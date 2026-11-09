@@ -292,7 +292,10 @@ fn check(acme: &Acme, functions: Vec<FunctionDeclaration>) -> CheckedGraph {
             qsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckingLimits::default())
+    .check(
+        quire_semantic_value::checking::CheckMode::Linked,
+        CheckingLimits::default(),
+    )
     .unwrap_or_else(|refusals| panic!("the acme functions check: {refusals:?}"))
 }
 
@@ -395,7 +398,10 @@ fn dispatch_with(acme: &Acme, root: &str, clauses: &OperationClauses) -> Package
 
 fn check_declarations(declarations: PackageDeclarations) -> CheckedGraph {
     declarations
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"))
 }
 
@@ -935,7 +941,10 @@ fn two_admitted_versions_of_one_model_identity_refuse() {
     let mut aliased = dispatch(&first, "Order/size");
     aliased.models.push(admitted("1.0.0").model.clone());
     aliased
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect("two aliases of one package share its selection");
 
     let mut extended = acme();
@@ -944,7 +953,10 @@ fn two_admitted_versions_of_one_model_identity_refuse() {
     let mut declarations = dispatch(&first, "Order/size");
     declarations.models.push(second.model.clone());
     let refusals = declarations
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect_err("two packages of one identity refuse");
     assert!(
         matches!(

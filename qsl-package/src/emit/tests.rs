@@ -220,7 +220,10 @@ fn graph_of_named(
     );
     declarations.functions = functions;
     declarations
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect("the fixture functions check")
 }
 
@@ -254,7 +257,10 @@ fn tree() -> CheckedPackage {
     declarations.types = types;
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("Tree checks"),
     )
 }
@@ -881,7 +887,10 @@ fn a_function_identity_survives_emission_and_the_i2_read() {
             PackageDeclarations::new(source(), "pkg", qsl_foundation::IdentityLimits::default());
         declarations.functions = functions;
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("t and f check")
     };
     let mut identities = BTreeSet::new();
@@ -1015,7 +1024,10 @@ fn a_float_sum_carries_the_ieee_law_and_its_rounding_mode() {
     );
     let package = CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("the float sum checks"),
     );
     let emission = emit(&package);
@@ -1080,7 +1092,10 @@ fn a_carried_sum_lowers_to_its_identity_with_the_carriers_rounding_mode() {
     .expect("the assembler builds the declarations");
     let package = CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("the carried sums check"),
     );
     let wire = wire(&emit(&package));
@@ -1465,7 +1480,10 @@ fn declared_types(
     declarations.functions = functions;
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("the declared types check"),
     )
 }
@@ -1617,7 +1635,10 @@ fn a_declared_name_segment_that_is_no_identifier_refuses_by_that_segment() {
         PackageDeclarations::new(source(), "pkg", qsl_foundation::IdentityLimits::default());
     declarations.types = types;
     let refusals = declarations
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect_err("the name has no identifier segments");
     assert!(
         refusals.iter().any(|refusal| refusal.cause
@@ -2273,7 +2294,10 @@ fn checked_call_package(functions: Vec<FunctionDeclaration>) -> qsl_semantics::c
     );
     declarations.functions = functions;
     declarations
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect("g and f check cleanly")
 }
 
@@ -2430,7 +2454,10 @@ fn generated_nodes_are_placed_at_their_enclosing_declaration() {
     declarations.functions = vec![inc_read_from_text()];
     let package = CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("inc checks"),
     );
     let emission = emit_checked(&package).expect("inc emits");
@@ -2501,7 +2528,10 @@ fn source_text_compiles_through_the_spine_and_reads_back_verified() {
     .expect("the assembler builds the package declarations");
     let package = CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("the package checks"),
     );
     let emission = emit_checked(&package).expect("the package emits with its source map");
@@ -2642,7 +2672,10 @@ pub(super) fn q_and_t_package_over(
     declarations.functions = vec![q, t()];
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("q checks"),
     )
 }
@@ -2845,7 +2878,10 @@ fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<Check
     let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .map(CheckedPackage::link)
 }
 
@@ -3021,7 +3057,10 @@ fn spine_compile_package() -> CheckedPackage {
     let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let graph = PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect("the package checks");
     CheckedPackage::link(graph)
 }
@@ -3091,7 +3130,10 @@ fn emit_model_unit(unit: &str, evidence_identity: Option<&str>) -> (Emission, Va
     let packages = qsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect("the package checks");
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -3959,7 +4001,10 @@ fn check_attempt_unit(
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckingLimits::default())
+    .check(
+        quire_semantic_value::checking::CheckMode::Linked,
+        CheckingLimits::default(),
+    )
 }
 
 /// What FR-114's emission assertions read from one attempt unit: the
@@ -4369,7 +4414,10 @@ pub(crate) fn package_from_text(declarations: &str) -> (String, CheckedPackage) 
     let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let graph = PackageDeclarations::assemble(raw, "pkg".to_owned(), unit, Vec::new(), Vec::new())
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect("the package checks");
     (text, CheckedPackage::link(graph))
 }

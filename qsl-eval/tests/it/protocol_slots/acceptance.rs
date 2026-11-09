@@ -100,7 +100,10 @@ fn fixture_named(
                 Vec::new(),
             )
             .unwrap()
-            .check(CheckingLimits::default())
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
             .expect("TC-1070's legitimate protocol package checks"),
         ),
         view,
