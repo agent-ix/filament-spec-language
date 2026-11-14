@@ -1172,7 +1172,13 @@ impl DebugWith for CheckedGraph {
             )
             .field("equality_producer_identities", equality_producer_identities)
             .field("dispatch_producer_decisions", dispatch_producer_decisions)
-            .field("operation_keys", operation_keys)
+            .field(
+                "operation_keys",
+                &operation_keys
+                    .iter()
+                    .map(|(location, key)| (location, NodeKeyDebug(key, table)))
+                    .collect::<Vec<_>>(),
+            )
             .field("effective_limits", &effective_limits)
             .field("form_spans", &form_spans)
             .field("type_spans", &type_spans)
