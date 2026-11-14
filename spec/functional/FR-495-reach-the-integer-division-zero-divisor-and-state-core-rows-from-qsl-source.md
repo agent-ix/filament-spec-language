@@ -153,6 +153,36 @@ bound and does not authorize a CG-side result-bound workaround.
   - Under `CheckMode::Kernel` a zero divisor evaluates to the kernel
     `Undefined::DivisionByZero`, spelled `division-by-zero` (FR-100), at the
     charge QSpec states for the operation, with no value and no loss record.
+- **What `CheckMode::Kernel` leaves unrecorded, and what it keeps.** `Kernel`
+  drops the unproved definedness obligations of a function body, so the
+  evaluator meets them as kernel outcomes. It SHALL NOT change what else the
+  check refuses. Four boundaries follow (QSL-1963):
+  - The presence obligation of `value(e)` (FR-104 "Definedness facts") is one
+    of the obligations `Kernel` drops: a function body whose `value(x)` has no
+    proved `present(x)` SHALL refuse `undefined_expression`/`unproved-presence`
+    under `Linked` and SHALL check under `Kernel`, where the evaluator meets
+    the absent value.
+  - `Kernel` selects how a function body is checked. A state clause a package
+    declares (`invariant`, `pre`, `post`; FR-104), checked through
+    `PackageDeclarations::check`, SHALL refuse its unproved obligation under
+    `Kernel` as under `Linked`, so `Kernel` never admits a declared clause
+    whose obligation `Linked` refuses. `CheckedGraph::check_clause_expression`
+    is a different entry that takes its own `CheckMode` and does drop
+    obligations under `Kernel`; this boundary does not govern it.
+  - A termination measure is not a definedness obligation of the body. The
+    `decreases(..)` expression and the recursion's missing-measure and
+    unproved-decrease refusals (QSpec FR-146, FR-091-AC-30) SHALL be checked
+    as under `Linked` in both modes, including an unproved obligation inside
+    the measure expression.
+  - A malformed structure is a fault in what was supplied, not an obligation
+    the evaluator could meet. The definedness walk of an already-checked body
+    SHALL refuse a rational operation whose operand is not of `Rational`
+    type, and `PackageDeclarations::check` SHALL refuse a dispatch declaration
+    whose table, operation or candidate function index or signature is
+    invalid, under `Kernel` exactly as under `Linked`. The typer builds a
+    rational operation only from `Rational` operands, so no QSL source or
+    package declaration produces the first fault, and no source text produces
+    the second.
 - **Declaration form before expression form.** Under a header profile that
   names only `quire.state.core/v1`, S3 SHALL refuse each declaration whose form
   the layer does not admit (the layer admits `invariant`, `pre` and `post`;
@@ -214,6 +244,10 @@ bound and does not authorize a CG-side result-bound workaround.
 | FR-495-AC-7 | Finite-backend negotiation (QSL-1485; QSpec FR-147-AC-3, AC-8). Under `quire.value.complete/v1` and each of the three division definitions, `function q using v(a: Integer, b: Integer): Integer pure { if b != 0 then a div b else 0 }` checks, and its `div` application has one `value-validity` requirement record whose extent is `Unbounded` over the parameter nodes of `a` and `b` (domain kind integer); the same with `rem` and with `mod`. First, in a locked run with a cvc5 provider registered beside a test descriptor advertising (`value-validity`, `bounded`) whose disposition for the item is `requires-bound`, the bounded descriptor's item is written with `finite_bound_available` true and settles `requires-bound`, no harness is emitted for it, S6a evaluates nothing, and the request names `a` and `b` as `Integer`, not as any `Int[..]`. Then, in a locked run with the bounded descriptor alone and no SMT provider registered, each item settles the same `requires-bound` disposition with the same request. | Test (TC-1284) |
 | FR-495-AC-8 | Through the existing public `qsl-replay` compile facade, compile genuine bounded-operand `div` and `rem` functions with each owner-admitted Euclidean, Floor and Truncating selection. The supplied capability, checked nodes and emitted `operation.laws` retain that exact owner law into CG; the existing source-backed QSL/CG agreement path matches QSpec TC-192 at positive and negative operands, including negative-divisor controls that distinguish the laws. This obligation supplies the admitted law to CG/source-backed IR-1391 agreement; a new byte-only execution surface is outside this scope. Missing demanded selection returns typed `MissingSelection(IntegerDivision)` at the operator; unknown, foreign or conflicting definition bindings retain native typed refusals before execution. A non-division and a `mod`-only control compile without a division selection. No test assigns a private declarations field, invents a law string or substitutes CG behavior for the public-facade selection. | Test |
 | FR-495-AC-9 | Complete-facet subcases of QSpec TC-192 DIV-18's slash row, written as function bodies under `quire.value.complete/v1` (the state-only subcases are AC-6's clause bodies, which stay clause bodies under both profiles). `function sl1 using v(): Rational[0, 7; 1, 3] pure { 7 / 3 }` checks, the integer operands promoted to `7/1` and `3/1` by QSpec FR-149, and evaluates to `7/3` after the nonzero and domain checks; `function sl2 using v(): Boolean pure { 7 / 3 = 7 / 3 }` has no expected rational type and refuses `ill_typed`/`type-mismatch` at the first `/`; neither body is read as `div`. Under `quire.state.core/v1` a `function` carrying either body is refused as a declaration first (AC-4), so the slash refusal code of the state-only subcase is only AC-6's clause form. | Test (TC-1284) |
+| FR-495-AC-10 | `function p using v(x: Option<Integer>): Integer pure { value(x) }` refuses `undefined_expression`/`unproved-presence` at the `value` under `CheckMode::Linked` and checks under `CheckMode::Kernel`, which records no presence obligation; `function g using v(x: Option<Integer>): Integer pure { if present(x) then value(x) else 0 }` checks under both modes. | Test (TC-1419) |
+| FR-495-AC-11 | Over the ConfigVersion package (FR-103-AC-1), checked through `PackageDeclarations::check` (not `CheckedGraph::check_clause_expression`), `invariant NoGuard using v on Config::ConfigVersion at current { deref(value(self.parent)).versionNumber < self.versionNumber }` refuses `undefined_expression`/`unproved-presence` at the `value` under `CheckMode::Linked` and under `CheckMode::Kernel`, one refusal each; the guarded `present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber` (FR-104-AC-1's `ParentOrder`) checks under both. | Test (TC-1419) |
+| FR-495-AC-12 | `function w using v(x: Option<Integer>): Int[0, 9] pure decreases(value(x)) { 0 }` refuses `undefined_expression`/`unproved-presence` under `CheckMode::Linked` and under `CheckMode::Kernel`. `function f using v(x: Int[0, 9]): Int[0, 9] pure { f(x) }` refuses `undefined_expression`/`unproved-decrease` with the `missing-measure` obligation at the call `f(x)`, the root of the body, under both modes. `function f using v(x: Int[0, 9]): Int[0, 9] pure { f(x) + 1 }` refuses `unproved-range` at the `+` under `Linked`, as its only refusal, and under `Kernel`, which records no range obligation, refuses `unproved-decrease`/`missing-measure` at the call `f(x)`, path `[0]`, the first operand of the `+`, as its only refusal. | Test (TC-1419) |
+| FR-495-AC-13 | Under `CheckMode::Kernel` and under `CheckMode::Linked`, the definedness walk of an already-checked body holding a rational operation (`Rational` or `RationalNegate`) whose operand node has type `Integer` refuses `undefined_expression`/`unproved-range` at that operation. Through `PackageDeclarations::check` under each mode, a package whose dispatch operation names a dispatch table index equal to the table count, and one whose dispatch table names a candidate function index equal to the function count, each refuse `invalid_package`/`invalid-value`. Each outcome is the same refusal under both modes; `Kernel` leaves none of the three to the evaluator. The dispatch refusals are made before any body walk, so today they cannot differ by mode; the criterion guards that they stay independent of the mode. | Test (TC-1420) |
 
 
 ## Dependencies
