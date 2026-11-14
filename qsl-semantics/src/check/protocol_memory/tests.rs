@@ -282,7 +282,10 @@ fn a_weak_join_with_no_outstanding_rule_reports_both_refusals() {
     let declarations = protocol(&parallel("Both", "memory tso", "any [left]", ""));
     let (_, assembled) = assemble(&declarations);
     let found = assembled
-        .check(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
         .expect_err("checking refuses");
     let mut seen: Vec<(&str, String)> = found
         .iter()

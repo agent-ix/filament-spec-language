@@ -2197,7 +2197,12 @@ mod conversion_budget_tests {
 
     fn units() -> super::super::super::CheckedGraph {
         let text = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\ndimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(2,1) * ms;\n";
-        declarations(text).check(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default()).unwrap()
+        declarations(text)
+            .check(
+                quire_semantic_value::checking::CheckMode::Linked,
+                CheckingLimits::default(),
+            )
+            .unwrap()
     }
 
     fn declarations(text: &str) -> super::super::super::PackageDeclarations {
@@ -2236,7 +2241,10 @@ mod conversion_budget_tests {
         ] {
             let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\n{function}\n");
             declarations(&text)
-                .check(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default().with_rational_bits(2))
+                .check(
+                    quire_semantic_value::checking::CheckMode::Linked,
+                    CheckingLimits::default().with_rational_bits(2),
+                )
                 .expect("the rational conversion ceiling must preserve nonreward Integer checking");
         }
     }

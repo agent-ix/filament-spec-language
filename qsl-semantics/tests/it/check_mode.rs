@@ -103,8 +103,8 @@ fn an_unproved_presence_checks_only_under_kernel() {
     );
 }
 
-/// FR-104 "Definedness facts": `Kernel` reaches function bodies and
-/// measures only, so a state clause still refuses its unproved obligation.
+/// FR-104 "Definedness facts": `Kernel` reaches function bodies only, so a
+/// state clause still refuses its unproved obligation.
 #[test]
 fn a_state_clause_still_refuses_its_obligation_under_kernel() {
     let clause = "invariant NoGuard using v on Config::ConfigVersion at current { \
@@ -243,4 +243,22 @@ fn a_call_exposes_the_key_of_its_application_node() {
          { if n > 0 then walk(n - 1) else 0 }",
         0,
     );
+}
+
+/// FR-495: `Kernel` leaves a function body's obligation to the evaluator
+/// but a termination measure is checked as under `Linked`, so an unproved
+/// obligation inside `decreases(..)` is refused in both modes.
+#[test]
+fn kernel_mode_still_proves_a_termination_measure() {
+    let source = "function w using v(a: Int[0, 9], b: Int[0, 9]): Int[0, 9] pure \
+                  decreases(a div b) { 0 }";
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        assert!(
+            matches!(
+                refusal(source, mode).cause,
+                CheckCause::Unproved(Obligation::Nonzero)
+            ),
+            "{mode:?}"
+        );
+    }
 }

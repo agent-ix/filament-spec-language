@@ -122,7 +122,10 @@ fn check(
     );
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default())
+        .check(
+            quire_semantic_value::checking::CheckMode::Linked,
+            CheckingLimits::default(),
+        )
 }
 
 fn checked(populations: &Populations, clauses: &str) -> CheckedGraph {
