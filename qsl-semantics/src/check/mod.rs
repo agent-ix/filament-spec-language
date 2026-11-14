@@ -8575,14 +8575,13 @@ impl CheckedGraph {
             },
         };
         let slots = typer.slots();
-        if mode == CheckMode::Linked {
-            Definedness::new(
-                parameters.len(),
-                &self.dispatch_tables,
-                &self.scope.dispatch_operations,
-            )
-            .check(root.root())?;
-        }
+        Definedness::new(
+            parameters.len(),
+            &self.dispatch_tables,
+            &self.scope.dispatch_operations,
+        )
+        .with_check_mode(mode)
+        .check(root.root())?;
         let formed_units =
             FormedUnits::identify(&typer.into_formed_units()).map_err(|identity| CheckRefusal {
                 location: location.clone(),

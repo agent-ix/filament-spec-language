@@ -1611,7 +1611,8 @@ pub(crate) fn check_declaration_body(
     )
     .with_check_mode(input.mode);
     definedness.check(body.root())?;
-    // The measure's own definedness is checked, but (unchanged from the
+    // The measure's own definedness is checked in `Linked` mode in every
+    // mode (termination is not a run-time obligation), but (unchanged from the
     // pre-migration behavior) its calls are not folded into `calls` below:
     // termination's call graph is built from each function's *body*, not
     // its measure.
@@ -1621,7 +1622,6 @@ pub(crate) fn check_declaration_body(
             input.dispatch_tables,
             &input.scope.dispatch_operations,
         )
-        .with_check_mode(input.mode)
         .check(measure.root())?;
     }
     Ok(CheckedDeclarationBody {
