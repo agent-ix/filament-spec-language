@@ -49,6 +49,7 @@ changed files.
 | FND-002 | fixed | edd5dee65: FR-284 lists `quire-aot` (the AOT backend) with QSL's crates above the core in its description and Behavior. |
 | FND-003 | fixed | edd5dee65: FR-562 Overlap reads "QSL's `quire-aot` follows the same rule". |
 | FND-004 | fixed | edd5dee65: FR-567 Overlap reads "QSL qualifies the parity of `quire-aot`, its AOT backend (FR-563)". |
+| FND-005 | fixed | 9ef39ed49: ADR-029 EB-6 reads "No shipped QSL crate emits target-specific code; the fixture generator below is test-only and lives in `qsl-conformance`." |
 
 ## New findings (disposition pass 1)
 

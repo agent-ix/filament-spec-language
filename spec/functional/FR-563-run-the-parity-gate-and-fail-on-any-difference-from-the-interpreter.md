@@ -123,7 +123,6 @@ or `ParityRefusal`.
 
 ## Behavior
 
-- The driver repository shall run the AOT backend, composed with the driver's real generator (`lower` then `generate` with the AOT target), over the same parity cases this FR's corpus yields and compare it with the interpreter as the runner does; QSL's own run, with the fixture generator, qualifies the backend's build-and-run harness, and the two runs together satisfy FR-295 and ADR-029 EB-5 for AOT.
 - The runner shall compare every entry each backend prepares with the
   reference's result for the same entry, arguments and limits, over the
   corpus and the generated units.
@@ -159,7 +158,6 @@ or `ParityRefusal`.
 | FR-563-AC-7 | A backend with 150 `difference` findings yields a report holding 100 findings and the total 150 at the default `max_reported`, and the run reaches every unit. | Test (TC-1386) |
 | FR-563-AC-8 | `run_parity`'s inputs and `cargo xtask parity`'s options hold no member that allows, skips, retries or tolerates a finding, and none selects a reference; `run_parity_with_reference` does not exist without the `test-support` feature (a `compile_fail` doctest with a compiling control under the feature); `cargo xtask parity --no-such-option` refuses, exit 2, naming the option. | Test (TC-1387) and Inspection |
 | FR-563-AC-9 | Over a corpus fixture holding a `runtime`/`run` vector for `function inc using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }` with the argument assignment `x` = 4, a `compile` vector and a `format` vector, the runner builds exactly one parity case, id the `run` vector's, entry `inc`, one tuple `(4)`; the report counts two vectors not selected and no finding for them; a test backend that returns 6 for `inc(4)` fails with one `difference` carrying that vector id and the tuple `(4)`. | Test (TC-1386) |
-| FR-563-AC-10 | The driver repository's AOT parity run composes `quire-aot` with the driver's real generator and calls `run_parity` over the corpus and generated units of FR-563-AC-1 at the default seed; a real generator made to emit code that rounds one decimal operation fails that run with a `difference` finding naming the member, and the run with the unmodified generator reports no finding and a compared count above zero. | Test (driver repository) |
 
 ## Dependencies
 
@@ -177,7 +175,7 @@ or `ParityRefusal`.
 `xtask parity` runs `run_parity` over `quire-aot`, a QSL crate, and gates the
 AOT backend on it, constructing it with the fixture generator of `qsl-conformance` and
 the toolchain the run names (ADR-029 EB-6); the gate never calls the driver's or CG's `generate` (ADR-011 FB-11). The driver depends on `qsl-conformance` for the CLI half of the
-matrix and for the real-generator AOT parity run: the driver repository owns that run (FR-563-AC-10), composing `quire-aot` with its real generator.
+matrix and for the real-generator AOT parity run: the driver repository owns that run, composing `quire-aot` with its real generator and comparing it with the interpreter over the same parity cases (the driver's requirement tracked as IR-1540). QSL's own run, with the fixture generator, qualifies the backend's build-and-run harness, and the two runs together satisfy FR-295 and ADR-029 EB-5 for AOT.
 
 ## References
 
