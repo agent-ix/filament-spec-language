@@ -99,3 +99,7 @@ Skipped: none in this lens.
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | edd5dee65: FR-560-AC-2 `half(a: Rational[-9, 9; 1, 9], h: Rational[1, 1; 2, 2]): Rational[-9, 9; 1, 18] { a * h }`; checks through S1, S2 and the S3 package check at 3965516954 (probe rerun). |
+| FND-002 | fixed | edd5dee65: FR-562-AC-5 `r` result is `Rational[-162, 162; 1, 81]`; checks at 3965516954 (probe rerun). |
+| FND-003 | fixed | 396551695: `quire-aot` is constructed with an injected generator trait and toolchain; `prepare` keeps FR-294's signature and calls the generator (ADR-029 §7 row and EB-6). |
+| FND-004 | fixed | edd5dee65: FR-295 Types reads "bounded `Rational`, bounded `Decimal` and bounded `Text`". |

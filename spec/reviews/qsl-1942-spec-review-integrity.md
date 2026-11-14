@@ -45,3 +45,13 @@ changed files.
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | edd5dee65: ADR-029 CB-3 item 3 reads "Driver repository: `quire-plugin-host` (§5) and the binary crate `quire-cli`; `quire-aot` (§7) is a QSL crate." |
+| FND-002 | fixed | edd5dee65: FR-284 lists `quire-aot` (the AOT backend) with QSL's crates above the core in its description and Behavior. |
+| FND-003 | fixed | edd5dee65: FR-562 Overlap reads "QSL's `quire-aot` follows the same rule". |
+| FND-004 | fixed | edd5dee65: FR-567 Overlap reads "QSL qualifies the parity of `quire-aot`, its AOT backend (FR-563)". |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | ADR-029 EB-6 still says "QSL emits no target-specific code", but the amended paragraph has `qsl-conformance` supply a fixture generator that returns FR-331 `artifacts` for the AOT target for `xtask parity` to build and run, which is QSL emitting target-specific code. | spec/decisions/ADR-029-lifecycle-cli-provider-plugin-cache-codegen-boundaries.md:879, spec/decisions/ADR-029-lifecycle-cli-provider-plugin-cache-codegen-boundaries.md:891-893 |

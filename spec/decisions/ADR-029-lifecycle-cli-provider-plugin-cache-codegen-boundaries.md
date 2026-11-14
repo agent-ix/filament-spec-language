@@ -876,7 +876,7 @@ fails the gate (QSpec FR-306-AC-1).
 (E5). CG generates Rust from S5 IR, negotiated per item before emission. An
 item that is not settled `supported` emits nothing (QSpec FR-331-AC-2). The
 generated artifact is FR-331 `artifacts` bytes with a source map keyed by
-occurrence key. QSL emits no target-specific code. A runtime monitor is
+occurrence key. No shipped QSL crate emits target-specific code; the fixture generator below is test-only and lives in `qsl-conformance`. A runtime monitor is
 another `generate` target behind the same boundary.
 
 The AOT backend is the crate `quire-aot`, owned by QSL: it implements the seam
@@ -887,8 +887,8 @@ whose one method takes the checked package and entries and returns the FR-331
 trait), and the build toolchain the caller names. `prepare` keeps FR-294's signature: it calls the
 generator, builds the artifact with the toolchain, and runs it as a child process
 in `call` and `evaluate`. `quire-aot` depends on no driver, CG or IR crate
-(FR-280, ADR-011 FB-11); the generator trait is its own. The driver supplies the
-generator and the toolchain for driver runs (driver FR-008); `xtask parity` supplies
+(FR-280, ADR-011 FB-11); the generator trait is its own. QSL requires the driver to
+supply the real generator (`lower` then `generate` with the AOT target) and the toolchain for driver runs; `xtask parity` supplies
 a QSL-side fixture generator from `qsl-conformance`, a test-only dependency,
 because an `xtask` edge to the driver's `generate` would be a QSL to CG test-time edge
 that FB-11 forbids (amendment 2026-11-14, QSL-1942; it replaces the 2026-11-08 amendment that gave
