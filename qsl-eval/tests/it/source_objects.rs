@@ -343,7 +343,7 @@ impl Unit {
             .link_dispatch(ModelNormalizationLimits::default())
             .expect("dispatch links");
         let graph: CheckedGraph = declarations
-            .check(CheckingLimits::default())
+            .check(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default())
             .map_err(|refusals| pending.report(refusals))
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
         Self {

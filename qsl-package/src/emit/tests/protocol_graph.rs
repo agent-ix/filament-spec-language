@@ -1086,7 +1086,7 @@ fn a_source_object_refusal_wins_over_a_refused_protocol() {
         .expect("the test model admits");
     let graph = assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check_with_protocol_results(CheckingLimits::default())
+        .check_with_protocol_results(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default())
         .expect("unit-level checks succeed");
     assert_eq!(graph.protocol_refusals().len(), 1);
     let at = text.find("object Widget").unwrap();

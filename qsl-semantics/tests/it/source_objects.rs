@@ -119,7 +119,7 @@ fn finish(
 ) -> Result<CheckedGraph, Vec<qsl_semantics::check::CheckRefusal>> {
     let pending = declarations.link_dispatch(ModelNormalizationLimits::default())?;
     declarations
-        .check(CheckingLimits::default())
+        .check(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| pending.report(refusals))
 }
 

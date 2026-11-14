@@ -26,7 +26,7 @@ fn source(text: &str) -> CheckedGraph {
         Vec::new(),
     )
     .expect("the source assembles")
-    .check(CheckingLimits::default())
+    .check(quire_semantic_value::checking::CheckMode::Linked, CheckingLimits::default())
     .expect("the source checks")
 }
 
