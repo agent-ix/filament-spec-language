@@ -63,6 +63,7 @@ pub struct StatisticalRequest<'a> {
     pub sampler: DefinitionRef,                     // checked by identity: quire.simulation.sampler/v1 (FR-188)
     pub limits: StatisticalLimits,                  // FR-191
     pub max_witnesses: u32,                         // FR-193; default 8
+    pub workers: usize,                             // FR-191 "Workers": setting `statistical.workers`, default 1
 }
 pub enum StatisticalMethod { Okamoto, Sprt, ClopperPearson, Regenerative { min_cycles: u64 } }
 

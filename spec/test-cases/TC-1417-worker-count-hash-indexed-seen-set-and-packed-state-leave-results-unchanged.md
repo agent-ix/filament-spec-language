@@ -25,7 +25,10 @@ FR-191-AC-7.
 ## Test Procedure
 
 Integration tests in `qsl-eval/tests/it/` through the public entries
-(`explore_request`, `replay`, `check_model` and the statistical run). Each
+(`explore_request`, `explore_request_parallel`, `replay`, `check_model` and the
+statistical run) and, for steps 5 to 7, the `SeenSetProbe` and `PackedLayout`
+test seam of FR-101 under each explorer crate's `test-support` feature. The
+statistical runs stay small (`max_samples` at most 1,000) so the case is cheap. Each
 step runs the same request with `workers` 1, 2, 4 and 64 and compares the
 results, except where it says otherwise.
 
@@ -37,19 +40,17 @@ results, except where it says otherwise.
    `max_transitions` stop, and two states that stop with different causes,
    the later in canonical order made to finish first.
 4. A run whose poll answers `true` after a delay, `workers` 4.
-5. A test hash function returning one constant, over 100 distinct states and
-   over two initial states with equal hashes and different keys; then two
-   other hash seeds.
+5. Through the probe, on each explorer (`explore_request`, `explore_request_parallel`, the FR-126 and FR-142 product explorers): a constant hash, over 100 distinct states and over two initial states with equal hashes and different keys; then two other hash functions.
 6. Pack and unpack every reachable state of a finite system and compare every pair
    of 200 states, including `float64` zero and negative zero and each end of
    a declared integer range; then a state with a value outside the layout.
-7. The system of step 1 with a packed layout and without one, and replay of
-   each run's trace against the other.
+7. On each explorer, `Packing::Auto` and `Packing::Off`, and replay of each run's trace against the other.
 8. `check_model` over the `Counter` subject with a violated claim, a holding
    claim with a certificate and a claim stopped by `max_states` 5; with
-   `max_candidates` one below the first state's charge; with a delayed
-   cancel; with `workers` 0.
-9. The statistical runs of FR-191-AC-6 with a sampler double that finishes
+   `max_candidates` set so the one-worker run stops at its seventh expanded
+   state, with a later state made to finish first; with a delayed cancel;
+   with `workers` 0, and with `workers` 2 on a non-`Sync` subject.
+9. The statistical runs of FR-191-AC-6 (`max_samples` 1,000 and 100) with a sampler double that finishes
    higher trace indices first; a delayed cancel with `workers` 4; `workers` 0.
 
 Tag each test `#[trace("TC-1417", "<AC id>")]` with its AC.
@@ -72,8 +73,8 @@ Tag each test `#[trace("TC-1417", "<AC id>")]` with its AC.
 - Step 7: byte-equal results, no packed form in any output, replay succeeds
   both ways.
 - Step 8: equal verdict, counterexample, certificate bytes and stop for
-  every count; the same `MaxCandidates` stop; `Stopped{Cancelled, None}`
-  for the delayed cancel; the `workers` 0 refusal.
+  every count; the same `MaxCandidates` stop at the seventh state; `Stopped{Cancelled, None}`
+  with counts and frontier of a one-worker prefix for the delayed cancel; the `workers` 0 refusal.
 - Step 9: byte-equal results and provenance; the `max_samples` 100 run counts
   no sample beyond trace index 99; the cancelled run equals the one-worker
   result at its trace index; the refusal.

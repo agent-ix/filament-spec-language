@@ -71,7 +71,7 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
   fixed by the language, and none enters the obligation identity.
 - When a test has counted `max_samples` samples or cycles and its method
   needs another, EN-4 SHALL stop and return `Stopped` with
-  `Limit{MaxSamples, value}`, before it draws the next sample; a method that decides
+  `Limit{MaxSamples, value}`, before it merges the next sample (FR-191 "Workers" for physical draws); a method that decides
   at exactly `max_samples` completes. When a test has drawn `max_draws`
   samples (for the regenerative method, taken `max_draws` walk steps in total, as FR-190 counts steps as draws), or taken `max_cycle_steps` steps in one cycle, it SHALL stop the same
   way before the next draw or step. The stop carries the limit, its value, the
@@ -87,26 +87,31 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
 
 ### Workers
 
-- A request SHALL carry `workers: usize`, the number of threads that may
-  draw samples at once (request setting `statistical.workers`, default 1).
-  It is not a budget and enters neither the obligation identity nor the
-  provenance.
+- A request SHALL carry `workers: usize` (`StatisticalRequest.workers`,
+  FR-189), the number of threads that may draw samples at once, setting
+  `statistical.workers`, default 1. It is not a budget and enters neither
+  the obligation identity nor the provenance. A system or subject that
+  holds single-threaded state supports `workers` 1 only, and a larger
+  count is refused as `workers` 0 is.
+- `workers` 0 SHALL return `StatisticalRefusal::Workers`, catalog code
+  `invalid_runtime_input`/`invalid-value`, before any sample is drawn.
 - A sample is a function of the seed, the sampler and its trace index
   alone, so workers MAY draw samples of different trace indices
   concurrently. The run SHALL merge samples in trace-index order and SHALL
   charge `max_samples`, `max_draws` and `max_cycle_steps`, and run the
   method's stopping rule (Okamoto's `N`, SPRT's bounds, the regenerative
-  cycle count), in that merge order. A sample drawn past the merge's stop
-  point SHALL be discarded and SHALL appear in no count, estimate, witness
-  or provenance range.
+  cycle count), in that merge order. At most `workers` samples are drawn
+  and not yet merged at any time, so a run stopped at a trace index has
+  drawn at most `workers - 1` samples beyond it. Those samples SHALL be
+  discarded and SHALL appear in no count, estimate, witness or provenance
+  range; the "before it draws the next sample" of Budgets is a statement
+  about the merge, not about the number of physical draws.
 - For every `workers >= 1` a run SHALL return the same decision, counts,
   estimates, witnesses, provenance and stop (limit and value) as the
-  one-worker run. A run stopped by `Cancel` MAY stop at a different trace
-  index from one run to the next, and its result SHALL be the one-worker
-  result at some trace index, with every sample before it counted and none
-  after it.
-- `workers` 0 SHALL refuse `invalid_runtime_input`/`invalid-value` before
-  any sample is drawn.
+  one-worker run.
+- A run stopped by `Cancel` MAY stop at a different trace index from one
+  run to the next, and its result SHALL be the one-worker result at some
+  trace index, with every sample before it counted and none after it.
 
 ### Provenance and reproduction
 
@@ -130,9 +135,8 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
 | FR-191-AC-3 | `P95` with SPRT and seed 7 run twice gives byte-equal results: provenance, per-test counts, estimates and decision. The run stopped by `max_samples` 100 and the rerun with the default limit draw equal samples at trace indices 0 to 99. A run with seed 8 records seed 8, the same obligation identity, and a different sample at some trace index. | Test (TC-626) |
 | FR-191-AC-4 | A two-test run records per test its initial state index, binding and trace-index range, with test 1's first trace index equal to 1 and its step 2. Changing the method from Okamoto to SPRT changes the result's method and leaves its obligation identity unchanged. | Test (TC-626) |
 | FR-191-AC-5 | `NoFault` with `max_samples` 9,210,341 completes at exactly 9,210,341 samples while 9,210,340 stops `Limit{MaxSamples, 9,210,340}` after counting 9,210,340 samples without drawing another; a `Stopped` and an `Unsupported` outcome (FR-189-AC-7's `Wide`) each carry the run's `StatisticalProvenance`, and a cancelled handle stops `Cancelled`. | Test (TC-626) |
-
-| FR-191-AC-6 | `P95` with SPRT and seed 7, and `NoFault` with Okamoto and `max_samples` 9,210,340, each run with `workers` 1, 2, 4 and 64, give byte-equal results: provenance, per-test counts, estimates, witnesses, decision and, for the second run, `Limit{MaxSamples, 9,210,340}` with 9,210,340 samples counted. A sampler test double that makes the sample at a higher trace index finish first changes no result. A run stopped by `max_samples` 100 draws, for `workers` 4, equal samples at trace indices 0 to 99 and counts no sample beyond 99. | Test (TC-1417) |
-| FR-191-AC-7 | A run with `workers` 4 whose `Cancel` handle is cancelled after a delay returns `Cancelled` with counts and estimates equal to the one-worker run stopped at the same trace index, for the index it reached; the result carries no sample of a higher trace index. `workers` 0 refuses `invalid_runtime_input`/`invalid-value` and draws no sample. | Test (TC-1417) |
+| FR-191-AC-6 | `P95` with SPRT and seed 7, and `NoFault` with Okamoto and `max_samples` 1,000 (a stop well below Okamoto's `N`), each run with `workers` 1, 2, 4 and 64, give results byte-equal to the one-worker run's: provenance, per-test counts, estimates, witnesses, decision and, for the second run, `Limit{MaxSamples, 1,000}` with 1,000 samples counted. A sampler test double that makes the sample at a higher trace index finish first changes no result. The run stopped by `max_samples` 100, with `workers` 4, draws samples at trace indices 0 to 99 equal to the one-worker run's samples at those indices and counts none beyond 99; the double records at most 103 draws. | Test (TC-1417) |
+| FR-191-AC-7 | A run with `workers` 4 whose `Cancel` handle is cancelled after a delay returns `Cancelled` with counts and estimates equal to the one-worker run stopped at the same trace index, for the index it reached; the result carries no sample of a higher trace index. `workers` 0 returns `StatisticalRefusal::Workers` (`invalid_runtime_input`/`invalid-value`) and draws no sample. | Test (TC-1417) |
 
 ## Dependencies
 
