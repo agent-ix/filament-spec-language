@@ -3,16 +3,16 @@ id: TC-516
 title: "call_site names a function's parameters and an operation's and a state clause's identities, matching what replay accepts"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-121
+  - target: ix://agent-ix/filament-spec-language/FR-121
     type: verifies
 ---
 # TC-516: call_site names a function's parameters and an operation's and a state clause's identities, matching what replay accepts
 
 ## Description
 
-Verify `qsl_replay::call_site` over real complete-V1 source: it pairs a
+Verify `fsl_replay::call_site` over real complete-V1 source: it pairs a
 named function's declared parameters with their node ids, and the pairing
-is the one `qsl_replay::replay` actually accepts, proved by driving `replay`
+is the one `fsl_replay::replay` actually accepts, proved by driving `replay`
 with a request keyed by `call_site`'s own pairs rather than by re-running
 the same node lookup `call_site` uses and comparing -- including for a unit
 compiled against a dependency input. It locates a named operation's anchor,
@@ -87,7 +87,7 @@ FR-121-AC-32 to FR-121-AC-36.
 12. Compile the step 2 unit through `call_site`; read the returned
     `package` bytes.
 13. Over the step 1 unit, from outside the crate, build a `DeclaredDomain`
-    for `[0, 9]` on `x`'s node using only `qsl_replay` root paths, and an
+    for `[0, 9]` on `x`'s node using only `fsl_replay` root paths, and an
     inverted range through `FiniteBound::integer_range` and
     `IntegerInterval::new`.
 14. Read `CallSiteRefusal::code` for the refusals of steps 2, 5, 8, 9,
@@ -223,7 +223,7 @@ Tag the tests `#[trace("TC-516", "FR-121-AC-n")]`.
   `ReplayRefusal::code`'s code and category `inconclusive`; both faults map
   to `Failed`.
 - Step 17: the `Compile` and `UnknownFunction` refusals map to `Declined` with
-  cause `InvalidInput` and each refusal's own code as `DeclineCode::Qsl` (category `refusal`); the
+  cause `InvalidInput` and each refusal's own code as `DeclineCode::Fsl` (category `refusal`); the
   `Fault` maps to `Failed`.
 - Step 18: `parent` is `[0]` and `versionNumber` `[1]` under
   `ConfigVersion`'s node, through either type; `alpha` is `[0]` and `zeta`

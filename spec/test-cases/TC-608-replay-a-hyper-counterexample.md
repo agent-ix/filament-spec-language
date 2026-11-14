@@ -3,7 +3,7 @@ id: TC-608
 title: "The replay facade replays hyper counterexamples of every kind through ModelSystem"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-183
+  - target: ix://agent-ix/filament-spec-language/FR-183
     type: verifies
 ---
 # TC-608: The replay facade replays hyper counterexamples of every kind through ModelSystem

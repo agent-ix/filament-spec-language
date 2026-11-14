@@ -3,7 +3,7 @@ id: TC-376
 title: "Function application checking accepts a well-typed call and refuses wrong arity, an unknown name and a type mismatch"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: verifies
 ---
 # TC-376: Function application checking accepts a well-typed call and refuses wrong arity, an unknown name and a type mismatch

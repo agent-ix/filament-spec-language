@@ -3,15 +3,15 @@
 //! assembly, admission, lowering and the replay facade (FR-091-AC-73,
 //! FR-093-AC-60).
 
+use filament_exact::Cancel;
+use fsl_foundation::Setting;
+use fsl_replay::spine::{self, ParseRequest, SpineLimits};
+use fsl_replay::{compile_admitted, DependencyInput, ReplayLimits, SourceIdentity, StageLimits};
+use fsl_semantics::value::nominal_payload::NominalPayload;
 use ix_trace_rs::trace;
-use qsl_foundation::Setting;
-use qsl_replay::spine::{self, ParseRequest, SpineLimits};
-use qsl_replay::{compile_admitted, DependencyInput, ReplayLimits, SourceIdentity, StageLimits};
-use qsl_semantics::value::nominal_payload::NominalPayload;
-use quire_exact::Cancel;
 
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     dimension L;\n\
     dimension N = L / L;\n\
     dimension M = L * L;\n\
@@ -29,7 +29,7 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn an_empty_derived_dimension_stays_derived_through_lowering_and_replay() {
     let limits: StageLimits = [(Setting::S1InputBytes, 1 << 20)].into_iter().collect();
     let admitted = compile_admitted(
-        qsl_replay::CompileUnit {
+        fsl_replay::CompileUnit {
             source: SourceIdentity::new("a", "u"),
             package_name: "fixture".to_owned(),
             path: "unit.native",

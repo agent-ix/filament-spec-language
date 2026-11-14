@@ -3,17 +3,17 @@ id: FR-241
 title: "Concretize a symbolic counterexample with exact rational delays"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-236
+  - target: ix://agent-ix/filament-spec-language/FR-236
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-238
+  - target: ix://agent-ix/filament-spec-language/FR-238
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-240
+  - target: ix://agent-ix/filament-spec-language/FR-240
     type: depends_on
 ---
 # FR-241: Concretize a symbolic counterexample with exact rational delays

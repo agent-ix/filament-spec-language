@@ -3,19 +3,19 @@ id: FR-244
 title: "Emit a zone certificate with every zone-engine proof"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-240
+  - target: ix://agent-ix/filament-spec-language/FR-240
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-149
+  - target: ix://agent-ix/filament-spec-language/FR-149
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-430
+  - target: ix://agent-ix/filament-spec-language/FR-430
     type: depends_on
 ---
 # FR-244: Emit a zone certificate with every zone-engine proof
@@ -52,7 +52,7 @@ pub struct ZoneCertificate {
     pub lu_bounds: Vec<LuBounds>,               // per discrete state and clock
         pub nodes: Vec<CertNode>,                   // (state key, automaton state, canonical Dbm, locked: bool)
     pub edges: Vec<CertEdge>,                   // (node, transition identity, target node)
-    pub initials: Vec<NodeIndex>,               // nonempty: one initial node per initial state, in the subject's order (QSpec FR-418)
+    pub initials: Vec<NodeIndex>,               // nonempty: one initial node per initial state, in the subject's order (FSpec FR-418)
     pub components: Option<Vec<CertComponent>>, // CF-2 forms only
     pub divergence: Option<Vec<DivergenceWitness>>, // time-lock-freedom item only
     pub admitted: DivergenceWitness,            // every proof: TD-6 vacuity witness
@@ -60,7 +60,7 @@ pub struct ZoneCertificate {
 }
 
 pub struct RefinementPart {                     // FR-430
-    pub refinement_node: NodeId,                // the refinement node's id (QSpec FR-418)
+    pub refinement_node: NodeId,                // the refinement node's id (FSpec FR-418)
     pub concrete_package: PackageId,
     pub abstract_package: PackageId,
     pub positions: Vec<CertifiedPosition>,      // FR-149's type, unchanged; nonempty
@@ -77,7 +77,7 @@ pub struct RefinementPart {                     // FR-430
   node whose zone covers the successor under the aLU simulation with the
   listed LU bounds. It SHALL name, in `initials`, the node that covers each initial
   state's initial symbolic state; `initials` is never empty and the
-  certificate has no `initial` member (QSpec FR-418). No listed node SHALL be bad (a rejecting automaton state, or a deadlocked
+  certificate has no `initial` member (FSpec FR-418). No listed node SHALL be bad (a rejecting automaton state, or a deadlocked
   valuation for the deadlock-freedom item) unless it is marked `locked`.
 - **Locked nodes.** For each violating symbolic state FR-239 continued past
   because its violating points are time-locked, the certificate SHALL list
@@ -158,7 +158,7 @@ pub struct RefinementPart {                     // FR-430
 
 ## References
 
-- QSpec half: QSpec FR-418 (Linear STD-139) owns the zone certificate wire
-  and its place in QSpec FR-331 (ADR-026 OV-12).
+- FSpec half: FSpec FR-418 (Linear STD-139) owns the zone certificate wire
+  and its place in FSpec FR-331 (ADR-026 OV-12).
 - S. Wimmer and J. von Mutius, 2020; S. Wimmer, F. Herbreteau and J. van de
   Pol, 2020 (ADR-026 References).

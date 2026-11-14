@@ -3,9 +3,9 @@ id: TC-014
 title: "Exact extracted source correspondence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-004
+  - target: ix://agent-ix/filament-spec-language/FR-004
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/NFR-001
+  - target: ix://agent-ix/filament-spec-language/NFR-001
     type: verifies
 ---
 

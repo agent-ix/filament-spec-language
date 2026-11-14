@@ -3,23 +3,23 @@ id: FR-193
 title: "Keep and replay sampled witnesses"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-185
+  - target: ix://agent-ix/filament-spec-language/FR-185
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-186
+  - target: ix://agent-ix/filament-spec-language/FR-186
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-188
+  - target: ix://agent-ix/filament-spec-language/FR-188
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-189
+  - target: ix://agent-ix/filament-spec-language/FR-189
     type: depends_on
 ---
 # FR-193: Keep and replay sampled witnesses
@@ -130,7 +130,7 @@ pub fn replay_sampled_witness(
 
 - A sampled witness SHALL convert to an ADR-018 `TemporalCounterexample`
   over the same subject (the initial state and binding that the verdict's
-  provenance records for its test index, QSpec FR-410, and its steps) for
+  provenance records for its test index, FSpec FR-410, and its steps) for
   the TP-2 claim of its bound direction (ADR-024 SV-7): "`E` on every
   behaviour" for a `>= θ` bound, "not `E` on every behaviour" for a
   `<= θ` bound, the PF-4 event's form for a quantile, and the fraction
@@ -166,12 +166,12 @@ pub fn replay_sampled_witness(
 
 - ADR-024 SV-6 to SV-8; ADR-018 CX-1 to CX-3; FR-185 "Package emission".
 - [FR-128](FR-128-replay-a-model-counterexample.md),
-  [FR-188](FR-188-draw-weighted-choices-with-the-qspec-sampler.md),
+  [FR-188](FR-188-draw-weighted-choices-with-the-fspec-sampler.md),
   [FR-186](FR-186-check-probabilistic-claim-forms-at-s3.md),
   [FR-189](FR-189-decide-a-probabilistic-claim-by-statistical-model-checking.md).
 
 ## References
 
-- QSpec half, which owns the sampled-witness wire and its replay checks:
-  QSpec FR-410 (Linear STD-137).
+- FSpec half, which owns the sampled-witness wire and its replay checks:
+  FSpec FR-410 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

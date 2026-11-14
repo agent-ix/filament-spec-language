@@ -3,15 +3,15 @@ id: FR-065
 title: "Migrate function declaration and application onto the checked-family contract"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: traces_to
 ---
 # FR-065: Migrate function declaration and application onto the checked-family contract
@@ -21,13 +21,13 @@ relationships:
 Function declaration and application is the sole representative family this
 ticket migrates onto the checked-family contract of
 [FR-062](FR-062-implement-checked-family-contract.md).
-QSL SHALL check, package and evaluate the `Value` family's
+FSL SHALL check, package and evaluate the `Value` family's
 function-declaration and function-application forms exclusively through that
 contract and `Value`'s own family check code (Behavior: the contract's
 `check` hook and `Value`'s application check).
-QSL SHALL carry their identity and provenance through the checked-package
+FSL SHALL carry their identity and provenance through the checked-package
 boundary unchanged (Behavior: identity and provenance).
-QSL SHALL expose these forms to callers only through the checked-package
+FSL SHALL expose these forms to callers only through the checked-package
 producer this requirement builds (Behavior: the public API and #240's
 precondition). Each
 form has one S3 checker (FR-065-CON-2), and the S3 typer's `Call` arm is a
@@ -39,7 +39,7 @@ declaration and application; it does not perform the CLI cutover. Spine
 `compile` and spine `run`, the deletion of native `compile`, the `lower`
 command and `lowering`, and the retarget of `format` to the CST are
 ADR-011 §7.3 M-6a, T-1's own PR, carried
-by [#240](https://github.com/agent-ix/quire-spec-language/issues/240)
+by [#240](https://github.com/agent-ix/filament-spec-language/issues/240)
 because that cutover cannot land before #242's S4 emitter exists. This
 requirement's checked-package producer is #240's precondition, not its
 implementation.
@@ -64,7 +64,7 @@ requirement and migrate under their own tickets.
 - A checked function-declaration node and a checked function-application
   node, each carrying an identity minted once at check and reachable through
   the package's occurrence-keyed source map.
-- `quire.checked-package/v2` bytes carrying the function's identity and
+- `filament.checked-package/v2` bytes carrying the function's identity and
   source-map occurrences unchanged from the in-process checked package.
 - For a caller that selects a function by `QualifiedName` against a checked
   package: the checked function-application node's evaluated outcome, or a
@@ -75,7 +75,7 @@ requirement and migrate under their own tickets.
 ### Public API accepts only checked objects or checked-package bytes
 
 The function packaging/lowering public API SHALL accept a checked node (built
-only through the contract's `check` hook) or `quire.checked-package/v2` bytes
+only through the contract's `check` hook) or `filament.checked-package/v2` bytes
 verified through the package boundary (ADR-011 E4/E5). It SHALL NOT accept
 raw CST, raw source text or a token stream as an input from which it derives
 function semantics.
@@ -96,7 +96,7 @@ declaration is checked.
 ### `Value`'s application check decides every function application
 
 `Value`'s function-application check is `check::family::Application`
-(`qsl-semantics/src/check/family.rs`: `resolve`, `parameter`, `finish`).
+(`fsl-semantics/src/check/family.rs`: `resolve`, `parameter`, `finish`).
 When the S3 typer checks a call `name(arguments)`:
 
 - If `name` names a declared function callable by name, `Application` SHALL
@@ -111,7 +111,7 @@ When the S3 typer checks a call `name(arguments)`:
   explicit as the exact integer conversion to the parameter's type, so that the
   argument's type node is the parameter's type node (Contract IR FR-347
   "Function-call arguments"); FR-093 lowers that conversion to
-  `quire.op.numeric.convert`. An argument whose type is already the
+  `filament.op.numeric.convert`. An argument whose type is already the
   parameter's takes no conversion.
 - `Application` SHALL build the call node with that function's declared
   result type.
@@ -124,7 +124,7 @@ When the S3 typer checks a call `name(arguments)`:
 - If `name` names no callable function, no type and no model operation,
   `Application` SHALL refuse the call as `missing-name` naming `name`.
 
-The S3 typer (`Typer`, `qsl-semantics/src/check/check/typing.rs`) SHALL
+The S3 typer (`Typer`, `fsl-semantics/src/check/check/typing.rs`) SHALL
 check every `Expression::Call` it reaches through `Application`, except
 `elapsed_wall_time(h)` and `wcet(f)` as the left operand of a timing clause,
 which FR-252 recognises before name resolution and `Application` does not
@@ -143,7 +143,7 @@ allows.
 `Typer::infer_form`'s `Call` arm is a dispatch seam (ADR-012 §4.3): it makes
 one call into `Application::resolve` and holds no name, arity or
 argument-type logic of its own (FR-065-CON-3). `Expression::Call` is a
-variant of the one `Expression` enum in the `forms` core (`qsl-forms`). Its
+variant of the one `Expression` enum in the `forms` core (`fsl-forms`). Its
 owning family is `Value`, because its arm calls `Value`'s application check
 (ADR-012 §4.3). A call nests inside every other `Value` form, so
 `Expression` carries the `Call` variant alongside them.
@@ -172,10 +172,10 @@ Each identity is an ADR-013 O-04 checked node id: the
 structural key of the node: its
 preimage value itself, compared by equality. A function declaration's node lists its parameter nodes and
 references its body's root expression node, so its body holds no
-application. It is keyed by QSL's `quire.structural-node/v1` preimage, which
+application. It is keyed by FSL's `filament.structural-node/v1` preimage, which
 names its `SourceOwner` (O-04;
 [FR-092](FR-092-key-type-parameter-and-declared-nodes.md)). A call is its own
-`expression` node, keyed by QSpec FR-322's `quire.application-node/v1`
+`expression` node, keyed by FSpec FR-322's `filament.application-node/v1`
 preimage, which has no owner member because an expression carries no
 declaration ([FR-093](FR-093-lower-checked-value-expressions-to-fr-322-terms.md)).
 Neither preimage names a `package_id` or any unrelated declaration, so the
@@ -193,7 +193,7 @@ call's resolution and arity verdict. FR-065-CON-2 states that each is the
 one S3 code path for its form.
 
 The composed checker (SEAM-2, `src/checking/composed/`) checks the composed
-grammar (ADR-010 lane B) and takes no `qsl-forms` input. Its `predicate`
+grammar (ADR-010 lane B) and takes no `fsl-forms` input. Its `predicate`
 declarations and `ValueKind::Invoke` calls are composed-grammar forms.
 ADR-011 §7.3 M-6e deletes SEAM-2 one family at a time, each in the PR that
 lands that family's S3 checker and S4 emission; the `Value` tickets are
@@ -244,8 +244,8 @@ for the function family.
 | FR-065-AC-4 | Given a declared function `f(x: Boolean): Boolean`, checking a call through the S3 typer admits `f(true)` as a call node of type `Boolean` whose callee is `f`; refuses `f(true, false)` (one argument too many) as `ill_typed`/`type-mismatch`; refuses `nowhere()` (a name that resolves to no function and no type) as `missing-name` naming `nowhere`; and refuses `f(1)` (an `Integer` argument against the declared `Boolean` parameter) as `ill_typed`/`type-mismatch`. | Test (TC-376) |
 | FR-065-AC-5 | Given a package that declares `f(x: Boolean): Boolean`, each of the calls `f(true)`, `f(true, false)`, `nowhere(true)` and `f(1)` receives the same verdict as the body of a parameterless `Boolean`-result declaration checked through `PackageDeclarations::check` and as a precondition clause checked through `CheckedGraph::check_clause_expression`: `f(true)` is admitted in both as a `Boolean` call to `f`; `f(true, false)` and `f(1)` are refused `ill_typed`/`type-mismatch` in both; `nowhere(true)` is refused `missing-name` naming `nowhere` in both. Written as the `decreases` measure of a declaration whose body is `true`, `f(true, false)` and `f(1)` are refused `ill_typed`/`type-mismatch` and `nowhere(true)` is refused `missing-name`. Verdicts are compared by refusal cause, not location. | Test (TC-164) |
 | FR-065-AC-6 | The layer-6 `replay` facade's executor entry, given a replay request naming a function, resolves the function by a typed `QualifiedName` against the recompiled package's declarations; a test that attempts to call the entry point with a bare `&str` in place of a `QualifiedName` fails to compile, and a request naming an unresolvable `QualifiedName` returns a typed refusal rather than matching by display-name equality. | Test (TC-166) |
-| FR-065-AC-7 | Checking the declaration `g() -> Boolean = 1` (an `Integer` body against a declared `Boolean` result) through the `Value` family's contract `check` hook returns `StageFailure::Refused` whose cause is `ill_typed` / `type-mismatch`, and the diagnostic sink holds no entry afterwards. Checking the well-typed declaration `f() -> Boolean = true` through the same hook admits it. `PackageDeclarations::check` keys `f` once every declaration is typed, and under source owner (`a`, `u`) its checked identity is FR-092 vector F1, the `quire.structural-node/v1` key of its function node. | Test (TC-380) |
-| FR-065-AC-8 | Under source owner (`a`, `u`), the checked identity of `function both using v(a: Boolean, b: Boolean): Boolean pure { a and b }` is FR-092 vector F2, a `quire.structural-node/v1` key whose preimage carries that owner, and the checked identity of the call `both(a, true)` in `function nb using v(a: Boolean): Boolean pure { both(a, true) }` is FR-092 vector E2, a `quire.application-node/v1` key whose preimage has no `owner` member. QSL's application-node key builder returns the published expected key for every operation-node vector in QSpec FR-322. | Test (TC-163) |
+| FR-065-AC-7 | Checking the declaration `g() -> Boolean = 1` (an `Integer` body against a declared `Boolean` result) through the `Value` family's contract `check` hook returns `StageFailure::Refused` whose cause is `ill_typed` / `type-mismatch`, and the diagnostic sink holds no entry afterwards. Checking the well-typed declaration `f() -> Boolean = true` through the same hook admits it. `PackageDeclarations::check` keys `f` once every declaration is typed, and under source owner (`a`, `u`) its checked identity is FR-092 vector F1, the `filament.structural-node/v1` key of its function node. | Test (TC-380) |
+| FR-065-AC-8 | Under source owner (`a`, `u`), the checked identity of `function both using v(a: Boolean, b: Boolean): Boolean pure { a and b }` is FR-092 vector F2, a `filament.structural-node/v1` key whose preimage carries that owner, and the checked identity of the call `both(a, true)` in `function nb using v(a: Boolean): Boolean pure { both(a, true) }` is FR-092 vector E2, a `filament.application-node/v1` key whose preimage has no `owner` member. FSL's application-node key builder returns the published expected key for every operation-node vector in FSpec FR-322. | Test (TC-163) |
 | FR-065-AC-9 | Given a declared function `g using v(a: Integer)`, checking the call `g(x)` for `x` of type `Int[0, 1000]` yields a call node whose argument is an exact integer conversion to `Integer`; the call `g(n)` for `n` of type `Integer` yields none; and the checked package of a unit calling `g` with a bounded field reads back through the strict reader. A helper whose parameter is `Int[0, 2000]` called with an `Int[0, 1000]` argument does the same (QSL-1824). | Test (TC-376) |
 
 ## Dependencies
@@ -258,9 +258,9 @@ for the function family.
   once #240 retargets it), §7.3 owns the deletion timing this requirement
   follows: M-6e (the composed checker, SEAM-2, deleted one family at a
   time, the last family ticket deleting the remainder; FR-065-OQ-1) and M-6a, T-1 (the CLI producer cutover, deleted by
-  [#240](https://github.com/agent-ix/quire-spec-language/issues/240) against
+  [#240](https://github.com/agent-ix/filament-spec-language/issues/240) against
   the producer this requirement builds, after
-  [#242](https://github.com/agent-ix/quire-spec-language/issues/242)'s S4
+  [#242](https://github.com/agent-ix/filament-spec-language/issues/242)'s S4
   emitter lands).
 - [ADR-012](../decisions/ADR-012-semantic-family-extension-contracts.md) §4.3
   (thin dispatch seam; the one `Expression` enum, each variant owned by the
@@ -276,7 +276,7 @@ for the function family.
 - [FR-092](FR-092-key-type-parameter-and-declared-nodes.md) and
   [FR-093](FR-093-lower-checked-value-expressions-to-fr-322-terms.md) define
   the node shapes and preimages the declaration and call identities are made of.
-- QSpec FR-322 publishes operation-node identity vectors used by the
+- FSpec FR-322 publishes operation-node identity vectors used by the
   application-node key conformance check in FR-065-AC-8.
 - [US-005](../usecase/US-005-trust-checked-identity-across-packaging.md).
 

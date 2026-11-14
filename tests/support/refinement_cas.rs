@@ -14,22 +14,22 @@
     reason = "each test binary uses the part of the fixture it needs"
 )]
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
-use qsl_eval::simulation::model::{
+use filament_checked::key::DeclarationKey;
+use filament_exact::{Integer, ScalarLimits, Value};
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use qsl_foundation::SourceIdentity;
-use qsl_package::CheckedPackage;
-use qsl_semantics::check::{CheckedGraph, CheckedRefinement, PackageDeclarations};
-use qsl_semantics::model::accounting::ModelNormalizationLimits;
-use qsl_semantics::model::intake::{admit_unit, meaning, package_input};
-use qsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
-use qsl_semantics::model::state::{ModelState, StateObject};
-use quire_checked::key::DeclarationKey;
-use quire_exact::{Integer, ScalarLimits, Value};
-use quire_semantic_value::checking::CheckingLimits;
+use fsl_foundation::SourceIdentity;
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::{CheckedGraph, CheckedRefinement, PackageDeclarations};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
+use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
+use fsl_semantics::model::state::{ModelState, StateObject};
 use serde_json::{json, Value as Json};
 
 pub const SPEC: &str = "example/counter-spec";
@@ -38,8 +38,8 @@ pub const CAS: &str = "example/counter-cas";
 /// `Third` and no refinement names.
 pub const THIRD: &str = "example/counter-third";
 
-const INTEGER: &str = "ix://quire/native/Integer";
-const BOOLEAN: &str = "ix://quire/native/Boolean";
+const INTEGER: &str = "ix://filament/native/Integer";
+const BOOLEAN: &str = "ix://filament/native/Boolean";
 
 /// A budget no fixture evaluation exhausts.
 pub const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -156,7 +156,7 @@ fn operation_with(package: &str, name: &str, params: &[(&str, &str)], modifies: 
         .collect();
     json!({
         "identity": identity, "name": name, "params": params, "pre": [], "post": [],
-        "origin": {"source": {"sourceIdentity": ident(package, "spec"), "path": "spec.qspec",
+        "origin": {"source": {"sourceIdentity": ident(package, "spec"), "path": "spec.fspec",
             "startLine": 1, "startColumn": 1}},
         "frame": {
             "modifies": modifies
@@ -473,7 +473,7 @@ pub fn mutated(body: &str, from: &str, to: &str) -> String {
 
 /// The unit text: both models, their contracts and `refinement`.
 pub fn unit_text(
-    documents: &qsl_semantics::model::intake::PackageInput,
+    documents: &fsl_semantics::model::intake::PackageInput,
     refinement: &str,
     variant: Variant,
 ) -> String {
@@ -494,8 +494,8 @@ pub fn unit_text(
     };
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
-         profile inf = \"quire.temporal.infinite-trace/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          {profiles}model Spec = \"{SPEC}\";\n\
          model Impl = \"{CAS}\";\n\
          model Third = \"{THIRD}\";\n\
@@ -557,7 +557,7 @@ pub fn documents(variant: Variant) -> Vec<Vec<u8>> {
 }
 
 /// The selected model documents admitted as one package input.
-pub fn packages(variant: Variant) -> qsl_semantics::model::intake::PackageInput {
+pub fn packages(variant: Variant) -> fsl_semantics::model::intake::PackageInput {
     let documents = documents(variant);
     package_input(documents.iter().map(Vec::as_slice)).unwrap()
 }
@@ -575,15 +575,15 @@ pub fn check_with_internals(
 ) -> Result<CheckedGraph, String> {
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "refinement"),
         "refinement.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 parses the unit");
     assert!(parsed.is_admissible(), "S1: {:?}", parsed.diagnostics());
-    let built = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let models = admit_unit(
         &built.selections().models,
         &documents,
@@ -591,7 +591,7 @@ pub fn check_with_internals(
     )
     .expect("the model selections admit")
     .with_parsed_operation_clauses(|text| {
-        qsl_forms::parse_clause_text(text, qsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let declarations = PackageDeclarations::assemble(
@@ -616,7 +616,7 @@ pub fn check_with_internals(
 fn snapshot(
     package: &str,
     (fields, keys): (Json, &[String]),
-    snapshots: &mut qsl_semantics::model::observation::DocumentProvision,
+    snapshots: &mut fsl_semantics::model::observation::DocumentProvision,
 ) -> DocumentRef {
     let objects: Vec<Json> = keys
         .iter()
@@ -625,7 +625,7 @@ fn snapshot(
     let header = json!({"identity": package});
     let name = format!("{package}/start/{fields}/{}", keys.join(","));
     let snapshot = json!({
-        "format": "quire.state.snapshot/v1",
+        "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": name},
         "observation": "current", "model": header,
         "anchor": {"kind": "initialization", "name": "start"},
@@ -634,7 +634,7 @@ fn snapshot(
     });
     let bytes = snapshot.to_string().into_bytes();
     snapshots.insert(
-        qsl_semantics::model::observation::document_reference(&bytes)
+        fsl_semantics::model::observation::document_reference(&bytes)
             .expect("a document names itself"),
         bytes,
     );
@@ -648,8 +648,8 @@ fn snapshot(
 pub struct World {
     keys: Vec<String>,
     package: CheckedPackage,
-    packages: qsl_semantics::model::intake::PackageInput,
-    snapshots: qsl_semantics::model::observation::DocumentProvision,
+    packages: fsl_semantics::model::intake::PackageInput,
+    snapshots: fsl_semantics::model::observation::DocumentProvision,
     spec_initial: DocumentRef,
     spec_one: DocumentRef,
     spec_two: DocumentRef,
@@ -757,12 +757,12 @@ impl World {
     }
 
     /// The domain package provision.
-    pub fn package_provision(&self) -> &qsl_semantics::model::intake::PackageInput {
+    pub fn package_provision(&self) -> &fsl_semantics::model::intake::PackageInput {
         &self.packages
     }
 
     /// The snapshot provision.
-    pub fn snapshot_provision(&self) -> &qsl_semantics::model::observation::DocumentProvision {
+    pub fn snapshot_provision(&self) -> &fsl_semantics::model::observation::DocumentProvision {
         &self.snapshots
     }
 
@@ -805,7 +805,7 @@ impl World {
         meter: ScalarLimits,
     ) -> ModelSimulationRequest<'_> {
         ModelSimulationRequest {
-            emit: qsl_package::EmitLimits::fixture(),
+            emit: fsl_package::EmitLimits::fixture(),
             package: &self.package,
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),

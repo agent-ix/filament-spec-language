@@ -1,17 +1,17 @@
 ---
 id: TC-729
-title: "QSL identities, state keys and allocation failures over quire-canonical at any depth"
+title: "FSL identities, state keys and allocation failures over quire-canonical at any depth"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: verifies
 ---
-# TC-729: QSL identities, state keys and allocation failures over quire-canonical at any depth
+# TC-729: FSL identities, state keys and allocation failures over quire-canonical at any depth
 
 ## Description
 
-Verify QSL's identities and state keys over `quire-canonical` at 100,000
-deep, and the one outcome QSL reports for its allocation failure. The
+Verify FSL's identities and state keys over `quire-canonical` at 100,000
+deep, and the one outcome FSL reports for its allocation failure. The
 crate's own behaviour is tested in its repository. FR-260-AC-2 (TC-730) and
 FR-261-AC-1 (TC-733) cover the malformed-input refusals of the sites that
 parse.

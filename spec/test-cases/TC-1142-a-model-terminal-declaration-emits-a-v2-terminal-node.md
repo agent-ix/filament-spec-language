@@ -3,17 +3,17 @@ id: TC-1142
 title: "A model terminal declaration emits a v2 terminal node"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-411
+  - target: ix://agent-ix/filament-spec-language/FR-411
     type: verifies
 ---
 # TC-1142: A model terminal declaration emits a v2 terminal node
 
 ## Description
 
-Verify that S4 emits a checked model `terminal` declaration as a QSpec FR-476
+Verify that S4 emits a checked model `terminal` declaration as an FSpec FR-476
 `temporal`/`terminal` node, that its mode and predicate enter identity while
 its name does not, that the deadlock-freedom item and its replay read it from
-the package, that the I2 reader refuses a malformed node, and that QSL
+the package, that the I2 reader refuses a malformed node, and that FSL
 settlement refuses a deadlock-freedom verdict decided under another
 declaration.
 

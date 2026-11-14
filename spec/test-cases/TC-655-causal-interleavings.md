@@ -3,7 +3,7 @@ id: TC-655
 title: "The protocol system admits exactly the causal interleavings"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-210
+  - target: ix://agent-ix/filament-spec-language/FR-210
     type: verifies
 ---
 # TC-655: The protocol system admits exactly the causal interleavings

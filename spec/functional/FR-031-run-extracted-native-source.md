@@ -3,39 +3,39 @@ id: FR-031
 title: "Run a selected Markdown clause through the spine clause runner"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-030
+  - target: ix://agent-ix/filament-spec-language/FR-030
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-312
+  - target: ix://agent-ix/filament-spec-language/FR-312
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-004
+  - target: ix://agent-ix/filament-spec-language/FR-004
     type: references
-  - target: ix://agent-ix/quire-specification/FR-352
+  - target: ix://agent-ix/filament-specification/FR-352
     type: references
 ---
 ## Description
 
 When a caller selects one authored clause of an original Markdown document,
-QSL shall run the clause's extracted body, the `ExtractedSource` FR-030
+FSL shall run the clause's extracted body, the `ExtractedSource` FR-030
 yields, as the unit of a spine clause run (FR-109): spine compile (S1 to S4)
 under the body's own identity, then the clause run. The report shall name
 the original document and the body, and shall carry the extraction record
-below. QSL has two entries to this run, and both are present in every build
-in which `qsl-replay` is built with its feature `quire-extraction` (for the
-`run` command, `--features qsl-replay/quire-extraction`; ADR-011
+below. FSL has two entries to this run, and both are present in every build
+in which `fsl-replay` is built with its feature `quire-extraction` (for the
+`run` command, `--features fsl-replay/quire-extraction`; ADR-011
 §7.3 X-4):
 
-- in process, `qsl_replay::spine::run_clause` with an I3 extracted source;
+- in process, `fsl_replay::spine::run_clause` with an I3 extracted source;
 - the `run` command's extraction mode: a `1-draft` native-run/1 clause-run
   request (FR-312) whose `program` carries an `extraction` record.
-  `qsl_replay::spine::read_clause_run_request` reads it, extracts the body
+  `fsl_replay::spine::read_clause_run_request` reads it, extracts the body
   through FR-030 and calls `run_clause`; the command reaches the I3 adapter
   only through that reader.
 
@@ -63,7 +63,7 @@ members beside `clause`:
   and the authored package. Exactly one binding forms FR-030's `Selection`
   with the body's identity.
 
-The command constructs the clause-only Quire context through `qsl-source`'s
+The command constructs the clause-only Quire context through `fsl-source`'s
 `clause_context` for the binding's package and the original path and
 identity, with empty exports and imports and a Markdown target. It does not
 load installed archetype schemas or infer model meaning from Markdown. Native
@@ -82,7 +82,7 @@ model imports retain their existing authority.
   span, the original-document regions that map gives for that span.
 - Through the command, one FR-267 `native-run-result/2` clause-run document
   whose top-level `extraction` member is that record, with the member set
-  and types QSpec FR-352 lists (`original`, `body`, `binding`, `outcome`,
+  and types FSpec FR-352 lists (`original`, `body`, `binding`, `outcome`,
   `map` and, for a refusal with a body span, `original_regions`).
 - Or FR-030's extraction `Error`, which retains the original source, the
   binding, any completed Quire extraction outcome and the actual preflight,
@@ -131,14 +131,14 @@ mode before it reads any dependent file:
 - If a request carrying `extraction` carries a number of `clauses` bindings
   other than one, then the command shall refuse `extraction-clause-count`,
   with `details` `{"actual": n}` for the number it carries.
-- If a request carries `extraction` to a command whose `qsl-replay` is built
+- If a request carries `extraction` to a command whose `fsl-replay` is built
   without `quire-extraction`, then the reader shall refuse `invalid-request`
   at stage `request`, naming `extraction`, as an unknown member.
 
 The command shall validate the clause-only context through Quire's public
 semantic-block validator before extraction.
 
-A body whose fence declares a language other than QSL native shall refuse at
+A body whose fence declares a language other than FSL native shall refuse at
 compile with `unknown_language`, exit 20, with no `package_id`
 (FR-109-AC-6). A body that does not parse refuses at compile with FR-109's
 `source` refusal. A body that declares more than one clause shall refuse at
@@ -176,12 +176,12 @@ start at zero.
 | FR-031-AC-2 | A selected clause the document does not hold and an unavailable extraction each end with FR-030's error, retaining the original identity, the selection and Quire's actual outcome, with no compile, no `package_id` and no truth; a body in an `ix:formal` fence refuses at compile with `unknown_language`, exit 20. | Test (TC-109) |
 | FR-031-AC-3 | An original over its byte or line limit, a body run with `work_units` 0, and a body compiled under `SpineLimits` whose checking limit is one below the body's checking work each report incomplete with that limit's typed cause; the same request with default limits then succeeds. | Test (TC-109) |
 | FR-031-AC-4 | The report of AC-1's healthy run names the body identity (`agent-ix`, its body identity) and the original document identity, and its extraction record holds Quire's unchanged `ClausesOutcome` and the verified map. | Test (TC-109) |
-| FR-031-AC-5 | Through the command built with `--features qsl-replay/quire-extraction`, a `1-draft` clause-run request whose `extraction` body record names `authority` `agent-ix`, `identity` `b`, and `document` `B` runs, and its `/2` document's `extraction` member renders the native identity (`agent-ix`, `b`) and the formal identity (`B`). The same request without the body's `authority`, or without its `document`, refuses `invalid-request` at stage `request`, exit 20. The same first request through the command built with no features refuses `invalid-request` at stage `request`, naming `extraction`, exit 20, empty stdout. | Test (TC-430) |
+| FR-031-AC-5 | Through the command built with `--features fsl-replay/quire-extraction`, a `1-draft` clause-run request whose `extraction` body record names `authority` `agent-ix`, `identity` `b`, and `document` `B` runs, and its `/2` document's `extraction` member renders the native identity (`agent-ix`, `b`) and the formal identity (`B`). The same request without the body's `authority`, or without its `document`, refuses `invalid-request` at stage `request`, exit 20. The same first request through the command built with no features refuses `invalid-request` at stage `request`, naming `extraction`, exit 20, empty stdout. | Test (TC-430) |
 | FR-031-AC-6 | With every model file the request names absent, a request carrying `extraction` and `package` refuses `extraction-package-conflict`; one with no `clauses` binding and one with two refuse `extraction-clause-count` with `details` `{"actual": 0}` and `{"actual": 2}`; one carrying `call` in place of `clause`, and a compile request carrying `extraction`, refuse `extraction-requires-run`; each at stage `request`, exit 20, empty stdout, with no file read beyond the request. A `null` `extraction`, a positional `body` and an unknown member in `body` each refuse `invalid-request` naming the member. | Test (TC-109) |
 | FR-031-AC-7 | A clause-only context that Quire's validator rejects refuses `invalid-quire-context` at stage `quire-context`, exit 20, with Quire's producer diagnostics unchanged in `details`; an unavailable extraction through the command writes the command-error envelope at stage `quire` retaining the original identity, the binding and Quire's outcome. | Test (TC-109) |
 | FR-031-AC-8 | Over an indented CRLF fence preceded on its lines by the two-byte character `é`, a body whose second line holds an ill-typed expression refuses at compile `ill_typed` with its body span unchanged and the original regions the map gives, each region's byte offsets equal to the body offsets plus the fence's original offset and indentation; a body refusal spanning the final CRLF the map deletes carries every original region of the span; a package-encoding refusal carries no original region; a malformed original-to-body map refuses before compile with FR-030's correspondence error. | Test (TC-109) |
 | FR-031-AC-9 | A body declaring two clauses refuses at compile `extraction-clause-count` with `details` `{"actual": 2}` and no `package_id`; a body with a syntax error refuses at compile at FR-109's `source` refusal; a selection naming a clause the body does not declare refuses at `select` `missing_declaration`. | Test (TC-109) |
-| FR-031-AC-10 | Through the command, AC-1's healthy request writes one `/2` clause-run document whose `extraction` member equals the in-process extraction record, and the FR-267 strict reader reads it back with every member equal (QSpec FR-352-AC-13); a clause-run request over a unit given as bytes writes no `extraction`. | Test (TC-109) |
+| FR-031-AC-10 | Through the command, AC-1's healthy request writes one `/2` clause-run document whose `extraction` member equals the in-process extraction record, and the FR-267 strict reader reads it back with every member equal (FSpec FR-352-AC-13); a clause-run request over a unit given as bytes writes no `extraction`. | Test (TC-109) |
 
 ## Dependencies
 
@@ -196,4 +196,4 @@ start at zero.
 - [FR-100](FR-100-run-a-named-function-through-the-spine.md): the native-run/1
   request envelope.
 - [FR-267](FR-267-write-run-results-as-native-run-result-2.md): the `/2`
-  `extraction` member and the command-error envelope; QSpec FR-352 the wire.
+  `extraction` member and the command-error envelope; FSpec FR-352 the wire.

@@ -3,11 +3,11 @@ id: FR-064
 title: "Restrict string dispatch to marked edges"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-006
+  - target: ix://agent-ix/filament-spec-language/US-006
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: traces_to
 ---
 # FR-064: Restrict string dispatch to marked edges
@@ -20,20 +20,20 @@ intake reader, or CLI argument parsing), and at that edge one total
 conversion turns the string into a closed enum or a typed identity, or
 refuses it with a typed cause. After the edge, no code compares a string to
 choose behaviour. The attribute `#[string_edge]` marks an edge function. It is owned by the
-neutral crate `ix-trace-rs` (agent-ix/ix-trace-rs), not by QSL. QSL SHALL run
+neutral crate `ix-trace-rs` (agent-ix/ix-trace-rs), not by FSL. FSL SHALL run
 a scan that reports every string comparison or string `match` outside a
 marked function in the selected crates' non-test code, so this rule is enforced
 by a running check rather than by convention alone.
 
 The authoritative scanner SHALL be a standalone Rust library and command
 that consumers can obtain from this repository and run against their own
-crate roots. QSL's `xtask string-edge` SHALL delegate to that library with
-QSL's roots and edge rules.
+crate roots. FSL's `xtask string-edge` SHALL delegate to that library with
+FSL's roots and edge rules.
 
 ## Inputs
 
 - Explicit consumer crate source roots and a base directory for resolving
-  source paths, rule entries and report locations. QSL supplies its own roots
+  source paths, rule entries and report locations. FSL supplies its own roots
   through its adapter.
 - The selected crates' source (non-test code; `#[cfg(test)]` items, files declared
   by `#[cfg(test)] mod x;` and files under a `tests/` directory are out of
@@ -61,12 +61,12 @@ chain, is a match arm's own value, or is a `strip_prefix` call.
 The marker is the attribute `#[string_edge]`, written as `string_edge`, as
 `ix_trace_rs::string_edge` or as `::ix_trace_rs::string_edge`. The marker has no comment or doc-comment form.
 
-Contract QSL relies on (owned by `ix-trace-rs`'s own specification; Linear
+Contract FSL relies on (owned by `ix-trace-rs`'s own specification; Linear
 QSL-953 tracks its publication): the attribute is a proc-macro attribute of
 `ix-trace-rs` that applies to a function, takes no argument, expands to the
 annotated item unchanged, adds no runtime behaviour, and reports an argument as
 one compile error with the message `#[string_edge] takes no arguments` while
-retaining the item. `ix-trace-rs` has no normal dependency and none on QSL, a
+retaining the item. `ix-trace-rs` has no normal dependency and none on FSL, a
 model, IR or a code-generation crate, so a consumer depends on it directly.
 
 - The scan SHALL treat a function as marked when it carries an attribute whose
@@ -76,9 +76,9 @@ model, IR or a code-generation crate, so a consumer depends on it directly.
   crate included, as a marker.
 - The scan SHALL treat a marker as covering only the function it is applied to,
   never a file or a crate.
-- The QSL workspace SHALL import the attribute from `ix-trace-rs` and declare
+- The FSL workspace SHALL import the attribute from `ix-trace-rs` and declare
   that dependency in the manifest of each package that uses it.
-- The QSL workspace SHALL define no attribute macro named `string_edge` and no
+- The FSL workspace SHALL define no attribute macro named `string_edge` and no
   re-export or alias of one.
 
 A consumer imports the attribute from `ix-trace-rs` (`use
@@ -87,7 +87,7 @@ that keeps its own copy of the marker is outside what the scan can detect by pat
 
 ### What the scan reports
 
-`xtask string-edge` SHALL scan every QSL crate's non-test source for:
+`xtask string-edge` SHALL scan every FSL crate's non-test source for:
 
 - an equality or ordering comparison between a `&str`/`String` value and a
   string literal or another `&str`/`String` value, and
@@ -119,9 +119,9 @@ result feeds a non-branching sink (a logged or displayed message, a
 diagnostic payload, a test assertion, or code compiled out of the checked
 build). None of the five production dispatch sites ADR-010 §4.3 names (the
 `"allocation"` relationship-category string, the
-`"quire.protocol.finite-global/v1"` profile string, the
+`"filament.protocol.finite-global/v1"` profile string, the
 `"filament-canonical-json-1"` canonicalization string, the
-`"quire.state.authority-adapter"` adapter string, and the `clock:` prefix)
+`"filament.state.authority-adapter"` adapter string, and the `clock:` prefix)
 can be accepted into the allow-list, because each one gates a branch; where
 a site is not yet converted by its owning family's ticket, `xtask
 string-edge` SHALL continue to report it as an unresolved violation rather
@@ -133,20 +133,20 @@ than accept it into the allow-list.
 
 ### Reusable consumer interface
 
-The standalone package and binary SHALL be named `qsl-string-edge`. Its
+The standalone package and binary SHALL be named `fsl-string-edge`. Its
 library SHALL accept a request containing a base directory, one or more
 crate source directories, and edge rules. Each source directory defines one
 crate's constant-resolution scope; supplying multiple roots SHALL NOT make
 a constant declared in one crate visible to the detector in another crate.
 The scanner SHALL use only the caller's supplied roots and rules, without
-requiring QSL crate names, a QSL checkout as the current directory, or a
-QSL compiler/runtime dependency. Each root denotes the source directory
+requiring FSL crate names, an FSL checkout as the current directory, or a
+FSL compiler/runtime dependency. Each root denotes the source directory
 itself, such as `src` or `crates/consumer/src`, not its `Cargo.toml`.
 
 The command SHALL expose the same request as:
 
 ```text
-qsl-string-edge --base-dir <directory> --crate-root <source-directory> [--crate-root <source-directory> ...] --rules <rules.json>
+fsl-string-edge --base-dir <directory> --crate-root <source-directory> [--crate-root <source-directory> ...] --rules <rules.json>
 ```
 
 `--base-dir` SHALL resolve relative to the invocation's current directory;
@@ -196,8 +196,8 @@ file.
 Consumer rules SHALL obey the allow-list restrictions above. An entry
 covering any detected branch-gating occurrence in its item SHALL be refused
 as a rule error, even if that item is marked. The scanner SHALL check that
-condition before applying marker or allow-list suppression. QSL-specific
-roots and rules SHALL reside in QSL's adapter; the reusable scanner SHALL
+condition before applying marker or allow-list suppression. FSL-specific
+roots and rules SHALL reside in FSL's adapter; the reusable scanner SHALL
 NOT import them as defaults. Consumers own their edge inventories and
 choice of CI invocation.
 
@@ -207,20 +207,20 @@ The consumer documentation SHALL give this installation route from the
 authoritative private source, using existing repository access:
 
 ```text
-cargo install --git https://github.com/agent-ix/quire-spec-language --branch main qsl-string-edge
+cargo install --git https://github.com/agent-ix/filament-spec-language --branch main fsl-string-edge
 ```
 
 A library consumer SHALL be able to use the same package through a Cargo
 git dependency with `branch = "main"`. Neither route SHALL require copying
-scanner sources, maintaining a scanner fork, or building QSL's `xtask` as
+scanner sources, maintaining a scanner fork, or building FSL's `xtask` as
 the consumer command. The documented consumer example SHALL run the
-installed binary from outside QSL against a non-QSL Rust crate, with its
+installed binary from outside FSL against a non-FSL Rust crate, with its
 own rule file, and show both a clean run and an unmarked dispatch failure.
 The implementation acceptance run SHALL execute that install and both
 invocations; prose examples alone do not establish the route works.
 
-QSL's adapter SHALL retain the existing `string-edge` lint prerequisite
-and propagate scanner failures. Extraction SHALL add no QSL gate beyond
+FSL's adapter SHALL retain the existing `string-edge` lint prerequisite
+and propagate scanner failures. Extraction SHALL add no FSL gate beyond
 the scanner crate's own tests. Consumer adoption in IR, CG and driver is
 separate work. Reuse preserves the existing structural detector's coverage
 and documented limitations; it does not claim to resolve variable-to-variable
@@ -230,21 +230,21 @@ comparisons, external constants or indirect branch dataflow.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-064-AC-1 | Given a QSL source tree with one string comparison inside a function marked `#[string_edge]` and one string `match` inside an unmarked function, `xtask string-edge` reports exactly the unmarked occurrence, naming its file and line, and does not report the marked occurrence. | Test |
+| FR-064-AC-1 | Given an FSL source tree with one string comparison inside a function marked `#[string_edge]` and one string `match` inside an unmarked function, `xtask string-edge` reports exactly the unmarked occurrence, naming its file and line, and does not report the marked occurrence. | Test |
 | FR-064-AC-2 | Given an unmarked occurrence whose location matches an allow-list entry, `xtask string-edge` does not report it; removing that allow-list entry causes the same occurrence to be reported on the next scan, with no change to the source. | Test |
 | FR-064-AC-3 | `xtask string-edge` scans no file under a `tests/` directory and no `#[cfg(test)]` module; a string `match` placed only inside such a module is not reported even when unmarked and not allow-listed. | Test |
 | FR-064-AC-4 | `xtask string-edge` exits non-zero when its report is non-empty and exits zero when its report is empty; a test constructs one fixture tree of each shape and asserts both exit codes. | Test |
 | FR-064-AC-5 | Given one allow-list entry whose comparison result feeds an `if`/`match` condition that selects between two different code paths, and one entry whose comparison result feeds only a logged message, `xtask string-edge` rejects the first (naming its file and line) and accepts the second. A test attempts to add each of the five ADR-010 §4.3 production dispatch sites (named in this requirement's Behavior) as an allow-list entry and asserts the tool rejects all five; a wrong implementation that allow-lists all five to force a clean scan does not satisfy this criterion. | Test |
 | FR-064-AC-6 | The lint gate's own target list (the `Makefile`) names `string-edge` as a prerequisite of the gate it runs in, whose own recipe runs `cargo run --package xtask -- string-edge`, and `xtask string-edge`'s non-zero exit propagates to that gate's own exit through `make`'s ordinary prerequisite-failure semantics -- a `.PHONY` aggregate target depending on a target whose recipe can fail. Both halves are checked directly: a grep-shaped check over the real `Makefile` confirms the prerequisite naming and the recipe, and a minimal fixture `Makefile` of the same aggregate/prerequisite shape demonstrates a failed prerequisite failing the aggregate target (and a succeeding one not failing it). | Test |
-| FR-064-AC-7 | Given two non-QSL crate source roots and a third unselected crate containing a violation, the library and binary report only occurrences in the selected roots with the same file, one-based line, item, branch classification and ordering. Repeating with equivalent absolute paths from another working directory produces identical occurrences. A named string constant in one selected crate does not classify a same-named non-string constant in the other as string dispatch. | Test |
-| FR-064-AC-8 | Given consumer rules and fixtures for marked intake, test exclusion, an allowed display-only comparison and a branch-gating comparison, the library and binary apply the same marker/exclusion/allow-list results as the QSL adapter. Removing the display entry restores its occurrence. Adding an entry at the branch-gating item causes a rule error, including when that item is marked. | Test |
+| FR-064-AC-7 | Given two non-FSL crate source roots and a third unselected crate containing a violation, the library and binary report only occurrences in the selected roots with the same file, one-based line, item, branch classification and ordering. Repeating with equivalent absolute paths from another working directory produces identical occurrences. A named string constant in one selected crate does not classify a same-named non-string constant in the other as string dispatch. | Test |
+| FR-064-AC-8 | Given consumer rules and fixtures for marked intake, test exclusion, an allowed display-only comparison and a branch-gating comparison, the library and binary apply the same marker/exclusion/allow-list results as the FSL adapter. Removing the display entry restores its occurrence. Adding an entry at the branch-gating item causes a rule error, including when that item is marked. | Test |
 | FR-064-AC-9 | Empty, missing, non-directory, duplicate, overlapping or out-of-base roots; a selection with no production Rust files; unreadable or malformed source; malformed rules; and a source link escaping the base or forming a cycle cannot produce a clean result. Each returns a typed library error identifying its input and command exit 2. Rule failures include unknown or missing fields, wrong types, empty reasons and out-of-base entry paths. | Test |
-| FR-064-AC-10 | Installing `qsl-string-edge` using the documented authoritative Git route and running it outside QSL against a non-QSL crate succeeds without QSL-named fixture directories. The documented clean fixture exits 0. Replacing its production body with an unmarked literal-string dispatch exits 1 and names the expected consumer file and line. A separate Rust consumer imports the public scanner API through the documented Git dependency without copied scanner sources. | Test |
-| FR-064-AC-11 | QSL's adapter passes its roots and rules to the standalone library, with no second detector implementation. On clean, violating and invalid-input fixtures, its report content and success/failure agree with the library; its existing lint prerequisite still propagates failure. Extraction adds only the scanner crate's own tests to QSL verification. | Test |
-| FR-064-AC-12 | A fixture function marked `#[ix_trace_rs::string_edge]`, one marked `#[::ix_trace_rs::string_edge]` and one marked with `#[string_edge]` imported by `use ix_trace_rs::string_edge;` each hold a string comparison that the library, the command and QSL's adapter do not report; an unmarked function in the same fixture is reported. | Test (TC-162) |
+| FR-064-AC-10 | Installing `fsl-string-edge` using the documented authoritative Git route and running it outside FSL against a non-FSL crate succeeds without FSL-named fixture directories. The documented clean fixture exits 0. Replacing its production body with an unmarked literal-string dispatch exits 1 and names the expected consumer file and line. A separate Rust consumer imports the public scanner API through the documented Git dependency without copied scanner sources. | Test |
+| FR-064-AC-11 | FSL's adapter passes its roots and rules to the standalone library, with no second detector implementation. On clean, violating and invalid-input fixtures, its report content and success/failure agree with the library; its existing lint prerequisite still propagates failure. Extraction adds only the scanner crate's own tests to FSL verification. | Test |
+| FR-064-AC-12 | A fixture function marked `#[ix_trace_rs::string_edge]`, one marked `#[::ix_trace_rs::string_edge]` and one marked with `#[string_edge]` imported by `use ix_trace_rs::string_edge;` each hold a string comparison that the library, the command and FSL's adapter do not report; an unmarked function in the same fixture is reported. | Test (TC-162) |
 | FR-064-AC-13 | A consumer crate that applies `#[string_edge]` from `ix-trace-rs` to a function compiles and runs the function with the behaviour of the unmarked function; `#[string_edge(anything)]` fails to compile with the one error message `#[string_edge] takes no arguments` and no second error from the retained function. | Test (TC-162) |
-| FR-064-AC-14 | The QSL workspace defines no attribute macro named `string_edge` and no re-export or alias of one, holds no crate whose only purpose is that marker, and `cargo check` of every package resolves each `string_edge` marker in production code to `ix_trace_rs::string_edge`. | Test (TC-162) |
-| FR-064-AC-15 | A fixture function marked `#[my_macros::string_edge]` is reported, as are functions whose only mark is the comment `// string_edge` or the doc comment `/// string_edge`; and `cargo metadata` over the QSL workspace shows `ix-trace-rs` among the dependencies of every package that uses the marker. | Test (TC-162) |
+| FR-064-AC-14 | The FSL workspace defines no attribute macro named `string_edge` and no re-export or alias of one, holds no crate whose only purpose is that marker, and `cargo check` of every package resolves each `string_edge` marker in production code to `ix_trace_rs::string_edge`. | Test (TC-162) |
+| FR-064-AC-15 | A fixture function marked `#[my_macros::string_edge]` is reported, as are functions whose only mark is the comment `// string_edge` or the doc comment `/// string_edge`; and `cargo metadata` over the FSL workspace shows `ix-trace-rs` among the dependencies of every package that uses the marker. | Test (TC-162) |
 
 ## Dependencies
 
@@ -253,10 +253,10 @@ comparisons, external constants or indirect branch dataflow.
   production dispatch sites this requirement's allow-list rejection names).
 - [FR-062](FR-062-implement-checked-family-contract.md).
 - [US-006](../usecase/US-006-extend-a-family-without-breaking-seams.md).
-- agent-ix/quire-contract-ir#141 and agent-ix/quire-contract-codegen#86 run
+- agent-ix/filament-contract-ir#141 and agent-ix/filament-contract-codegen#86 run
   the same scan in their own repositories, over the same rule; this
   requirement builds the scan tool that #141 and #86 invoke, not their own
   edge inventories. The attribute is `ix-trace-rs`'s.
 - Linear QSL-953 (`ix-trace-rs`: publish the `#[string_edge]` attribute with the
-  contract in "The marker attribute") is the prerequisite for QSL's use of the
+  contract in "The marker attribute") is the prerequisite for FSL's use of the
   attribute; `ix-trace-rs` provides `trace` and `implements` only until it lands.

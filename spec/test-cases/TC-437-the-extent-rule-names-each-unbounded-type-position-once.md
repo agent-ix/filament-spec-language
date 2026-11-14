@@ -3,7 +3,7 @@ id: TC-437
 title: "The extent rule names each unbounded type position once, by node and path, under a node-count ceiling"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: verifies
 ---
 # TC-437: The extent rule names each unbounded type position once, by node and path, under a node-count ceiling

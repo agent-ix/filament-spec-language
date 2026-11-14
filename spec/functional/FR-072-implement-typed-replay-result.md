@@ -3,35 +3,35 @@ id: FR-072
 title: "Implement the typed replay result and record carrier"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-145
+  - target: ix://agent-ix/filament-spec-language/FR-145
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: references
 ---
 # FR-072: Implement the typed replay result and record carrier
 
 ## Description
 
-QSL SHALL implement a typed replay result, defined in the layer-6 `replay`
+FSL SHALL implement a typed replay result, defined in the layer-6 `replay`
 module and part of its public API (ADR-013 O-27), as one per-item result
 whose `arm` member is a sum of distinct, independently-typed arm results —
 a `Witness`-arm result, an `Input`-arm result, an observed-temporal
 result, and a `ProtocolAssumption` result. The `Witness` and `Input` results each carry their own settlement,
-the O-16 category, evaluated value, decisive QSpec FR-351 record, resolved
+the O-16 category, evaluated value, decisive FSpec FR-351 record, resolved
 nested regions (ADR-013 O-12), and replay charges. The observed-temporal
 result carries its own settlement, O-16 category, decoded trace position,
 typed evaluated temporal value, resolved regions and replay charges.
 
 Parity is agreement between the proved and replayed verdicts, each verdict
-taken from the QSpec outcome-to-verdict map fixed per O-16 category
+taken from the FSpec outcome-to-verdict map fixed per O-16 category
 (ADR-013 QC-8). A disagreement SHALL settle `inconclusive` with a typed
 cause, never repaired: the result type exposes no public constructor,
 setter, or conversion that can turn a disagreement into an agreement
@@ -53,7 +53,7 @@ type for consumers such as #217's function-application exemplar.
   `trace_position` (FR-331).
 - The originating `ReplaySource` arm (`Witness`, `Input` or
   `ProtocolAssumption`) and, for the
-  `Witness` arm, the QSpec FR-351 separating-witness record decoded from it.
+  `Witness` arm, the FSpec FR-351 separating-witness record decoded from it.
 - For the observed-temporal arm, the shared `WitnessEnvelope` and observed
   `TemporalCounterexample` payload, the decoded packet position, and the
   typed temporal outcome at that position (FR-331).
@@ -64,7 +64,7 @@ type for consumers such as #217's function-application exemplar.
 ## Outputs
 
 - A typed replay result carrying the O-16 category, arm-specific settlement,
-  nested QSpec FR-351 witness record where decisive, resolved regions and
+  nested FSpec FR-351 witness record where decisive, resolved regions and
   charges; the observed-temporal arm additionally carries its decoded trace
   position and typed evaluated temporal value. The `ProtocolAssumption` arm
   carries the typed reason, exact assumption identities, paired paths when
@@ -105,7 +105,7 @@ type for consumers such as #217's function-application exemplar.
   their category and typed charge point assigned by FR-327, FR-328 and
   FR-329. The result SHALL preserve the undefined value's own position,
   source locus and catalogued cause; it SHALL NOT encode these as a rendered
-  diagnostic string. Its QSpec FR-323 `observed_temporal` encoding SHALL use
+  diagnostic string. Its FSpec FR-323 `observed_temporal` encoding SHALL use
   the closed member set and value union defined by FR-323-AC-24.
 - A `ProtocolAssumption` result SHALL carry
   `ProtocolAssumptionNotEstablished{reason, identities, witness}` and SHALL
@@ -120,7 +120,7 @@ type for consumers such as #217's function-application exemplar.
   typed cause, with no public API path on the result type that constructs
   an agreement result from disagreeing verdicts.
 - A function, frame or state-clause arm result's evaluated value, and a
-  `Witness`-arm result's QSpec FR-351 record with it, SHALL be absent when
+  `Witness`-arm result's FSpec FR-351 record with it, SHALL be absent when
   the replay completed no value (a `refused`, `incomplete` or `undefined`
   S6a outcome, or a family result).
   A result with no value SHALL settle `inconclusive` with a `NoValue`
@@ -132,11 +132,11 @@ type for consumers such as #217's function-application exemplar.
   counterexample's `where` is a completed value,
   `ModelTraceValue::Undefined`, not the no-value case.
 - A construct → serialize → read round trip of a decisive `Witness`-arm
-  result SHALL preserve the nested QSpec FR-351 record's deciding quantifier,
+  result SHALL preserve the nested FSpec FR-351 record's deciding quantifier,
   deciding element, index, value path and trace position exactly (ADR-031
   SW-5).
 - A comparison of two results for agreement SHALL read only the typed
-  QSpec FR-351 fields, never a transcript's rendered text or a diagnostic message
+  FSpec FR-351 fields, never a transcript's rendered text or a diagnostic message
   string.
 - #217's function-application exemplar SHALL construct and compare a
   replay result using the result type together with FR-070's witness
@@ -150,7 +150,7 @@ type for consumers such as #217's function-application exemplar.
 
 | ID | Constraint | Type | Validation |
 |----|------------|------|------------|
-| FR-072-CON-1 | The wire this result type's serializer targets is QSpec FR-323's result envelope (ADR-013 O-27, OQ-2), QSpec's own contract; this requirement's Rust type refuses any `contract_version` other than FR-323's. | Design | Inspection |
+| FR-072-CON-1 | The wire this result type's serializer targets is FSpec FR-323's result envelope (ADR-013 O-27, OQ-2), FSpec's own contract; this requirement's Rust type refuses any `contract_version` other than FR-323's. | Design | Inspection |
 
 ## Acceptance Criteria
 
@@ -158,22 +158,22 @@ type for consumers such as #217's function-application exemplar.
 |----|----------|--------------|
 | FR-072-AC-1 | Given a `Witness`-arm agreement and an `Input`-arm agreement, each settles its own distinct value (`reproduced-with-evaluated-witness` and `reproduced-without-witness` respectively); the `Witness`-arm and `Input`-arm result types are distinct with no `From`, `TryFrom`, `Into` or blanket conversion between them, so no `Input`-arm result can satisfy a call site typed for a `Witness`-arm result (the only input CG's sealed backend-evidence-verdict type, AD-016, admits). | Test (TC-189) |
 | FR-072-AC-2 | Given a proved verdict and a replayed verdict for the same item that differ under the fixed O-16-category-to-verdict map, the result settles `inconclusive` with a typed cause, and no public constructor, setter or `From`/`TryFrom` conversion on the result type can produce an agreement result from those disagreeing verdicts. | Test (TC-190) |
-| FR-072-AC-3 | A positive `Witness`-arm result's construct → serialize → read round trip preserves the nested QSpec FR-351 record's deciding quantifier, deciding element, index, value path and trace position exactly, and a subsequent equality/agreement comparison between two results reads only those typed fields, never a rendered transcript or message string. | Test (TC-191) |
+| FR-072-AC-3 | A positive `Witness`-arm result's construct → serialize → read round trip preserves the nested FSpec FR-351 record's deciding quantifier, deciding element, index, value path and trace position exactly, and a subsequent equality/agreement comparison between two results reads only those typed fields, never a rendered transcript or message string. | Test (TC-191) |
 | FR-072-AC-4 | #217's function-application exemplar constructs and compares a replay result using only this type together with FR-070's witness envelope and FR-071's request type, with no new witness or replay type defined in #217's repository scope. | Test (TC-192) |
 | FR-072-AC-5 | A result whose encoded size exceeds the configured reader bound refuses, and no truncated or partially-populated result is returned. | Test (TC-191) |
-| FR-072-AC-6 | The observed-temporal result constructor preserves the decoded packet position and typed temporal outcome; FR-331's undefined evaluation at the same position, source locus and cause settles `reproduced-with-evaluated-witness`, while one at another position settles `inconclusive` with `ReplayParity`. `Holds`, `Violated`, `Undefined`, `InsufficientData`, `Pending` and incomplete values retain the O-16 category and typed fields assigned by FR-327/328/329, with QSpec FR-323's closed `observed_temporal` encoding. | Test (TC-847) |
+| FR-072-AC-6 | The observed-temporal result constructor preserves the decoded packet position and typed temporal outcome; FR-331's undefined evaluation at the same position, source locus and cause settles `reproduced-with-evaluated-witness`, while one at another position settles `inconclusive` with `ReplayParity`. `Holds`, `Violated`, `Undefined`, `InsufficientData`, `Pending` and incomplete values retain the O-16 category and typed fields assigned by FR-327/328/329, with FSpec FR-323's closed `observed_temporal` encoding. | Test (TC-847) |
 | FR-072-AC-7 | A `ProtocolAssumption` replay whose strengthening witness or no-lasso `relation-undetermined` prefixes and `ContractUndetermined` locus reproduce returns the distinct arm result with arm settlement `reproduced-with-evaluated-witness` and O-16 category `inconclusive`; a changed identity, prefix, reason or locus returns `inconclusive` with `ReplayParity`. Neither result is convertible to a `Witness`-arm or backend-evidence result. | Test (TC-553) |
 
 ## Dependencies
 
 - **Upstream**: [FR-070](FR-070-implement-typed-counterexample-witness-envelope.md),
   [FR-071](FR-071-implement-typed-replay-request.md); ADR-013 O-27, O-16
-  (category-to-verdict map); QSpec
-  [QSpec FR-351](https://github.com/agent-ix/quire-specification/blob/main/spec/objects/protocol/FR-351-separating-witness-record.md)
+  (category-to-verdict map); FSpec
+  [FSpec FR-351](https://github.com/agent-ix/filament-specification/blob/main/spec/objects/protocol/FR-351-separating-witness-record.md)
   (separating-witness record, the normative record shape this result type
-  carries) and FR-323 (the result envelope FR-072-CON-1 targets). QSpec AD-016's Replay-ownership table
+  carries) and FR-323 (the result envelope FR-072-CON-1 targets). FSpec AD-016's Replay-ownership table
   (`spec/assurance/AD-016-semantic-family-extension-path.md`) assigns the
-  "Replay result" row to QSL (#231, this requirement) and the separate
+  "Replay result" row to FSL (#231, this requirement) and the separate
   "Backend-evidence verdict" row to the CG parity comparator; this
   requirement builds only the former and defines no backend-evidence
   verdict type itself.
@@ -181,8 +181,8 @@ type for consumers such as #217's function-application exemplar.
   kernel `Outcome` type and the ADR-013 O-12 resolved-region type this
   result's nested fields reuse; this requirement adds no parallel type for
   either.
-- **Downstream**: [#217](https://github.com/agent-ix/quire-spec-language/issues/217)'s
-  function-application exemplar; [#186](https://github.com/agent-ix/quire-spec-language/issues/186)'s
+- **Downstream**: [#217](https://github.com/agent-ix/filament-spec-language/issues/217)'s
+  function-application exemplar; [#186](https://github.com/agent-ix/filament-spec-language/issues/186)'s
   state-specific payload; the CG
   parity comparator, which builds the sealed backend-evidence-verdict type
   (AD-016) from this requirement's `Witness`-arm result.

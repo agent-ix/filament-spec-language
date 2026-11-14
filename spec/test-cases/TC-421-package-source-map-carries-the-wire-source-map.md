@@ -3,16 +3,16 @@ id: TC-421
 title: "The package source map carries the wire's source map, and a location resolves or refuses by cause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-095
+  - target: ix://agent-ix/filament-spec-language/FR-095
     type: verifies
 ---
 # TC-421: The package source map carries the wire's source map, and a location resolves or refuses by cause
 
 ## Description
 
-Verify that QSL's I2 reader conforms to the `source_map` contract in QSpec
+Verify that FSL's I2 reader conforms to the `source_map` contract in FSpec
 FR-322: its verified outcome carries the wire mapping, and a kernel location
-tag resolves through it or refuses with a typed cause. This QSL integration
+tag resolves through it or refuses with a typed cause. This FSL integration
 test catches a dropped or truncated region list, a misspelled role, a
 relabelled source and a lookup that reports the wrong cause.
 
@@ -27,8 +27,8 @@ Scope: FR-095-AC-3, FR-095-AC-4.
    id is not lowercase hex; read each defect's refusal code. Map each of
    IR's six occurrence roles to its spelling and compare it with IR's own
    serialized spelling.
-4. Read the QSpec checkout's published positive fixtures at
-   `proposals/checked-package-v2/fixtures/positive-*.json` through QSL's whole
+4. Read the FSpec checkout's published positive fixtures at
+   `proposals/checked-package-v2/fixtures/positive-*.json` through FSL's whole
    I2 read, with each fixture's required features as supported, and look up
    every `source_map` entry in the verified read's package source map.
 5. Resolve location tags for a mapped occurrence, a node the map does not

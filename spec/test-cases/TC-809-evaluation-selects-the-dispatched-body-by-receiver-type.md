@@ -3,7 +3,7 @@ id: TC-809
 title: "Evaluation selects the dispatched body from the linked table by the receiver's most-specific type"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: verifies
 ---
 # TC-809: Evaluation selects the dispatched body from the linked table by the receiver's most-specific type

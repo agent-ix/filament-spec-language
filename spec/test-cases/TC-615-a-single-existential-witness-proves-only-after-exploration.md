@@ -3,7 +3,7 @@ id: TC-615
 title: "A single-existential witness proves only after exploration rules out an undefined evaluation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-181
+  - target: ix://agent-ix/filament-spec-language/FR-181
     type: verifies
 ---
 # TC-615: A single-existential witness proves only after exploration rules out an undefined evaluation

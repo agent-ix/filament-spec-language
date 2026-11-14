@@ -3,7 +3,7 @@ id: TC-1310
 title: "Read the checked predicate and the temporal subject from a checked package"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: verifies
 ---
 # TC-1310: Read the checked predicate and the temporal subject from a checked package

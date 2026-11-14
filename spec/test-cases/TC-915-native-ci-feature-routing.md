@@ -3,7 +3,7 @@ id: TC-915
 title: "Native CI preserves feature lane paths and complete Cargo argv"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-013
+  - target: ix://agent-ix/filament-spec-language/NFR-013
     type: verifies
 ---
 # TC-915: Native CI preserves feature lane paths and complete Cargo argv

@@ -3,7 +3,7 @@ id: TC-113
 title: "Recognize composed syntax without changing historical grammar"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-035
+  - target: ix://agent-ix/filament-spec-language/FR-035
     type: verifies
 ---
 # TC-113: Recognize composed syntax without changing historical grammar

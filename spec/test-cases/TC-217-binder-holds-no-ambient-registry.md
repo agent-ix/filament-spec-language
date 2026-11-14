@@ -3,7 +3,7 @@ id: TC-217
 title: "The model binder is a pure function with no cross-run ambient state"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-217: The model binder is a pure function with no cross-run ambient state

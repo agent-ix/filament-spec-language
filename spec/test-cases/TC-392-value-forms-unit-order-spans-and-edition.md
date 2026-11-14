@@ -3,7 +3,7 @@ id: TC-392
 title: "S2 returns one Value form per declaration, in source order, with its span and the unit edition"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-392: S2 returns one Value form per declaration, in source order, with its span and the unit edition
@@ -27,7 +27,7 @@ Every fixture unit below starts with the complete-V1 header
 (`language "ix:native" edition "1-draft";`) and one profile selection whose
 alias is `v`.
 
-1. Parse with `qsl_cst::parse` a unit holding, in order:
+1. Parse with `fsl_cst::parse` a unit holding, in order:
    `type Digit = Int[0, 9];`,
    `function inc using v(x: Digit): Int[0, 10] pure { x + 1 }`,
    `record Point { x: Int[0, 9]; }` and `tuple Pair(Int[0, 9], Int[0, 9]);`.

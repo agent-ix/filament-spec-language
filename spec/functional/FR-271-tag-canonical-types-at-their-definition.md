@@ -3,11 +3,11 @@ id: FR-271
 title: "Tag each canonical public type at its definition"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-028
+  - target: ix://agent-ix/filament-spec-language/US-028
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-032
+  - target: ix://agent-ix/filament-spec-language/ADR-032
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
 ---
 # FR-271: Tag each canonical public type at its definition
@@ -15,7 +15,7 @@ relationships:
 ## Description
 
 Each canonical public type SHALL carry the doc-comment tag
-`/// quire:canonical` at its one definition, as ADR-032 DT-1 decides. The
+`/// filament:canonical` at its one definition, as ADR-032 DT-1 decides. The
 tags are the canonical set: `cargo xtask canonical-types` (FR-272) reads the
 set from them and from nothing else. A type is canonical when an ADR-013 §3
 owner row names it as its owner's public type.
@@ -34,7 +34,7 @@ owner row names it as its owner's public type.
 
 - A canonical type's definition SHALL carry, in its outer doc comment, one
   line whose text after the `///` marker and surrounding whitespace is
-  exactly `quire:canonical`.
+  exactly `filament:canonical`.
 - The tag SHALL be documentation only: the crate that carries it keeps its
   dependency list, and the compiled item is unchanged.
 - The gate SHALL read the tag from the item's outer `doc` attributes,
@@ -51,7 +51,7 @@ owner row names it as its owner's public type.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-271-AC-1 | Over a fixture of two crates, `pub struct Meter` in crate A whose doc comment holds the tag line between two prose lines, and a `struct Meter` in crate B, the gate reports one identifier finding naming A's definition and B's. With A's tag removed, written as `// quire:canonical`, or written as `/// quire:canonical type`, the gate reports nothing. | Test (TC-746) |
+| FR-271-AC-1 | Over a fixture of two crates, `pub struct Meter` in crate A whose doc comment holds the tag line between two prose lines, and a `struct Meter` in crate B, the gate reports one identifier finding naming A's definition and B's. With A's tag removed, written as `// filament:canonical`, or written as `/// filament:canonical type`, the gate reports nothing. | Test (TC-746) |
 | FR-271-AC-2 | The tag on a `pub fn`, on a private `struct`, and on a struct field each give one `tag` finding naming the file, line and item. The tag on `pub struct Meter` in both A and B gives one `tag` finding naming both locations. | Test (TC-746) |
 
 ## Dependencies

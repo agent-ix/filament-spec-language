@@ -3,12 +3,12 @@ id: TC-108
 title: "Execute an actually extracted native clause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-030
+  - target: ix://agent-ix/filament-spec-language/FR-030
     type: verifies
 ---
 ## Description
 
-Integration, P1, in `qsl-source`'s and `qsl-replay`'s tests built with their
+Integration, P1, in `fsl-source`'s and `fsl-replay`'s tests built with their
 `quire-extraction` feature: use the real Quire Rust extractor (`quire-rs`)
 with immutable licensed Markdown, spine compile and the spine clause runner
 (FR-109); compare exact original/body source.
@@ -28,7 +28,7 @@ foreign/stale selections, unavailable extraction, EOF mapping and exhausted limi
 
 Each foreign source identity, path and package must return its own typed preflight cause and actual/expected values,
 without an extraction outcome. Both the default build and the build with
-`qsl-replay`'s `quire-extraction` run locally; the default build calls no
+`fsl-replay`'s `quire-extraction` run locally; the default build calls no
 Quire extraction.
 
 The ExtractedSource's ClausesOutcome equals Quire's actual result: the same

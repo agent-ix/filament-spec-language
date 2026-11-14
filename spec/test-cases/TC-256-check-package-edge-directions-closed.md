@@ -3,7 +3,7 @@ id: TC-256
 title: "check and package's dependency edge is one direction, and CheckedPackage wraps CheckedGraph"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-256: check and package's dependency edge is one direction, and CheckedPackage wraps CheckedGraph
@@ -34,9 +34,9 @@ accessors, never constructing or mutating one; and the root crate, where
 `value::expression` lives, re-exports no layer-crate item, `CheckedPackage`
 included. Scope: FR-087-AC-9.
 
-Layer-4 `package` is the crate `qsl-package` (X-7): the canonical
+Layer-4 `package` is the crate `fsl-package` (X-7): the canonical
 `CheckedPackage`, `EmittedPackage`, the v2 emitter and the I2 byte reader
-are in `qsl-package/src/`, and the root crate's module named `package` holds
+are in `fsl-package/src/`, and the root crate's module named `package` holds
 only SEAM-1 (ADR-011 §6.2, `package` row). In this test, "`package`" means
 layer-4 `package`; the steps name its path.
 
@@ -48,35 +48,35 @@ depending on `check` is layer 4's permitted direction.
 ## Test Procedure
 
 1. Confirm `check` cannot import `package`. **Amended.** Layer-4
-   `package` is the crate `qsl-package`, which depends on `qsl-semantics`,
+   `package` is the crate `fsl-package`, which depends on `fsl-semantics`,
    where `check` is. Cargo refuses the reverse edge as a dependency cycle, so
-   no `use` line or inline path under `qsl-semantics/src/check/` can resolve
-   into `qsl_package`. TC-390 confirms the crate edges from `cargo
-   metadata`: `qsl-semantics` names no `qsl-package` dependency of either
+   no `use` line or inline path under `fsl-semantics/src/check/` can resolve
+   into `fsl_package`. TC-390 confirms the crate edges from `cargo
+   metadata`: `fsl-semantics` names no `fsl-package` dependency of either
    kind.
-2. Search `qsl-semantics/src/check/` for any type, method, or field named
+2. Search `fsl-semantics/src/check/` for any type, method, or field named
    `CheckedPackage`; confirm none exists.
 3. **Amended.** Scan every `pub use` under the root crate's
    `src/` and confirm none is rooted at a layer crate: `value::expression`
-   imports `CheckedPackage` with a private `use qsl_package::CheckedPackage;`
+   imports `CheckedPackage` with a private `use fsl_package::CheckedPackage;`
    and re-exports it nowhere (ADR-011 §7.2, §4 as amended). The scan is
    `tests/it/layer_crate_reexports.rs`. (This step previously required
    exactly `pub use crate::checked_package::CheckedPackage;`.) FR-511's `src/number.rs` exemption has ended: the module is deleted
    and the scan exempts no path.
-4. Confirm no code under `qsl-semantics/src/check/` constructs a `LibraryLock`, mutates
+4. Confirm no code under `fsl-semantics/src/check/` constructs a `LibraryLock`, mutates
    one, or calls any method on it other than its read-only accessors.
 5. Read `package`'s `CheckedPackage` definition and confirm: it holds a
    `CheckedGraph` field (this package's own checked declarations) plus the
    S4 dependency-closure data; its only constructor is the S4 link step,
    taking a `CheckedGraph`; every accessor that returns check-owned state
    delegates to that `CheckedGraph` field; and no type under
-   `qsl-package/src/` or `src/package/` re-declares or copies a
+   `fsl-package/src/` or `src/package/` re-declares or copies a
    check-owned type (`Node`, `Signature`, and the rest).
-6. Adverse checks: a `qsl-semantics` dependency on `qsl-package` (normal or
+6. Adverse checks: a `fsl-semantics` dependency on `fsl-package` (normal or
    dev) fails TC-390's crate-edge check, and a planted `pub use` of a layer
    crate fails step 3's scan fixture, as does a planted `pub use` of a
    layer-crate item in any root module. **Amended.** A `check`
-   module importing `qsl_package::CheckedPackage` does not compile, so it
+   module importing `fsl_package::CheckedPackage` does not compile, so it
    needs no fixture of its own.
 
 ## Expected Results

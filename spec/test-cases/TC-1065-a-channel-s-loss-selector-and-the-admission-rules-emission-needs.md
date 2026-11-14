@@ -3,9 +3,9 @@ id: TC-1065
 title: "A channel's loss selector and the admission rules emission needs"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: verifies
 ---
 # TC-1065: A channel's loss selector and the admission rules emission needs

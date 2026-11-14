@@ -3,7 +3,7 @@ id: TC-664
 title: "The memory clause checks and the request selects the resolved model"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-219
+  - target: ix://agent-ix/filament-spec-language/FR-219
     type: verifies
 ---
 # TC-664: The memory clause checks and the request selects the resolved model

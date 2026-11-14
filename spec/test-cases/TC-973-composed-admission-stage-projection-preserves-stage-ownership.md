@@ -3,7 +3,7 @@ id: TC-973
 title: "Composed admission stage projection preserves stage ownership"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-973: Composed admission stage projection preserves stage ownership

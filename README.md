@@ -1,8 +1,8 @@
-# Quire Specification Language
+# Filament Specification Language
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/k8DVhuYBR2)
 
-QSL (Quire Specification Language) is a formal language for rules about a
+FSL (Filament Specification Language) is a formal language for rules about a
 system's data and behavior. This repository contains its compiler library,
 and its reference evaluator.
 
@@ -13,7 +13,7 @@ code-generation backends read the same checked package.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.svg">
-  <img alt="A rule written in QSL, either in a .native file or in a fenced block inside a Markdown spec, is compiled against a domain model into a checked package, then evaluated against data. The result is one of: holds, violated, refused, unsupported or incomplete." src="docs/images/hero-light.svg">
+  <img alt="A rule written in FSL, either in a .native file or in a fenced block inside a Markdown spec, is compiled against a domain model into a checked package, then evaluated against data. The result is one of: holds, violated, refused, unsupported or incomplete." src="docs/images/hero-light.svg">
 </picture>
 
 > **Status: public prerelease.** The language, its editions and every API here
@@ -26,12 +26,12 @@ model `example/config-version`:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/first-rule-dark.svg">
-  <img alt="An annotated QSL unit: (1) the header names the language and edition, (2) the profile says which part of the language the rules use, (3) the model line imports a domain package by exact identity, (4) invariants must hold for every object, (5) a post rule compares a value after an operation with its value before." src="docs/images/first-rule-light.svg">
+  <img alt="An annotated FSL unit: (1) the header names the language and edition, (2) the profile says which part of the language the rules use, (3) the model line imports a domain package by exact identity, (4) invariants must hold for every object, (5) a post rule compares a value after an operation with its value before." src="docs/images/first-rule-light.svg">
 </picture>
 
 ```
 language "ix:native" edition "1-draft";
-profile v = "quire.value.complete/v1";
+profile v = "filament.value.complete/v1";
 model Config = "example/config-version";
 
 invariant ParentOrder using v on Config::ConfigVersion at current {
@@ -49,7 +49,7 @@ post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
 
 - **`language … edition`** sets the language version of the file.
 - **`profile`** selects the part of the language the rules may use.
-  `quire.value.complete/v1` covers values, records and expressions. The line
+  `filament.value.complete/v1` covers values, records and expressions. The line
   binds it to the name `v`, and each rule says `using v`.
 - **`model`** imports the domain model by identity.
   A rule is checked against the model with that identity.
@@ -79,8 +79,8 @@ invariant ParentOrder using v on Config::ConfigVersion at current {
 ```
 ````
 
-The optional `qsl-replay/quire-extraction` feature reads the block's bytes from
-the Markdown file through `qsl-source`, using
+The optional `fsl-replay/quire-extraction` feature reads the block's bytes from
+the Markdown file through `fsl-source`, using
 [quire-rs](https://github.com/agent-ix/quire-rs), and keeps a source map to the
 document. Errors are reported at their line and column in the Markdown file.
 This is a library API; the `run` command does not yet accept Markdown for
@@ -92,7 +92,7 @@ Every check ends in one outcome, and the process exit code matches it:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/outcomes-dark.svg">
-  <img alt="Every QSL check ends in exactly one outcome with its own exit code: success 0; violation or undefined 10; refused 20; unsupported 21; indeterminate 11; incomplete or inconclusive 22; internal failure 30; a clause still pending when its trace ends exits 0. Only success and violation are answers about the rule; the others say why no answer was given." src="docs/images/outcomes-light.svg">
+  <img alt="Every FSL check ends in exactly one outcome with its own exit code: success 0; violation or undefined 10; refused 20; unsupported 21; indeterminate 11; incomplete or inconclusive 22; internal failure 30; a clause still pending when its trace ends exits 0. Only success and violation are answers about the rule; the others say why no answer was given." src="docs/images/outcomes-light.svg">
 </picture>
 
 | Outcome | Exit | Meaning |
@@ -100,11 +100,11 @@ Every check ends in one outcome, and the process exit code matches it:
 | success | 0 | The check completed and the rule holds. |
 | violation, undefined | 10 | The check completed and the rule is broken, or the rule asked for a value that is not defined. |
 | refused | 20 | The input was rejected before any rule ran: bad syntax, a wrong model identity, a malformed request. |
-| unsupported | 21 | The construct is valid QSL, but the selected profile or backend cannot check it. |
+| unsupported | 21 | The construct is valid FSL, but the selected profile or backend cannot check it. |
 | incomplete, inconclusive | 22 | Data was missing or the work budget ran out. |
 | indeterminate | 11 | A finite-window clause whose window is closed and whose evidence is still missing or conflicting: neither held nor broken. |
 | pending | 0 | A clause still pending when its trace ends: no violation was observed, and the report lists the pending clauses. |
-| internal failure | 30 | A bug in QSL. |
+| internal failure | 30 | A bug in FSL. |
 
 Only success and violation carry a truth value. Refused and incomplete results
 have no truth field in their output. Every result names the source, model and
@@ -166,15 +166,15 @@ protocol Orders using P over (view: M::WorkflowView) on each (started: M::StartV
 
 | Profile | Family |
 | --- | --- |
-| `quire.value.complete/v1` | values, records, functions, predicates |
-| `quire.state.graph/v1` | invariants, `pre`/`post`, reachability over object graphs |
-| `quire.temporal.event-position.false-extension/v1` | temporal rules over event positions |
-| `quire.temporal.timestamped-event.finite-window/v1` | temporal rules over timestamped events in a finite window |
-| `quire.temporal.fixed-sample.false-extension/v1` | temporal rules over fixed-rate samples |
-| `quire.temporal.infinite-trace/v1` | temporal rules over unbounded traces (model checking) |
-| `quire.protocol.finite-global/v1` | protocols between roles |
+| `filament.value.complete/v1` | values, records, functions, predicates |
+| `filament.state.graph/v1` | invariants, `pre`/`post`, reachability over object graphs |
+| `filament.temporal.event-position.false-extension/v1` | temporal rules over event positions |
+| `filament.temporal.timestamped-event.finite-window/v1` | temporal rules over timestamped events in a finite window |
+| `filament.temporal.fixed-sample.false-extension/v1` | temporal rules over fixed-rate samples |
+| `filament.temporal.infinite-trace/v1` | temporal rules over unbounded traces (model checking) |
+| `filament.protocol.finite-global/v1` | protocols between roles |
 
-The `1-draft` language is a closed list of capabilities in nine families. QSL
+The `1-draft` language is a closed list of capabilities in nine families. FSL
 checks every package against that list.
 
 <picture>
@@ -188,13 +188,13 @@ historical parser is deleted. Do not write new rules in it.
 
 ## Compiler stages
 
-QSL compiles in stages. Each stage consumes the previous stage's output type
+FSL compiles in stages. Each stage consumes the previous stage's output type
 and produces a new one. Unchecked and checked rules are different Rust types,
 so unchecked input cannot reach an evaluator or backend.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/pipeline-dark.svg">
-<img alt="QSL compiles source through a lossless syntax tree and parsed forms into a checked graph, resolving names against domain models and dependency packages, then links a checked package. It can be evaluated by the reference evaluator or emitted as checked-package/v2 bytes for Contract IR and proof backends. A counterexample from an engine is replayed through the same compiler and evaluator to confirm it." src="docs/images/pipeline-light.svg">
+<img alt="FSL compiles source through a lossless syntax tree and parsed forms into a checked graph, resolving names against domain models and dependency packages, then links a checked package. It can be evaluated by the reference evaluator or emitted as checked-package/v2 bytes for Contract IR and proof backends. A counterexample from an engine is replayed through the same compiler and evaluator to confirm it." src="docs/images/pipeline-light.svg">
 </picture>
 
 | Stage | Guarantees |
@@ -203,10 +203,10 @@ so unchecked input cannot reach an evaluator or backend.
 | **Syntax tree** | A byte-exact tree of the source, including comments and spacing. The formatter works from it. A file that parses is not yet checked. |
 | **Parsed forms** | One unchecked form per declaration, each with its source span. |
 | **Checked graph** | Every name is resolved against the imported domain model and dependency packages. Every expression is typed. Every partial operation, such as a division or a dereference, is proved defined or becomes an explicit runtime obligation. |
-| **Checked package** | The checked rules and their dependencies' checked rules, with a package identity and a source map. It can be written as `quire.checked-package/v2` bytes. |
+| **Checked package** | The checked rules and their dependencies' checked rules, with a package identity and a source map. It can be written as `filament.checked-package/v2` bytes. |
 | **Reference evaluation** | Deterministic, side-effect-free execution against supplied data. Ends in one of the outcomes above. |
 | **Model checking** | In-process engines for temporal and protocol rules: model checking, timed-zone search, schedulability and probabilistic analysis. |
-| **Proof backends** | [Contract IR](https://github.com/agent-ix/quire-contract-ir) reads the v2 bytes. [Contract codegen](https://github.com/agent-ix/quire-contract-codegen) generates code, property tests and bounded proofs from it. |
+| **Proof backends** | [Contract IR](https://github.com/agent-ix/filament-contract-ir) reads the v2 bytes. [Contract codegen](https://github.com/agent-ix/filament-contract-codegen) generates code, property tests and bounded proofs from it. |
 | **Replay** | A counterexample from any engine is recompiled from its source and re-run on the reference evaluator. A backend's "violated" result is accepted only if the reference evaluator returns the same outcome. |
 
 ## Usage
@@ -214,28 +214,28 @@ so unchecked input cannot reach an evaluator or backend.
 Install Rust at or above the `rust-version` in `Cargo.toml`. No other tools or services are needed.
 
 ```sh
-git clone https://github.com/agent-ix/quire-spec-language
-cd quire-spec-language
+git clone https://github.com/agent-ix/filament-spec-language
+cd filament-spec-language
 cargo build --locked --workspace
 ```
 
-The main QSL interface is a library. The separate
-[`qsl-probability-check`](tools/qsl-probability-check/README.md) developer-tool executable checks
+The main FSL interface is a library. The separate
+[`fsl-probability-check`](tools/fsl-probability-check/README.md) developer-tool executable checks
 exact reachability certificate documents against supplied source and data.
-The `quire` command line is in
-[quire-driver](https://github.com/agent-ix/quire-driver), whose verbs call the
+The `fsl` command line is in
+[filament-driver](https://github.com/agent-ix/filament-driver), whose verbs call the
 library API described here.
 
-**Format.** `qsl_cst::format::format` takes an admissible parsed source and
+**Format.** `fsl_cst::format::format` takes an admissible parsed source and
 returns the formatted source; it leaves the file unchanged. Parse the bytes
-with `qsl_cst::parse`, which takes the source identity (authority and id)
+with `fsl_cst::parse`, which takes the source identity (authority and id)
 that every diagnostic carries.
 
 **Run a rule against data.** The ConfigVersion example writes one directory per
 case, holding the unit from [A first rule](#a-first-rule), its domain model and
 a snapshot of `ConfigVersion` objects. `requests.sh` writes a `run.json`
 `native-run/1` request that checks one rule for the object keyed `child`, and
-The non-core `qsl_command::command::run` library entry executes it:
+The non-core `fsl_command::command::run` library entry executes it:
 
 ```sh
 cargo run --locked --example config_version_fixtures -- /tmp/config-version
@@ -243,7 +243,7 @@ examples/config-version/requests.sh /tmp/config-version/healthy-parent ParentOrd
 ```
 
 ```rust
-use qsl_command::command;
+use fsl_command::command;
 
 let result = command::run(std::path::Path::new("/tmp/config-version/healthy-parent/run.json"))?;
 // `result.value` is the JSON result document; `result.exit_code` is the code
@@ -269,7 +269,7 @@ code and whose `value()` is the refusal envelope. The test
 
 **Compile a rule.** `requests.sh` also writes `compile.json`, a `native-compile/1`
 request. `command::compile` accepts only `1-draft` sources and returns the
-checked package as `quire.checked-package/v2` bytes; a source that declares any
+checked package as `filament.checked-package/v2` bytes; a source that declares any
 other edition, including `0-draft`, is refused with `unknown_edition`:
 
 ```rust
@@ -280,13 +280,13 @@ let package: Vec<u8> =
 **Emit package bytes from a source file.** `compile` needs a request file with
 source labels. For a downstream reader that wants the bytes of one `1-draft`
 source, the `emit_checked_v2` example takes the files directly and calls the
-same producer (`qsl_replay::compile_package`), so the bytes follow the
+same producer (`fsl_replay::compile_package`), so the bytes follow the
 producer. Pass each domain package document the
 source's `model` declarations select with `--model`, and each imported library
 as `--library <identity>=<file>`. The bytes go to stdout, or to `--out <path>`.
 Every failure (usage, unreadable file, write failure, refusal) writes no
 bytes, prints a diagnostic on stderr that tells them apart, and exits with the
-refusal category's code 20, as the `quire` driver does; a producer refusal whose
+refusal category's code 20, as the `fsl` driver does; a producer refusal whose
 catalog code is in another category (for example incomplete) exits with that
 category's code (22). The emitted bytes embed the source path exactly as given
 (the `source:<path>` label feeds the source labels and the
@@ -308,7 +308,7 @@ The package is read back with the same domain documents as evidence
 
 **Accepted execution points.** `--execution-points <file>` supplies accepted
 state-clause execution points (FR-104-AC-15) through the producer's
-`check_with_execution_points` (`qsl_replay::compile_package_with_execution_points`),
+`check_with_execution_points` (`fsl_replay::compile_package_with_execution_points`),
 so the emitted state clauses carry them. The file is a JSON object from the
 exact authored clause name to an execution point: `{"kind": "initialization" |
 "handler", "name": "<anchor>"}` or `{"kind": "pre" | "post", "operation":
@@ -347,43 +347,43 @@ and incomplete runs. `run` can also evaluate one pure function;
 
 | Feature | Adds |
 | --- | --- |
-| `qsl-replay/quire-extraction` | Enables QSL's replay library to read rules from Quire Markdown spec artifacts, with locations mapped to the document. |
+| `fsl-replay/quire-extraction` | Enables FSL's replay library to read rules from Quire Markdown spec artifacts, with locations mapped to the document. |
 | `population-fixtures` | Writes the population fixtures used by the admission tests. |
 
-QSL builds no command line of its own. `quire` from [quire-driver](https://github.com/agent-ix/quire-driver)
-serves parse, format, run and compile, running QSL, Contract IR and the
+FSL builds no command line of its own. `fsl` from [filament-driver](https://github.com/agent-ix/filament-driver)
+serves parse, format, run and compile, running FSL, Contract IR and the
 backends as one tool.
 
-## The Quire ecosystem
+## The Filament ecosystem
 
-The standard defines the language. QSL compiles rules into checked packages.
+The standard defines the language. FSL compiles rules into checked packages.
 Contract IR turns them into contracts for code generation, the runtime and the
 analyzers. The driver runs the chain. All of them use a set of shared `no_std` libraries.
 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/ecosystem-dark.svg">
-  <img alt="The Quire repositories. The main chain runs from the standard, quire-specification, to the compiler, quire-spec-language, then quire-contract-ir, quire-contract-codegen and quire-contract-runtime. quire-spec-language also feeds quire-protocol, and quire-contract-ir feeds quire-analyze. quire-observation feeds quire-protocol and quire-mltl. Above the chain, quire-driver runs it, quire-integration tests it and quire-verification plans verification. Below it, shared libraries used throughout: quire-eval, quire-exact, quire-semantic-value, quire-walk, quire-canonical and quire-verification-contracts." src="docs/images/ecosystem-light.svg">
+  <img alt="The Quire repositories. The main chain runs from the standard, filament-specification, to the compiler, filament-spec-language, then filament-contract-ir, filament-contract-codegen and filament-contract-runtime. filament-spec-language also feeds filament-protocol, and filament-contract-ir feeds filament-analyze. filament-observation feeds filament-protocol and filament-mltl. Above the chain, filament-driver runs it, filament-integration tests it and filament-verification plans verification. Below it, shared libraries used throughout: filament-eval, filament-exact, filament-semantic-value, filament-walk, quire-canonical and filament-verification-contracts." src="docs/images/ecosystem-light.svg">
 </picture>
 
-| Repository | Role | Relation to QSL |
+| Repository | Role | Relation to FSL |
 | --- | --- | --- |
-| [quire-specification](https://github.com/agent-ix/quire-specification) | The language standard: rule semantics, profiles, interchange formats and the conformance tests. | QSL implements it; `make ci` checks QSL against its test vectors. |
-| [quire-exact](https://github.com/agent-ix/quire-exact) | Exact numbers and closed outcomes; `no_std`. | QSL depends on it. |
-| [quire-semantic-value](https://github.com/agent-ix/quire-semantic-value) | Semantic values with their origin, built on quire-exact; `no_std`. | QSL depends on it. |
-| [quire-walk](https://github.com/agent-ix/quire-walk) | Walks deep trees on a heap stack; `no_std`. | QSL depends on it. |
-| [quire-canonical](https://github.com/agent-ix/quire-canonical) | Canonical JSON (RFC 8785). | QSL depends on it. |
-| [quire-contract-ir](https://github.com/agent-ix/quire-contract-ir) | The target-neutral contract model that backends use. | QSL depends on its model crate; IR reads QSL's checked packages. |
-| [quire-contract-codegen](https://github.com/agent-ix/quire-contract-codegen) | Generates Rust, property tests, bounded proofs and evidence from contracts. | Depends on QSL to replay counterexamples. |
-| [quire-contract-runtime](https://github.com/agent-ix/quire-contract-runtime) | The `no_std` runtime for generated checks. | Used by codegen's output. |
-| [quire-analyze](https://github.com/agent-ix/quire-analyze) | SMT-based consistency and implication checks across contracts. | Works on Contract IR. |
-| [quire-verification-contracts](https://github.com/agent-ix/quire-verification-contracts) | The verification record types the tools exchange. | Used by IR, codegen and the standard. |
-| [quire-observation](https://github.com/agent-ix/quire-observation) | Turns raw signals into qualified observations for rule evaluation. | Supplies data for temporal checks. |
-| [quire-mltl](https://github.com/agent-ix/quire-mltl) | Connects the MLTL temporal-logic engine to quire-observation. | No direct dependency. |
-| [quire-protocol](https://github.com/agent-ix/quire-protocol) | Checks running systems against compiled protocols, including compensation. | Consumes QSL's compiled protocols. |
-| [quire-verification](https://github.com/agent-ix/quire-verification) | Selects verification techniques and plans for each requirement. | No direct dependency. |
-| [quire-driver](https://github.com/agent-ix/quire-driver) | The `quire` command line that runs the whole chain. | Depends on QSL. |
-| [quire-integration](https://github.com/agent-ix/quire-integration) | Fixes a working set of versions and tests the chain together. | Depends on QSL. |
+| [filament-specification](https://github.com/agent-ix/filament-specification) | The language standard: rule semantics, profiles, interchange formats and the conformance tests. | FSL implements it; `make ci` checks FSL against its test vectors. |
+| [filament-exact](https://github.com/agent-ix/filament-exact) | Exact numbers and closed outcomes; `no_std`. | FSL depends on it. |
+| [filament-semantic-value](https://github.com/agent-ix/filament-semantic-value) | Semantic values with their origin, built on filament-exact; `no_std`. | FSL depends on it. |
+| [filament-walk](https://github.com/agent-ix/filament-walk) | Walks deep trees on a heap stack; `no_std`. | FSL depends on it. |
+| [quire-canonical](https://github.com/agent-ix/quire-canonical) | Canonical JSON (RFC 8785). | FSL depends on it. |
+| [filament-contract-ir](https://github.com/agent-ix/filament-contract-ir) | The target-neutral contract model that backends use. | FSL depends on its model crate; IR reads FSL's checked packages. |
+| [filament-contract-codegen](https://github.com/agent-ix/filament-contract-codegen) | Generates Rust, property tests, bounded proofs and evidence from contracts. | Depends on FSL to replay counterexamples. |
+| [filament-contract-runtime](https://github.com/agent-ix/filament-contract-runtime) | The `no_std` runtime for generated checks. | Used by codegen's output. |
+| [filament-analyze](https://github.com/agent-ix/filament-analyze) | SMT-based consistency and implication checks across contracts. | Works on Contract IR. |
+| [filament-verification-contracts](https://github.com/agent-ix/filament-verification-contracts) | The verification record types the tools exchange. | Used by IR, codegen and the standard. |
+| [filament-observation](https://github.com/agent-ix/filament-observation) | Turns raw signals into qualified observations for rule evaluation. | Supplies data for temporal checks. |
+| [filament-mltl](https://github.com/agent-ix/filament-mltl) | Connects the MLTL temporal-logic engine to filament-observation. | No direct dependency. |
+| [filament-protocol](https://github.com/agent-ix/filament-protocol) | Checks running systems against compiled protocols, including compensation. | Consumes FSL's compiled protocols. |
+| [filament-verification](https://github.com/agent-ix/filament-verification) | Selects verification techniques and plans for each requirement. | No direct dependency. |
+| [filament-driver](https://github.com/agent-ix/filament-driver) | The `fsl` command line that runs the whole chain. | Depends on FSL. |
+| [filament-integration](https://github.com/agent-ix/filament-integration) | Fixes a working set of versions and tests the chain together. | Depends on FSL. |
 
 ## Crates
 
@@ -392,25 +392,25 @@ layers below it; `make arch-lint` enforces this.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/layers-dark.svg">
-  <img alt="The QSL workspace in layers, bottom to top: the shared no_std libraries quire-exact, quire-semantic-value, quire-walk and quire-canonical; qsl-foundation; qsl-cst; qsl-forms; qsl-semantics; qsl-package; then qsl-eval and qsl-route; and at the top qsl-replay, qsl-analyze and the quire-driver command line." src="docs/images/layers-light.svg">
+  <img alt="The FSL workspace in layers, bottom to top: the shared no_std libraries filament-exact, filament-semantic-value, filament-walk and quire-canonical; fsl-foundation; fsl-cst; fsl-forms; fsl-semantics; fsl-package; then fsl-eval and fsl-route; and at the top fsl-replay, fsl-analyze and the filament-driver command line." src="docs/images/layers-light.svg">
 </picture>
 
 | Crate | Contents |
 | --- | --- |
-| `qsl-foundation` | Source identity, source maps, diagnostics and exit codes, wire-format names. |
-| `qsl-cst` | Lexer, grammar, the lossless syntax tree and the formatter. |
-| `qsl-forms` | Parsed, unchecked forms for each declaration family. |
-| `qsl-semantics` | Model intake, name resolution, type checking and definedness proofs. The largest crate. |
-| `qsl-package` | Checked packages and the `quire.checked-package/v2` writer and reader. |
-| `qsl-eval` | The reference evaluator, including temporal automata and finite simulation. |
-| `qsl-route` | Matches a package's requirements to the backends that can check it. |
-| `qsl-analyze` | In-process model checking, timed zones and schedulability. |
-| `qsl-conformance` | Shared library lifecycle cases and expected outcomes for driver conformance tests; see [outcome parity](docs/outcome-parity.md). |
-| `qsl-inspect` | Typed package and result views, rendered as bounded JSON, text or DOT. |
-| `qsl-replay` | Recompiles and re-runs counterexamples; codegen calls it. |
-| `qsl-source` | Reads rules from Quire Markdown; its `quire-extraction` feature is enabled by `qsl-replay/quire-extraction`. |
-| `qsl-string-edge` | The FR-064 string-edge scanner (library and `qsl-string-edge` command) that QSL's `xtask string-edge` and consumer repositories run; see [`qsl-string-edge/README.md`](qsl-string-edge/README.md). |
-| `qsl-walk-grow`, `qsl-bench` | Deep-recursion stack growth, benchmarks. |
+| `fsl-foundation` | Source identity, source maps, diagnostics and exit codes, wire-format names. |
+| `fsl-cst` | Lexer, grammar, the lossless syntax tree and the formatter. |
+| `fsl-forms` | Parsed, unchecked forms for each declaration family. |
+| `fsl-semantics` | Model intake, name resolution, type checking and definedness proofs. The largest crate. |
+| `fsl-package` | Checked packages and the `filament.checked-package/v2` writer and reader. |
+| `fsl-eval` | The reference evaluator, including temporal automata and finite simulation. |
+| `fsl-route` | Matches a package's requirements to the backends that can check it. |
+| `fsl-analyze` | In-process model checking, timed zones and schedulability. |
+| `fsl-conformance` | Shared library lifecycle cases and expected outcomes for driver conformance tests; see [outcome parity](docs/outcome-parity.md). |
+| `fsl-inspect` | Typed package and result views, rendered as bounded JSON, text or DOT. |
+| `fsl-replay` | Recompiles and re-runs counterexamples; codegen calls it. |
+| `fsl-source` | Reads rules from Quire Markdown; its `quire-extraction` feature is enabled by `fsl-replay/quire-extraction`. |
+| `fsl-string-edge` | The FR-064 string-edge scanner (library and `fsl-string-edge` command) that FSL's `xtask string-edge` and consumer repositories run; see [`fsl-string-edge/README.md`](fsl-string-edge/README.md). |
+| `fsl-walk-grow`, `fsl-bench` | Deep-recursion stack growth, benchmarks. |
 | root crate | The library facade. |
 | `xtask`, `tools/arch-lint` | Repository checks: dependency direction, API surface, qualification and refinement. |
 
@@ -428,7 +428,7 @@ Other directories:
 
 `make ci` is the local gate: formatting, clippy, tests across feature
 combinations, docs and the architecture lints. It reads the standard's test
-vectors from a sibling `quire-specification` checkout (`QSPEC_DIR`). The hosted
+vectors from a sibling `filament-specification` checkout (`FSPEC_DIR`). The hosted
 native compiler CI runs only on manual dispatch, so run the gate before opening
 a pull request.
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
@@ -437,5 +437,5 @@ Contributions require the [CLA](CLA.md).
 
 ## License
 
-QSL is licensed under [AGPL-3.0-or-later](LICENSE). Fixtures keep their
+FSL is licensed under [AGPL-3.0-or-later](LICENSE). Fixtures keep their
 `AGPL-3.0-only` headers.

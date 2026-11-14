@@ -3,7 +3,7 @@ id: TC-234
 title: "Connection admission checks all three conditions independently and reports every failure"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: verifies
 ---
 # TC-234: Connection admission checks all three conditions independently and reports every failure

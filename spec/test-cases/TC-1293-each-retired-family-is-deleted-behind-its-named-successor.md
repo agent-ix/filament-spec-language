@@ -3,7 +3,7 @@ id: TC-1293
 title: "Each retired family is deleted behind its named successor"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: verifies
 ---
 # TC-1293: Each retired family is deleted behind its named successor
@@ -27,7 +27,7 @@ left untagged.
    of FR-329.
 4. After QSL-499, confirm `src/native_model` is absent and run TC-469.
 5. After QSL-830 and QSL-868, run TC-1027 steps 2 and 3, parse a profile line
-   carrying a version and a digest with every parser, and run `quire-spec parse`
+   carrying a version and a digest with every parser, and run `filament-spec parse`
    with each flag and exit 20, 21, 22 and 30.
 6. Confirm the handoff writer, its feature, examples and snapshots exist until
    QSL-1501 is closed.

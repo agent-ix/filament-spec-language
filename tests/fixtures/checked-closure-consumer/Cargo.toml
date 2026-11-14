@@ -6,10 +6,10 @@ license = "AGPL-3.0-or-later"
 publish = false
 
 [dependencies]
-qsl-replay = { path = "../../../qsl-replay" }
-quire-eval = { workspace = true }
-quire-exact = { workspace = true }
-quire-semantic-value = { workspace = true }
+fsl-replay = { path = "../../../fsl-replay" }
+filament-eval = { workspace = true }
+filament-exact = { workspace = true }
+filament-semantic-value = { workspace = true }
 
 [dev-dependencies]
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }

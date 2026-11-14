@@ -3,7 +3,7 @@ id: TC-793
 title: "Unit compile carries one linked dispatch table per called operation, named by each call"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: verifies
 ---
 # TC-793: Unit compile carries one linked dispatch table per called operation, named by each call

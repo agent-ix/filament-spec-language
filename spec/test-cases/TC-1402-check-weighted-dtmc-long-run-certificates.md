@@ -3,11 +3,11 @@ id: TC-1402
 title: "Check weighted DTMC long-run certificates against independently evaluated weights"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-199
+  - target: ix://agent-ix/filament-spec-language/FR-199
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: verifies
 ---
 # TC-1402: Check weighted DTMC long-run certificates against independently evaluated weights
@@ -40,7 +40,7 @@ bottom components; it does not import a solver's stationary vector.
    reachable terminal stutter. Retain controls where only transient
    positions have zero weight.
 3. Serialize valid documents and independently check them in a fresh
-   process without qsl-analyze/provider linkage. Apply each AC-33 mutation
+   process without fsl-analyze/provider linkage. Apply each AC-33 mutation
    independently, including missing top-level values and a missing
    component bias/gain/value; assert typed member errors, not merely
    nonacceptance. Shift component biases by a nonzero constant to preserve

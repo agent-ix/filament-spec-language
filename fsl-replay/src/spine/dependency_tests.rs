@@ -1,0 +1,1018 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-446 (FR-099-AC-1 to AC-4): spine `compile` resolves each `import`
+//! against the supplied libraries, compiles each library from source, binds
+//! the import to its library, and refuses each ADR-015 D-1
+//! case with no package.
+
+use std::collections::BTreeMap;
+
+use fsl_cst::HostCause;
+use fsl_foundation::diagnostic::LimitKind;
+use fsl_foundation::Setting;
+use fsl_foundation::{Code, SourceIdentity};
+use fsl_package::{emit_checked, read_import_view};
+use fsl_semantics::check::CheckRefusal;
+use fsl_semantics::library::LibraryName;
+use ix_trace_rs::trace;
+use serde_json::Value;
+
+use super::{
+    compose, CompileRefusal, ComposedUnit, DependencyInput, DependencyInputRefusal,
+    DependencyLimits, ImportRefusal, SourceHolder, SpineLimits, SpineStage, SuppliedLibrary,
+};
+
+const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n";
+
+const F: &str = "function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
+const H: &str = "function h using v(): Boolean pure { true }\n";
+
+fn lib(identity: &str) -> LibraryName {
+    LibraryName::new(identity).expect("a non-empty identity")
+}
+
+/// `import "identity" as alias;`.
+fn import(identity: &str, alias: &str) -> String {
+    format!("import \"{identity}\" as {alias};\n")
+}
+
+/// `package`'s import view as `identity`, read alone.
+fn view_of(
+    package: &fsl_package::CheckedPackage,
+    identity: &str,
+) -> Result<fsl_semantics::library::ImportView, fsl_package::ImportViewRefusal> {
+    let emission =
+        emit_checked(package, fsl_package::EmitLimits::fixture()).expect("the package emits");
+    read_import_view(
+        package,
+        &emission,
+        lib(identity),
+        &BTreeMap::new(),
+        &mut fsl_package::AdmittedPackages::default(),
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+    )
+}
+
+/// A library supplied as `identity`, from source (`a`, `name`, `git`, `1`)
+/// holding `body` after the header.
+fn library(identity: &str, name: &str, body: &str) -> SuppliedLibrary {
+    SuppliedLibrary {
+        identity: identity.to_owned(),
+        source: SourceIdentity::new("a", name),
+        path: format!("{name}.native"),
+        bytes: format!("{HEADER}{body}").into_bytes(),
+    }
+}
+
+fn input(libraries: Vec<SuppliedLibrary>) -> DependencyInput {
+    DependencyInput::new(libraries).expect("an admissible dependency input")
+}
+
+/// Spine compile of `source`, as (`a`, `identity`, `git`, `1`).
+fn compile_as(
+    identity: &str,
+    source: &str,
+    dependencies: &DependencyInput,
+) -> Result<ComposedUnit, Box<CompileRefusal>> {
+    compose(
+        SourceIdentity::new("a", identity),
+        &format!("{identity}.native"),
+        source.as_bytes(),
+        &BTreeMap::new(),
+        dependencies,
+        SpineLimits::default(),
+    )
+}
+
+/// The importing unit `u`: the header, then `body`.
+fn unit(body: &str) -> String {
+    format!("{HEADER}{body}")
+}
+
+/// The text `region` covers in `source`.
+fn covered<'a>(source: &'a str, refusal: &CompileRefusal) -> &'a str {
+    let region = refusal.region().expect("the refusal is located");
+    let start = usize::try_from(region.start()).unwrap();
+    let end = usize::try_from(region.end()).unwrap();
+    &source[start..end]
+}
+
+fn wire(compiled: &ComposedUnit) -> Value {
+    serde_json::from_slice(compiled.emitted.bytes()).expect("the wire is JSON")
+}
+
+/// FR-099-AC-3 (TC-446 step 3), selection and dependency input: each
+/// refusal is located as D-1 states, and none yields a package.
+#[trace("FR-099-AC-3", "TC-446")]
+#[trace("FSpec-FR-307-AC-6", "FSpec-TC-227")]
+#[test]
+fn selection_and_dependency_input_refusals() {
+    let geometry = library("test/geometry", "geometry", F);
+    let declaration = import("test/geometry", "g");
+    let source = unit(&format!("{declaration}{H}"));
+
+    // No library supplied.
+    let missing = compile_as("u", &source, &DependencyInput::default())
+        .expect_err("nothing supplies test/geometry");
+    assert_eq!(missing.stage(), SpineStage::Intake);
+    assert_eq!(missing.code(), Code::MissingImport);
+    assert!(
+        matches!(
+            &*missing,
+            CompileRefusal::Import {
+                refusal: ImportRefusal::MissingSelection { identity },
+                ..
+            } if identity.as_str() == "test/geometry"
+        ),
+        "{missing:?}"
+    );
+    assert_eq!(covered(&source, &missing), "\"test/geometry\"");
+
+    // Two libraries supplied as test/geometry.
+    let twice = DependencyInput::new(vec![
+        geometry.clone(),
+        library("test/geometry", "geometry-2", F),
+    ])
+    .expect_err("one library per identity");
+    assert_eq!(twice.code(), Code::InvalidPackage);
+    assert_eq!(twice.cause(), Some("conflicting-definition"));
+    assert_eq!(
+        twice,
+        DependencyInputRefusal::DuplicateIdentity {
+            identity: lib("test/geometry"),
+            first: Box::new(SourceIdentity::new("a", "geometry")),
+            second: Box::new(SourceIdentity::new("a", "geometry-2")),
+        }
+    );
+
+    // Two libraries whose sources share one owner.
+    let same_owner = library("test/other", "geometry", H);
+    let shared = DependencyInput::new(vec![geometry.clone(), same_owner])
+        .expect_err("one owner per compile");
+    assert_eq!(shared.cause(), Some("conflicting-definition"));
+    assert_eq!(
+        shared,
+        DependencyInputRefusal::SharedOwner {
+            first: SourceHolder::Library(lib("test/geometry")),
+            second: lib("test/other"),
+            authority: "a".to_owned(),
+            identity: "geometry".to_owned(),
+        }
+    );
+
+    // A library whose source has the unit's authority and identity.
+    let unit_owner = compile_as("u", &source, &input(vec![library("test/geometry", "u", F)]))
+        .expect_err("the library repeats the unit's owner");
+    assert_eq!(unit_owner.stage(), SpineStage::Intake);
+    assert_eq!(unit_owner.code(), Code::InvalidPackage);
+    assert!(unit_owner.region().is_none());
+    assert!(
+        matches!(
+            &*unit_owner,
+            CompileRefusal::DependencyInput(DependencyInputRefusal::SharedOwner {
+                first: SourceHolder::Unit,
+                second,
+                ..
+            }) if *second == lib("test/geometry")
+        ),
+        "{unit_owner:?}"
+    );
+
+    // An empty identity.
+    let empty = DependencyInput::new(vec![library("", "geometry", F)])
+        .expect_err("an identity is non-empty");
+    assert_eq!(empty.code(), Code::InvalidIdentifier);
+    assert_eq!(empty.host_cause(), Some(HostCause::SelectionIdentity));
+}
+
+#[test]
+fn multi_source_library_identity_mismatch_has_a_typed_refusal() {
+    let refusal = input(vec![library("test/a", "a", H)])
+        .with_library_units("test/a", vec![library("test/b", "b", H)])
+        .expect_err("a source's declared library identity must match its list");
+    assert!(matches!(
+        refusal,
+        DependencyInputRefusal::LibraryIdentityMismatch { .. }
+    ));
+    assert_eq!(refusal.code(), Code::InvalidPackage);
+    assert_eq!(refusal.cause(), Some("conflicting-definition"));
+}
+
+#[test]
+fn multi_source_dependency_exclusion_shares_source_bytes() {
+    let dependencies = input(vec![library("test/a", "a0", H), library("test/b", "b0", H)])
+        .with_library_units(
+            "test/a",
+            vec![library("test/a", "a1", H), library("test/a", "a2", H)],
+        )
+        .expect("both source units belong to one library");
+    let library = lib("test/a");
+    assert!(std::sync::Arc::ptr_eq(
+        &dependencies.libraries[&library],
+        &dependencies.library_units[&library][0]
+    ));
+    let without = dependencies.without_library(&library);
+    let other = lib("test/b");
+    assert!(std::sync::Arc::ptr_eq(
+        &dependencies.library_units[&other][0],
+        &without.library_units[&other][0]
+    ));
+}
+
+#[test]
+fn multi_source_owner_conflicts_scan_every_other_library() {
+    let dependencies = input(vec![
+        library("test/a", "a0", H),
+        library("test/b", "shared", H),
+        library("test/c", "c0", H),
+    ]);
+    let refusal = dependencies
+        .with_library_units(
+            "test/c",
+            vec![library("test/c", "c0", H), library("test/c", "shared", H)],
+        )
+        .expect_err("a later source may not reuse another library's owner");
+    assert!(matches!(
+        refusal,
+        DependencyInputRefusal::SharedOwner {
+            first: SourceHolder::Library(ref first),
+            second,
+            ..
+        } if first == &lib("test/b") && second == lib("test/c")
+    ));
+}
+
+/// FR-099-AC-3 (TC-446 step 3), closure-level and wrapped refusals: a cycle
+/// is reported unwrapped at the import that closes it, in the source that
+/// declares it; a library's own refusal is wrapped with its
+/// dependency path and located in the library's source.
+#[trace("FR-099-AC-3", "TC-446")]
+#[trace("FSpec-FR-307-AC-4", "FSpec-TC-227")]
+#[test]
+fn a_cycle_and_a_library_refusal() {
+    // test/a and test/b import each other.
+    let b_imports_a = import("test/a", "la");
+    let cycle_input = input(vec![
+        library("test/a", "a", &format!("{}{H}", import("test/b", "lb"))),
+        library("test/b", "b", &format!("{b_imports_a}{H}")),
+    ]);
+    let source = unit(&format!("{}{H}", import("test/a", "la")));
+    let cycle = compile_as("u", &source, &cycle_input).expect_err("a imports b imports a");
+    assert_eq!(cycle.stage(), SpineStage::Intake);
+    assert_eq!(cycle.code(), Code::InvalidPackage);
+    let CompileRefusal::Import {
+        refusal: cycle_import @ ImportRefusal::Cycle { path },
+        region,
+    } = &*cycle
+    else {
+        panic!("expected an unwrapped cycle, got {cycle:?}");
+    };
+    assert_eq!(cycle_import.cause(), Some("definition-cycle"));
+    assert_eq!(*path, [lib("test/a"), lib("test/b"), lib("test/a")]);
+    let region = region.as_ref().expect("the cycle is located");
+    assert_eq!(region.source().identity(), "b");
+    let b_source = format!("{HEADER}{b_imports_a}{H}");
+    assert_eq!(covered(&b_source, &cycle), "\"test/a\"");
+
+    // test/a imports a test/missing nothing supplies.
+    let a_imports_missing = import("test/missing", "m");
+    let source = unit(&format!("{}{H}", import("test/a", "la")));
+    let wrapped = compile_as(
+        "u",
+        &source,
+        &input(vec![library(
+            "test/a",
+            "a",
+            &format!("{a_imports_missing}{H}"),
+        )]),
+    )
+    .expect_err("test/a's own import is missing");
+    assert_eq!(wrapped.stage(), SpineStage::Intake);
+    assert_eq!(wrapped.code(), Code::MissingImport);
+    let CompileRefusal::Dependency { path, refusal } = &*wrapped else {
+        panic!("expected a wrapped refusal, got {wrapped:?}");
+    };
+    assert_eq!(*path, [lib("test/a")]);
+    assert!(
+        matches!(
+            &**refusal,
+            CompileRefusal::Import {
+                refusal: ImportRefusal::MissingSelection { identity },
+                ..
+            } if identity.as_str() == "test/missing"
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.region().unwrap().source().identity(), "a");
+    let a_source = format!("{HEADER}{a_imports_missing}{H}");
+    assert_eq!(covered(&a_source, &wrapped), "\"test/missing\"");
+}
+
+/// FR-110 (TC-490): E3 resolves the header of each library the S4 source
+/// resolution compiles, not only the unit's: a library whose header selects
+/// an unknown profile refuses wrapped with its dependency path, located at
+/// the identity literal in the library's own source.
+#[trace("TC-490", "FR-110-AC-2")]
+#[test]
+fn a_library_header_that_does_not_resolve_is_refused() {
+    let bad = HEADER.replace("filament.value.complete/v1", "test:unknown-profile");
+    let mut lib_a = library("test/a", "a", H);
+    lib_a.bytes = format!("{bad}{H}").into_bytes();
+    let source = unit(&format!("{}{H}", import("test/a", "la")));
+    let wrapped = compile_as("u", &source, &input(vec![lib_a]))
+        .expect_err("test/a's header selects an unknown profile");
+    assert_eq!(wrapped.stage(), SpineStage::Assembly);
+    assert_eq!(wrapped.code(), Code::UnknownProfile);
+    let CompileRefusal::Dependency { path, refusal } = &*wrapped else {
+        panic!("expected a wrapped refusal, got {wrapped:?}");
+    };
+    assert_eq!(*path, [lib("test/a")]);
+    let CompileRefusal::Profile { refusals, .. } = &**refusal else {
+        panic!("expected a profile refusal, got {refusal:?}");
+    };
+    assert_eq!(refusals[0].cause(), "unsupported-selection");
+    assert_eq!(refusal.region().unwrap().source().identity(), "a");
+    let a_source = format!("{bad}{H}");
+    assert_eq!(covered(&a_source, &wrapped), "\"test:unknown-profile\"");
+}
+
+/// FR-099-AC-1 (TC-446 step 1): an import that nothing references still
+/// selects its library, and a supplied library the unit does not import
+/// changes nothing in the emitted bytes.
+#[trace("FR-099-AC-1", "TC-446")]
+#[trace("FSpec-FR-307-AC-4", "FSpec-FR-307-AC-6", "FSpec-TC-227")]
+#[test]
+fn an_unreferenced_import_selects_its_library_and_an_unimported_one_changes_nothing() {
+    let source = unit(&format!("{}{H}", import("test/geometry", "g")));
+    let geometry = library("test/geometry", "geometry", F);
+    let alone = compile_as("u", &source, &input(vec![geometry.clone()])).expect("compiles");
+    assert_eq!(
+        alone
+            .package
+            .dependency_selections()
+            .keys()
+            .collect::<Vec<_>>(),
+        [&lib("test/geometry")]
+    );
+
+    let other = library("test/other", "other", H);
+    let with_other = compile_as("u", &source, &input(vec![geometry, other])).expect("compiles");
+    assert_eq!(alone.emitted.bytes(), with_other.emitted.bytes());
+}
+
+/// FR-099-AC-4 (TC-446 step 4): a library identity is any non-empty string,
+/// and the closure is listed in UTF-8 byte order of identity whatever the
+/// import order.
+#[trace("FR-099-AC-4", "TC-446")]
+#[test]
+fn library_identities_are_strings_listed_in_byte_order() {
+    for identity in ["test/geometry", "a.b", "L"] {
+        assert_eq!(lib(identity).as_str(), identity);
+    }
+    assert!(LibraryName::new("").is_err());
+
+    let a = library("test/a", "a", H);
+    let b = library("test/b", "b", H);
+    let dependencies = input(vec![b, a]);
+    let import_a = import("test/a", "la");
+    let import_b = import("test/b", "lb");
+    for imports in [
+        format!("{import_b}{import_a}"),
+        format!("{import_a}{import_b}"),
+    ] {
+        let compiled = compile_as("u", &unit(&format!("{imports}{H}")), &dependencies)
+            .expect("both libraries compile");
+        assert_eq!(
+            compiled
+                .package
+                .dependency_selections()
+                .keys()
+                .collect::<Vec<_>>(),
+            [&lib("test/a"), &lib("test/b")]
+        );
+        let identities: Vec<String> = wire(&compiled)["lock"]["dependency_selections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["identity"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(identities, ["test/a", "test/b"]);
+    }
+
+    // Byte order, not segment or case order: `Z` (0x5A) before `a`
+    // (0x61), and `a.b` (0x2E) before `a/b` (0x2F), imported in reverse.
+    let names = ["Z", "a", "a.b", "a/b"];
+    let supplied: Vec<SuppliedLibrary> = names
+        .iter()
+        .enumerate()
+        .map(|(index, identity)| library(identity, &format!("lib-{index}"), H))
+        .collect();
+    let imports: String = supplied
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(index, library)| import(&library.identity, &format!("l{index}")))
+        .collect();
+    let compiled = compile_as("u", &unit(&format!("{imports}{H}")), &input(supplied))
+        .expect("four libraries compile");
+    let identities: Vec<String> = wire(&compiled)["lock"]["dependency_selections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["identity"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(identities, names);
+}
+
+/// A unit importing `test/c{n-1}`, and the `n` libraries it reaches:
+/// `test/c0` imports nothing and `test/cN` imports `test/c(N-1)`.
+fn chain_of(libraries: usize) -> (String, Vec<SuppliedLibrary>) {
+    let mut chain = Vec::new();
+    for index in 0..libraries {
+        let body = if index == 0 {
+            H.to_owned()
+        } else {
+            format!("{}{H}", import(&format!("test/c{}", index - 1), "l"))
+        };
+        chain.push(library(
+            &format!("test/c{index}"),
+            &format!("c{index}"),
+            &body,
+        ));
+    }
+    let source = unit(&format!(
+        "{}{H}",
+        import(&format!("test/c{}", libraries - 1), "l")
+    ));
+    (source, chain)
+}
+
+/// `compose` of `source` over `libraries` under `dependencies`.
+fn compile_under(
+    source: &str,
+    libraries: Vec<SuppliedLibrary>,
+    dependencies: DependencyLimits,
+) -> Result<ComposedUnit, Box<CompileRefusal>> {
+    compose(
+        SourceIdentity::new("a", "u"),
+        "u.native",
+        source.as_bytes(),
+        &BTreeMap::new(),
+        &input(libraries),
+        SpineLimits {
+            dependencies,
+            ..SpineLimits::default()
+        },
+    )
+}
+
+/// The dependency limit a compile stopped at, and the identity of the
+/// library source whose import reached it (the limit's locus).
+fn reached_dependency_limit(
+    refusal: &CompileRefusal,
+) -> (&str, &fsl_foundation::diagnostic::LimitExceeded) {
+    let CompileRefusal::Limit(limit) = refusal else {
+        panic!("expected a dependency limit, got {refusal:?}");
+    };
+    let Some(fsl_foundation::diagnostic::Locus::Region(region)) = limit.locus() else {
+        panic!("a dependency limit is located at its import, got {limit:?}");
+    };
+    (region.source().identity(), limit)
+}
+
+/// ADR-030: no fixed ceiling bounds how deeply library compiles nest. A
+/// chain of 1,000 libraries compiles at the default limits on a thread with
+/// a 512 KiB stack, so the resolution does not recurse per library. The
+/// closure read's gathering and the drop of a nested package chain are
+/// shown on a 128 KiB stack at 100,000 links in `fsl-package`
+/// (`a_dependency_closure_of_any_length_is_held_on_a_small_stack`,
+/// `a_dependency_chain_of_any_length_drops_on_a_small_stack`).
+#[trace("FR-099-AC-7", "TC-446")]
+#[test]
+fn a_dependency_chain_of_any_length_compiles_on_a_small_stack() {
+    const CHAIN: usize = 1_000;
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            let (source, chain) = chain_of(CHAIN);
+            let compiled = compile_as("u", &source, &input(chain))
+                .expect("a chain longer than any fixed depth compiles");
+            assert_eq!(compiled.package.dependency_selections().len(), CHAIN);
+        })
+        .expect("spawn a 512 KiB thread")
+        .join()
+        .expect("the compile must not overflow a 512 KiB stack");
+}
+
+/// FR-099-AC-7: a unit importing `a`, which imports `b`, which imports `c`.
+/// The refusal is incomplete work (exit 22), never invalid input.
+/// With `dependency.libraries` at 2 the compile refuses at `b`'s import of
+/// `c` naming node count, bound 2, actual 3 and the setting, and at 3 it
+/// compiles.
+#[trace("FR-099-AC-7", "TC-446")]
+#[test]
+fn the_libraries_limit_refuses_the_import_that_would_exceed_it() {
+    let (source, chain) = chain_of(3);
+    let limits = |libraries| DependencyLimits {
+        libraries,
+        ..DependencyLimits::default()
+    };
+    let refusal =
+        compile_under(&source, chain.clone(), limits(2)).expect_err("a third library exceeds two");
+    assert_eq!(refusal.code(), Code::StageLimitExceeded);
+    assert!(
+        refusal.code().is_incomplete(),
+        "a reached limit is incomplete (exit 22)"
+    );
+    assert_eq!(refusal.stage(), SpineStage::Intake);
+    let (importer, limit) = reached_dependency_limit(&refusal);
+    assert_eq!(importer, "c1", "the second library's import of the third");
+    assert_eq!(limit.kind(), LimitKind::NodeCount);
+    assert_eq!(limit.configured_bound(), 2);
+    assert_eq!(limit.actual(), 3);
+    assert_eq!(limit.setting(), Setting::DependencyLibraries);
+    assert_eq!(limit.setting().name(), "dependency.libraries");
+    assert!(compile_under(&source, chain, limits(3)).is_ok());
+}
+
+/// FR-099-AC-7: with `dependency.import_edges` at 2 the same unit refuses at
+/// the third import naming edge count, bound 2, actual 3 and the setting; at
+/// 3 it compiles.
+#[trace("FR-099-AC-7", "TC-446")]
+#[test]
+fn the_import_edges_limit_refuses_the_import_that_would_exceed_it() {
+    let (source, chain) = chain_of(3);
+    let limits = |import_edges| DependencyLimits {
+        import_edges,
+        ..DependencyLimits::default()
+    };
+    let refusal =
+        compile_under(&source, chain.clone(), limits(2)).expect_err("a third import exceeds two");
+    assert_eq!(refusal.code(), Code::StageLimitExceeded);
+    let (_, limit) = reached_dependency_limit(&refusal);
+    assert_eq!(limit.kind(), LimitKind::EdgeCount);
+    assert_eq!(limit.configured_bound(), 2);
+    assert_eq!(limit.actual(), 3);
+    assert_eq!(limit.setting(), Setting::DependencyImportEdges);
+    assert_eq!(limit.setting().name(), "dependency.import_edges");
+    assert!(compile_under(&source, chain, limits(3)).is_ok());
+}
+
+/// FR-099-AC-7: with `dependency.source_bytes` one byte below the three
+/// libraries' summed source bytes the compile refuses naming input bytes and
+/// the setting; at the sum it compiles.
+#[trace("FR-099-AC-7", "TC-446")]
+#[test]
+fn the_source_bytes_limit_refuses_the_library_that_would_exceed_it() {
+    let (source, chain) = chain_of(3);
+    let total: usize = chain.iter().map(|library| library.bytes.len()).sum();
+    let limits = |source_bytes| DependencyLimits {
+        source_bytes,
+        ..DependencyLimits::default()
+    };
+    let refusal = compile_under(&source, chain.clone(), limits(total - 1))
+        .expect_err("one byte short of the three sources");
+    assert_eq!(refusal.code(), Code::StageLimitExceeded);
+    let (_, limit) = reached_dependency_limit(&refusal);
+    assert_eq!(limit.kind(), LimitKind::InputBytes);
+    assert_eq!(limit.configured_bound(), u64::try_from(total - 1).unwrap());
+    assert_eq!(limit.actual(), u128::try_from(total).unwrap());
+    assert_eq!(limit.setting(), Setting::DependencySourceBytes);
+    assert_eq!(limit.setting().name(), "dependency.source_bytes");
+    assert!(compile_under(&source, chain, limits(total)).is_ok());
+}
+
+/// FR-091-AC-24's selective form (ADR-015 D-1): the assembler refuses
+/// `UnsuppliedImport` only for an import with no admitted entry. With
+/// test/geometry admitted and test/other not, exactly one error names
+/// test/other.
+#[trace("FR-091-AC-24", "TC-405")]
+#[test]
+fn the_assembler_refuses_only_the_unadmitted_import() {
+    use fsl_semantics::check::{AdmittedImport, AssemblyCause, PackageDeclarations};
+    let geometry = library("test/geometry", "geometry", F);
+    let alone = compose(
+        geometry.source.clone(),
+        &geometry.path,
+        &geometry.bytes,
+        &BTreeMap::new(),
+        &DependencyInput::default(),
+        SpineLimits::default(),
+    )
+    .unwrap();
+    let view = view_of(&alone.package, "fixture").unwrap();
+    let source = unit(&format!(
+        "{}{}{H}",
+        import("test/geometry", "g"),
+        import("test/other", "o"),
+    ));
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("a", "u"),
+        "u.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .unwrap();
+    let unit = fsl_forms::build_unit(&parsed).unwrap();
+    let refusal = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        vec![AdmittedImport {
+            identity: lib("test/geometry"),
+            view,
+            graph: alone.package.shared_graph(),
+        }],
+    )
+    .expect_err("test/other is not admitted");
+    assert_eq!(refusal.errors.len(), 1, "{refusal:?}");
+    assert_eq!(
+        refusal.errors[0].cause,
+        AssemblyCause::UnsuppliedImport {
+            identity: "test/other".to_owned()
+        }
+    );
+    let start = refusal.errors[0].span.start;
+    assert!(source[start..].starts_with("import \"test/other\""));
+}
+
+/// FR-317-AC-3 (TC-820): when a union `g` declares `f` and the import alias
+/// `g` exports `f`, `g::f(1)` refuses `ambiguous_declaration`/`ambiguous-name`
+/// naming both candidates, at the call.
+#[trace("FR-317-AC-3", "TC-820")]
+#[test]
+fn a_union_and_an_import_alias_sharing_a_member_name_are_ambiguous() {
+    use fsl_semantics::check::{CheckCause, QualifiedCandidate};
+    let geometry = library("test/geometry", "geometry", F);
+    let source = unit(&format!(
+        "{}union g {{ f(Integer) }}\nfunction h using v(): g pure {{ g::f(1) }}\n",
+        import("test/geometry", "g"),
+    ));
+    let refusal = compile_as("u", &source, &input(vec![geometry]))
+        .expect_err("g::f has a union and an import candidate");
+    assert_eq!(refusal.code(), Code::AmbiguousDeclaration);
+    assert_eq!(refusal.cause(), Some("ambiguous-name"));
+    assert_eq!(covered(&source, &refusal), "g::f(1)");
+    let CompileRefusal::Check { refusals, .. } = &*refusal else {
+        panic!("a check refusal, not {refusal:?}")
+    };
+    let [CheckRefusal {
+        cause: CheckCause::AmbiguousQualified(ambiguous),
+        ..
+    }] = refusals.as_slice()
+    else {
+        panic!("one ambiguity, not {refusals:?}")
+    };
+    assert_eq!(ambiguous.name, "g::f");
+    assert!(matches!(
+        ambiguous.candidates.as_slice(),
+        [QualifiedCandidate::Union(_), QualifiedCandidate::Import(alias)] if alias == "g"
+    ));
+}
+
+/// The domain package the refusal library's `model M` selects.
+fn spine_model() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../tests/fixtures/spine-model.semantic-ir.json"
+    ))
+    .unwrap()
+}
+
+/// FR-099-AC-5 (TC-446 step 5), refusals: a call of a library function
+/// returning a record, over a set of records, over a tuple holding a
+/// record, or over a model reference, and a use of the library's record in
+/// a type position, each refuse `ill_typed`/`operator-ineligible` at the use.
+#[trace("FR-099-AC-5", "TC-446")]
+#[trace("FSpec-FR-307-AC-6", "FSpec-TC-227")]
+#[test]
+fn an_imported_name_whose_signature_is_package_dependent_refuses() {
+    let document = spine_model();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let body = format!(
+        "model M = \"acme/orders\";\n\
+         record R {{ datum: Int[0, 9]; }}\n\
+         tuple T(R, Boolean);\n\
+         {F}\
+         function mk using v(x: Int[0, 9]): R pure {{ R{{datum: x}} }}\n\
+         function every using v(xs: Set<R>[0, 3]): Boolean pure {{ true }}\n\
+         function pair using v(t: T): Boolean pure {{ true }}\n\
+         function widget using v(w: Reference<M::Widget>): Boolean pure {{ true }}\n"
+    );
+    let geometry = library("test/geometry", "geometry", &body);
+    let compile_with = |source: &SourceIdentity, bytes: &[u8], dependencies: &DependencyInput| {
+        compose(
+            source.clone(),
+            "unit.native",
+            bytes,
+            &packages,
+            dependencies,
+            SpineLimits::default(),
+        )
+    };
+    let declaration = import("test/geometry", "g");
+    let dependencies = input(vec![geometry]);
+    let u = SourceIdentity::new("a", "u");
+    for (callee, body) in [
+        (
+            "g::mk",
+            "function p using v(y: Int[0, 9]): Boolean pure { g::mk(y) = g::mk(y) }\n",
+        ),
+        (
+            "g::every",
+            "function p using v(y: Int[0, 9]): Boolean pure { g::every(y) }\n",
+        ),
+        (
+            "g::pair",
+            "function p using v(y: Int[0, 9]): Boolean pure { g::pair(y) }\n",
+        ),
+        (
+            "g::widget",
+            "function p using v(y: Int[0, 9]): Boolean pure { g::widget(y) }\n",
+        ),
+        (
+            "g::R",
+            "function p using v(y: Int[0, 9]): Boolean pure { g::R(y) }\n",
+        ),
+        (
+            "g::R",
+            "function p using v(r: g::R): Boolean pure { true }\n",
+        ),
+    ] {
+        let source = unit(&format!("{declaration}{body}"));
+        let refusal = compile_with(&u, source.as_bytes(), &dependencies)
+            .expect_err("a package-dependent signature is ineligible");
+        assert_eq!(refusal.code(), Code::IllTyped, "{callee}: {refusal}");
+        let cause = match &*refusal {
+            CompileRefusal::Check { refusals, .. } => refusals[0].cause.cause(),
+            // A type position is the assembler's.
+            CompileRefusal::Assembly { refusal, .. } => {
+                Some(refusal.errors[0].cause.catalog_code().cause())
+            }
+            other => panic!("{callee}: expected a check refusal, got {other:?}"),
+        };
+        assert_eq!(cause, Some("operator-ineligible"), "{callee}");
+        assert!(
+            covered(&source, &refusal).starts_with(callee),
+            "{callee}: at {:?}",
+            covered(&source, &refusal)
+        );
+    }
+}
+
+/// ADR-015 D-5: an imported call evaluates the library function's body
+/// against the library's own package, where its own calls resolve, and the
+/// caller's package is restored when it returns.
+#[trace("FR-099-AC-5", "TC-446")]
+#[trace("FSpec-FR-307-AC-6", "FSpec-TC-227")]
+#[test]
+fn an_imported_call_evaluates_in_the_library_and_returns_to_the_caller() {
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
+    use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
+    use fsl_semantics::model::object_environment::ObjectEnvironment;
+
+    let geometry = library(
+        "test/geometry",
+        "geometry",
+        "function small using v(x: Int[0, 9]): Boolean pure { x < 5 }\n\
+         function f using v(x: Int[0, 9]): Boolean pure { small(x) }\n",
+    );
+    let source = unit(&format!(
+        "{}function local using v(y: Int[0, 9]): Boolean pure {{ y > 1 }}\n\
+         function p using v(y: Int[0, 9]): Boolean pure {{ g::f(y) and local(y) }}\n",
+        import("test/geometry", "g")
+    ));
+    let compiled = compile_as("u", &source, &input(vec![geometry]))
+        .unwrap_or_else(|refusal| panic!("p checks: {refusal}"));
+    let limits = ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    };
+    let p = QualifiedName::unqualified("p").unwrap();
+    for (y, expected) in [(3_i64, true), (1, false), (7, false)] {
+        let evaluation = compiled
+            .package
+            .call(
+                &p,
+                vec![Value::Integer(Integer::from(y))],
+                &ObjectEnvironment::default(),
+                &mut Meter::new(limits),
+            )
+            .expect("the call runs");
+        let FamilyOutcome::Evaluated(outcome) = evaluation.outcome else {
+            panic!("a kernel outcome, not {:?}", evaluation.outcome);
+        };
+        assert_eq!(
+            format!("{outcome:?}"),
+            format!("{:?}", Outcome::Completed(Value::Boolean(expected))),
+            "p({y})"
+        );
+    }
+}
+
+/// FR-087-AC-13 (TC-379 steps 1 and 3): an import with no `as` binds no
+/// qualifier, so neither `f` nor `test/geometry`'s own spelling reaches
+/// the library; `l::f` resolves through the import view to `{d, f's node
+/// id}` (the callee [`an_imported_call_is_typed_from_the_library_and_lowered_to_a_dependency_reference`]
+/// checks); `l::Q`, which the library does not export, refuses
+/// `missing_declaration`/`missing-name`.
+#[trace("FR-087-AC-13", "TC-379")]
+#[test]
+fn e3_resolves_an_imported_name_only_through_its_qualifier() {
+    let geometry = library("test/geometry", "geometry", F);
+    let dependencies = input(vec![geometry]);
+    let unqualified = "import \"test/geometry\";\n".to_owned();
+    let qualified = import("test/geometry", "l");
+    for (declaration, call, name) in [
+        (&unqualified, "f(y)", "f"),
+        (&unqualified, "geometry::f(y)", "geometry::f"),
+        (&qualified, "l::Q(y)", "Q"),
+    ] {
+        let source = unit(&format!(
+            "{declaration}function p using v(y: Int[0, 9]): Boolean pure {{ {call} }}\n"
+        ));
+        let refusal = compile_as("u", &source, &dependencies).expect_err("no such name");
+        assert_eq!(refusal.stage(), SpineStage::Check, "{call}");
+        assert_eq!(refusal.code(), Code::MissingDeclaration, "{call}");
+        let CompileRefusal::Check { refusals, .. } = &*refusal else {
+            panic!("{call}: expected a check refusal, got {refusal:?}");
+        };
+        let missing_name_matches = if call.contains("::") {
+            matches!(
+                &refusals[0].cause,
+                fsl_semantics::check::CheckCause::MissingQualifiedName(missing)
+                    if missing.name == call.split('(').next().unwrap_or_default()
+                        && missing.segments.iter().map(String::as_str).collect::<Vec<_>>()
+                            == call.split('(').next().unwrap_or_default().split("::").collect::<Vec<_>>()
+            )
+        } else {
+            matches!(
+                &refusals[0].cause,
+                fsl_semantics::check::CheckCause::MissingName(missing) if missing == name
+            )
+        };
+        assert!(missing_name_matches, "{call}: {:?}", refusals[0].cause);
+        assert_eq!(refusals[0].cause.cause(), Some("missing-name"), "{call}");
+    }
+}
+
+/// ADR-015 D-5: a halt raised inside an imported function's body is
+/// located at the `ImportedCall` node in the caller's graph, never at a
+/// library node, whose declaration index names another package. Every
+/// work budget from zero until `p` completes stops `p` located at its own
+/// root call `g::f(y)`; the budgets past the call's own charge stop inside
+/// the library body.
+#[trace("FR-099-AC-5", "TC-446")]
+#[test]
+fn a_halt_inside_an_imported_body_is_located_at_the_callers_call() {
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
+    use filament_semantic_value::location::{
+        ExpressionLocation as Location, ExpressionOwner as Origin,
+    };
+    use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
+    use fsl_semantics::model::object_environment::ObjectEnvironment;
+
+    let geometry = library(
+        "test/geometry",
+        "geometry",
+        "function f using v(x: Int[0, 9]): Boolean pure \
+         { x < 5 and x < 6 and x < 7 and x < 8 and x < 9 and x < 10 }\n",
+    );
+    let source = unit(&format!(
+        "{}function p using v(y: Int[0, 9]): Boolean pure {{ g::f(y) }}\n",
+        import("test/geometry", "g")
+    ));
+    let compiled = compile_as("u", &source, &input(vec![geometry]))
+        .unwrap_or_else(|refusal| panic!("p checks: {refusal}"));
+    let p = QualifiedName::unqualified("p").unwrap();
+    let mut stops = 0;
+    for work_units in 0.. {
+        let limits = ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units,
+            result_units: u64::MAX,
+        };
+        let evaluation = compiled
+            .package
+            .call(
+                &p,
+                vec![Value::Integer(Integer::from(3_i64))],
+                &ObjectEnvironment::default(),
+                &mut Meter::new(limits),
+            )
+            .expect("the call runs");
+        if let FamilyOutcome::Evaluated(Outcome::Completed(_)) = evaluation.outcome {
+            break;
+        }
+        // The top-level call's own charge is denied before the machine
+        // runs, with no location.
+        let Some(location) = evaluation.location else {
+            assert_eq!(stops, 0, "work_units {work_units}: an unlocated stop");
+            continue;
+        };
+        stops += 1;
+        assert!(
+            matches!(
+                &location,
+                Location { origin: Origin::Body { function, .. }, .. } if function == "p" && location.depth() == 0
+            ),
+            "work_units {work_units}: {location:?}"
+        );
+        assert!(work_units < 1_000, "p never completes");
+    }
+    assert!(
+        stops > 3,
+        "the budgets reach into the library body: {stops}"
+    );
+}
+
+/// ADR-015 D-5 (`is_package_independent`): a library function over each
+/// accepted non-integer scalar kind -- Decimal, Rational, Text, Option and
+/// a collection -- is callable through an import, and the importing
+/// package's I2 view read admits it. Float is package-independent too, but
+/// the assembler refuses a Float type in a `1-draft` unit (FR-091-AC-19,
+/// TC-405), so no compiled call over it exists to test.
+#[trace("FR-099-AC-5", "TC-446")]
+#[test]
+fn an_imported_call_over_each_independent_scalar_kind_checks_and_reads() {
+    for kind in [
+        "Decimal[0, 100; 0, 2; nearest-even]",
+        "Rational[0, 1; 1, 5]",
+        "Text[1, 100; nfc]",
+        "Option<Boolean>",
+        "Set<Int[0, 9]>[0, 4]",
+    ] {
+        let geometry = library(
+            "test/geometry",
+            "geometry",
+            &format!("function f using v(x: {kind}): Boolean pure {{ true }}\n"),
+        );
+        let source = unit(&format!(
+            "{}function p using v(x: {kind}): Boolean pure {{ g::f(x) }}\n",
+            import("test/geometry", "g")
+        ));
+        let compiled = compile_as("u", &source, &input(vec![geometry]))
+            .unwrap_or_else(|refusal| panic!("{kind}: {refusal}"));
+        view_of(&compiled.package, "fixture")
+            .unwrap_or_else(|refusal| panic!("{kind}: the I2 read admits p: {refusal}"));
+    }
+}
+
+/// FR-307-AC-4 (TC-227): two imports declaring one qualifier are
+/// `ambiguous_declaration`/`ambiguous-name`, and a name used through the
+/// qualifier of an import written without `as` is `missing_declaration`.
+#[trace("FSpec-FR-307-AC-4", "FSpec-TC-227")]
+#[test]
+fn a_duplicate_import_qualifier_is_ambiguous_and_an_unaliased_import_binds_no_name() {
+    let dependencies = input(vec![
+        library("test/geometry", "geometry", F),
+        library("test/other", "other", F),
+    ]);
+
+    let duplicate = unit(&format!(
+        "{}{}{H}",
+        import("test/geometry", "g"),
+        import("test/other", "g"),
+    ));
+    let refusal =
+        compile_as("u", &duplicate, &dependencies).expect_err("one qualifier names two imports");
+    assert_eq!(refusal.code(), Code::AmbiguousDeclaration);
+    let CompileRefusal::Assembly {
+        refusal: assembly, ..
+    } = &*refusal
+    else {
+        panic!("an assembly refusal, not {refusal:?}");
+    };
+    assert_eq!(
+        assembly.errors[0].cause.catalog_code().to_string(),
+        "ambiguous_declaration/ambiguous-name"
+    );
+
+    let unaliased = unit(
+        "import \"test/geometry\";\n\
+         function p using v(y: Int[0, 9]): Boolean pure { g::f(y) }\n",
+    );
+    let refusal = compile_as("u", &unaliased, &dependencies)
+        .expect_err("an import without `as` binds no qualifier");
+    assert_eq!(refusal.code(), Code::MissingDeclaration);
+    assert_eq!(covered(&unaliased, &refusal), "g::f(y)");
+}

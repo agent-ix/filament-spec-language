@@ -3,7 +3,7 @@ id: TC-1080
 title: "A refused automaton state key rejects the closure certificate and the proof does not settle proved"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: verifies
 ---
 # TC-1080: A refused automaton state key rejects the closure certificate and the proof does not settle proved

@@ -7,7 +7,7 @@
 //! of its bounds, and [`fixture`] emits it through the real v2 emitter and reads
 //! it back through IR's checked-package v2 reader. [`write()`] writes those
 //! bytes, for [`CASES`], into a new directory so IR's conformance gate can
-//! read them without depending on QSL.
+//! read them without depending on FSL.
 //! The `population_v2_fixtures` example is a thin caller of [`write()`].
 //!
 //! Beside each case the directory holds the domain package document the
@@ -23,23 +23,23 @@
 //! derivations and re-encoded with IR's public encoder, then read by IR's
 //! public reader; nothing of IR is copied.
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::{
     fs, io,
     path::{Path, PathBuf},
 };
 
-use qsl_forms::{BuiltinType, Expression, FunctionDeclaration, TypeForm, TypeFormHead};
-use qsl_foundation::{source::provenance::SourceRegion, Span};
-use qsl_package::{read_import_view, AdmittedPackages, CheckedPackage, V2ReadLimits};
-use qsl_semantics::{check::PackageDeclarations, library::LibraryName};
-use quire_contract_model::{
+use filament_contract_model::{
     encode_checked_package_v2, BoundedDomainForm, CheckedNodeId, CheckedNodeKind,
     CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageSidecarsRef,
     CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedPackageV2ReadResult,
     CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedTerm,
 };
-use quire_semantic_value::checking::CheckingLimits;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_forms::{BuiltinType, Expression, FunctionDeclaration, TypeForm, TypeFormHead};
+use fsl_foundation::{source::provenance::SourceRegion, Span};
+use fsl_package::{read_import_view, AdmittedPackages, CheckedPackage, V2ReadLimits};
+use fsl_semantics::{check::PackageDeclarations, library::LibraryName};
 
 #[path = "../tests/support/spine_model.rs"]
 mod spine_model;
@@ -222,7 +222,7 @@ fn with_population_package<T>(
         None,
         Expression::boolean(true),
     );
-    let packages = qsl_semantics::model::intake::package_input([DOMAIN_PACKAGE])
+    let packages = fsl_semantics::model::intake::package_input([DOMAIN_PACKAGE])
         .map_err(|refusal| Error::Admission(format!("{refusal:?}")))?;
     let mut declarations = assemble(&packages)?;
     declarations.functions.extend([pop]);
@@ -235,23 +235,23 @@ fn with_population_package<T>(
 /// The spine-model unit run S1, S2, I1 (against `packages`) and the
 /// assembler, as spine `compile` runs it.
 fn assemble(
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<PackageDeclarations, Error> {
     let stage = |stage| move |detail: String| Error::Assemble { stage, detail };
-    let parsed = qsl_cst::parse(
-        qsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         spine_model::unit().as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .map_err(|refusal| stage("S1")(format!("{refusal:?}")))?;
     let raw = parsed.source().reference().clone();
     let unit =
-        qsl_forms::build_unit(&parsed).map_err(|refusal| stage("S2")(format!("{refusal:?}")))?;
-    let models = qsl_semantics::model::intake::admit_unit(
+        fsl_forms::build_unit(&parsed).map_err(|refusal| stage("S2")(format!("{refusal:?}")))?;
+    let models = fsl_semantics::model::intake::admit_unit(
         &unit.selections().models,
         packages,
-        qsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .map_err(|refusal| stage("I1")(format!("{refusal:?}")))?;
     PackageDeclarations::assemble(raw, "spine-model".into(), unit, models, Vec::new())
@@ -262,14 +262,14 @@ fn assemble(
 /// kinds IR's reader decoded from them.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fixture {
-    /// The `quire.checked-package/v2` bytes.
+    /// The `filament.checked-package/v2` bytes.
     pub bytes: Vec<u8>,
     /// Each graph node's family and form as IR's reader decoded it.
     pub node_kinds: Vec<CheckedNodeKind>,
 }
 
 /// `bounds`' package through the v2 emitter, with nothing omitted, and read
-/// back through QSL's I2 read, which runs IR's checked-package v2 reader and
+/// back through FSL's I2 read, which runs IR's checked-package v2 reader and
 /// refuses unless it admits the bytes.
 pub fn fixture(bounds: &[u64]) -> Result<Fixture, Error> {
     let bindings: Vec<Binding> = bounds
@@ -283,7 +283,7 @@ pub fn fixture(bounds: &[u64]) -> Result<Fixture, Error> {
 /// package it admitted them as.
 #[derive(Clone, Debug)]
 pub struct VariantFixture {
-    /// The `quire.checked-package/v2` bytes.
+    /// The `filament.checked-package/v2` bytes.
     pub bytes: Vec<u8>,
     /// The package IR's checked-package v2 reader admitted `bytes` as.
     pub package: CheckedPackageV2,
@@ -319,10 +319,10 @@ fn emit_and_read(package: &CheckedPackage) -> Result<EmittedRead, Error> {
     // of the unit the package was checked from.
     let source = package.graph().source().clone();
     let length = u64::try_from(spine_model::unit().len()).unwrap_or(u64::MAX);
-    let emission = qsl_package::emit_package(
+    let emission = fsl_package::emit_package(
         package,
         |_| SourceRegion::new(source.clone(), 0, length).ok(),
-        qsl_package::EmitLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
     )
     .map_err(|refusal| Error::Emit(format!("{refusal:?}")))?;
     if !emission.omitted().is_empty() {
@@ -332,7 +332,7 @@ fn emit_and_read(package: &CheckedPackage) -> Result<EmittedRead, Error> {
     }
     let library = LibraryName::new("spine-model")
         .map_err(|refusal| Error::Admission(format!("{refusal:?}")))?;
-    let domain_packages = qsl_semantics::model::intake::package_input([DOMAIN_PACKAGE])
+    let domain_packages = fsl_semantics::model::intake::package_input([DOMAIN_PACKAGE])
         .map_err(|refusal| Error::Admission(format!("{refusal:?}")))?;
     let mut admitted = AdmittedPackages::default();
     read_import_view(
@@ -342,7 +342,7 @@ fn emit_and_read(package: &CheckedPackage) -> Result<EmittedRead, Error> {
         &domain_packages,
         &mut admitted,
         V2ReadLimits::fixture(),
-        qsl_package::EmitLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
     )
     .map_err(|refusal| Error::Admission(format!("{refusal:?}")))?;
     let admitted = admitted
@@ -429,7 +429,7 @@ fn retarget(
     let limits = quire_canonical::Limits::new(u64::MAX);
     // The nodes are in resolved form: write their FR-322 operand slots and rows.
     let operand_rows =
-        qsl_package::write_operand_slots(&mut nodes, qsl_package::EmitLimits::new(u64::MAX))
+        fsl_package::write_operand_slots(&mut nodes, fsl_package::EmitLimits::new(u64::MAX))
             .map_err(|error| refuse(RetargetRefusal::Encode(format!("{error:?}"))))?;
     let graph = CheckedSemanticGraphV2 {
         graph_version: base.resolved_graph().graph_version.clone(),
@@ -503,11 +503,11 @@ fn io_at(path: &Path, source: io::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ix_trace_rs::trace;
-    use quire_contract_model::{
+    use filament_contract_model::{
         BoundedDomainForm, CheckedNodeId, CheckedOccurrenceRole, CheckedPackageV2,
         CheckedSemanticNodeV2,
     };
+    use ix_trace_rs::trace;
 
     fn written() -> (tempfile::TempDir, PathBuf) {
         let parent = tempfile::tempdir().unwrap();

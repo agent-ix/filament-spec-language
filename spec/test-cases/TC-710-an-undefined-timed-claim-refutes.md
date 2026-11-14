@@ -3,11 +3,11 @@ id: TC-710
 title: "An undefined timed claim evaluation refutes with a timed prefix and replays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-235
+  - target: ix://agent-ix/filament-spec-language/FR-235
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: verifies
 ---
 # TC-710: An undefined timed claim evaluation refutes with a timed prefix and replays

@@ -30,7 +30,7 @@
           "operations": "optional",
           "supertypes": "optional"
         },
-        "meaning": "quire.meaning.systems.interface/v1"
+        "meaning": "filament.meaning.systems.interface/v1"
       }
     }
   ],
@@ -60,7 +60,7 @@
         {
           "identity": "ix://acme/systems/Sensor/reading",
           "name": "reading",
-          "typeRef": "ix://quire/native/Integer",
+          "typeRef": "ix://filament/native/Integer",
           "presence": "required",
           "nullable": false,
           "defaultKind": "none",

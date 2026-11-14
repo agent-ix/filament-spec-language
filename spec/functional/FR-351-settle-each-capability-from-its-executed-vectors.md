@@ -3,13 +3,13 @@ id: FR-351
 title: "Settle each capability from its executed vectors"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-035
+  - target: ix://agent-ix/filament-spec-language/US-035
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-350
+  - target: ix://agent-ix/filament-spec-language/FR-350
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-311
+  - target: ix://agent-ix/filament-specification/FR-311
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-336
+  - target: ix://agent-ix/filament-specification/FR-336
     type: depends_on
 ---
 # FR-351: Settle each capability from its executed vectors
@@ -24,10 +24,10 @@ executed in the same run (FR-350).
 
 - The per-vector outcomes of FR-350.
 - The scope: the capability ids the caller selects, or, when the caller
-  selects none, QSL's default scope of corpus capabilities applicable to a
-  QSL consumer and a profile in QSL's definition catalog. QSpec FR-336 owns
+  selects none, FSL's default scope of corpus capabilities applicable to a
+  FSL consumer and a profile in FSL's definition catalog. FSpec FR-336 owns
   the capability inventory and applicability representation;
-  [FR-350](FR-350-run-the-conformance-corpus-against-qsl.md) defines QSL's
+  [FR-350](FR-350-run-the-conformance-corpus-against-fsl.md) defines FSL's
   consumer selection.
 
 ## Outputs
@@ -43,7 +43,7 @@ of the vectors that decided it.
   [FR-353](FR-353-settle-the-complete-v1-qualification-verdict.md), without
   settling a capability. A nonempty scope with no applicable vectors
   still settles its selected capabilities as `uncovered`.
-- If a capability in scope has no vector whose applicability names a QSL
+- If a capability in scope has no vector whose applicability names an FSL
   consumer type,
   then its outcome SHALL be `uncovered`.
 - Otherwise its outcome SHALL be the first of these that holds:
@@ -55,14 +55,14 @@ of the vectors that decided it.
 - A non-`passed` capability SHALL hold the ids of every vector with that
   outcome.
 - Each capability outcome is computed from vectors executed in this run.
-  The corpus's recorded `results` member (QSpec FR-336) is not an input to
+  The corpus's recorded `results` member (FSpec FR-336) is not an input to
   any outcome.
 - A caller-selected scope SHALL be the set of the named capability ids:
   repeating an id cannot execute its vectors twice or count the capability
   twice. Selection does not grant a new consumer type to its vectors. An
-  explicitly selected capability with no QSL-applicable vectors is
+  explicitly selected capability with no FSL-applicable vectors is
   `uncovered`, even when its monitor-only vectors have recorded passes.
-- If the caller selects a capability id not declared by the QSpec FR-336
+- If the caller selects a capability id not declared by the FSpec FR-336
   corpus, then the runner SHALL refuse the run with
   `unknown_required_feature`/`unknown-feature`, naming the id, before it
   executes any vector.
@@ -72,14 +72,14 @@ of the vectors that decided it.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-351-AC-1 | A capability whose three vectors are `passed` is `passed`. A capability with one `passed` and one `failed` vector is `failed`, holding the failed vector's id. A capability with one `unsupported` and one `incomplete` vector is `unsupported`. A capability with one `tool-failure` and one `failed` vector is `failed`. | Test |
-| FR-351-AC-2 | A capability that QSpec FR-336 marks applicable to the `language` consumer and a catalog-held profile, with no vector, is `uncovered`. A capability applicable only to the `monitor` consumer, and a language capability applicable only to a profile absent from QSL's catalog, are outside the default scope and appear in no outcome. | Test |
-| FR-351-AC-3 | A corpus that records `passed` for a vector QSL fails does not change the result: QSL settles that capability as `failed` from the vector executed in this run. | Test |
+| FR-351-AC-2 | A capability that FSpec FR-336 marks applicable to the `language` consumer and a catalog-held profile, with no vector, is `uncovered`. A capability applicable only to the `monitor` consumer, and a language capability applicable only to a profile absent from FSL's catalog, are outside the default scope and appear in no outcome. | Test |
+| FR-351-AC-3 | A corpus that records `passed` for a vector FSL fails does not change the result: FSL settles that capability as `failed` from the vector executed in this run. | Test |
 | FR-351-AC-4 | A run scoped to two capability ids settles exactly those two and executes no vector from another capability. Repeating one selected id gives the same vector executions and capability outcomes as naming it once. Explicitly selecting a monitor-only capability settles it `uncovered` without running its vectors. A run scoped to an id the corpus does not declare refuses `unknown_required_feature`/`unknown-feature` naming the id and executes no vector. | Test |
 
 ## Dependencies
 
-- [FR-350](FR-350-run-the-conformance-corpus-against-qsl.md) (per-vector
+- [FR-350](FR-350-run-the-conformance-corpus-against-fsl.md) (per-vector
   outcomes).
-- QSpec FR-311 (a missing, unsupported, failed or unexecuted vector is a
+- FSpec FR-311 (a missing, unsupported, failed or unexecuted vector is a
   gap) and FR-336 (the corpus capability inventory and applicability, including
   its `results` member).

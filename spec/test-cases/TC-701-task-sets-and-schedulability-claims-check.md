@@ -3,7 +3,7 @@ id: TC-701
 title: "S3 checks task sets and routes schedulability claims to EN-7"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-246
+  - target: ix://agent-ix/filament-spec-language/FR-246
     type: verifies
 ---
 # TC-701: S3 checks task sets and routes schedulability claims to EN-7

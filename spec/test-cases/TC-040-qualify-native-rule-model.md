@@ -3,7 +3,7 @@ id: TC-040
 title: "Qualify the source-derived native rule model"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: verifies
 ---
 # TC-040: Qualify the source-derived native rule model

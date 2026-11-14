@@ -3,33 +3,33 @@ id: US-030
 title: "Add providers, plugins and faster execution backends without changing results"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-288
+  - target: ix://agent-ix/filament-spec-language/FR-288
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-289
+  - target: ix://agent-ix/filament-spec-language/FR-289
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-291
+  - target: ix://agent-ix/filament-spec-language/FR-291
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-296
+  - target: ix://agent-ix/filament-spec-language/FR-296
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-560
+  - target: ix://agent-ix/filament-spec-language/FR-560
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-561
+  - target: ix://agent-ix/filament-spec-language/FR-561
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-562
+  - target: ix://agent-ix/filament-spec-language/FR-562
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-563
+  - target: ix://agent-ix/filament-spec-language/FR-563
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-566
+  - target: ix://agent-ix/filament-spec-language/FR-566
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-568
+  - target: ix://agent-ix/filament-spec-language/FR-568
     type: exercises
 ---
 # US-030: Add providers, plugins and faster execution backends without changing results
@@ -82,7 +82,7 @@ EB-8).
   installed.
 - **When** the author runs the same request again.
 - **Then** every item is computed again and nothing is read from an earlier
-  run (QSpec FR-306).
+  run (FSpec FR-306).
 
 ### US-030-EX-5: The JIT returns what the interpreter returns
 

@@ -3,9 +3,9 @@ id: TC-1335
 title: "dropFirst and removeOne check, lower and evaluate"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-1335: dropFirst and removeOne check, lower and evaluate
@@ -13,10 +13,10 @@ relationships:
 ## Description
 
 Verify that `dropFirst(c)` and `removeOne(c, v)` map through S2, check to
-QSpec FR-145's derived types, lower to the QSpec FR-322 one-occurrence
+FSpec FR-145's derived types, lower to the FSpec FR-322 one-occurrence
 identities and evaluate with FR-145's values and charges, and that the
 ineligible kinds, wrong value types and wrong arities are refused. Scope:
-FR-093-AC-59 and the `dropFirst` and `removeOne` rows of FR-091-AC-3 (QSpec
+FR-093-AC-59 and the `dropFirst` and `removeOne` rows of FR-091-AC-3 (FSpec
 FR-145-AC-10 and AC-11, TC-190).
 
 ## Test Procedure
@@ -32,8 +32,8 @@ FR-145-AC-10 and AC-11, TC-190).
 4. Check `dropFirst` over the set and bag parameters, `removeOne(s, true)` and
    `dropFirst(i)`; parse `dropFirst(s, s)` and `removeOne(s)`.
 
-Tag the tests `#[trace("FR-093-AC-59", "TC-1335", "QSpec-TC-190",
-"QSpec-FR-145-AC-10")]` for `dropFirst` and with `QSpec-FR-145-AC-11` for
+Tag the tests `#[trace("FR-093-AC-59", "TC-1335", "FSpec-TC-190",
+"FSpec-FR-145-AC-10")]` for `dropFirst` and with `FSpec-FR-145-AC-11` for
 `removeOne`; step 1's S2 mapping also carries `FR-091-AC-3`.
 
 ## Expected Results

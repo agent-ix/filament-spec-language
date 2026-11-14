@@ -1,0 +1,3752 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Located checking refusals and their closed codes and causes.
+
+use super::protocol_memory::AccessClass;
+use filament_checked::node::EndSide;
+use filament_exact::{EffectiveId, NodeKey};
+use filament_exact::{IllTyped, IllTypedCause};
+use filament_exact::{Integer, TextProfile, ValueType};
+use filament_semantic_value::call::WrongSnapshotCause;
+use filament_semantic_value::location::ExpressionLocation as Location;
+use filament_semantic_value::semantic_node::IdentityRefusal;
+use fsl_forms::AccessOrdering;
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::source::provenance::SourceRegion;
+use fsl_foundation::MemoryModelName;
+use fsl_foundation::Setting;
+use fsl_foundation::Span;
+
+/// FR-113: why a protocol's `ProtocolClause` checker refused one scoped
+/// anchor, or a name it declares. Each variant's `span` is the refusal's
+/// own site: the anchor's whole reference for a resolution refusal, or the
+/// declaration's own name for a duplicate-declaration refusal (ADR-012
+/// §12.2 Check row). `region::DeclarationRegions::refusal_region` reads
+/// this span directly rather than through a `Location`'s path: a protocol
+/// has no expression tree for a path to walk.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ProtocolAnchorCause {
+    /// FR-113 "Refusals": no scope declares the anchor's first segment, or
+    /// a later segment names nothing its previous target declares.
+    Missing {
+        /// The anchor's segments exactly as written (FR-113 "Refusals":
+        /// "retaining the segments, the scope, and the first segment that
+        /// failed").
+        segments: Vec<String>,
+        /// The segment that failed to resolve.
+        segment: String,
+        /// The anchor's own lexical scope (outermost first, empty at the
+        /// top level) -- the search's starting point, named for context
+        /// regardless of which segment failed.
+        scope: Vec<String>,
+        /// The whole reference's span.
+        span: Span,
+    },
+    /// FR-113 "Refusals": a scope declares two static nodes of one name, or
+    /// an anchor whose resolution decides on that name.
+    Ambiguous {
+        /// The ambiguous name.
+        name: String,
+        /// Every declaring locus of the name, in source order.
+        loci: Vec<Span>,
+        /// The refusal's own site: the anchor's reference, or the
+        /// duplicated declaration's own name.
+        span: Span,
+    },
+    /// FR-113 "Refusals": a resolved anchor names a node its site does not
+    /// admit.
+    WrongKind {
+        /// The site the anchor fills, e.g. `"effect-of"`.
+        site: &'static str,
+        /// The kinds the site admits.
+        admitted: Vec<&'static str>,
+        /// The resolved target's actual kind.
+        actual: &'static str,
+        /// The anchor's reference span.
+        span: Span,
+    },
+    /// FR-113 "Refusals": a `receive`'s channel disagrees with the `send`
+    /// its `receive-of` anchor names.
+    ChannelMismatch {
+        /// The `receive`'s own channel.
+        receive_channel: String,
+        /// The named `send`'s channel.
+        send_channel: String,
+        /// The anchor's reference span.
+        span: Span,
+    },
+    /// FR-113 "Refusals": a record binder, a capture, a compensation
+    /// trigger or a retry or recovery parameter names a model or profile
+    /// alias, a native declaration of the package, or another binder
+    /// visible where it is declared.
+    Shadow {
+        /// The shadowing binder's own name.
+        name: String,
+        /// What the binder shadows.
+        shadowed: ShadowedDeclaration,
+        /// The shadowing binder's own span.
+        span: Span,
+    },
+    /// FR-114 "Behavior": an `attempt`'s `contracts` entry names no state
+    /// clause of the unit.
+    MissingContract {
+        /// The entry as written.
+        entry: String,
+        /// The entry's own span.
+        span: Span,
+    },
+    /// FR-114 "Behavior": an `attempt`'s `contracts` entry names an
+    /// invariant, or a `pre`/`post` clause anchored at a different
+    /// operation than the attempt's own (FSpec: "Listed state
+    /// pre/postcondition declarations must match this operation and its
+    /// invocation anchors").
+    WrongContractAnchor {
+        /// The entry as written.
+        entry: String,
+        /// The attempt's own anchor, `Context::operation`.
+        attempt_anchor: String,
+        /// The named clause's own anchor: `Context::operation` for a
+        /// `pre`/`post` clause anchored elsewhere, or just `Context` for an
+        /// invariant (which names no operation).
+        clause_anchor: String,
+        /// The entry's own span.
+        span: Span,
+    },
+    /// A protocol whose anchors, binders and attempt bindings all check,
+    /// but which holds a construct no checker reads yet (a `predicate`
+    /// join, a `parallel`'s memory clause, an attempt's memory order, a
+    /// `fence`, or a relationship between two ends that are not object
+    /// types). Refused rather than compiled with
+    /// unchecked content and silently missing from the emitted package
+    /// (SR-753 FND-002, SR-761 FND-001, SR-770 FND-001).
+    Unimplemented {
+        /// The declared protocol name.
+        name: String,
+        /// The construct's own keyword, e.g. `"channel"` or `"send"`.
+        construct: &'static str,
+        /// The construct's own span: the earliest such construct in the
+        /// protocol.
+        span: Span,
+    },
+    /// FR-218 Predicate joins: the named unit declaration does not exist.
+    JoinFunctionMissing {
+        /// The parallel node containing the join.
+        parallel: String,
+        /// The function name as written.
+        function: String,
+        /// The function name's span.
+        span: Span,
+    },
+    /// FR-218 Predicate joins: the name resolves to a declaration that is
+    /// not a function.
+    JoinFunctionKind {
+        /// The parallel node containing the join.
+        parallel: String,
+        /// The function name as written.
+        function: String,
+        /// The resolved declaration kind.
+        kind: &'static str,
+        /// The function name's span.
+        span: Span,
+    },
+    /// A predicate join names a protocol that exists but was refused by its
+    /// own S3 check. The dependent refusal keeps the ordinary
+    /// `missing_declaration`/`missing-name` pair while recording the target's
+    /// own code and cause as structured dependency provenance.
+    RefusedDependency {
+        /// The protocol name written as the predicate function.
+        function: String,
+        /// The refused protocol and its original check pair.
+        refused_dependency: Box<RefusedProtocolDependency>,
+        /// True because this refusal follows from the target protocol's
+        /// refusal rather than a missing declaration.
+        consequence: bool,
+        /// The predicate reference span.
+        span: Span,
+    },
+    /// FR-218 Predicate joins: the resolved function's Boolean signature
+    /// does not match the distinct joined labels.
+    JoinFunctionType {
+        /// The parallel node containing the join.
+        parallel: String,
+        /// The resolved function name.
+        function: String,
+        /// The required parameter types.
+        expected_parameters: Box<[ValueType]>,
+        /// The function's declared parameter types.
+        actual_parameters: Box<[ValueType]>,
+        /// The required return type.
+        expected_result: Box<ValueType>,
+        /// The function's declared return type.
+        actual_result: Box<ValueType>,
+        /// The function name's span.
+        span: Span,
+    },
+    /// The protocol's `using` alias names no profile selection of
+    /// the unit.
+    MissingProfile {
+        /// The alias as written.
+        alias: String,
+        /// The alias's own span.
+        span: Span,
+    },
+    /// FR-508: a profile alias resolves, but the selected identity is not
+    /// admitted at this protocol use site.
+    WrongProfileKind {
+        /// The alias as written.
+        alias: String,
+        /// The selected profile identity.
+        selected: String,
+        /// The kind required at this use site.
+        required: &'static str,
+        /// The alias's own span.
+        span: Span,
+    },
+    /// A role's `on`/`each` object type names no object type of
+    /// the package.
+    MissingRoleType {
+        /// The role's declared name.
+        role: String,
+        /// The object type as written.
+        context: String,
+        /// The object type's own span.
+        span: Span,
+    },
+    /// An `attempt`'s `by` role names no role of the protocol.
+    MissingRole {
+        /// The role as written.
+        role: String,
+        /// The role reference's own span.
+        span: Span,
+    },
+    /// A binder's declared type does not resolve against the
+    /// package scope.
+    BinderType {
+        /// The binder's declared name.
+        binder: String,
+        /// Why the type did not resolve.
+        fault: super::type_form::TypeFormFault,
+        /// The span of the type form (or nested argument form) at fault.
+        span: Span,
+    },
+    /// FR-218 "Channels": a channel's `from` or `to` names no role the
+    /// protocol declares. `missing_declaration`/`missing-name`, at the role
+    /// name; both ends refuse independently.
+    ChannelRole {
+        /// The channel's declared name.
+        channel: String,
+        /// Which end of the channel names the role.
+        end: ChannelEnd,
+        /// The role name as written.
+        name: String,
+        /// The role name's own span.
+        span: Span,
+    },
+    /// FR-218 "Channels": a channel's `carries` type does not resolve.
+    /// `missing_declaration`/`missing-name` for a missing name, at the type
+    /// name.
+    ChannelType {
+        /// The channel's declared name.
+        channel: String,
+        /// Why the type did not resolve.
+        fault: super::type_form::TypeFormFault,
+        /// The span of the type form (or nested argument form) at fault.
+        span: Span,
+    },
+    /// FR-509-AC-2: a channel's inclusive delivery interval has its lower
+    /// count above its upper count.
+    ChannelDeliveryRange {
+        /// The channel's declared name.
+        channel: String,
+        /// The lower bound as written.
+        lower: u64,
+        /// The upper bound as written.
+        upper: u64,
+        /// The interval's source span.
+        span: Span,
+    },
+    /// FR-218 "Admission for emission": a channel carries an object type,
+    /// which is not a message type. `invalid_model_binding`/
+    /// `malformed-declaration`, once, at the type name.
+    ChannelCarriesObject {
+        /// The channel's declared name.
+        channel: String,
+        /// The `carries` type as written.
+        name: String,
+        /// The type name's own span.
+        span: Span,
+    },
+    /// FR-218 "Admission for emission": a role's model is a type that does
+    /// not take part in a protocol. `invalid_model_binding`/
+    /// `malformed-declaration`, at the model name.
+    RoleModel {
+        /// The role's declared name.
+        role: String,
+        /// The model as written.
+        context: String,
+        /// The model name's own span.
+        span: Span,
+    },
+    /// FR-218 "Admission for emission": a `parallel`'s join list or quorum
+    /// count is unsound. `invalid_package`/`invalid-value`, at the list, or
+    /// at the count for a quorum.
+    JoinList {
+        /// The `parallel` control's declared name.
+        parallel: String,
+        /// What is unsound.
+        fault: JoinFault,
+        /// The list's span, or the quorum count's.
+        span: Span,
+    },
+    /// FR-219: a nested `parallel` declares a memory default other than its
+    /// outermost `parallel`'s. `invalid_model_binding`/`conflicting-binding`,
+    /// at the nested control's `memory` clause, naming both controls.
+    MemoryConflict {
+        /// The outermost `parallel`'s declared name.
+        outermost: String,
+        /// The outermost `parallel`'s default.
+        outermost_model: MemoryModelName,
+        /// The nested `parallel`'s declared name.
+        nested: String,
+        /// The nested `parallel`'s default.
+        nested_model: MemoryModelName,
+        /// The nested control's `memory` clause.
+        span: Span,
+    },
+    /// FR-219: a `parallel` declaring a weak default joins another way than
+    /// `all` with no `outstanding` clause. `unsupported_construct`/
+    /// `declaration-form`, at the join.
+    WeakJoin {
+        /// The `parallel`'s declared name.
+        parallel: String,
+        /// The weak default declared.
+        model: MemoryModelName,
+        /// The join policy as written, with any `outstanding` clause.
+        policy: String,
+        /// The join policy's span.
+        span: Span,
+    },
+    /// FR-220: an access carries an ordering its kind does not take, or a
+    /// read-modify-write carries none. `ill_typed`/`operator-ineligible`,
+    /// at the ordering, or at the attempt when none is written.
+    AccessOrdering {
+        /// The attempt's declared name.
+        attempt: String,
+        /// The access kind the attempt classifies as.
+        class: AccessClass,
+        /// The ordering written, if any.
+        ordering: Option<AccessOrdering>,
+        /// The ordering's span, or the attempt's name.
+        span: Span,
+    },
+    /// FR-220: under a weak default an attempt's shared footprint holds two
+    /// or more locations, an any-object location or a population
+    /// membership. `unsupported_construct`/`declaration-form`, at the
+    /// attempt.
+    AccessShape {
+        /// The attempt's declared name.
+        attempt: String,
+        /// The weak default of the enclosing `parallel`.
+        model: MemoryModelName,
+        /// The locations, canonical text, in order.
+        locations: Vec<String>,
+        /// The attempt's name.
+        span: Span,
+    },
+    /// FR-218 "Constructs": an `event` or `commit` written `by`, or a
+    /// `choice` or `repeat` owned `by`, a name that is no declared role.
+    /// `missing_declaration`/`missing-name`, at the role name.
+    NodeRole {
+        /// The node's declared name.
+        node: String,
+        /// The role name as written.
+        name: String,
+        /// The role name's own span.
+        span: Span,
+    },
+    /// FR-218 "Channels": a `send` or `receive` written `via` a name that
+    /// is no declared channel. `missing_declaration`/`missing-name`, at the
+    /// name.
+    MissingChannel {
+        /// The node's declared name.
+        node: String,
+        /// The channel name as written.
+        name: String,
+        /// The channel name's own span.
+        span: Span,
+    },
+    /// FR-218 "Channels": a `send` or `receive` record binder, or a FIFO
+    /// binder, whose declared type is not the channel's `carries` type.
+    /// `ill_typed`/`type-mismatch`, at the binder's type.
+    CarriesMismatch {
+        /// The channel's declared name.
+        channel: String,
+        /// The channel's `carries` type.
+        expected: Box<filament_exact::ValueType>,
+        /// The binder's declared type.
+        actual: Box<filament_exact::ValueType>,
+        /// The binder type's span.
+        span: Span,
+    },
+    /// FR-218 "Channels": a refusal of the clause checker inside a channel's
+    /// FIFO key, checked over its binder and constants only. Its code and
+    /// cause are the wrapped cause's.
+    KeyClause {
+        /// The channel's declared name.
+        channel: String,
+        /// The clause checker's cause.
+        cause: Box<CheckCause>,
+        /// The located node.
+        span: Span,
+    },
+    /// FR-218 "Channels": a channel's FIFO key reads model state.
+    /// `ill_typed`/`operator-ineligible`, at the read, naming the key by its
+    /// channel.
+    KeyModelState {
+        /// The channel's declared name.
+        channel: String,
+        /// The read.
+        span: Span,
+    },
+    /// FR-218 "Channels": a channel's FIFO key is of a type over which the
+    /// clause checker admits no `=` (FSpec FR-054: stable equality).
+    /// `ill_typed`/`operator-ineligible`, at the key, retaining the operator
+    /// and the type.
+    KeyEquality {
+        /// The channel's declared name.
+        channel: String,
+        /// The key's type.
+        key_type: Box<filament_exact::ValueType>,
+        /// The key.
+        span: Span,
+    },
+    /// FR-218 "Scopes": a refusal inside one slot of a node -- a body, a
+    /// `check` condition, a `visible` entry, a guard or a loop proof -- by
+    /// the clause checker, or a read of a binder that is not readable at
+    /// the slot (`MissingName`, as FR-113 refuses an unresolved name). Its
+    /// code and cause are the wrapped cause's.
+    SlotClause {
+        /// The node's declared name.
+        node: String,
+        /// Which slot of the node.
+        slot: SlotKind,
+        /// The cause.
+        cause: Box<CheckCause>,
+        /// The located read or node.
+        span: Span,
+    },
+    /// FR-218 "Model state": a slot that bars model state (a `check`
+    /// condition, a guard, a `visible` entry) reads it, or reads the `over`
+    /// input. `ill_typed`/`operator-ineligible`, at the read, naming the
+    /// slot.
+    SlotModelState {
+        /// The node's declared name.
+        node: String,
+        /// Which slot of the node.
+        slot: SlotKind,
+        /// The read.
+        span: Span,
+    },
+    /// FR-218 "Choice and repeat decisions": a `visible` entry or a guard
+    /// reads a fact that is not an eligible, individually listed fact of the
+    /// owner. `wrong_snapshot`/`wrong-observation`, at the read.
+    WrongObservation {
+        /// The `choice` or `repeat` node's declared name.
+        node: String,
+        /// The owning role.
+        owner: String,
+        /// The binder read.
+        binder: String,
+        /// The field read, when the read is a field read.
+        field: Option<String>,
+        /// Why the fact is not observable.
+        reason: ObservationReason,
+        /// The read.
+        span: Span,
+    },
+    /// FR-218 "Constructs": the compiled causal edge relation, without the
+    /// `repeat` back edges, has a cycle. `invalid_package`/
+    /// `definition-cycle`, naming the controls on the cycle in tree order,
+    /// at the first of them.
+    CausalCycle {
+        /// The names of the controls on the cycle, in tree order.
+        nodes: Vec<String>,
+        /// The first control's name span.
+        span: Span,
+    },
+    /// FR-218 "Constructs": a `repeat` whose body does not necessarily take
+    /// a step. `unsupported_construct`/`declaration-form`, at the `repeat`,
+    /// naming it and the selected protocol profile (FSpec FR-052).
+    NoProgress {
+        /// The `repeat` control's declared name.
+        repeat: String,
+        /// The identity of the selected protocol profile, when one is
+        /// selected.
+        profile: Option<String>,
+        /// The `repeat`'s name span.
+        span: Span,
+    },
+    /// FR-218: a post-test repeat with a zero maximum cannot execute its
+    /// required first body iteration. `invalid_package`/`invalid-value`.
+    RepeatMaxConflict {
+        /// The repeat's declared name.
+        repeat: String,
+        /// The repeat declaration's name span.
+        span: Span,
+    },
+    /// FR-218 "Choice and repeat decisions": a `choice` whose guards are not
+    /// proved exhaustive and exclusive. `undefined_expression`/
+    /// `unproved-exhaustiveness`, at the choice.
+    Exhaustiveness {
+        /// The `choice` control's declared name.
+        choice: String,
+        /// The names of the cases involved, in source order.
+        cases: Vec<String>,
+        /// What the valuations show, in the order `missing-arm`,
+        /// `duplicate-arm`; never empty.
+        failed: Vec<ArmFault>,
+        /// The `choice`'s name span.
+        span: Span,
+    },
+    /// FSpec FR-466 "Per-operator checks" 2: an `await` whose matched event
+    /// is a `send` or an `attempt`. `unsupported_construct`/
+    /// `declaration-form`, at the `await`, naming the form and the selected
+    /// protocol profile.
+    AwaitedForm {
+        /// The `await` control's declared name.
+        node: String,
+        /// The matched event node's declared name.
+        event: String,
+        /// The matched node's form keyword (`send` or `attempt`).
+        form: &'static str,
+        /// The identity of the selected protocol profile, when one is
+        /// selected.
+        profile: Option<String>,
+        /// The `await`'s name span.
+        span: Span,
+    },
+    /// FSpec FR-466 "Per-operator checks" 6: an `await`'s `within` with
+    /// `lower > upper` or an open upper bound. `ill_typed`/`type-mismatch`
+    /// at the interval (member `within`, expected a closed interval with
+    /// `lower <= upper`, actual the interval as written).
+    AwaitWindow {
+        /// The `await` control's declared name.
+        node: String,
+        /// The lower bound as written.
+        lower: u64,
+        /// The upper bound as written; `None` for `*`.
+        upper: Option<u64>,
+        /// The interval's span.
+        span: Span,
+    },
+    /// FSpec FR-464 "Profiles and laws": an `await` or a `compensate` reads
+    /// a clock role, so the unit selects a `temporal_profile`; without one,
+    /// `missing_declaration`/`missing-selection` at the node.
+    MissingTemporalProfile {
+        /// The node's keyword, `await` or `compensate`.
+        construct: &'static str,
+        /// The `await` control's or `compensate` template's declared name.
+        node: String,
+        /// The node's name span.
+        span: Span,
+    },
+    /// FSpec FR-465 "Role" 2: a replicated role whose authored `max` is
+    /// below 1. `ill_typed`/`type-mismatch`, at the maximum.
+    RoleMax {
+        /// The role's declared name.
+        role: String,
+        /// The least admitted maximum, 1.
+        minimum: u64,
+        /// The maximum as written.
+        actual: u64,
+        /// The maximum's span.
+        span: Span,
+    },
+    /// FR-218 "Scopes", ADR-027 RR-1: the `pop` of `role r each T from pop`
+    /// names no population of the domain package that declares `T`.
+    /// `missing_declaration`/`missing-name`, at the name.
+    MissingRolePopulation {
+        /// The role's declared name.
+        role: String,
+        /// The population name as written.
+        population: String,
+        /// The population name's span.
+        span: Span,
+    },
+    /// FR-218 "Scopes", ADR-027 RR-1: the `pop` of `role r each T from pop`
+    /// names a population whose element type is not `T`.
+    /// `ill_typed`/`type-mismatch`, at the name.
+    RolePopulationType {
+        /// The role's declared name.
+        role: String,
+        /// The population name as written.
+        population: String,
+        /// The population name's span.
+        span: Span,
+    },
+    /// FR-218 "Relationships": a `relationship r = M::R;` whose `M::R` is no
+    /// export of a selected model. `missing_declaration`/`missing-name`, at
+    /// the name.
+    MissingRelationship {
+        /// The protocol-local relationship name.
+        relationship: String,
+        /// The model name as written.
+        name: String,
+        /// The model name's span.
+        span: Span,
+    },
+    /// FR-218 "Relationships": `M::R` names an export that is not a
+    /// relationship. `invalid_model_binding`/`wrong-export`, at the name.
+    RelationshipExport {
+        /// The protocol-local relationship name.
+        relationship: String,
+        /// The model name as written.
+        name: String,
+        /// The required kind, `relationship`.
+        required: &'static str,
+        /// The export's own kind, such as `port` or `object type`.
+        actual: &'static str,
+        /// The export's declaration key.
+        export: Box<filament_checked::key::DeclarationKey>,
+        /// The model name's span.
+        span: Span,
+    },
+    /// FR-218 "Relationships": a `related by r (a, b)` clause whose `r` is
+    /// no relationship the protocol declares. `missing_declaration`/
+    /// `missing-name`, at the name.
+    MissingRelated {
+        /// The event node's declared name.
+        node: String,
+        /// The relationship name as written.
+        name: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FR-218 "Relationships": a `related by` end whose type is not its
+    /// relationship end's type. `ill_typed`/`type-mismatch`, at the end.
+    RelatedEnd {
+        /// The relationship name.
+        relationship: String,
+        /// Which end.
+        end: RelatedEnd,
+        /// The relationship end's type.
+        expected: Box<filament_exact::ValueType>,
+        /// The end expression's type.
+        actual: Box<filament_exact::ValueType>,
+        /// The end expression's span.
+        span: Span,
+    },
+    /// FR-218 "Requirements": a `requires temporal T;` names no declaration
+    /// of the unit, or a name the unit binds only as an alias.
+    /// `missing_declaration`/`missing-name`, at the name.
+    MissingRequirement {
+        /// The name as written.
+        name: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FR-218 "Requirements": a `requires temporal T;` names a declaration
+    /// of the unit that is not a temporal clause. `ill_typed`/
+    /// `operator-ineligible`, at the name, naming the resolved kind.
+    RequirementKind {
+        /// The name as written.
+        name: String,
+        /// The resolved declaration's keyword, such as `predicate`.
+        kind: &'static str,
+        /// The name's span.
+        span: Span,
+    },
+    /// FR-218 "Requirements": the required temporal clause reaches the
+    /// requiring protocol through a protocol reference, directly or through
+    /// other clauses. `invalid_package`/`definition-cycle`, at the
+    /// requirement's name.
+    RequirementCycle {
+        /// The requiring protocol.
+        protocol: String,
+        /// The required temporal clause.
+        temporal: String,
+        /// The name's span.
+        span: Span,
+    },
+}
+
+/// The typed refusal pair of a protocol named by a dependent protocol.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RefusedProtocolDependency {
+    /// The target protocol declaration.
+    pub declaration: String,
+    /// The target's own refusal code.
+    pub code: Code,
+    /// The target's own catalog cause.
+    pub cause: &'static str,
+}
+
+/// Which expression slot of a protocol node a refusal is about (FR-218
+/// "Scopes").
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum SlotKind {
+    /// An event node's constraint body.
+    Constraint,
+    /// A `check`'s condition.
+    Condition,
+    /// The `finish` constraint.
+    Finish,
+    /// A `visible` entry of a `choice` or `repeat`.
+    Visible,
+    /// A `case` guard or a `repeat`'s `while` guard.
+    Guard,
+    /// A `repeat`'s invariant.
+    Invariant,
+    /// A `repeat`'s variant.
+    Variant,
+    /// The protocol's `terminal when` predicate (FR-211).
+    Terminal,
+    /// An end of an event node's `related by` clause (FR-218).
+    RelatedEnd,
+    /// A replicated role's `until` predicate (FSpec FR-464 stage
+    /// `role-lifetime`).
+    Lifetime,
+}
+
+/// Which end of a relationship a `related by` end fills (FR-218
+/// "Relationships").
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RelatedEnd {
+    /// `first`: the relationship's source end.
+    First,
+    /// `second`: the relationship's target end.
+    Second,
+}
+
+impl RelatedEnd {
+    /// The `end` member's value.
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::First => "first",
+            Self::Second => "second",
+        }
+    }
+}
+
+/// Why a decision's read is not an observable fact of its owner (FR-218
+/// "Choice and repeat decisions").
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ObservationReason {
+    /// `other-role`: the binder is eligible only for a different role.
+    OtherRole,
+    /// `ineligible-kind`: the binder's kind is never eligible.
+    IneligibleKind,
+    /// `unlisted`: eligible, but no individual `visible` entry lists it.
+    Unlisted,
+}
+
+impl ObservationReason {
+    /// The `reason` member's value.
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::OtherRole => "other-role",
+            Self::IneligibleKind => "ineligible-kind",
+            Self::Unlisted => "unlisted",
+        }
+    }
+}
+
+/// What a valuation of a `choice`'s visible facts shows about its guards
+/// (FR-218 "Choice and repeat decisions").
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ArmFault {
+    /// `missing-arm`: a valuation no guard covers.
+    MissingArm,
+    /// `duplicate-arm`: a valuation two guards cover.
+    DuplicateArm,
+}
+
+impl ArmFault {
+    /// The `failed` entry's value.
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::MissingArm => "missing-arm",
+            Self::DuplicateArm => "duplicate-arm",
+        }
+    }
+}
+
+/// Which end of a channel names a role (FR-218 "Channels").
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ChannelEnd {
+    /// The `from` role.
+    From,
+    /// The `to` role.
+    To,
+}
+
+/// Why a `parallel`'s join list or quorum count is refused (FR-218
+/// "Admission for emission").
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum JoinFault {
+    /// `join all` whose list omits a branch.
+    OmitsBranch {
+        /// The first omitted branch label, in source order.
+        branch: String,
+    },
+    /// `join quorum(n)` with `n` below one.
+    QuorumBelowOne,
+    /// `join quorum(n)` with `n` above the number of distinct labels joined.
+    QuorumAboveLabels {
+        /// The number of distinct labels the list holds.
+        labels: usize,
+    },
+    /// A `join any` or `join predicate` that lists no label.
+    NoLabel,
+    /// A `join any`, `join quorum` or `join predicate` that writes no
+    /// `outstanding` rule, so the branches it leaves outstanding have no
+    /// stated fate.
+    NoOutstandingRule,
+}
+
+/// Why a protocol reference expression that resolved is still refused
+/// (FR-218). An unresolved or non-protocol target is `MissingName` and
+/// `IllTyped` like any other name.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ProtocolReferenceCause {
+    /// A second reference to a target already referred to in the unit: the
+    /// carrier is keyed by its body alone and IR admits one `expression`
+    /// occurrence per carrier, so two references to one target cannot both
+    /// be written. `unsupported_construct`/`expression-form`, at the second
+    /// reference.
+    Repeated {
+        /// The first reference to the same target.
+        first: Location,
+    },
+    /// A protocol, or a reference to it, that names a construct whose
+    /// FR-464, FR-465 or FR-466 node FSL does not write yet, while a protocol
+    /// profile is selected: the protocol would otherwise be written without
+    /// that part of its graph. `unsupported_construct`/`not-yet-implemented`.
+    NotEmitted {
+        /// The construct no node is written for.
+        construct: ProtocolConstruct,
+    },
+}
+
+/// A construct of a protocol whose FR-464, FR-465 or FR-466 node FSL does not
+/// write yet. Each names the ticket that writes it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ProtocolConstruct {
+    /// A control of the `run` tree other than a `sequence`, by its keyword
+    /// (FR-466): QSL-1126.
+    Control(&'static str),
+    /// A protocol that belongs to a cyclic component of function calls and
+    /// protocol references (a body that calls a function that reads the
+    /// protocol back, or a protocol that refers to itself). FSpec FR-383
+    /// "Cyclic reference components" writes such a component with one
+    /// recursion group; that emission is QSL-844.
+    ReferenceCycle,
+    /// A `protocol` reference written directly in a protocol's own body (a
+    /// `check`/`send` constraint, an `each` guard, a `terminal when`
+    /// condition, a capture initializer or a `finish` constraint). FSpec
+    /// FR-464 "Binder scope" finds an expression's reads over its dependency
+    /// closure, which stops at a `function` node but not at a
+    /// `protocol_reference`, so the closure runs through the referenced
+    /// clause to its `finish` binder and IR's reader refuses the body
+    /// (`BinderScope`, `ModelStateRead`). FSL cannot prove the package
+    /// admitted until FSpec says whether the closure stops at the carrier;
+    /// a call to a function that reads the protocol is admitted. QSL-1121g.
+    ProtocolReferenceInBody,
+    /// A `terminal when` condition that reads `over` under `activation on
+    /// each`. FSpec FR-464 stage `terminal` and vector TC-947 TM11 admit it,
+    /// but IR's reader (`protocol_body.rs` `check_finish_terminal`) lets only an `origin` protocol's terminal read
+    /// `over`, so the package would be refused: IR-1069.
+    TerminalReadsOverUnderEach,
+    /// A `relationship` member (FR-464 "Clause body"): a real model package
+    /// cannot name a relationship yet, so the clause `relationships` set is
+    /// unproved against IR's reader: QSL-1141.
+    Relationships,
+    /// A `channel` that carries a bounded scalar or collection
+    /// (`Int[a, b]`, `Text`, `Decimal`, `Rational`, `Float`, a bounded
+    /// `Sequence`/`Set`/`Bag`; FR-465 "Channel"). Each lowers to a
+    /// `bounded_domain` node, which IR's reader
+    /// does not admit as `carries`: QSL-1137.
+    ChannelCarriesBounded,
+    /// A FIFO `channel` whose key type IR's reader does not take as
+    /// equality-stable (FR-465 "Channel"): the key's type is, or contains
+    /// through an option, a collection or a record field, a bounded domain,
+    /// a quantity, a float or a model-owned type. The check admits `=` over
+    /// it but the reader refuses the key (`ill_typed`/`operator-ineligible`):
+    /// QSL-1142.
+    ChannelKeyNotEqualityStable,
+    /// A post-test `repeat`, whose `while` guard reads a binder its body
+    /// declares (FSL FR-218). FSpec FR-466 "No post-test `repeat`" settles
+    /// that the checked package has no post-test form (STD-539).
+    PostTestRepeat,
+    /// A `repeat` whose `visible` entry, invariant or variant reads a binder
+    /// its body declares, while its guard does not. FSpec FR-466 "Binder
+    /// scope" reads them at the repeat's entry only (a `repeat` is
+    /// pre-test), so they have no node form (STD-539).
+    RepeatDecisionReadsBody,
+    /// A `repeat` whose body steps only through a nested `repeat` whose
+    /// guard cannot be false (FSL FR-218-AC-32). FSpec #481 (STD-539) now
+    /// supports it (FR-464 "Nested `repeat` rule"); it is withheld until
+    /// IR's reader decides that rule (IR-1100), which today refuses the
+    /// outer repeat.
+    RepeatStepsThroughRepeat,
+    /// A reference, from a function or a clause, to a protocol that holds an
+    /// `attempt`: that protocol's node is written after the state clauses
+    /// its attempts list, which are written after the functions. QSL-1121g.
+    ReferenceToAttemptProtocol,
+    /// A clause whose `over` input is not a reference to an object type of a
+    /// selected model: there is no exact local model declaration node to
+    /// name as the clause's `owner_model`
+    /// (FSpec FR-464 "owner_model", FR-383), and the reader refuses a clause
+    /// without one. QSL-1147.
+    NoOwnerModel,
+}
+
+impl ProtocolConstruct {
+    /// The ticket that writes this construct's node.
+    pub const fn tracking(self) -> &'static str {
+        match self {
+            Self::TerminalReadsOverUnderEach => "IR-1069",
+            Self::Control(_) => "QSL-1126",
+            Self::ReferenceCycle => "QSL-844",
+            Self::ReferenceToAttemptProtocol | Self::ProtocolReferenceInBody => "QSL-1121g",
+            Self::ChannelCarriesBounded => "QSL-1137",
+            Self::Relationships => "QSL-1141",
+            Self::ChannelKeyNotEqualityStable => "QSL-1142",
+            Self::NoOwnerModel => "QSL-1147",
+            Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
+            Self::RepeatStepsThroughRepeat => "IR-1100",
+        }
+    }
+}
+
+impl ProtocolReferenceCause {
+    /// The first reference to the same target, for a repeated reference.
+    pub fn first(&self) -> Option<&Location> {
+        match self {
+            Self::Repeated { first } => Some(first),
+            Self::NotEmitted { .. } => None,
+        }
+    }
+
+    /// The construct no node is written for, for a protocol that names one.
+    pub fn construct(&self) -> Option<ProtocolConstruct> {
+        match self {
+            Self::Repeated { .. } => None,
+            Self::NotEmitted { construct } => Some(*construct),
+        }
+    }
+
+    /// This cause's catalog code.
+    pub fn code(&self) -> Code {
+        match self {
+            Self::Repeated { .. } | Self::NotEmitted { .. } => Code::UnsupportedConstruct,
+        }
+    }
+
+    /// This cause's catalog tag.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::Repeated { .. } => "expression-form",
+            Self::NotEmitted { .. } => "not-yet-implemented",
+        }
+    }
+}
+
+/// The catalog code and tag a [`ProtocolAnchorCause::BinderType`] refuses
+/// with: the same classes `type_form::TypeFormError`'s own refusal uses
+/// (a missing or ambiguous name, else a type mismatch).
+pub(super) fn type_fault_class(fault: &super::type_form::TypeFormFault) -> (Code, &'static str) {
+    use super::type_form::TypeFormFault as F;
+    match fault {
+        F::MissingName(_) | F::MissingQualifiedName(_) | F::UnresolvedUnitName { .. } => {
+            (Code::MissingDeclaration, "missing-name")
+        }
+        F::AmbiguousName(_) => (Code::AmbiguousDeclaration, "ambiguous-name"),
+        F::UnitArithmetic(_) => (Code::IllTyped, "operator-ineligible"),
+        F::UnitIdentity(IdentityRefusal::InputBytes { .. }) => (
+            Code::StageLimitExceeded,
+            Setting::IdentityInputBytes.kind().catalog_cause(),
+        ),
+        F::UnitIdentity(IdentityRefusal::Allocation { .. }) => {
+            (Code::ResourceExhausted, "allocation-failed")
+        }
+        F::UnitIdentity(IdentityRefusal::NonCanonical) => {
+            (Code::RuntimeInvariant, "established-invariant-broken")
+        }
+        F::Malformed
+        | F::EmptyInterval
+        | F::IntegerOutsideI128(_)
+        | F::DenominatorBelowOne
+        | F::MalformedDecimal
+        | F::EmptyTextBounds
+        | F::EmptyCardinality => (Code::IllTyped, "type-mismatch"),
+        F::ClockNotChecked => (Code::UnsupportedConstruct, "not-yet-implemented"),
+    }
+}
+
+/// A timed construct of FR-393 that S2 builds and S3 does not yet check.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TimedConstruct {
+    /// A `time` declaration (FR-230).
+    TimeSource,
+    /// A `time invariant` declaration (FR-230).
+    TimeInvariant,
+    /// An `urgent` declaration (FR-230).
+    Urgent,
+    /// The `Clock` type (FR-230).
+    Clock,
+    /// A temporal operator's timed interval (FR-233, FR-234).
+    TimedInterval,
+    /// A `taskset` declaration (FSpec FR-419, FSL FR-246).
+    Taskset,
+    /// A `schedulable` claim (FSpec FR-419, FSL FR-246).
+    Schedulable,
+    /// A `response` claim (FSpec FR-419, FSL FR-246).
+    Response,
+    /// A `release` declaration (FSpec FR-419, FSL FR-249).
+    Release,
+    /// A clock-reading declaration whose expansion reaches its own call
+    /// (FR-230 "Clock-reading declarations").
+    RecursiveClockReading,
+    /// A clock of an object other than the receiver, reached through a
+    /// reference (FR-230 "Parameters").
+    ReferencedClock,
+}
+
+impl TimedConstruct {
+    /// The construct as a reader names it.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::TimeSource => "a `time` declaration",
+            Self::TimeInvariant => "a `time invariant` declaration",
+            Self::Urgent => "an `urgent` declaration",
+            Self::Clock => "the `Clock` type",
+            Self::TimedInterval => "a timed interval",
+            Self::Taskset => "a `taskset` declaration",
+            Self::Schedulable => "a `schedulable` claim",
+            Self::Response => "a `response` claim",
+            Self::Release => "a `release` declaration",
+            Self::RecursiveClockReading => "a recursive clock-reading declaration",
+            Self::ReferencedClock => "a clock of another object",
+        }
+    }
+}
+
+/// Which selection alias a [`ShadowedDeclaration::ProfileAlias`] or
+/// [`ShadowedDeclaration::ModelAlias`] names (FR-091: `profile p = ...;` and
+/// `model M = ...;`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AliasKind {
+    /// A `profile p = ...;` selection alias.
+    Profile,
+    /// A `model M = ...;` selection alias.
+    Model,
+}
+
+/// What a binder shadows (FR-113 "Refusals"): named as the checker holds
+/// it. FR-113 says "naming the declaration it would shadow", and AC-5 says
+/// "naming the alias" -- a consumer needs the *kind* of the shadowed
+/// declaration, not just that one exists (SR-765 FND-005). The first five
+/// variants live outside the protocol form this checker reads (a
+/// package-wide alias or native declaration), so none of them carry a
+/// span; only [`Self::Binder`] does.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ShadowedDeclaration {
+    /// The unit's own `profile p = ...;` selection alias.
+    ProfileAlias,
+    /// The unit's own `model M = ...;` selection alias.
+    ModelAlias,
+    /// A native `function` or `predicate` declaration of the package.
+    Function,
+    /// A native `type`, `record`, `tuple` or `enum` declaration of the
+    /// package.
+    Type,
+    /// A native `dimension` or `unit` declaration of the package.
+    Quantity,
+    /// Another binder visible where the shadowing binder is declared, by
+    /// that binder's own span.
+    Binder(Span),
+}
+
+impl ProtocolAnchorCause {
+    /// The refusal's own span (FR-096: read directly, not through a
+    /// `Location`'s path).
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Missing { span, .. }
+            | Self::Ambiguous { span, .. }
+            | Self::WrongKind { span, .. }
+            | Self::ChannelMismatch { span, .. }
+            | Self::Shadow { span, .. }
+            | Self::MissingContract { span, .. }
+            | Self::WrongContractAnchor { span, .. }
+            | Self::Unimplemented { span, .. }
+            | Self::JoinFunctionMissing { span, .. }
+            | Self::JoinFunctionKind { span, .. }
+            | Self::RefusedDependency { span, .. }
+            | Self::JoinFunctionType { span, .. }
+            | Self::MissingProfile { span, .. }
+            | Self::WrongProfileKind { span, .. }
+            | Self::MissingRoleType { span, .. }
+            | Self::MissingRole { span, .. }
+            | Self::BinderType { span, .. }
+            | Self::ChannelRole { span, .. }
+            | Self::ChannelType { span, .. }
+            | Self::ChannelDeliveryRange { span, .. }
+            | Self::ChannelCarriesObject { span, .. }
+            | Self::RoleModel { span, .. }
+            | Self::JoinList { span, .. }
+            | Self::MemoryConflict { span, .. }
+            | Self::WeakJoin { span, .. }
+            | Self::AccessOrdering { span, .. }
+            | Self::AccessShape { span, .. }
+            | Self::NodeRole { span, .. }
+            | Self::MissingChannel { span, .. }
+            | Self::CarriesMismatch { span, .. }
+            | Self::CausalCycle { span, .. }
+            | Self::NoProgress { span, .. }
+            | Self::RepeatMaxConflict { span, .. }
+            | Self::Exhaustiveness { span, .. }
+            | Self::KeyClause { span, .. }
+            | Self::KeyModelState { span, .. }
+            | Self::KeyEquality { span, .. }
+            | Self::SlotClause { span, .. }
+            | Self::SlotModelState { span, .. }
+            | Self::WrongObservation { span, .. }
+            | Self::AwaitedForm { span, .. }
+            | Self::AwaitWindow { span, .. }
+            | Self::MissingTemporalProfile { span, .. }
+            | Self::MissingRequirement { span, .. }
+            | Self::MissingRelationship { span, .. }
+            | Self::RoleMax { span, .. }
+            | Self::MissingRolePopulation { span, .. }
+            | Self::RolePopulationType { span, .. }
+            | Self::RelationshipExport { span, .. }
+            | Self::MissingRelated { span, .. }
+            | Self::RelatedEnd { span, .. }
+            | Self::RequirementKind { span, .. }
+            | Self::RequirementCycle { span, .. } => *span,
+        }
+    }
+
+    /// This cause's catalog code.
+    pub fn code(&self) -> Code {
+        match self {
+            Self::Missing { .. }
+            | Self::MissingContract { .. }
+            | Self::MissingProfile { .. }
+            | Self::MissingRoleType { .. }
+            | Self::MissingRole { .. }
+            | Self::ChannelRole { .. }
+            | Self::NodeRole { .. }
+            | Self::MissingChannel { .. }
+            | Self::MissingTemporalProfile { .. }
+            | Self::MissingRequirement { .. }
+            | Self::MissingRelationship { .. }
+            | Self::MissingRolePopulation { .. }
+            | Self::MissingRelated { .. } => Code::MissingDeclaration,
+            Self::JoinFunctionMissing { .. } => Code::MissingDeclaration,
+            Self::WrongProfileKind { .. } => Code::UnknownProfile,
+            Self::RefusedDependency { .. } => Code::MissingDeclaration,
+            Self::Ambiguous { .. } | Self::Shadow { .. } => Code::AmbiguousDeclaration,
+            Self::WrongKind { .. }
+            | Self::ChannelMismatch { .. }
+            | Self::CarriesMismatch { .. }
+            | Self::ChannelDeliveryRange { .. }
+            | Self::AwaitWindow { .. }
+            | Self::KeyModelState { .. }
+            | Self::KeyEquality { .. }
+            | Self::SlotModelState { .. }
+            | Self::RequirementKind { .. }
+            | Self::AccessOrdering { .. }
+            | Self::RelatedEnd { .. }
+            | Self::RolePopulationType { .. }
+            | Self::RoleMax { .. } => Code::IllTyped,
+            Self::JoinFunctionKind { .. } | Self::JoinFunctionType { .. } => Code::IllTyped,
+            Self::KeyClause { cause, .. } | Self::SlotClause { cause, .. } => cause.code(),
+            Self::WrongObservation { .. } => Code::WrongSnapshot,
+            Self::WrongContractAnchor { .. } => Code::WrongSnapshot,
+            Self::Unimplemented { .. }
+            | Self::NoProgress { .. }
+            | Self::AwaitedForm { .. }
+            | Self::WeakJoin { .. }
+            | Self::AccessShape { .. } => Code::UnsupportedConstruct,
+            Self::CausalCycle { .. }
+            | Self::RepeatMaxConflict { .. }
+            | Self::RequirementCycle { .. } => Code::InvalidPackage,
+            Self::Exhaustiveness { .. } => Code::UndefinedExpression,
+            Self::BinderType { fault, .. } | Self::ChannelType { fault, .. } => {
+                type_fault_class(fault).0
+            }
+            Self::ChannelCarriesObject { .. }
+            | Self::RoleModel { .. }
+            | Self::MemoryConflict { .. }
+            | Self::RelationshipExport { .. } => Code::InvalidModelBinding,
+            Self::JoinList { .. } => Code::InvalidPackage,
+        }
+    }
+
+    /// This cause's catalog tag (FR-113: reuses the existing
+    /// `missing-name`, `ambiguous-name` and `type-mismatch` tags; no
+    /// protocol-specific catalog code exists).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::Missing { .. }
+            | Self::MissingContract { .. }
+            | Self::MissingProfile { .. }
+            | Self::MissingRoleType { .. }
+            | Self::MissingRole { .. }
+            | Self::ChannelRole { .. }
+            | Self::NodeRole { .. }
+            | Self::MissingChannel { .. }
+            | Self::MissingRequirement { .. }
+            | Self::MissingRelationship { .. }
+            | Self::MissingRolePopulation { .. }
+            | Self::MissingRelated { .. } => "missing-name",
+            Self::JoinFunctionMissing { .. } => "missing-name",
+            Self::WrongProfileKind { .. } => "wrong-selection-role",
+            Self::RefusedDependency { .. } => "missing-name",
+            Self::Ambiguous { .. } | Self::Shadow { .. } => "ambiguous-name",
+            Self::WrongKind { .. }
+            | Self::ChannelMismatch { .. }
+            | Self::CarriesMismatch { .. }
+            | Self::ChannelDeliveryRange { .. }
+            | Self::AwaitWindow { .. }
+            | Self::RelatedEnd { .. }
+            | Self::RolePopulationType { .. }
+            | Self::RoleMax { .. } => "type-mismatch",
+            Self::JoinFunctionType { .. } => "type-mismatch",
+            Self::KeyModelState { .. }
+            | Self::KeyEquality { .. }
+            | Self::SlotModelState { .. }
+            | Self::AccessOrdering { .. }
+            | Self::RequirementKind { .. } => "operator-ineligible",
+            Self::JoinFunctionKind { .. } => "operator-ineligible",
+            // Only a cause that has a tag is wrapped
+            // (`protocol_controls::check_fifo`, `protocol_slots`).
+            Self::KeyClause { cause, .. } | Self::SlotClause { cause, .. } => {
+                cause.cause().unwrap_or_default()
+            }
+            Self::WrongObservation { .. } => "wrong-observation",
+            Self::WrongContractAnchor { .. } => "wrong-anchor",
+            Self::Unimplemented { .. } => "not-yet-implemented",
+            Self::NoProgress { .. }
+            | Self::AwaitedForm { .. }
+            | Self::WeakJoin { .. }
+            | Self::AccessShape { .. } => "declaration-form",
+            Self::MissingTemporalProfile { .. } => "missing-selection",
+            Self::CausalCycle { .. } | Self::RequirementCycle { .. } => "definition-cycle",
+            Self::RepeatMaxConflict { .. } => "invalid-value",
+            Self::Exhaustiveness { .. } => "unproved-exhaustiveness",
+            Self::BinderType { fault, .. } | Self::ChannelType { fault, .. } => {
+                type_fault_class(fault).1
+            }
+            Self::ChannelCarriesObject { .. } | Self::RoleModel { .. } => "malformed-declaration",
+            Self::RelationshipExport { .. } => "wrong-export",
+            Self::MemoryConflict { .. } => "conflicting-binding",
+            Self::JoinList { .. } => "invalid-value",
+        }
+    }
+}
+
+/// A clause form the checked package excludes by rule (FSpec FR-322-AC-267,
+/// STD-560): the producer refuses it `unsupported_construct`/
+/// `expression-form` at the form, naming the construct, and writes no clause
+/// node for it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ExcludedClauseForm {
+    /// A guard disjunct that constrains no clock (`GJ-01`): a `clock_guard`
+    /// part names at least one constraint.
+    DataOnlyDisjunct,
+    /// A clock collection written other than by a reset of its elements: a
+    /// collection literal, `filter` and the like (`CW-01`, `CW-02`).
+    CollectionWrite,
+    /// `self.v = absent` or another drop of a clock place (`CW-03`): a drop
+    /// is no reset.
+    PresenceDrop,
+    /// A reset by selection whose condition reads the element's data
+    /// (`SD-01`).
+    ElementDataSelection,
+}
+
+impl ExcludedClauseForm {
+    /// The construct, as the refusal names it.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::DataOnlyDisjunct => "a guard disjunct that constrains no clock",
+            Self::CollectionWrite => "a clock collection written other than by a reset",
+            Self::PresenceDrop => "a clock place set absent",
+            Self::ElementDataSelection => "a reset by selection that reads the element's data",
+        }
+    }
+}
+
+/// Why a checked timed model is not written whole: a member S4 does not
+/// write yet, or a clause form the package excludes.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TimedOmission {
+    /// A member S4 does not write yet.
+    Unwritten(UnwrittenTimedMember),
+    /// A form the checked package excludes.
+    Excluded(ExcludedClauseForm),
+}
+
+/// A timed-model member that no S4 emission writes yet (FR-230 "Checked
+/// package", FSpec FR-322 "Clause nodes"): the model is refused
+/// `unsupported_construct`/`not-yet-implemented` at the member.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UnwrittenTimedMember {
+    /// A quantified timed-clause form the current producer does not write,
+    /// such as an unbounded clock family or an unsupported element-data read.
+    QuantifiedClause,
+    /// A clock-reading clause bound to an execution point: a timed clause
+    /// needs a point-qualified operation anchor, while this producer writes
+    /// only the point-free operation anchor (FSpec FR-342-AC-11).
+    PointQualifiedClause,
+    /// A guard part, time invariant or `urgent when` predicate that reads
+    /// the presences of a clock collection's elements (`forall(e in self.q:
+    /// present(e))`), whose quantified presence form this producer does not
+    /// admit yet.
+    ElementPresence,
+    /// A postcondition requiring a clock presence by a comparison with
+    /// `absent` (`self.v != absent`, `not (self.v = absent)`), whose
+    /// `presence_read` S3 does not write yet; `present(self.v)` is written
+    /// (FSpec FR-322 `CW-05`).
+    ComparedPresence,
+    /// A reset of an element clock that no single binder selects: a clock
+    /// below two collections, or an element named by position.
+    ElementReset,
+}
+
+impl UnwrittenTimedMember {
+    /// The member, as the refusal names it.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::QuantifiedClause => "a quantified timed clause is not written by this producer",
+            Self::PointQualifiedClause => {
+                "a clock-reading clause bound to an execution point is not written by this producer"
+            }
+            Self::ElementPresence => {
+                "a predicate reading a clock collection's element presences is not written by this producer"
+            }
+            Self::ComparedPresence => {
+                "a postcondition requiring a clock presence by comparison with `absent`"
+            }
+            Self::ElementReset => "a reset of an element clock no single binder selects",
+        }
+    }
+}
+
+/// FR-326: why the `TemporalTrace` family's `check` refused one `temporal`
+/// clause. Each variant carries its own span, which
+/// `region::DeclarationRegions::refusal_region` reads directly: a clause has
+/// no expression tree for a `Location` path to walk.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum TemporalCause {
+    /// Several temporal faults retained in source order (FR-194-AC-8).
+    Multiple {
+        /// The individually located causes in source order.
+        causes: Vec<TemporalCause>,
+    },
+    /// FR-230: a timed declaration requires the temporal facet selected by
+    /// the unit header. Located at the declaration itself.
+    TimedFacetRequired {
+        /// The timed family written by the source.
+        construct: TimedConstruct,
+        /// The model alias for a time source, or the declaration name.
+        owner: String,
+        /// The unit's selected header layers, before closure.
+        selected: Vec<crate::value::layer::HeaderLayer>,
+        /// The facet that would admit the timed declaration.
+        required: crate::value::layer::HeaderLayer,
+        /// The declaration's span.
+        span: Span,
+    },
+    /// FR-230: a second `time` declaration for the same model.
+    DuplicateTimeSource {
+        /// The model alias.
+        model: String,
+        /// The first declaration's span.
+        first: Span,
+        /// The second declaration's span.
+        span: Span,
+    },
+    /// FR-230: a `time` declaration names no admitted model alias.
+    MissingTimedModel {
+        /// The alias as written.
+        name: String,
+        /// The alias name's span.
+        span: Span,
+    },
+    /// FR-230: a `time` declaration names more than one semantic model node.
+    AmbiguousTimedModel {
+        /// The alias as written.
+        name: String,
+        /// The alias name's span.
+        span: Span,
+    },
+    /// FR-230: `urgent when` has no timed model to bind its predicate.
+    UrgencyWithoutTimeSource {
+        /// The urgency declaration's span.
+        span: Span,
+    },
+    /// FR-230: a `time invariant` has no timed model to bind its
+    /// predicate and bounds.
+    TimeInvariantWithoutTimeSource {
+        /// The time invariant's span.
+        span: Span,
+    },
+    /// FR-230: a time invariant or `urgent` declaration of a unit with
+    /// several time sources, which names none of them.
+    AmbiguousTimedDeclaration {
+        /// The declaration's span.
+        span: Span,
+    },
+    /// FR-230: the timed model's populations range over no object type, or
+    /// over several, so a time invariant or `urgent when` has no `self`.
+    /// Located at the declaration.
+    TimedStateObject {
+        /// Whether several object types were found rather than none.
+        ambiguous: bool,
+        /// The declaration's span.
+        span: Span,
+    },
+    /// FR-230 "Clocks and resets": a model holds a `Clock` field but its
+    /// time source is not `dense`. Located at the time declaration, or at
+    /// the model alias of a model with no time declaration.
+    ClockWithoutDenseTime {
+        /// The clock field's member name.
+        field: String,
+        /// The declaration's span.
+        span: Span,
+    },
+    /// FR-230 "Clock constraints and guards": a clock read anywhere but as
+    /// the clock operand of an atomic clock constraint. Located at the
+    /// read.
+    ClockReadOutsideConstraint {
+        /// The read's span.
+        span: Span,
+    },
+    /// FR-230: an atomic constraint compares a clock with another clock.
+    /// Located at the comparison.
+    ClockComparison {
+        /// The comparison's span.
+        span: Span,
+    },
+    /// FR-230: a clock constraint's constant, or a reset value, is
+    /// negative. Located at the constant.
+    NegativeClockConstant {
+        /// The constant's span.
+        span: Span,
+    },
+    /// FR-230: a clock constraint's bound, or a reset's value, is not an
+    /// exact time quantity literal. Located at the bound.
+    ClockBoundNotConstant {
+        /// The bound's span.
+        span: Span,
+    },
+    /// FR-230 "Clock-typed positions": an argument for a `Clock` parameter,
+    /// or the body of a function whose result is `Clock`, that is no place
+    /// expression. `ill_typed`/`type-mismatch`, located at it.
+    NotAPlaceExpression {
+        /// The argument's or the body's span.
+        span: Span,
+    },
+    /// FR-230 "Clocks and resets": a write to a clock that is not a reset
+    /// of a clock of the operation's frame to a constant. Located at the
+    /// write.
+    ClockWrite {
+        /// The write's span.
+        span: Span,
+    },
+    /// FR-230 "Clock constraints on a type": a `min` constraint on clocks,
+    /// which no conjunction of upper bounds states. Located at the model.
+    TimeInvariantShape {
+        /// The model's span.
+        span: Span,
+    },
+    /// FR-230 "Collection-valued writes": a postcondition that writes one
+    /// clock collection twice, or writes it and resets a clock of it, gives
+    /// its clocks no one value. Located at the later write.
+    ConflictingClockWrite {
+        /// The later write's span.
+        span: Span,
+    },
+    /// FSpec FR-415-AC-21 "No implicit reset on a presence change": a
+    /// postcondition requires `present(p)` of a guarded place it does not
+    /// write, where the operation's precondition establishes `p` absent,
+    /// so no successor exists. Located at the requirement.
+    ClockPresenceUnwritten {
+        /// The `present(...)` requirement's span.
+        span: Span,
+    },
+    /// FR-230 "Guards": `value(p)` of a guarded place read where the guard
+    /// conjunct or the time invariant's predicate does not establish
+    /// `present(p)`: `undefined_expression`/`unproved-presence`, located at
+    /// the read.
+    UnprovedPresence {
+        /// The read's span.
+        span: Span,
+    },
+    /// FR-230 "Presence bit": `present(p)` of an `Option<Clock>` place in a
+    /// position this slice does not read yet (a quantifier body, another
+    /// object's place, a disjunction in a postcondition): no clock is read.
+    PresenceNotChecked {
+        /// The presence read's span.
+        span: Span,
+    },
+    /// FR-230 "Selection": a selector `p[s]` of a clock place expression in
+    /// a clause of a timed model, which only `ref` checks so far (guards,
+    /// resets and data reads by selection are FR-230-AC-21). Located at the
+    /// selector.
+    SelectionNotChecked {
+        /// The selector's span.
+        span: Span,
+    },
+    /// FR-230: a time invariant bound's operand names no clock of the
+    /// state object. Located at the operand.
+    UnknownClock {
+        /// The operand's span.
+        span: Span,
+    },
+    /// FR-230 "Time invariants and urgency": `urgent O` names no operation
+    /// of the timed model, or several. Located at the name.
+    UrgentOperation {
+        /// The operation as written.
+        name: String,
+        /// Whether several operations were found rather than none.
+        ambiguous: bool,
+        /// The name's span.
+        span: Span,
+    },
+    /// FR-230: `urgent O` names an operation whose guard reads a clock.
+    /// Located at the declaration.
+    UrgentGuardReadsClock {
+        /// The clock the guard reads.
+        clock: String,
+        /// The declaration's span.
+        span: Span,
+    },
+    /// FR-230: the `when` predicate of a time invariant or `urgent`
+    /// declaration, or a guard's data part, refused as the clause checker
+    /// refuses an invariant body. Located at the node the refusal names.
+    TimedPredicate {
+        /// The clause checker's refusal.
+        cause: Box<CheckCause>,
+        /// The span of the node it names.
+        span: Span,
+    },
+    /// FR-230: a timed model with a member that no S4 emission writes yet:
+    /// refused rather than compiled and silently missing from the package's
+    /// identity.
+    TimedModelNotEmitted {
+        /// The model alias.
+        model: String,
+        /// The member S4 does not write.
+        member: UnwrittenTimedMember,
+        /// The member's span: the quantifier of a quantified clause, else
+        /// the clause, declaration or constraint written.
+        span: Span,
+    },
+    /// FSpec FR-322-AC-267: a clause form the checked package excludes,
+    /// refused at the form.
+    ExcludedClauseForm {
+        /// The model alias.
+        model: String,
+        /// The excluded form.
+        form: ExcludedClauseForm,
+        /// The form's span.
+        span: Span,
+    },
+    /// FR-230: a tick source's period is zero or negative.
+    InvalidTickPeriod {
+        /// The period quantity's span.
+        span: Span,
+    },
+    /// FR-230: the time unit's scale to its root is zero, so it cannot be a
+    /// conversion target. The unit graph refuses a zero scale at admission;
+    /// this reports the malformed unit if one ever reaches S3.
+    MalformedTimeUnit {
+        /// The unit as written.
+        name: String,
+        /// The unit name's span.
+        span: Span,
+    },
+    /// FR-230: a tick source names no operation of its model.
+    MissingTickOperation {
+        /// The operation as written.
+        name: String,
+        /// The operation name's span.
+        span: Span,
+    },
+    /// FR-230: a tick source's operation name resolves more than once.
+    AmbiguousTickOperation {
+        /// The operation as written.
+        name: String,
+        /// The operation name's span.
+        span: Span,
+    },
+    /// FR-326 "Profile identity": the unit selects no temporal profile, or
+    /// more than one. `found` names the identity of each selection it
+    /// found, in source order. Located at the clause.
+    ProfileSelection {
+        /// The identity of each temporal profile the unit selects.
+        found: Vec<&'static str>,
+        /// The clause's span.
+        span: Span,
+    },
+    /// FR-326 "Bounded profiles": an operator with no interval under a
+    /// bounded profile. Located at the operator.
+    MissingInterval {
+        /// The operator's own token.
+        span: Span,
+    },
+    /// FR-326 "Bounded profiles": an `[a,*]` interval under a bounded
+    /// profile. Located at the interval.
+    OpenInterval {
+        /// The interval's span.
+        span: Span,
+    },
+    /// FR-326 "Bounded profiles": an interval with `a > b`, under every
+    /// profile. Located at the interval.
+    InvertedInterval {
+        /// The written lower bound.
+        lower: u64,
+        /// The written upper bound.
+        upper: u64,
+        /// The interval's span.
+        span: Span,
+    },
+    /// A parameter of the clause (`over`, `on each` or a capture) declares
+    /// a type that does not resolve.
+    ParameterType {
+        /// The parameter's name.
+        parameter: String,
+        /// Why its type form did not resolve.
+        fault: super::type_form::TypeFormFault,
+        /// The type form's span.
+        span: Span,
+    },
+    /// FR-337 "`on each` activation at S3": the `on each` parameter's type is
+    /// not the `over` parameter's. `ill_typed`/`type-mismatch`, located at
+    /// the type form.
+    TriggerType {
+        /// The `on each` parameter's name.
+        parameter: String,
+        /// The type form's span.
+        span: Span,
+    },
+    /// FR-337 "`on each` activation at S3": the `on each` parameter is named
+    /// as the `over` parameter is. `conflicting_declaration`/
+    /// `duplicate-declaration`, located at the `on each` binder's name.
+    DuplicateTrigger {
+        /// The repeated name.
+        name: String,
+        /// The `over` parameter name's span, the first declaration.
+        first: Span,
+        /// The `on each` binder name's span.
+        span: Span,
+    },
+    /// FR-337 "Captures at S3": a capture is named as the `over` parameter,
+    /// the trigger binder or an earlier capture is.
+    /// `conflicting_declaration`/`duplicate-declaration`, located at the
+    /// capture's name.
+    DuplicateCapture {
+        /// The repeated name.
+        name: String,
+        /// The first declaration's name span.
+        first: Span,
+        /// The capture name's span.
+        span: Span,
+    },
+    /// FR-123 "Fairness constraints": a fairness constraint names no
+    /// operation of an admitted model. Located at the operation's name.
+    UnresolvedFairnessOperation {
+        /// The operation as written.
+        name: String,
+        /// The operation name's span.
+        span: Span,
+    },
+    /// FR-123 "Fairness constraints": a fairness constraint's operation
+    /// names operations of several declaring types, none more derived than
+    /// the others. Located at the operation's name.
+    AmbiguousFairnessOperation {
+        /// The operation as written.
+        name: String,
+        /// The operation name's span.
+        span: Span,
+    },
+    /// FR-123 "Fairness constraints": a fairness constraint on a clause
+    /// whose unit selects a bounded profile. Located at the constraint.
+    FairnessUnderBoundedProfile {
+        /// The constraint's span.
+        span: Span,
+    },
+    /// FR-194: aggregate terms apply to trace subjects, not model subjects.
+    AggregateModelSubject {
+        /// The aggregate term's span.
+        span: Span,
+    },
+    /// FR-194: an aggregate literal violates its authored-value constraint.
+    InvalidAggregateValue {
+        /// The literal's span.
+        span: Span,
+    },
+    /// FR-194: the window bounds are not ordered.
+    InvalidAggregateWindow {
+        /// The complete `past[a, b]` span.
+        span: Span,
+    },
+    /// FR-194: a window bound has the wrong kind for the selected profile,
+    /// or a `duration` bound is in a unit that is no time unit or does not
+    /// convert to the window's time unit.
+    AggregateWindowKindMismatch {
+        /// The first bound with the wrong kind, or the bound's unit.
+        span: Span,
+    },
+    /// FR-194: aggregate windows are admitted only by event-position and
+    /// timestamped-event profiles.
+    AggregateProfileUnsupported {
+        /// The aggregate term's span.
+        span: Span,
+    },
+    /// A timed interval (FR-393) where the clause counts steps or ticks, not
+    /// time: under `model-steps` (FR-233) and under the finite-window
+    /// profile (FR-326), whether the bound carries a unit, is rational, has
+    /// an open end or an unbounded upper end. `ill_typed`/`type-mismatch`
+    /// at the interval.
+    TimedIntervalUnderStepCount {
+        /// The interval's span.
+        span: Span,
+    },
+    /// A timed interval in a hyper clause under the timed profile, which has
+    /// no timed reading yet (FR-488-AC-18): refused rather than checked.
+    /// `unsupported_construct`/`not-yet-implemented` at the interval.
+    TimedIntervalNotChecked {
+        /// The interval's span.
+        span: Span,
+    },
+    /// A clause whose checked parts all hold, but that no S4 emission
+    /// writes yet (FR-337): refused rather than compiled and silently
+    /// missing from the emitted package.
+    NotEmitted {
+        /// The declared clause name.
+        name: String,
+        /// The clause's span.
+        span: Span,
+    },
+    /// FR-212 "Targets at S3": a fairness constraint resolved to a
+    /// protocol target, which no S4 emission writes yet: refused rather
+    /// than compiled into a clause whose identity does not bind it.
+    /// Located at the constraint's name.
+    ProtocolFairnessNotEmitted {
+        /// The resolved constraint.
+        constraint: Box<super::temporal_clause::CheckedProtocolFairness>,
+        /// The constraint name's span.
+        span: Span,
+    },
+    /// FR-234: a timed interval with a negative lower bound, `a > b`, or an
+    /// open end with `a = b`. Located at the interval.
+    InvalidTimedInterval {
+        /// Which condition the bounds broke.
+        reason: fsl_foundation::bound::InvalidTimedInterval,
+        /// The interval's span.
+        span: Span,
+    },
+    /// FR-233: a clause writes `clock "model-time"` over a model with no
+    /// `time` member. Located at the clock clause, naming the model.
+    ModelTimeOnUntimedModel {
+        /// The model the clause's subject belongs to.
+        model: String,
+        /// The clock clause's span.
+        span: Span,
+    },
+    /// FR-233 "Intervals": under `model-time` an interval bound with no
+    /// unit (a step interval `[a, b]`). Located at the bound.
+    UnitlessTimedBound {
+        /// The bound's span.
+        span: Span,
+    },
+    /// An interval bound written `rational(n, 0)`. Located at the bound.
+    ZeroDenominator {
+        /// The bound's span.
+        span: Span,
+    },
+    /// FR-230 "The time dimension and its units", read by FR-233 for an
+    /// interval bound: the bound's unit is not a time unit of the checked
+    /// package's unit graph.
+    TimeQuantity {
+        /// Why the unit is not a time unit (boxed: an affine unit's offset
+        /// is an exact rational).
+        cause: Box<TimeUnitCause>,
+        /// The unit name's span; for a task's time value (FSL FR-246), the span of
+        /// the whole quantity.
+        span: Span,
+    },
+    /// A clause under the timed profile whose clock binding is not
+    /// `model-time` over a timed model: ADR-026 CB-1 has the timed profile
+    /// selected only by `model-time`, and no FSL requirement names the
+    /// refusal of the timed profile under another binding. Located at the
+    /// clock clause.
+    TimedProfileWithoutModelTime {
+        /// The clock role, as written.
+        clock: String,
+        /// The clock clause's span.
+        span: Span,
+    },
+    /// A clause under the timed profile over a subject that is not a model
+    /// object type: a timed-trace subject, whose clock binding and time unit
+    /// no FSL requirement states (FSpec FR-252 supplies it "through the
+    /// shared observation interface"). Located at the clause.
+    TimedTraceSubject {
+        /// The clause's span.
+        span: Span,
+    },
+    /// FSL FR-246, FSpec FR-419: a task set or a claim over it that breaks a
+    /// rule of the task model. Located at the offending value, or at the
+    /// declaration for a task set with no task.
+    InvalidTaskSet {
+        /// The task set.
+        task_set: String,
+        /// The tasks the refusal names: none for a task set that declares
+        /// none, one task, or both tasks of a priority clash.
+        tasks: Vec<String>,
+        /// The broken rule.
+        defect: TaskSetDefect,
+        /// The span of the offending value or declaration.
+        span: Span,
+    },
+    /// FSL FR-246: two tasks of one task set share a name. Located at the
+    /// second task's name.
+    DuplicateTask {
+        /// The task set.
+        task_set: String,
+        /// The shared name.
+        task: String,
+        /// The first task's name span.
+        first: Span,
+        /// The second task's name span.
+        span: Span,
+    },
+    /// FSL FR-246: two task sets of one unit share a name. Located at the
+    /// second task set's name.
+    DuplicateTaskSet {
+        /// The shared name.
+        name: String,
+        /// The first task set's name span.
+        first: Span,
+        /// The second task set's name span.
+        span: Span,
+    },
+    /// FSL FR-246: a claim names no task set of the unit. Located at the
+    /// task set name the claim wrote.
+    MissingTaskSet {
+        /// The claim.
+        claim: String,
+        /// The task set as written.
+        name: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-246: a `response` claim names no task of its task set.
+    /// Located at the task name the claim wrote.
+    UnknownResponseTask {
+        /// The claim.
+        claim: String,
+        /// The task set.
+        task_set: String,
+        /// The task as written.
+        task: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249, FSpec FR-419: a `release` names no task set of the unit.
+    /// Located at the task set name the declaration wrote.
+    UnknownReleaseTaskSet {
+        /// The task set as written.
+        name: String,
+        /// The operation the declaration releases on, as written.
+        operation: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249, FSpec FR-419: a `release` names no task of its task set.
+    /// Located at the task name the declaration wrote.
+    UnknownReleaseTask {
+        /// The task set.
+        task_set: String,
+        /// The task as written.
+        task: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249: a `release` names no operation of a model. Located at
+    /// the operation name.
+    UnresolvedReleaseOperation {
+        /// The operation as written.
+        name: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249: a `release` names operations of several declaring types,
+    /// none more derived than the others. Located at the operation name.
+    AmbiguousReleaseOperation {
+        /// The operation as written.
+        name: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249: an operation releases one task twice. Located at the
+    /// second declaration.
+    DuplicateRelease {
+        /// The task set.
+        task_set: String,
+        /// The task.
+        task: String,
+        /// The operation as written.
+        operation: String,
+        /// The first declaration's span.
+        first: Span,
+        /// The second declaration's span.
+        span: Span,
+    },
+    /// A clause over a non-hybrid subject that writes no `clock` member: its
+    /// subject's default clock (FSpec FR-252, FSL FR-233 "Default") is not
+    /// built, so the clause is refused rather than stepped by a guessed
+    /// clock. Located at the clause.
+    MissingClock {
+        /// The clause's span.
+        span: Span,
+    },
+}
+
+/// A time member of a task, for a refusal to name (FSL FR-246).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TaskTimeMember {
+    /// The period or minimum inter-arrival time.
+    Period,
+    /// The relative deadline.
+    Deadline,
+    /// The best-case execution time lower bound.
+    Bcet,
+    /// The `wcet` budget: `C`, or `C(LO)` for a `hi` task.
+    Wcet,
+    /// The `wcet_hi` budget `C(HI)`.
+    WcetHi,
+    /// The release jitter.
+    Jitter,
+    /// The blocking term.
+    Blocking,
+}
+
+/// Which rule of the task model an [`TemporalCause::InvalidTaskSet`] broke
+/// (FSL FR-246, FSpec FR-419). Every one is catalog `invalid_timed_model`/
+/// `invalid-task-set`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum TaskSetDefect {
+    /// The task set declares no task.
+    NoTask,
+    /// A period, minimum inter-arrival time, deadline or WCET is not
+    /// positive.
+    NotPositive(TaskTimeMember),
+    /// A jitter or blocking term is negative.
+    Negative(TaskTimeMember),
+    /// A `hi` task's `C(LO)` exceeds its `C(HI)`.
+    BudgetOrder,
+    /// A best-case execution time exceeds the task's applicable WCET.
+    BcetExceedsBudget,
+    /// A `lo` task states a `wcet_hi`.
+    LoDualBudgets,
+    /// A priority is past the largest natural number S3 holds.
+    PriorityOutOfRange,
+    /// A `fixed_priority`, `amc` or `response` claim over a task with no
+    /// priority.
+    MissingPriority,
+    /// A `fixed_priority`, `amc` or `response` claim over two tasks of one
+    /// priority.
+    PriorityClash {
+        /// The shared priority.
+        priority: u64,
+    },
+    /// An `edf` claim over a task whose jitter or blocking term is not zero,
+    /// which the processor-demand test does not read.
+    EdfTerm(TaskTimeMember),
+    /// An `amc` claim over a task whose deadline exceeds its period, which
+    /// AMC-rtb does not cover.
+    AmcDeadlineBeyondPeriod,
+}
+
+/// Why a quantity's unit is not a time unit (FR-230 "The time dimension and
+/// its units"), in the order the checker reads it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum TimeUnitCause {
+    /// The unit graph has no base dimension named `Time`.
+    NoTimeDimension {
+        /// The required base dimension name.
+        name: &'static str,
+    },
+    /// The unit graph has no unit with the written name.
+    UnknownUnit {
+        /// The unit as written.
+        name: String,
+    },
+    /// The unit is typed by a dimension other than the `Time` base node.
+    NotTimeDimension {
+        /// The unit as written.
+        name: String,
+    },
+    /// The unit is a time unit of a base `Time` dimension other than the
+    /// model's time dimension, with no admitted equivalence between them
+    /// (FSpec FR-142 "Dimensions of different owners").
+    OtherTimeDimension {
+        /// The unit as written.
+        name: String,
+    },
+    /// The unit's composed offset to its root is not zero.
+    AffineUnit {
+        /// The unit as written.
+        name: String,
+        /// The composed offset.
+        offset: filament_exact::Rational,
+    },
+}
+
+impl TimeUnitCause {
+    /// The cause's catalog code: an unresolved name is a missing
+    /// declaration, a unit that is no time unit of the model is ill typed.
+    pub fn code(&self) -> Code {
+        match self {
+            Self::NoTimeDimension { .. } | Self::UnknownUnit { .. } => Code::MissingDeclaration,
+            Self::NotTimeDimension { .. }
+            | Self::OtherTimeDimension { .. }
+            | Self::AffineUnit { .. } => Code::IllTyped,
+        }
+    }
+
+    /// The cause's catalog tag.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::NoTimeDimension { .. } | Self::UnknownUnit { .. } => "missing-name",
+            Self::NotTimeDimension { .. }
+            | Self::OtherTimeDimension { .. }
+            | Self::AffineUnit { .. } => "type-mismatch",
+        }
+    }
+}
+
+impl TemporalCause {
+    /// The refusal's own span (FR-096: read directly, not through a
+    /// `Location`'s path).
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Multiple { causes } => causes
+                .first()
+                .map_or(Span { start: 0, end: 0 }, TemporalCause::span),
+            Self::TimedFacetRequired { span, .. }
+            | Self::DuplicateTimeSource { span, .. }
+            | Self::MissingTimedModel { span, .. }
+            | Self::AmbiguousTimedModel { span, .. }
+            | Self::UrgencyWithoutTimeSource { span }
+            | Self::TimeInvariantWithoutTimeSource { span }
+            | Self::AmbiguousTimedDeclaration { span }
+            | Self::TimedStateObject { span, .. }
+            | Self::ClockWithoutDenseTime { span, .. }
+            | Self::ClockReadOutsideConstraint { span }
+            | Self::ClockComparison { span }
+            | Self::NegativeClockConstant { span }
+            | Self::ClockBoundNotConstant { span }
+            | Self::NotAPlaceExpression { span }
+            | Self::ClockWrite { span }
+            | Self::ConflictingClockWrite { span }
+            | Self::ClockPresenceUnwritten { span }
+            | Self::UnprovedPresence { span }
+            | Self::PresenceNotChecked { span }
+            | Self::SelectionNotChecked { span }
+            | Self::TimeInvariantShape { span }
+            | Self::UnknownClock { span }
+            | Self::UrgentOperation { span, .. }
+            | Self::UrgentGuardReadsClock { span, .. }
+            | Self::TimedPredicate { span, .. }
+            | Self::TimedModelNotEmitted { span, .. }
+            | Self::ExcludedClauseForm { span, .. }
+            | Self::InvalidTickPeriod { span }
+            | Self::MalformedTimeUnit { span, .. }
+            | Self::MissingTickOperation { span, .. }
+            | Self::AmbiguousTickOperation { span, .. }
+            | Self::ProfileSelection { span, .. }
+            | Self::MissingInterval { span }
+            | Self::OpenInterval { span }
+            | Self::InvertedInterval { span, .. }
+            | Self::ParameterType { span, .. }
+            | Self::TriggerType { span, .. }
+            | Self::DuplicateTrigger { span, .. }
+            | Self::DuplicateCapture { span, .. }
+            | Self::UnresolvedFairnessOperation { span, .. }
+            | Self::AmbiguousFairnessOperation { span, .. }
+            | Self::FairnessUnderBoundedProfile { span }
+            | Self::AggregateModelSubject { span }
+            | Self::InvalidAggregateValue { span }
+            | Self::InvalidAggregateWindow { span }
+            | Self::AggregateWindowKindMismatch { span }
+            | Self::AggregateProfileUnsupported { span }
+            | Self::TimedIntervalUnderStepCount { span }
+            | Self::TimedIntervalNotChecked { span }
+            | Self::NotEmitted { span, .. }
+            | Self::ProtocolFairnessNotEmitted { span, .. }
+            | Self::InvalidTimedInterval { span, .. }
+            | Self::ModelTimeOnUntimedModel { span, .. }
+            | Self::UnitlessTimedBound { span }
+            | Self::ZeroDenominator { span }
+            | Self::TimeQuantity { span, .. }
+            | Self::TimedProfileWithoutModelTime { span, .. }
+            | Self::TimedTraceSubject { span }
+            | Self::InvalidTaskSet { span, .. }
+            | Self::DuplicateTask { span, .. }
+            | Self::DuplicateTaskSet { span, .. }
+            | Self::MissingTaskSet { span, .. }
+            | Self::UnknownResponseTask { span, .. }
+            | Self::UnknownReleaseTaskSet { span, .. }
+            | Self::UnknownReleaseTask { span, .. }
+            | Self::UnresolvedReleaseOperation { span, .. }
+            | Self::AmbiguousReleaseOperation { span, .. }
+            | Self::DuplicateRelease { span, .. }
+            | Self::MissingClock { span } => *span,
+        }
+    }
+
+    /// This cause's catalog code.
+    pub fn code(&self) -> Code {
+        match self {
+            Self::Multiple { causes } => causes
+                .first()
+                .map_or(Code::InvalidPackage, TemporalCause::code),
+            Self::TimedFacetRequired { .. } => Code::UnsupportedConstruct,
+            Self::InvalidAggregateValue { .. } => Code::InvalidPackage,
+            Self::InvalidAggregateWindow { .. } => Code::InvalidPackage,
+            Self::AggregateWindowKindMismatch { .. } => Code::IllTyped,
+            Self::AggregateProfileUnsupported { .. } => Code::UnsupportedConstruct,
+            Self::DuplicateTimeSource { .. } => Code::InvalidTimedModel,
+            Self::MissingTimedModel { .. } => Code::MissingDeclaration,
+            Self::AmbiguousTimedModel { .. } => Code::AmbiguousDeclaration,
+            Self::UrgencyWithoutTimeSource { .. }
+            | Self::TimeInvariantWithoutTimeSource { .. }
+            | Self::UnknownClock { .. } => Code::MissingDeclaration,
+            Self::AmbiguousTimedDeclaration { .. } => Code::AmbiguousDeclaration,
+            Self::TimedStateObject { ambiguous, .. } | Self::UrgentOperation { ambiguous, .. } => {
+                if *ambiguous {
+                    Code::AmbiguousDeclaration
+                } else {
+                    Code::MissingDeclaration
+                }
+            }
+            Self::ClockWithoutDenseTime { .. }
+            | Self::ClockReadOutsideConstraint { .. }
+            | Self::ClockComparison { .. }
+            | Self::NegativeClockConstant { .. }
+            | Self::ClockBoundNotConstant { .. }
+            | Self::ClockWrite { .. }
+            | Self::ConflictingClockWrite { .. }
+            | Self::ClockPresenceUnwritten { .. }
+            | Self::TimeInvariantShape { .. }
+            | Self::UrgentGuardReadsClock { .. } => Code::InvalidTimedModel,
+            Self::TimedPredicate { cause, .. } => cause.code(),
+            Self::UnprovedPresence { .. } => Code::UndefinedExpression,
+            Self::PresenceNotChecked { .. } | Self::SelectionNotChecked { .. } => {
+                Code::UnsupportedConstruct
+            }
+            Self::TimedModelNotEmitted { .. } | Self::ExcludedClauseForm { .. } => {
+                Code::UnsupportedConstruct
+            }
+            Self::InvalidTickPeriod { .. } | Self::MalformedTimeUnit { .. } => {
+                Code::InvalidModelBinding
+            }
+            Self::MissingTickOperation { .. } => Code::MissingDeclaration,
+            Self::AmbiguousTickOperation { .. } => Code::AmbiguousDeclaration,
+            Self::ProfileSelection { .. } => Code::UnknownProfile,
+            Self::MissingInterval { .. }
+            | Self::OpenInterval { .. }
+            | Self::FairnessUnderBoundedProfile { .. }
+            | Self::AggregateModelSubject { .. }
+            | Self::TimedIntervalNotChecked { .. }
+            | Self::NotEmitted { .. }
+            | Self::ProtocolFairnessNotEmitted { .. }
+            | Self::TimedProfileWithoutModelTime { .. }
+            | Self::TimedTraceSubject { .. }
+            | Self::MissingClock { .. } => Code::UnsupportedConstruct,
+            Self::UnresolvedFairnessOperation { .. } => Code::MissingDeclaration,
+            Self::InvalidTimedInterval { .. }
+            | Self::ModelTimeOnUntimedModel { .. }
+            | Self::InvalidTaskSet { .. } => Code::InvalidTimedModel,
+            Self::DuplicateTask { .. }
+            | Self::DuplicateTaskSet { .. }
+            | Self::DuplicateRelease { .. } => Code::ConflictingDeclaration,
+            Self::MissingTaskSet { .. }
+            | Self::UnknownResponseTask { .. }
+            | Self::UnknownReleaseTaskSet { .. }
+            | Self::UnknownReleaseTask { .. }
+            | Self::UnresolvedReleaseOperation { .. } => Code::MissingDeclaration,
+            Self::AmbiguousReleaseOperation { .. } => Code::AmbiguousDeclaration,
+            Self::UnitlessTimedBound { .. }
+            | Self::TimedIntervalUnderStepCount { .. }
+            | Self::NotAPlaceExpression { .. } => Code::IllTyped,
+            Self::ZeroDenominator { .. } => Code::UndefinedExpression,
+            Self::TimeQuantity { cause, .. } => cause.code(),
+            Self::AmbiguousFairnessOperation { .. } => Code::AmbiguousDeclaration,
+            Self::InvertedInterval { .. } | Self::TriggerType { .. } => Code::IllTyped,
+            Self::DuplicateTrigger { .. } | Self::DuplicateCapture { .. } => {
+                Code::ConflictingDeclaration
+            }
+            Self::ParameterType { fault, .. } => type_fault_class(fault).0,
+        }
+    }
+
+    /// This cause's catalog tag.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::Multiple { causes } => causes.first().map_or("invalid-value", TemporalCause::tag),
+            Self::TimedFacetRequired { .. } => "declaration-form",
+            Self::DuplicateTimeSource { .. } => "duplicate-time-source",
+            Self::MissingTimedModel { .. } => "missing-name",
+            Self::AmbiguousTimedModel { .. } => "ambiguous-name",
+            Self::UrgencyWithoutTimeSource { .. }
+            | Self::TimeInvariantWithoutTimeSource { .. }
+            | Self::UnknownClock { .. } => "missing-name",
+            Self::AmbiguousTimedDeclaration { .. } => "ambiguous-name",
+            Self::TimedStateObject { ambiguous, .. } | Self::UrgentOperation { ambiguous, .. } => {
+                if *ambiguous {
+                    "ambiguous-name"
+                } else {
+                    "missing-name"
+                }
+            }
+            Self::ClockWithoutDenseTime { .. } => "clock-without-dense-time",
+            Self::ClockReadOutsideConstraint { .. } => "clock-read-outside-constraint",
+            Self::ClockComparison { .. } => "clock-comparison",
+            Self::NegativeClockConstant { .. } => "negative-clock-constant",
+            Self::ClockBoundNotConstant { .. } => "clock-bound-not-constant",
+            Self::ClockWrite { .. } => "clock-write",
+            Self::ConflictingClockWrite { .. } => "conflicting-clock-write",
+            Self::ClockPresenceUnwritten { .. } => "clock-presence-unwritten",
+            Self::UnprovedPresence { .. } => "unproved-presence",
+            Self::PresenceNotChecked { .. } | Self::SelectionNotChecked { .. } => {
+                "not-yet-implemented"
+            }
+            Self::TimeInvariantShape { .. } => "time-invariant-shape",
+            Self::UrgentGuardReadsClock { .. } => "urgent-guard-reads-clock",
+            Self::TimedPredicate { cause, .. } => cause.cause().unwrap_or("invalid-value"),
+            Self::TimedModelNotEmitted { .. } => "not-yet-implemented",
+            Self::ExcludedClauseForm { .. } => "expression-form",
+            Self::InvalidTickPeriod { .. } | Self::MalformedTimeUnit { .. } => {
+                "malformed-declaration"
+            }
+            Self::MissingTickOperation { .. } => "missing-name",
+            Self::AmbiguousTickOperation { .. } => "ambiguous-name",
+            Self::ProfileSelection { .. } => "unsupported-selection",
+            Self::MissingInterval { .. }
+            | Self::OpenInterval { .. }
+            | Self::FairnessUnderBoundedProfile { .. } => "expression-form",
+            Self::AggregateModelSubject { .. } => "expression-form",
+            Self::InvalidAggregateValue { .. } => "invalid-value",
+            Self::InvalidAggregateWindow { .. } => "invalid-value",
+            Self::AggregateWindowKindMismatch { .. } => "unit-mismatch",
+            Self::AggregateProfileUnsupported { .. } => "expression-form",
+            Self::UnresolvedFairnessOperation { .. } => "missing-name",
+            Self::AmbiguousFairnessOperation { .. } => "ambiguous-name",
+            Self::InvertedInterval { .. } | Self::TriggerType { .. } => "type-mismatch",
+            Self::DuplicateTrigger { .. }
+            | Self::DuplicateCapture { .. }
+            | Self::DuplicateTask { .. }
+            | Self::DuplicateTaskSet { .. }
+            | Self::DuplicateRelease { .. } => "duplicate-declaration",
+            Self::InvalidTaskSet { .. } => "invalid-task-set",
+            Self::MissingTaskSet { .. }
+            | Self::UnknownResponseTask { .. }
+            | Self::UnknownReleaseTaskSet { .. }
+            | Self::UnknownReleaseTask { .. }
+            | Self::UnresolvedReleaseOperation { .. } => "missing-name",
+            Self::AmbiguousReleaseOperation { .. } => "ambiguous-name",
+            Self::TimedIntervalNotChecked { .. }
+            | Self::NotEmitted { .. }
+            | Self::ProtocolFairnessNotEmitted { .. }
+            | Self::TimedProfileWithoutModelTime { .. }
+            | Self::TimedTraceSubject { .. }
+            | Self::MissingClock { .. } => "not-yet-implemented",
+            Self::ParameterType { fault, .. } => type_fault_class(fault).1,
+            Self::InvalidTimedInterval { .. } => "invalid-interval",
+            Self::ModelTimeOnUntimedModel { .. } => "model-time-on-untimed-model",
+            Self::UnitlessTimedBound { .. }
+            | Self::TimedIntervalUnderStepCount { .. }
+            | Self::NotAPlaceExpression { .. } => "type-mismatch",
+            Self::ZeroDenominator { .. } => "unproved-nonzero",
+            Self::TimeQuantity { cause, .. } => cause.tag(),
+        }
+    }
+}
+
+/// Why the `StateGraph` family refused a state-graph claim (FR-165). Each
+/// cause carries the span it is located at, read directly, since a claim's
+/// predicates are not the expression tree of a declaration a `Location`
+/// path resolves in.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum StateGraphCause {
+    /// A predicate reads an operation anchor (`self`), a result or a
+    /// pre-state (`pre(e)`), not the state alone (ADR-022 GM-3). Located at
+    /// the read.
+    ReadsBeyondState {
+        /// The read's span.
+        span: Span,
+    },
+    /// A predicate contains a temporal operator. Located at the operator.
+    TemporalOperator {
+        /// The operator's span.
+        span: Span,
+    },
+    /// The claim carries a fairness constraint (ADR-022 GM-7). Located at
+    /// the constraint.
+    Fairness {
+        /// The constraint's span.
+        span: Span,
+    },
+    /// The state clause checker refused a predicate, as it refuses an
+    /// invariant body.
+    Predicate {
+        /// The refused predicate's role in the claim.
+        role: PredicateRole,
+        /// The span of the node the refusal names, or of the whole predicate
+        /// when its spans do not reach that node.
+        span: Span,
+        /// The clause checker's refusal.
+        cause: Box<CheckCause>,
+    },
+}
+
+/// Which predicate of a state-graph claim a refusal is about.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PredicateRole {
+    /// `possible`'s and `always possible`'s `P`.
+    Target,
+    /// `always possible`'s `Q` and `unique path`'s `X`.
+    From,
+    /// `unique path`'s `Y`.
+    To,
+}
+
+impl StateGraphCause {
+    /// The refusal's own span (FR-096), when it has one.
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::ReadsBeyondState { span }
+            | Self::TemporalOperator { span }
+            | Self::Fairness { span }
+            | Self::Predicate { span, .. } => Some(*span),
+        }
+    }
+
+    /// This cause's catalog code.
+    pub fn code(&self) -> Code {
+        match self {
+            Self::ReadsBeyondState { .. }
+            | Self::TemporalOperator { .. }
+            | Self::Fairness { .. } => Code::UnsupportedConstruct,
+            Self::Predicate { cause, .. } => cause.code(),
+        }
+    }
+
+    /// This cause's catalog tag.
+    pub fn tag(&self) -> Option<&'static str> {
+        match self {
+            Self::ReadsBeyondState { .. }
+            | Self::TemporalOperator { .. }
+            | Self::Fairness { .. } => Some("expression-form"),
+            Self::Predicate { cause, .. } => cause.cause(),
+        }
+    }
+}
+
+/// An inclusive mathematical integer interval whose missing ends are
+/// unbounded.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct ProvedInterval {
+    /// The lower end, if bounded.
+    pub lower: Option<Integer>,
+    /// The upper end, if bounded.
+    pub upper: Option<Integer>,
+}
+
+/// The definedness obligation that could not be proved.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum Obligation {
+    /// A divisor may be zero: `unproved-nonzero`.
+    Nonzero,
+    /// `value(e)` without a proved `present(e)`: `unproved-presence`.
+    Presence,
+    /// An integer value may lie outside its required interval:
+    /// `unproved-range`.
+    Range {
+        /// The required interval.
+        required: Box<ProvedInterval>,
+        /// The interval the accepted proof forms establish.
+        proved: Box<ProvedInterval>,
+    },
+    /// A rational quotient may lie outside its `Rational[..]` domain:
+    /// `unproved-range`.
+    RationalRange,
+    /// `reduce` without a proof of `size(c) >= 1`: `unproved-range`.
+    NonemptyReduction {
+        /// The proved `size(c)` interval.
+        size: Box<ProvedInterval>,
+    },
+}
+
+/// The FR-146 component obligation that failed, in check order.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum MeasureObligation {
+    /// `missing-measure`.
+    MissingMeasure,
+    /// `measure-arity`.
+    MeasureArity,
+    /// `measure-kind`.
+    MeasureKind,
+    /// `nonnegative`.
+    Nonnegative,
+    /// `decrease`.
+    Decrease,
+}
+
+impl MeasureObligation {
+    /// The obligation spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingMeasure => "missing-measure",
+            Self::MeasureArity => "measure-arity",
+            Self::MeasureKind => "measure-kind",
+            Self::Nonnegative => "nonnegative",
+            Self::Decrease => "decrease",
+        }
+    }
+}
+
+/// The checking stage a declared checking limit bounds.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CheckingStage {
+    /// Name resolution and typing.
+    Typing,
+}
+
+/// Which declared checking limit was reached.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CheckingLimitKind {
+    /// Admitted expression nodes per checked package.
+    Nodes,
+    /// A checked-family declaration's own preimage byte length
+    /// (`fsl_foundation::diagnostic::LimitKind::InputBytes`).
+    InputBytes,
+    /// Cumulative checking work: the checked-family contract meter's
+    /// spend across every declaration checked against it
+    /// (`fsl_foundation::diagnostic::LimitKind::WorkBudget`), and lowering's
+    /// `declaration.check` charges.
+    WorkBudget,
+    /// The bit length of an exact value's rational numerator or denominator
+    /// (`fsl_foundation::diagnostic::LimitKind::RationalBits`).
+    RationalBits,
+    /// The written scale of one `decimal(c, s)` literal
+    /// (`s3.decimal_literal_scale`, a work-budget limit).
+    DecimalLiteralScale,
+    /// The total written scale of the `decimal(c, s)` literals of one checked
+    /// package (`s3.decimal_literal_scale_total`, a work-budget limit).
+    DecimalLiteralScaleTotal,
+}
+
+impl CheckingLimitKind {
+    /// The setting that raises this limit (FR-255): the one mapping from a
+    /// checking limit to its name, and through the setting to its limit kind.
+    pub const fn setting(self) -> Setting {
+        match self {
+            Self::Nodes => Setting::S3Nodes,
+            Self::InputBytes => Setting::S3InputBytes,
+            Self::WorkBudget => Setting::S3WorkUnits,
+            Self::RationalBits => Setting::S3RationalBits,
+            Self::DecimalLiteralScale => Setting::S3DecimalLiteralScale,
+            Self::DecimalLiteralScaleTotal => Setting::S3DecimalLiteralScaleTotal,
+        }
+    }
+}
+
+impl TryFrom<Setting> for CheckingLimitKind {
+    type Error = Setting;
+
+    /// The reverse of [`CheckingLimitKind::setting`], for `check::mod`'s
+    /// `StageFailure::Limit` arm. Matched exhaustively rather than with a
+    /// `_` catch-all, so a new setting forces a decision here. Every other
+    /// setting names a limit of a stage other than checking, and refuses.
+    fn try_from(setting: Setting) -> Result<Self, Setting> {
+        match setting {
+            Setting::S3Nodes => Ok(Self::Nodes),
+            Setting::S3InputBytes => Ok(Self::InputBytes),
+            Setting::S3WorkUnits => Ok(Self::WorkBudget),
+            Setting::S3RationalBits => Ok(Self::RationalBits),
+            Setting::S3DecimalLiteralScale => Ok(Self::DecimalLiteralScale),
+            Setting::S3DecimalLiteralScaleTotal => Ok(Self::DecimalLiteralScaleTotal),
+            Setting::S1InputBytes
+            | Setting::S1Tokens
+            | Setting::S1Nodes
+            | Setting::S1WorkUnits
+            | Setting::S3DecimalScale
+            | Setting::DependencyLibraries
+            | Setting::DependencyImportEdges
+            | Setting::DependencySourceBytes
+            | Setting::EnvironmentAncestorSteps
+            | Setting::EnvironmentWorkUnits
+            | Setting::ModelDeclarationRecords
+            | Setting::ModelSequenceMaximum
+            | Setting::ModelDerivationFacts
+            | Setting::ModelEffectiveDeclarations
+            | Setting::ModelDispatchCandidates
+            | Setting::ModelWorkUnits
+            | Setting::ModelAncestorSteps
+            | Setting::ModelFamilySteps
+            | Setting::TemporalEvidenceFormulaNodes
+            | Setting::TemporalEvidenceInstances
+            | Setting::TemporalEvidencePositions
+            | Setting::TemporalEvidenceValuations
+            | Setting::TemporalEvidenceCaptures
+            | Setting::TemporalEvidenceSupport
+            | Setting::TemporalEvidenceHistorySpan
+            | Setting::TemporalEvidenceEvaluationSteps
+            | Setting::TemporalEvidenceLineage
+            | Setting::TemporalEvidenceVisited
+            | Setting::TemporalEvidenceRequestBytes
+            | Setting::TemporalEvidenceResultBytes
+            | Setting::TemporalEvidenceMemberBytes
+            | Setting::AdmissionPopulationMembers
+            | Setting::AdmissionWorkUnits
+            | Setting::AdmissionAncestorSteps
+            | Setting::ObservationInputBytes
+            | Setting::ObservationObjects
+            | Setting::ObservationValues
+            | Setting::LibraryDefinitions
+            | Setting::LibraryDependencyEdges
+            | Setting::LibraryArtifactBytes
+            | Setting::LibrarySingleArtifactBytes
+            | Setting::IdentityInputBytes
+            | Setting::IntakeInputBytes
+            | Setting::ReplayInputBytes
+            | Setting::FormatOutputBytes
+            | Setting::RenderOutputBytes
+            | Setting::PrepareCompileWorkUnits
+            | Setting::PrepareCodeBytes
+            | Setting::I2InputBytes
+            | Setting::I2Nodes
+            | Setting::I2Edges
+            | Setting::I2Occurrences
+            | Setting::I2Diagnostics
+            | Setting::I2WorkUnits
+            | Setting::I2NativeJoinStorage
+            | Setting::EmitOutputBytes
+            | Setting::ExploreStates
+            | Setting::ExploreTransitions
+            | Setting::ModelCheckMaxStates
+            | Setting::ModelCheckMaxTransitions
+            | Setting::ModelCheckMaxAutomatonStates
+            | Setting::ModelCheckWitnessSamples
+            | Setting::ModelCheckMaxWalkSteps
+            | Setting::ModelCheckMaxWitnessSet
+            | Setting::ModelCheckMaxRelationTuples
+            | Setting::ModelCheckMaxLiveInstances
+            | Setting::ModelCheckMaxStoreBuffer
+            | Setting::ModelCheckMaxMessages
+            | Setting::ExpansionMaxCandidates
+            | Setting::InspectMaxViewEntries
+            | Setting::ProgressCoveredPositions => Err(setting),
+        }
+    }
+}
+
+/// [`CheckCause::ResourceExhausted`]'s payload: the checking
+/// stage, the limit kind reached, its declared bound and the counter value
+/// the refused step would have reached.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct StageLimitCause {
+    /// The checking stage.
+    pub stage: CheckingStage,
+    /// The limit reached.
+    pub kind: CheckingLimitKind,
+    /// The declared limit.
+    pub limit: u64,
+    /// The counter value the refused step would have reached.
+    pub actual: u128,
+    /// FR-096: the region where a family `check` reached the limit, when
+    /// the refusal's `location` cannot name it: a declaration's whole span,
+    /// or the node whose entry `Typer`'s node stop failed at. `None` when `location`
+    /// names the position, or when no region of the unit does.
+    pub region: Option<SourceRegion>,
+}
+
+/// One candidate of an ambiguous `r.name` (FR-363).
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum MemberCandidate {
+    /// A field of the receiver's object type.
+    Field(filament_semantic_value::declaration::FieldRef),
+    /// A relationship end navigable from the receiver, named by the role of
+    /// the end on `side` (the end nearest the receiver).
+    RelationshipEnd {
+        /// The relationship's declaration.
+        relationship: filament_checked::key::DeclarationKey,
+        /// The end whose role the name matched.
+        side: EndSide,
+    },
+}
+
+/// One candidate of an ambiguous qualified reference `q::m` (FR-317).
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum QualifiedCandidate {
+    /// A declared union named `q` that has a member `m`.
+    Union(NodeKey),
+    /// A declared enum named `q` that has a member `m`.
+    Enum(NodeKey),
+    /// The import alias `q`, whose package exports `m`.
+    Import(String),
+}
+
+/// [`CheckCause::AmbiguousQualified`]'s payload.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct AmbiguousQualified {
+    /// The ambiguous reference as written, `q::m`.
+    pub name: String,
+    /// Every candidate it matched, unions then enums then the import.
+    pub candidates: Vec<QualifiedCandidate>,
+}
+
+/// [`CheckCause::AmbiguousMember`]'s payload.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct AmbiguousMember {
+    /// The ambiguous name.
+    pub name: String,
+    /// Every candidate the name matched.
+    pub candidates: Vec<MemberCandidate>,
+}
+
+/// Why a destination end's multiplicity types no navigation (FR-363).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NavigationBound {
+    /// The destination end declares no multiplicity, and none is substituted.
+    Undeclared,
+    /// The destination end's upper bound is unbounded.
+    Unbounded,
+    /// The destination end's multiplicity is ordered.
+    Ordered,
+}
+
+/// The typed cause of a checking refusal.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum CheckCause {
+    /// The owner's declared-type traversal could not allocate its native request.
+    TypeCheckAllocation(filament_semantic_value::declaration::StorageRequest),
+    /// The owner's declared-type traversal could not represent its native request.
+    TypeCheckCapacity(filament_semantic_value::declaration::StorageRequest),
+    /// A value operator prohibited by the declaration's selected profile.
+    ProfileProhibitedOperator(fsl_forms::BinaryOperator),
+    /// A typed equality whose operand families exceed its selected layer.
+    LayerEquality {
+        /// The declaration's selected layer.
+        selected: crate::value::layer::HeaderLayer,
+        /// The first missing family in FR-110 table order.
+        required: crate::value::layer::HeaderLayer,
+        /// The operator token when the expression was read from source.
+        span: Option<Span>,
+    },
+    /// FR-300: a nested model form retains StateModel ownership.
+    StateModel(Box<super::state_model::StateModelRefusal>),
+    /// FR-366: a refusal in a type-level invariant clause, with the clause
+    /// it is about.
+    TypeInvariant(Box<super::type_invariant::TypeInvariantRefusal>),
+    /// FR-185, FR-186: the `Probabilistic` family's check refused a
+    /// declaration, or a quantity literal reached a position no checker
+    /// reads yet.
+    Probabilistic(Box<super::probabilistic::ProbabilisticCause>),
+    /// A `terminal when` predicate's checking refused (FR-124), with the
+    /// declaration it is about.
+    Terminal(Box<super::terminal::TerminalRefusal>),
+    /// A `terminal any` on a model that declares no object type (STD-492):
+    /// FSpec FR-476 names no node to write for it. Located at the
+    /// declaration.
+    TerminalWithoutObjectType {
+        /// The declared name.
+        name: String,
+        /// The span of the whole declaration.
+        span: Span,
+    },
+    /// A use of a member the model declares with no checked type (a bare
+    /// native `Text`, `Rational` or `Decimal`, FR-056-AC-43), naming the
+    /// owner and the declaration locus of its type reference.
+    UntypedMember(Box<UntypedMemberRefusal>),
+    /// An `abstraction` declaration's name or binding refused (FR-304).
+    Abstraction(Box<super::abstraction::AbstractionRefusal>),
+    /// A selected extension's declaration form refused (FR-354).
+    Extension(Box<super::extension::ExtensionCause>),
+    /// A refinement declaration's checking refused (FR-135 to FR-137).
+    Refinement(Box<super::refinement::RefinementRefusal>),
+    /// A `refinement` declaration that checks but that no S4 emission writes
+    /// yet (FR-135): refused rather than compiled and silently missing.
+    RefinementNotEmitted {
+        /// The declared name.
+        name: String,
+        /// The span of the whole declaration.
+        span: Span,
+    },
+    /// A timed construct S2 builds but no S3 check reads yet (FR-393;
+    /// FR-230, FR-233, FR-234 own the checks): refused rather than compiled
+    /// unchecked.
+    TimedNotChecked {
+        /// Which construct.
+        construct: TimedConstruct,
+        /// The construct's span.
+        span: Span,
+    },
+    /// A completed model conformance stage retains every axis failure.
+    ModelConformance(Box<super::model_conformance::ModelConformanceFailure>),
+    /// An unfinished model stage exposes its exact five-field denial.
+    ModelIncomplete(crate::model::accounting::NormalizationIncomplete),
+    /// Completing the staged type admission after a conformance stage that
+    /// found nothing refused, or reading it while pending, reached a type
+    /// environment refusal or ceiling.
+    TypeAdmission {
+        /// The stable code of the type admission's refusal or ceiling.
+        code: Code,
+        /// Its catalog cause.
+        cause: &'static str,
+        /// The type-environment ceiling that was reached, when the cause is
+        /// a reached limit; `None` for every other type admission refusal. Boxed to
+        /// keep `CheckCause`, and so `CheckRefusal`, small.
+        limit: Option<Box<fsl_foundation::diagnostic::LimitExceeded>>,
+    },
+    /// `refused { code: ill_typed }` with its FR-272 cause.
+    IllTyped(IllTypedCause),
+    /// `refused { code: wrong_snapshot }` with its FR-272 cause: `pre(...)`
+    /// written outside its admitted clause, or over an ineligible operand.
+    WrongSnapshot(WrongSnapshotCause),
+    /// `missing_declaration` / `missing-name` for an unqualified source name.
+    MissingName(String),
+    /// An accepted execution point is inapplicable to its authored state
+    /// clause or names a different operation member (FR-104-AC-15).
+    ExecutionPointBinding(ExecutionPointRefusal),
+    /// `invalid_timed_model` / `clock-read-outside-constraint`: a call of the
+    /// named clock-reading declaration outside an operation precondition, a
+    /// time invariant body or another clock-reading declaration (FR-230
+    /// "Clock-reading declarations"), located at the call.
+    ClockReadingCall(String),
+    /// `missing_declaration` / `missing-name` for a qualified source name.
+    MissingQualifiedName(fsl_forms::NameForm),
+    /// `missing_declaration` / `missing-name` for a bare unit name the
+    /// compiling unit does not declare (FR-505-AC-12), with the identities of
+    /// the selected packages that declare a unit of that name.
+    UnresolvedUnitName {
+        /// The name as written.
+        name: String,
+        /// The declaring packages, in selection order.
+        packages: Vec<String>,
+    },
+    /// `missing_declaration` / `missing-name` for the population segment of
+    /// a two-segment `M::P` name (FR-391 "Resolution"), located at that
+    /// segment: it starts `offset` bytes into the written name.
+    MissingSegment {
+        /// The name as written.
+        name: String,
+        /// The byte offset of the segment that names nothing.
+        offset: usize,
+        /// The name's own span, when the form that writes it records one
+        /// (a population form's domain); otherwise the name is the node at
+        /// the refusal's location.
+        span: Option<Span>,
+    },
+    /// `missing_declaration` / `missing-name` for `self` written where no
+    /// state clause binds it (FR-104): a typed cause, not a `MissingName`
+    /// whose text is `"self"`.
+    MissingSelf,
+    /// `ambiguous_declaration` / `ambiguous-name`, listing every locus of the
+    /// name.
+    AmbiguousName {
+        /// The ambiguous name.
+        name: String,
+        /// Every declaring locus.
+        loci: Vec<Location>,
+    },
+    /// FR-363: `r.name` names more than one candidate, a field and a
+    /// relationship end or two ends: `ambiguous_declaration` /
+    /// `ambiguous-name`, naming every candidate. Boxed like the other
+    /// payload-bearing causes, to keep `CheckCause` small.
+    AmbiguousMember(Box<AmbiguousMember>),
+    /// FR-317: `q::m` names more than one candidate, a union, an enum or an
+    /// import alias: `ambiguous_declaration` / `ambiguous-name`, naming every
+    /// candidate.
+    AmbiguousQualified(Box<AmbiguousQualified>),
+    /// FR-363: `r.name` names a relationship end whose destination multiplicity
+    /// types no navigation: `unsupported_construct` / `expression-form`.
+    UnsupportedNavigation(NavigationBound),
+    /// FR-366: the invariant of a record value type or an event type reads
+    /// through a reference, navigates a relationship or ranges over a
+    /// population. A record or event value is evaluated with no object
+    /// universe, so there is nothing for the read to observe.
+    ObjectReadInValueInvariant,
+    /// FR-139: a `seq` outside a refinement declaration's rows:
+    /// `unsupported_construct` / `expression-form`, at the form. FR-391
+    /// admits the other population forms in a state clause and a `holds`
+    /// atom.
+    PopulationFormOutsideRefinement,
+    /// FR-139: a population-valued form that S3 does not check yet:
+    /// `unsupported_construct` / `not-yet-implemented`, naming what is
+    /// unbuilt.
+    PopulationFormNotChecked {
+        /// What the check does not read.
+        what: &'static str,
+    },
+    /// `ill_typed` / `type-mismatch` (FR-091): an integer literal outside
+    /// `i128::MIN..=i128::MAX`, at the literal. Never a nonzero-magnitude
+    /// rewrite: a literal is refused, not truncated.
+    IntegerOutsideI128(super::type_form::IntegerOutsideI128),
+    /// `ill_typed` / `type-mismatch` (FR-091 "Native scalar literals"): the
+    /// text of a `UUID("...")` literal is not the canonical lowercase
+    /// `8-4-4-4-12` spelling, at the call.
+    MalformedUuidLiteral {
+        /// The argument text as written (decoded).
+        argument: String,
+    },
+    /// `ill_typed` / `type-mismatch` (FR-056): the retained text literal is
+    /// outside the expected `Text` domain, at the constructor call.
+    TextLiteralOutsideBounds {
+        /// The argument text as written (decoded).
+        argument: String,
+        /// Inclusive minimum profile length.
+        min: u64,
+        /// Inclusive maximum profile length.
+        max: u64,
+        /// The profile that determines normalization and length.
+        profile: TextProfile,
+        /// The retained sequence's length under `profile`.
+        retained_length: u64,
+    },
+    /// `ill_typed` / `identity-observing-form` (FR-150): a form that
+    /// observes the identity of a `symmetric` population's objects, at the
+    /// form's node. Boxed like the other payload-bearing causes.
+    IdentityObservingForm(Box<IdentityObserving>),
+    /// `ill_typed` / `non-boolean-root` (FR-104): a state clause body whose
+    /// type is not `Boolean`, at the body.
+    NonBooleanRoot,
+    /// `ill_typed` / `unit-mismatch` (FR-194, FSpec FR-370 step 5): a window
+    /// aggregate threshold quantity of another dimension than the value's,
+    /// or in a unit that does not convert exactly to the value's, at the
+    /// threshold.
+    UnitMismatch,
+    /// `wrong_snapshot` / `wrong-anchor` (FR-104): `result` written anywhere
+    /// but a postcondition of an operation that declares a result. Names the
+    /// state clause kind and the operation it was written under: both are
+    /// `None` outside a state clause, and the operation is `None` in an
+    /// invariant.
+    UnanchoredResult {
+        /// The state clause kind, or `None` outside a state clause.
+        clause: Option<fsl_forms::StateClauseKind>,
+        /// The operation the clause names, or `None` when it names none.
+        operation: Option<String>,
+    },
+    /// `undefined_expression` with the cause of its obligation.
+    Unproved(Obligation),
+    /// The `SumCase` family's one failed `case` exhaustiveness obligation
+    /// (FR-318): `undefined_expression`/`unproved-exhaustiveness`. Boxed like
+    /// [`Self::ProtocolAnchor`], to keep `CheckCause` small.
+    SumCase(Box<super::SumCaseCause>),
+    /// `undefined_expression` / `unproved-decrease` for one recursive
+    /// component.
+    UnprovedDecrease {
+        /// The component cycle, first and last entries equal. The refusal
+        /// location is the call edge the obligation is about.
+        cycle: Vec<String>,
+        /// The failed obligation.
+        obligation: MeasureObligation,
+    },
+    /// `stage_limit_exceeded`/`<kind>-exceeded`: a declared
+    /// checking limit was reached at this node. Boxed: `actual`'s `u128`
+    /// would otherwise make every `CheckCause` pay for this one variant's
+    /// widest field (clippy `result_large_err` on `CheckRefusal`), the same
+    /// reason `InternalFault` below is boxed.
+    ResourceExhausted(Box<StageLimitCause>),
+    /// An IEEE conversion or arithmetic in a package with no admitted IEEE
+    /// profile:
+    /// `invalid_package`.
+    IeeeProfileNotAdmitted,
+    /// `invalid_package` / `conflicting-definition` (FR-397-AC-16): a
+    /// supplied library exports a declaration under the reserved IEEE
+    /// intrinsic identity the call names; a declaration never replaces or
+    /// shadows an intrinsic.
+    ReservedIntrinsicConflict(String),
+    /// A derived collection bound exceeds the representable cardinality range.
+    UnrepresentableBound,
+    /// `invalid_package` / `definition-cycle` (FR-151, TC-196 D08): an
+    /// FR-146 call-graph strongly connected component containing an FR-151
+    /// dispatch edge. Operation bodies and contract clauses have no
+    /// `decreases` form, so such a component is refused outright, never
+    /// measure-checked.
+    DefinitionCycle {
+        /// Every dispatch edge in the component, ascending by caller then
+        /// callee source-declaration order (FR-151's own listing order).
+        edges: Vec<(String, String)>,
+    },
+    /// `invalid_package` / `invalid-value`: a supplied [`super::DispatchTable`]
+    /// or [`super::DispatchOperation`] is malformed — an out-of-range table
+    /// or function index, or a candidate whose signature does not match its
+    /// dispatch operation's declared arity or types. Checked upfront in
+    /// [`super::PackageDeclarations::check`], before any node is typed, so
+    /// `facts`'s own call-graph walk can treat every table index it
+    /// reads as already valid; reuses the already-catalogued `invalid-value`
+    /// tag rather than minting a new one. Boxed: this was already
+    /// `CheckCause`'s widest variant at 56 bytes; adding `ResourceExhausted`'s
+    /// `StageLimitCause` payload cost `CheckCause` its niche-packed
+    /// discriminant, so `CheckRefusal` crossed clippy's `result_large_err`
+    /// threshold. Boxing this pre-existing variant (not `ResourceExhausted`,
+    /// already boxed) is the fix, same precedent as `InternalFault` below.
+    InvalidDispatchDeclaration(Box<InvalidDispatchDeclaration>),
+    /// `missing_declaration` / `missing-selection` (FR-093): a lowered
+    /// operation or leaf needs a profile law whose `DefinitionRef` the
+    /// package does not select, so the node is not built.
+    MissingSelection {
+        /// The law role the package does not select.
+        role: super::node_key::LawRole,
+    },
+    /// `unknown_required_feature` / `unsupported-feature` (FR-092 "Recursion
+    /// groups", FR-092-OQ-1): the nodes of a recursion group cannot be keyed
+    /// apart from another group's, so `check` refuses the group instead of
+    /// keying it. `loci` names every in-group declaration, in declaration
+    /// order.
+    UnsupportedFeature {
+        /// Every in-group declaration's region.
+        loci: Vec<Location>,
+    },
+    /// `runtime_invariant` / `established-invariant-broken` (FR-094
+    /// "Refusals", ADR-013 T-4): keying a node needed a fact that type
+    /// admission, intake or the check stage's own unit scope guarantees, and
+    /// it was not there. A fault in `check`, not in the input; the node gets
+    /// no key. Boxed: a fault names a `DeclarationKey` or a `UnitId`, larger
+    /// than every other cause.
+    InternalFault(Box<KeyFault>),
+    /// `invalid_package`: a node preimage that cannot be encoded (an empty
+    /// or non-identifier name, a number RFC 8785 cannot render exactly).
+    NodePreimage(super::node_key::NodeKeyRefusal),
+    /// A formed compound unit's identity could not be encoded (FR-259
+    /// Behavior 4): its bytes reached `identity.input_bytes`
+    /// (`stage_limit_exceeded`), a heap reservation failed
+    /// (`resource_exhausted`), or, a broken invariant, it has no RFC 8785
+    /// encoding.
+    Identity(IdentityRefusal),
+    /// FR-113: a scoped anchor's resolution or a protocol's declaration
+    /// collection refused. Boxed for the same reason as
+    /// `InvalidDispatchDeclaration` above: this would otherwise be
+    /// `CheckCause`'s widest variant.
+    ProtocolAnchor(Box<ProtocolAnchorCause>),
+    /// FR-218: a protocol reference expression refused after it resolved.
+    /// Boxed for the same reason as `ProtocolAnchor` above.
+    ProtocolReference(Box<ProtocolReferenceCause>),
+    /// FR-326: the `TemporalTrace` family refused a `temporal` clause.
+    /// Boxed for the same reason as `ProtocolAnchor` above.
+    Temporal(Box<TemporalCause>),
+    /// FR-172: the `TemporalTrace` family refused a `hyper` clause or a
+    /// `relation`. Boxed for the same reason as `ProtocolAnchor` above.
+    Hyper(Box<super::hyper_clause::HyperCause>),
+    /// FR-165: the `StateGraph` family refused a state-graph claim. Boxed
+    /// for the same reason as `ProtocolAnchor` above.
+    StateGraph(Box<StateGraphCause>),
+    /// FR-447: S3 refused a `hybrid` declaration. Boxed for the same reason
+    /// as `ProtocolAnchor` above.
+    Hybrid(Box<super::hybrid::HybridCause>),
+    /// FR-381, FR-218: S3 refused a protocol's role, activation, capture or
+    /// compensation template. Boxed for the same reason as `ProtocolAnchor`
+    /// above.
+    ProtocolObligation(Box<super::protocol_obligation::ObligationCause>),
+    /// FR-302: a called operation's dispatch family did not link at S3.
+    /// Boxed for the same reason as `ProtocolAnchor` above.
+    DispatchLink(Box<DispatchLinkCause>),
+    /// FR-062-AC-8/TC-161/FR-063: exists only so `--cfg seam_probe` makes
+    /// `CheckCause::code`'s match below non-exhaustive. Never constructed
+    /// outside the probe build.
+    #[cfg(seam_probe)]
+    __SeamProbe,
+}
+
+/// FR-302: why one called operation's dispatch family did not link. An
+/// ambiguous family has one value for each subtype that did not link, as the
+/// FSpec FR-272 `ambiguous_dispatch` record names one closed subtype; any other
+/// failure has one value for the family. A compile that fails several
+/// families holds all of them in its one refusal.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct DispatchLinkCause {
+    /// The called operation: the root of the family that failed.
+    pub operation: filament_checked::key::DeclarationKey,
+    /// The refusal's code.
+    pub code: Code,
+    /// The refusal's catalog pair: `resource_exhausted`/
+    /// `insufficient-next-charge` for a ceiling, `ambiguous_dispatch`/
+    /// `no-applicable` or `multiple-undominated` for an ambiguous family.
+    pub catalog: filament_semantic_value::catalog::CatalogCode,
+    /// The caller-budget ceiling the family stopped on, when it did: the
+    /// setting that raises it, the limit, the count the refused step would
+    /// have reached and the retained charge (FR-255 Behavior 1).
+    pub denial: Option<fsl_foundation::diagnostic::BudgetDenial>,
+    /// The subtype that did not link, with its candidates and dominance
+    /// pairs; `None` unless the family was ambiguous.
+    pub subtype: Option<DispatchSubtypeFailure>,
+}
+
+/// One subtype that did not link in an ambiguous family (FR-083): its
+/// FR-151 cause, the applicable candidates and the strict dominance pairs
+/// among them.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct DispatchSubtypeFailure {
+    /// The subtype.
+    pub subtype: filament_checked::key::DeclarationKey,
+    /// `no-applicable` or `multiple-undominated`.
+    pub cause: &'static str,
+    /// Every applicable candidate.
+    pub candidates: Vec<filament_checked::key::DeclarationKey>,
+    /// Every `(dominant, dominated)` pair among them.
+    pub dominance_pairs: Vec<(
+        filament_checked::key::DeclarationKey,
+        filament_checked::key::DeclarationKey,
+    )>,
+}
+
+/// Why an accepted execution point cannot be carried by the clause it
+/// accompanies (FSpec FR-341 "Execution point", FR-342): refused before any
+/// node is keyed, so no package carries a point its V2 read would refuse.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ExecutionPointRefusal {
+    /// The point's variant is not one this clause kind takes: an invariant
+    /// takes `initialization` or `handler`; a precondition `pre`; a
+    /// postcondition `post`.
+    InapplicableVariant,
+    /// A `pre` or `post` point names an operation other than the one the
+    /// clause (and so its anchor) names.
+    OperationMismatch,
+}
+
+/// The invariant [`CheckCause::InternalFault`] names, with the value that
+/// broke it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum KeyFault {
+    /// An accepted execution point its clause cannot carry (FSpec FR-341,
+    /// FR-342): the variant is inapplicable to the clause kind, or its
+    /// operation is not the clause's.
+    ExecutionPoint(ExecutionPointRefusal),
+    /// The private intake owner lost its corresponding assembled model.
+    MissingAdmittedModel(String),
+    /// A staged-admission read the conformance stage made for an admitted
+    /// member pair was refused, which the admitted records cannot cause.
+    PendingField(String),
+    /// A `Reference<T>`'s `EffectiveId` is no `type_identities` value of an
+    /// admitted domain package's effective view.
+    UnknownEffectiveId(EffectiveId),
+    /// A `DeclarationKey`'s `package` is no admitted domain package's
+    /// identity.
+    UnadmittedPackage(filament_checked::key::DeclarationKey),
+    /// A `DeclarationKey`'s `node` is empty.
+    EmptyNode(filament_checked::key::DeclarationKey),
+    /// A `DeclarationKey` names no record of its admitted domain package.
+    UnknownDeclaration(filament_checked::key::DeclarationKey),
+    /// A domain package record of a kind no checked node names.
+    UnnamedRecordKind(filament_checked::key::DeclarationKey),
+    /// A compound `UnitId` the check stage's unit scope does not hold.
+    UnheldUnit(filament_exact::UnitId),
+    /// An enum shape member has no unique exact source or admitted-model identity.
+    MissingEnumMember(filament_exact::NodeKey),
+    /// A declared unit node, or a dimension or target unit node a held unit
+    /// names, whose nominal preimage the unit table does not hold.
+    UnheldNominal(filament_exact::NodeKey),
+    /// A dimension or unit node whose key a node of another form already
+    /// holds.
+    NominalKeyClash(filament_exact::NodeKey),
+    /// A node whose occurrence of one role was placed at an ordinal it, or a
+    /// later one, already holds.
+    OccurrenceOrdinalTaken(filament_exact::NodeKey),
+    /// A `Population<T>[N]`-typed node whose object type `T` no population
+    /// binding names.
+    UntargetedPopulation,
+    /// A literal of a value kind the `Value` family's checker never builds
+    /// as a literal.
+    UnbuiltLiteral,
+    /// A `ValueType::Composite` handle names no declaration of the check's
+    /// type environment.
+    UnknownComposite(filament_exact::NodeKey),
+    /// A recursion group handed to the group keying is empty, repeats a
+    /// member, or names no member at a group position.
+    InvalidGroup,
+    /// A node names a draft that dependency order never keyed.
+    UnresolvedDraft,
+    /// One checked body occurrence was lowered to conflicting graph nodes.
+    ExpressionIdentityConflict,
+    /// A checked dispatch call names no dispatch operation.
+    DispatchOperationOutOfRange {
+        /// The operation index carried by the checked call.
+        index: usize,
+    },
+    /// A checked dispatch operation names no linked table.
+    DispatchTableOutOfRange {
+        /// The table index carried by the checked operation.
+        index: usize,
+    },
+    /// A record value's slots and its declaration's fields differ in
+    /// number.
+    RecordSlotCount,
+    /// An IEEE arithmetic node whose left operand is not an IEEE type.
+    UntypedIeeeOperand,
+    /// A `DropFirst` node whose operand is not a sequence or an ordered set,
+    /// the only families with a first occurrence (FSpec FR-322).
+    UnorderedFirstOccurrence,
+    /// The compiler-owned IEEE catalog row failed admission, retaining the
+    /// semantic-value owner's typed refusal.
+    IeeeProfileAdmission(filament_semantic_value::definition::PackageRefusal),
+    /// Two admitted domain packages share this identity: a check selects
+    /// one version of each (FR-094, ADR-013 O-01).
+    DuplicateModelSelection(String),
+    /// A selected model package's `model_root` node has no key.
+    /// The text of the key formation refusal.
+    ModelRootKey(String),
+    /// An admitted enum declaration or member whose nominal preimage has no
+    /// RFC 8785 encoding.
+    NonCanonicalNominal(filament_exact::NodeKey),
+    /// A union or enum declaration whose member has no valid structural key:
+    /// the declaration's path extended by the member name is not a node key.
+    InvalidMemberKey(filament_exact::NodeKey),
+    /// A family `check` reported a stage limit whose setting no checking
+    /// limit has.
+    UncheckedLimit(Setting),
+    /// A claim (ADR-012 §13.5) could not be keyed by occurrence: its site
+    /// has no one scalar application `expression` occurrence at its
+    /// location, a guard, root or result bound names no lowered node, or a
+    /// scalar application occurrence in a function body is no claim's.
+    /// Claims are never silently dropped.
+    UnkeyableRequirements,
+    /// A claim's extent could not be classified: a checked type names a
+    /// composite the type environment does not hold, or the body reads a
+    /// slot no binder bound (FR-097-AC-2).
+    UnclassifiedExtent(filament_semantic_value::catalog::InternalFault),
+    /// A family `check` stopped on an internal fault of its own, which names
+    /// the stage and invariant.
+    StageFault(filament_semantic_value::catalog::InternalFault),
+    /// A model correspondence entry would give a node a second declaration
+    /// or a declaration a second node (FR-303): names the recorded pair and
+    /// the offered one.
+    CorrespondenceConflict(Box<super::identity::CorrespondenceConflict>),
+    /// A protocol that passed S3 lacks a fact its node needs: its `run`
+    /// root, its `finish` node, the checked body of its `finish` constraint
+    /// or the binder slot of its closing record.
+    UncheckedProtocolFact,
+}
+
+impl KeyFault {
+    /// The violated invariant's stable identifier (ADR-013 T-4).
+    pub fn invariant(&self) -> &'static str {
+        match self {
+            Self::MissingAdmittedModel(_) => "intake-owner-has-assembled-model",
+            Self::PendingField(_) => "conformance-reads-admitted-member-pair",
+            Self::UnknownEffectiveId(_) => "reference-target-admitted",
+            Self::UnadmittedPackage(_) => "declaration-package-admitted",
+            Self::EmptyNode(_) => "declaration-node-nonempty",
+            Self::UnknownDeclaration(_) => "declaration-record-present",
+            Self::UnnamedRecordKind(_) => "record-kind-named",
+            Self::UnheldUnit(_) => "compound-unit-held",
+            Self::MissingEnumMember(_) => "enum-member-identity-retained",
+            Self::UnheldNominal(_) => "unit-nominal-preimage-held",
+            Self::NominalKeyClash(_) => "unit-nominal-key-unshared",
+            Self::OccurrenceOrdinalTaken(_) => "occurrence-ordinal-free",
+            Self::UntargetedPopulation => "population-target-bound",
+            Self::UnbuiltLiteral => "literal-kind-built",
+            Self::UnknownComposite(_) => "composite-declared",
+            Self::InvalidGroup => "recursion-group-well-formed",
+            Self::UnresolvedDraft => "draft-keyed-in-dependency-order",
+            Self::ExpressionIdentityConflict => "checked-expression-has-one-lowered-node",
+            Self::DispatchOperationOutOfRange { .. } => "dispatch-operation-index-in-range",
+            Self::DispatchTableOutOfRange { .. } => "dispatch-table-index-in-range",
+            Self::RecordSlotCount => "record-slots-match-fields",
+            Self::UntypedIeeeOperand => "ieee-operand-typed",
+            Self::UnorderedFirstOccurrence => "drop-first-operand-ordered",
+            Self::IeeeProfileAdmission(_) => "catalog-ieee-profile-admitted",
+            Self::DuplicateModelSelection(_) => "one-model-version-per-identity",
+            Self::ModelRootKey(_) => "model-root-keyed",
+            Self::NonCanonicalNominal(_) => "nominal-preimage-canonical",
+            Self::InvalidMemberKey(_) => "member-key-valid",
+            Self::UncheckedLimit(_) => "family-limit-is-a-checking-limit",
+            Self::UnkeyableRequirements => "requirements-item-keyed",
+            Self::UnclassifiedExtent(fault) | Self::StageFault(fault) => fault.invariant(),
+            Self::CorrespondenceConflict(_) => "model-correspondence-one-to-one",
+            Self::UncheckedProtocolFact => "protocol-fact-checked",
+            Self::ExecutionPoint(_) => "execution-point-matches-clause",
+        }
+    }
+}
+
+/// Which dispatch-table function slot [`InvalidDispatchDeclaration`] names.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DispatchFunctionRole {
+    /// A candidate's own operation body.
+    Body,
+    /// A candidate's own runtime-evaluated effective precondition.
+    Precondition,
+    /// A precondition clause reachable from a candidate's static FR-146
+    /// redefinition ancestry.
+    PreconditionClause,
+}
+
+/// The typed detail of [`CheckCause::InvalidDispatchDeclaration`]: what
+/// exactly is malformed about a supplied [`super::DispatchTable`] or
+/// [`super::DispatchOperation`], with the actual field/index path
+/// (`native-diagnostics.md`'s `invalid_package`/`invalid-value` row) rather
+/// than a free-form summary.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum InvalidDispatchDeclaration {
+    /// A `NodeKind::Dispatch` node's own `operation` index names no
+    /// operation in the package's own `dispatch_operations`.
+    OperationOutOfRange {
+        /// The out-of-range operation index.
+        operation: usize,
+    },
+    /// A dispatch operation names a `table` index past the package's own
+    /// `dispatch_tables`.
+    TableOutOfRange {
+        /// The dispatch operation's own member name.
+        member: String,
+        /// The out-of-range table index.
+        table: usize,
+    },
+    /// A dispatch-table function index names no function in the package's
+    /// own `functions`.
+    FunctionOutOfRange {
+        /// Which slot this index was read from.
+        role: DispatchFunctionRole,
+        /// The out-of-range function index.
+        index: usize,
+    },
+    /// A candidate function's declared parameter count does not match the
+    /// dispatch operation's own arity (the receiver plus every declared
+    /// argument).
+    Arity {
+        /// Which slot this index was read from.
+        role: DispatchFunctionRole,
+        /// The function index, valid in `functions` but wrongly shaped.
+        index: usize,
+        /// The function's own declared parameter count.
+        declared: usize,
+        /// The receiver plus the dispatch operation's own argument count.
+        expected: usize,
+    },
+    /// A candidate function's parameter types (after the receiver) do not
+    /// match the dispatch operation's declared argument types.
+    ParameterType {
+        /// Which slot this index was read from.
+        role: DispatchFunctionRole,
+        /// The function index, valid in `functions` but wrongly shaped.
+        index: usize,
+    },
+    /// A candidate function's declared result type does not match the
+    /// result its role requires (the operation's own result for a body,
+    /// `Boolean` for a precondition or precondition clause).
+    ResultType {
+        /// Which slot this index was read from.
+        role: DispatchFunctionRole,
+        /// The function index, valid in `functions` but wrongly shaped.
+        index: usize,
+    },
+    /// Two dispatch operations in the package's own `dispatch_operations`
+    /// share a `(receiver_type, member)` pair. A well-formed package exposes
+    /// each static receiver type/member name once; a duplicate means two
+    /// bridge calls (see `crate::check::checked_dispatch`) were merged for
+    /// overlapping roots, and name lookup at a call site would otherwise
+    /// silently pick whichever entry happens to come first.
+    DuplicateOperation {
+        /// The receiver type both operations declare, by its effective
+        /// identity.
+        receiver_type: EffectiveId,
+        /// The shared member name.
+        member: String,
+    },
+    /// A [`super::ResolvedSignatures`] entry is keyed by an index past the
+    /// package's own `functions`, so it stands in for no declaration.
+    ResolvedSignatureOutOfRange {
+        /// The out-of-range function index.
+        index: usize,
+    },
+    /// A `PackageDeclarations::model_clauses` entry is keyed by an index
+    /// past the package's own `functions`, so it owns no clause function.
+    ModelClauseOutOfRange {
+        /// The out-of-range function index.
+        index: usize,
+    },
+}
+
+impl CheckCause {
+    fn type_check_failure(&self) -> Option<&Self> {
+        let mut current = self;
+        loop {
+            current = match current {
+                Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => return Some(current),
+                Self::StateModel(refusal) => &refusal.cause,
+                Self::TypeInvariant(refusal) => &refusal.cause,
+                Self::Terminal(refusal) => &refusal.cause,
+                Self::Refinement(refusal) => match &refusal.cause {
+                    super::refinement::RefinementCause::Check(cause) => cause,
+                    _ => return None,
+                },
+                Self::StateGraph(cause) => match cause.as_ref() {
+                    StateGraphCause::Predicate { cause, .. } => cause,
+                    _ => return None,
+                },
+                Self::ProtocolAnchor(cause) => match cause.as_ref() {
+                    ProtocolAnchorCause::KeyClause { cause, .. }
+                    | ProtocolAnchorCause::SlotClause { cause, .. } => cause,
+                    _ => return None,
+                },
+                Self::Temporal(cause) => {
+                    let mut temporal = cause.as_ref();
+                    loop {
+                        match temporal {
+                            TemporalCause::TimedPredicate { cause, .. } => break cause,
+                            TemporalCause::Multiple { causes } => temporal = causes.first()?,
+                            _ => return None,
+                        }
+                    }
+                }
+                _ => return None,
+            };
+        }
+    }
+
+    /// The checking stage of a declared-type traversal storage failure.
+    pub fn type_check_stage(&self) -> Option<CheckingStage> {
+        self.type_check_failure().map(|_| CheckingStage::Typing)
+    }
+
+    /// Catalog fields for an owner's declared-type storage failure, in its
+    /// native unit; these requests are not configured limits.
+    pub fn type_check_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
+        use filament_semantic_value::declaration::StorageUnit;
+        let (field, request) = match self.type_check_failure()? {
+            Self::TypeCheckAllocation(request) => ("requested", request),
+            Self::TypeCheckCapacity(request) => ("upstream", request),
+            _ => return None,
+        };
+        let unit = match request.unit() {
+            StorageUnit::Bytes => "bytes",
+            StorageUnit::AdditionalElements => "additional-elements",
+        };
+        Some(std::collections::BTreeMap::from([(
+            field,
+            format!("{unit}:{}", request.amount()),
+        )]))
+    }
+
+    /// This cause without the type-level invariant it was found in (FR-366):
+    /// a reader that classifies a cause by its kind (a reached limit, an
+    /// internal fault, a denied dispatch link) reads through the wrapper.
+    #[must_use]
+    pub fn unwrapped(&self) -> &Self {
+        match self {
+            Self::TypeInvariant(refusal) => refusal.cause.unwrapped(),
+            Self::Terminal(refusal) => refusal.cause.unwrapped(),
+            Self::Refinement(refusal) => match &refusal.cause {
+                super::refinement::RefinementCause::Check(cause) => cause.unwrapped(),
+                _ => self,
+            },
+            other => other,
+        }
+    }
+
+    /// The attributed catalog pair for model causes, preserving raw code().
+    pub fn catalog_code(&self) -> Option<filament_semantic_value::catalog::CatalogCode> {
+        match self {
+            Self::StateModel(cause) => cause.catalog_code(),
+            Self::TypeInvariant(cause) => cause.cause.catalog_code(),
+            Self::Terminal(cause) => cause.cause.catalog_code(),
+            Self::Refinement(cause) => match &cause.cause {
+                super::refinement::RefinementCause::Check(inner) => inner.catalog_code(),
+                other => Some(filament_semantic_value::catalog::CatalogCode::new(
+                    other.code().as_str(),
+                    other.cause()?,
+                )),
+            },
+            Self::DispatchLink(cause) => Some(cause.catalog),
+            _ => Some(filament_semantic_value::catalog::CatalogCode::new(
+                self.code().as_str(),
+                self.cause()?,
+            )),
+        }
+    }
+
+    fn rendered_code(&self) -> String {
+        self.catalog_code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| self.code().as_str().to_owned())
+    }
+    /// The refusal code.
+    ///
+    /// FR-062-AC-8/TC-161/FR-063 seam: adding a `CheckCause` variant with no arm
+    /// here fails `--cfg seam_probe` with `E0004` (`xtask::seam_probe`'s
+    /// checked-in `CheckCause::code` location) -- this is the one family
+    /// `Cause` enum's `catalog_code()`-shaped mapping (ADR-012 §5.1 S4) FSL
+    /// has today.
+    #[deny(clippy::wildcard_enum_match_arm)]
+    #[deny(clippy::match_wildcard_for_single_variants)]
+    pub fn code(&self) -> Code {
+        match self {
+            Self::ProfileProhibitedOperator(_) | Self::LayerEquality { .. } => {
+                Code::UnsupportedConstruct
+            }
+            Self::UntypedMember(_) => Code::IllTyped,
+            Self::StateModel(cause) => cause.cause.code(),
+            Self::TypeInvariant(cause) => cause.cause.code(),
+            Self::Terminal(cause) => cause.cause.code(),
+            Self::TerminalWithoutObjectType { .. }
+            | Self::RefinementNotEmitted { .. }
+            | Self::TimedNotChecked { .. } => Code::UnsupportedConstruct,
+            Self::Refinement(cause) => cause.cause.code(),
+            Self::Abstraction(cause) => cause.code(),
+            Self::Extension(cause) => cause.code(),
+            Self::Probabilistic(cause) => cause.code(),
+            Self::ModelConformance(failure) => failure.code,
+            Self::ModelIncomplete(_) => Code::ResourceExhausted,
+            Self::TypeAdmission { code, .. } => *code,
+            Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
+            Self::IllTyped(_)
+            | Self::IdentityObservingForm(_)
+            | Self::NonBooleanRoot
+            | Self::UnitMismatch
+            | Self::IntegerOutsideI128(_)
+            | Self::MalformedUuidLiteral { .. }
+            | Self::TextLiteralOutsideBounds { .. } => Code::IllTyped,
+            Self::WrongSnapshot(_) | Self::UnanchoredResult { .. } => Code::WrongSnapshot,
+            Self::MissingName(_)
+            | Self::MissingQualifiedName(_)
+            | Self::UnresolvedUnitName { .. }
+            | Self::MissingSegment { .. }
+            | Self::MissingSelf => Code::MissingDeclaration,
+            Self::ExecutionPointBinding(_) => Code::InvalidModelBinding,
+            Self::ClockReadingCall(_) => Code::InvalidTimedModel,
+            Self::AmbiguousName { .. } | Self::AmbiguousMember(_) | Self::AmbiguousQualified(_) => {
+                Code::AmbiguousDeclaration
+            }
+            Self::UnsupportedNavigation(_)
+            | Self::ObjectReadInValueInvariant
+            | Self::PopulationFormOutsideRefinement
+            | Self::PopulationFormNotChecked { .. } => Code::UnsupportedConstruct,
+            Self::Unproved(_) | Self::UnprovedDecrease { .. } => Code::UndefinedExpression,
+            Self::SumCase(cause) => cause.code(),
+            Self::ResourceExhausted(_) => Code::StageLimitExceeded,
+            Self::IeeeProfileNotAdmitted
+            | Self::ReservedIntrinsicConflict(_)
+            | Self::DefinitionCycle { .. }
+            | Self::InvalidDispatchDeclaration(_)
+            | Self::NodePreimage(_) => Code::InvalidPackage,
+            Self::UnrepresentableBound => Code::UnrepresentableConstraint,
+            Self::MissingSelection { .. } => Code::MissingDeclaration,
+            Self::UnsupportedFeature { .. } => Code::UnknownRequiredFeature,
+            Self::InternalFault(_) => Code::RuntimeInvariant,
+            Self::Identity(IdentityRefusal::InputBytes { .. }) => Code::StageLimitExceeded,
+            Self::Identity(IdentityRefusal::Allocation { .. }) => Code::ResourceExhausted,
+            Self::Identity(IdentityRefusal::NonCanonical) => Code::RuntimeInvariant,
+            Self::ProtocolAnchor(cause) => cause.code(),
+            Self::ProtocolReference(cause) => cause.code(),
+            Self::Temporal(cause) => cause.code(),
+            Self::Hyper(cause) => cause.code(),
+            Self::StateGraph(cause) => cause.code(),
+            Self::Hybrid(cause) => cause.code(),
+            Self::ProtocolObligation(cause) => cause.code(),
+            Self::DispatchLink(cause) => cause.code,
+            // Downstream crates (`fsl-eval`, `fsl-route`, the root crate)
+            // have their own real seams over other enums, probed in the
+            // same `--cfg seam_probe_downstream` build -- this arm exists
+            // only so *this* match keeps compiling in that build, letting
+            // rustc reach and report those crates' own E0004s, the same
+            // "arm under downstream, none under seam_probe alone" shape
+            // `FamilyKind::catalog_code_prefix` already uses. `Code`'s
+            // choice is arbitrary: `__SeamProbe` is never constructed
+            // outside the probe build, so this arm is never actually
+            // reached.
+            #[cfg(seam_probe_downstream)]
+            Self::__SeamProbe => Code::RuntimeInvariant,
+        }
+    }
+
+    /// The closed cause tag, where the code has one.
+    pub fn cause(&self) -> Option<&'static str> {
+        match self {
+            Self::UntypedMember(_) => Some("operator-ineligible"),
+            Self::StateModel(cause) => cause.cause.cause(),
+            Self::TypeInvariant(cause) => cause.cause.cause(),
+            Self::Terminal(cause) => cause.cause.cause(),
+            Self::TerminalWithoutObjectType { .. } => Some("declaration-form"),
+            Self::RefinementNotEmitted { .. } | Self::TimedNotChecked { .. } => {
+                Some("not-yet-implemented")
+            }
+            Self::Refinement(cause) => cause.cause.cause(),
+            Self::Abstraction(cause) => Some(cause.cause()),
+            Self::Extension(cause) => Some(cause.cause()),
+            Self::Probabilistic(cause) => Some(cause.tag()),
+            Self::ModelConformance(failure) => Some(failure.cause.as_str()),
+            // The model ceilings are the caller's budget (FR-255), so a denied
+            // charge is an insufficient next charge, never a stage limit.
+            Self::ModelIncomplete(_) => Some("insufficient-next-charge"),
+            Self::TypeAdmission { cause, .. } => Some(cause),
+            Self::TypeCheckAllocation(_) => Some("allocation-failed"),
+            Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
+            Self::IllTyped(cause) => cause.tag(),
+            Self::WrongSnapshot(cause) => Some(cause.as_str()),
+            Self::NonBooleanRoot => Some("non-boolean-root"),
+            Self::UnitMismatch => Some("unit-mismatch"),
+            Self::IdentityObservingForm(_) => Some("identity-observing-form"),
+            Self::IntegerOutsideI128(_)
+            | Self::MalformedUuidLiteral { .. }
+            | Self::TextLiteralOutsideBounds { .. } => Some("type-mismatch"),
+            Self::UnanchoredResult { .. } => Some("wrong-anchor"),
+            Self::MissingName(_)
+            | Self::MissingQualifiedName(_)
+            | Self::UnresolvedUnitName { .. }
+            | Self::MissingSegment { .. }
+            | Self::MissingSelf => Some("missing-name"),
+            Self::ExecutionPointBinding(_) => Some("malformed-declaration"),
+            Self::ClockReadingCall(_) => Some("clock-read-outside-constraint"),
+            Self::AmbiguousName { .. } | Self::AmbiguousMember(_) | Self::AmbiguousQualified(_) => {
+                Some("ambiguous-name")
+            }
+            Self::UnsupportedNavigation(_)
+            | Self::ObjectReadInValueInvariant
+            | Self::PopulationFormOutsideRefinement => Some("expression-form"),
+            Self::PopulationFormNotChecked { .. } => Some("not-yet-implemented"),
+            Self::Unproved(Obligation::Nonzero) => Some("unproved-nonzero"),
+            Self::Unproved(Obligation::Presence) => Some("unproved-presence"),
+            Self::Unproved(
+                Obligation::Range { .. }
+                | Obligation::RationalRange
+                | Obligation::NonemptyReduction { .. },
+            ) => Some("unproved-range"),
+            Self::UnprovedDecrease { .. } => Some("unproved-decrease"),
+            Self::SumCase(cause) => Some(cause.tag()),
+            Self::ResourceExhausted(cause) => Some(cause.kind.setting().kind().catalog_cause()),
+            Self::DefinitionCycle { .. } => Some("definition-cycle"),
+            Self::InvalidDispatchDeclaration(_) => Some("invalid-value"),
+            Self::MissingSelection { .. } => Some("missing-selection"),
+            Self::UnsupportedFeature { .. } => Some("unsupported-feature"),
+            Self::ProfileProhibitedOperator(_) | Self::LayerEquality { .. } => {
+                Some("expression-form")
+            }
+            Self::InternalFault(_) | Self::Identity(IdentityRefusal::NonCanonical) => {
+                Some("established-invariant-broken")
+            }
+            Self::Identity(IdentityRefusal::InputBytes { .. }) => {
+                Some(Setting::IdentityInputBytes.kind().catalog_cause())
+            }
+            Self::Identity(IdentityRefusal::Allocation { .. }) => Some("allocation-failed"),
+            Self::ReservedIntrinsicConflict(_) => Some("conflicting-definition"),
+            Self::IeeeProfileNotAdmitted | Self::UnrepresentableBound | Self::NodePreimage(_) => {
+                None
+            }
+            Self::ProtocolAnchor(cause) => Some(cause.tag()),
+            Self::ProtocolReference(cause) => Some(cause.tag()),
+            Self::Temporal(cause) => Some(cause.tag()),
+            Self::Hyper(cause) => Some(cause.tag()),
+            Self::StateGraph(cause) => cause.tag(),
+            Self::Hybrid(cause) => Some(cause.tag()),
+            Self::ProtocolObligation(cause) => cause.tag(),
+            Self::DispatchLink(cause) => Some(cause.catalog.cause()),
+            // Not a seam-probe location (unlike `code()`, above --
+            // deliberately left non-exhaustive there): this arm keeps
+            // `cause()` compiling under `--cfg seam_probe`, so `code()`'s
+            // own E0004 is the one and only probe failure this variant
+            // causes, matching the checked-in list in `xtask::seam_probe`.
+            #[cfg(seam_probe)]
+            Self::__SeamProbe => None,
+        }
+    }
+}
+
+/// The form an `identity-observing-form` refusal names (FR-150, FSpec
+/// FR-381).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum IdentityForm {
+    /// A `fold` or `reduce` whose result depends on the order of a `Set` or
+    /// `Bag` of references.
+    OrderSensitiveTraversal,
+    /// A conversion of a reference to a value of another type.
+    ReferenceConversion,
+}
+
+/// The kind of node an `identity-observing-form` refusal is at.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum IdentityNode {
+    /// A `fold`.
+    Fold,
+    /// A `reduce`.
+    Reduce,
+    /// A `convert<T>(e)`.
+    Convert,
+}
+
+/// What an `identity-observing-form` refusal retains (FR-150): the refused
+/// node's kind and form, and the `symmetric` population whose identity the
+/// form observes.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct IdentityObserving {
+    /// The refused node's kind.
+    pub node: IdentityNode,
+    /// The form of identity observation.
+    pub form: IdentityForm,
+    /// The population's declaration key.
+    pub population: filament_checked::key::DeclarationKey,
+}
+
+/// A located checking refusal, made before any charge.
+///
+/// filament:canonical
+#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]
+#[error("{} at {location:?}: {cause:?}", cause.rendered_code())]
+pub struct CheckRefusal {
+    /// Where the refusal originates.
+    pub location: Location,
+    /// The typed cause.
+    pub cause: CheckCause,
+}
+
+/// A member with no checked type used in a clause (FR-056-AC-43): the object
+/// type that declares it, the member, and where its type reference is written.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct UntypedMemberRefusal {
+    /// The declaring object type's name.
+    pub owner: String,
+    /// The field or operation name.
+    pub member: String,
+    /// The locus of the type reference: `Field.typeRef`,
+    /// `Operation.params[i].typeRef` or `Operation.returns.typeRef`.
+    pub locus: String,
+}
+
+/// Refusals owned by one protocol declaration while the rest of the unit
+/// continues checking (FR-383 per-protocol results).
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ProtocolCheckRefusal {
+    /// The protocol declaration's authored name.
+    pub declaration: String,
+    /// The protocol declaration's source-unit index.
+    pub source_index: usize,
+    /// The span of the protocol declaration's name.
+    pub declaration_span: Span,
+    /// Every typed refusal attributed to this declaration, in check order.
+    pub refusals: Vec<CheckRefusal>,
+}
+
+impl CheckRefusal {
+    pub(crate) fn from_type_check(
+        location: &Location,
+        failure: filament_semantic_value::declaration::TypeCheckError,
+    ) -> Self {
+        use filament_semantic_value::declaration::TypeCheckError;
+        let cause = match failure {
+            TypeCheckError::Refused(refusal) => return Self::from_ill_typed(location, refusal),
+            TypeCheckError::Allocation(request) => CheckCause::TypeCheckAllocation(request),
+            TypeCheckError::Capacity(request) => CheckCause::TypeCheckCapacity(request),
+        };
+        Self {
+            location: location.clone(),
+            cause,
+        }
+    }
+
+    pub(crate) fn ill_typed(location: &Location, cause: IllTypedCause) -> Self {
+        Self {
+            location: location.clone(),
+            cause: CheckCause::IllTyped(cause),
+        }
+    }
+
+    /// A kernel type refusal as its FR-272 cause: an unordered enum ordering
+    /// is `operator-ineligible`, every other incompatibility `type-mismatch`.
+    pub(crate) fn from_ill_typed(location: &Location, refusal: IllTyped) -> Self {
+        let cause = match refusal.cause {
+            IllTypedCause::TypeMismatch
+            | IllTypedCause::OperatorIneligible
+            | IllTypedCause::AmbiguousLiteral => refusal.cause,
+            IllTypedCause::UnorderedEnumOrdering => IllTypedCause::OperatorIneligible,
+            IllTypedCause::DistinctTextProfiles
+            | IllTypedCause::DistinctEnumDeclarations
+            | IllTypedCause::IncompatibleDimensions
+            | IllTypedCause::AffineUnitArithmetic
+            | IllTypedCause::DistinctUnits
+            | IllTypedCause::MalformedDecimalType
+            | IllTypedCause::MalformedBoundedQuantityType
+            | IllTypedCause::DistinctIeeeWidths
+            | IllTypedCause::IeeeWithExactOperand
+            | IllTypedCause::IeeeToNonRationalExact => IllTypedCause::TypeMismatch,
+        };
+        Self::ill_typed(location, cause)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CheckCause, CheckingLimitKind, CheckingStage, KeyFault, Setting, StageLimitCause};
+    use fsl_foundation::diagnostic::Code;
+
+    /// Every `CheckingLimitKind` reports `stage_limit_exceeded`
+    /// with its own `<kind>-exceeded` cause, and carries the bound and
+    /// actual counter it was built with.
+    #[test]
+    fn resource_exhausted_reports_stage_limit_exceeded_per_kind() {
+        let cases = [
+            (CheckingLimitKind::Nodes, "node-count-exceeded"),
+            (CheckingLimitKind::InputBytes, "input-bytes-exceeded"),
+            (CheckingLimitKind::WorkBudget, "work-budget-exceeded"),
+            (CheckingLimitKind::RationalBits, "rational-bits-exceeded"),
+            (
+                CheckingLimitKind::DecimalLiteralScale,
+                "work-budget-exceeded",
+            ),
+            (
+                CheckingLimitKind::DecimalLiteralScaleTotal,
+                "work-budget-exceeded",
+            ),
+        ];
+        for (kind, cause) in cases {
+            let refused = CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+                stage: CheckingStage::Typing,
+                kind,
+                limit: 10,
+                actual: 11,
+                region: None,
+            }));
+            assert_eq!(refused.code(), Code::StageLimitExceeded, "{kind:?}");
+            assert_eq!(refused.cause(), Some(cause), "{kind:?}");
+            let CheckCause::ResourceExhausted(exceeded) = refused else {
+                unreachable!()
+            };
+            assert_eq!(exceeded.limit, 10);
+            assert_eq!(exceeded.actual, 11);
+        }
+    }
+
+    /// The four settings a checking limit names convert back; every other
+    /// setting names a limit of another stage, refuses, and names the
+    /// `KeyFault` `check::mod` raises for it.
+    #[test]
+    fn only_checking_settings_convert_from_a_setting() {
+        for setting in Setting::ALL.iter().copied() {
+            let expected = match setting {
+                Setting::S3Nodes => Ok(CheckingLimitKind::Nodes),
+                Setting::S3InputBytes => Ok(CheckingLimitKind::InputBytes),
+                Setting::S3WorkUnits => Ok(CheckingLimitKind::WorkBudget),
+                Setting::S3RationalBits => Ok(CheckingLimitKind::RationalBits),
+                Setting::S3DecimalLiteralScale => Ok(CheckingLimitKind::DecimalLiteralScale),
+                Setting::S3DecimalLiteralScaleTotal => {
+                    Ok(CheckingLimitKind::DecimalLiteralScaleTotal)
+                }
+                other => Err(other),
+            };
+            assert_eq!(CheckingLimitKind::try_from(setting), expected, "{setting}");
+        }
+        assert_eq!(
+            KeyFault::UncheckedLimit(Setting::S1Tokens).invariant(),
+            "family-limit-is-a-checking-limit"
+        );
+    }
+}

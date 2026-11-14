@@ -3,7 +3,7 @@ id: TC-033
 title: "Enforce native linking resource ceilings"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-013
+  - target: ix://agent-ix/filament-spec-language/FR-013
     type: verifies
 ---
 

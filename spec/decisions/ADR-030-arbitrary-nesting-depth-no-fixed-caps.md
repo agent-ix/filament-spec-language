@@ -3,35 +3,35 @@ id: ADR-030
 title: "Arbitrary nesting depth: resource limits only, no fixed depth caps"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/NFR-001
+  - target: ix://agent-ix/filament-spec-language/NFR-001
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/NFR-011
+  - target: ix://agent-ix/filament-spec-language/NFR-011
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: relates_to
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # ADR-030: Arbitrary nesting depth: resource limits only, no fixed depth caps
@@ -41,35 +41,35 @@ relationships:
 The owner ruled that deep nesting must be supported, and that a known depth
 limit is answered by a redesign, not by a cap.
 
-QSL expressions are binary trees. A long sum, a long `else if` chain or a long
+FSL expressions are binary trees. A long sum, a long `else if` chain or a long
 run of nested `let`s is as deep as it is long. Today two fixed constants
 refuse such expressions well before any size limit is reached: the forms
-stage's `DEFAULT_FORMS_NESTING_DEPTH` (`qsl-forms/src/dispatch.rs`) and the
-checker's `MAX_CHECKING_DEPTH` (`quire-semantic-value/src/checking.rs`, which
+stage's `DEFAULT_FORMS_NESTING_DEPTH` (`fsl-forms/src/dispatch.rs`) and the
+checker's `MAX_CHECKING_DEPTH` (`filament-semantic-value/src/checking.rs`, which
 `CheckingLimits::new` refuses to exceed). NFR-011 makes the checker's constant
-a requirement. QSpec FR-146 states that Complete V1 defines no expression depth
+a requirement. FSpec FR-146 states that Complete V1 defines no expression depth
 or nesting limit for checking, and that a host stack limit is never a
 Complete-V1 outcome.
 
-Other fixed depth constants sit under QSL's identity and intake paths:
+Other fixed depth constants sit under FSL's identity and intake paths:
 `quire_canonical::Limits::MAX_DEPTH`, which is the stack budget of a
 serde-driven recursive encoder; `IDENTITY_LIMITS`
-(`quire-semantic-value/src/semantic_node.rs`), which takes that constant as
-its depth; and the semantic-IR reader's `json::MAX_DEPTH`, which QSL's intake
-mirrors (`qsl-semantics/src/model/intake.rs`). Several walks recurse natively
+(`filament-semantic-value/src/semantic_node.rs`), which takes that constant as
+its depth; and the semantic-IR reader's `json::MAX_DEPTH`, which FSL's intake
+mirrors (`fsl-semantics/src/model/intake.rs`). Several walks recurse natively
 in proportion to input, and are safe today only because a cap runs first:
 the checker's text-leaf walk (`LeafWalk::walk`, `check/lowering.rs`),
 `node_key::term`, the forms `control_anchors` walk, and the derived `Clone`,
-`Debug`, `PartialEq` and `Drop` of `qsl_forms::Expression` (whose `Drop` is
-already iterative), the checked `Node` and `quire_exact::ValueType`.
+`Debug`, `PartialEq` and `Drop` of `fsl_forms::Expression` (whose `Drop` is
+already iterative), the checked `Node` and `filament_exact::ValueType`.
 
 Several pieces are already iterative and are the pattern this record extends:
 the CST lexer and parser keep explicit stacks; forms builds `Expression` trees
 over an explicit stack; typing, facts and expression lowering in the checker
 run over explicit frame stacks; the evaluator runs on an explicit task stack;
-`quire_exact::Value` has hand-written iterative traits; and the
+`filament_exact::Value` has hand-written iterative traits; and the
 `quire-canonical` encoder already keeps an explicit frame stack for open
-objects. QSL's emitted v2 checked package is already one node per expression,
+objects. FSL's emitted v2 checked package is already one node per expression,
 with arguments as references, but the v2 schema still admits inline nested
 terms.
 
@@ -78,9 +78,9 @@ terms.
 Item ids `D-` are local to this record. Other artifacts cite them as
 `ADR-030 D-n`.
 
-### D-1. The ecosystem depth rule (QSpec FR-460)
+### D-1. The ecosystem depth rule (FSpec FR-460)
 
-QSpec states one rule for every stage of every implementation: parser,
+FSpec states one rule for every stage of every implementation: parser,
 reader, encoder, checker, lowering, generator, evaluator, replay and every
 wire format.
 
@@ -95,14 +95,14 @@ wire format.
    - **Arena order.** An arena stores each node after its children, so a
      bottom-up computation is one forward loop over the arena with no stack.
    - **The walker toolkit.** A top-down or mutually recursive walk runs on
-     the one shared `no_std` walker toolkit, the crate `quire-walk`, in its own repository
-     `agent-ix/quire-walk`: an
+     the one shared `no_std` walker toolkit, the crate `filament-walk`, in its own repository
+     `agent-ix/filament-walk`: an
      explicit heap stack of typed frames, with enter and exit callbacks. The
      toolkit is Kani-verified. It is a shared leaf in FB-05's class (ADR-011
-     §6.1 layer W), so QSL, IR, CG and RT all use it.
+     §6.1 layer W), so FSL, IR, CG and RT all use it.
 
    A representation whose depth its schema fixes needs neither, and
-   `quire-exact`, a leaf with no dependency, keeps hand-written iterative
+   `filament-exact`, a leaf with no dependency, keeps hand-written iterative
    traits (D-4.7).
 3. **Heap stacks are charged.** Every heap stack, and every recursion through
    the `maybe_grow` wrapper (item 6), grows by at most a constant per node
@@ -121,9 +121,9 @@ wire format.
    S4 checker, the prove path and the certificate checkers; ADR-029 CB-2) no
    walk grows or switches the native stack. Outside the core, a walk whose
    conversion to the toolkit is awkward may grow the stack on demand as a
-   justified exception, only through QSL's one `maybe_grow` wrapper. The
-   wrapper is the std-only crate `qsl-walk-grow` (ADR-011 layer WG), outside
-   the core, which no core crate depends on; `quire-walk` stays `no_std`
+   justified exception, only through FSL's one `maybe_grow` wrapper. The
+   wrapper is the std-only crate `fsl-walk-grow` (ADR-011 layer WG), outside
+   the core, which no core crate depends on; `filament-walk` stays `no_std`
    with no features, so no feature unification can bring `stacker` into the
    core. The wrapper is a plain call under `cfg(kani)`. Each use has a test
    at 100,000 depth on a thread with a small fixed stack.
@@ -134,9 +134,9 @@ wire format.
 
 This generalises FR-146's checking-only statement to every stage.
 
-### D-2. Flat v2 body sub-positions (QSpec FR-322 body grammar)
+### D-2. Flat v2 body sub-positions (FSpec FR-322 body grammar)
 
-QSpec FR-322 defines a v2 node `body` by a stratified grammar in which no
+FSpec FR-322 defines a v2 node `body` by a stratified grammar in which no
 production names itself or a higher stratum. The JSON depth of every v2
 package is then fixed by the schema, whatever the model's size.
 
@@ -152,14 +152,14 @@ Each composite subterm is its own node, reached by `reference`. A reader
 refuses a body outside the grammar as a malformed wire (`refused`), not as a
 limit.
 
-QSpec owns the grammar, and QSL cites it. A `binding` never holds a `binding`.
+FSpec owns the grammar, and FSL cites it. A `binding` never holds a `binding`.
 Expression results and operands are references or literals, an application
 argument is a Member (a reference, a literal, a group of bindings or a
 binding of a Leaf, a Group or a Tuple), function nodes are an aggregate of
 bindings whose `parameters` value is a group of references, and unit-power
 members are groups of bindings. The strata are closed. If an emitted shape
 falls outside them, lowering splits it into nodes rather than adding a
-stratum. Two QSL shapes were a binding of a binding: an optional record
+stratum. Two FSL shapes were a binding of a binding: an optional record
 field (FR-092) and a fold's step (FR-093). Each is now a binding of a Group
 that holds the inner binding, so those nodes' ids differ from the
 four-stratum form's, and so do the ids of every node that names them.
@@ -187,14 +187,14 @@ under a larger limit.
    - the replay request, as the `stage_limits` entry of that name;
    - the CLI, as `--limit <name>=<value>`. The user CLI is the driver's
      (`quire`, ADR-029 CB-1), and the driver CLI exposes the caller limits.
-     QSL provides the library operation that applies a `<name>=<value>`
+     FSL provides the library operation that applies a `<name>=<value>`
      setting to the stages' limits, which the driver CLI calls.
 3. **Every named limit can be raised at every entry point.** Replay carries
    every stage limit in its request and passes each one through. Today it
    applies the proving run's S1 byte limit and S3 work budget, and runs every
-   other stage at its defaults. QSL's settings operation accepts every setting
+   other stage at its defaults. FSL's settings operation accepts every setting
    name, so the driver CLI accepts every setting name.
-4. **The diagnostic type carries the setting.** `qsl_foundation`'s
+4. **The diagnostic type carries the setting.** `fsl_foundation`'s
    `LimitExceeded` carries the setting with the kind, configured bound,
    actual count and locus. Each stage's limits type maps each of its fields
    to its setting in one place.
@@ -205,9 +205,9 @@ under a larger limit.
 6. **Catalogs.** The `stage_limit_exceeded` row of the native diagnostics
    catalog carries the setting name with the limit kind and bound (overlap
    item O-5). An `incomplete` outcome names its accounting counter, which is
-   its setting at every entry point (FR-255, QSpec FR-461 Behavior 6).
+   its setting at every entry point (FR-255, FSpec FR-461 Behavior 6).
 
-### D-4. Components in QSL's lane
+### D-4. Components in FSL's lane
 
 For each component: the redesign, the limit that bounds it, and the
 deep-input criterion as a design statement. Every limit is reported as D-3
@@ -221,7 +221,7 @@ smaller than one frame per level would need (D-6).
 
 - **Redesign.** Already iterative: the lexer's delimiter stack and the
   parser's explicit stack and memo table. The bracket-nesting ceiling
-  (`qsl_cst::Limits::nesting`) is deleted. At any position the bracket depth
+  (`fsl_cst::Limits::nesting`) is deleted. At any position the bracket depth
   is fixed by the input, so the memo table stays bounded by the production
   count per position without it.
 - **Limit.** Source bytes, tokens, syntax nodes and the parser's work budget
@@ -262,7 +262,7 @@ smaller than one frame per level would need (D-6).
     of path segments, with one typed frame per entered type: the `ValueType`
     being walked and, for a composite, its field cursor and the
     `open`-list length on entry. `open` and `prefixes` keep their roles.
-  - QSL's `SemanticTerm` becomes stratified Rust types matching D-2
+  - FSL's `SemanticTerm` becomes stratified Rust types matching D-2
     (`LeafTerm`, `GroupTerm`, `TupleTerm`, `MemberTerm`, `BodyTerm`). `node_key::term`
     becomes a fixed-depth match, and its depth guard is deleted. Body
     preimages then have a schema-fixed depth.
@@ -280,7 +280,7 @@ smaller than one frame per level would need (D-6).
   100,000-deep `Option` type and a 100,000-record composite chain lower their
   text leaves.
 
-#### D-4.4 `quire-semantic-value` `IDENTITY_LIMITS`
+#### D-4.4 `filament-semantic-value` `IDENTITY_LIMITS`
 
 - **Redesign.** `IDENTITY_LIMITS` becomes the published default (16777216
   bytes) of the caller's `identity.input_bytes` limit (FR-255), a byte limit
@@ -299,10 +299,10 @@ smaller than one frame per level would need (D-6).
 - **Criterion.** The identity of a package holding a 100,000-deep expression
   is minted, and equals the identity minted on an ordinary thread.
 
-#### D-4.5 What QSL relies on from `quire-canonical`
+#### D-4.5 What FSL relies on from `quire-canonical`
 
 `quire-canonical` is a separate repository and designs its own crate (D-8
-overlap item O-6). QSL relies on these capabilities, named here, not
+overlap item O-6). FSL relies on these capabilities, named here, not
 designed:
 
 - canonical RFC 8785 encoding bounded by bytes only, with no depth limit;
@@ -313,7 +313,7 @@ designed:
   limit;
 - a serde encoding path that only fixed-depth types can take.
 
-QSL's own behaviour over them: QSL reports the crate's byte error as the
+FSL's own behaviour over them: FSL reports the crate's byte error as the
 calling stage's byte limit (D-3), maps the crate's malformed-input refusal to
 the calling site's malformed-input refusal, and routes each identity to the
 fixed-depth path or the event API as D-4.4 states.
@@ -329,7 +329,7 @@ fixed-depth path or the event API as D-4.4 states.
     in place of a `serde_json::Value`, whose own `Drop` recurses.
   - The canonical-bytes encoding of that tree goes through the event API.
   - The semantic-IR crate's checks take the same tree (overlap item O-4), so
-    the document is parsed once. QSL's lock on that crate moves to the
+    the document is parsed once. FSL's lock on that crate moves to the
     revision that does this.
 - **Limit.** The intake byte limit, caller-configurable with a published
   default, refused as `resource_exhausted`/`intake-limit-exceeded` with the
@@ -342,17 +342,17 @@ fixed-depth path or the event API as D-4.4 states.
 
 - **Redesign.** Expression evaluation and calls already run on an explicit
   task stack. What remains is the types around it:
-  - `quire_exact::ValueType` gets hand-written iterative `Clone`,
+  - `filament_exact::ValueType` gets hand-written iterative `Clone`,
     `PartialEq`, `Debug` and `Drop`, following `Value`'s existing pattern.
     These types also build for `no_std` targets, where a deep native
     recursion fails silently rather than aborting.
-  - The simulation state key (`qsl-eval/src/simulation/key.rs`) encodes
+  - The simulation state key (`fsl-eval/src/simulation/key.rs`) encodes
     through the event API. `TransitionSystem::Key` and `TransitionId` change
     their bound from `Serialize` to an event-source trait that writes into
-    the canonical writer from an explicit stack. `quire_exact::Value`
+    the canonical writer from an explicit stack. `filament_exact::Value`
     implements it iteratively, and a fixed-shape key implements it through
     the fixed-depth serde path.
-- **Limit.** `work_units` fuel under `quire.value.accounting/v1`: one
+- **Limit.** `work_units` fuel under `filament.value.accounting/v1`: one
   `function.call` charge per call, with no call-depth counter (FR-146). A
   denied charge is `incomplete { limit_kind: work_units, ... }`. Simulation
   keeps its explicit exploration limits.
@@ -364,7 +364,7 @@ fixed-depth path or the event API as D-4.4 states.
 
 - **Redesign.** Replay inherits every change above: recompilation through
   D-4.1 to D-4.3, identities through D-4.4, values through D-4.7. Canonical
-  assignment values decode into `quire_exact::Value` from `quire-canonical`'s
+  assignment values decode into `filament_exact::Value` from `quire-canonical`'s
   reader tree (D-4.5). Every identity over a value is the value
   itself and encodes, where canonical bytes are needed, through the event API.
 - **Limit.** The proving run's stage limits and accounting limits, carried in
@@ -380,7 +380,7 @@ fixed-depth path or the event API as D-4.4 states.
 - **Redesign.**
   - The emitter produces D-2's form. A conformance test asserts that every
     emitted body is in the stratified grammar.
-  - The reader (`qsl-package/src/checked_v2.rs`) deletes
+  - The reader (`fsl-package/src/checked_v2.rs`) deletes
     `V2ReadLimits::depth` and its clamp to IR's reader maximum once IR's
     reader enforces D-2 (overlap item O-1). The decoded nodes are then
     fixed-depth types, so the derived traits on `V2Read` stop recursing in
@@ -393,9 +393,9 @@ fixed-depth path or the event API as D-4.4 states.
   back and verified. A wire with a nested inline term is refused as
   malformed.
 
-#### D-4.10 Other JSON reads in QSL
+#### D-4.10 Other JSON reads in FSL
 
-- **Redesign.** Every QSL read of untrusted JSON that does not go through a
+- **Redesign.** Every FSL read of untrusted JSON that does not go through a
   typed reader uses `quire-canonical`'s reader and its arena tree (D-4.5):
   - library package identity (`library/package_identity.rs`);
   - observation admission (`model/observation.rs`);
@@ -409,7 +409,7 @@ fixed-depth path or the event API as D-4.4 states.
 - **Criterion.** Each site reads a 100,000-deep document and reports it on
   its content.
 
-### D-5. QSL requirements this record changes
+### D-5. FSL requirements this record changes
 
 Recorded here as decisions. The documents themselves are amended with the
 requirements work that follows this record.
@@ -441,13 +441,13 @@ requirements work that follows this record.
 ### D-6. Verification design
 
 - Each criterion in D-4 is one test on a thread with a small fixed stack
-  (`qsl-cst`'s parser test is the existing example), so a pass shows that
+  (`fsl-cst`'s parser test is the existing example), so a pass shows that
   stack use does not grow with depth.
 - Each public entry point of the qualified core, and each `maybe_grow` call
   site outside it, has a test at 100,000 depth on a thread with a small
   fixed stack (D-1 items 6 and 7; FR-356, TC-902). The walker toolkit has
   its own small-stack tests and Kani harnesses (TC-898, TC-899, in
-  `agent-ix/quire-walk`).
+  `agent-ix/filament-walk`).
 - Deep inputs cover a sum, an `else if` chain and nested `let`s through parse,
   forms, check, lower, emit, v2 read and evaluate; a deep `Option` type and a
   recursive list value through state key, replay and identity; deep JSON
@@ -464,15 +464,15 @@ requirements work that follows this record.
   It then reruns the input with that setting raised, through the library,
   the replay request and the CLI, and asserts that it succeeds.
 
-### D-7. QSL's slices and what they wait on
+### D-7. FSL's slices and what they wait on
 
-QSL's own work lands in four slices. Each names only the other lane's work
+FSL's own work lands in four slices. Each names only the other lane's work
 it waits on.
 
-- **Slice 1. Waits on nothing outside QSL.**
-  - The walker toolkit `quire-walk` (its own repository,
-    `agent-ix/quire-walk`) and the `maybe_grow` wrapper crate
-    `qsl-walk-grow` (FR-356), landing first,
+- **Slice 1. Waits on nothing outside FSL.**
+  - The walker toolkit `filament-walk` (its own repository,
+    `agent-ix/filament-walk`) and the `maybe_grow` wrapper crate
+    `fsl-walk-grow` (FR-356), landing first,
     since the walks below run on it.
   - Forms arena and iterative `control_anchors` (D-4.2).
   - Checked `Node` arena, and `LeafWalk` and the remaining checker walks on
@@ -482,7 +482,7 @@ it waits on.
   - Iterative `ValueType` traits (D-4.7).
   - Deletion of `DEFAULT_FORMS_NESTING_DEPTH`, `MAX_CHECKING_DEPTH` and the CST
     nesting ceiling.
-  - Deletion of every depth limit kind: `qsl_foundation`'s
+  - Deletion of every depth limit kind: `fsl_foundation`'s
     `LimitKind::NestingDepth` and its `nesting-depth-exceeded` cause,
     `SyntaxLimit::NestingDepth`, `CheckingLimitKind::Depth`, the checked
     family's `StageLimits` nesting depth, and the library resolution depth,
@@ -516,7 +516,7 @@ D-2.
   validation, the reader's recursive decode, admit and preimage, the
   quadratic reference grouping, and moving its package identity encoding onto
   `quire-canonical`. IR's reader reads through `quire-canonical`'s shared
-  reader. QSL's D-4.9 waits on this.
+  reader. FSL's D-4.9 waits on this.
 - **O-2 CG.** Generated-code analysis and rendering, and generated Rust whose
   nesting follows expression depth, are CG's. One option is flat, one
   binding per node.
@@ -524,7 +524,7 @@ D-2.
   replace with work fuel and an explicit frame stack. So are RT's recursive
   `ValueType` and `CollectionType`, and moving its snapshot reader onto
   `quire-canonical`'s shared reader. RT's own checking
-  limits are a call-depth limit with defaults different from QSL's.
+  limits are a call-depth limit with defaults different from FSL's.
 - **O-4 Filament (semantic-IR in `filament-core-data`).** This covers:
   - the JSON reader, with its depth constant and fixed byte constant. It is
     replaced by `quire-canonical`'s shared reader, under the caller's byte
@@ -537,15 +537,15 @@ D-2.
   once their depth passes `DEPTH_LIMIT`, so a composite cycle longer than
   that constant goes unreported. The cause is traced in the code, not shown
   by a test. Reporting every composite cycle, whatever its length, is a
-  Filament-owned requirement; Filament designs the search. QSL's D-4.6
+  Filament-owned requirement; Filament designs the search. FSL's D-4.6
   criterion tests the outcome.
-- **O-5 QSpec.** D-1 and D-2 as requirements, including FR-322's read limits,
+- **O-5 FSpec.** D-1 and D-2 as requirements, including FR-322's read limits,
   the depth rows of the diagnostics catalogs that D-1 retires, and the
   setting name on the `stage_limit_exceeded` row (D-3).
 - **O-6 `quire-canonical`.** The capabilities D-4.5 names (byte-only
   canonical encoding, an event API driven from the caller's stack, the
   shared non-recursive JSON reader, and a serde path for fixed-depth types
-  only) are `quire-canonical`'s to design and deliver. QSL's slice 2 waits on them.
+  only) are `quire-canonical`'s to design and deliver. FSL's slice 2 waits on them.
 
 ### D-9. Rulings on the draft's questions
 
@@ -554,7 +554,7 @@ The owner ruled on the questions the draft left open, on 2026-10-01.
 | ID | Question | Ruling | Rationale | Where it lands |
 | --- | --- | --- | --- | --- |
 | RU-1 | Whether any stage keeps an optional caller depth setting | **No depth setting of any kind.** | Depth is not a resource once nothing recurses. Nodes, bytes and work bound memory and time | D-1 items 1 and 5; D-4.1 to D-4.3, D-4.6, D-4.10; Alternatives |
-| RU-2 | Where the shared iterative JSON reader lives | **In `quire-canonical`.** | It is the shared `no_std` leaf crate, so one reader serves QSL, IR and RT | D-4.5; D-4.6, D-4.8, D-4.10; D-7 slice 2; O-1, O-3, O-4, O-6 |
+| RU-2 | Where the shared iterative JSON reader lives | **In `quire-canonical`.** | It is the shared `no_std` leaf crate, so one reader serves FSL, IR and RT | D-4.5; D-4.6, D-4.8, D-4.10; D-7 slice 2; O-1, O-3, O-4, O-6 |
 | RU-3 | Whether the default size limits rise to fit 100,000-deep inputs | **The defaults stay, sized for realistic specifications.** A limit reached gives `stage_limit_exceeded` naming the limit, its value and how to raise it. The 100,000-deep criteria set their own limits | A default bounds a realistic specification's cost. A deep input states the limits it needs, and the outcome tells the caller which setting to raise | D-1 items 4 and 5; D-3; D-4 criteria; D-6 |
 
 ## Consequences
@@ -562,18 +562,18 @@ The owner ruled on the questions the draft left open, on 2026-10-01.
 - Expressions, types, values and documents nest to any depth their size
   limits admit. The limit a user meets is the one that measures what the
   input costs: bytes, nodes or work.
-- Depth stops being a limit kind in QSL. Removing `LimitKind::NestingDepth`,
+- Depth stops being a limit kind in FSL. Removing `LimitKind::NestingDepth`,
   `CheckingLimitKind::Depth`, `IntakeLimit::NestingDepth` and the S1 and S2
   nesting kinds removes them from the effective limits a checked package
   records.
-- `qsl_forms::Expression`, the checked `Node` and `SemanticTerm` change shape.
+- `fsl_forms::Expression`, the checked `Node` and `SemanticTerm` change shape.
   Every consumer that matches on them moves to arena ids or stratified
   variants in the same slice.
-- A recursive type has no serde path into the canonical encoder, so a QSL
+- A recursive type has no serde path into the canonical encoder, so an FSL
   caller that serialises one fails to compile rather than at run time.
 - The v2 wire's depth is fixed by its schema, so readers of it need no depth
   defence.
-- One JSON reader and one canonical encoder serve QSL, IR, RT and the
+- One JSON reader and one canonical encoder serve FSL, IR, RT and the
   semantic-IR crate, so all of them read the same document the same way.
 - A caller who meets a limit learns from the outcome which setting to raise,
   and can raise it from the library, the replay request or the CLI.
@@ -596,8 +596,8 @@ The owner ruled on the questions the draft left open, on 2026-10-01.
   is iterative, memory and time are linear in nodes and bytes, so a depth
   knob bounds nothing those limits do not. It would also keep depth as a
   limit kind in every catalog.
-- **A JSON reader per crate, or one in a QSL foundation crate.** Rejected
-  (RU-2). IR and RT need the same reader and cannot depend on QSL.
+- **A JSON reader per crate, or one in an FSL foundation crate.** Rejected
+  (RU-2). IR and RT need the same reader and cannot depend on FSL.
   `quire-canonical` is the shared `no_std` leaf they all depend on already.
 - **Raise the default size limits so a 100,000-deep chain fits unconfigured.**
   Rejected (RU-3). Defaults are sized for realistic specifications. A deep
@@ -617,11 +617,11 @@ The owner ruled on the questions the draft left open, on 2026-10-01.
 
 - Linear QSL-381 (this redesign), with the owner rulings and the ecosystem
   research it carries.
-- The QSpec half (Linear STD-143, which supersedes STD-125): D-1 is QSpec
+- The FSpec half (Linear STD-143, which supersedes STD-125): D-1 is FSpec
   FR-460; D-2 is FR-322's body grammar, AC-39 to AC-42; D-3's setting names
   are FR-461 and the FR-323 `stage_limits` entries.
 - Linear IR-495 (IR), IR-496 (CG), IR-497 (RT): O-1 to O-3.
-- QSpec FR-146 (no checking depth limit; no host stack outcome) and FR-322
+- FSpec FR-146 (no checking depth limit; no host stack outcome) and FR-322
   (checked-package artifact).
 - ADR-011 §2.3 (stage limits), ADR-013 §2 (one RFC 8785 implementation),
   ADR-014 §1 and §2 (bound taxonomy; absent bounds are inherited).

@@ -3,7 +3,7 @@ id: TC-1419
 title: "Kernel mode drops a function body's presence obligation and keeps state clauses and measures"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-495
+  - target: ix://agent-ix/filament-spec-language/FR-495
     type: verifies
 ---
 # TC-1419: Kernel mode drops a function body's presence obligation and keeps state clauses and measures

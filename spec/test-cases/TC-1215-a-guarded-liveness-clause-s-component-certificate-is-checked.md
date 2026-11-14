@@ -3,7 +3,7 @@ id: TC-1215
 title: "A guarded liveness clause's component certificate is accepted or rejected"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-339
+  - target: ix://agent-ix/filament-spec-language/FR-339
     type: verifies
 ---
 # TC-1215: A guarded liveness clause's component certificate is accepted or rejected

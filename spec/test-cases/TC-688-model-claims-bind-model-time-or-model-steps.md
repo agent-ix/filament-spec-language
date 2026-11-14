@@ -3,7 +3,7 @@ id: TC-688
 title: "Model claims bind model-time or model-steps, with defaults, identity keys and interval units"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-233
+  - target: ix://agent-ix/filament-spec-language/FR-233
     type: verifies
 ---
 # TC-688: Model claims bind model-time or model-steps, with defaults, identity keys and interval units

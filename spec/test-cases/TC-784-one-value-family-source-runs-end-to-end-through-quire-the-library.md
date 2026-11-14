@@ -3,14 +3,14 @@ id: TC-784
 title: "One Value-family source runs through check, package and execute with documents and exit codes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-299
+  - target: ix://agent-ix/filament-spec-language/FR-299
     type: verifies
 ---
 # TC-784: One Value-family source runs through check, package and execute with documents and exit codes
 
 ## Description
 
-Verify that QSL's library operations serve the source the driver's `quire check`, `compile`, `run` and `prove` use, with and without a supplied library, and that cancellation stops them.
+Verify that FSL's library operations serve the source the driver's `quire check`, `compile`, `run` and `prove` use, with and without a supplied library, and that cancellation stops them.
 
 Scope: FR-299-AC-1 to FR-299-AC-4.
 

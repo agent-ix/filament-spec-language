@@ -3,7 +3,7 @@ id: TC-997
 title: "A variant type is admitted whether or not a clause, field or signature names it, and signature meanings that stay refused keep their node and path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-997: A variant type is admitted whether or not a clause, field or signature names it, and signature meanings that stay refused keep their node and path

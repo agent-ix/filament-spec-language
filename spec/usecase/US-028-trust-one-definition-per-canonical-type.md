@@ -1,26 +1,26 @@
 ---
 id: US-028
-title: "Trust that a canonical type has one definition across QSL and its backends"
+title: "Trust that a canonical type has one definition across FSL and its backends"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-271
+  - target: ix://agent-ix/filament-spec-language/FR-271
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-272
+  - target: ix://agent-ix/filament-spec-language/FR-272
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-273
+  - target: ix://agent-ix/filament-spec-language/FR-273
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
-# US-028: Trust that a canonical type has one definition across QSL and its backends
+# US-028: Trust that a canonical type has one definition across FSL and its backends
 
 ## Story
 
-**As a** QSL or backend contributor reading or changing code that handles a
+**As a** FSL or backend contributor reading or changing code that handles a
 shared concept such as a kernel value, an evaluation outcome or a checked
 package
 **I want** each canonical type to have exactly one definition, marked where
-it is declared, with every same-named item inside QSL either deleted in its
+it is declared, with every same-named item inside FSL either deleted in its
 favour or renamed to say what it is, and every copy of it in a backend
 caught by that backend's own lint gate
 **So that** a name in the code always means the one canonical concept, I
@@ -30,25 +30,25 @@ takes, and a copied type cannot drift from its source unnoticed.
 ## Context
 
 ADR-013 §3 names one canonical owner and one public type for each shared
-concept, and ADR-011 §4 requires exactly one QSL type per stage output. On
+concept, and ADR-011 §4 requires exactly one FSL type per stage output. On
 main, many canonical names are also declared elsewhere in the workspace:
 generic names in the native-v1 seam modules, layer-crate types with a
 different meaning, and two definitions of one concept. ADR-032 tags each
-canonical type with `/// quire:canonical` and adds a gate that reads the
+canonical type with `/// filament:canonical` and adds a gate that reads the
 tags, so the set needs no list of names.
 
 ## Acceptance Examples (Illustrative)
 
 ### US-028-EX-1: A second definition fails the gate
 
-- **Given** `quire_exact::Meter` carries the canonical tag.
-- **When** a contributor adds a `struct Meter` to another QSL crate.
+- **Given** `filament_exact::Meter` carries the canonical tag.
+- **When** a contributor adds a `struct Meter` to another FSL crate.
 - **Then** `cargo xtask canonical-types` fails, naming both definitions,
   and the contributor names the new type for what it meters.
 
 ### US-028-EX-2: A backend copy fails the backend's gate
 
-- **Given** a backend workspace that builds against `quire-exact`.
+- **Given** a backend workspace that builds against `filament-exact`.
 - **When** a contributor copies `ComparisonOperator` into the backend with
   the same variants.
 - **Then** the backend's run of the same subcommand fails with a `copy`

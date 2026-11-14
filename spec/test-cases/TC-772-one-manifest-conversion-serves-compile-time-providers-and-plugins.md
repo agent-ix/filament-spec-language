@@ -3,7 +3,7 @@ id: TC-772
 title: "One manifest conversion serves compile-time providers and plugins"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-288
+  - target: ix://agent-ix/filament-spec-language/FR-288
     type: verifies
 ---
 # TC-772: One manifest conversion serves compile-time providers and plugins
@@ -26,7 +26,7 @@ Scope: FR-288-AC-1 to FR-288-AC-6.
 
 Tag the tests `#[trace("TC-772", "<AC id>")]`.
 
-Layer R owns steps 5 and 6 (FR-288-AC-5, FR-288-AC-6), tested in `qsl-route`. Steps 1 to 4 (FR-288-AC-1 to FR-288-AC-4) run through the driver's registry builder, which owns the manifest conversion (IR-609 lane); no `qsl-route` test covers them.
+Layer R owns steps 5 and 6 (FR-288-AC-5, FR-288-AC-6), tested in `fsl-route`. Steps 1 to 4 (FR-288-AC-1 to FR-288-AC-4) run through the driver's registry builder, which owns the manifest conversion (IR-609 lane); no `fsl-route` test covers them.
 
 ## Expected Results
 

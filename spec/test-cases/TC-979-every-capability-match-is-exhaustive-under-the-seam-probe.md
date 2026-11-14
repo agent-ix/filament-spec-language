@@ -3,7 +3,7 @@ id: TC-979
 title: "Every capability match is exhaustive under the seam probe"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: verifies
 ---
 # TC-979: Every capability match is exhaustive under the seam probe

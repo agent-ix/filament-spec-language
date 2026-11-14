@@ -3,9 +3,9 @@ id: TC-166
 title: "The replay executor selects a function by typed QualifiedName, never by string"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: verifies
 ---
 # TC-166: The replay executor selects a function by typed QualifiedName, never by string

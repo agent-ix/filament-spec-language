@@ -3,45 +3,45 @@ id: FR-480
 title: "Compile and link one checked package from several source units"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-014
+  - target: ix://agent-ix/filament-spec-language/US-014
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-033
+  - target: ix://agent-ix/filament-spec-language/ADR-033
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-362
+  - target: ix://agent-ix/filament-spec-language/FR-362
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
 ---
 # FR-480: Compile and link one checked package from several source units
 
 ## Description
 
-QSL SHALL compile one checked package from an ordered, non-empty list of
-complete-V1 source units, the package's **unit list**. QSpec FR-151 defines
-the linked-source-unit language rules; QSpec FR-322 defines the corresponding
-package representation. This requirement specifies QSL's compile order,
+FSL SHALL compile one checked package from an ordered, non-empty list of
+complete-V1 source units, the package's **unit list**. FSpec FR-151 defines
+the linked-source-unit language rules; FSpec FR-322 defines the corresponding
+package representation. This requirement specifies FSL's compile order,
 cross-unit stage behavior, source ownership and emitted package obligations.
 Each unit is read once and parsed once with the one grammar (ADR-033,
 FR-362). A unit list of one source is the one-unit compile every other
@@ -72,7 +72,7 @@ the package means the same whichever order the two files are listed in.
 
 ## Outputs
 
-- One `CheckedPackage` whose `quire.checked-package/v2` `sources` list every
+- One `CheckedPackage` whose `filament.checked-package/v2` `sources` list every
   unit, with one checked unit (FR-362) per source unit.
 - On refusal: one refusal with the stage, code, cause and locus this
   requirement or the one-unit rules give. Every locus names its unit's
@@ -91,7 +91,7 @@ the package means the same whichever order the two files are listed in.
   refusal refuses the package, and the first such refusal in request order
   is reported.
 - **Source order** is request order, then the byte offset within a unit. It
-  is QSpec FR-142's source order. It orders refusal reports, FR-091's "in
+  is FSpec FR-142's source order. It orders refusal reports, FR-091's "in
   source order" lists and FR-142's turn list. It never orders the admitted
   package: see "Ownership, identity and emission".
 
@@ -114,7 +114,7 @@ the package means the same whichever order the two files are listed in.
 ### Selections and imports
 
 - A `model` or `import` alias SHALL resolve only within the unit that
-  declares it (QSpec FR-151-AC-16). Two units may bind one alias to two
+  declares it (FSpec FR-151-AC-16). Two units may bind one alias to two
   model identities, or two aliases to one identity, and alias uniqueness
   applies within each unit.
 - A domain package that one unit, or two units, select under several
@@ -127,7 +127,7 @@ the package means the same whichever order the two files are listed in.
   context or operation, an `allInstances` or `lookup` type argument, a
   variant case `N::T::Case`), and `N::T` SHALL resolve to the declaration
   `M::T` resolves to. Type and node identity remain the package
-  declaration's, independent of the alias (QSpec FR-322-AC-71, AC-132,
+  declaration's, independent of the alias (FSpec FR-322-AC-71, AC-132,
   AC-142; FR-480-AC-3), so a value written through one alias is a value of
   the type the other alias names. A selected relationship is rooted once,
   at the first alias's declaration site (FR-094).
@@ -159,7 +159,7 @@ the package means the same whichever order the two files are listed in.
   its bare name in every unit, whether its unit comes before or after the
   referring unit in request order.
 - A name declared in two units SHALL be refused as two declarations of it in
-  one unit are, `ambiguous_declaration`/`ambiguous-name` (FR-091; QSpec
+  one unit are, `ambiguous_declaration`/`ambiguous-name` (FR-091; FSpec
   FR-151 "native declaration names"), naming both declarations, each with
   its unit.
 - An `import` names a library of the dependency input (FR-099), never a
@@ -187,16 +187,16 @@ the package means the same whichever order the two files are listed in.
   unit's local alias is resolved. `view_clauses` and FR-120's expansion
   conjoin them in ascending clause name under FR-006's short-circuit, so
   neither the unit that declares a clause nor the request order changes an
-  outcome (QSpec FR-151-AC-19, TC-196 D10).
+  outcome (FSpec FR-151-AC-19, TC-196 D10).
 - FR-091's assembler SHALL build one `PackageDeclarations` from every unit's
   parsed unit, each declaration keyed under its own unit's `SourceOwner`.
-  The unit-graph topology check takes QSpec FR-142's turn list over the
+  The unit-graph topology check takes FSpec FR-142's turn list over the
   whole unit list.
 
 ### Ownership, identity and emission
 
 - Each declared node SHALL carry the `SourceOwner` (authority, identity) of
-  the unit that declares it (QSpec FR-322). Its structural `node_id` is
+  the unit that declares it (FSpec FR-322). Its structural `node_id` is
   `{package, path, ordinal}` and is compared componentwise, never hashed.
   Moving a declaration to another unit of the same package changes its
   owner and source-map region; its package and declaration path remain the
@@ -218,7 +218,7 @@ the package means the same whichever order the two files are listed in.
 - Reordering the unit list therefore leaves the package bytes and structural
   node ids unchanged.
 - Each declared node's `declaration` occurrence regions SHALL name its own
-  unit's source in the source map (QSpec FR-322-AC-52).
+  unit's source in the source map (FSpec FR-322-AC-52).
 - The spine SHALL return one checked unit per source unit. Each unit carries
   that source's one `RawSourceRef`; its graph and type report are outputs of
   that source unit's parse, as FR-362 defines. The package graph lists every
@@ -228,8 +228,8 @@ the package means the same whichever order the two files are listed in.
 
 ### Replay and import of a several-unit package
 
-- A package reference's `sources` (QSpec FR-323) names the package's
-  `sources`: one or more sources, each named by its authority and identity. QSpec states
+- A package reference's `sources` (FSpec FR-323) names the package's
+  `sources`: one or more sources, each named by its authority and identity. FSpec states
   no order for that list, so the FR-098 executor SHALL accept it in any
   order and recompile it as one unit list in canonical unit order, which
   gives the package that `sources` describes. A `dependencies` entry's
@@ -243,12 +243,12 @@ the package means the same whichever order the two files are listed in.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-480-AC-1 | QSpec TC-196 D10 split across two units: unit `U1` holds D01, `PX` and `pre PA`; unit `U2` holds `pre PB1` and `pre PB2`, both on `M::B::size` through `U2`'s own `model M` alias. Evaluating `I` for `d1` gives D10's first result (`undefined`, reason `absent-key`, with `PB2` and `PA` not evaluated). With the two bodies' names swapped it gives D10's second result (`undefined`, reason `precondition-false`, after the false clause and `PA`, the lookup clause neither evaluated nor charged). Each result is equal, charges included, for the unit lists `[U1, U2]` and `[U2, U1]`, and so is each result with `PB1` in `U1` and `PB2` in `U2`, again in both link orders. Each placement gives byte-equal packages in both orders, and `sources` lists `U1` and `U2` in canonical unit order. The body node of `false`, shared by `pre PA` in `U1` and `pre PB2` in `U2`, has its `expression` occurrences numbered `U1`'s first in both orders, with equal `source_map` rows. | Test |
+| FR-480-AC-1 | FSpec TC-196 D10 split across two units: unit `U1` holds D01, `PX` and `pre PA`; unit `U2` holds `pre PB1` and `pre PB2`, both on `M::B::size` through `U2`'s own `model M` alias. Evaluating `I` for `d1` gives D10's first result (`undefined`, reason `absent-key`, with `PB2` and `PA` not evaluated). With the two bodies' names swapped it gives D10's second result (`undefined`, reason `precondition-false`, after the false clause and `PA`, the lookup clause neither evaluated nor charged). Each result is equal, charges included, for the unit lists `[U1, U2]` and `[U2, U1]`, and so is each result with `PB1` in `U1` and `PB2` in `U2`, again in both link orders. Each placement gives byte-equal packages in both orders, and `sources` lists `U1` and `U2` in canonical unit order. The body node of `false`, shared by `pre PA` in `U1` and `pre PB2` in `U2`, has its `expression` occurrences numbered `U1`'s first in both orders, with equal `source_map` rows. | Test |
 | FR-480-AC-2 | Unit `A` declares `record Point { x: Integer; }` and unit `B` declares `function px using v(p: Point): Integer pure { p.x }`. The list `[B, A]` checks, and `px`'s parameter type is `A`'s `Point` node. With `record Point { x: Integer; }` also declared in `B`, the compile refuses `ambiguous_declaration`/`ambiguous-name`, naming both declarations with their units. A `B` that writes `import A` refuses as an import of a library that the dependency input does not supply (FR-099). With a dependency input that also supplies a library whose source has `A`'s (authority, identity), the compile refuses `invalid_package`/`conflicting-definition` before any parse, naming the unit `A` and the library entry. | Test |
-| FR-480-AC-3 | QSpec FR-151-AC-16: units `A` and `B` select one domain package as `model M` and `model N` respectively, and each declares an `operation-body` for a different operation of it; the package links. When `B`'s body targets `A`'s operation instead, the compile refuses `conflicting_declaration`/`duplicate-declaration` (FR-302) with no partial package. | Test |
+| FR-480-AC-3 | FSpec FR-151-AC-16: units `A` and `B` select one domain package as `model M` and `model N` respectively, and each declares an `operation-body` for a different operation of it; the package links. When `B`'s body targets `A`'s operation instead, the compile refuses `conflicting_declaration`/`duplicate-declaration` (FR-302) with no partial package. | Test |
 | FR-480-AC-4 | Through the spine compile (FR-278's composition over the unit list, not FR-027's command), two `1-draft` units whose headers select the same two profiles in different orders refuse `invalid_package`/`conflicting-definition` at the later unit's header, naming both headers, and so do two units selecting different profile sets; two units spelling one profile's alias `v` and `w` check. An empty unit list refuses `invalid_package`/`invalid-value`, and two sources with one (authority, identity) refuse `invalid_package`/`conflicting-definition` before any parse. | Test |
 | FR-480-AC-5 | AC-2's package with `Point` moved from `A` to `B`, and `B` keeping `px`, has a `Point` node whose `owner` is `B`'s `SourceOwner`. Its structural `node_id` retains the package name and declaration path; the producer-assigned ordinal remains unique within that package and path. A source-map `declaration` region of `Point` names `B`'s source. | Test |
-| FR-480-AC-6 | QSpec TC-187 U11q through QSL: document 1 declares `dimension T;` and `unit z : T = rational(0, 1) * z2; unit z2 : T = rational(1, 1);`, and document 2 declares `dimension L;` and `unit u_self : L = rational(1, 1) * u_self;`. The list `[1, 2]` refuses `invalid_package`/`invalid-value` (FR-142's unit-graph table, row 1: a zero scale) at `z` in document 1, and `[2, 1]` refuses `invalid_package`/`definition-cycle` (FR-142 row 6: a unit target cycle) at `u_self` in document 2, its payload the dependency edge `u_self` to `u_self`; each refusal names the document's source reference and the declaration span, as FR-091 states for one unit, and the first defect in list order is the one reported (FR-514-AC-5). | Test |
+| FR-480-AC-6 | FSpec TC-187 U11q through FSL: document 1 declares `dimension T;` and `unit z : T = rational(0, 1) * z2; unit z2 : T = rational(1, 1);`, and document 2 declares `dimension L;` and `unit u_self : L = rational(1, 1) * u_self;`. The list `[1, 2]` refuses `invalid_package`/`invalid-value` (FR-142's unit-graph table, row 1: a zero scale) at `z` in document 1, and `[2, 1]` refuses `invalid_package`/`definition-cycle` (FR-142 row 6: a unit target cycle) at `u_self` in document 2, its payload the dependency edge `u_self` to `u_self`; each refusal names the document's source reference and the declaration span, as FR-091 states for one unit, and the first defect in list order is the one reported (FR-514-AC-5). | Test |
 | FR-480-AC-7 | AC-1's package replays: an FR-098 request whose package reference lists `U1` and `U2` in canonical unit order, with both sources in the byte provision, recompiles to the same structural package and replays the D10 call. The same reference with the two sources reversed recompiles to the same structural package and replays; with one source repeated it refuses before any recompile, `invalid_package`/`invalid-value` at `/package/lock/sources`. A reference naming a definition document refuses before any recompile. | Test |
 | FR-480-AC-8 | The spine returns two checked units for AC-2's package, each carrying its own source reference and a type report (FR-514) produced from that source unit's parse. The API does not accept an independently supplied type report or source for rebinding. | Test |
 | FR-480-AC-9 | One unit selects `example/config-version` as `Config` and then as `History`: an invariant on `History::ConfigVersion`, a `pre` and a `post` on `History::ConfigVersion::attemptUpdate`, `allInstances<History::ConfigVersion>(History::config_history)`, `lookup<History::ConfigVersion>(p, r)`, a `bound` on `History::config_history` and a function over `History::VersionNumber` each check, a `History::ConfigVersion` parameter and a `Config::ConfigVersion` parameter have one type, and the type environment declares `ConfigVersion` once. With unit `a` selecting the package as `Config` and unit `b` as `History`, `b`'s function over `History::ConfigVersion` and `History::VersionNumber` calls `a`'s function over the `Config` spellings, both have one signature, and the package has one object type and one `model_root`. | Test |
@@ -264,7 +264,7 @@ the package means the same whichever order the two files are listed in.
 
 ## Dependencies
 
-- QSpec FR-151 (linked source units, native declaration names, the
+- FSpec FR-151 (linked source units, native declaration names, the
   one-body rule across units), FR-322 (`sources`, `SourceOwner`, graph
   order and structural `node_id`), FR-323 (package reference `sources`), FR-142
   (source order of several documents), TC-196 D10 and TC-187 U11q.

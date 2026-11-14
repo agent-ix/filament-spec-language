@@ -1,20 +1,20 @@
 ---
 id: TC-1408
-title: "Declare object types, populations and operations in QSL source"
+title: "Declare object types, populations and operations in FSL source"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-569
+  - target: ix://agent-ix/filament-spec-language/FR-569
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
-# TC-1408: Declare object types, populations and operations in QSL source
+# TC-1408: Declare object types, populations and operations in FSL source
 
 ## Description
 
@@ -37,7 +37,7 @@ type.
 ## Test Procedure
 
 Fixture **S** is this unit, after the header and `profile P =
-"quire.state.core/v1";`:
+"filament.state.core/v1";`:
 
 ```
 object Order identity (total) {

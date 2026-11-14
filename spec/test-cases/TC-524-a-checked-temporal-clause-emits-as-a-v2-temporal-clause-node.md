@@ -3,16 +3,16 @@ id: TC-524
 title: "A checked temporal clause emits as a v2 temporal clause node and reads back"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: verifies
 ---
 # TC-524: A checked temporal clause emits as a v2 temporal clause node and reads back
 
 ## Description
 
-Verify that the S4 emitter writes a checked temporal clause as QSpec
+Verify that the S4 emitter writes a checked temporal clause as FSpec
 FR-370's `temporal`/`temporal_clause` node, that the resolved fairness set
-and intervals decide its identity, and that QSL's I2 reader admits the node
+and intervals decide its identity, and that FSL's I2 reader admits the node
 and refuses each defect with FR-370's code.
 
 Scope: FR-337-AC-1 to FR-337-AC-4 and FR-337-AC-24.
@@ -32,7 +32,7 @@ Use ADR-018 §6's ConfigVersion example unit.
    `eventually[3,*] holds(c.versionNumber = 2)` under infinite-trace.
 4. Feed the I2 reader step 1's node with its arguments reordered; with a
    `null` interval under a bounded profile; with a fairness member naming
-   `Absent`; with a `quire.op.temporal.fair` application inside the
+   `Absent`; with a `filament.op.temporal.fair` application inside the
    formula.
 5. Emit `eventually[0,5] holds(p)` under the finite-window profile; emit a
    checked clause of that profile built with the timed interval `(0 ms, 5 ms]`;
@@ -47,9 +47,9 @@ Tag the tests `#[trace("TC-524", "FR-337-AC-n")]`.
 - Step 2: the first two give byte-identical fairness applications and equal
   node keys; `each` against `whole` and the interval change each give a
   different node key and `package_id`.
-- Step 3: `quire.op.temporal.eventually` with `{lower: "0", upper: "5"}` and
-  an empty fairness argument; `quire.op.temporal.once` with `{lower: "1",
-  upper: "1"}`; `quire.op.temporal.eventually` with `{lower: "3", upper:
+- Step 3: `filament.op.temporal.eventually` with `{lower: "0", upper: "5"}` and
+  an empty fairness argument; `filament.op.temporal.once` with `{lower: "1",
+  upper: "1"}`; `filament.op.temporal.eventually` with `{lower: "3", upper:
   null}`.
 - Step 4: a schema failure; `invalid_package`/`operation-member-mismatch`;
   `missing_declaration`/`missing-name`; `ill_typed`/`operator-ineligible`;

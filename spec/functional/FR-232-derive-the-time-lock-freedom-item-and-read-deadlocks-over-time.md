@@ -3,30 +3,30 @@ id: FR-232
 title: "Derive the time-lock-freedom item and read deadlocks, fairness and vacuity over time"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-231
+  - target: ix://agent-ix/filament-spec-language/FR-231
     type: depends_on
 ---
 # FR-232: Derive the time-lock-freedom item and read deadlocks, fairness and vacuity over time
 
 ## Description
 
-QSL's request writer SHALL add one derived **time-lock-freedom** item for
+FSL's request writer SHALL add one derived **time-lock-freedom** item for
 each distinct timed subject among a request's items, beside FR-124's
 deadlock-freedom item (ADR-026 TD-2). A time-lock is a reachable timed
 state from which no time-divergent behaviour exists; it silently removes
-behaviours, so it is always reported. QSL SHALL also read deadlocks,
+behaviours, so it is always reported. FSL SHALL also read deadlocks,
 enabledness, weak fairness and vacuity over time (TD-4 to TD-6).
 
 ## Use case
@@ -116,6 +116,6 @@ deadlock.
 
 ## References
 
-- QSpec half: QSpec FR-417 (Linear STD-139) owns the time-lock-freedom
+- FSpec half: FSpec FR-417 (Linear STD-139) owns the time-lock-freedom
   item, time-locks and the `TimeLock` counterexample kind on the wire
   (ADR-026 OV-5, OV-6).

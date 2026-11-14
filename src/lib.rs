@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The root surfaces quire-protocol uses:
-//! complete-V1 editor tooling over `qsl-cst`, and the
+//! The root surfaces filament-protocol uses:
+//! complete-V1 editor tooling over `fsl-cst`, and the
 //! checked-package v2 emitter and handoff corpus. The language stages live in
-//! the `qsl-*` layer crates (ADR-011 §6.1); this crate re-exports none of them.
+//! the `fsl-*` layer crates (ADR-011 §6.1); this crate re-exports none of them.
 /// The version of this package as built, which `cargo xtask qualify` reports
-/// as the QSL version (FR-567-AC-5).
+/// as the FSL version (FR-567-AC-5).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(feature = "checked-handoff")]
@@ -19,4 +19,4 @@ pub mod population_fixtures;
 // is public under `cfg(test)` only because most of its helpers serve the
 // integration tests that include the same file, not this crate's unit tests.
 #[cfg(test)]
-extern crate self as quire_spec_language;
+extern crate self as filament_spec_language;

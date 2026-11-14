@@ -3,29 +3,29 @@ id: FR-225
 title: "Bound the memory component by request method bounds, default 4, stated in the result"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-221
+  - target: ix://agent-ix/filament-spec-language/FR-221
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-439
+  - target: ix://agent-ix/filament-specification/FR-439
     type: depends_on
 ---
 # FR-225: Bound the memory component by request method bounds, default 4, stated in the result
@@ -38,7 +38,7 @@ as method bounds, like the `max_depth` search horizon: bounds on the
 explored state space that every result states, not resource limits. The
 request sets them with no ceiling, and their published default is 4
 (ADR-025 MB-2). The model checker SHALL apply them and settle under them as
-QSpec FR-439 states (ADR-025 MB-3, MB-4), and every terminal record of an
+FSpec FR-439 states (ADR-025 MB-3, MB-4), and every terminal record of an
 item over a subject with a weak `parallel` SHALL state the bound used and
 whether it was reached.
 
@@ -69,11 +69,11 @@ again.
 - When a request leaves a memory bound unset, the model checker SHALL run
   with 4. The model checker SHALL treat the bounds as method parameters outside
   the model, the subject and its obligation identity.
-- The model checker SHALL leave unexpanded each store that QSpec FR-439's
+- The model checker SHALL leave unexpanded each store that FSpec FR-439's
   bound rule cuts, expand every other enabled step, record the state as
   bound-limited, and read a state whose only enabled steps are cut stores as
   a boundary state (ADR-025 MB-3).
-- The model checker SHALL return the outcome QSpec FR-439's verdict table
+- The model checker SHALL return the outcome FSpec FR-439's verdict table
   gives a run under a bound, which FR-127 settles: V-4 with a counterexample, V-1 with the bound stated as not
   reached when no state was bound-limited, and otherwise V-6,
   `MemoryBoundReached{bound, states}`, with `bound` naming the request
@@ -114,10 +114,10 @@ again.
   [FR-127](FR-127-settle-a-model-check-verdict-as-a-terminal-record.md)
   (the V-6 row and the terminal record), FR-215 (protocol request form),
   FR-221, FR-222.
-- QSpec owns the memory bounds as request method bounds, their default, the bound
-  semantics and verdicts, and their statement in the terminal record (QSpec
+- FSpec owns the memory bounds as request method bounds, their default, the bound
+  semantics and verdicts, and their statement in the terminal record (FSpec
   FR-439, FR-331).
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-439 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-439 (Linear STD-138).

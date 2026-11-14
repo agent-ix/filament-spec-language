@@ -3,19 +3,19 @@ id: FR-214
 title: "Require an explicit refinement row for every protocol step class"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-177
+  - target: ix://agent-ix/filament-specification/FR-177
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-432
+  - target: ix://agent-ix/filament-specification/FR-432
     type: depends_on
 ---
 # FR-214: Require an explicit refinement row for every protocol step class
@@ -25,7 +25,7 @@ relationships:
 When the concrete subject of a refinement declaration is a protocol
 subject, S3 SHALL check its `step` rows by the refinement record's row check
 (FR-136: `StepRow`, the protocol step classes, coverage and its refusals),
-as QSpec FR-432 states (ADR-027 PR-1). This FR adds what a protocol on the
+as FSpec FR-432 states (ADR-027 PR-1). This FR adds what a protocol on the
 abstract side reads: the observation of each concrete step, computed from
 its `StepRow` target, and the pairing of initial protocol states (ADR-027
 PR-2, PR-3).
@@ -86,11 +86,11 @@ think about is a compile error and never passes the check unexamined.
 - ADR-027 §6 PR-1 to PR-3; ADR-020's refinement check (References).
 - FR-206 (step kinds), FR-215 (memory step kinds), FR-218 (checked
   clause).
-- QSpec owns protocol refinement and the explicit step rows (QSpec FR-432,
+- FSpec owns protocol refinement and the explicit step rows (FSpec FR-432,
   over FR-177) and the `step` row syntax, including the nested path form for a node inside a
   sequence, parallel or branch (FR-432, TC-386).
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-432 (Linear STD-140). Refinement
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-432 (Linear STD-140). Refinement
   record: ADR-020, Linear QSL-367.

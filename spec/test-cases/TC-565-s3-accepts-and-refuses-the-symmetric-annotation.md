@@ -3,7 +3,7 @@ id: TC-565
 title: "S3 carries the symmetric annotation and refuses a non-catalog fold over its references"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-150
+  - target: ix://agent-ix/filament-spec-language/FR-150
     type: verifies
 ---
 # TC-565: S3 carries the symmetric annotation and refuses a non-catalog fold over its references

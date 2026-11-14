@@ -3,7 +3,7 @@ id: TC-545
 title: "The refinement mapping builds the abstract state from a concrete state and its history"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-140
+  - target: ix://agent-ix/filament-spec-language/FR-140
     type: verifies
 ---
 # TC-545: The refinement mapping builds the abstract state from a concrete state and its history

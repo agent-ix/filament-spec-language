@@ -7,20 +7,20 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use ix_trace_rs::trace;
-use qsl_package::{
+use filament_contract_model::CheckedPackageV2;
+use filament_exact::NodeKey;
+use filament_spec_language::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
+use filament_spec_language::emit_checked_v2::Request;
+use fsl_package::{
     BarePackage, BareSelectionFailure, BareSupply, EqualityFileRefusal, EqualityWitnessRefusal,
     ProtocolSlotDescriptor, ReadEqualityRows, ReadIdentityRows,
 };
-use quire_contract_model::CheckedPackageV2;
-use quire_exact::NodeKey;
-use quire_spec_language::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
-use quire_spec_language::emit_checked_v2::Request;
+use ix_trace_rs::trace;
 use serde_json::Value;
 
 use super::checked_handoff::{admitted, request, tree};
 
-#[path = "../../qsl-semantics/tests/support/tc1070.rs"]
+#[path = "../../fsl-semantics/tests/support/tc1070.rs"]
 pub(super) mod tc1070;
 
 /// The request that compiles TC-1070's source `source` (fixtures E and L).
@@ -44,7 +44,7 @@ fn fixture_request(directory: &Path, source: &str) -> CheckedHandoffRequest {
             out: None,
         },
         corpus: Corpus::None,
-        native_join: qsl_package::V2ReadLimits::fixture().native_join_limits(),
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
     }
 }
 
@@ -70,7 +70,7 @@ fn read(request: &CheckedHandoffRequest, bytes: &[u8]) -> Box<CheckedPackageV2> 
 
 /// The key of the protocol node `first ... last` declares.
 fn node_key(package: &CheckedPackageV2, first: &str, last: &str) -> NodeKey {
-    let ids = qsl_semantics::check::wire_id::WireGraph::new(
+    let ids = fsl_semantics::check::wire_id::WireGraph::new(
         package
             .resolved_graph()
             .nodes
@@ -100,14 +100,14 @@ fn select(
     node: NodeKey,
     member: &str,
     index: Option<usize>,
-) -> Result<qsl_package::BareSlot, BareSelectionFailure> {
+) -> Result<fsl_package::BareSlot, BareSelectionFailure> {
     BarePackage::new(package)
         .with_supply(
             BareSupply {
                 identities,
                 equality,
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply")
         .select_protocol_slot(&ProtocolSlotDescriptor::new(node, member, index))
@@ -127,7 +127,7 @@ fn the_directory_for_fixture_e_holds_the_equality_file_a_slot_call_reads() {
     let file = &files["equality.json"];
     let package = read(&request, &files["checked-package.json"]);
     let text: Value = serde_json::from_slice(file).expect("JSON");
-    assert_eq!(text["format"], "quire.checked-handoff.equality/1");
+    assert_eq!(text["format"], "filament.checked-handoff.equality/1");
     assert!(file.ends_with(b"\n"));
     for member in ["applications", "facts"] {
         assert!(
@@ -150,7 +150,7 @@ fn the_directory_for_fixture_e_holds_the_equality_file_a_slot_call_reads() {
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let refund = node_key(&package, "Refunds", "Refund");
@@ -183,7 +183,7 @@ fn the_equality_witness_refusals_are_missing_foreign_and_unknown() {
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let refund = node_key(&package, "Refunds", "Refund");
@@ -208,7 +208,7 @@ fn the_equality_witness_refusals_are_missing_foreign_and_unknown() {
 }
 
 fn empty_file() -> Vec<u8> {
-    b"{\n  \"format\": \"quire.checked-handoff.equality/1\",\n  \"applications\": [],\n  \"facts\": [],\n  \"source_units\": []\n}\n".to_vec()
+    b"{\n  \"format\": \"filament.checked-handoff.equality/1\",\n  \"applications\": [],\n  \"facts\": [],\n  \"source_units\": []\n}\n".to_vec()
 }
 
 /// The equality rows of recipe R's package: a package other than fixture E's.
@@ -230,7 +230,7 @@ fn a_unit_without_an_equality_application_writes_the_file_empty() {
     let holder = tempfile::tempdir().expect("directory");
     let mut request = fixture_request(
         holder.path(),
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\n\
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n\
          function f using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x + 1 }\n",
     );
     request.emit.models.clear();
@@ -272,11 +272,11 @@ fn the_equality_file_reader_refuses_as_the_spec_closes_it() {
         Err(EqualityFileRefusal::Malformed { .. })
     ));
     let mut format = good.clone();
-    format["format"] = "quire.checked-handoff.equality/2".into();
+    format["format"] = "filament.checked-handoff.equality/2".into();
     assert_eq!(
         read(&json(&format)).err(),
         Some(EqualityFileRefusal::Format(
-            "quire.checked-handoff.equality/2".into()
+            "filament.checked-handoff.equality/2".into()
         ))
     );
     let mut foreign = good.clone();
@@ -333,20 +333,19 @@ fn origin_name(row: &Value) -> &str {
 
 /// The origins of `Decide`'s decision family, in the order of their names.
 fn decision_origins(package: &CheckedPackageV2) -> Vec<String> {
-    let mut names: Vec<String> = package
-        .checked_term_data()
-        .expect("term data")
-        .protocol_locations
-        .iter()
-        .filter_map(|row| match &row.location.origin {
-            quire_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration { name }
-                if name.starts_with(DECISION) =>
-            {
-                Some(name.to_string())
-            }
-            _ => None,
-        })
-        .collect();
+    let mut names: Vec<String> =
+        package
+            .checked_term_data()
+            .expect("term data")
+            .protocol_locations
+            .iter()
+            .filter_map(|row| match &row.location.origin {
+                filament_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration {
+                    name,
+                } if name.starts_with(DECISION) => Some(name.to_string()),
+                _ => None,
+            })
+            .collect();
     names.sort();
     names.dedup();
     names
@@ -361,7 +360,7 @@ fn decide_origin(
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let decide = node_key(package, "Pipeline", "Decide");
@@ -384,7 +383,7 @@ fn projection_refusal(
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let bare = BarePackage::new(package)
@@ -393,7 +392,7 @@ fn projection_refusal(
                 identities: &identities,
                 equality: None,
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let slot = bare
@@ -496,32 +495,31 @@ fn binding_mut<'a>(group: &'a mut Value, name: &str) -> &'a mut Value {
 #[trace("TC-1333", "FR-533-AC-14", "FR-383-AC-63")]
 #[test]
 fn related_calls_are_named_by_record_position() {
-    use qsl_eval::value::{
+    use fsl_eval::value::{
         CheckedPackageEvaluation, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply,
         SuppliedValue,
     };
     let source = tc1070::SOURCE
-        .replace("profile S = \"quire.state.graph/v1\";", "profile S = \"quire.state.graph/v1\";\nprofile v = \"quire.value.complete/v1\";")
+        .replace("profile S = \"filament.state.graph/v1\";", "profile S = \"filament.state.graph/v1\";\nprofile v = \"filament.value.complete/v1\";")
         .replace("model M = \"test/orders\";", "model M = \"test/orders\";\nfunction identityRef using v(x: M::Node): M::Node pure { x }")
         .replace("related by Owns (view, view)", "related by Owns (identityRef(view), identityRef(view))");
     assert_ne!(source, tc1070::SOURCE);
     let (_holder, request, files) = handoff(&source);
     let original = read(&request, &files["checked-package.json"]);
     const RELATED: &str = "protocol Pipeline run Main Got related ";
-    let mut origins: Vec<_> = original
-        .checked_term_data()
-        .expect("term data")
-        .protocol_locations
-        .iter()
-        .filter_map(|row| match &row.location.origin {
-            quire_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration { name }
-                if name.starts_with(RELATED) =>
-            {
-                Some(name.to_string())
-            }
-            _ => None,
-        })
-        .collect();
+    let mut origins: Vec<_> =
+        original
+            .checked_term_data()
+            .expect("term data")
+            .protocol_locations
+            .iter()
+            .filter_map(|row| match &row.location.origin {
+                filament_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration {
+                    name,
+                } if name.starts_with(RELATED) => Some(name.to_string()),
+                _ => None,
+            })
+            .collect();
     origins.sort();
     origins.dedup();
     assert_eq!(
@@ -533,7 +531,7 @@ fn related_calls_are_named_by_record_position() {
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("identities");
     let bare = BarePackage::new(&package)
@@ -542,7 +540,7 @@ fn related_calls_are_named_by_record_position() {
                 identities: &identities,
                 equality: None,
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let mut roots = Vec::new();
@@ -573,7 +571,7 @@ fn related_calls_are_named_by_record_position() {
                     (
                         source.binder().clone(),
                         SuppliedValue::Unavailable(
-                            quire_semantic_value::catalog::CatalogCode::new(
+                            filament_semantic_value::catalog::CatalogCode::new(
                                 "unavailable_observation",
                                 "missing-required-artifact",
                             ),
@@ -584,7 +582,7 @@ fn related_calls_are_named_by_record_position() {
                 .collect(),
             observation: None,
         };
-        let mut meter = quire_exact::Meter::new(UNLIMITED);
+        let mut meter = filament_exact::Meter::new(UNLIMITED);
         let result = bare.evaluate_protocol_slot(&slot, &supply, &mut meter);
         assert!(
             matches!(result, Ok(ProtocolSlotEvaluation::Unavailable { .. })),
@@ -611,23 +609,23 @@ fn related_calls_are_named_by_record_position() {
     };
     assert!(matches!(
         view.reason(),
-        qsl_package::UnsupportedReason::MissingLocationProjection(_)
+        fsl_package::UnsupportedReason::MissingLocationProjection(_)
     ));
 }
 
-/// FR-533-AC-21 (vectors): QSpec's published protocol-location vectors
+/// FR-533-AC-21 (vectors): FSpec's published protocol-location vectors
 /// `PL-04-case-guard`, `PL-04b-case-guard-shared`, `PL-05-related-end` and
 /// `PL-05b-related-end-shared` carry the origin names `protocol_site` builds
 /// for a case guard and a `related` end.
 #[trace("FR-533-AC-21", "FR-383-AC-63", "TC-1333", "TC-1063")]
 #[test]
 fn the_published_pl_04_and_pl_05_vectors_carry_the_names_the_checker_builds() {
-    use qsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
-    let qspec =
-        std::env::var_os("QSPEC_DIR").expect("QSPEC_DIR must name a quire-specification checkout");
+    use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
+    let fspec = std::env::var_os("FSPEC_DIR")
+        .expect("FSPEC_DIR must name a filament-specification checkout");
     let vectors: Value = serde_json::from_slice(
         &std::fs::read(
-            Path::new(&qspec).join("proposals/checked-package-v2/checked-term-data-vectors.json"),
+            Path::new(&fspec).join("proposals/checked-package-v2/checked-term-data-vectors.json"),
         )
         .expect("the published vectors"),
     )
@@ -675,7 +673,7 @@ fn the_published_pl_04_and_pl_05_vectors_carry_the_names_the_checker_builds() {
 fn related_records_that_collapse_write_their_rows_once() {
     let source = |clauses: &str| {
         tc1070::SOURCE
-            .replace("profile S = \"quire.state.graph/v1\";", "profile S = \"quire.state.graph/v1\";\nprofile v = \"quire.value.complete/v1\";")
+            .replace("profile S = \"filament.state.graph/v1\";", "profile S = \"filament.state.graph/v1\";\nprofile v = \"filament.value.complete/v1\";")
             .replace("model M = \"test/orders\";", "model M = \"test/orders\";\nfunction identityRef using v(x: M::Node): M::Node pure { x }")
             .replace("related by Owns (view, view)", clauses)
     };
@@ -688,8 +686,9 @@ fn related_records_that_collapse_write_their_rows_once() {
             .expect("term data")
             .protocol_locations
         {
-            if let quire_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration { name } =
-                &row.location.origin
+            if let filament_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration {
+                name,
+            } = &row.location.origin
             {
                 if name.contains(" related ") {
                     match rows.iter_mut().find(|(held, _)| held == &**name) {
@@ -718,7 +717,7 @@ fn related_records_that_collapse_write_their_rows_once() {
 #[test]
 fn equal_related_ends_of_distinct_records_take_their_own_origin() {
     let source = tc1070::SOURCE
-        .replace("profile S = \"quire.state.graph/v1\";", "profile S = \"quire.state.graph/v1\";\nprofile v = \"quire.value.complete/v1\";")
+        .replace("profile S = \"filament.state.graph/v1\";", "profile S = \"filament.state.graph/v1\";\nprofile v = \"filament.value.complete/v1\";")
         .replace("model M = \"test/orders\";", "model M = \"test/orders\";\nfunction identityRef using v(x: M::Node): M::Node pure { x }")
         .replace("protocol Pipeline using P over (view: M::Node) on origin {", "protocol Pipeline using P over (view: M::Node) on origin {\n capture peer: M::Node = view;")
         .replace("related by Owns (view, view)", "related by Owns (identityRef(view), peer) related by Owns (identityRef(view), view)");
@@ -728,7 +727,7 @@ fn equal_related_ends_of_distinct_records_take_their_own_origin() {
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("identities");
     let bare = BarePackage::new(&package)
@@ -737,7 +736,7 @@ fn equal_related_ends_of_distinct_records_take_their_own_origin() {
                 identities: &identities,
                 equality: None,
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let mut locations = Vec::new();
@@ -758,7 +757,7 @@ fn equal_related_ends_of_distinct_records_take_their_own_origin() {
             .clone();
         assert_eq!(
             location.origin,
-            quire_semantic_value::location::ExpressionOwner::TypeDeclaration { name }
+            filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name }
         );
         locations.push(location);
     }
@@ -772,7 +771,7 @@ fn equal_related_ends_of_distinct_records_take_their_own_origin() {
 #[trace("TC-1333", "FR-533-AC-13")]
 #[test]
 fn tied_case_guards_take_their_own_origin_in_either_label_order() {
-    use qsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot, ProtocolSlotEvaluation};
+    use fsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot, ProtocolSlotEvaluation};
     let (_holder, request, files) = handoff(tc1070::SOURCE);
     let original = read(&request, &files["checked-package.json"]);
     assert_eq!(decision_origins(&original).len(), 1);
@@ -856,7 +855,7 @@ fn tied_case_guards_take_their_own_origin_in_either_label_order() {
         let identities = ReadIdentityRows::read(
             &files["identities.json"],
             &package,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("identities");
         let bare = BarePackage::new(&package)
@@ -865,14 +864,14 @@ fn tied_case_guards_take_their_own_origin_in_either_label_order() {
                     identities: &identities,
                     equality: None,
                 },
-                &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
             )
             .expect("the fixture budget admits the supply");
         let world = bare.world().expect("world");
         let got = record(
             world.types(),
             "Flag",
-            vec![("ready", quire_exact::Value::Boolean(true))],
+            vec![("ready", filament_exact::Value::Boolean(true))],
         );
         let mut charges = Vec::new();
         let expected = if labels_follow_source {
@@ -899,7 +898,7 @@ fn tied_case_guards_take_their_own_origin_in_either_label_order() {
                 Some(format!("{CASE}{label} guard").as_str())
             );
             let supply = supply_of(&selected, vec![("got", got.clone())]);
-            let mut meter = quire_exact::Meter::new(UNLIMITED);
+            let mut meter = filament_exact::Meter::new(UNLIMITED);
             let result = bare.evaluate_protocol_slot(&slot, &supply, &mut meter);
             let Ok(ProtocolSlotEvaluation::Evaluated(evaluation, binder_charges)) = &result else {
                 panic!("evaluates: {result:?}");
@@ -909,8 +908,8 @@ fn tied_case_guards_take_their_own_origin_in_either_label_order() {
                 "a completed evaluation has no stop location"
             );
             let projection = bare.project_protocol_slot(&selected).expect("projects");
-            let expected_location = quire_semantic_value::location::ExpressionLocation::at(
-                quire_semantic_value::location::ExpressionOwner::TypeDeclaration {
+            let expected_location = filament_semantic_value::location::ExpressionLocation::at(
+                filament_semantic_value::location::ExpressionOwner::TypeDeclaration {
                     name: format!("{CASE}{label} guard"),
                 },
                 &[],
@@ -943,7 +942,7 @@ fn tied_case_guards_take_their_own_origin_in_either_label_order() {
 #[trace("TC-1333", "FR-533-AC-14")]
 #[test]
 fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
-    use qsl_package::UnsupportedReason;
+    use fsl_package::UnsupportedReason;
     let (_holder, request, files) = handoff(tc1070::SOURCE);
     let original = read(&request, &files["checked-package.json"]);
     let [visible] = decision_origins(&original).try_into().expect("one origin");
@@ -974,11 +973,11 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
 
     // The public call must propagate the same view refusal before supply
     // admission or the first scalar charge.
-    use qsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot, ProtocolSupply};
+    use fsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot, ProtocolSupply};
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let bare = BarePackage::new(&package)
@@ -987,7 +986,7 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
                 identities: &identities,
                 equality: None,
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let slot = ProtocolSlot {
@@ -995,7 +994,7 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
         member: "cases.guard".into(),
         index: Some(1),
     };
-    let mut meter = quire_exact::Meter::new(UNLIMITED);
+    let mut meter = filament_exact::Meter::new(UNLIMITED);
     let result = bare.evaluate_protocol_slot(
         &slot,
         &ProtocolSupply {
@@ -1004,21 +1003,21 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
         },
         &mut meter,
     );
-    let Err(quire_eval::CallFailure::Admission(refusal)) = result else {
+    let Err(filament_eval::CallFailure::Admission(refusal)) = result else {
         panic!("missing candidate refuses at the call: {result:?}");
     };
-    let quire_eval::CallAdmissionFailure::Refused(refused) = *refusal else {
+    let filament_eval::CallAdmissionFailure::Refused(refused) = *refusal else {
         panic!("a projection refusal");
     };
     assert_eq!(
         refused.locus,
-        quire_eval::CallAdmissionLocus::Node(missing.application.clone())
+        filament_eval::CallAdmissionLocus::Node(missing.application.clone())
     );
     assert_eq!(
         refused.record.fields.get("reason").map(String::as_str),
         Some("missing-location-projection")
     );
-    for counter in quire_exact::LimitKind::ALL {
+    for counter in filament_exact::LimitKind::ALL {
         assert_eq!(meter.consumed(counter), 0, "{counter:?}");
     }
     assert!(meter.admitted_charges().is_empty());
@@ -1029,7 +1028,7 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &all_missing,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("identities");
     let bare = BarePackage::new(&all_missing)
@@ -1038,7 +1037,7 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
                 identities: &identities,
                 equality: None,
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     for (member, index) in [("visible", 0)] {
@@ -1047,7 +1046,7 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
             member: member.into(),
             index: Some(index),
         };
-        let mut untouched = quire_exact::Meter::new(UNLIMITED);
+        let mut untouched = filament_exact::Meter::new(UNLIMITED);
         let result = bare.evaluate_protocol_slot(
             &slot,
             &ProtocolSupply {
@@ -1056,21 +1055,21 @@ fn a_slot_without_rows_under_its_origin_refuses_missing_location_projection() {
             },
             &mut untouched,
         );
-        let Err(quire_eval::CallFailure::Admission(failure)) = result else {
+        let Err(filament_eval::CallFailure::Admission(failure)) = result else {
             panic!("all candidate rows missing refuses: {result:?}");
         };
-        let quire_eval::CallAdmissionFailure::Refused(refused) = *failure else {
+        let filament_eval::CallAdmissionFailure::Refused(refused) = *failure else {
             panic!("a typed refusal");
         };
         assert_eq!(
             refused.locus,
-            quire_eval::CallAdmissionLocus::Node(missing.application.clone())
+            filament_eval::CallAdmissionLocus::Node(missing.application.clone())
         );
         assert_eq!(
             refused.record.fields.get("reason").map(String::as_str),
             Some("missing-location-projection")
         );
-        for counter in quire_exact::LimitKind::ALL {
+        for counter in filament_exact::LimitKind::ALL {
             assert_eq!(untouched.consumed(counter), 0, "{counter:?}");
         }
         assert!(untouched.admitted_charges().is_empty());
@@ -1089,7 +1088,7 @@ fn a_slot_is_named_by_control_node_member_and_index() {
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let decide = node_key(&package, "Pipeline", "Decide");
@@ -1120,7 +1119,7 @@ fn a_slot_is_named_by_control_node_member_and_index() {
 /// refusal reports the equality one, `Package` before `Node`; the witness
 /// refusals are Missing for no rows, Foreign for another package's rows and
 /// Unknown for rows that join nothing. The `Package` locus of the call
-/// (FR-390-AC-66) is asserted by the evaluation tests of qsl-eval
+/// (FR-390-AC-66) is asserted by the evaluation tests of fsl-eval
 /// (`bare_slots`).
 #[trace("FR-390-AC-67", "TC-1331")]
 #[test]
@@ -1133,7 +1132,7 @@ fn an_equality_witness_refusal_is_reported_before_a_node_refusal() {
     let identities = ReadIdentityRows::read(
         &serde_json::to_vec(&stripped).expect("bytes"),
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("fewer rows still read");
     let refund = node_key(&package, "Refunds", "Refund");
@@ -1170,8 +1169,8 @@ fn an_equality_witness_refusal_is_reported_before_a_node_refusal() {
 fn source_with_called_equality() -> String {
     tc1070::SOURCE
         .replace(
-            "profile S = \"quire.state.graph/v1\";",
-            "profile S = \"quire.state.graph/v1\";\nprofile v = \"quire.value.complete/v1\";",
+            "profile S = \"filament.state.graph/v1\";",
+            "profile S = \"filament.state.graph/v1\";\nprofile v = \"filament.value.complete/v1\";",
         )
         .replace(
             "model M = \"test/orders\";",
@@ -1199,7 +1198,7 @@ fn an_equality_inside_a_called_function_is_part_of_the_slots_walk() {
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let rows = ReadEqualityRows::read(&files["equality.json"], &package).expect("rows");
@@ -1224,7 +1223,7 @@ fn an_equality_inside_a_called_function_is_part_of_the_slots_walk() {
     guard("Partial", None).expect("a guard that calls no such function needs no rows");
 }
 
-const UNLIMITED: quire_exact::ScalarLimits = quire_exact::ScalarLimits {
+const UNLIMITED: filament_exact::ScalarLimits = filament_exact::ScalarLimits {
     integer_bits: u64::MAX,
     decimal_digits: u64::MAX,
     scale_expansion: u64::MAX,
@@ -1239,10 +1238,10 @@ const UNLIMITED: quire_exact::ScalarLimits = quire_exact::ScalarLimits {
 
 /// A record of the package's own declarations, built field by field.
 fn record(
-    types: &quire_semantic_value::declaration::TypeEnvironment,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
     name: &str,
-    fields: Vec<(&str, quire_exact::Value)>,
-) -> quire_exact::Value {
+    fields: Vec<(&str, filament_exact::Value)>,
+) -> filament_exact::Value {
     let key = types
         .composites()
         .find(|record| record.name().ends_with(name))
@@ -1253,21 +1252,21 @@ fn record(
             key,
             fields
                 .into_iter()
-                .map(|(field, value)| (field, quire_exact::FieldValue::Present(value)))
+                .map(|(field, value)| (field, filament_exact::FieldValue::Present(value)))
                 .collect(),
         )
         .expect("the record is well formed")
 }
 
-fn is_boolean(value: &quire_exact::Value, expected: bool) -> bool {
-    matches!(value, quire_exact::Value::Boolean(held) if *held == expected)
+fn is_boolean(value: &filament_exact::Value, expected: bool) -> bool {
+    matches!(value, filament_exact::Value::Boolean(held) if *held == expected)
 }
 
 fn supply_of(
-    slot: &qsl_package::BareSlot,
-    values: Vec<(&str, quire_exact::Value)>,
-) -> qsl_eval::value::ProtocolSupply<'static> {
-    qsl_eval::value::ProtocolSupply {
+    slot: &fsl_package::BareSlot,
+    values: Vec<(&str, filament_exact::Value)>,
+) -> fsl_eval::value::ProtocolSupply<'static> {
+    fsl_eval::value::ProtocolSupply {
         binders: values
             .into_iter()
             .map(|(name, value)| {
@@ -1278,7 +1277,7 @@ fn supply_of(
                     .unwrap_or_else(|| panic!("the slot reads {name}"))
                     .binder()
                     .clone();
-                (binder, qsl_eval::value::SuppliedValue::Value(value).into())
+                (binder, fsl_eval::value::SuppliedValue::Value(value).into())
             })
             .collect(),
         observation: None,
@@ -1286,17 +1285,17 @@ fn supply_of(
 }
 
 fn completed(
-    result: Result<qsl_eval::value::ProtocolSlotEvaluation, quire_eval::CallFailure>,
-) -> quire_exact::Value {
-    use quire_eval::FamilyOutcome;
-    let Ok(qsl_eval::value::ProtocolSlotEvaluation::Evaluated(evaluation, charges)) = result else {
+    result: Result<fsl_eval::value::ProtocolSlotEvaluation, filament_eval::CallFailure>,
+) -> filament_exact::Value {
+    use filament_eval::FamilyOutcome;
+    let Ok(fsl_eval::value::ProtocolSlotEvaluation::Evaluated(evaluation, charges)) = result else {
         panic!("the slot evaluates: {result:?}");
     };
     assert!(
         charges.binders().count() >= 1,
         "the per-binder charge log is carried"
     );
-    let FamilyOutcome::Evaluated(quire_exact::Outcome::Completed(value)) = evaluation.outcome
+    let FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(value)) = evaluation.outcome
     else {
         panic!("a completed outcome: {:?}", evaluation.outcome);
     };
@@ -1318,13 +1317,13 @@ fn completed(
 )]
 #[test]
 fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
-    use qsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot};
+    use fsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot};
     let (_holder, request, files) = handoff(tc1070::SOURCE);
     let package = read(&request, &files["checked-package.json"]);
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let rows = ReadEqualityRows::read(&files["equality.json"], &package).expect("rows");
@@ -1334,7 +1333,7 @@ fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
                 identities: &identities,
                 equality: Some(&rows),
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let without_rows = BarePackage::new(&package)
@@ -1343,7 +1342,7 @@ fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
                 identities: &identities,
                 equality: None,
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let world = with_rows.world().expect("the package declares its records");
@@ -1366,7 +1365,7 @@ fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
             record(
                 types,
                 "Attempt",
-                vec![("tally", quire_exact::Value::Integer(tally.into()))],
+                vec![("tally", filament_exact::Value::Integer(tally.into()))],
             )
         };
         let given = supply_of(
@@ -1374,11 +1373,11 @@ fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
             vec![
                 ("earlier", attempt(earlier)),
                 ("later", attempt(later)),
-                ("target", quire_exact::Value::Integer(5_i64.into())),
-                ("activated", quire_exact::Value::Boolean(false)),
+                ("target", filament_exact::Value::Integer(5_i64.into())),
+                ("activated", filament_exact::Value::Boolean(false)),
             ],
         );
-        let mut meter = quire_exact::Meter::new(UNLIMITED);
+        let mut meter = filament_exact::Meter::new(UNLIMITED);
         let result = with_rows.evaluate_protocol_slot(&slot, &given, &mut meter);
         (completed(result), meter, slot, given)
     };
@@ -1386,28 +1385,28 @@ fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
     // and not activated.
     let (held, meter, slot, given) = relation(1, 2);
     assert!(is_boolean(&held, true), "{held:?}");
-    assert!(meter.consumed(quire_exact::LimitKind::WorkUnits) > 0);
+    assert!(meter.consumed(filament_exact::LimitKind::WorkUnits) > 0);
     assert!(is_boolean(&relation(1, 3).0, false));
     assert!(is_boolean(&relation(3, 3).0, false));
     // The same call over a supply without the equality rows refuses before
     // any charge, at the package locus.
-    let mut untouched = quire_exact::Meter::new(UNLIMITED);
-    let Err(quire_eval::CallFailure::Admission(refusal)) =
+    let mut untouched = filament_exact::Meter::new(UNLIMITED);
+    let Err(filament_eval::CallFailure::Admission(refusal)) =
         without_rows.evaluate_protocol_slot(&slot, &given, &mut untouched)
     else {
         panic!("the relation is refused without the equality rows");
     };
-    let quire_eval::CallAdmissionFailure::Refused(refused) = *refusal else {
+    let filament_eval::CallAdmissionFailure::Refused(refused) = *refusal else {
         panic!("a refusal");
     };
-    assert_eq!(refused.locus, quire_eval::CallAdmissionLocus::Package);
+    assert_eq!(refused.locus, filament_eval::CallAdmissionLocus::Package);
     assert_eq!(refused.record.catalog.code(), "unknown_required_feature");
     assert_eq!(refused.record.catalog.cause(), "unsupported-feature");
     assert_eq!(
         refused.record.fields.get("reason").map(String::as_str),
         Some("missing-equality-witness")
     );
-    for counter in quire_exact::LimitKind::ALL {
+    for counter in filament_exact::LimitKind::ALL {
         assert_eq!(untouched.consumed(counter), 0, "{counter:?}");
     }
     assert!(untouched.admitted_charges().is_empty());
@@ -1427,16 +1426,16 @@ fn the_retry_relation_evaluates_from_the_handoff_files_alone() {
     let flag = record(
         types,
         "Flag",
-        vec![("ready", quire_exact::Value::Boolean(false))],
+        vec![("ready", filament_exact::Value::Boolean(false))],
     );
     let given = supply_of(
         &selected,
         vec![
             ("trigger", flag),
-            ("target", quire_exact::Value::Integer(5_i64.into())),
+            ("target", filament_exact::Value::Integer(5_i64.into())),
         ],
     );
-    let mut meter = quire_exact::Meter::new(UNLIMITED);
+    let mut meter = filament_exact::Meter::new(UNLIMITED);
     assert!(is_boolean(
         &completed(without_rows.evaluate_protocol_slot(&guard, &given, &mut meter)),
         true
@@ -1460,7 +1459,7 @@ fn a_package_refusal_found_after_a_node_refusal_in_the_walk_is_reported_first() 
     let full = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("identities");
     let refund = node_key(&package, "Refunds", "Refund");
@@ -1478,7 +1477,7 @@ fn a_package_refusal_found_after_a_node_refusal_in_the_walk_is_reported_first() 
     let identities = ReadIdentityRows::read(
         &serde_json::to_vec(&stripped).expect("bytes"),
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("fewer rows still read");
     let project = |equality: Option<&ReadEqualityRows>| {
@@ -1488,7 +1487,7 @@ fn a_package_refusal_found_after_a_node_refusal_in_the_walk_is_reported_first() 
                     identities: &identities,
                     equality,
                 },
-                &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
             )
             .expect("the fixture budget admits the supply")
             .project_protocol_slot(&slot)
@@ -1517,13 +1516,13 @@ fn a_package_refusal_found_after_a_node_refusal_in_the_walk_is_reported_first() 
 #[trace("TC-1331", "FR-531-AC-28")]
 #[test]
 fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
-    use quire_contract_model::NativeJoinBudget;
+    use filament_contract_model::NativeJoinBudget;
     let (_holder, request, files) = handoff(tc1070::SOURCE);
     let package = read(&request, &files["checked-package.json"]);
     let identities = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("original identities");
     let equality =
@@ -1553,13 +1552,13 @@ fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
     let projection = bare
         .project_protocol_slot(&slot)
         .expect("real slot projection");
-    fn equality_positions(projection: &qsl_package::ReaderProtocolProjection) -> Vec<usize> {
+    fn equality_positions(projection: &fsl_package::ReaderProtocolProjection) -> Vec<usize> {
         let mut pending = vec![projection.root()];
         let mut positions = Vec::new();
         while let Some(index) = pending.pop() {
             if matches!(
                 projection.kind(index),
-                Some(quire_checked::node::NodeKind::Equality(..))
+                Some(filament_checked::node::NodeKind::Equality(..))
             ) {
                 positions.push(index);
             }
@@ -1569,7 +1568,7 @@ fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
     }
     assert_eq!(
         projection.value_type(projection.root()),
-        Some(&quire_exact::ValueType::Boolean)
+        Some(&filament_exact::ValueType::Boolean)
     );
     let positions = equality_positions(&projection);
     let [position] = positions.as_slice() else {
@@ -1579,17 +1578,17 @@ fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
         .location(*position)
         .expect("the equality has its original protocol location")
         .clone();
-    let quire_semantic_value::location::ExpressionOwner::TypeDeclaration {
+    let filament_semantic_value::location::ExpressionOwner::TypeDeclaration {
         name: original_origin,
     } = &original_location.origin
     else {
         panic!("authored protocol type-declaration origin")
     };
     let semantic_row = package.checked_term_data().expect("original native term data").protocol_locations.iter().find(|row| {
-        matches!(&row.location.origin, quire_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration { name } if name.as_ref() == original_origin)
+        matches!(&row.location.origin, filament_contract_model::CheckedProtocolLocationOrigin::TypeDeclaration { name } if name.as_ref() == original_origin)
             && row.location.path.iter().map(|ordinal| match ordinal {
-                quire_contract_model::CheckedKeyOrdinal::Safe(value) => usize::try_from(*value).expect("small authored child index"),
-                quire_contract_model::CheckedKeyOrdinal::BeyondSafe(_) => panic!("fixture child indices are small"),
+                filament_contract_model::CheckedKeyOrdinal::Safe(value) => usize::try_from(*value).expect("small authored child index"),
+                filament_contract_model::CheckedKeyOrdinal::BeyondSafe(_) => panic!("fixture child indices are small"),
             }).collect::<Vec<_>>() == original_location.path()
     }).expect("original protocol occurrence at the equality's authored origin and path");
     let row = equality
@@ -1609,20 +1608,20 @@ fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
         .expect("independent original owner decision");
     assert_eq!(decision.location(), &row.location);
     let expected = Box::new(
-        quire_semantic_value::declaration::CheckedEquality::from_admitted_decision(&decision),
+        filament_semantic_value::declaration::CheckedEquality::from_admitted_decision(&decision),
     );
-    let Some(quire_checked::node::NodeKind::Equality(operator, actual, _, _)) =
+    let Some(filament_checked::node::NodeKind::Equality(operator, actual, _, _)) =
         projection.kind(*position)
     else {
         unreachable!("the equality position was found")
     };
     assert_eq!(
         *operator,
-        quire_semantic_value::declaration::EqualityOperator::Equal
+        filament_semantic_value::declaration::EqualityOperator::Equal
     );
     assert_eq!(actual, &expected);
     let world = bare.world().expect("original admitted record declarations");
-    let protocol_slot = qsl_eval::value::ProtocolSlot {
+    let protocol_slot = fsl_eval::value::ProtocolSlot {
         node: descriptor.node().clone(),
         member: "retry.relation".to_owned(),
         index: None,
@@ -1639,21 +1638,21 @@ fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
         assert_eq!(repeated.root(), projection.root());
         assert_eq!(
             repeated.value_type(repeated.root()),
-            Some(&quire_exact::ValueType::Boolean)
+            Some(&filament_exact::ValueType::Boolean)
         );
         let positions = equality_positions(&repeated);
         let [position] = positions.as_slice() else {
             panic!("still exactly the authored equality")
         };
         assert_eq!(repeated.location(*position), Some(&original_location));
-        let Some(quire_checked::node::NodeKind::Equality(operator, actual, _, _)) =
+        let Some(filament_checked::node::NodeKind::Equality(operator, actual, _, _)) =
             repeated.kind(*position)
         else {
             unreachable!("located equality")
         };
         assert_eq!(
             *operator,
-            quire_semantic_value::declaration::EqualityOperator::Equal
+            filament_semantic_value::declaration::EqualityOperator::Equal
         );
         assert_eq!(actual, &expected);
         let given = supply_of(
@@ -1664,7 +1663,7 @@ fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
                     record(
                         world.types(),
                         "Attempt",
-                        vec![("tally", quire_exact::Value::Integer(1_i64.into()))],
+                        vec![("tally", filament_exact::Value::Integer(1_i64.into()))],
                     ),
                 ),
                 (
@@ -1672,16 +1671,16 @@ fn equality_slots_reuse_the_decisions_retained_by_exact_budget_admission() {
                     record(
                         world.types(),
                         "Attempt",
-                        vec![("tally", quire_exact::Value::Integer(later.into()))],
+                        vec![("tally", filament_exact::Value::Integer(later.into()))],
                     ),
                 ),
-                ("target", quire_exact::Value::Integer(5_i64.into())),
-                ("activated", quire_exact::Value::Boolean(false)),
+                ("target", filament_exact::Value::Integer(5_i64.into())),
+                ("activated", filament_exact::Value::Boolean(false)),
             ],
         );
-        let mut meter = quire_exact::Meter::new(UNLIMITED);
+        let mut meter = filament_exact::Meter::new(UNLIMITED);
         let value = completed(
-            qsl_eval::value::CheckedPackageEvaluation::evaluate_protocol_slot(
+            fsl_eval::value::CheckedPackageEvaluation::evaluate_protocol_slot(
                 &bare,
                 &protocol_slot,
                 &given,

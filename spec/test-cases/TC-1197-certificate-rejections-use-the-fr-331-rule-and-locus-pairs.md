@@ -3,24 +3,24 @@ id: TC-1197
 title: "Certificate rejections use only the rule and locus pairs of FR-331"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: verifies
 ---
 # TC-1197: Certificate rejections use only the rule and locus pairs of FR-331
 
 ## Description
 
-Verify that QSL writes a `certificate-rejected` cause only with the
-spellings and the rule and locus pairs that QSpec FR-331's Certification
-table lists. A pair the table does not list is QSL's internal fault and is
+Verify that FSL writes a `certificate-rejected` cause only with the
+spellings and the rule and locus pairs that FSpec FR-331's Certification
+table lists. A pair the table does not list is FSL's internal fault and is
 never written. Each checker names only the loci FR-338's Rejection
 spellings table assigns to it. The state-graph checker rejects a malformed
 certificate at a State or State-graph entry locus. The probability and zone
@@ -31,8 +31,8 @@ FR-245-AC-7.
 ## Test Procedure
 
 1. Write an outcome document whose items settle `CertificateRejected` with
-   each FR-338-AC-12 pair, and validate every written cause against QSpec
-   FR-331's schema at `QSPEC_DIR`.
+   each FR-338-AC-12 pair, and validate every written cause against FSpec
+   FR-331's schema at `FSPEC_DIR`.
 2. Write each FR-338-AC-13 unlisted pair, then each of its listed pairs.
 3. Read the two FR-338-AC-13 plugin result entries through FR-290's
    reader.

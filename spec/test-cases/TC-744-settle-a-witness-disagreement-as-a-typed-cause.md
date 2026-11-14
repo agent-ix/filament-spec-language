@@ -3,7 +3,7 @@ id: TC-744
 title: "A witness disagreement settles inconclusive with a typed Witness cause that round-trips"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-269
+  - target: ix://agent-ix/filament-spec-language/FR-269
     type: verifies
 ---
 # TC-744: A witness disagreement settles inconclusive with a typed Witness cause that round-trips
@@ -37,7 +37,7 @@ Tag the tests `#[trace("TC-744", "FR-269-AC-n")]`.
 ## Expected Results
 
 - Step 1: `Witness { proved: violation, replayed: violation, given: index-2
-  record, derived: index-1 record, failure: Mismatch }` with no QSpec FR-351
+  record, derived: index-1 record, failure: Mismatch }` with no FSpec FR-351
   record on the result; then `given` absent and `derived` the index-1 record.
 - Step 2: `Separation { Quantifier, Unmet }`, `Separation { Element,
   Unmet }` three times, `Separation { Body, Unmet }`; then

@@ -3,35 +3,35 @@ id: FR-177
 title: "Check a forall-exists safety hyperproperty by witness sets (EN-1)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
 ---
 # FR-177: Check a forall-exists safety hyperproperty by witness sets (EN-1)
 
 ## Description
 
-QSL's layer-A `qsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL decide an HP-3 item by exploring a
+FSL's layer-A `fsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL decide an HP-3 item by exploring a
 witness-set product (ADR-023 HC-2): each state is a tuple of universal
 component states with the set `X` of (existential tuple, safety automaton
 state) pairs still consistent with it. An empty `X` from which a fair
 universal cycle exists is a violation. The `WitnessSet` step is one construction
-in `qsl-eval`, which ADR-020's hidden-field refinement and the core
+in `fsl-eval`, which ADR-020's hidden-field refinement and the core
 certificate checker (FR-163) also use. It needs no Büchi complementation.
 
 ## Use case
@@ -87,7 +87,7 @@ partner has failed.
   through the one clause evaluator (FR-107) at every joint step and joint
   position it builds, for universal and existential components alike.
 - If one evaluates `Undefined`, then the engine SHALL return `Violated`
-  with QSpec FR-400's `Undefined` counterexample ending at that joint
+  with FSpec FR-400's `Undefined` counterexample ending at that joint
   position, one path per universal and existential variable, the first such
   position in canonical breadth-first order (ADR-023 HV-8). Between it and
   an empty `X`, the first in that order SHALL be returned (see "Ranking
@@ -114,19 +114,19 @@ partner has failed.
 - If `μ_U` or a universal component's contract conjunction is undefined at a
   product state whose `X` is empty, then the engine SHALL refuse the item
   with `HyperRefusal::NoPartnerPath` and return no outcome, since the
-  counterexample would have no existential path for QSpec FR-400's one path
+  counterexample would have no existential path for FSpec FR-400's one path
   per variable. It ranks as the undefined evaluation it is, so it ends the
   item only when no earlier finding exists.
 - The `NoPartnerPath` refusal is a request refusal returned to the caller. It
   has no terminal record, no V-x settlement and no catalog code or cause,
-  and none is defined until QSpec FR-400 either admits an empty existential
+  and none is defined until FSpec FR-400 either admits an empty existential
   path for its `undefined` kind or accepts this refusal.
 - An `Undefined` counterexample whose locus is a body letter or a `match`
   conjunct SHALL name every trace variable, universal and existential, in
   quantifier order, each with its state key at the position, so that
   `variables` and `state_keys` hold as many entries as there are traces,
   however many universal variables the clause has. One whose locus is a
-  component's contract conjunction names that component alone, as QSpec
+  component's contract conjunction names that component alone, as FSpec
   FR-400 states for a guard.
 
 ### Ranking findings
@@ -222,15 +222,15 @@ partner has failed.
   (SCC phase), [FR-176](FR-176-check-a-universal-hyperproperty-by-self-composition.md)
   (pre-check, scoped fairness), [FR-173](FR-173-classify-hyper-clauses-into-forms.md),
   [FR-184](FR-184-bound-hyper-runs-with-caller-budgets.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md).
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md).
 - [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md) (canonical
   instance order).
-- QSpec owns the forms and HP-3's evidence (ADR-023 QS-3, QS-6). Its
-  `undefined` kind (QSpec FR-400) ends each path at the state the evaluation
+- FSpec owns the forms and HP-3's evidence (ADR-023 QS-3, QS-6). Its
+  `undefined` kind (FSpec FR-400) ends each path at the state the evaluation
   reads: for an undefined `μ_U` on a joint step, the universal paths' state
   after the step and the existential paths' state before it, so paths of one
   `Undefined` counterexample may differ in length by that step.
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-399 (Linear STD-136; ADR-023 QS-3, QS-6).
+- ADR-023. FSpec half: FSpec FR-399 (Linear STD-136; ADR-023 QS-3, QS-6).

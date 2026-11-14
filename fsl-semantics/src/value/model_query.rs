@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-153 closed-population queries (`allInstances<T>(p)`, `lookup<T>(p, r)
+//! absent m`) as complete-V1 source forms.
+//!
+//! `crate::model::population`'s typed wrappers
+//! ([`ReferenceSet`](crate::model::population::ReferenceSet),
+//! [`TypedReference`](crate::model::population::TypedReference)) stay in
+//! `crate::model`'s own identity domain rather than constructing
+//! [`ObjectReference`] themselves; this module is the documented canonical
+//! encoding that bridges the two. FR-143 defines a reference's `universe`
+//! and most-specific `type` as literally the model's own
+//! `filament.model.object-universe/v2` and `filament.model.effective-declaration/v2`
+//! digests. The type component is the kernel [`EffectiveId`] on both sides
+//! (ADR-013 O-05), so it passes through unchanged: no `EffectiveId` <->
+//! `NodeKey` transfer exists (ADR-010 OBS-018). The universe is the kernel
+//! [`filament_exact::UniverseId`] `model` already computes
+//! (`crate::model::population::ReferenceKey::universe`, ADR-013 §8 OQ-C
+//! ruling), never re-hashed.
+//!
+//! `crate::model::population::all_instances`/`lookup` already perform every
+//! FR-153 charge (`lookup.key`, `lookup.result-retain`, `population.visit`,
+//! `collection.bound`, `collection.result-retain`) against this crate's own
+//! `filament.value.accounting/v1` [`Meter`] before returning their typed
+//! outcome, so this module never charges again for a well-formed reference:
+//! it only bridges identities and materializes the already-charged,
+//! already-ordered result as a [`Value`].
+//!
+//! # Malformed references
+//!
+//! A checked `Reference<T>` value's identity triple is supplied by an
+//! untrusted producer, but ADR-013 §8's OQ-C ruling now bounds what "not
+//! well-formed" can mean: the kernel [`filament_exact::UniverseId`] is always a
+//! 32-byte digest and the kernel [`filament_exact::ObjectId`] is always
+//! non-empty, exact UTF-8 (its one constructor, `ObjectId::new`, refuses
+//! anything else), so a `Value::Reference` can no longer carry a
+//! wrong-length universe or invalid-UTF-8 object identity at all -- those
+//! byte-level malformations are prevented at construction, not handled at
+//! lookup time. What remains representable, and what [`lookup`] still
+//! decides, is a *foreign* reference: a well-formed universe or object
+//! identity that simply names no member of the bound population.
+//! `bridge_lookup_key` never substitutes a derived value for either
+//! component and never classifies it itself: it hands [`LookupKey`] `r`'s
+//! own bytes exactly as supplied, and [`lookup`] alone decides the outcome,
+//! in its own single order (`ModelIndex::conforms(S, T)`, then `lookup.key`, then
+//! the universe check, then membership or absence -- see [`LookupKey`]'s own
+//! doc comment). `LookupKey.universe`/`.object` stay raw bytes there because
+//! `crate::model::population`'s own direct callers (`tests/it/
+//! model_population.rs`) still exercise `lookup`'s byte-level defenses
+//! (wrong-length universe, non-UTF-8 identity) directly, bypassing
+//! `ObjectReference` -- those callers, not this bridge, are where a
+//! genuinely malformed `LookupKey` can still originate.
+//!
+//! # The TypeEnvironment island
+//!
+//! This module bridges identities, never model *conformance*:
+//! `allInstances`/`lookup`'s own conformance decisions
+//! ([`all_instances`]/[`lookup`]) run inside `crate::model::population`
+//! against the runtime [`PopulationBinding`]'s model -- including, for a
+//! malformed reference, the short-circuit above, since [`lookup`] itself
+//! decides `ModelIndex::conforms(S, T)` before any charge for every
+//! reference it is called with, well-formed or not.
+//!
+//! The checker decides the same relation over the package's own admitted
+//! object types: `filament_semantic_value::declaration::TypeEnvironment` carries their
+//! generalization graph (`conforms`), their flattened attribute sets
+//! (inherited and redefined fields), and admits them only within the
+//! `ancestor_steps` ceiling the model walks under, so `lookup<T>(p, r)`'s
+//! `S`-vs-`T` refusal, TC-198 L08 upcast equality and `deref(r).f` through
+//! an inherited field are all decided at check time and agree with
+//! evaluation. What remains an island is which object types a particular
+//! runtime binding's model exports: that is model data, not package data
+//! (see `resolve_target`).
+
+use crate::model::key::EffectiveId;
+use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
+use crate::model::population::{
+    all_instances, lookup, AllInstancesOutcome, LookupKey, LookupOutcome, PopulationBinding,
+    ReferenceKey,
+};
+use filament_checked::key::DeclarationKey;
+use filament_semantic_value::absence::AbsenceMode;
+use filament_semantic_value::catalog::InternalFault;
+use fsl_foundation::diagnostic::Code;
+
+use filament_exact::{
+    from_admitted, CollectionType, Incomplete, Meter, ObjectId, ObjectReference, OptionValue,
+    PopulationId, Value, ValueType,
+};
+use filament_semantic_value::stop::Stop;
+
+/// Why a population query stopped without a value. The evaluator
+/// (`value::expression`, layer 5) turns `Refused` and `AbsentKey` into the
+/// `StateModel` family's own evaluation-time results (FR-090-AC-8,
+/// AC-12); this layer names no `check`-core outcome type (ADR-011 §6.2).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelQueryHalt {
+    /// An FSL-owned S6a invariant break, distinct from ordinary query results.
+    Fault(InternalFault),
+    /// An ordinary evaluator stop.
+    Stop(Stop),
+    /// `model::population` refused the query. Boxed: `ModelRefusal` is
+    /// large, and this is the cold path.
+    Refused(Box<ModelRefusal>),
+    /// A `lookup<T>(p, r) absent undefined` query found no member of `r`'s
+    /// key in the population bound to `p`.
+    AbsentKey {
+        /// The population bound to `p`.
+        population: PopulationId,
+        /// `r`'s object identity bytes, exactly as supplied.
+        key: Vec<u8>,
+    },
+    /// No declared member type covers the query by conformance; this is an
+    /// evaluation-time undefined result, not an admission refusal.
+    IncompleteClosure {
+        /// The queried effective type's canonical node name.
+        queried_type: String,
+        /// The queried type as the minimal uncovered-subtype witness.
+        uncovered_subtypes: Vec<String>,
+    },
+}
+
+impl From<Incomplete> for ModelQueryHalt {
+    fn from(record: Incomplete) -> Self {
+        Self::Stop(Stop::Incomplete(record))
+    }
+}
+
+/// The explicit invariant of the detecting query producer (FR-090).
+fn invariant(identifier: &'static str) -> ModelQueryHalt {
+    ModelQueryHalt::Fault(InternalFault::new("S6a", identifier))
+}
+
+/// The FR-143 conversion of a model [`ReferenceKey`] into its kernel
+/// [`ObjectReference`]: the universe is already the same
+/// [`filament_exact::UniverseId`] (ADR-013 §8 OQ-C ruling), the type is the same
+/// [`EffectiveId`], and the object identity is minted as an
+/// [`filament_exact::ObjectId`] from `key.object`'s own authored bytes. Fails
+/// only when the object identity is empty. Population binding admission
+/// does not establish nonempty member keys, so public evaluation can reach it.
+fn to_object_reference(key: &ReferenceKey) -> Result<ObjectReference, ModelQueryHalt> {
+    let object = ObjectId::new(key.object.clone())
+        .map_err(|_| invariant("model-query-object-identity-empty"))?;
+    Ok(ObjectReference::new(
+        key.universe.clone(),
+        key.type_identity.clone(),
+        object,
+    ))
+}
+
+/// `reference`'s own identity triple as a [`LookupKey`] for [`lookup`],
+/// paired with `static_type`. Always succeeds (see the module docs): the
+/// type is `reference`'s own [`EffectiveId`], and `universe` and `object` are
+/// its own bytes, exactly as supplied, never bridged, classified or
+/// substituted here -- [`lookup`] alone decides whether `universe` or
+/// `object` names a member.
+fn bridge_lookup_key(static_type: DeclarationKey, reference: &ObjectReference) -> LookupKey {
+    LookupKey {
+        static_type,
+        universe: reference.universe().clone(),
+        type_identity: reference.object_type().clone(),
+        object: reference.object().as_str().as_bytes().to_vec(),
+    }
+}
+
+/// The queried type `t`'s original [`DeclarationKey`], resolved from a checked
+/// `Reference<T>`'s `T` (its [`EffectiveId`]) through `binding`'s own type
+/// catalog, read in reverse from the index built once with it
+/// ([`PopulationBinding::type_key_of`]), never rebuilt per query.
+/// `Err` for a
+/// `T` the checked package declares but this particular runtime binding's
+/// model does not -- a real FR-153 `ill_typed`/`type-mismatch`, the same
+/// cause `crate::model::population::all_instances`'s own `is_object_type`
+/// gives a declared type the model doesn't recognize, never a checked
+/// invariant: the checker cannot tie a package's declared object types to a
+/// particular runtime binding's model (the "TypeEnvironment island" -- see
+/// the module docs -- runs the other way here too, since which types a
+/// *binding* declares is model data, not package data).
+fn resolve_target(
+    binding: &PopulationBinding,
+    target: EffectiveId,
+) -> Result<DeclarationKey, ModelQueryHalt> {
+    binding.type_key_of(&target).cloned().ok_or_else(|| {
+        ModelQueryHalt::Refused(Box::new(ModelRefusal {
+            code: Code::IllTyped,
+            cause: ModelRefusalCause::TypeMismatch,
+            detail: format!("{target:?} is not a declared type of this population's model"),
+        }))
+    })
+}
+
+/// `allInstances<T>(p)` (FR-153). `collection_type` is this call's own
+/// checked `Set<Reference<T>>[0,N]` result type
+/// (`filament_checked::node::NodeKind::AllInstances`'s node's own
+/// `value_type`); its element names `T`.
+pub fn evaluate_all_instances(
+    binding: &PopulationBinding,
+    collection_type: &CollectionType,
+    meter: &mut Meter,
+) -> Result<Value, ModelQueryHalt> {
+    let ValueType::Reference(target_key) = collection_type.element() else {
+        return Err(invariant("model-query-reference-element-expected"));
+    };
+    let target = resolve_target(binding, target_key.clone())?;
+    match all_instances(binding, &target, meter) {
+        AllInstancesOutcome::Completed(set) => {
+            let mut elements = Vec::with_capacity(set.len());
+            for key in set.members() {
+                elements.push(Value::Reference(to_object_reference(key)?));
+            }
+            Ok(from_admitted(collection_type.clone(), elements))
+        }
+        AllInstancesOutcome::Refused(refusal) => Err(ModelQueryHalt::Refused(Box::new(refusal))),
+        AllInstancesOutcome::Incomplete(incomplete) => Err(incomplete.into()),
+        AllInstancesOutcome::IncompleteSubtypeClosure(incomplete) => {
+            Err(ModelQueryHalt::IncompleteClosure {
+                queried_type: incomplete.queried_type.node,
+                uncovered_subtypes: incomplete
+                    .missing_types
+                    .into_iter()
+                    .map(|missing| missing.node)
+                    .collect(),
+            })
+        }
+    }
+}
+
+/// `lookup<T>(p, r) absent m` (FR-153). `target` is `T`; `static_type` is
+/// `r`'s own declared static type `S` (`fsl_semantics::check::Node`'s
+/// generic `value_type` field on the `reference` child, read by the caller);
+/// `result_type` is this call's own checked result type (a bare
+/// `Reference<T>` for `undefined`/`refused`, an `Option<Reference<T>>` for
+/// `empty`, per FR-153's own table).
+pub fn evaluate_lookup(
+    binding: &PopulationBinding,
+    target: EffectiveId,
+    static_type: EffectiveId,
+    reference: Value,
+    absence: AbsenceMode,
+    result_type: &ValueType,
+    meter: &mut Meter,
+) -> Result<Value, ModelQueryHalt> {
+    let Value::Reference(reference) = reference else {
+        return Err(invariant("model-query-reference-value-expected"));
+    };
+    let target = resolve_target(binding, target)?;
+    let static_type = resolve_target(binding, static_type)?;
+
+    let lookup_key = bridge_lookup_key(static_type, &reference);
+    match lookup(binding, &target, &lookup_key, absence, meter) {
+        LookupOutcome::Completed(Some(typed)) => {
+            let found = Value::Reference(to_object_reference(typed.key())?);
+            match absence {
+                // `found`'s `object_type` is `r`'s own runtime most-specific
+                // type `F` (FR-143's identity triple), not `T`; see
+                // `OptionValue::from_admitted`'s own doc comment for the
+                // soundness chain (`F` conforms to `S` by parameter
+                // admission, `S` conforms to `T` by `lookup`'s own
+                // `ModelIndex::conforms` call) that lets this bypass the checked
+                // `OptionValue::present`, whose structural `admits()` call
+                // would wrongly refuse every genuine upcast (`b1: M::B`
+                // present as `Reference<M::A>`) that this operation's whole
+                // Outputs clause exists to produce.
+                AbsenceMode::Empty => Ok(OptionValue::from_admitted(
+                    option_payload(result_type)?,
+                    Some(found),
+                )),
+                AbsenceMode::Undefined | AbsenceMode::Refused => Ok(found),
+            }
+        }
+        LookupOutcome::Completed(None) => Ok(OptionValue::from_admitted(
+            option_payload(result_type)?,
+            None,
+        )),
+        LookupOutcome::Undefined => Err(ModelQueryHalt::AbsentKey {
+            population: binding.population_id(),
+            key: lookup_key.object,
+        }),
+        LookupOutcome::Refused(refusal) => Err(ModelQueryHalt::Refused(Box::new(refusal))),
+        LookupOutcome::Incomplete(incomplete) => Err(incomplete.into()),
+    }
+}
+
+fn option_payload(result_type: &ValueType) -> Result<ValueType, ModelQueryHalt> {
+    match result_type {
+        ValueType::Option(payload) => Ok((**payload).clone()),
+        _ => Err(invariant("model-query-option-result-expected")),
+    }
+}

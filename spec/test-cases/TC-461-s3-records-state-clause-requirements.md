@@ -3,7 +3,7 @@ id: TC-461
 title: "S3 records one operation-contract requirement per state clause and frame"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
 ---
 # TC-461: S3 records one operation-contract requirement per state clause and frame
@@ -25,7 +25,7 @@ Scope: FR-104-AC-5, FR-104-AC-6.
 4. Add `invariant ParentOrder2` with `ParentOrder`'s body.
 5. Check the step 1 unit against the fixture package with a second,
    unbounded population `archive` over `ConfigVersion` (every domain-package
-   population is unbounded, QSpec FR-153; a population never declares a
+   population is unbounded, FSpec FR-153; a population never declares a
    maximum).
 6. Check two operations of one type with equal frame content (both an
    empty `modifies`/`creates`/`deletes`), one clause naming each: first with

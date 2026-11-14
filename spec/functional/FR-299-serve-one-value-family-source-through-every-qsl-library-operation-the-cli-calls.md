@@ -1,47 +1,47 @@
 ---
 id: FR-299
-title: "Serve one Value-family source through every QSL library operation the CLI calls"
+title: "Serve one Value-family source through every FSL library operation the CLI calls"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-279
+  - target: ix://agent-ix/filament-spec-language/FR-279
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-286
+  - target: ix://agent-ix/filament-spec-language/FR-286
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-287
+  - target: ix://agent-ix/filament-spec-language/FR-287
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-289
+  - target: ix://agent-ix/filament-spec-language/FR-289
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-280
+  - target: ix://agent-ix/filament-spec-language/FR-280
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-564
+  - target: ix://agent-ix/filament-spec-language/FR-564
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-301"
+  - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
 ---
-# FR-299: Serve one Value-family source through every QSL library operation the CLI calls
+# FR-299: Serve one Value-family source through every FSL library operation the CLI calls
 
 ## Description
 
 For one `1-draft` source with `Value`-family function claims, with or
-without supplied libraries (FR-099), QSL's library operations SHALL return
+without supplied libraries (FR-099), FSL's library operations SHALL return
 the outcomes the driver's `quire check`, `compile`, `run` and `prove` render
 (ADR-029 SL-1):
 
@@ -67,14 +67,14 @@ their FR-285 exit codes.
 
 ## Behavior
 
-- When the caller runs `check` over the source, QSL shall return a success
+- When the caller runs `check` over the source, FSL shall return a success
   outcome holding the `CheckedPackage`.
-- When the caller runs `package` over that `CheckedPackage`, QSL shall return
+- When the caller runs `package` over that `CheckedPackage`, FSL shall return
   the v2 bytes the FR-278 composition writes for the same source.
-- When the caller runs `execute` naming a function of the source, QSL shall
+- When the caller runs `execute` naming a function of the source, FSL shall
   run it on the interpreter through the execution seam and return its
   outcome.
-- When the source imports a library the caller supplies, QSL shall check,
+- When the source imports a library the caller supplies, FSL shall check,
   package and execute it against that library as FR-099 states.
 - If the caller cancels an operation's `Cancel` handle before the operation
   ends, then the operation shall return its cancelled failure (FR-276).
@@ -94,11 +94,11 @@ their FR-285 exit codes.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md), [FR-276](FR-276-cancel-a-lifecycle-operation.md): call shape and cancellation.
 - [FR-278](FR-278-parse-select-check-and-package-as-library-operations.md), [FR-279](FR-279-execute-a-checked-entry-as-a-library-operation.md): the library operations.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md), [FR-286](FR-286-serialize-every-outcome-as-one-json-outcome-document.md): exit codes and documents.
-- [FR-287](FR-287-reach-qsl-through-the-driver-cli.md): the CLI that calls these operations.
-- [FR-289](FR-289-keep-results-unchanged-by-provider-installation.md): the provider part QSL supplies.
+- [FR-287](FR-287-reach-fsl-through-the-driver-cli.md): the CLI that calls these operations.
+- [FR-289](FR-289-keep-results-unchanged-by-provider-installation.md): the provider part FSL supplies.
 - [FR-099](FR-099-compile-against-supplied-libraries.md): supplied libraries.
 - [FR-564](FR-564-produce-each-outcome-kind-of-the-lifecycle-conformance-matrix-through-the-library.md): the conformance matrix that carries this requirement's operations to eight outcome kinds per verb, over its own fixtures.
-- QSpec FR-300, FR-301: the lifecycle API and CLI.
+- FSpec FR-300, FR-301: the lifecycle API and CLI.
 
 ## Overlap
 
@@ -112,4 +112,4 @@ with a replayed counterexample, and exits 10.
 
 - QSL-392 (ARCH-52): the bounded CLI, library, and provider slice.
 - QSL-390 (ARCH-50).
-- QSpec FR-300, FR-301 (STD-141): the QSpec half.
+- FSpec FR-300, FR-301 (STD-141): the FSpec half.

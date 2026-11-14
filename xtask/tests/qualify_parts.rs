@@ -8,22 +8,22 @@ use ix_trace_rs::trace;
 use serde_json::Value;
 use xtask::qualify::{self, QualifyInputs};
 
-fn qspec_dir() -> PathBuf {
-    std::env::var_os("QSPEC_DIR")
+fn fspec_dir() -> PathBuf {
+    std::env::var_os("FSPEC_DIR")
         .map(PathBuf::from)
         .or_else(|| {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .expect("xtask is under the workspace root");
-            Some(workspace.parent()?.join("quire-specification"))
+            Some(workspace.parent()?.join("filament-specification"))
         })
-        .expect("QSpec checkout path")
+        .expect("FSpec checkout path")
 }
 
 fn inputs() -> QualifyInputs {
-    let fixtures = qspec_dir().join("proposals/conformance-corpus-v1/fixtures");
+    let fixtures = fspec_dir().join("proposals/conformance-corpus-v1/fixtures");
     QualifyInputs {
-        qspec: qspec_dir(),
+        fspec: fspec_dir(),
         operands: vec!["--corpus".into(), fixtures.into_os_string()],
         #[cfg(feature = "test-support")]
         matrix: None,
@@ -60,8 +60,8 @@ fn a_passing_run_names_the_three_parts_and_qualifies() {
     assert_eq!(part(&report, "parity")["result"], "no-backend");
 }
 
-/// FR-567-AC-5, first half only (so the test carries no `FR-567-AC-5` tag): the report's QSL version is the
-/// `quire-spec-language` root package's own `CARGO_PKG_VERSION`, not xtask's,
+/// FR-567-AC-5, first half only (so the test carries no `FR-567-AC-5` tag): the report's FSL version is the
+/// `filament-spec-language` root package's own `CARGO_PKG_VERSION`, not xtask's,
 /// and it is the version the root manifest declares. The scratch-copy half
 /// (a copy whose version is `9.9.9` reports `9.9.9`) needs a rebuild of the
 /// copy and is not run here (docs/outcome-parity.md, Known gaps).
@@ -69,18 +69,21 @@ fn a_passing_run_names_the_three_parts_and_qualifies() {
 #[test]
 fn the_report_names_the_root_package_version() {
     let outcome = qualify::run(&inputs()).expect("the gate runs");
-    let version = report(&outcome)["qsl_version"].clone();
-    assert_eq!(version, quire_spec_language::VERSION);
+    let version = report(&outcome)["fsl_version"].clone();
+    assert_eq!(version, filament_spec_language::VERSION);
     assert_ne!(
         version,
         env!("CARGO_PKG_VERSION"),
-        "xtask's own version is not the QSL version"
+        "xtask's own version is not the FSL version"
     );
     let manifest =
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml"))
             .expect("the root manifest");
     assert!(
-        manifest.contains(&format!("version = \"{}\"", quire_spec_language::VERSION)),
+        manifest.contains(&format!(
+            "version = \"{}\"",
+            filament_spec_language::VERSION
+        )),
         "the root manifest declares the reported version"
     );
 }
@@ -92,14 +95,14 @@ fn the_report_names_the_root_package_version() {
 #[trace("TC-1396", "FR-567-AC-2")]
 #[test]
 fn a_failing_matrix_case_fails_the_gate_by_name() {
-    use qsl_conformance::{lifecycle_matrix, MatrixCell, OutcomeKind, Verb};
+    use fsl_conformance::{lifecycle_matrix, MatrixCell, OutcomeKind, Verb};
     let cells: Vec<MatrixCell> = lifecycle_matrix()
         .iter()
         .map(|cell| match cell {
             MatrixCell::Case(case)
                 if case.verb == Verb::Check && case.kind == OutcomeKind::Refusal =>
             {
-                MatrixCell::Case(qsl_conformance::MatrixCase {
+                MatrixCell::Case(fsl_conformance::MatrixCase {
                     expected_exit: 21,
                     ..*case
                 })

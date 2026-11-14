@@ -9,7 +9,7 @@
 //! never from the emitted bytes; the one join to the emitted bytes is the wire
 //! id of each node the checked unit names. [`Selection::check`] compares an
 //! admitted package with it through the borrowed
-//! [`quire_contract_model::CheckedPackageV2`] surface, so a consumer parses
+//! [`filament_contract_model::CheckedPackageV2`] surface, so a consumer parses
 //! and compares with no copy of the format. The corpus edits package bytes
 //! only to mutate them; every verdict on a package comes from
 //! `read_checked_package` and [`Selection::check`].
@@ -20,11 +20,11 @@
 //! and [`Selection::check`] against this public surface alone:
 //!
 //! ```no_run
-//! use quire_spec_language::checked_handoff::{
+//! use filament_spec_language::checked_handoff::{
 //!     write, CheckedHandoffRequest, Corpus, Selection,
 //! };
-//! use quire_spec_language::emit_checked_v2::Request;
-//! use qsl_package::NativeJoinLimits;
+//! use filament_spec_language::emit_checked_v2::Request;
+//! use fsl_package::NativeJoinLimits;
 //!
 //! fn handoff(emit: Request, directory: &std::path::Path) {
 //!     let request = CheckedHandoffRequest {
@@ -42,7 +42,7 @@
 //! The writer's internals are not part of that surface:
 //!
 //! ```compile_fail
-//! use quire_spec_language::checked_handoff::tree::Files;
+//! use filament_spec_language::checked_handoff::tree::Files;
 //! ```
 
 mod corpus;
@@ -52,7 +52,7 @@ mod tree;
 
 use std::path::Path;
 
-use quire_contract_model::{
+use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
     CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
 };
@@ -64,13 +64,13 @@ pub use inventory::{Inventory, InventoryReadError, InventoryRow, InventorySource
 pub use selection::{Selection, SelectionAxis, SelectionReadError, SelectionRefusal};
 
 /// The format of `selection.json`.
-pub const SELECTION_FORMAT: &str = "quire.checked-handoff.selection/1";
+pub const SELECTION_FORMAT: &str = "filament.checked-handoff.selection/1";
 
 /// The format of `inventory.json`.
-pub const INVENTORY_FORMAT: &str = "quire.checked-handoff.inventory/1";
+pub const INVENTORY_FORMAT: &str = "filament.checked-handoff.inventory/1";
 
 /// The format of `mutations/manifest.json`.
-pub const MUTATIONS_FORMAT: &str = "quire.checked-handoff.mutations/1";
+pub const MUTATIONS_FORMAT: &str = "filament.checked-handoff.mutations/1";
 
 /// Which adverse corpus the writer adds (FR-518).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,7 +94,7 @@ pub struct CheckedHandoffRequest {
     /// The finite work and logical-storage ceilings of the identity file's
     /// native joins (FR-531, FR-358). The writer owns no default: the caller
     /// states them, and one budget of them serves the write.
-    pub native_join: qsl_package::NativeJoinLimits,
+    pub native_join: fsl_package::NativeJoinLimits,
 }
 
 /// A stable code for an [`Error`].
@@ -197,7 +197,7 @@ pub enum Error {
     /// joining the selected identities (FR-358). The stage diagnostic keeps
     /// IR's native refusal; it is not an unnameable value.
     #[error("the native join budget was consumed: {0}")]
-    NativeJoinExhausted(Box<qsl_package::NativeJoinLimitError>),
+    NativeJoinExhausted(Box<fsl_package::NativeJoinLimitError>),
 }
 
 impl Error {
@@ -344,7 +344,7 @@ pub fn write_with(
     tree::publish(directory, &files, environment)
 }
 
-/// `inventory.json` (FR-517 "The inventory file"): `qsl_inventory` over the
+/// `inventory.json` (FR-517 "The inventory file"): `fsl_inventory` over the
 /// in-process unit, joined to the wire node ids of the emitted `bytes`.
 fn inventory_file(compiled: &Compiled, bytes: &[u8]) -> Result<Vec<u8>, Error> {
     let outcome = compiled
@@ -361,9 +361,9 @@ fn inventory_file(compiled: &Compiled, bytes: &[u8]) -> Result<Vec<u8>, Error> {
 /// the emitter holds them.
 fn identity_file(
     compiled: &Compiled,
-    package: &quire_contract_model::CheckedPackageV2,
-    budget: &mut quire_contract_model::NativeJoinBudget,
-    limits: qsl_package::NativeJoinLimits,
+    package: &filament_contract_model::CheckedPackageV2,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+    limits: fsl_package::NativeJoinLimits,
 ) -> Result<Vec<u8>, Error> {
     let unnameable = |what: String| Error::Unnameable { what };
     compiled
@@ -371,12 +371,12 @@ fn identity_file(
         .emission()
         .identity_rows(package, budget)
         .map_err(|refused| match refused {
-            qsl_package::IdentityFileRefusal::Rows(rows) => match limits.refusal(rows, budget) {
+            fsl_package::IdentityFileRefusal::Rows(rows) => match limits.refusal(rows, budget) {
                 Some(denial) => Error::NativeJoinExhausted(Box::new(denial)),
                 None => unnameable("adapter budget denial has no unpaid charge".to_owned()),
             },
-            qsl_package::IdentityFileRefusal::Native(native)
-                if qsl_semantics::model::intake::is_native_budget_denial(&native) =>
+            fsl_package::IdentityFileRefusal::Native(native)
+                if fsl_semantics::model::intake::is_native_budget_denial(&native) =>
             {
                 match limits.refusal(native, budget) {
                     Some(denial) => Error::NativeJoinExhausted(Box::new(denial)),
@@ -395,14 +395,14 @@ fn identity_file(
 fn equality_file(
     compiled: &Compiled,
     request: &CheckedHandoffRequest,
-    package: &quire_contract_model::CheckedPackageV2,
-    budget: &mut quire_contract_model::NativeJoinBudget,
-    limits: qsl_package::NativeJoinLimits,
+    package: &filament_contract_model::CheckedPackageV2,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+    limits: fsl_package::NativeJoinLimits,
 ) -> Result<Vec<u8>, Error> {
     let unnameable = |what: String| Error::Unnameable { what };
     let selections =
         emit_checked_v2::clock_selections(&compiled.checked, &request.emit.temporal_selections)?;
-    qsl_package::emit_checked_with_temporal_selections(
+    fsl_package::emit_checked_with_temporal_selections(
         compiled.checked.package(),
         &selections,
         compiled.emit,
@@ -445,7 +445,7 @@ pub fn evidence(request: &CheckedHandoffRequest) -> Result<CheckedPackageEvidenc
 /// and the admitted package of every library the unit imports.
 fn read_evidence(compiled: &Compiled) -> Result<CheckedPackageEvidence, Error> {
     let documents =
-        qsl_semantics::model::intake::package_input(compiled.models.iter().map(Vec::as_slice))
+        fsl_semantics::model::intake::package_input(compiled.models.iter().map(Vec::as_slice))
             .map_err(|refused| Error::Unnameable {
                 what: format!("domain package documents: {refused:?}"),
             })?;
@@ -462,7 +462,7 @@ fn read_evidence(compiled: &Compiled) -> Result<CheckedPackageEvidence, Error> {
 
 fn supply_documents(
     evidence: &mut CheckedPackageEvidence,
-    documents: &qsl_semantics::model::intake::PackageInput,
+    documents: &fsl_semantics::model::intake::PackageInput,
     owner: &str,
 ) -> Result<(), Error> {
     for (identity, document) in documents {
@@ -478,17 +478,17 @@ fn supply_documents(
 
 /// Admit each library of `package`'s closure and supply it to `evidence`.
 fn admit_dependencies(
-    package: &qsl_package::CheckedPackage,
+    package: &fsl_package::CheckedPackage,
     evidence: &mut CheckedPackageEvidence,
-    documents: &qsl_semantics::model::intake::PackageInput,
-    emit: qsl_package::EmitLimits,
+    documents: &fsl_semantics::model::intake::PackageInput,
+    emit: fsl_package::EmitLimits,
 ) -> Result<(), Error> {
     for (identity, dependency) in package.dependencies() {
         let failed = |detail: String| Error::Dependency {
             identity: identity.as_str().to_owned(),
             detail,
         };
-        let emission = qsl_package::emit_checked(dependency, emit)
+        let emission = fsl_package::emit_checked(dependency, emit)
             .map_err(|refusal| failed(refusal.to_string()))?;
         let mut own = emission.evidence().clone();
         supply_documents(&mut own, documents, identity.as_str())?;

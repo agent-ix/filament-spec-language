@@ -3,11 +3,11 @@ id: TC-1053
 title: "Bind a call's named values to a scalar application occurrence in operand order"
 type: TC
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-367"
+  - target: "ix://agent-ix/filament-spec-language/FR-367"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-357"
+  - target: "ix://agent-ix/filament-spec-language/FR-357"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-100"
+  - target: "ix://agent-ix/filament-spec-language/FR-100"
     type: verifies
 ---
 # TC-1053: Bind a call's named values to a scalar application occurrence in operand order

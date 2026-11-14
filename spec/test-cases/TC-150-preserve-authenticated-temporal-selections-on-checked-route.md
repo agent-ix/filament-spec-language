@@ -3,10 +3,10 @@ id: TC-150
 title: "Preserve authenticated temporal selections on the checked route"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-044, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/TC-138, type: references }
-  - { target: ix://agent-ix/quire-spec-language/TC-1278, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-044, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/TC-138, type: references }
+  - { target: ix://agent-ix/filament-spec-language/TC-1278, type: references }
 ---
 # TC-150: Preserve authenticated temporal selections on the checked route
 

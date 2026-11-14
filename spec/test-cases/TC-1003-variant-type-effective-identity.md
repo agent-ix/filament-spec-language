@@ -3,9 +3,9 @@ id: TC-1003
 title: "A variant type and its cases have effective identities independent of case order, and conflicting cases leave no view"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-1003: A variant type and its cases have effective identities independent of case order, and conflicting cases leave no view

@@ -3,29 +3,29 @@ id: FR-211
 title: "Declare a protocol's intended terminal states and report its deadlocks"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-209
+  - target: ix://agent-ix/filament-spec-language/FR-209
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-429
+  - target: ix://agent-ix/filament-specification/FR-429
     type: depends_on
 ---
 # FR-211: Declare a protocol's intended terminal states and report its deadlocks
@@ -79,7 +79,7 @@ opts out.
 
 - S3 SHALL admit at most one `terminal` member per protocol clause, and
   SHALL refuse a second with `ambiguous_declaration`/`ambiguous-name` at
-  its span, naming the first (QSpec FR-429).
+  its span, naming the first (FSpec FR-429).
 - S3 SHALL check `P` as a Boolean state predicate over the model
   observation and the protocol's captures through the one clause checker
   (FR-104), and SHALL refuse a read of a binder, a parameter or a pre-state
@@ -91,7 +91,7 @@ opts out.
 ### Terminal and deadlocked states
 
 - The model checker SHALL classify each protocol state as terminal,
-  intended or deadlocked by QSpec FR-429's rules, reading `Any`, `When(P)`
+  intended or deadlocked by FSpec FR-429's rules, reading `Any`, `When(P)`
   or `None` from the checked declaration; a terminal state with no live
   instance is intended.
 - A boundary state (a state constraint's boundary, a memory-bound-limited
@@ -161,10 +161,10 @@ opts out.
   [FR-104](FR-104-check-state-clauses.md) (predicate checking),
   [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (checking), FR-205, FR-206, FR-209, FR-218.
-- QSpec owns the protocol-level `terminal` member and the protocol subject's
+- FSpec owns the protocol-level `terminal` member and the protocol subject's
   intended terminal states, deadlocks and wait causes (ADR-027 QS-7,
   QS-13).
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-429 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-429 (Linear STD-140).

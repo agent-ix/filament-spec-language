@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-1409 step 1: the checked-package bytes of FR-093-AC-63's `n` read back
-//! through IR's strict v2 reader, and carry one `quire.op.text.size` call.
+//! through IR's strict v2 reader, and carry one `filament.op.text.size` call.
 
 use std::path::Path;
 
@@ -9,13 +9,13 @@ use serde_json::Value;
 
 use crate::emit_checked_v2::{producer_bytes, read_back};
 
-/// Every `quire.op.text.size` application in `wire`, anywhere in it.
+/// Every `filament.op.text.size` application in `wire`, anywhere in it.
 fn size_nodes<'w>(wire: &'w Value, found: &mut Vec<&'w Value>) {
     match wire {
         Value::Object(object) => {
             if object
                 .get("operation")
-                .is_some_and(|operation| operation["identity"] == "quire.op.text.size")
+                .is_some_and(|operation| operation["identity"] == "filament.op.text.size")
                 && object.get("term").is_some_and(|term| term == "application")
             {
                 found.push(wire);
@@ -34,7 +34,7 @@ fn size_nodes<'w>(wire: &'w Value, found: &mut Vec<&'w Value>) {
 #[test]
 fn text_size_lowers_to_one_text_size_call_with_the_profile_law_and_mode() {
     let source = "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
          function n using v(t: Text[0, 8; nfc]): Int[0, 8] pure { size(t) }\n";
     let bytes = producer_bytes(Path::new("text-size.native"), source, &[]);
     read_back(&bytes, &[]);
@@ -53,7 +53,7 @@ fn text_size_lowers_to_one_text_size_call_with_the_profile_law_and_mode() {
             "role": "text_profile",
             "definition": {
                 "authority": "agent-ix",
-                "identity": "quire.value.text.unicode-17.0.0/v1"
+                "identity": "filament.value.text.unicode-17.0.0/v1"
             }
         }])
     );

@@ -1,49 +1,49 @@
 ---
 id: TC-452
-title: "The spine run entry is qsl_replay::spine::run, agrees with the CLI, and maps every outcome"
+title: "The spine run entry is fsl_replay::spine::run, agrees with the CLI, and maps every outcome"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
 ---
-# TC-452: The spine run entry is qsl_replay::spine::run, agrees with the CLI, and maps every outcome
+# TC-452: The spine run entry is fsl_replay::spine::run, agrees with the CLI, and maps every outcome
 
 ## Description
 
-Verify that the library entry `qsl_replay::spine::run` returns the same
-result the CLI renders, that neither the root crate nor `qsl_replay`'s
-public spine surface reaches `qsl-eval`, and that the one outcome mapping
+Verify that the library entry `fsl_replay::spine::run` returns the same
+result the CLI renders, that neither the root crate nor `fsl_replay`'s
+public spine surface reaches `fsl-eval`, and that the one outcome mapping
 converts every S6a outcome into its `outcome` member and exit status. This
 catches CLI-only run behavior (ADR-011 §5: no behavior is reachable only
-through the CLI), a layer-5 type leaking through `qsl_replay`, and an
+through the CLI), a layer-5 type leaking through `fsl_replay`, and an
 outcome kind rendered with the wrong spelling or exit status.
 
 Scope: FR-100-AC-7 to FR-100-AC-9, and FR-100-AC-12.
 
 ## Test Procedure
 
-1. In `qsl-replay`, call `qsl_replay::spine::run` directly over the inputs
+1. In `fsl-replay`, call `fsl_replay::spine::run` directly over the inputs
    of TC-450 step 1 and TC-451 steps 1, 2, 3, 5, 6 and 7, with the default
    spine stage limits, an empty package input and an empty dependency input.
 2. Run TC-390's dependency check
    (`tests/it/family_outcome_layering.rs`) after the CLI change.
-3. Run the `tools/arch-lint` API-surface check over `qsl_replay`: every
-   public item of `qsl_replay::spine`, and every `qsl_replay` re-export, is
-   scanned for a `qsl_eval` path. Then run it over a probe that adds
-   `pub use qsl_eval::value::QualifiedName;` to `qsl_replay`.
+3. Run the `tools/arch-lint` API-surface check over `fsl_replay`: every
+   public item of `fsl_replay::spine`, and every `fsl_replay` re-export, is
+   scanned for a `fsl_eval` path. Then run it over a probe that adds
+   `pub use fsl_eval::value::QualifiedName;` to `fsl_replay`.
 4. Compile the fixture unit `F` below through the FR-278 composition
    as the program source (its bytes are exactly these three lines, each
    ended by one LF, 136 bytes in all):
 
    ```text
    language "ix:native" edition "1-draft";
-   profile v = "quire.value.complete/v1";
+   profile v = "filament.value.complete/v1";
    function f using v(x: Int[0, 9]): Integer pure { x + 5 }
    ```
 
    Construct each S6a outcome below with an `Evaluation.location` of
    `Body{function: "f", index: 0}`, path `[1]` (the literal `5` in `f`'s
-   body), and convert it with the outcome mapping (the `qsl_replay` conversion
+   body), and convert it with the outcome mapping (the `fsl_replay` conversion
    `spine::run` applies, then the root crate's renderer and exit mapping):
    - `Outcome::Completed` of `true`, `false`, `0`, `-17` and `2^70`;
    - `Outcome::Refused(CardinalityOutOfBound)` with kind `Set`, bound
@@ -81,11 +81,11 @@ Scope: FR-100-AC-7 to FR-100-AC-9, and FR-100-AC-12.
    - a `CallFailure::Fault` of `InternalFault::new("S6a",
      "checked-identity-not-resolved-by-package")`.
 5. Count the charges a live `Cancel::observing` handle sees while
-   `qsl_replay::spine::run` compiles and calls FR-100-AC-1's `seven`:
+   `fsl_replay::spine::run` compiles and calls FR-100-AC-1's `seven`:
    `F` charges up to the end of S4 and `T` in all, with `T > F` (S6a charges
    at least once, FR-100-AC-6). Run `seven` twice more, each with a fresh
    handle tripped by the `Cancel::observing` gate harness
-   (`qsl-replay/src/spine/lifecycle/tests.rs`) so that the run observes it
+   (`fsl-replay/src/spine/lifecycle/tests.rs`) so that the run observes it
    only from the chosen charge on: (a) `CancelCause::Requested` at charge
    `F`, the last front-end charge; (b) `CancelCause::Deadline` at charge
    `F + 1`, the first S6a charge, inside `CheckedPackage::call`. Pass each
@@ -101,9 +101,9 @@ Tag the tests `#[trace("TC-452", "FR-100-AC-7")]` (steps 1 and 2),
 - Step 1: each call returns the `package_id`, outcome category, value,
   catalog code, reason, counter, and parameter name or position that the
   CLI renders for the same input in TC-450 and TC-451.
-- Step 2: the root crate names `qsl-eval` in no normal, dev or build
+- Step 2: the root crate names `fsl-eval` in no normal, dev or build
   dependency table.
-- Step 3: the check passes over `qsl_replay`, and fails over the probe,
+- Step 3: the check passes over `fsl_replay`, and fails over the probe,
   naming the re-export.
 - Step 4: each `refused` outcome also carries `location`
   `{"origin": {"kind": "body", "function": "f", "index": 0}, "path": [1]}`.

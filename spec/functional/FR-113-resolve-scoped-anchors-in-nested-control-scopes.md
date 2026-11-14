@@ -3,13 +3,13 @@ id: FR-113
 title: "Resolve scoped anchors in nested control scopes and refuse missing, ambiguous, shadowing and wrong-kind names"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-006
+  - target: ix://agent-ix/filament-spec-language/US-006
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-112
+  - target: ix://agent-ix/filament-spec-language/FR-112
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-048
+  - target: ix://agent-ix/filament-spec-language/FR-048
     type: traces_to
 ---
 # FR-113: Resolve scoped anchors in nested control scopes and refuse missing, ambiguous, shadowing and wrong-kind names
@@ -68,7 +68,7 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
 - A name declared in an inner scope hides the same name declared further out
   for a reference inside the inner scope. A path from an outer control, such
   as `Main::Applied`, reaches the outer node from anywhere in the protocol
-  (QSpec `choreography-surface.md`: "fully qualified paths such as
+  (FSpec `choreography-surface.md`: "fully qualified paths such as
   `Main::Applied` retain the same resolved identity").
 
 ### Refusals
@@ -87,7 +87,7 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
   `finish` or a `compensate` declaration), capture, the protocol's own
   `over (p)` input parameter, its `activation on each (p)` parameter, and
   every compensation trigger, retry or recovery parameter, SHALL be unique
-  across the whole checked protocol declaration (QSpec
+  across the whole checked protocol declaration (FSpec
   `shared-grammar.md`: binders "are unique in their enclosing declaration"
   -- the protocol as a whole, not merely the lexical scope, sequence,
   choice, parallel, repeat, case, branch, await or compensate declaration
@@ -95,12 +95,12 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
   alias, a native declaration of the package, or another binder visible
   anywhere else in the protocol, then the checker SHALL refuse
   `ambiguous_declaration`/`ambiguous-name` at that binder, naming the
-  declaration it would shadow (QSpec `shared-grammar.md`: binders "cannot
+  declaration it would shadow (FSpec `shared-grammar.md`: binders "cannot
   shadow aliases, native declarations or another visible binding", and "the
   same no-shadowing rule applies to binders and captures"). Two separate
   protocols may reuse a binder name.
 - The checker SHALL check the kind of node each resolved anchor names,
-  by its site (QSpec `choreography-surface.md`'s node and deadline rows):
+  by its site (FSpec `choreography-surface.md`'s node and deadline rows):
 
   | Site | Admitted target |
   | --- | --- |
@@ -117,7 +117,7 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
   expected and actual kind).
 - If a `receive` names a channel other than the channel of the `send` its
   `receive-of` anchor names, then the checker SHALL refuse
-  `ill_typed`/`type-mismatch` at the anchor, naming both channels (QSpec: a receive is "related to the exact concrete send
+  `ill_typed`/`type-mismatch` at the anchor, naming both channels (FSpec: a receive is "related to the exact concrete send
   occurrence" of its channel).
 - A refused anchor or binder SHALL NOT stop the checker from checking the
   other anchors and binders of the declaration: each clause that is in order
@@ -139,7 +139,7 @@ package beside them (FR-114, ADR-012 §12.2 Package row).
 
 - FR-112 (scoped anchor forms).
 - ADR-012 §3, §4.2, §12.2.
-- QSpec `choreography-surface.md` (control names, relative and qualified
+- FSpec `choreography-surface.md` (control names, relative and qualified
   paths, "Duplicate or ambiguous declarations refuse") and
   `shared-grammar.md` (binder no-shadowing), and the catalog rows for
   `missing_declaration` and `ambiguous_declaration` in

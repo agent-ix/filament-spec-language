@@ -3,7 +3,7 @@ id: TC-1390
 title: "execute produces each applicable outcome kind of the lifecycle matrix"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-564
+  - target: ix://agent-ix/filament-spec-language/FR-564
     type: verifies
 ---
 # TC-1390: execute produces each applicable outcome kind of the lifecycle matrix
@@ -19,7 +19,7 @@ Scope: FR-564-AC-3.
 Run `execute` over each applicable cell's input: `seven` on the interpreter;
 `id(12)`; `seven` choosing `jit` with `SuppliedBackends::default()`;
 `seven` with a handle cancelled `Deadline`, then `Requested`, before the
-call; `seven` with `work_units` 0; and `seven` on `qsl-conformance`'s
+call; `seven` with `work_units` 0; and `seven` on `fsl-conformance`'s
 fault-injecting test backend.
 
 Tag the tests `#[trace("TC-1390", "FR-564-AC-3")]`.

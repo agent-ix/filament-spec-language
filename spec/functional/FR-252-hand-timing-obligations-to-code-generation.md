@@ -3,31 +3,31 @@ id: FR-252
 title: "Hand timing obligations to code generation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-251
+  - target: ix://agent-ix/filament-spec-language/FR-251
     type: depends_on
 ---
 # FR-252: Hand timing obligations to code generation
 
 ## Description
 
-QSL SHALL hand CG, for each tick-based monitor plan (FR-251) and each
+FSL SHALL hand CG, for each tick-based monitor plan (FR-251) and each
 contract that relates timestamp parameters, the timing obligations that CG
-discharges with Kani (ADR-026 KG-1 to KG-4). These are obligations QSL
+discharges with Kani (ADR-026 KG-1 to KG-4). These are obligations FSL
 writes; how CG emits harnesses is CG's. An obligation about elapsed real
-time or WCET is outside Kani's model, so QSL writes it as unsupported, and
-schedulability goes to EN-7. QSL has no authored form for a claim about
+time or WCET is outside Kani's model, so FSL writes it as unsupported, and
+schedulability goes to EN-7. FSL has no authored form for a claim about
 preemption or interrupt timing, so it writes no obligation for one.
 
 ## Use case
 
 An embedded engineer generates a monitor and its code obligations. They
-learn that the monitor agrees with QSL's evaluator on every short trace,
+learn that the monitor agrees with FSL's evaluator on every short trace,
 that tick arithmetic never overflows across wraparound, and that a claim
 about measured execution time was not silently dropped but reported as
 unsupported.
@@ -56,22 +56,22 @@ pub enum TimingObligation {
 }
 ```
 
-in the obligations QSL writes for CG, and an `Unsupported` disposition for
+in the obligations FSL writes for CG, and an `Unsupported` disposition for
 each timing obligation outside the code model.
 
 ## Behavior
 
-- For each monitor plan QSL SHALL write a `MonitorAgreement` obligation:
+- For each monitor plan FSL SHALL write a `MonitorAgreement` obligation:
   the monitor's step function agrees with the layer-5 reference evaluator
   on every trace of up to `agreement_horizon` events with symbolic integer time
   stamps. The obligation SHALL carry `agreement_horizon` as its stated horizon,
   and a discharged obligation holds for traces up to that length only.
-- For each monitor plan QSL SHALL write a `TickArithmetic` obligation: tick
+- For each monitor plan FSL SHALL write a `TickArithmetic` obligation: tick
   arithmetic never panics or overflows, modular differences are correct
   across wraparound, and no buffer exceeds its capacity under the plan's
   rate.
 - When a clause of a contract relates two or more of the integer parameters
-  that `timestamp_parameters` names for that contract, QSL SHALL write a
+  that `timestamp_parameters` names for that contract, FSL SHALL write a
   `TimestampContract` obligation for it over symbolic integers. A contract
   with no such clause gets no `TimestampContract` obligation, including a
   contract whose clauses compare one named parameter only with a constant or
@@ -80,7 +80,7 @@ each timing obligation outside the code model.
   `elapsed_wall_time(h)`, the elapsed real time of handler `h`, or `wcet(f)`,
   the worst-case execution time of function `f`, whose right operand `d` is a
   time quantity, and whose `<op>` is one of `<`, `<=`, `=`, `>=` and `>`.
-- QSL SHALL recognise `elapsed_wall_time(h)` and `wcet(f)` in a timing clause
+- FSL SHALL recognise `elapsed_wall_time(h)` and `wcet(f)` in a timing clause
   before name resolution: it takes `h` and `f` as written, resolves neither
   against the unit's declarations, types the left operand as a time quantity,
   and refuses nothing at S1 to S3 for either form. This recognition applies
@@ -92,11 +92,11 @@ each timing obligation outside the code model.
   A comparison whose left operand is one of the two forms and whose right
   operand is not a time quantity is refused as `ill_typed`/`type-mismatch`
   at the comparison.
-- QSL SHALL dispose a timing clause as `unsupported`,
+- FSL SHALL dispose a timing clause as `unsupported`,
   `unsupported-requested-capability`, naming its timing kind: a timing clause
   with `elapsed_wall_time` names elapsed real time and one with `wcet` names
   WCET.
-- QSL SHALL route a schedulability claim to EN-7 (FR-246), with WCET as a
+- FSL SHALL route a schedulability claim to EN-7 (FR-246), with WCET as a
   stated premise.
 
 ## Acceptance Criteria
@@ -116,5 +116,5 @@ each timing obligation outside the code model.
 ## References
 
 - The CG obligation shapes: ADR-026 OV-13.
-- QSpec half: QSpec FR-415 and FR-416 (Linear STD-139), the timed model
+- FSpec half: FSpec FR-415 and FR-416 (Linear STD-139), the timed model
   and claim semantics the obligations carry.

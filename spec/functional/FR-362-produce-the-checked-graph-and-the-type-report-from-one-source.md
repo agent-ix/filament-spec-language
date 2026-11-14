@@ -3,21 +3,21 @@ id: FR-362
 title: "Produce the checked graph and the type report from one source"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-033
+  - target: ix://agent-ix/filament-spec-language/ADR-033
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-488
+  - target: ix://agent-ix/filament-spec-language/FR-488
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-180
+  - target: ix://agent-ix/filament-spec-language/FR-180
     type: references
 ---
 # FR-362: Produce the checked graph and the type report from one source
@@ -26,7 +26,7 @@ Status: Proposed. It becomes Accepted on merge. It states ADR-033 Option A+D.
 
 ## Description
 
-QSL SHALL read each source text once, with one grammar, and from that single
+FSL SHALL read each source text once, with one grammar, and from that single
 parse produce both the `CheckedGraph` and the `TypeReport`. The producer SHALL
 return one `CheckedUnit` carrying the `Source`'s single `RawSourceRef`; its graph
 and type report are outputs of that same parse, not independent inputs bound by
@@ -44,8 +44,8 @@ comparing copied source references.
    graph and type report are both derived from this parse; their source
    locations resolve through the checked unit's single source reference. The
    authored-document identity of that reference
-   follows QSpec FR-202-AC-2; the checked-package
-   source-map contract follows QSpec FR-322.
+   follows FSpec FR-202-AC-2; the checked-package
+   source-map contract follows FSpec FR-322.
 3. **One producer, one `CheckedUnit`.** The producer is the spine front end
    (parse, build, assemble, check over one `Source`) extended by the type
    phase. It takes the source and the stage limits, and returns the checked unit or
@@ -56,8 +56,8 @@ comparing copied source references.
    states what it holds) and the source's one `RawSourceRef`. The selected
    formal identity is not a producer input or a `CheckedUnit` member: the
    inventory takes it as its own parameter (FR-514). The type report covers one unit by construction. The type the
-   source inventory used to define is deleted, and `qsl_inventory` lives in
-   `qsl_replay` and reads `spine::CheckedUnit`.
+   source inventory used to define is deleted, and `fsl_inventory` lives in
+   `fsl_replay` and reads `spine::CheckedUnit`.
 4. **One source reference.** `CheckedUnit` carries the single `RawSourceRef`
    minted for the `Source` read by the producer. Its graph and type report come
    from the same parse; the producer does not accept separately supplied graph,
@@ -79,7 +79,7 @@ comparing copied source references.
    clause and for a `hyper` clause over `behaviours`, and S3 checks them
    (FR-171, FR-172); S2 refuses neither with `NoDispatchEntry` or
    `UnrepresentedConstruct`. A checked `relation` clause over model
-   operations, a step relation (FR-173), is emitted as one QSpec FR-477
+   operations, a step relation (FR-173), is emitted as one FSpec FR-477
    `claim`/`step_relation` node (FR-180), and a checked `hyper` clause over
    `behaviours` is emitted as one `claim`/`hyperproperty` node (FR-488). Neither
    is refused `NotEmitted` for being a `relation` or `hyper` clause. A `hyper`
@@ -93,8 +93,8 @@ comparing copied source references.
    cause or, for its temporal operators, fairness and profile selection, a
    typed temporal cause, and is never refused `NotEmitted`. A `hyper` clause over a finite
    trace domain and a `relation` over names that are not model operations keep
-      the finite reading of QSpec FR-191 (FR-171, FR-172).
-9. **The inventory.** The owner-issued source inventory of QSL's checked
+      the finite reading of FSpec FR-191 (FR-171, FR-172).
+9. **The inventory.** The owner-issued source inventory of FSL's checked
    requirements and pending obligations is built from the checked unit and
    from nothing else. A unit that the S3 type phase refuses is an error outcome
    of `check` and yields no partial inventory rows. This is a different case
@@ -105,13 +105,13 @@ comparing copied source references.
    no unfinished-admission stop, so the spine never produces the IR's
    `TypeAdmissionUnfinished`. The inventory's
    identity binds the checked unit's whole source reference; its
-   authored-document key semantics follow QSpec FR-202. The encoding of a row's
+   authored-document key semantics follow FSpec FR-202. The encoding of a row's
    identity belongs to the FR that owns the inventory rows.
 10. **Several source units.** A package of several source units (FR-480) has
     one checked unit per source unit. Each carries its own source reference and
     the type report of its own parse. The shared graph lists every unit's
     source reference in `sources` (FR-001); each entry conforms to the
-    source-reference shape in QSpec FR-322. Each type report covers one unit by
+    source-reference shape in FSpec FR-322. Each type report covers one unit by
     construction.
 
 ## Acceptance Criteria
@@ -119,7 +119,7 @@ comparing copied source references.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-362-AC-1 | For a source the grammar admits, the producer returns one `CheckedUnit` containing the graph, type report and the source's single `RawSourceRef`; the graph and type report come from that source's one parse. The carried reference holds the source's `authority` and `identity` labels. | Test (TC-1026) |
-| FR-362-AC-2 | For a source whose profile line carries any clause after the identity, `qsl_cst::parse` returns a recovered `ParsedSource` with an `invalid_syntax` diagnostic at that token, and `build_unit` and the producer refuse it with `invalid_syntax`; no other parser admits it, and no parser in the workspace admits a profile line with a `version` or `digest`. | Test |
+| FR-362-AC-2 | For a source whose profile line carries any clause after the identity, `fsl_cst::parse` returns a recovered `ParsedSource` with an `invalid_syntax` diagnostic at that token, and `build_unit` and the producer refuse it with `invalid_syntax`; no other parser admits it, and no parser in the workspace admits a profile line with a `version` or `digest`. | Test |
 | FR-362-AC-3 | The producer does not accept separately supplied graph, type report and formal source inputs, and exposes no graph/report/source mismatch constructor or typed refusal. Its sole `CheckedUnit` is created from the one source parse. | Inspection |
 | FR-362-AC-4 | A producer-created checked unit yields the inventory rows derived from its own graph and type report. | Test |
 | FR-362-AC-5 | No type, function or flag copies the checked unit's source reference to compare it against graph or type-report fields. | Inspection |
@@ -132,8 +132,8 @@ comparing copied source references.
 - ADR-033 states the options, the measurements and the recommendation this
   requirement follows.
 - FR-087 and FR-091 state the checked graph and the assembler; FR-110 states
-  profile selection by identity. QSpec FR-202-AC-2 owns authored-document key
-  equality; QSpec FR-322 and its source-map definition own the checked-package
+  profile selection by identity. FSpec FR-202-AC-2 owns authored-document key
+  equality; FSpec FR-322 and its source-map definition own the checked-package
   source-map contract.
 - FR-035, FR-036, FR-040 and FR-049 state the parse, link, check and evaluation
   inputs of the composed lane, which is deleted.

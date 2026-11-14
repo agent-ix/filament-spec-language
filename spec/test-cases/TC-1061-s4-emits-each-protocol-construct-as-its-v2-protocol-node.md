@@ -3,7 +3,7 @@ id: TC-1061
 title: "S4 emits each protocol construct as its v2 protocol node"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: verifies
 ---
 # TC-1061: S4 emits each protocol construct as its v2 protocol node
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify that S4 emits a checked protocol as the clause, role, channel, queue,
-obligation, control and compensation nodes of QSpec FR-464, FR-465 and
+obligation, control and compensation nodes of FSpec FR-464, FR-465 and
 FR-466, with each construct's arguments written from the checked fact, the
 absent optionals absent and every node admitted by the IR v2 reader. Scope:
 FR-383-AC-1 to FR-383-AC-8 and FR-383-AC-22.
@@ -23,7 +23,7 @@ relationship alias written into the clause, a queue missing for a channel or
 written twice, a loss selector written for another overflow, a `commit never`
 written as a commit, and a `Full` and a `Partial` template merged.
 
-Fixture **W**: QSpec TC-946's base protocol `OrderFlow`, authored as one QSL
+Fixture **W**: FSpec TC-946's base protocol `OrderFlow`, authored as one FSL
 unit over a domain package `M` with the order, charge, shipment and refund
 types that protocol names, model alias `M`, protocol profile alias `P`,
 temporal profile alias `T` and the unit's temporal clause
@@ -44,7 +44,7 @@ package with the IR v2 reader and asserts typed fields, never message text.
 
 | # | Unit | Expected |
 | --- | --- | --- |
-| 1 | **W** | the package holds one `protocol_clause`; three `role`, one `channel`, one `queue`, one `finish` and one `terminal` node; 15 `control` nodes, one `compensation` node; every body is a `quire.op.protocol.control` application with one `protocol_profile` law equal to the package's row, a `profile_operator` member naming the node's operator, `null` mode, empty leaves and the Boolean `semantic_type`; the reader admits it |
+| 1 | **W** | the package holds one `protocol_clause`; three `role`, one `channel`, one `queue`, one `finish` and one `terminal` node; 15 `control` nodes, one `compensation` node; every body is a `filament.op.protocol.control` application with one `protocol_profile` law equal to the package's row, a `profile_operator` member naming the node's operator, `null` mode, empty leaves and the Boolean `semantic_type`; the reader admits it |
 | 2 | **W**; **W** with `on origin`; **W** with `on each` and no guard; **W** with `on each ... when (true)`; **W** with no `terminal`, no `scheduling`, no relationship, no `requires temporal` and no template | the clause has thirteen arguments in order; `origin` carries no trigger and no guard; `on each` carries the trigger binder node and the guard only when written, and the last two units have different clause keys; `relationships` holds the model relationship node (no alias), `requirements` the temporal clause node; the stripped unit has empty sets and absent optionals and is admitted |
 | 3 | **W**; **W** with a replicated role of each lifetime (`workflow`, `scope`, `until`) | the static role has an empty `replication` Group; each replicated role carries its population text, `max`, binder node and lifetime, and `until` only for `until`; the four roles have four different keys |
 | 4 | **W** with `Charges` as `unordered`, then `fifo`; with each delivery (`unknown`, `at-most-once`, `at-least-once`, `exactly-once-premise`); with capacity `literal 4` and `symbolic Bound`; with overflow `reject`, `block`, `loss head`, `loss tail`, `loss new` | the channel carries `from`, `to`, `carries`, the ordering Group (a `fifo` has the message binder and the key, an `unordered` neither) and the delivery text; each channel has one queue with the capacity Group, the overflow text and a fourth argument only for `loss`; the three selectors give three queue keys; the queue has no `declaration` and one `generated` occurrence at the channel's region |

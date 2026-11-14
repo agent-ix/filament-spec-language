@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-080-AC-3: `cargo xtask route-lint` -- scans the `#185`
-//! registry crate (every `.rs` file under `qsl-route/src`) for a
+//! registry crate (every `.rs` file under `fsl-route/src`) for a
 //! `static`, `OnceLock`,
 //! `thread_local!` or `lazy_static!` item and fails when it finds one.
 //!
@@ -31,9 +31,9 @@ use crate::error::{Error, Result};
 /// The registry crate's source root this gate scans, relative to the
 /// workspace root. FR-080-AC-3's own scope is "the registry module (the
 /// module implementing FR-075)"; since X-9 that module is the crate
-/// `qsl-route`, so every file under its `src/` is scanned, and a module
+/// `fsl-route`, so every file under its `src/` is scanned, and a module
 /// added beside `lib.rs` cannot hold ambient state unseen.
-pub const REGISTRY_SRC_ROOT: &str = "qsl-route/src";
+pub const REGISTRY_SRC_ROOT: &str = "fsl-route/src";
 
 /// One finding: a `static`, `OnceLock`-typed `static`, `thread_local!` or
 /// `lazy_static!` item, named and located.
@@ -124,7 +124,7 @@ fn type_mentions_ident(ty: &syn::Type, ident: &str) -> bool {
 
 /// Scan `source` (already-read Rust source text) for `static`, `OnceLock`,
 /// `thread_local!` and `lazy_static!` items. Pure function, used both by
-/// the real gate (over every file under `qsl-route/src` on disk) and by this module's own
+/// the real gate (over every file under `fsl-route/src` on disk) and by this module's own
 /// tests (over literal injected source strings).
 pub fn scan_source(source: &str) -> std::result::Result<Vec<Finding>, syn::Error> {
     let parsed = syn::parse_file(source)?;
@@ -207,7 +207,7 @@ mod tests {
 
     /// The gate scans the whole registry crate. A `static` in a
     /// module beside `lib.rs` is found and named by its file, and a
-    /// missing `qsl-route/src` is an error, not a clean scan.
+    /// missing `fsl-route/src` is an error, not a clean scan.
     #[test]
     #[trace("TC-206", "FR-080-AC-3")]
     fn a_static_in_another_module_of_the_registry_crate_is_found() {
@@ -225,12 +225,12 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("qsl-route/src/nested/cache.rs:1 OnceLock `DEFAULT`"),
+                .contains("fsl-route/src/nested/cache.rs:1 OnceLock `DEFAULT`"),
             "{error}"
         );
 
         let empty = tempfile::tempdir().unwrap();
-        assert!(run(empty.path()).is_err(), "a missing qsl-route/src fails");
+        assert!(run(empty.path()).is_err(), "a missing fsl-route/src fails");
     }
 
     /// TC-206 step 2: an injected plain `static` is found and named.

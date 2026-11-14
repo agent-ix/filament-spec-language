@@ -3,7 +3,7 @@ id: TC-903
 title: "A deep-input fuzz target drives the parser and the checker"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-356
+  - target: ix://agent-ix/filament-spec-language/FR-356
     type: verifies
 ---
 # TC-903: A deep-input fuzz target drives the parser and the checker

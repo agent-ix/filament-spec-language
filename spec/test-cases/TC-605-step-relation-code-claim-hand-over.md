@@ -3,14 +3,14 @@ id: TC-605
 title: "A bound step relation hands over its code claim, and its Kani counterexample replays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-180
+  - target: ix://agent-ix/filament-spec-language/FR-180
     type: verifies
 ---
 # TC-605: A bound step relation hands over its code claim, and its Kani counterexample replays
 
 ## Description
 
-Verify that a relation over bound operations records a separate `operation-contract` code claim with the checked-package members the harness reads, and that QSL's half of a Kani counterexample replay reproduces, disagrees and refuses.
+Verify that a relation over bound operations records a separate `operation-contract` code claim with the checked-package members the harness reads, and that FSL's half of a Kani counterexample replay reproduces, disagrees and refuses.
 
 Scope: FR-180-AC-1 to FR-180-AC-3.
 

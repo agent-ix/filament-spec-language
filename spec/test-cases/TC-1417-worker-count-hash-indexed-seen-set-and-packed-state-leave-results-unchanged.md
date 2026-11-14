@@ -3,11 +3,11 @@ id: TC-1417
 title: "Worker count, a hash-indexed seen set and a packed state leave results unchanged"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-191
+  - target: ix://agent-ix/filament-spec-language/FR-191
     type: verifies
 ---
 # TC-1417: Worker count, a hash-indexed seen set and a packed state leave results unchanged
@@ -24,7 +24,7 @@ FR-191-AC-7.
 
 ## Test Procedure
 
-Integration tests in `qsl-eval/tests/it/` through the public entries
+Integration tests in `fsl-eval/tests/it/` through the public entries
 (`explore_request`, `explore_request_parallel`, `replay`, `check_model` and the
 statistical run) and, for steps 5 to 7, the `SeenSetProbe` and `PackedLayout`
 test seam of FR-101 under each explorer crate's `test-support` feature. The

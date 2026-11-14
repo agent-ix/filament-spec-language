@@ -3,22 +3,22 @@ id: FR-132
 title: "Settle a fairness constraint over a supplied trace as a missing premise"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-017
+  - target: ix://agent-ix/filament-spec-language/US-017
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-129
+  - target: ix://agent-ix/filament-spec-language/FR-129
     type: depends_on
 ---
 # FR-132: Settle a fairness constraint over a supplied trace as a missing premise
 
 ## Description
 
-QSL SHALL settle a temporal clause with any fairness constraint, weak or
+FSL SHALL settle a temporal clause with any fairness constraint, weak or
 strong, that is evaluated over a supplied trace, replayed or monitored with
 no model subject behind it, `unsupported` with the new cause
 `MissingFairnessPremise{constraint}` (ADR-019 SV-2, AM-6). A supplied trace
@@ -35,8 +35,8 @@ as though every behaviour were fair.
 
 ## Semantic authority and boundary
 
-QSpec owns "missing fairness premise" and its settlement (ADR-019 QS-3;
-References). This requirement specifies QSL's cause and where the
+FSpec owns "missing fairness premise" and its settlement (ADR-019 QS-3;
+References). This requirement specifies FSL's cause and where the
 TemporalTrace evaluator and replay settle it.
 
 ## Inputs
@@ -47,9 +47,9 @@ TemporalTrace evaluator and replay settle it.
 ## Outputs
 
 - `TerminalValue::Unsupported(UnavailabilityCause::MissingFairnessPremise
-  { constraint: FairnessConstraint })`: QSpec FR-360 label
-  `unsupported`, QSpec FR-243 basis `unavailable`, wire cause
-  `unsupported_projection`/`missing-fairness-premise` (QSpec FR-362), O-16
+  { constraint: FairnessConstraint })`: FSpec FR-360 label
+  `unsupported`, FSpec FR-243 basis `unavailable`, wire cause
+  `unsupported_projection`/`missing-fairness-premise` (FSpec FR-362), O-16
   category unsupported.
 
 ## Behavior
@@ -80,5 +80,5 @@ TemporalTrace evaluator and replay settle it.
 
 ## References
 
-- QSpec FR-362 (the missing fairness premise): the QSpec half of ADR-019
+- FSpec FR-362 (the missing fairness premise): the FSpec half of ADR-019
   QS-3 (Linear STD-132).

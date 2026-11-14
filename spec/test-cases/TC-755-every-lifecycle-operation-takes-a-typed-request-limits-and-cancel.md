@@ -3,14 +3,14 @@ id: TC-755
 title: "Every lifecycle operation takes a typed request, limits and Cancel, and rejects wrong-stage input at compile time"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: verifies
 ---
 # TC-755: Every lifecycle operation takes a typed request, limits and Cancel, and rejects wrong-stage input at compile time
 
 ## Description
 
-Verify the twelve QSL lifecycle operations share the FR-275 call shape: each takes its typed request, its limits value and `&Cancel`; each consuming operation takes its predecessor's own type; and each is a function of its request and limits.
+Verify the twelve FSL lifecycle operations share the FR-275 call shape: each takes its typed request, its limits value and `&Cancel`; each consuming operation takes its predecessor's own type; and each is a function of its request and limits.
 
 Scope: FR-275-AC-1 to FR-275-AC-3, FR-275-AC-5.
 

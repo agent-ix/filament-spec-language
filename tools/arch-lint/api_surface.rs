@@ -7,24 +7,24 @@
 //! **Scanning method (FR-060 Behavior, "Scanning method and its stated
 //! limitations").** A `forbidden_patterns` entry is a violation from any
 //! module, including an allowed caller: a spelling that no longer names the
-//! rule's symbol at all (T12-A's `quire_spec_language::replay::`, dead since
+//! rule's symbol at all (T12-A's `filament_spec_language::replay::`, dead since
 //! the facade became its own crate).
 //!
-//! A `forbidden_modules` entry (T12-A's `qsl_replay::spine`) is a
+//! A `forbidden_modules` entry (T12-A's `fsl_replay::spine`) is a
 //! violation from any module too, and is found by parsing each file with
 //! `syn`, not by substring: every `use` tree leaf and every path whose first
-//! segment names the crate, or an alias of it (`use qsl_replay as q;`,
-//! `extern crate qsl_replay as q;`), and whose second names the module, is
-//! a violation -- so `use qsl_replay::spine;`, `use qsl_replay::{replay,
-//! spine::compile}` and `use qsl_replay::spine as s` each are, not only a
-//! call spelled `qsl_replay::spine::compile(..)`. A glob import of the
-//! crate (`use qsl_replay::*;`) is a violation as well, since it brings the
+//! segment names the crate, or an alias of it (`use fsl_replay as q;`,
+//! `extern crate fsl_replay as q;`), and whose second names the module, is
+//! a violation -- so `use fsl_replay::spine;`, `use fsl_replay::{replay,
+//! spine::compile}` and `use fsl_replay::spine as s` each are, not only a
+//! call spelled `fsl_replay::spine::compile(..)`. A glob import of the
+//! crate (`use fsl_replay::*;`) is a violation as well, since it brings the
 //! module into scope. Macro arguments are not parsed by `syn`; a token-run
 //! match of `crate::module` covers a path written inside one.
 //!
 //! A `Rule::shipped_only` rule (T12-G) matches each pattern against the
 //! file's `proc_macro2` tokens and parsed paths, not its text:
-//! `quire_checked::construct` is the token run `quire_checked` `:` `:`
+//! `filament_checked::construct` is the token run `filament_checked` `:` `:`
 //! `construct`. A comment is not a token and a string is one literal token,
 //! so neither can match, while a call split across lines, a constructor
 //! passed as a function value, and a call inside a macro's arguments all do.
@@ -38,10 +38,10 @@
 //! `main.rs`'s printed report states these limitations.
 //!
 //! Each rule scans one *role*'s source tree (see [`Role`]): T12-G is a
-//! QSL-side rule (which QSL module calls a checked-term constructor),
-//! scanned against the QSL tree passed with `--qsl`; T12-A is a CG-side rule
-//! (does CG call only QSL's `qsl-replay` facade crate), scanned against the
-//! CG tree passed with `--cg` -- never against QSL's own tree, which
+//! FSL-side rule (which FSL module calls a checked-term constructor),
+//! scanned against the FSL tree passed with `--fsl`; T12-A is a CG-side rule
+//! (does CG call only FSL's `fsl-replay` facade crate), scanned against the
+//! CG tree passed with `--cg` -- never against FSL's own tree, which
 //! contains no CG call sites for the rule to find (#249 review,
 //! HIGH-2/MEDIUM-4). A rule whose role's tree was not supplied reports
 //! [`RuleStatus::NeedsRoot`]; the other rules are still evaluated --
@@ -77,7 +77,7 @@ pub(crate) struct CallSite {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RuleStatus {
     Live,
-    /// The rule's `requires_path` marker is absent from the QSL tree.
+    /// The rule's `requires_path` marker is absent from the FSL tree.
     Pending(&'static str),
     /// The rule's target exists, but no tree was supplied for its role, so
     /// nothing was scanned. Not a pass.
@@ -85,13 +85,13 @@ pub(crate) enum RuleStatus {
 }
 
 /// Which repository's tree a rule scans for call sites. `requires_path` is
-/// always checked against the QSL tree (every T-12 target lands in QSL
+/// always checked against the FSL tree (every T-12 target lands in FSL
 /// first), but the scan itself runs over whichever role names.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Role {
-    /// Scan QSL's own tree: which QSL module calls a QSL-defined constructor.
-    Qsl,
-    /// Scan the CG tree: does CG call QSL only through the stated facade.
+    /// Scan FSL's own tree: which FSL module calls an FSL-defined constructor.
+    Fsl,
+    /// Scan the CG tree: does CG call FSL only through the stated facade.
     Cg,
 }
 
@@ -99,7 +99,7 @@ impl Role {
     /// The CLI flag that supplies this role's scan root (`main.rs`).
     pub(crate) fn flag_name(self) -> &'static str {
         match self {
-            Role::Qsl => "--qsl",
+            Role::Fsl => "--fsl",
             Role::Cg => "--cg",
         }
     }
@@ -107,10 +107,10 @@ impl Role {
 
 /// One allowed caller of a rule's symbol: the crate, named by its source
 /// root relative to the scanned checkout (`"src"` for the root crate,
-/// `"qsl-semantics/src"`), and a module path prefix inside it, matched as
+/// `"fsl-semantics/src"`), and a module path prefix inside it, matched as
 /// `module == prefix` or `module.starts_with("{prefix}::")`. Module paths are
 /// relative to their own crate, and two crates can have modules of the same
-/// name (the root crate and `qsl-semantics` both have `value` and
+/// name (the root crate and `fsl-semantics` both have `value` and
 /// `complete`), so a module prefix alone would also allow a same-named
 /// module in any other crate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,7 +141,7 @@ pub(crate) struct Rule {
     pub(crate) description: &'static str,
     pub(crate) role: Role,
     /// Patterns that identify a use of the rule's symbol: a path such as
-    /// `"quire_checked::construct"` (called or passed as a value), or a
+    /// `"filament_checked::construct"` (called or passed as a value), or a
     /// trailing `(` to require a call, as in `"helper("`.
     pub(crate) call_patterns: &'static [&'static str],
     /// Call-site substrings that are a violation from any module, including
@@ -163,7 +163,7 @@ pub(crate) struct Rule {
     /// crate alias, a nested use tree and a glob import all count. `&[]` for
     /// every other rule.
     pub(crate) constructors: &'static [ConstructorCallers],
-    /// A file path, relative to the QSL tree, whose presence the rule needs
+    /// A file path, relative to the FSL tree, whose presence the rule needs
     /// before it is live. `None` means the rule is always live once a root is
     /// given.
     pub(crate) requires_path: Option<&'static str>,
@@ -186,21 +186,21 @@ pub(crate) const RULES: &[Rule] = &[
     Rule {
         id: "T12-A",
         description:
-            "CG calls the QSL layer-6 `qsl-replay` facade only (ADR-011 §3 FB-05, §2.1 E9)",
+            "CG calls the FSL layer-6 `fsl-replay` facade only (ADR-011 §3 FB-05, §2.1 E9)",
         role: Role::Cg,
-        // The facade is the `qsl-replay` workspace crate (ADR-011 §6.1 layer 6).
-        call_patterns: &["qsl_replay::"],
+        // The facade is the `fsl-replay` workspace crate (ADR-011 §6.1 layer 6).
+        call_patterns: &["fsl_replay::"],
         // The root crate has no `replay` module any more (it moved into
         // its own crate), so a call spelled this way cannot reach the
         // facade; it is a finding, never a pass, from any module including
         // an allowed one.
-        forbidden_patterns: &["quire_spec_language::replay::"],
-        // `qsl_replay::spine` is the spine compile `command` shares with the
+        forbidden_patterns: &["filament_spec_language::replay::"],
+        // `fsl_replay::spine` is the spine compile `command` shares with the
         // executor. It is `pub` only because `command` is another
         // crate; it is not part of the facade CG may call, so any reference
         // to it is a finding from any module.
         forbidden_modules: &[ForbiddenModule {
-            krate: "qsl_replay",
+            krate: "fsl_replay",
             module: "spine",
         }],
         // The facade's own internal adapter module has no ticket-assigned
@@ -210,22 +210,22 @@ pub(crate) const RULES: &[Rule] = &[
             crate_src: "src",
             module_prefix: "replay",
         }],
-        requires_path: Some("qsl-replay/src/lib.rs"),
-        pending_reason: "the layer-6 facade crate `qsl-replay/src/lib.rs` is absent from the \
-                         --qsl tree",
+        requires_path: Some("fsl-replay/src/lib.rs"),
+        pending_reason: "the layer-6 facade crate `fsl-replay/src/lib.rs` is absent from the \
+                         --fsl tree",
         scope_note: None,
         constructors: &[],
         shipped_only: false,
     },
     Rule {
         id: "T12-G",
-        description: "only `check` and `value::definition` of `qsl-semantics` call a \
-                      `quire_checked::construct` constructor (ADR-011 FB-14, FR-400 \"Checking \
+        description: "only `check` and `value::definition` of `fsl-semantics` call a \
+                      `filament_checked::construct` constructor (ADR-011 FB-14, FR-400 \"Checking \
                       authority\" rule 3)",
-        role: Role::Qsl,
+        role: Role::Fsl,
         // Every function of the `construct` module builds a checked term. The
-        // module is compiled only under `quire-checked`'s `construct`
-        // feature, which only `qsl-semantics` enables in its manifest, but
+        // module is compiled only under `filament-checked`'s `construct`
+        // feature, which only `fsl-semantics` enables in its manifest, but
         // Cargo feature unification turns it on for the whole workspace, so
         // this rule is what keeps another crate from building one. A path
         // through the module, spelled through the crate or an alias of it,
@@ -233,24 +233,24 @@ pub(crate) const RULES: &[Rule] = &[
         // function value. `check` and every module under it may build any
         // checked term; `value::definition` admits
         // `AdmittedIntegerDivision`, only its own constructor.
-        call_patterns: &["quire_checked::construct"],
+        call_patterns: &["filament_checked::construct"],
         forbidden_patterns: &[],
         forbidden_modules: &[],
         allowed_callers: &[AllowedCaller {
-            crate_src: "qsl-semantics/src",
+            crate_src: "fsl-semantics/src",
             module_prefix: "check",
         }],
         requires_path: None,
         pending_reason: "",
         scope_note: Some(
-            "scoped to QSL's own tree; a reference through a re-export of `quire_checked` in \
+            "scoped to FSL's own tree; a reference through a re-export of `filament_checked` in \
              another crate is not followed; the manifest check (TC-390) is what confines the \
-             `construct` feature to `qsl-semantics`",
+             `construct` feature to `fsl-semantics`",
         ),
         constructors: &[ConstructorCallers {
             function: "admitted_integer_division",
             callers: &[AllowedCaller {
-                crate_src: "qsl-semantics/src",
+                crate_src: "fsl-semantics/src",
                 module_prefix: "value::definition",
             }],
         }],
@@ -258,31 +258,31 @@ pub(crate) const RULES: &[Rule] = &[
     },
 ];
 
-/// Validates that `qsl_root` is actually a quire-spec-language checkout, by
+/// Validates that `fsl_root` is actually a filament-spec-language checkout, by
 /// its own manifest's declared package name. Every rule's `requires_path` is
 /// checked against this root regardless of which role it scans (`Role`), so
-/// without this guard a `--qsl` argument that points at some other tree
-/// (for example quire-contract-runtime's or quire-contract-codegen's own
+/// without this guard a `--fsl` argument that points at some other tree
+/// (for example filament-contract-runtime's or filament-contract-codegen's own
 /// checkout) can silently reach the `Pending` branch and report a
-/// QSL-specific reason about a tree the rule never actually scanned, with
+/// FSL-specific reason about a tree the rule never actually scanned, with
 /// exit 0 -- a green line describing a different repository (#249 review
 /// round 2 H-1).
-pub(crate) fn assert_is_qsl_root(qsl_root: &Path) -> Result<()> {
-    let manifest_path = qsl_root.join("Cargo.toml");
+pub(crate) fn assert_is_fsl_root(fsl_root: &Path) -> Result<()> {
+    let manifest_path = fsl_root.join("Cargo.toml");
     let manifest =
         fs::read_to_string(&manifest_path).map_err(|error| Error::io(&manifest_path, error))?;
-    let is_qsl = manifest
+    let is_fsl = manifest
         .lines()
-        .any(|line| line.trim() == "name = \"quire-spec-language\"");
-    if !is_qsl {
+        .any(|line| line.trim() == "name = \"filament-spec-language\"");
+    if !is_fsl {
         return Err(Error::new(
             Code::Usage,
             format!(
-                "{} is not a quire-spec-language checkout (its Cargo.toml does not declare \
-                 name = \"quire-spec-language\"); --qsl must point at quire-spec-language \
-                 itself. T12-G scans QSL's own tree only; see its scope note for what it does \
+                "{} is not a filament-spec-language checkout (its Cargo.toml does not declare \
+                 name = \"filament-spec-language\"); --fsl must point at filament-spec-language \
+                 itself. T12-G scans FSL's own tree only; see its scope note for what it does \
                  not evaluate",
-                qsl_root.display()
+                fsl_root.display()
             ),
         ));
     }
@@ -1071,20 +1071,20 @@ pub(crate) fn walk_rs_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Evaluate one rule. `qsl_root` is QSL's own package root, used to test
+/// Evaluate one rule. `fsl_root` is FSL's own package root, used to test
 /// `requires_path` regardless of which role the rule scans (every T-12
-/// target lands in QSL first). `scan_root` is the package root of the tree
-/// the rule's `role` actually scans (QSL itself for a `Role::Qsl` rule, the
+/// target lands in FSL first). `scan_root` is the package root of the tree
+/// the rule's `role` actually scans (FSL itself for a `Role::Fsl` rule, the
 /// CG checkout for a `Role::Cg` rule) -- `None` when the caller has no root
 /// for that role, in which case a rule whose target exists reports
 /// [`RuleStatus::NeedsRoot`].
 pub(crate) fn evaluate(
     rule: &Rule,
-    qsl_root: &Path,
+    fsl_root: &Path,
     scan_root: Option<&Path>,
 ) -> Result<RuleOutcome> {
     if let Some(marker) = rule.requires_path {
-        if !qsl_root.join(marker).exists() {
+        if !fsl_root.join(marker).exists() {
             return Ok(RuleOutcome {
                 rule_id: rule.id,
                 status: RuleStatus::Pending(rule.pending_reason),
@@ -1100,11 +1100,11 @@ pub(crate) fn evaluate(
         });
     };
     let mut violations = Vec::new();
-    for src_root in qsl_scan_src_roots(rule.role, scan_root) {
+    for src_root in fsl_scan_src_roots(rule.role, scan_root) {
         if !src_root.exists() {
             // Every listed root is required, the primary root
             // (`<scan_root>/src`) and every extracted-layer-crate root
-            // (`qsl-foundation/src`, `qsl-cst/src`, ...) alike: a missing
+            // (`fsl-foundation/src`, `fsl-cst/src`, ...) alike: a missing
             // configured root must fail loudly rather than silently drop
             // that tree's coverage (carried over from review-325's
             // finding). A crate rename or move that this
@@ -1172,31 +1172,31 @@ pub(crate) fn evaluate(
 
 /// Every crate's own `src/` this scan's `role` covers, under one workspace
 /// checkout root. A `Role::Cg` rule scans only the CG checkout's own `src/`
-/// (CG is a single crate as far as this tool is concerned). A `Role::Qsl`
-/// rule scans every QSL workspace crate whose `[dependencies]` can name the
+/// (CG is a single crate as far as this tool is concerned). A `Role::Fsl`
+/// rule scans every FSL workspace crate whose `[dependencies]` can name the
 /// symbols these rules match: the root crate's own `src/`, plus each
-/// extracted ADR-011 §6.1 layer crate's `src/`: `qsl-foundation`
-/// (ADR-011 §7.3 X-2), `qsl-cst` (X-3), `qsl-source` (X-4), `qsl-forms`
-/// (X-5), `qsl-semantics` (X-6), `qsl-package` (X-7), `qsl-eval` (X-8), `qsl-route` (X-9),
-/// `qsl-replay` (X-10) and `qsl-analyze` (X-12, layer A). A module path is relative to its own
+/// extracted ADR-011 §6.1 layer crate's `src/`: `fsl-foundation`
+/// (ADR-011 §7.3 X-2), `fsl-cst` (X-3), `fsl-source` (X-4), `fsl-forms`
+/// (X-5), `fsl-semantics` (X-6), `fsl-package` (X-7), `fsl-eval` (X-8), `fsl-route` (X-9),
+/// `fsl-replay` (X-10) and `fsl-analyze` (X-12, layer A). A module path is relative to its own
 /// crate's
-/// `src/`, so `check` (T12-G) names `qsl-semantics`' module. Each later
+/// `src/`, so `check` (T12-G) names `fsl-semantics`' module. Each later
 /// layer crate joins this list when it is extracted.
-pub(crate) fn qsl_scan_src_roots(role: Role, scan_root: &Path) -> Vec<PathBuf> {
+pub(crate) fn fsl_scan_src_roots(role: Role, scan_root: &Path) -> Vec<PathBuf> {
     match role {
         Role::Cg => vec![scan_root.join("src")],
-        Role::Qsl => [
+        Role::Fsl => [
             "src",
-            "qsl-foundation/src",
-            "qsl-cst/src",
-            "qsl-source/src",
-            "qsl-forms/src",
-            "qsl-semantics/src",
-            "qsl-package/src",
-            "qsl-eval/src",
-            "qsl-route/src",
-            "qsl-replay/src",
-            "qsl-analyze/src",
+            "fsl-foundation/src",
+            "fsl-cst/src",
+            "fsl-source/src",
+            "fsl-forms/src",
+            "fsl-semantics/src",
+            "fsl-package/src",
+            "fsl-eval/src",
+            "fsl-route/src",
+            "fsl-replay/src",
+            "fsl-analyze/src",
         ]
         .into_iter()
         .map(|relative| scan_root.join(relative))
@@ -1204,27 +1204,27 @@ pub(crate) fn qsl_scan_src_roots(role: Role, scan_root: &Path) -> Vec<PathBuf> {
     }
 }
 
-/// FR-100-AC-8 (TC-452 step 3): no public item of `qsl_replay::spine`, and
-/// no `qsl_replay` re-export, names a `qsl_eval` path. Unlike the `RULES`
+/// FR-100-AC-8 (TC-452 step 3): no public item of `fsl_replay::spine`, and
+/// no `fsl_replay` re-export, names a `fsl_eval` path. Unlike the `RULES`
 /// above (each a named constructor's disallowed *caller*), this check scans
 /// the *facade's own* public surface for a forbidden *callee* crate, so it
 /// is its own function rather than a `Rule` entry: a function item is
-/// scanned by its signature alone (a `qsl_eval` path used only inside a
+/// scanned by its signature alone (a `fsl_eval` path used only inside a
 /// function's body, never in its signature, is not a violation -- the
-/// facade's own implementation may depend on `qsl_eval` freely, only its
+/// facade's own implementation may depend on `fsl_eval` freely, only its
 /// public interface may not name it); every other public item (a struct,
 /// enum, type alias, `pub use`, ...) is scanned whole, since such an item
 /// has no body distinct from its public shape.
 ///
-/// `qsl_replay_src` is the `qsl-replay` crate's `src/` directory. Returns
+/// `fsl_replay_src` is the `fsl-replay` crate's `src/` directory. Returns
 /// one finding per offending public item, `"<file>: <description>"`.
-pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<Vec<String>> {
-    // FR-100-AC-8: a `qsl_eval` path is named either literally
-    // (`qsl_eval::value::QualifiedName`) or through a local name a `use` import
-    // bound to one (`use qsl_eval::value::QualifiedName as Ev;` then `Ev` in a
+pub(crate) fn spine_surface_fsl_eval_findings(fsl_replay_src: &Path) -> Result<Vec<String>> {
+    // FR-100-AC-8: a `fsl_eval` path is named either literally
+    // (`fsl_eval::value::QualifiedName`) or through a local name a `use` import
+    // bound to one (`use fsl_eval::value::QualifiedName as Ev;` then `Ev` in a
     // signature or field type) -- `aliases` holds every such local name this
     // file's own top-level `use` items bind, so both spellings are caught by
-    // the same identifier scan. A glob import (`use qsl_eval::value::*;`)
+    // the same identifier scan. A glob import (`use fsl_eval::value::*;`)
     // binds names this check cannot enumerate; that is a documented
     // limitation, not a case this check silently passes over the *literal*
     // path for.
@@ -1233,18 +1233,18 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
         found: bool,
     }
     impl<'ast> syn::visit::Visit<'ast> for PathFinder<'_> {
-        // A type path's leading segment (`qsl_eval::value::QualifiedName`) and
+        // A type path's leading segment (`fsl_eval::value::QualifiedName`) and
         // a `use` tree's own identifiers (`UseTree::Path`/`UseTree::Name`,
         // which hold a bare `Ident`, never a `Path`) both surface here, so
         // visiting every identifier catches both forms, plus any aliased
-        // local name this file's own imports bound to a `qsl_eval` item.
+        // local name this file's own imports bound to a `fsl_eval` item.
         fn visit_ident(&mut self, ident: &'ast proc_macro2::Ident) {
-            if ident == "qsl_eval" || self.aliases.contains(&ident.to_string()) {
+            if ident == "fsl_eval" || self.aliases.contains(&ident.to_string()) {
                 self.found = true;
             }
         }
     }
-    fn names_qsl_eval(
+    fn names_fsl_eval(
         aliases: &std::collections::HashSet<String>,
         visit: impl FnOnce(&mut PathFinder<'_>),
     ) -> bool {
@@ -1272,36 +1272,36 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
         })
     }
     // Every local name a top-level `use` item in this file binds to a
-    // `qsl_eval` path, walking `UseTree::Path`/`Name`/`Rename`/`Group`
+    // `fsl_eval` path, walking `UseTree::Path`/`Name`/`Rename`/`Group`
     // recursively; `UseTree::Glob` binds no enumerable name (see the type
     // doc above).
     // Every local name a top-level `use` item in one file binds to a
-    // `qsl_eval` path, walking `UseTree::Path`/`Name`/`Rename`/`Group`
+    // `fsl_eval` path, walking `UseTree::Path`/`Name`/`Rename`/`Group`
     // recursively; `UseTree::Glob` binds no enumerable name (see the type
     // doc above).
     fn use_aliases(file: &syn::File) -> std::collections::HashSet<String> {
         fn walk(
             tree: &syn::UseTree,
-            under_qsl_eval: bool,
+            under_fsl_eval: bool,
             out: &mut std::collections::HashSet<String>,
         ) {
             match tree {
                 syn::UseTree::Path(path) => {
-                    walk(&path.tree, under_qsl_eval || path.ident == "qsl_eval", out);
+                    walk(&path.tree, under_fsl_eval || path.ident == "fsl_eval", out);
                 }
                 syn::UseTree::Name(name) => {
-                    if under_qsl_eval {
+                    if under_fsl_eval {
                         out.insert(name.ident.to_string());
                     }
                 }
                 syn::UseTree::Rename(rename) => {
-                    if under_qsl_eval {
+                    if under_fsl_eval {
                         out.insert(rename.rename.to_string());
                     }
                 }
                 syn::UseTree::Group(group) => {
                     for tree in &group.items {
-                        walk(tree, under_qsl_eval, out);
+                        walk(tree, under_fsl_eval, out);
                     }
                 }
                 syn::UseTree::Glob(_) => {}
@@ -1336,15 +1336,15 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
         Ok(())
     }
 
-    let mut files = vec![qsl_replay_src.join("spine.rs")];
-    let spine_dir = qsl_replay_src.join("spine");
+    let mut files = vec![fsl_replay_src.join("spine.rs")];
+    let spine_dir = fsl_replay_src.join("spine");
     if spine_dir.is_dir() {
         collect_spine_files(&spine_dir, &mut files)?;
     }
     files.sort();
     // FND-020: every scanned file's syntax tree, read and parsed once, so
     // the alias set below can be resolved across all of them together --
-    // `pub(crate) type Ev = qsl_eval::...;` declared in `spine.rs` and used
+    // `pub(crate) type Ev = fsl_eval::...;` declared in `spine.rs` and used
     // only by its bare name in `call.rs` is still an alias there.
     let parsed_files = files
         .iter()
@@ -1395,16 +1395,16 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
         .collect();
     let mut type_aliases = std::collections::HashSet::new();
     // FND-015/FND-020: a `type` alias (private or public), in any scanned
-    // file, whose own definition names `qsl_eval` -- directly, or through
+    // file, whose own definition names `fsl_eval` -- directly, or through
     // another such alias declared in the same or a different file -- is
     // itself an alias: a public item spelling only the alias's own name
-    // (`type Q = qsl_eval::value::QualifiedName;` then `pub fn f() ->
-    // Option<Q>`, however far apart the two are) still names `qsl_eval`
+    // (`type Q = fsl_eval::value::QualifiedName;` then `pub fn f() ->
+    // Option<Q>`, however far apart the two are) still names `fsl_eval`
     // through it. Fixed point over every scanned file's own `type` items
     // together, since one alias may be defined in terms of another
     // declared in a different file. `use` names remain local to the file
     // that imports them; pooling those across recursively scanned modules
-    // would mistake unrelated identifiers for `qsl_eval` aliases.
+    // would mistake unrelated identifiers for `fsl_eval` aliases.
     loop {
         let mut changed = false;
         for (_, parsed) in &parsed_files {
@@ -1416,7 +1416,7 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
                     if type_aliases.contains(&name) {
                         continue;
                     }
-                    if names_qsl_eval(&aliases, |finder| finder.visit_type(&type_item.ty)) {
+                    if names_fsl_eval(&aliases, |finder| finder.visit_type(&type_item.ty)) {
                         type_aliases.insert(name);
                         changed = true;
                     }
@@ -1448,7 +1448,7 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
                 for impl_item in &item_impl.items {
                     if let syn::ImplItem::Fn(method) = impl_item {
                         if is_pub(&method.vis)
-                            && names_qsl_eval(&aliases, |finder| {
+                            && names_fsl_eval(&aliases, |finder| {
                                 finder.visit_signature(&method.sig)
                             })
                         {
@@ -1470,9 +1470,9 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
             }
             let violated = match item {
                 syn::Item::Fn(function) => {
-                    names_qsl_eval(&aliases, |finder| finder.visit_signature(&function.sig))
+                    names_fsl_eval(&aliases, |finder| finder.visit_signature(&function.sig))
                 }
-                _ => names_qsl_eval(&aliases, |finder| finder.visit_item(item)),
+                _ => names_fsl_eval(&aliases, |finder| finder.visit_item(item)),
             };
             if violated {
                 if let Some(name) = item_name(item) {
@@ -1484,7 +1484,7 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
     // Every `pub use` at the crate root that re-exports something from
     // `spine` -- the module's own re-export, not merely an item defined
     // inside `spine.rs`/`spine/*.rs` (already covered by the loop above).
-    let lib = qsl_replay_src.join("lib.rs");
+    let lib = fsl_replay_src.join("lib.rs");
     let text = fs::read_to_string(&lib).map_err(|error| Error::io(&lib, error))?;
     let parsed = syn::parse_file(&text)
         .map_err(|error| Error::new(Code::Usage, format!("{}: {error}", lib.display())))?;
@@ -1493,10 +1493,10 @@ pub(crate) fn spine_surface_qsl_eval_findings(qsl_replay_src: &Path) -> Result<V
     for item in &parsed.items {
         if let syn::Item::Use(use_item) = item {
             if is_pub(&use_item.vis)
-                && names_qsl_eval(&lib_aliases, |finder| finder.visit_item_use(use_item))
+                && names_fsl_eval(&lib_aliases, |finder| finder.visit_item_use(use_item))
             {
                 findings.push(format!(
-                    "{}: re-export names a qsl_eval path",
+                    "{}: re-export names a fsl_eval path",
                     lib.display()
                 ));
             }
@@ -1533,38 +1533,38 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
-    /// Every `Role::Qsl` scan root now has to exist: a
+    /// Every `Role::Fsl` scan root now has to exist: a
     /// missing one is an error, not a silently skipped tree. Tests that
-    /// exercise `Role::Qsl` rules but are not themselves about a missing
+    /// exercise `Role::Fsl` rules but are not themselves about a missing
     /// root (every one below except tc_arch_lint_api_surface_015/019, which
     /// test exactly that) call this first so the extracted-crate roots they
     /// don't care about are present, but empty.
-    fn ensure_qsl_roots(root: &Path) {
+    fn ensure_fsl_roots(root: &Path) {
         for relative in [
             "src",
-            "qsl-foundation/src",
-            "qsl-cst/src",
-            "qsl-source/src",
-            "qsl-forms/src",
-            "qsl-semantics/src",
-            "qsl-package/src",
-            "qsl-eval/src",
-            "qsl-route/src",
-            "qsl-replay/src",
-            "qsl-analyze/src",
+            "fsl-foundation/src",
+            "fsl-cst/src",
+            "fsl-source/src",
+            "fsl-forms/src",
+            "fsl-semantics/src",
+            "fsl-package/src",
+            "fsl-eval/src",
+            "fsl-route/src",
+            "fsl-replay/src",
+            "fsl-analyze/src",
         ] {
             fs::create_dir_all(root.join(relative)).unwrap();
         }
     }
 
     /// T12-G, the one shipped-code rule: the vehicle for the scanner's own
-    /// tests (allowed prefix `check` of `qsl-semantics`).
+    /// tests (allowed prefix `check` of `fsl-semantics`).
     fn t12g() -> &'static Rule {
         RULES.iter().find(|rule| rule.id == "T12-G").unwrap()
     }
 
     /// One checked-term constructor reference, outside any allow-list.
-    const CONSTRUCT: &str = "fn f() {\n    let _ = quire_checked::construct::term(p);\n}\n";
+    const CONSTRUCT: &str = "fn f() {\n    let _ = filament_checked::construct::term(p);\n}\n";
 
     /// tc_arch_lint_api_surface_001: module-path mapping matches Rust's own
     /// `mod.rs`/`foo.rs` convention and the crate-root special case.
@@ -1594,12 +1594,12 @@ mod tests {
     fn tc_arch_lint_api_surface_002_missing_symbol_is_pending_not_vacuous_pass() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "src/lib.rs", "pub mod value;\n");
-        let rule = &RULES[0]; // T12-A: requires qsl-replay/src/lib.rs, absent here.
+        let rule = &RULES[0]; // T12-A: requires fsl-replay/src/lib.rs, absent here.
         let outcome = evaluate(rule, dir.path(), None).unwrap();
         assert_eq!(outcome.rule_id, rule.id);
         match &outcome.status {
             RuleStatus::Pending(reason) => assert!(
-                reason.contains("qsl-replay/src/lib.rs"),
+                reason.contains("fsl-replay/src/lib.rs"),
                 "pending reason must name the missing path, got: {reason}"
             ),
             other => panic!("expected Pending, got {other:?}"),
@@ -1615,8 +1615,8 @@ mod tests {
     #[test]
     fn tc_arch_lint_api_surface_003_disallowed_caller_is_a_violation() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
-        write(dir.path(), "qsl-semantics/src/library/mod.rs", CONSTRUCT);
+        ensure_fsl_roots(dir.path());
+        write(dir.path(), "fsl-semantics/src/library/mod.rs", CONSTRUCT);
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
         assert_eq!(outcome.status, RuleStatus::Live);
         assert_eq!(outcome.violations.len(), 1);
@@ -1632,10 +1632,10 @@ mod tests {
     #[test]
     fn tc_arch_lint_api_surface_004_allowed_caller_is_not_a_violation() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
+        ensure_fsl_roots(dir.path());
         write(
             dir.path(),
-            "qsl-semantics/src/check/normalize.rs",
+            "fsl-semantics/src/check/normalize.rs",
             CONSTRUCT,
         );
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
@@ -1652,8 +1652,8 @@ mod tests {
     #[test]
     fn tc_arch_lint_api_surface_005_segment_boundary_not_string_prefix() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
-        write(dir.path(), "qsl-semantics/src/check_query.rs", CONSTRUCT);
+        ensure_fsl_roots(dir.path());
+        write(dir.path(), "fsl-semantics/src/check_query.rs", CONSTRUCT);
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
         assert_eq!(outcome.violations.len(), 1);
         assert_eq!(outcome.violations[0].module, "check_query");
@@ -1668,7 +1668,7 @@ mod tests {
     #[test]
     fn tc_arch_lint_api_surface_022_cfg_test_mod_declaration_excludes_its_file() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
+        ensure_fsl_roots(dir.path());
         write(
             dir.path(),
             "src/value/widget.rs",
@@ -1685,23 +1685,23 @@ mod tests {
 
     /// tc_arch_lint_api_surface_008 (negative control, #249 review HIGH-2): a
     /// CG-shaped consumer tree, given as T12-A's `--cg` scan root, that calls
-    /// the `qsl-replay` facade from a disallowed module is a real, failing
-    /// violation -- T12-A must scan the CG tree, not the QSL tree, once its
-    /// `requires_path` gate (QSL's own `qsl-replay/src/lib.rs`) is
+    /// the `fsl-replay` facade from a disallowed module is a real, failing
+    /// violation -- T12-A must scan the CG tree, not the FSL tree, once its
+    /// `requires_path` gate (FSL's own `fsl-replay/src/lib.rs`) is
     /// satisfied.
     #[trace("TC-157", "FR-060-AC-3")]
     #[test]
     fn tc_arch_lint_api_surface_008_consumer_tree_violation_is_caught() {
-        let qsl_dir = tempfile::tempdir().unwrap();
-        write(qsl_dir.path(), "qsl-replay/src/lib.rs", "pub fn run() {}\n");
+        let fsl_dir = tempfile::tempdir().unwrap();
+        write(fsl_dir.path(), "fsl-replay/src/lib.rs", "pub fn run() {}\n");
         let cg_dir = tempfile::tempdir().unwrap();
         write(
             cg_dir.path(),
             "src/oracle.rs",
-            "fn f() {\n    qsl_replay::run();\n}\n",
+            "fn f() {\n    fsl_replay::run();\n}\n",
         );
         let rule = &RULES[0]; // T12-A
-        let outcome = evaluate(rule, qsl_dir.path(), Some(cg_dir.path())).unwrap();
+        let outcome = evaluate(rule, fsl_dir.path(), Some(cg_dir.path())).unwrap();
         assert_eq!(outcome.status, RuleStatus::Live);
         assert_eq!(outcome.violations.len(), 1);
         assert_eq!(outcome.violations[0].module, "oracle");
@@ -1715,32 +1715,32 @@ mod tests {
     #[trace("TC-157", "FR-060-AC-1")]
     #[test]
     fn tc_arch_lint_api_surface_009_live_rule_with_no_scan_root_needs_root() {
-        let qsl_dir = tempfile::tempdir().unwrap();
-        write(qsl_dir.path(), "qsl-replay/src/lib.rs", "pub fn run() {}\n");
-        let rule = &RULES[0]; // T12-A: live (qsl-replay/src/lib.rs exists).
-        let outcome = evaluate(rule, qsl_dir.path(), None).unwrap();
+        let fsl_dir = tempfile::tempdir().unwrap();
+        write(fsl_dir.path(), "fsl-replay/src/lib.rs", "pub fn run() {}\n");
+        let rule = &RULES[0]; // T12-A: live (fsl-replay/src/lib.rs exists).
+        let outcome = evaluate(rule, fsl_dir.path(), None).unwrap();
         assert_eq!(outcome.status, RuleStatus::NeedsRoot(Role::Cg));
         assert!(outcome.violations.is_empty());
         assert!(!outcome.passed());
     }
 
     /// tc_arch_lint_api_surface_020 (negative control): a CG call spelled
-    /// `quire_spec_language::replay::` is a T12-A violation even from the
+    /// `filament_spec_language::replay::` is a T12-A violation even from the
     /// allowed `replay` module -- the root crate has no `replay` module, so
     /// that spelling can never be a pass.
     #[trace("TC-157", "FR-060-AC-3")]
     #[test]
     fn tc_arch_lint_api_surface_020_root_crate_replay_path_is_a_violation() {
-        let qsl_dir = tempfile::tempdir().unwrap();
-        write(qsl_dir.path(), "qsl-replay/src/lib.rs", "pub fn run() {}\n");
+        let fsl_dir = tempfile::tempdir().unwrap();
+        write(fsl_dir.path(), "fsl-replay/src/lib.rs", "pub fn run() {}\n");
         let cg_dir = tempfile::tempdir().unwrap();
         write(
             cg_dir.path(),
             "src/replay.rs",
-            "fn f() {\n    quire_spec_language::replay::run();\n    qsl_replay::run();\n}\n",
+            "fn f() {\n    filament_spec_language::replay::run();\n    fsl_replay::run();\n}\n",
         );
         let rule = &RULES[0]; // T12-A
-        let outcome = evaluate(rule, qsl_dir.path(), Some(cg_dir.path())).unwrap();
+        let outcome = evaluate(rule, fsl_dir.path(), Some(cg_dir.path())).unwrap();
         assert_eq!(outcome.status, RuleStatus::Live);
         assert_eq!(outcome.violations.len(), 1, "{:?}", outcome.violations);
         assert_eq!(outcome.violations[0].module, "replay");
@@ -1749,29 +1749,29 @@ mod tests {
     }
 
     /// tc_arch_lint_api_surface_025 (negative control): every
-    /// spelling that reaches `qsl_replay::spine` is a T12-A violation, even
+    /// spelling that reaches `fsl_replay::spine` is a T12-A violation, even
     /// from the allowed `replay` module -- a direct path, `use ...::spine;`
     /// then `spine::compile`, a `spine::compile` leaf inside a use group, a
     /// renamed import, a crate alias, a glob import and a path inside a
-    /// macro -- while `qsl_replay::replay` passes.
+    /// macro -- while `fsl_replay::replay` passes.
     #[trace("TC-157", "FR-060-AC-3")]
     #[test]
     fn tc_arch_lint_api_surface_025_spine_compile_is_not_the_facade() {
-        let qsl_dir = tempfile::tempdir().unwrap();
-        write(qsl_dir.path(), "qsl-replay/src/lib.rs", "pub fn run() {}\n");
+        let fsl_dir = tempfile::tempdir().unwrap();
+        write(fsl_dir.path(), "fsl-replay/src/lib.rs", "pub fn run() {}\n");
         let cases: [(&str, usize); 7] = [
-            ("fn f() {\n    qsl_replay::spine::compile(a, b, c, d, e);\n}\n", 2),
-            ("use qsl_replay::spine;\nfn f() {\n    spine::compile(a, b, c, d, e);\n}\n", 1),
-            ("use qsl_replay::{replay, spine::compile};\nfn f() {\n    compile(a, b, c, d, e);\n}\n", 1),
-            ("use qsl_replay::spine as s;\nfn f() {\n    s::compile(a, b, c, d, e);\n}\n", 1),
-            ("use qsl_replay as q;\nfn f() {\n    q::spine::compile(a, b, c, d, e);\n}\n", 3),
-            ("use qsl_replay::*;\nfn f() {\n    spine::compile(a, b, c, d, e);\n}\n", 1),
-            ("fn f() {\n    let _ = format!(\"{:?}\", qsl_replay::spine::compile(a));\n}\n", 2),
+            ("fn f() {\n    fsl_replay::spine::compile(a, b, c, d, e);\n}\n", 2),
+            ("use fsl_replay::spine;\nfn f() {\n    spine::compile(a, b, c, d, e);\n}\n", 1),
+            ("use fsl_replay::{replay, spine::compile};\nfn f() {\n    compile(a, b, c, d, e);\n}\n", 1),
+            ("use fsl_replay::spine as s;\nfn f() {\n    s::compile(a, b, c, d, e);\n}\n", 1),
+            ("use fsl_replay as q;\nfn f() {\n    q::spine::compile(a, b, c, d, e);\n}\n", 3),
+            ("use fsl_replay::*;\nfn f() {\n    spine::compile(a, b, c, d, e);\n}\n", 1),
+            ("fn f() {\n    let _ = format!(\"{:?}\", fsl_replay::spine::compile(a));\n}\n", 2),
         ];
         for (source, line) in cases {
             let cg_dir = tempfile::tempdir().unwrap();
             write(cg_dir.path(), "src/replay.rs", source);
-            let outcome = evaluate(&RULES[0], qsl_dir.path(), Some(cg_dir.path())).unwrap();
+            let outcome = evaluate(&RULES[0], fsl_dir.path(), Some(cg_dir.path())).unwrap();
             assert_eq!(outcome.status, RuleStatus::Live);
             let lines: Vec<usize> = outcome.violations.iter().map(|site| site.line).collect();
             assert_eq!(lines, [line], "{source}");
@@ -1781,64 +1781,64 @@ mod tests {
         write(
             cg_dir.path(),
             "src/replay.rs",
-            "use qsl_replay::{replay, ReplayRefusal};\nfn f() {\n    qsl_replay::replay(w);\n}\n",
+            "use fsl_replay::{replay, ReplayRefusal};\nfn f() {\n    fsl_replay::replay(w);\n}\n",
         );
-        let outcome = evaluate(&RULES[0], qsl_dir.path(), Some(cg_dir.path())).unwrap();
+        let outcome = evaluate(&RULES[0], fsl_dir.path(), Some(cg_dir.path())).unwrap();
         assert!(outcome.passed(), "{:?}", outcome.violations);
     }
 
     /// tc_arch_lint_api_surface_010 (negative control, #249 review round 2
-    /// H-1): a `--qsl` root whose manifest is not quire-spec-language's own
+    /// H-1): a `--fsl` root whose manifest is not filament-spec-language's own
     /// is rejected before any rule is evaluated -- previously this reached
-    /// a rule's `Pending` branch and exited 0 with a QSL-specific
+    /// a rule's `Pending` branch and exited 0 with an FSL-specific
     /// reason describing a tree it never scanned.
     #[trace("TC-157", "FR-060-AC-1")]
     #[test]
-    fn tc_arch_lint_api_surface_010_non_qsl_root_is_rejected() {
+    fn tc_arch_lint_api_surface_010_non_fsl_root_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         write(
             dir.path(),
             "Cargo.toml",
-            "[package]\nname = \"quire-contract-runtime\"\nversion = \"0.1.0\"\n",
+            "[package]\nname = \"filament-contract-runtime\"\nversion = \"0.1.0\"\n",
         );
         write(
             dir.path(),
             "src/exact/node.rs",
             "pub struct NodeKey([u8; 32]);\n",
         );
-        let error = assert_is_qsl_root(dir.path()).unwrap_err();
+        let error = assert_is_fsl_root(dir.path()).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("is not a quire-spec-language checkout"),
+                .contains("is not a filament-spec-language checkout"),
             "{error}"
         );
     }
 
-    /// tc_arch_lint_api_surface_011: a `--qsl` root whose manifest really is
-    /// quire-spec-language's own is accepted.
+    /// tc_arch_lint_api_surface_011: a `--fsl` root whose manifest really is
+    /// filament-spec-language's own is accepted.
     #[trace("TC-157", "FR-060-AC-1")]
     #[test]
-    fn tc_arch_lint_api_surface_011_qsl_root_is_accepted() {
+    fn tc_arch_lint_api_surface_011_fsl_root_is_accepted() {
         let dir = tempfile::tempdir().unwrap();
         write(
             dir.path(),
             "Cargo.toml",
-            "[package]\nname = \"quire-spec-language\"\nversion = \"0.2.0\"\n",
+            "[package]\nname = \"filament-spec-language\"\nversion = \"0.2.0\"\n",
         );
-        assert_is_qsl_root(dir.path()).unwrap();
+        assert_is_fsl_root(dir.path()).unwrap();
     }
 
-    /// tc_arch_lint_api_surface_014 (ADR-011 §7.3 X-2): a `Role::Qsl` rule
-    /// scans `qsl-foundation/src/` too, not only the root crate's own
-    /// `src/` -- the extracted layer-F crate is as much "QSL's own tree" as
+    /// tc_arch_lint_api_surface_014 (ADR-011 §7.3 X-2): a `Role::Fsl` rule
+    /// scans `fsl-foundation/src/` too, not only the root crate's own
+    /// `src/` -- the extracted layer-F crate is as much "FSL's own tree" as
     /// the root crate.
     #[trace("TC-157", "FR-060-AC-3")]
     #[test]
-    fn tc_arch_lint_api_surface_014_qsl_foundation_crate_is_scanned() {
+    fn tc_arch_lint_api_surface_014_fsl_foundation_crate_is_scanned() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
-        write(dir.path(), "qsl-foundation/src/digest.rs", CONSTRUCT);
+        ensure_fsl_roots(dir.path());
+        write(dir.path(), "fsl-foundation/src/digest.rs", CONSTRUCT);
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
         assert_eq!(outcome.status, RuleStatus::Live);
         assert_eq!(outcome.violations.len(), 1);
@@ -1847,30 +1847,30 @@ mod tests {
     }
 
     /// tc_arch_lint_api_surface_015: a checkout with no
-    /// `qsl-foundation/` directory at all is an error, the same as the root
+    /// `fsl-foundation/` directory at all is an error, the same as the root
     /// crate's own `src/` being absent (tc_arch_lint_api_surface_009). Every
     /// listed root is required precisely so a crate rename or move this
     /// scanner's own root list has not caught up with fails loudly instead
     /// of silently scanning nothing there.
     #[trace("TC-157", "FR-060-AC-2")]
     #[test]
-    fn tc_arch_lint_api_surface_015_missing_qsl_foundation_crate_is_an_error() {
+    fn tc_arch_lint_api_surface_015_missing_fsl_foundation_crate_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("src")).unwrap();
-        write(dir.path(), "qsl-semantics/src/library/mod.rs", CONSTRUCT);
+        write(dir.path(), "fsl-semantics/src/library/mod.rs", CONSTRUCT);
         let error = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap_err();
-        assert!(error.to_string().contains("qsl-foundation/src"), "{error}");
+        assert!(error.to_string().contains("fsl-foundation/src"), "{error}");
     }
 
-    /// tc_arch_lint_api_surface_016 (ADR-011 §7.3 X-3): a `Role::Qsl` rule
-    /// scans `qsl-cst/src/` too, the same way tc_arch_lint_api_surface_014
-    /// covers `qsl-foundation/src/`.
+    /// tc_arch_lint_api_surface_016 (ADR-011 §7.3 X-3): a `Role::Fsl` rule
+    /// scans `fsl-cst/src/` too, the same way tc_arch_lint_api_surface_014
+    /// covers `fsl-foundation/src/`.
     #[trace("TC-157", "FR-060-AC-3")]
     #[test]
-    fn tc_arch_lint_api_surface_016_qsl_cst_crate_is_scanned() {
+    fn tc_arch_lint_api_surface_016_fsl_cst_crate_is_scanned() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
-        write(dir.path(), "qsl-cst/src/token.rs", CONSTRUCT);
+        ensure_fsl_roots(dir.path());
+        write(dir.path(), "fsl-cst/src/token.rs", CONSTRUCT);
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
         assert_eq!(outcome.status, RuleStatus::Live);
         assert_eq!(outcome.violations.len(), 1);
@@ -1879,19 +1879,19 @@ mod tests {
     }
 
     /// tc_arch_lint_api_surface_017 (R-1, review-335-v2): a constructor
-    /// passed as a value (`.map(quire_checked::construct::term)`) is caught
+    /// passed as a value (`.map(filament_checked::construct::term)`) is caught
     /// the same as an ordinary call from a disallowed module. Both spellings
     /// are planted in the same disallowed module to prove neither is missed.
     #[trace("TC-157", "FR-060-AC-3")]
     #[test]
     fn tc_arch_lint_api_surface_017_path_form_call_is_a_violation() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
+        ensure_fsl_roots(dir.path());
         write(
             dir.path(),
             "src/value/reference.rs",
-            "fn f() {\n    quire_checked::construct::term(p);\n}\n\
-             fn g(x: Option<u8>) -> Option<u8> {\n    x.map(quire_checked::construct::term)\n}\n",
+            "fn f() {\n    filament_checked::construct::term(p);\n}\n\
+             fn g(x: Option<u8>) -> Option<u8> {\n    x.map(filament_checked::construct::term)\n}\n",
         );
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
         assert_eq!(outcome.status, RuleStatus::Live);
@@ -1904,29 +1904,29 @@ mod tests {
     }
 
     /// tc_arch_lint_api_surface_018 (ADR-011 §7.3 X-10, X-4,
-    /// X-5, X-6, X-9): a `Role::Qsl` rule
-    /// scans `qsl-replay/src/`, `qsl-source/src/`, `qsl-forms/src/`,
-    /// `qsl-semantics/src/` and `qsl-route/src/` too, the same way tc_arch_lint_api_surface_014/016
-    /// cover `qsl-foundation/src/` and `qsl-cst/src/`. Each crate gets its
+    /// X-5, X-6, X-9): a `Role::Fsl` rule
+    /// scans `fsl-replay/src/`, `fsl-source/src/`, `fsl-forms/src/`,
+    /// `fsl-semantics/src/` and `fsl-route/src/` too, the same way tc_arch_lint_api_surface_014/016
+    /// cover `fsl-foundation/src/` and `fsl-cst/src/`. Each crate gets its
     /// own checkout so one crate's violation cannot stand in for the other's.
     #[trace("TC-157", "FR-060-AC-3")]
     #[test]
-    fn tc_arch_lint_api_surface_018_qsl_replay_and_qsl_source_crates_are_scanned() {
+    fn tc_arch_lint_api_surface_018_fsl_replay_and_fsl_source_crates_are_scanned() {
         for (file, module) in [
-            ("qsl-replay/src/identity.rs", "identity"),
-            ("qsl-source/src/preflight.rs", "preflight"),
-            ("qsl-forms/src/dispatch.rs", "dispatch"),
-            ("qsl-semantics/src/library/identity.rs", "library::identity"),
-            ("qsl-route/src/lib.rs", ""),
+            ("fsl-replay/src/identity.rs", "identity"),
+            ("fsl-source/src/preflight.rs", "preflight"),
+            ("fsl-forms/src/dispatch.rs", "dispatch"),
+            ("fsl-semantics/src/library/identity.rs", "library::identity"),
+            ("fsl-route/src/lib.rs", ""),
         ] {
             let dir = tempfile::tempdir().unwrap();
-            ensure_qsl_roots(dir.path());
+            ensure_fsl_roots(dir.path());
             write(dir.path(), file, CONSTRUCT);
             let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
             assert_eq!(outcome.status, RuleStatus::Live, "{file}");
             assert_eq!(outcome.violations.len(), 1, "{file}");
             assert_eq!(outcome.violations[0].module, module, "{file}");
-            // The module path alone does not name the crate (`qsl-route`'s
+            // The module path alone does not name the crate (`fsl-route`'s
             // `lib.rs` and the root crate's are both `""`), so the file is
             // checked too.
             assert!(
@@ -1940,24 +1940,24 @@ mod tests {
 
     /// tc_arch_lint_api_surface_019: a checkout missing any listed crate
     /// root is an error, the same as tc_arch_lint_api_surface_015 for
-    /// `qsl-foundation/`. Every listed root is required precisely so a crate
+    /// `fsl-foundation/`. Every listed root is required precisely so a crate
     /// rename or move this scanner's root list has not caught up with fails
     /// loudly instead of silently scanning nothing there.
     #[trace("TC-157", "FR-060-AC-2")]
     #[test]
-    fn tc_arch_lint_api_surface_019_missing_qsl_replay_or_qsl_source_crate_is_an_error() {
+    fn tc_arch_lint_api_surface_019_missing_fsl_replay_or_fsl_source_crate_is_an_error() {
         for missing in [
-            "qsl-replay/src",
-            "qsl-analyze/src",
-            "qsl-source/src",
-            "qsl-forms/src",
-            "qsl-package/src",
-            "qsl-eval/src",
-            "qsl-route/src",
-            "qsl-semantics/src",
+            "fsl-replay/src",
+            "fsl-analyze/src",
+            "fsl-source/src",
+            "fsl-forms/src",
+            "fsl-package/src",
+            "fsl-eval/src",
+            "fsl-route/src",
+            "fsl-semantics/src",
         ] {
             let dir = tempfile::tempdir().unwrap();
-            ensure_qsl_roots(dir.path());
+            ensure_fsl_roots(dir.path());
             fs::remove_dir_all(dir.path().join(missing)).unwrap();
             write(dir.path(), "src/value/enumeration.rs", CONSTRUCT);
             let error = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap_err();
@@ -1977,12 +1977,12 @@ mod tests {
     #[test]
     fn tc_157_block_comment_opener_in_a_string_does_not_hide_a_later_mint() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
+        ensure_fsl_roots(dir.path());
         write(
             dir.path(),
-            "qsl-semantics/src/library/mod.rs",
+            "fsl-semantics/src/library/mod.rs",
             "fn glob() -> &'static str {\n    \"src/*.rs\"\n}\n\
-             fn a_new_function() {\n    quire_checked::construct::term(p);\n}\n",
+             fn a_new_function() {\n    filament_checked::construct::term(p);\n}\n",
         );
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
         assert_eq!(outcome.violations.len(), 1, "{:?}", outcome.violations);
@@ -1997,11 +1997,11 @@ mod tests {
     #[test]
     fn tc_157_call_split_across_lines_fails() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
+        ensure_fsl_roots(dir.path());
         write(
             dir.path(),
-            "qsl-semantics/src/library/mod.rs",
-            "fn f() {\n    quire_checked\n        ::\n        construct\n        ::\n        term\n        (p);\n}\n",
+            "fsl-semantics/src/library/mod.rs",
+            "fn f() {\n    filament_checked\n        ::\n        construct\n        ::\n        term\n        (p);\n}\n",
         );
         let outcome = evaluate(t12g(), dir.path(), Some(dir.path())).unwrap();
         assert_eq!(outcome.violations.len(), 1, "{:?}", outcome.violations);
@@ -2009,28 +2009,28 @@ mod tests {
         assert!(!outcome.passed());
     }
 
-    /// tc_arch_lint_api_surface_029 (T12-G, FR-400-AC-3): a `quire_checked::construct`
-    /// path from `qsl-eval`, `qsl-package` or `qsl-semantics`' `model` fails,
+    /// tc_arch_lint_api_surface_029 (T12-G, FR-400-AC-3): a `filament_checked::construct`
+    /// path from `fsl-eval`, `fsl-package` or `fsl-semantics`' `model` fails,
     /// naming file, line and module; `check` and
     /// `value::definition` pass; `library` fails.
     #[trace("TC-157", "FR-060-AC-2", "FR-400-AC-3")]
     #[test]
     fn tc_arch_lint_api_surface_029_construct_outside_the_checker_is_a_violation() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
+        ensure_fsl_roots(dir.path());
         let call =
-            "fn f() {\n    let _ = quire_checked::construct::admitted_integer_division(p);\n}\n";
-        write(dir.path(), "qsl-eval/src/run.rs", call);
-        write(dir.path(), "qsl-package/src/emit.rs", call);
-        write(dir.path(), "qsl-semantics/src/model/key.rs", call);
-        write(dir.path(), "qsl-semantics/src/check/deep/node.rs", call);
-        write(dir.path(), "qsl-semantics/src/library/mod.rs", call);
-        write(dir.path(), "qsl-semantics/src/value/definition.rs", call);
-        write(dir.path(), "qsl-semantics/src/value/other.rs", call);
+            "fn f() {\n    let _ = filament_checked::construct::admitted_integer_division(p);\n}\n";
+        write(dir.path(), "fsl-eval/src/run.rs", call);
+        write(dir.path(), "fsl-package/src/emit.rs", call);
+        write(dir.path(), "fsl-semantics/src/model/key.rs", call);
+        write(dir.path(), "fsl-semantics/src/check/deep/node.rs", call);
+        write(dir.path(), "fsl-semantics/src/library/mod.rs", call);
+        write(dir.path(), "fsl-semantics/src/value/definition.rs", call);
+        write(dir.path(), "fsl-semantics/src/value/other.rs", call);
         write(
             dir.path(),
-            "qsl-semantics/src/model/test_only.rs",
-            "#[cfg(test)]\nmod tests {\n    fn f() { quire_checked::construct::x(); }\n}\n",
+            "fsl-semantics/src/model/test_only.rs",
+            "#[cfg(test)]\nmod tests {\n    fn f() { filament_checked::construct::x(); }\n}\n",
         );
         let rule = RULES.iter().find(|rule| rule.id == "T12-G").unwrap();
         let outcome = evaluate(rule, dir.path(), Some(dir.path())).unwrap();
@@ -2047,20 +2047,20 @@ mod tests {
         assert_eq!(
             found,
             vec![
-                ("qsl-eval/src/run.rs".to_owned(), 2, "run".to_owned()),
-                ("qsl-package/src/emit.rs".to_owned(), 2, "emit".to_owned()),
+                ("fsl-eval/src/run.rs".to_owned(), 2, "run".to_owned()),
+                ("fsl-package/src/emit.rs".to_owned(), 2, "emit".to_owned()),
                 (
-                    "qsl-semantics/src/library/mod.rs".to_owned(),
+                    "fsl-semantics/src/library/mod.rs".to_owned(),
                     2,
                     "library".to_owned()
                 ),
                 (
-                    "qsl-semantics/src/model/key.rs".to_owned(),
+                    "fsl-semantics/src/model/key.rs".to_owned(),
                     2,
                     "model::key".to_owned()
                 ),
                 (
-                    "qsl-semantics/src/value/other.rs".to_owned(),
+                    "fsl-semantics/src/value/other.rs".to_owned(),
                     2,
                     "value::other".to_owned()
                 ),
@@ -2079,43 +2079,43 @@ mod tests {
     #[test]
     fn tc_arch_lint_api_surface_031_construct_is_found_through_alias_group_and_glob() {
         let dir = tempfile::tempdir().unwrap();
-        ensure_qsl_roots(dir.path());
+        ensure_fsl_roots(dir.path());
         let spellings = [
             (
-                "qsl-eval/src/alias.rs",
-                "use quire_checked as qc;\nfn f() { let _ = qc::construct::admitted_integer_division(p); }\n",
+                "fsl-eval/src/alias.rs",
+                "use filament_checked as qc;\nfn f() { let _ = qc::construct::admitted_integer_division(p); }\n",
             ),
             (
-                "qsl-eval/src/group.rs",
-                "use quire_checked::{construct::admitted_integer_division, key::DeclarationKey};\n",
+                "fsl-eval/src/group.rs",
+                "use filament_checked::{construct::admitted_integer_division, key::DeclarationKey};\n",
             ),
-            ("qsl-eval/src/glob.rs", "use quire_checked::construct::*;\n"),
-            ("qsl-eval/src/module.rs", "use quire_checked::construct;\n"),
+            ("fsl-eval/src/glob.rs", "use filament_checked::construct::*;\n"),
+            ("fsl-eval/src/module.rs", "use filament_checked::construct;\n"),
             (
-                "qsl-eval/src/rename.rs",
-                "use quire_checked::construct::admitted_integer_division as admit;\n",
-            ),
-            (
-                "qsl-eval/src/macro_arg.rs",
-                "fn f() { m!(quire_checked::construct::admitted_integer_division(p)); }\n",
+                "fsl-eval/src/rename.rs",
+                "use filament_checked::construct::admitted_integer_division as admit;\n",
             ),
             (
-                "qsl-semantics/src/library/mod.rs",
-                "use quire_checked::construct::admitted_integer_division;\n",
+                "fsl-eval/src/macro_arg.rs",
+                "fn f() { m!(filament_checked::construct::admitted_integer_division(p)); }\n",
             ),
             (
-                "qsl-semantics/src/value/definition.rs",
-                "use quire_checked::construct::package_id;\n",
+                "fsl-semantics/src/library/mod.rs",
+                "use filament_checked::construct::admitted_integer_division;\n",
             ),
             (
-                "qsl-semantics/src/check/mod.rs",
-                "use quire_checked as qc;\nuse qc::construct::*;\nuse quire_checked::{construct::package_id};\n",
+                "fsl-semantics/src/value/definition.rs",
+                "use filament_checked::construct::package_id;\n",
             ),
             (
-                "qsl-semantics/src/value/definition/inner.rs",
-                "fn f() { quire_checked::construct::admitted_integer_division(p); }\n",
+                "fsl-semantics/src/check/mod.rs",
+                "use filament_checked as qc;\nuse qc::construct::*;\nuse filament_checked::{construct::package_id};\n",
             ),
-            ("qsl-eval/src/unrelated.rs", "use quire_checked::key::DeclarationKey;\nuse other::construct::x;\n"),
+            (
+                "fsl-semantics/src/value/definition/inner.rs",
+                "fn f() { filament_checked::construct::admitted_integer_division(p); }\n",
+            ),
+            ("fsl-eval/src/unrelated.rs", "use filament_checked::key::DeclarationKey;\nuse other::construct::x;\n"),
         ];
         for (path, text) in spellings {
             write(dir.path(), path, text);
@@ -2132,14 +2132,14 @@ mod tests {
             .collect();
         found.sort();
         let expected: Vec<(String, usize)> = [
-            ("qsl-eval/src/alias.rs", 2),
-            ("qsl-eval/src/glob.rs", 1),
-            ("qsl-eval/src/group.rs", 1),
-            ("qsl-eval/src/macro_arg.rs", 1),
-            ("qsl-eval/src/module.rs", 1),
-            ("qsl-eval/src/rename.rs", 1),
-            ("qsl-semantics/src/library/mod.rs", 1),
-            ("qsl-semantics/src/value/definition.rs", 1),
+            ("fsl-eval/src/alias.rs", 2),
+            ("fsl-eval/src/glob.rs", 1),
+            ("fsl-eval/src/group.rs", 1),
+            ("fsl-eval/src/macro_arg.rs", 1),
+            ("fsl-eval/src/module.rs", 1),
+            ("fsl-eval/src/rename.rs", 1),
+            ("fsl-semantics/src/library/mod.rs", 1),
+            ("fsl-semantics/src/value/definition.rs", 1),
         ]
         .into_iter()
         .map(|(file, line)| (file.to_owned(), line))
@@ -2148,61 +2148,61 @@ mod tests {
     }
 
     /// tc_arch_lint_api_surface_030 (T12-G on this repository's own tree,
-    /// FR-400-AC-3): no shipped QSL module outside the allow-list calls a
+    /// FR-400-AC-3): no shipped FSL module outside the allow-list calls a
     /// `construct` constructor.
     #[trace("TC-157", "FR-060-AC-2", "FR-400-AC-3")]
     #[test]
     fn tc_arch_lint_api_surface_030_construct_live_tree_is_clean() {
-        let qsl_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let fsl_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
             .unwrap();
-        assert_is_qsl_root(&qsl_root).unwrap();
+        assert_is_fsl_root(&fsl_root).unwrap();
         let rule = RULES.iter().find(|rule| rule.id == "T12-G").unwrap();
-        let outcome = evaluate(rule, &qsl_root, Some(&qsl_root)).unwrap();
+        let outcome = evaluate(rule, &fsl_root, Some(&fsl_root)).unwrap();
         assert_eq!(outcome.status, RuleStatus::Live);
         assert!(outcome.violations.is_empty(), "{:?}", outcome.violations);
         assert!(outcome.passed());
     }
 
-    /// FR-100-AC-8 (TC-452 step 3) on this repository's own `qsl-replay`
+    /// FR-100-AC-8 (TC-452 step 3) on this repository's own `fsl-replay`
     /// tree: the check passes over the shipped facade.
     #[trace("TC-452", "FR-100-AC-8")]
     #[test]
-    fn tc_452_spine_surface_check_passes_over_qsl_replay() {
-        let qsl_replay_src = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../qsl-replay/src")
+    fn tc_452_spine_surface_check_passes_over_fsl_replay() {
+        let fsl_replay_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fsl-replay/src")
             .canonicalize()
             .unwrap();
-        let findings = spine_surface_qsl_eval_findings(&qsl_replay_src).unwrap();
+        let findings = spine_surface_fsl_eval_findings(&fsl_replay_src).unwrap();
         assert!(findings.is_empty(), "{findings:?}");
     }
 
     /// FR-100-AC-8 (TC-452 step 3): a probe that adds
-    /// `pub use qsl_eval::value::QualifiedName;` to `qsl_replay` fails the
+    /// `pub use fsl_eval::value::QualifiedName;` to `fsl_replay` fails the
     /// check, naming the re-export.
     #[trace("TC-452", "FR-100-AC-8")]
     #[test]
-    fn tc_452_spine_surface_check_fails_over_a_qsl_eval_reexport_probe() {
+    fn tc_452_spine_surface_check_fails_over_a_fsl_eval_reexport_probe() {
         let dir = tempfile::tempdir().unwrap();
         write(
             dir.path(),
             "spine.rs",
-            "pub fn run() -> qsl_foundation::Code { todo!() }\n",
+            "pub fn run() -> fsl_foundation::Code { todo!() }\n",
         );
         write(
             dir.path(),
             "lib.rs",
-            "pub mod spine;\npub use qsl_eval::value::QualifiedName;\n",
+            "pub mod spine;\npub use fsl_eval::value::QualifiedName;\n",
         );
-        let findings = spine_surface_qsl_eval_findings(dir.path()).unwrap();
+        let findings = spine_surface_fsl_eval_findings(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
-        assert!(findings[0].contains("re-export names a qsl_eval path"));
+        assert!(findings[0].contains("re-export names a fsl_eval path"));
     }
 
-    /// FR-100-AC-8: a public function's *signature* naming a `qsl_eval`
-    /// path is a violation; a `qsl_eval` path used only in its *body* is
-    /// not (the facade's own implementation may depend on `qsl_eval`
+    /// FR-100-AC-8: a public function's *signature* naming a `fsl_eval`
+    /// path is a violation; a `fsl_eval` path used only in its *body* is
+    /// not (the facade's own implementation may depend on `fsl_eval`
     /// freely -- only its public interface may not name it).
     #[trace("TC-452", "FR-100-AC-8")]
     #[test]
@@ -2211,11 +2211,11 @@ mod tests {
         write(
             dir.path(),
             "spine.rs",
-            "pub fn run(x: qsl_eval::value::QualifiedName) { }\n\
-             pub fn compile() {\n    let _ = qsl_eval::value::QualifiedName::new;\n}\n",
+            "pub fn run(x: fsl_eval::value::QualifiedName) { }\n\
+             pub fn compile() {\n    let _ = fsl_eval::value::QualifiedName::new;\n}\n",
         );
         write(dir.path(), "lib.rs", "pub mod spine;\n");
-        let findings = spine_surface_qsl_eval_findings(dir.path()).unwrap();
+        let findings = spine_surface_fsl_eval_findings(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("fn run"));
     }
@@ -2224,26 +2224,26 @@ mod tests {
     /// facade surface scan, not only files directly under `spine/`.
     #[trace("TC-452", "FR-100-AC-8")]
     #[test]
-    fn tc_452_spine_surface_check_rejects_qsl_eval_in_a_nested_module() {
+    fn tc_452_spine_surface_check_rejects_fsl_eval_in_a_nested_module() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "spine.rs", "pub mod clause;\n");
         write(dir.path(), "spine/clause.rs", "pub mod nested;\n");
         write(
             dir.path(),
             "spine/clause/nested.rs",
-            "pub fn expose() -> qsl_eval::value::QualifiedName { todo!() }\n",
+            "pub fn expose() -> fsl_eval::value::QualifiedName { todo!() }\n",
         );
         write(dir.path(), "lib.rs", "pub mod spine;\n");
 
-        let findings = spine_surface_qsl_eval_findings(dir.path()).unwrap();
+        let findings = spine_surface_fsl_eval_findings(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("nested.rs"), "{findings:?}");
         assert!(findings[0].contains("fn expose"), "{findings:?}");
     }
 
-    /// FND-001: a `pub` field typed through a `use qsl_eval::... as X`
+    /// FND-001: a `pub` field typed through a `use fsl_eval::... as X`
     /// alias is a violation, even though its own type text never spells
-    /// `qsl_eval` literally.
+    /// `fsl_eval` literally.
     #[trace("TC-452", "FR-100-AC-8")]
     #[test]
     fn tc_452_spine_surface_check_resolves_an_aliased_import_in_a_pub_field() {
@@ -2251,17 +2251,17 @@ mod tests {
         write(
             dir.path(),
             "spine.rs",
-            "use qsl_eval::value::QualifiedName as Ev;\n\
+            "use fsl_eval::value::QualifiedName as Ev;\n\
              pub struct Selected {\n    pub value: Ev,\n}\n",
         );
         write(dir.path(), "lib.rs", "pub mod spine;\n");
-        let findings = spine_surface_qsl_eval_findings(dir.path()).unwrap();
+        let findings = spine_surface_fsl_eval_findings(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("struct Selected"), "{findings:?}");
     }
 
     /// FND-001: a `pub fn` inside an inherent `impl` block returning a
-    /// `qsl_eval` type is a violation; `item_visibility`/`item_name` never
+    /// `fsl_eval` type is a violation; `item_visibility`/`item_name` never
     /// classified `syn::Item::Impl` before, so this bypass this is a real
     /// probe against, not only against the alias resolution above.
     #[trace("TC-452", "FR-100-AC-8")]
@@ -2272,17 +2272,17 @@ mod tests {
             dir.path(),
             "spine.rs",
             "pub struct Selected;\n\
-             impl Selected {\n    pub fn evaluation(&self) -> qsl_eval::value::QualifiedName { todo!() }\n}\n",
+             impl Selected {\n    pub fn evaluation(&self) -> fsl_eval::value::QualifiedName { todo!() }\n}\n",
         );
         write(dir.path(), "lib.rs", "pub mod spine;\n");
-        let findings = spine_surface_qsl_eval_findings(dir.path()).unwrap();
+        let findings = spine_surface_fsl_eval_findings(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("impl fn evaluation"), "{findings:?}");
     }
 
-    /// FND-015: a private `type` alias whose definition names `qsl_eval`
+    /// FND-015: a private `type` alias whose definition names `fsl_eval`
     /// is itself an alias -- a `pub fn` spelling only the alias's own name
-    /// still names `qsl_eval` through it.
+    /// still names `fsl_eval` through it.
     #[trace("TC-452", "FR-100-AC-8")]
     #[test]
     fn tc_452_spine_surface_check_resolves_a_private_type_alias() {
@@ -2290,12 +2290,12 @@ mod tests {
         write(
             dir.path(),
             "spine.rs",
-            "type Q = qsl_eval::value::QualifiedName;\n\
+            "type Q = fsl_eval::value::QualifiedName;\n\
              pub struct Selected;\n\
              impl Selected {\n    pub fn probe(&self) -> Option<Q> { None }\n}\n",
         );
         write(dir.path(), "lib.rs", "pub mod spine;\n");
-        let findings = spine_surface_qsl_eval_findings(dir.path()).unwrap();
+        let findings = spine_surface_fsl_eval_findings(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("impl fn probe"), "{findings:?}");
     }
@@ -2310,7 +2310,7 @@ mod tests {
         write(
             dir.path(),
             "spine.rs",
-            "pub(crate) type Ev = qsl_eval::value::QualifiedName;\n\
+            "pub(crate) type Ev = fsl_eval::value::QualifiedName;\n\
              pub mod call;\n",
         );
         write(
@@ -2320,7 +2320,7 @@ mod tests {
              impl Selected {\n    pub fn probe(&self) -> Option<super::Ev> { None }\n}\n",
         );
         write(dir.path(), "lib.rs", "pub mod spine;\n");
-        let findings = spine_surface_qsl_eval_findings(dir.path()).unwrap();
+        let findings = spine_surface_fsl_eval_findings(dir.path()).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("impl fn probe"), "{findings:?}");
     }

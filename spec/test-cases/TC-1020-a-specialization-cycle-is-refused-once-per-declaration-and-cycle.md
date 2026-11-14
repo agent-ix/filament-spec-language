@@ -3,7 +3,7 @@ id: TC-1020
 title: "A specialization cycle is refused once per declaration and cycle"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
 ---
 # TC-1020: A specialization cycle is refused once per declaration and cycle

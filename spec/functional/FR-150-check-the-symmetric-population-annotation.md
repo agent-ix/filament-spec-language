@@ -3,17 +3,17 @@ id: FR-150
 title: "Check the symmetric population annotation and refuse identity-observing forms at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
 ---
 # FR-150: Check the symmetric population annotation and refuse identity-observing forms at S3
@@ -22,7 +22,7 @@ relationships:
 
 A population declaration may carry the `symmetric` annotation, which states
 that the identities of the population's objects are interchangeable in every
-clause that reads it (ADR-021 SYM-8). QSL SHALL read the annotation at
+clause that reads it (ADR-021 SYM-8). FSL SHALL read the annotation at
 intake, carry it into the checked package, and refuse at S3 every form that
 observes the identity of an annotated population's objects other than by
 equality, dereference, membership and passing as a value (ADR-021 SYM-3).
@@ -39,8 +39,8 @@ rather than from an `inconclusive` verdict after a long request (US-019).
 ## Inputs
 
 - An admitted domain package whose population records may carry the
-  `symmetric` marker (QSpec model contract; the spelling and the marker are
-  QSpec's, see References).
+  `symmetric` marker (FSpec model contract; the spelling and the marker are
+  FSpec's, see References).
 - A `1-draft` unit and its checked clauses: operation preconditions and
   postconditions and invariants (FR-104), temporal clause atoms (FR-123),
   `terminal when` predicates (FR-124), state constraints (FR-158), and
@@ -64,7 +64,7 @@ rather than from an `inconclusive` verdict after a long request (US-019).
 - When a clause reads an annotated population, the checker SHALL refuse
   each of these forms that applies to a value whose static type contains a
   reference into that population:
-  1. a `fold` or `reduce` over a `Set` or `Bag` whose step is outside QSpec
+  1. a `fold` or `reduce` over a `Set` or `Bag` whose step is outside FSpec
      FR-145's commutative and associative catalog, or another traversal that
      depends on element order. The class is decided by catalog membership: a
      step outside the catalog is refused conservatively as an order-sensitive
@@ -85,11 +85,11 @@ rather than from an `inconclusive` verdict after a long request (US-019).
   is not form 4.
 - The forms are refused in the clause kinds of Inputs: operation
   preconditions and postconditions, invariants, temporal clause atoms,
-  `terminal when` predicates, state constraints and refinement rows (QSpec
+  `terminal when` predicates, state constraints and refinement rows (FSpec
   FR-381 "Scope of the check"). A form written outside them, such as in a
   function body, SHALL be checked by the rules that apply without the
   annotation.
-- QSpec FR-145 refuses a `fold` or `reduce` over a `Set` or `Bag` whose step is
+- FSpec FR-145 refuses a `fold` or `reduce` over a `Set` or `Bag` whose step is
   outside its catalog, `ill_typed`/`operator-ineligible`, in every unit.
 - When a clause of those kinds holds such a fold or reduce and the fold's
   source contains a reference into an annotated population, the checker SHALL
@@ -97,7 +97,7 @@ rather than from an `inconclusive` verdict after a long request (US-019).
   FR-145's `operator-ineligible` for it. Otherwise, including such a fold in a
   function body, the checker SHALL report FR-145's `operator-ineligible`. The
   split is per fold, from its source type, since a unit may read an annotated
-  and an unannotated population (QSpec FR-381 "Precedence over FR-145").
+  and an unannotated population (FSpec FR-381 "Precedence over FR-145").
 - The checker SHALL check a `fold` or `reduce` whose step is in the catalog as
   FR-145 does, annotated population or not; it is not form 1. A `fold` whose
   step is outside the catalog, over a `Bag` converted from such a `Set`, is
@@ -106,7 +106,7 @@ rather than from an `inconclusive` verdict after a long request (US-019).
   unannotate or restructure, which is why it takes precedence.
 - Each refusal SHALL be `ill_typed`/`identity-observing-form` at the span of
   the refused node and SHALL name the node kind and the population's
-  declaration identity text. The code and cause are QSpec's (References).
+  declaration identity text. The code and cause are FSpec's (References).
 - The checker SHALL report every refused node of a unit, in source order,
   and SHALL produce no checked package for a unit with one.
 - A clause that observes an annotated population only by equality, field
@@ -140,12 +140,12 @@ rather than from an `inconclusive` verdict after a long request (US-019).
   (temporal clauses), [FR-124](FR-124-declare-intended-terminal-states-and-derive-deadlock-freedom.md)
   (`terminal when`), [FR-158](FR-158-cut-the-search-with-a-state-constraint.md)
   (state constraints).
-- QSpec owns the annotation's spelling, its place in the model contract, the
+- FSpec owns the annotation's spelling, its place in the model contract, the
   identity-observing forms as normative semantics and the diagnostic code
   and cause (ADR-021 QS-3).
 
 ## References
 
-- QSpec half: QSpec FR-381 (Linear STD-134 and STD-244; ADR-021 §9 QS-3): its
+- FSpec half: FSpec FR-381 (Linear STD-134 and STD-244; ADR-021 §9 QS-3): its
   breaking forms, "Scope of the check" and "Precedence over FR-145". Owning
   ticket: Linear QSL-368.

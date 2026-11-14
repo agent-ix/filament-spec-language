@@ -1,14 +1,14 @@
 ---
 id: TC-1199
-title: "An SMT proof settles through the qsl-replay handoff by its checker result"
+title: "An SMT proof settles through the fsl-replay handoff by its checker result"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: verifies
 ---
-# TC-1199: An SMT proof settles through the qsl-replay handoff by its checker result
+# TC-1199: An SMT proof settles through the fsl-replay handoff by its checker result
 
 ## Description
 
@@ -28,7 +28,7 @@ Scope: FR-314-AC-6 and FR-127-AC-14.
    each entry's return value.
 2. Check TC-893's AC-1 bounded certificate for the TP-2 `on origin` claim
    `always[0,3] holds(c.value * c.value <= 9)` at `BoundedComplete{depth: 3}`.
-3. From a crate whose only QSL dependency is `qsl-replay`, call
+3. From a crate whose only FSL dependency is `fsl-replay`, call
    `settle_smt_proof` with outcomes built from step 1's certificates, with
    `BoundedComplete{depth: 3}` and `certificate: None`, and with
    FR-315-AC-30's faulting rebuild.

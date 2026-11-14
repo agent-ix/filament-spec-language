@@ -3,9 +3,9 @@ id: TC-227
 title: "allInstances requires subtype closure, never a partial set"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-227: allInstances requires subtype closure, never a partial set
@@ -24,12 +24,12 @@ FR-084-AC-1; no query runs without an admitted binding. This test targets
 the "no partial substitute" exit condition: it must fail against an
 implementation that returns a collection when subtype closure is missing.
 The implementation binders are delivered by companion PR #763:
-`qsl-eval/tests/it/model_reference_queries.rs::tc_227_incomplete_subtype_closure_is_undefined_through_checked_evaluate`
+`fsl-eval/tests/it/model_reference_queries.rs::tc_227_incomplete_subtype_closure_is_undefined_through_checked_evaluate`
 for the S6a incomplete result, and
-`qsl-semantics/tests/it/model_population.rs::all_instances_requires_declared_subtype_closure`
+`fsl-semantics/tests/it/model_population.rs::all_instances_requires_declared_subtype_closure`
 for the complete-coverage/canonical-order control and the zero-work
 pre-charge incompleteness assertion, and
-`qsl-semantics/tests/it/model_population.rs::all_instances_does_not_walk_unrelated_type_catalog`
+`fsl-semantics/tests/it/model_population.rs::all_instances_does_not_walk_unrelated_type_catalog`
 for the no-catalog-walk guard. Both names were verified on the companion PR
 branch; the source implementation remains in that code PR.
 

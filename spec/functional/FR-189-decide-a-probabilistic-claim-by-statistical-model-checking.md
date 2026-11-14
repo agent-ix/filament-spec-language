@@ -3,36 +3,36 @@ id: FR-189
 title: "Decide a probabilistic claim by statistical model checking (EN-4)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-186
+  - target: ix://agent-ix/filament-spec-language/FR-186
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-187
+  - target: ix://agent-ix/filament-spec-language/FR-187
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-188
+  - target: ix://agent-ix/filament-spec-language/FR-188
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-280
+  - target: ix://agent-ix/filament-spec-language/FR-280
     type: references
-  - target: ix://agent-ix/quire-specification/FR-410
+  - target: ix://agent-ix/filament-specification/FR-410
     type: references
 ---
 # FR-189: Decide a probabilistic claim by statistical model checking (EN-4)
 
 ## Description
 
-QSL's `statistical` module in layer A, crate `qsl-analyze` (ADR-029
+FSL's `statistical` module in layer A, crate `fsl-analyze` (ADR-029
 CB-3), SHALL decide a probabilistic claim under
 a workload by sampling behaviours with FR-188's sampler, deciding the
 claim's event or measure on each sample with the layer-5 evaluator (ADR-018
@@ -60,7 +60,7 @@ pub struct StatisticalRequest<'a> {
     pub claim: &'a CheckedProbabilisticClaim,       // FR-186, scheduler Workload, confidence Some
     pub method: StatisticalMethod,
     pub seed: u64,
-    pub sampler: DefinitionRef,                     // checked by identity: quire.simulation.sampler/v1 (FR-188)
+    pub sampler: DefinitionRef,                     // checked by identity: filament.simulation.sampler/v1 (FR-188)
     pub limits: StatisticalLimits,                  // FR-191
     pub max_witnesses: u32,                         // FR-193; default 8
     pub workers: usize,                             // FR-191 "Workers": setting `statistical.workers`, default 1
@@ -92,7 +92,7 @@ pub struct TestResult { pub index: u32, pub initial: u32, pub binding: Option<Bi
     pub quantile: Option<MeasureValue>,         // a quantile claim's nearest-rank quantile of the counted samples
     pub samples: u64, pub draws: u64,
     pub undefined: Option<UndefinedEvaluation> }   // ADR-024 SV-11; `where` names the sample
-pub enum MeasureValue { Value(Rational), Censored }  // a quantity's Rational is in the reward unit, which FR-186 normalizes the threshold into (QSpec FR-410)
+pub enum MeasureValue { Value(Rational), Censored }  // a quantity's Rational is in the reward unit, which FR-186 normalizes the threshold into (FSpec FR-410)
 pub enum Decision { Accepted, Rejected, Undecided(UndecidedCause) }
 pub enum UndecidedCause { IndifferenceRegion, UndecidedSuccessor }
 ```
@@ -107,7 +107,7 @@ trace index `j` alone, so the method never raises it), `ConfidenceBeyondPrecisio
 no normal-quantile bound for the regenerative method, `FractionForEvent` for a
 fraction a Bernoulli test cannot take, `Internal` for a broken exact-arithmetic
 invariant,
-`ExactOnlyForm` for a claim form only EN-5 decides (QSpec FR-411, ADR-028
+`ExactOnlyForm` for a claim form only EN-5 decides (FSpec FR-411, ADR-028
 XF-5), or `NotStatistical` for a method
 the claim's form does not admit (FR-190, SPRT and Clopper–Pearson below).
 
@@ -162,7 +162,7 @@ the claim's form does not admit (FR-190, SPRT and Clopper–Pearson below).
   to the empirical nearest-rank quantile of its counted samples: the
   `⌈q · n⌉`-th smallest of the `n` counted samples, a censored sample
   ordered after every finite value. A quantity-typed `M` gives a `Value`
-  holding the magnitude in the unit of the claim's threshold `c` (QSpec FR-410).
+  holding the magnitude in the unit of the claim's threshold `c` (FSpec FR-410).
 - When the rank `⌈q · n⌉` lies among the censored samples, the test's
   `quantile` SHALL be `Censored`.
 - A test of any other claim form, and a quantile test with no estimate, SHALL
@@ -177,10 +177,10 @@ exact `Rational` magnitude in the reward's declared unit `u`. The
 separate unit member. Its caller interprets the value using the checked reward
 type in the request; a sampled witness uses the same checked reward type from
 the model subject. FR-186 normalizes the threshold into that reward unit, so
-the result also satisfies QSpec FR-410's threshold-unit rule. EN-4 SHALL keep
+the result also satisfies FSpec FR-410's threshold-unit rule. EN-4 SHALL keep
 the magnitude in `u` and SHALL NOT convert it to a base unit. A quantity
 operand written in another unit enters the checked measure only through the
-explicit conversion required by QSpec FR-142.
+explicit conversion required by FSpec FR-142.
 
 The canonical finite magnitude is an exact `Rational` in lowest terms: its
 denominator is positive, its numerator and denominator have gcd 1, and only
@@ -204,19 +204,19 @@ unsupported condition.
 
 - If the event, the measure or its comparison evaluates `Undefined` on a
   sample, then EN-4 SHALL decide that test Rejected at once, stop the
-  run, as QSpec FR-408 does, and set the test's `undefined` to
+  run, as FSpec FR-408 does, and set the test's `undefined` to
   `UndefinedEvaluation{where, cause}`, `where` naming the test index, the
   trace index and the position at which the claim evaluated undefined
   (ADR-024 SV-11, ADR-018 UE-1).
 
 ### Methods
 
-- EN-4 SHALL implement QSpec FR-408's fixed-sample method (Okamoto) and
+- EN-4 SHALL implement FSpec FR-408's fixed-sample method (Okamoto) and
   sequential method (SPRT) over each test's `α'`, `β'` and the claim's
   `ι`, with FR-408's rational bounds, conservative rounding and two-sum
   SPRT decision, in exact rationals, so the decision is a function of the
   counts alone.
-- EN-4 SHALL implement QSpec FR-408's exact binomial method
+- EN-4 SHALL implement FSpec FR-408's exact binomial method
   (Clopper–Pearson, ADR-024 ST-11): it SHALL draw Okamoto's `N` counted
   samples, decide each test from the binomial tails `G(k, θ)` and `L(k, θ)`
   of its `k` holding samples against `β'` and `α'` with FR-408's binary
@@ -271,7 +271,7 @@ unsupported condition.
 - If a sample stops with `SampleStop::TotalAboveDrawRange`, then the run
   SHALL stop and return `Unsupported{cause: TotalAboveDrawRange{total}}`, which
   FR-192 settles as `unsupported` with the kebab-case cause
-  `total-above-draw-range{total}`, `total` a decimal string (QSpec
+  `total-above-draw-range{total}`, `total` a decimal string (FSpec
   FR-181-AC-14, FR-331).
 - If a sample stops with `SampleStop::GeneratorMismatch`, then EN-4 SHALL
   refuse with `StatisticalRefusal`'s `GeneratorMismatch`. A refusal carries no
@@ -287,12 +287,12 @@ unsupported condition.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-189-AC-1 | `P95` (ADR-024 §7.2) with Okamoto runs one test of `N = 23,026` samples, each of at most 11 positions, and settles `Completed` Accepted with an interval of half-width `1/100` whose lower end is at least `19/20`; the same claim at `<= 2 ms` settles Rejected with an interval whose upper end is below `19/20`. With SPRT, at `5 ms` it settles Accepted and at `2 ms` Rejected, each with a sample count below 23,026. | Test (TC-624) |
-| FR-189-AC-2 | The Okamoto sample count is computed exactly with conservative rounding: `N = 23,026` for `α = β = 1/100`, `ι = 1/100`, `m = 1`, and `N = 26,492` for `m = 2`. The SPRT thresholds for `α' = β' = 1/100` are rationals `T+ >= ln 100` and `T- <= -ln 100` within QSpec's stated precision of them. Two runs with the same request give equal outcomes. | Test (TC-624) |
+| FR-189-AC-2 | The Okamoto sample count is computed exactly with conservative rounding: `N = 23,026` for `α = β = 1/100`, `ι = 1/100`, `m = 1`, and `N = 26,492` for `m = 2`. The SPRT thresholds for `α' = β' = 1/100` are rationals `T+ >= ln 100` and `T- <= -ln 100` within FSpec's stated precision of them. Two runs with the same request give equal outcomes. | Test (TC-624) |
 | FR-189-AC-3 | A two-initial-state variant of `Service` runs `m = 2` tests, each with `α' = β' = 1/200`, sample `i` of test `j` at trace index `2i + j`. A variant with two symmetric servers under an admitted symmetry declaration runs `m = 1`, with a workload that weights each of its operations equally and with one whose operation weights differ from one another. | Test (TC-624) |
 | FR-189-AC-4 | A quantile claim over a variant of `Service` whose `request` sets `phase = Busy` with probability `1/2` (a random parameter) and otherwise stays `Idle` counts only activated samples: with Okamoto the result has `samples = 23,026` and `draws > samples`. A censored sample (no `Done` within the window) counts as exceeding the threshold. `quantile 0.5 of (M) >= 3` (`M` is a placeholder for the claim's parenthesised measure) reduces to the event `M < 3` with the strict bound `< 1/2`; over a variant where `M` is 1 or 3 with probability 1/2 each, `Pr(M < 3) = 1/2`, so the reduced bound is false, as the claim is (its 1/2-quantile is 1). | Test (TC-624) |
 | FR-189-AC-5 | The ADR-024 §7.1 `NoFault` claim with Okamoto at `indifference 0.0005` computes `N = 9,210,341`. A `Health` variant with a non-unique post-state returns `Unsupported` with cause `NotMarkov`; a variant with an undecided contract conjunction settles that test Undecided, `UndecidedSuccessor`; a `mean of` claim with SPRT is refused `NotStatistical`. | Test (TC-624) |
 | FR-189-AC-6 | Over a `Coin` model (object `c` with `v: Int[0, 1]`, initially 0, in a population `coins` bounded to 1; operation `drop(b: Int[0, 1])` with `random Coin::drop(b) ~ { 0: 1, 1: 1 };` and postcondition `count(o in M::coins where true) = b`, so that `drop` with `b = 0` deletes the coin; workload weight `drop` 1) and the claim `probability >= 0.5 [ always[0,3] holds(c.v = 0) ]` over `(c: M::Coin)` with `alpha 0.01, beta 0.01, indifference 0.1`, Okamoto and seed 7, the test decides Rejected at the first sample in trace-index order whose path takes `drop` with `b = 0`, draws no further sample, and carries `UndefinedEvaluation` naming that sample's test index 0, its trace index and the first position after a `drop` with `b = 0`, cause `absent-key`; the claim settles `Completed` Rejected. | Test (TC-640) |
-| FR-189-AC-7 | Over a `Wide` model (object `w` with `v: Boolean`, initially false; operation `spin(x: Boolean)` with `random Wide::spin(x) ~ { true: 1, false: 115792089237316195423570985008687907853269984665640564039457584007913129639936 };` (that decimal is 2^256) and postcondition `self.v = x`; workload weight `spin` 1) and the claim `probability >= 0.5 [ always[0,3] holds(w.v or not w.v) ]` with `alpha 0.01, beta 0.01, indifference 0.1`, one initial state so `m = 1`, Okamoto and seed 7, the run stops at the first sample and returns `Unsupported` with cause `TotalAboveDrawRange{total}` and `total` `2^256 + 1`; the claim settles `unsupported` with cause `total-above-draw-range` and `total` `"115792089237316195423570985008687907853269984665640564039457584007913129639937"` (QSpec TC-354 SM-09). | Test (TC-624) |
+| FR-189-AC-7 | Over a `Wide` model (object `w` with `v: Boolean`, initially false; operation `spin(x: Boolean)` with `random Wide::spin(x) ~ { true: 1, false: 115792089237316195423570985008687907853269984665640564039457584007913129639936 };` (that decimal is 2^256) and postcondition `self.v = x`; workload weight `spin` 1) and the claim `probability >= 0.5 [ always[0,3] holds(w.v or not w.v) ]` with `alpha 0.01, beta 0.01, indifference 0.1`, one initial state so `m = 1`, Okamoto and seed 7, the run stops at the first sample and returns `Unsupported` with cause `TotalAboveDrawRange{total}` and `total` `2^256 + 1`; the claim settles `unsupported` with cause `total-above-draw-range` and `total` `"115792089237316195423570985008687907853269984665640564039457584007913129639937"` (FSpec TC-354 SM-09). | Test (TC-624) |
 | FR-189-AC-8 | Fixture `Undef` (object `z` with `v: Int[0, 1]`, initially 1; the claim `probability >= 0.5 [ always[0,0] holds(1 mod (1 - z.v) = 0) ]` with Okamoto): the first sample is undefined, the one test is Rejected with `estimate` `None`, `samples` 0 and `undefined` naming test 0, trace index 0, position 0; the verdict's `estimate` is `None`. A two-initial-state variant whose test 1 is undefined keeps test 0's Accepted result beside test 1's. | Test (TC-624) |
 | FR-189-AC-9 | Over `Service` with the claim `P95` and Okamoto, a test ended by an undefined second sample (the second sample's event evaluated undefined) has `estimate` the first sample's value (`0` or `1`) and no `interval`; a decided Okamoto test has an `interval` and an SPRT test has none; a mean-of-fraction test ended the same way has the first sample as its estimate; and a regenerative `LongRun` test that ends before its first positive-weight cycle has `estimate` `None`. | Test (TC-624) |
 | FR-189-AC-10 | Through the `BehaviourSampler` seam, with the SPRT method over a claim `>= 19/20` (so no Okamoto sample count applies), tests with these (decision, estimate) pairs give the verdict's `estimate` of: Rejected `9/10` and Rejected `4/5` the test at `4/5`; Rejected `9/10` and Rejected `9/10` the test at index 0; Accepted `97/100` and Rejected with no estimate (test 1, since an undefined test stops the run) the test with no estimate; Undecided `19/20` and Accepted `99/100` the Undecided test; Accepted `97/100` and Accepted `99/100` the test at `97/100`; for a claim `<= 1/20` Accepted `1/100` and Accepted `3/100` the test at `3/100`; for a quantile `>= 3` claim reduced to `< 1/2` with estimates `2/5` and `9/20` the test at `9/20`. | Test (TC-624) |
@@ -310,7 +310,7 @@ unsupported condition.
 - [FR-075](FR-075-compute-candidates-from-registered-backends.md),
   [FR-186](FR-186-check-probabilistic-claim-forms-at-s3.md),
   [FR-187](FR-187-give-model-transitions-step-probabilities-and-rewards.md),
-  [FR-188](FR-188-draw-weighted-choices-with-the-qspec-sampler.md),
+  [FR-188](FR-188-draw-weighted-choices-with-the-fspec-sampler.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-280](FR-280-serve-the-driver-s-lower-generate-and-prove-operations.md)
   (EN-4's provider manifest).
@@ -319,8 +319,8 @@ unsupported condition.
 
 ## References
 
-- QSpec half, which owns the normative statistical methods and the rational
-  bounds for logarithms, square roots and normal quantiles: QSpec FR-408
-  (Linear STD-137), and QSpec FR-410's statistical result and quantity-unit
+- FSpec half, which owns the normative statistical methods and the rational
+  bounds for logarithms, square roots and normal quantiles: FSpec FR-408
+  (Linear STD-137), and FSpec FR-410's statistical result and quantity-unit
   context.
 - Owning ticket: Linear QSL-371.

@@ -3,7 +3,7 @@ id: TC-644
 title: "State-graph certificates that do not hold are rejected and never prove"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
 ---
 # TC-644: State-graph certificates that do not hold are rejected and never prove

@@ -3,11 +3,11 @@ id: US-017
 title: "Learn which fairness premise a verdict depends on or cannot use"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-132
+  - target: ix://agent-ix/filament-spec-language/FR-132
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-133
+  - target: ix://agent-ix/filament-spec-language/FR-133
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-017: Learn which fairness premise a verdict depends on or cannot use

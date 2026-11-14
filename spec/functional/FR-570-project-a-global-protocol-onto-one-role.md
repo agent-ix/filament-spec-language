@@ -3,36 +3,36 @@ id: FR-570
 title: "Project a checked global protocol onto one role"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-036
+  - target: ix://agent-ix/filament-spec-language/ADR-036
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-519
+  - target: ix://agent-ix/filament-spec-language/FR-519
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-572
+  - target: ix://agent-ix/filament-spec-language/FR-572
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-573
+  - target: ix://agent-ix/filament-spec-language/FR-573
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-575
+  - target: ix://agent-ix/filament-spec-language/FR-575
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-174
+  - target: ix://agent-ix/filament-specification/FR-174
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-053
+  - target: ix://agent-ix/filament-specification/FR-053
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-054
+  - target: ix://agent-ix/filament-specification/FR-054
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-172
+  - target: ix://agent-ix/filament-specification/FR-172
     type: depends_on
 ---
 # FR-570: Project a checked global protocol onto one role
 
 ## Description
 
-QSL SHALL decide the `local-projection` capability kind for a checked global
+FSL SHALL decide the `local-projection` capability kind for a checked global
 protocol and one role, in the `bounded-static` profile (FR-575), and return
 either the role's local graph with the evidence that it is sound or a minimal
 global-path counterexample. It implements ADR-036 PA-9 to PA-12 and PA-25
-(projection artifacts) and QSpec FR-174-AC-1 to AC-5. The key of the result
+(projection artifacts) and FSpec FR-174-AC-1 to AC-5. The key of the result
 is FR-572's; its settlement is FR-573's.
 
 ## Inputs
@@ -141,11 +141,11 @@ edges.
 ## Dependencies
 
 - ADR-036 PA-3, PA-5, PA-6, PA-9 to PA-12, PA-22, PA-25.
-- [FR-519](FR-519-publish-the-protocol-read-surface-the-quire-protocol-link-layer-imports.md): the only graph reader.
+- [FR-519](FR-519-publish-the-protocol-read-surface-the-filament-protocol-link-layer-imports.md): the only graph reader.
 - [FR-572](FR-572-key-protocol-analysis-results-structurally.md): the key.
 - [FR-573](FR-573-settle-protocol-analysis-results-with-the-fr-360-labels.md): settlement.
 - [FR-575](FR-575-answer-unsupported-for-constructs-outside-the-bounded-static-profile.md): the profile and unsupported causes.
-- QSpec FR-174, FR-053, FR-054, FR-172.
+- FSpec FR-174, FR-053, FR-054, FR-172.
 
 ## References
 

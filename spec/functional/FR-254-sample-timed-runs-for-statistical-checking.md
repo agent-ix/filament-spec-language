@@ -3,19 +3,19 @@ id: FR-254
 title: "Sample timed runs for statistical checking"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-231
+  - target: ix://agent-ix/filament-spec-language/FR-231
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-193
+  - target: ix://agent-ix/filament-spec-language/FR-193
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-253
+  - target: ix://agent-ix/filament-spec-language/FR-253
     type: depends_on
 ---
 # FR-254: Sample timed runs for statistical checking
@@ -123,7 +123,7 @@ server is available. Each estimate comes with its confidence and the grid
 
 ## References
 
-- QSpec half: QSpec FR-420 (Linear STD-139) owns timed events and
+- FSpec half: FSpec FR-420 (Linear STD-139) owns timed events and
   measures, free delays and the sampler's delay draws on the `2^-q` grid
-  (ADR-026 OV-8); QSpec FR-408 (Linear STD-137) owns the
+  (ADR-026 OV-8); FSpec FR-408 (Linear STD-137) owns the
   statistical methods.

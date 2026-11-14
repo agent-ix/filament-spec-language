@@ -3,7 +3,7 @@ id: TC-429
 title: "The I2 reader locates its version refusal and its limits in the artifact"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-429: The I2 reader locates its version refusal and its limits in the artifact
@@ -21,7 +21,7 @@ Scope: FR-096-AC-9, FR-096-AC-10, FR-096-AC-18.
 
 ## Test Procedure
 
-1. Read bytes whose `contract_version` is `quire.checked-package/v3`.
+1. Read bytes whose `contract_version` is `filament.checked-package/v3`.
 2. Read a v2 wire whose graph has more nodes than node bound `B`.
 3. Read bytes longer than the artifact byte ceiling.
 4. Read bytes that are not JSON.
@@ -37,8 +37,8 @@ Every fixture is a real v2 wire mutated at one member.
 ## Expected Results
 
 - Step 1: `StageFailure::Refused`, code `unknown_wire`/`unsupported-wire`,
-  `actual` `quire.checked-package/v3` and `expected`
-  `quire.checked-package/v2`, locus `Locus::Artifact` with pointer `/contract_version`.
+  `actual` `filament.checked-package/v3` and `expected`
+  `filament.checked-package/v2`, locus `Locus::Artifact` with pointer `/contract_version`.
 - Step 2: `StageFailure::Limit`, kind node count, bound `B`, IR's consumed
   counter, locus `Locus::Artifact` with IR's pointer.
 - Step 3: kind input bytes and no locus.

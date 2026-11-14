@@ -3,7 +3,7 @@ id: TC-201
 title: "value::ieee and value::division carry no negotiate_* function"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-078
+  - target: ix://agent-ix/filament-spec-language/FR-078
     type: verifies
 ---
 # TC-201: value::ieee and value::division carry no negotiate_* function
@@ -29,7 +29,7 @@ doc comment), one per removed public name — `negotiate_ieee`,
 `IntegerDivisionDisposition` — each asserting the unresolved-import diagnostic
 rather than an untagged or type-error `compile_fail`, plus a positive-control
 doctest confirming a surviving name (`AdmittedIeeeProfile`) still resolves
-from the same path. `cargo test --doc -p quire-spec-language` runs them.
+from the same path. `cargo test --doc -p filament-spec-language` runs them.
 
 **Steps 1-3 are retired.** They described a source scan over `value::ieee`
 and `value::division` as modules; neither module exists any more.

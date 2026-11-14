@@ -3,29 +3,29 @@ id: FR-228
 title: "Derive flush fairness under tso and visibility fairness under ra"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-212
+  - target: ix://agent-ix/filament-spec-language/FR-212
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-221
+  - target: ix://agent-ix/filament-spec-language/FR-221
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-436
+  - target: ix://agent-ix/filament-specification/FR-436
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-437
+  - target: ix://agent-ix/filament-specification/FR-437
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-365
+  - target: ix://agent-ix/filament-specification/FR-365
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-339
+  - target: ix://agent-ix/filament-spec-language/FR-339
     type: depends_on
 ---
 # FR-228: Derive flush fairness under tso and visibility fairness under ra
@@ -33,9 +33,9 @@ relationships:
 ## Description
 
 Every infinite-trace clause over a subject with a `tso` `parallel` SHALL
-carry QSpec FR-436's flush fairness, `fair weak each flush(b)` per thread
+carry FSpec FR-436's flush fairness, `fair weak each flush(b)` per thread
 (ADR-025 MF-1), and every infinite-trace clause over a subject with an `ra`
-`parallel` SHALL carry QSpec FR-437's visibility fairness (ADR-025 MF-2),
+`parallel` SHALL carry FSpec FR-437's visibility fairness (ADR-025 MF-2),
 each with a `memory` origin, beside the authored and scheduler constraints
 (FR-212). FR-126's fairness filter and canonical loop SHALL read flush fairness
 as weak constraints and visibility fairness as ADR-025 MF-2's per-pair edge
@@ -71,7 +71,7 @@ visible.
   each with origin `memory`; the member's (thread, location) pairs are
   derived from the resolved program, one per location a thread loads.
 - FR-126's fairness filter SHALL accept a lasso only when it meets each
-  memory constraint as QSpec FR-436 and FR-437 define it.
+  memory constraint as FSpec FR-436 and FR-437 define it.
 - For visibility fairness on an SCC, the filter SHALL remove the edges on
   which a thread `b` loads a location `ℓ`, for each pair (`b`, `ℓ`) whose
   edges in the SCC include a load of `ℓ` by `b` but none from `ℓ`'s mo-last
@@ -81,7 +81,7 @@ visible.
 - The filter SHALL apply the removals of every failing strong constraint (the
   states that enable it) and of every failing visibility pair in one
   refinement step, so the first passing component is the same under every
-  order (ADR-025 MF-2, QSpec FR-365).
+  order (ADR-025 MF-2, FSpec FR-365).
 - The filter SHALL accept a component only when, for every pair it still
   loads, it holds an edge on which `b` loads `ℓ` from `ℓ`'s mo-last message.
   A component is its states with the edges the decomposition kept.
@@ -103,15 +103,15 @@ visible.
 - No request member, unit member or derived item SHALL remove a memory
   constraint from a fairness set: the constraints belong to the model
   (ADR-025 MF-1). FR-212's `scheduling adversarial` removes the scheduler
-  constraints only and keeps the memory constraints (QSpec FR-430). That a memory constraint is what rejects a lasso is
+  constraints only and keeps the memory constraints (FSpec FR-430). That a memory constraint is what rejects a lasso is
   observed at FR-126's fairness filter, which is one function over an SCC and
   a fairness set (ADR-018 FA-5), given the set with and without its `memory`
   members. The explicit diagnostic selection below changes only the fairness
   set view used by that one liveness search; it removes no member from the
   checked clause, its obligation identity or the protocol's fairness set.
-- The QSL protocol liveness request SHALL set `ignore_memory_constraints` to
+- The FSL protocol liveness request SHALL set `ignore_memory_constraints` to
   `false` by default.
-- When `ignore_memory_constraints` is `true`, the QSL liveness search SHALL
+- When `ignore_memory_constraints` is `true`, the FSL liveness search SHALL
   use the same clause and subject but omit only fairness members whose origin
   is `memory` from FR-126's fair-component filter. Authored and scheduler
   constraints remain active.
@@ -150,9 +150,9 @@ visible.
   FA-6, CX-5; ADR-027 PA-1 to PA-3, SE-1 (h).
 - [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (fairness filter), FR-212 (fairness set and scheduler constraints),
-  FR-221, FR-222, FR-339 (the component certificate); QSpec FR-365 (the SCC search and its refinement order).
-- QSpec FR-436 and FR-437 own memory fairness and its `memory` origin.
+  FR-221, FR-222, FR-339 (the component certificate); FSpec FR-365 (the SCC search and its refinement order).
+- FSpec FR-436 and FR-437 own memory fairness and its `memory` origin.
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-436, FR-437 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-436, FR-437 (Linear STD-138).

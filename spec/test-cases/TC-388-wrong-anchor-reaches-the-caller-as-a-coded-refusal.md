@@ -1,12 +1,12 @@
 ---
 id: TC-388
-title: "An evaluation-time wrong-anchor snapshot reaches the caller as a coded QSL refusal, not a kernel refusal"
+title: "An evaluation-time wrong-anchor snapshot reaches the caller as a coded FSL refusal, not a kernel refusal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
-# TC-388: An evaluation-time wrong-anchor snapshot reaches the caller as a coded QSL refusal, not a kernel refusal
+# TC-388: An evaluation-time wrong-anchor snapshot reaches the caller as a coded FSL refusal, not a kernel refusal
 
 ## Description
 
@@ -19,15 +19,15 @@ a kernel `Outcome::Refused` inside `FamilyOutcome::Evaluated`, not an
 admission refusal and not a panic. The kernel `Refusal` has no
 `WrongSnapshot` variant (ADR-013 O-16, T-6). Scope: FR-090-AC-7.
 
-This test replaces `qsl-eval/tests/it/model_reference_queries.rs`'s
+This test replaces `fsl-eval/tests/it/model_reference_queries.rs`'s
 `pre_of_a_binding_with_no_pre_anchor_refuses_wrong_anchor` (FR-042-AC-4,
 TC-198). That test asserts
 `Outcome::Refused(Refusal::WrongSnapshot(WrongSnapshotCause::WrongAnchor))`
-on QSL's kernel copy, which is the shape T-6 removes.
+on FSL's kernel copy, which is the shape T-6 removes.
 
 ## Test Procedure
 
-1. Reuse `qsl-eval/tests/it/model_reference_queries.rs`'s scenario: a package with a
+1. Reuse `fsl-eval/tests/it/model_reference_queries.rs`'s scenario: a package with a
    postcondition parameter `p: Population<A>[3]` and the expression
    `pre(allInstances<A>(p))`.
 2. Admit the population argument through `admit_binding` directly. This

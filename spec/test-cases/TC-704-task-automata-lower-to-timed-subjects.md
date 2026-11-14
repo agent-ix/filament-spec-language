@@ -3,19 +3,19 @@ id: TC-704
 title: "Task automata use replayable timed products for deadline checking"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-249
+  - target: ix://agent-ix/filament-spec-language/FR-249
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-238
+  - target: ix://agent-ix/filament-spec-language/FR-238
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-235
+  - target: ix://agent-ix/filament-spec-language/FR-235
     type: verifies
 ---
 # TC-704: Task automata use replayable timed products for deadline checking
@@ -45,10 +45,10 @@ a two-job preemption scenario, a mixed-criticality task with distinct
    that the outcome carries a task-search frontier. Remove an edge, change
    the effective bound, omit a frontier node, and attempt to settle the
    bounded prefix as `Holds`.
-3. Replay the preemption scenario through the QSpec FR-364 contract. Check
+3. Replay the preemption scenario through the FSpec FR-364 contract. Check
    that the existing ModelTrace result arm is used; mutate one derived-step
    identity and require the reader to reject it.
-4. Replay an LO-to-HI source transition through the QSpec FR-364 reader. Run
+4. Replay an LO-to-HI source transition through the FSpec FR-364 reader. Run
    the periodic overload under both fixed_priority and EDF, requiring the
    replayed queue_growth continuation; mutate its occurrence mapping and test
    an overflow-only purported miss.

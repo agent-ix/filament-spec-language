@@ -1,10 +1,10 @@
 [package]
-name = "qsl-fuzz"
+name = "fsl-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
 license = "AGPL-3.0-or-later"
-description = "cargo-fuzz targets: deeply nested QSL sources through the S1 parser and the S3 checker (FR-356-AC-7)."
+description = "cargo-fuzz targets: deeply nested FSL sources through the S1 parser and the S3 checker (FR-356-AC-7)."
 
 [package.metadata]
 cargo-fuzz = true
@@ -12,7 +12,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 # The generator and the S1-to-S4 driver, built and tested by `make ci`.
-qsl-bench = { path = "../qsl-bench" }
+fsl-bench = { path = "../fsl-bench" }
 
 # Its own workspace (`exclude = ["fuzz"]` in the root): the target is a
 # `no_main` libFuzzer binary, which cannot build or link under the main

@@ -3,29 +3,29 @@ id: FR-227
 title: "Carry and replay a weak-memory counterexample"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-217
+  - target: ix://agent-ix/filament-spec-language/FR-217
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-221
+  - target: ix://agent-ix/filament-spec-language/FR-221
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-224
+  - target: ix://agent-ix/filament-spec-language/FR-224
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-228
+  - target: ix://agent-ix/filament-spec-language/FR-228
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-439
+  - target: ix://agent-ix/filament-specification/FR-439
     type: depends_on
 ---
 # FR-227: Carry and replay a weak-memory counterexample
@@ -127,9 +127,9 @@ happens-before computation, so a summary bug cannot produce a false race.
   PX-2; ADR-018 CX-2, CX-3.
 - [FR-128](FR-128-replay-a-model-counterexample.md), FR-217 (protocol
   replay), FR-221, FR-222, FR-224, FR-228.
-- QSpec owns the counterexample wire for memory components and races and
-  their replay (QSpec FR-439, FR-438).
+- FSpec owns the counterexample wire for memory components and races and
+  their replay (FSpec FR-439, FR-438).
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-439 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-439 (Linear STD-138).

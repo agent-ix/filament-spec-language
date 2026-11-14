@@ -3,7 +3,7 @@ id: TC-553
 title: "Concrete steps are decided against an abstract protocol with internal closure and observation labels"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: verifies
 ---
 # TC-553: Concrete steps are decided against an abstract protocol with internal closure and observation labels
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify the abstract protocol state sets with internal closure, visible and
-internal concrete steps, refutations that replay, and QSpec FR-177's
+internal concrete steps, refutations that replay, and FSpec FR-177's
 divergence-freedom, refusal-set, terminal-success and environment-assumption
 checks on the same product.
 
@@ -82,7 +82,7 @@ model (ADR-020 §8) with `peek` removed; `CasTwice` with `peek` kept.
     `ProtocolAssumptionNotEstablished{reason: strengthened}` with the exact
     memory and operation identities and paired paths. Replay confirms the
     flush fairness and violated `inc` constraint.
-11. Exercise QSpec FR-379's refusal and terminal-success vectors on the same
+11. Exercise FSpec FR-379's refusal and terminal-success vectors on the same
     protocol product: a stable implementation refusing `ack` while every
     stable candidate enables it; a permitted refusal where one stable
     candidate refuses; both `concrete-only` and `abstract-only` terminal
@@ -151,7 +151,7 @@ Tag the tests `#[trace("TC-553", "FR-148-AC-n")]`.
 - Step 11: refusal reports `RefusalNotPermitted{position: 1, label: {step:
   "ack", binder: []}}`; the permitted refusal holds. Terminal failures are
   `TerminalSuccessMismatch{direction: concrete-only}` and
-  `{direction: abstract-only}` at their prefix positions. Each QSpec kind
+  `{direction: abstract-only}` at their prefix positions. Each FSpec kind
   replays under FR-379-AC-13; malformed positions, labels or directions
   settle `inconclusive`, `replay-parity`; the incoming step-rule failure
   takes precedence and a model abstract subject yields neither kind.

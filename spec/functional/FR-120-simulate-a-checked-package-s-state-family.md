@@ -3,41 +3,41 @@ id: FR-120
 title: "Simulate a checked package's state family over its operation frames"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: references
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-013
+  - target: ix://agent-ix/filament-specification/FR-013
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
 ---
 # FR-120: Simulate a checked package's state family over its operation frames
 
 ## Description
 
-QSpec FR-181 is the normative source for finite simulation, and QSpec FR-013
-for operation frames. FR-101 is QSL's engine for FR-181: canonical order,
+FSpec FR-181 is the normative source for finite simulation, and FSpec FR-013
+for operation frames. FR-101 is FSL's engine for FR-181: canonical order,
 the state key, the fixed-algorithm sampler, replay, findings and the stopped
 outcomes, over any `TransitionSystem` (FR-101's trait, including its
 `Expansion`, `ExpansionStop` and `Outcome::Stopped`). This requirement
@@ -60,7 +60,7 @@ reads. A unit whose S5 emission refuses today, such as one with `pre` or
 `post` clauses (`Emit(UnlocatedOccurrence { role: Generated })`, pending
 STD-111), is simulated through its S4 package.
 
-Where FR-181 leaves a choice open, this requirement names QSL's choice and
+Where FR-181 leaves a choice open, this requirement names FSL's choice and
 says so.
 
 ## Use case
@@ -76,7 +76,7 @@ set is incomplete, never exhaustive.
 
 ## Inputs
 
-A `ModelSimulationRequest` (`qsl_eval::simulation::model`):
+A `ModelSimulationRequest` (`fsl_eval::simulation::model`):
 
 - `package: &CheckedPackage`, the S4 package;
 - `packages`, FR-056's package input (domain packages by identity and version), and the `ModelNormalizationLimits` FR-106 admission takes;
@@ -146,13 +146,13 @@ pub struct ModelTrace {
 ### Identities
 
 The **declaration identity text** of a `DeclarationKey` is the RFC 8785 JCS
-text of its existing `$defs.DeclarationKey` preimage (`qsl-semantics/src/
-model/key.rs:84-124`, QSpec `model-complete.md` "Identity domains"):
+text of its existing `$defs.DeclarationKey` preimage (`fsl-semantics/src/
+model/key.rs:84-124`, FSpec `model-complete.md` "Identity domains"):
 `{"node":"<node>","package":"<package>"}`. It
 names the package, so two domain packages with equal node identities give
 different texts. It is the text form for every declaration below: the
 `semantic` map's population keys, a record's `name`, a transition's
-operation and an anchor's handler name. This is QSL's choice; FR-181's
+operation and an anchor's handler name. This is FSL's choice; FR-181's
 `<qualified-name>` leaves the text form to the implementation.
 
 ### Initial states
@@ -165,7 +165,7 @@ in the given order, and returns the first failure:
    no object (FR-035), refuses `invalid_runtime_input`/`invalid-value`. A
    key repeated within one universe refuses
    `invalid_runtime_input`/`conflicting-identity`.
-2. Each initial document is a `quire.state.snapshot/v1` snapshot (FR-106
+2. Each initial document is a `filament.state.snapshot/v1` snapshot (FR-106
    "Document forms"), admitted by `StateModel::admit_initial` (see "Frame
    and observation seam"), which runs FR-106 check 1 (read), check 3, check
    4 (model), check 6 (populations and values), check 7 and check 8
@@ -174,7 +174,7 @@ in the given order, and returns the first failure:
      `initialization`. Another `observation` refuses `wrong_snapshot`/
      `wrong-observation`, and another anchor kind refuses `wrong_snapshot`/
      `wrong-anchor`. Treating an initial state as an initialization
-     observation is QSL's choice: QSpec's state contract names
+     observation is FSL's choice: FSpec's state contract names
      initialization and handler anchors for invariants and leaves a
      simulator's initial state to the implementation.
    - check 7 applies to every population of the document. Each universe
@@ -200,7 +200,7 @@ The state key is FR-181's
 `control`, `queues`, `roles`, `observations`, `bounds` and `memory` are empty maps
 (`{"type":"map","entries":[]}`), matching a state family whose only state is
 its populations. FR-181 leaves a population state's typed canonical form to the
-implementation, and QSL's `semantic` member is a map in FR-181's map form:
+implementation, and FSL's `semantic` member is a map in FR-181's map form:
 
 - key: each universe population's declaration identity text, as `text`;
 - value: a map from each object's reference triple to a `record` whose
@@ -226,17 +226,17 @@ A state that lists no extents has no `relationships` entry.
 
 A field declared `Option<T>` holds an option value, `{"type":"option","value":
 <encoded>|null}`. A presence-optional (`?`) field that an object leaves absent
-is the plain `null` of its `{name, value}` entry (QSpec FR-181 "Typed canonical
+is the plain `null` of its `{name, value}` entry (FSpec FR-181 "Typed canonical
 form"); a present one is its bare encoded value.
 
 Every other value encodes in FR-181's typed canonical form, read from its
 declared type:
 
 - a decimal as `{"type":"decimal","coefficient":…,"scale":…}` with its
-  retained coefficient and scale (QSpec FR-140);
+  retained coefficient and scale (FSpec FR-140);
 - a quantity as the `rational` form of its exact magnitude with an added
-  `"unit"` member, since a QSL quantity's magnitude is an exact rational
-  (`quire-exact` `Quantity`);
+  `"unit"` member, since an FSL quantity's magnitude is an exact rational
+  (`filament-exact` `Quantity`);
 - a UUID as `{"type":"uuid","value":…}` holding its K2 canonical payload,
   and a Timestamp as `{"type":"timestamp","nanoseconds":…}` holding its
   signed nanosecond count (FR-056, ADR-034);
@@ -254,20 +254,20 @@ declaration identity text (above) and `unit` is the declared quantity type's
 `UnitId` text (FR-088), and `member` and a
 field's `name` are the declared identifiers: the spellings FR-070 gives the
 same values in a counterexample witness, so a value has one FR-181 text in
-QSL wherever it appears. An object's `record` name stays the declaration
+FSL wherever it appears. An object's `record` name stays the declaration
 identity text of its most-specific type, as above.
 
 Every element of a set or bag is written in FR-181's canonical element
 encoding before the elements are ordered by their JCS bytes, recursively
 through nested options, collections, records, tuples and unions: a decimal
-takes its normalized coefficient and scale (QSpec FR-140), and every other
+takes its normalized coefficient and scale (FSpec FR-140), and every other
 family, a quantity's exact rational included, keeps the form above. A value outside a set
 or bag element keeps its retained form.
 
 A state member that holds a population's objects is typed
 `Set<Reference<T>>` and encodes as FR-181's `set` of reference triples. A
 value of a population type itself, a population handle rather than its
-objects, has no FR-181 form (QSpec FR-181: a type that is a population has
+objects, has no FR-181 form (FSpec FR-181: a type that is a population has
 none). Encoding one, wherever it appears in a state key, a transition
 identity or a step effect, SHALL refuse with the typed `EncodingRefusal`
 naming the population-typed field, receiver, argument or result, never a
@@ -279,7 +279,7 @@ A reference encodes as FR-181's triple: `universe` is the population's
 type's `EffectiveId` as 64 lowercase hex digits, and `identity` the
 lowercase hex of the key's UTF-8 bytes (`c1` is `6331`).
 
-A state's anchor is QSL's choice: QSpec requires an exact named
+A state's anchor is FSL's choice: FSpec requires an exact named
 initialization or handler observation for an invariant and leaves a
 simulated state's anchor to the implementation. An initial state's anchor is its snapshot's
 `{initialization, <name>}`. A reached state's anchor is
@@ -292,7 +292,7 @@ finding.
 
 ### Frame and observation seam
 
-`qsl_semantics::model::state` is the public layer-3 seam `ModelSystem`
+`fsl_semantics::model::state` is the public layer-3 seam `ModelSystem`
 calls. It reuses FR-106's model views, value reader and frame decision:
 
 ```rust
@@ -378,11 +378,11 @@ by asking it about a state that changes that one field.
   object with every field value, built by FR-106's builder; `populations`
   maps each population to `true` (complete).
 - A synthesized state's `DocumentRef` has labels `authority` `quire`,
-  `identity` `quire.simulation.state/<n>`, `n` the decimal position of the
+  `identity` `filament.simulation.state/<n>`, `n` the decimal position of the
   state in the order the exploration first reached it; the state is addressed by that
   identity alone.
 - `ModelSystem` builds each clause evaluation's `AdmittedObservations`
-  directly, since its fields are public (`qsl-semantics/src/model/
+  directly, since its fields are public (`fsl-semantics/src/model/
   observation.rs:309-335`): `usage` is `AdmissionUsage::default()`; `clause`
   is the clause's node key; for an invariant, `current` is the state's
   observation; for a precondition, `pre` is the state's observation and
@@ -569,9 +569,9 @@ application's operation (FR-104) and `r`'s most-specific type conforms to
 the clause's context type.
 
 The effective precondition is `true` when no `pre` clause applies, and
-otherwise is formed as QSpec FR-151's rule `quire.model.conformance.refinement/v1`
-defines it (QSpec FR-151-AC-17 to AC-19, TC-196 D09 to D11): `own(m)` and
-`eff(m)` are QSpec's, and a member's own clauses are conjoined in
+otherwise is formed as FSpec FR-151's rule `filament.model.conformance.refinement/v1`
+defines it (FSpec FR-151-AC-17 to AC-19, TC-196 D09 to D11): `own(m)` and
+`eff(m)` are FSpec's, and a member's own clauses are conjoined in
 ascending clause name (UTF-8 bytes) under FR-006's short-circuit, so an
 undefined clause that sorts before a false one makes the precondition
 undefined and the reverse order makes it `false`. The order does not depend on
@@ -597,7 +597,7 @@ clause in ascending name order (UTF-8 bytes):
   `insufficient-next-charge` at once: the successor set is not known. The stop
   names the limit `EvaluationMeter` whichever counter of the evaluation ran out,
   the counter limits of the exact kernel included (FR-149 relies on this
-  label), and carries that counter: the `quire.value.accounting/v1` counter
+  label), and carries that counter: the `filament.value.accounting/v1` counter
   the `Incomplete` names as exhausted
   (`ExpansionLimit::EvaluationMeter { counter }`). A settlement reads it to
   name the counter's FR-255 accounting setting and the counter's configured
@@ -616,7 +616,7 @@ clause in ascending name order (UTF-8 bytes):
   outcomes.
 
 For the effective precondition the conjunction over one member's own
-clauses is QSpec FR-151's: clauses in ascending name order, each evaluated
+clauses is FSpec FR-151's: clauses in ascending name order, each evaluated
 under FR-006's short-circuit, and evaluation stops at the first clause that is
 not `Completed(true)`; the clauses after it are not evaluated or charged. A
 `Completed(false)` clause makes the precondition `false`: the application is
@@ -636,7 +636,7 @@ An application is enabled when its effective precondition is `true`.
 The application's frame is its operation's frame as FR-114 binds it: the
 operation's one `OperationEffect` (FR-103), the declaring type's frame for
 an inherited operation. The request's only frame source is the checked
-package (FR-115, QSpec FR-013-AC-3). Simulation reads every operation's
+package (FR-115, FSpec FR-013-AC-3). Simulation reads every operation's
 `OperationEffect` from the package, including one that no clause or attempt
 names.
 
@@ -715,7 +715,7 @@ keep every result the enumeration would give:
   meter, through `evaluate_clause`. Only `Completed(v)` solves the
   assignment. Any other outcome (`Undefined`, `Refused`, `Incomplete`) falls
   back to enumeration for that application, so its findings and stops are the
-  enumeration's. A candidate is kept exactly when QSL `=` holds between its
+  enumeration's. A candidate is kept exactly when FSL `=` holds between its
   `f` and `v`. When no value of `f`'s domain equals `v` the solved
   candidate set is empty, which is also what the enumeration yields, since
   its postcondition is false on every candidate: the application has no
@@ -733,7 +733,7 @@ keep every result the enumeration would give:
   request alone. It covers every expansion that generates candidates under
   the subject's `max_candidates` through `ModelSystem`: FR-120's own,
   and the explorers of FR-126 and FR-142 that call it. It does not change the
-  hidden-field candidates of FR-141 (QSpec FR-378), the FR-220 access
+  hidden-field candidates of FR-141 (FSpec FR-378), the FR-220 access
   candidates or the SMT encoding's `smt_encoding.max_candidates` (FR-315),
   each of which keeps its own rule.
 - *Invariant.* For an eligible application the generator produces the same
@@ -786,11 +786,11 @@ per:
   `Population(None)` when it has no universe.
 
 Each root is named by a structural checked-package node key `{package, path,
-ordinal}`, as QSpec FR-331 "Model member domain keys" defines: a field, an
+ordinal}`, as FSpec FR-331 "Model member domain keys" defines: a field, an
 operation parameter or an operation result is keyed under the model
 declaration node of the type that declares it, with path `[0, f, ...]` for a
 field, `[1, o, p, ...]` for a parameter and `[2, o, ...]` for a result; a
-population is named by its `relation`/`population` node (QSpec FR-201
+population is named by its `relation`/`population` node (FSpec FR-201
 `PopulationId`). A root that `classify_extent` finds unbounded makes
 `explore_model` and `sample_model` return `NotSimulated::RequiresBound`
 naming it, before any state is expanded.
@@ -806,16 +806,16 @@ references and its `changed` entries `{object, field, pre, post}`, objects
 in ascending reference-key order and fields in declaration order, each value
 in FR-181's typed canonical form, and the transition's result or none.
 
-Every simulator input is data. The complete-V1 grammar QSL parses has
+Every simulator input is data. The complete-V1 grammar FSL parses has
 declaration and expression forms only, and FR-107's evaluator takes the
 package, the observations and the meter as its whole input.
 The forms that read ambient state outside their anchor refuse at S3, each at
-its own source location, before a `CheckedPackage` exists (QSpec
+its own source location, before a `CheckedPackage` exists (FSpec
 `shared-grammar.md`: "`self`, `result` and `pre(...)` are caller-side anchor
 operations, unavailable as implicit ambient state"):
 
 - `self` outside a state clause: `missing_declaration`/`missing-name` at the
-  `self` (FR-104; `self_reference`, `qsl-semantics/src/check/
+  `self` (FR-104; `self_reference`, `fsl-semantics/src/check/
   check.rs:1667-1673`, refuses at the `self` node's location);
 - `result` outside a `post` clause of an operation with a result:
   `wrong_snapshot`/`wrong-anchor` at the `result` (FR-104);
@@ -824,7 +824,7 @@ operations, unavailable as implicit ambient state"):
 - `reaches` outside a state clause: `ill_typed`/`operator-ineligible` at the
   `reaches` (FR-104).
 
-Every code and cause above is in QSpec `native-diagnostics.md`.
+Every code and cause above is in FSpec `native-diagnostics.md`.
 
 ## Acceptance Criteria
 
@@ -848,7 +848,7 @@ identity text of operation `op`.
 | FR-120-AC-4 | `s0`'s state key has `semantic` equal to `{"type":"map","entries":[{"key":{"type":"text","value":"{\"node\":\"test/counters/counters\",\"package\":\"test/counters\"}"},"value":{"type":"map","entries":[{"key":{"type":"reference","universe":"<U>","object_type":"<E>","identity":"6331"},"value":{"type":"record","name":"{\"node\":\"test/counters/Counter\",\"package\":\"test/counters\"}","fields":[{"name":"value","value":{"type":"integer","value":"0"}},{"name":"label","value":{"type":"integer","value":"0"}},{"name":"next","value":null}]}}]}}]}`, where `<U>` and `<E>` are the universe and effective type of the `ObjectReference` that FR-106 admission gives `c1` in `s0`'s admitted `Observation` (`StateModel::admit_initial`, independent of the simulator's key encoding), each as 64 lowercase hex digits; `control`, `queues`, `roles`, `observations`, `bounds` and `memory` are `{"type":"map","entries":[]}`. `s0` with `c1.label` 1 has a different key. | Test (TC-471) |
 | FR-120-AC-5 | With `increment`, `CanInc`, `Inc` and `invariant Small … at current { self.value < 2 }`, exploration is `Exhaustive` with 3 states, 2 transitions and depth 2, and `findings` holds exactly one entry: `v2`'s state key, depth 2, `InvariantViolated { Small, c1, {handler, <increment>} }`. Adding `reset()` (frame `modifies value`, post `self.value = 0`) makes the run `Exhaustive` with 3 states and 5 transitions, including `v2 → v0`: the violating state is expanded. `s0`'s findings, when any, carry anchor `{initialization, start}`. | Test (TC-472) |
 | FR-120-AC-6 | With `increment`, `Small`, no `pre` or `post` clause and a meter budget of zero, exploration is `Exhaustive` with 3 states, and each state has `InvariantUndetermined` for `Small` and `c1`, its evaluation `Incomplete` with `resource_exhausted`/`insufficient-next-charge`. With budget zero and `CanInc`, the run is `Outcome::Stopped` with cause `resource_exhausted`/`insufficient-next-charge`, frontier `[<s0>]`, category incomplete. With `max_candidates` 2 and `increment` with no clause, the run is `Stopped` with the same cause. | Test (TC-472) |
-| FR-120-AC-7 | `ModelSystem::new` refuses an initial snapshot with `observation` `pre` (`wrong_snapshot`/`wrong-observation`), one anchored `{handler, validate}` (`wrong_snapshot`/`wrong-anchor`), one whose anchor kind is `other` (`invalid_runtime_input`/`wrong-value-kind` with field `anchor`, refused by FR-106's document reader, `qsl-semantics/src/model/observation/document.rs:525-528`, before check 3), and one holding `c3` (`invalid_runtime_input`/`invalid-value`); a universe listing `c1` twice refuses `invalid_runtime_input`/`conflicting-identity`; a universe for a population the package does not declare refuses `invalid_runtime_input`/`wrong-role-mapping`; a universe population absent from the snapshot returns `Incomplete` with `incomplete_population`/`incomplete-scope`. With no universe for `counters`, or with an operation parameter typed `Integer`, `explore_model` returns `NotSimulated::RequiresBound`, and `sample_model` `ModelSampleError::NotSimulated(RequiresBound)`, naming that root's node key and expand no state. | Test (TC-472) |
+| FR-120-AC-7 | `ModelSystem::new` refuses an initial snapshot with `observation` `pre` (`wrong_snapshot`/`wrong-observation`), one anchored `{handler, validate}` (`wrong_snapshot`/`wrong-anchor`), one whose anchor kind is `other` (`invalid_runtime_input`/`wrong-value-kind` with field `anchor`, refused by FR-106's document reader, `fsl-semantics/src/model/observation/document.rs:525-528`, before check 3), and one holding `c3` (`invalid_runtime_input`/`invalid-value`); a universe listing `c1` twice refuses `invalid_runtime_input`/`conflicting-identity`; a universe for a population the package does not declare refuses `invalid_runtime_input`/`wrong-role-mapping`; a universe population absent from the snapshot returns `Incomplete` with `incomplete_population`/`incomplete-scope`. With no universe for `counters`, or with an operation parameter typed `Integer`, `explore_model` returns `NotSimulated::RequiresBound`, and `sample_model` `ModelSampleError::NotSimulated(RequiresBound)`, naming that root's node key and expand no state. | Test (TC-472) |
 | FR-120-AC-8 | A `sample_model` trace (seed `424242`, trace `0`, `max_steps` 4) over the AC-5 package ends `NoSuccessors` at `v2`, records `Small`'s finding at step 2, and replays; the same trace with that finding removed refuses `ReplayError::FindingMismatch` at step 2. With budget zero and `CanInc`, the trace ends `StopReason::Stopped(resource_exhausted/insufficient-next-charge)` at step 0 and replays; replayed against the same package with the default budget it refuses `ReplayError::Stopped { step: 0, recorded: Some(…), replayed: None }`. Two runs with equal inputs give equal `Exploration`s and equal `ModelTrace`s. | Test (TC-472) |
 | FR-120-AC-9 | Over the `test/orders` dispatch fixture (object type `A`, population `pop`, a query operation `ready(): Boolean` of `A` whose effective precondition is `false`, `guard` false): from `t1`, `pre Low { self.ready() }` on `ready` makes `ready` not enabled and records `ContractUndetermined { <ready identity>, none, Low, the family result Undefined with reason precondition-false }`; adding `pre Aaa { false }`, which sorts before `Low`, records no finding; `post LowPost { self.ready() }` on `ready` records the finding with `candidate` = `t1`'s state key and gives no successor. Not covered: the `test/tallies` package with `Tally`, its `Sequence<Int[0, 2]>[1, 1]` field and an empty-frame `touch()` (the `touch` operation and the post-`LowPost` case on it). | Test (TC-472) |
 | FR-120-AC-10 | With `isZero(): Boolean` (empty frame, `post Z { result = (self.value = 0) }`), `v0` has one `isZero` successor, `v0`, whose step effect has result `{"type":"boolean","value":true}`, and `v1` has one, `v1`, with result `false`; the `isZero` result root is in `domains()`. | Test (TC-473) |
@@ -857,10 +857,10 @@ identity text of operation `op`.
 | FR-120-AC-13 | With `spawn()` over a population whose universe has 30 unused keys and each created object's fields ranging over `Int[0, 2]`, `Int[0, 1]` and `Option<Reference<Counter>>`, so the candidate product exceeds 10^9, and `max_candidates` 10, exploration returns `Outcome::Stopped` with `resource_exhausted`/`insufficient-next-charge` after generating at most 11 candidates, and does not allocate the product. | Test (TC-472) |
 | FR-120-AC-14 | `ModelSystem::over_model` over a model identity that the refinement unit does not select (`example/not-selected`) refuses `invalid_runtime_input`/`wrong-role-mapping`; over each of the unit's two selected models it returns a system that reports that model. | Test (TC-1086) |
 | FR-120-AC-15 | Over the `test/orders` fixture of AC-9 with two `pre` clauses on `ready`, one `false` and one undefined (`self.ready()`), the clauses are conjoined in ascending name under short-circuit whatever their source order: with the undefined clause sorting first (`Aaa` undefined, `Zzz` false, in either source order) the application is not enabled and exactly one `ContractUndetermined` is recorded for `Aaa`, the false clause not being reached; with the false clause sorting first (`Aaa` false, `Zzz` undefined) none is recorded. On the dispatch path (`view_clauses`), over `ConfigVersion::size` with the same two clauses, a call of `size` gives the result of the clause that sorts first (undefined for `other`'s precondition when the undefined clause sorts first, undefined for `size`'s own precondition when the false clause does), with equal outcome and charges in both source orders. | Test (TC-472) |
-| FR-120-AC-16 | Over a model whose object type `Item` (population `items`, universe `{i1}`) declares the fields `id: UUID`, `at: Timestamp`, `price: Decimal[0, 1000; 0, 2; exact]`, `length: Quantity<metre>`, `color: Color` (enum `red`, `blue`), `tag: Tag` (record `Tag { sku: Integer, note?: Text[0, 8] }`), `pair: Pair` (tuple `Pair(Boolean, Integer)`) and `shape: Shape` (union with nullary member `none`), an initial state whose `i1` holds `00112233-4455-6677-8899-aabbccddeeff`, Timestamp `-1`, `1.50`, `1.50` metre, `red`, `Tag { sku: 7 }`, `Pair(true, -3)` and `none` is admitted, and its state key writes each field as the QSpec FR-181-AC-19 bytes of that family: `{"type":"uuid","value":"00112233-4455-6677-8899-aabbccddeeff"}`, `{"nanoseconds":"-1","type":"timestamp"}`, `{"coefficient":"150","scale":"2","type":"decimal"}`, and for `color`, `tag`, `pair` and `shape` FR-181-AC-19's enum, record, tuple and nullary-union bytes with each `name` the declaration's identity text; `length` writes `{"denominator":"2","numerator":"3","type":"rational","unit":"<u>"}`, `<u>` the `UnitId` text of `metre`. Exploration of an operation `setPrice(p: Decimal[0, 1000; 0, 2; exact])` from that state gives the transition argument for `1.50` as `{"coefficient":"150","scale":"2","type":"decimal"}` and a step effect whose `price` post value has the same bytes. No refusal is returned. | Test (TC-1195) |
-| FR-120-AC-17 | Over AC-16's model with the universe `{i1, i2}` and the fields `prices: Set<Decimal[0, 1000; 0, 2; exact]>` and `times: Set<Timestamp>` added, a state holding `prices = {1.50}` and `times = {2, 10}` writes `prices` as `{"elements":[{"coefficient":"15","scale":"1","type":"decimal"}],"type":"set"}` while `price` keeps coefficient `150`, scale `2`, and writes `times` as `{"elements":[{"nanoseconds":"10","type":"timestamp"},{"nanoseconds":"2","type":"timestamp"}],"type":"set"}` (QSpec FR-181-AC-20). A field `members: Set<Reference<Item>>` holding the objects `i1` and `i2`, built in the order `i1, i2` and in the order `i2, i1`, gives two states with equal state keys, the set's reference triples ordered by their JCS bytes (QSpec FR-181-AC-21). | Test (TC-1195) |
+| FR-120-AC-16 | Over a model whose object type `Item` (population `items`, universe `{i1}`) declares the fields `id: UUID`, `at: Timestamp`, `price: Decimal[0, 1000; 0, 2; exact]`, `length: Quantity<metre>`, `color: Color` (enum `red`, `blue`), `tag: Tag` (record `Tag { sku: Integer, note?: Text[0, 8] }`), `pair: Pair` (tuple `Pair(Boolean, Integer)`) and `shape: Shape` (union with nullary member `none`), an initial state whose `i1` holds `00112233-4455-6677-8899-aabbccddeeff`, Timestamp `-1`, `1.50`, `1.50` metre, `red`, `Tag { sku: 7 }`, `Pair(true, -3)` and `none` is admitted, and its state key writes each field as the FSpec FR-181-AC-19 bytes of that family: `{"type":"uuid","value":"00112233-4455-6677-8899-aabbccddeeff"}`, `{"nanoseconds":"-1","type":"timestamp"}`, `{"coefficient":"150","scale":"2","type":"decimal"}`, and for `color`, `tag`, `pair` and `shape` FR-181-AC-19's enum, record, tuple and nullary-union bytes with each `name` the declaration's identity text; `length` writes `{"denominator":"2","numerator":"3","type":"rational","unit":"<u>"}`, `<u>` the `UnitId` text of `metre`. Exploration of an operation `setPrice(p: Decimal[0, 1000; 0, 2; exact])` from that state gives the transition argument for `1.50` as `{"coefficient":"150","scale":"2","type":"decimal"}` and a step effect whose `price` post value has the same bytes. No refusal is returned. | Test (TC-1195) |
+| FR-120-AC-17 | Over AC-16's model with the universe `{i1, i2}` and the fields `prices: Set<Decimal[0, 1000; 0, 2; exact]>` and `times: Set<Timestamp>` added, a state holding `prices = {1.50}` and `times = {2, 10}` writes `prices` as `{"elements":[{"coefficient":"15","scale":"1","type":"decimal"}],"type":"set"}` while `price` keeps coefficient `150`, scale `2`, and writes `times` as `{"elements":[{"nanoseconds":"10","type":"timestamp"},{"nanoseconds":"2","type":"timestamp"}],"type":"set"}` (FSpec FR-181-AC-20). A field `members: Set<Reference<Item>>` holding the objects `i1` and `i2`, built in the order `i1, i2` and in the order `i2, i1`, gives two states with equal state keys, the set's reference triples ordered by their JCS bytes (FSpec FR-181-AC-21). | Test (TC-1195) |
 | FR-120-AC-18 | A state key, transition identity or step effect that would hold a value of a population type refuses `EncodingRefusal` naming the population-typed field, receiver, argument or result: `explore_model` returns `NotSimulated::KeyEncoding`, and `replay` of a trace through it returns `ReplayError::KeyEncoding`, each with `invalid_runtime_input`/`invalid-value`, and neither panics nor records a state for that value. | Test (TC-1195) |
-| FR-120-AC-19 | QSpec TC-196 D10's `B/size` clauses split across two linked source units (FR-480-AC-1), in both link orders and with either clause in either unit, give D10's one-unit results, with equal outcome and charges: `view_clauses` and the expansion read the member's own clauses from both units in ascending clause name. | Test (TC-472) |
+| FR-120-AC-19 | FSpec TC-196 D10's `B/size` clauses split across two linked source units (FR-480-AC-1), in both link orders and with either clause in either unit, give D10's one-unit results, with equal outcome and charges: `view_clauses` and the expansion read the member's own clauses from both units in ascending clause name. | Test (TC-472) |
 | FR-120-AC-20 | D10's `absent-key` form: with `pre PB1 using V on M::B::size { (lookup<M::A>(M::PX, self) absent undefined) = self }` and `pre PB2 using V on M::B::size { false }` over a closed population `PX` with no runtime members, a call of `size` for `d1` is `undefined` with reason `absent-key` after `dispatch.select` and `PB1`'s charges, with no `function.call`, and `PB2` and `PA` are not evaluated. With the two bodies' names swapped it is `undefined` with reason `precondition-false` after the false clause's and then `PA`'s charges, the lookup clause neither evaluated nor charged. | Test (TC-472) |
 | FR-120-AC-21 | FR-120-AC-6's runs with `CanInc`: under a meter budget whose `work_units` is 0 and every other counter at its default, the `Stopped` outcome's `ExpansionStop` names `EvaluationMeter` with counter `work_units`, the counter whose next charge was denied; with `max_candidates` 2 and `increment` with no clause, it names `MaxCandidates` and carries no counter. | Test (TC-472) |
 | FR-120-AC-22 | Over a model whose object type `Cell` (population `cells`, universe `{k1}`) declares `cfg: Cfg` (record `Cfg { on: Boolean, n: Int[0, 2] }`), `pr: Pr` (tuple `Pr(Boolean, Int[0, 1])`) and `w: Wrap` (record `Wrap { c: Cfg, o: Option<Boolean> }`), with an operation `put()` whose frame is `modifies cfg, pr, w` and no clause, each field's domain is finite and `domains()` lists no unbounded root for them. `cfg` has 6 values, ordered `on` first: (`false`, 0), (`false`, 1), (`false`, 2), (`true`, 0), (`true`, 1), (`true`, 2). `pr` has 4: (`false`, 0), (`false`, 1), (`true`, 0), (`true`, 1). `w` has 6 × 3 = 18 values, `c` first in `Cfg` order, `o` absent, then `false`, then `true`. An application of `put` from a state holding `k1` has 6 × 4 × 18 = 432 candidates, each counted against `max_candidates`. In a separate model, a granted field `oc: Option<Cfg>` has 7 values, and so has `sq: Sequence<Cfg>[0, 1]` (the empty sequence, then the 6 one-element sequences); a two-component record `R1 { c: Cfg, a: Boolean }` has 6 × 2 = 12. | Test (TC-1270) |
@@ -874,7 +874,7 @@ identity text of operation `op`.
 | FR-120-AC-30 | Over AC-29's `Cell` with one operation `step()` (frame `modifies a, b`) and the one clause `post A { self.a = pre(self.a) + 1 }`, from the state with `a` 3, the application has 100 candidates, one per value of `b`, in ascending `b` candidate order, and 100 successors, each with `a` 4. Its charge is 101: one argument vector and 100 candidates. The same model with the reference clause `post A { self.a = pre(self.a) + 1 and true }`, which is ineligible and so enumerated, charges 10,001 and has the same 100 successors as a set of state keys, with equal transition identities, equal `StepEffect`s and the same findings. Exploring both forms to depth 3 returns equal `Exploration` values. With `max_candidates` 300 the solved form completes and the enumerated form stops with `MaxCandidates`. The successors are compared as keyed sets, because exploration orders them by state-key bytes (FR-101), in which `b` 10 precedes `b` 2. | Test (TC-1418) |
 | FR-120-AC-31 | Over AC-29's `Cell`, each of these models holds the one operation named and is ineligible, so it charges the 10^4 candidates of its enumeration and stops with `MaxCandidates` at `max_candidates` 1,000: `post A { self.a = self.b }` (reads the post-state); two clauses `post A { self.a = 1 }` and `post B { self.a = 2 }` (the same field); `post A { self.a = pre(self.b) }` with a second clause `post C { self.b > 0 }`; a frame `modifies a, b` and `deletes Cell` with `post A { self.a = pre(self.b) }`; and a clause that names `result` on an operation that declares a result. Separately, in a model whose one operation is `post A { self.a = pre(self.b) + 1 }`, the state with `b` 99 gives an eligible equation whose value 100 equals no value of `a`: the expansion has no successor and no finding, as the enumeration has no successor and no finding, and charges 1, the argument vector. | Test (TC-1418) |
 | FR-120-AC-32 | Over AC-29's `Cell`, in a model whose one operation has the equation clause `post A { self.a = pre(self.a) / 0 }` whose `e` is `Undefined`, and in one whose equation evaluation is `Incomplete` under a meter budget whose `work_units` is 0, the application is not solved. Each gives the result of its ineligible reference form (`self.a = ... and true`): the `Undefined` case records `ContractUndetermined` for `A` with the candidate's state key and the same charge, and the `Incomplete` case stops with `resource_exhausted`/`insufficient-next-charge` naming `EvaluationMeter` with counter `work_units`. | Test (TC-1418) |
-| FR-120-AC-33 | The `mc/frame_candidates` axis of `qsl-bench`, which QSL-1906 creates and which does not exist before it, builds AC-29's `swap` and AC-30's `step` models, each with its one operation, in a solved form and in the ineligible reference form. Its smallest-size test asserts, for the same state, the charges of AC-29 and AC-30 (2 and 101 solved, 10,001 enumerated for each) and equal successor sets of state keys; it asserts charges, not times. A speed claim rests on the A/B comparison of BENCHMARKING.md, and no stored figure is a threshold. | Test (TC-1418) |
+| FR-120-AC-33 | The `mc/frame_candidates` axis of `fsl-bench`, which QSL-1906 creates and which does not exist before it, builds AC-29's `swap` and AC-30's `step` models, each with its one operation, in a solved form and in the ineligible reference form. Its smallest-size test asserts, for the same state, the charges of AC-29 and AC-30 (2 and 101 solved, 10,001 enumerated for each) and equal successor sets of state keys; it asserts charges, not times. A speed claim rests on the A/B comparison of BENCHMARKING.md, and no stored figure is a threshold. | Test (TC-1418) |
 
 ## Dependencies
 
@@ -882,13 +882,13 @@ identity text of operation `op`.
   record value domain and its order for protocol binders (ADR-027 ST-2,
   ST-11), whose order FR-120's record domain follows; FR-230 (clock
   places, record-literal reset).
-- QSpec FR-181, its exploration contract, typed canonical form and AC-4 to
-  AC-6; QSpec FR-013 (frames, including its Behavior's `modifies`, `creates`
-  and `deletes` rules); QSpec FR-151 (the receiver, effective
-  pre- and postconditions, conformance); QSpec `state-contract.md` and
+- FSpec FR-181, its exploration contract, typed canonical form and AC-4 to
+  AC-6; FSpec FR-013 (frames, including its Behavior's `modifies`, `creates`
+  and `deletes` rules); FSpec FR-151 (the receiver, effective
+  pre- and postconditions, conformance); FSpec `state-contract.md` and
   `shared-grammar.md` (anchor operations are caller-side);
   `native-diagnostics.md`.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md):
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md):
   the engine, its `TransitionSystem` trait, findings, `Outcome::Stopped`,
   `StopReason::Stopped` and replay.
 - [FR-056](FR-056-admit-domain-package-model-declarations.md): the spine

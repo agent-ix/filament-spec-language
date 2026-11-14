@@ -3,7 +3,7 @@ id: TC-156
 title: "Report FB-05 and FB-11 violations over the four-repository backend dependency graph"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-059
+  - target: ix://agent-ix/filament-spec-language/FR-059
     type: verifies
 ---
 # TC-156: Report FB-05 and FB-11 violations over the four-repository backend dependency graph
@@ -11,52 +11,52 @@ relationships:
 ## Description
 
 Verify that `arch-lint direction` classifies resolved packages by repository,
-reports every FB-05 edge into QSL other than CG's normal dependency on
-`qsl-replay`, reports
+reports every FB-05 edge into FSL other than CG's normal dependency on
+`fsl-replay`, reports
 every FB-11 cycle over the combined normal+dev edge graph exactly once, and
-reports no IR → QSL edge and no QSL ⇄ IR cycle when run against
-quire-contract-ir's real current-head `cargo metadata` output, that resolving
-QSL's own manifest classifies its real edge on `quire-contract-model` as
-QSL → IR, and that the shared leaves `quire-exact` and
-`quire-semantic-value` classify as no ecosystem repository. Scope: FR-059-AC-1
+reports no IR → FSL edge and no FSL ⇄ IR cycle when run against
+filament-contract-ir's real current-head `cargo metadata` output, that resolving
+FSL's own manifest classifies its real edge on `filament-contract-model` as
+FSL → IR, and that the shared leaves `filament-exact` and
+`filament-semantic-value` classify as no ecosystem repository. Scope: FR-059-AC-1
 through FR-059-AC-6 and FR-059-AC-8 through FR-059-AC-11.
 
 ## Test Procedure
 
 1. Build a synthetic four-repository graph with only CG's normal dependency on
-   `qsl-replay` and no cycle. Run the check.
-2. Build a graph with a normal edge from IR into QSL, then a separate graph
-   with a dev edge from RT into QSL. Run the check on each.
-3. Build a graph with a dev edge from CG into QSL (no normal edge). Run the
+   `fsl-replay` and no cycle. Run the check.
+2. Build a graph with a normal edge from IR into FSL, then a separate graph
+   with a dev edge from RT into FSL. Run the check on each.
+3. Build a graph with a dev edge from CG into FSL (no normal edge). Run the
    check.
-4. Build a graph with a 2-repository cycle (QSL depends on CG, normal edge,
-   and CG's own manifest carries a dev edge back to QSL beyond the stated
+4. Build a graph with a 2-repository cycle (FSL depends on CG, normal edge,
+   and CG's own manifest carries a dev edge back to FSL beyond the stated
    exception) and, separately, a longer cycle spanning all four repositories
    over a mix of normal and dev edges. Run the check starting the search from
    each of the four repositories in turn.
-5. Build an acyclic graph with edges only running toward QSL and CG (no edge
-   originates from QSL or CG). Run the check.
-6. Run `arch-lint direction` against real `cargo metadata` output for QSL's
-   own manifest and a real local checkout of quire-contract-ir's current head.
-   Separately, resolve QSL's own workspace manifest through
-   `edges_for_manifest`, the path `direction` uses for `--qsl` (automated).
+5. Build an acyclic graph with edges only running toward FSL and CG (no edge
+   originates from FSL or CG). Run the check.
+6. Run `arch-lint direction` against real `cargo metadata` output for FSL's
+   own manifest and a real local checkout of filament-contract-ir's current head.
+   Separately, resolve FSL's own workspace manifest through
+   `edges_for_manifest`, the path `direction` uses for `--fsl` (automated).
 7. Parse a synthetic `cargo metadata` document in which RT depends on
-   `quire-exact`, sourced from the `agent-ix/quire-exact` git url, and on
-   `qsl-eval`, sourced from the QSL repository's git url, and run the check on the resulting edges.
+   `filament-exact`, sourced from the `agent-ix/filament-exact` git url, and on
+   `fsl-eval`, sourced from the FSL repository's git url, and run the check on the resulting edges.
 8. Parse a synthetic `cargo metadata` document in which RT depends on
-   `quire-semantic-value`, sourced from the `agent-ix/quire-semantic-value` git
-   url, and on `qsl-semantics` and `qsl-eval`, sourced from the QSL
+   `filament-semantic-value`, sourced from the `agent-ix/filament-semantic-value` git
+   url, and on `fsl-semantics` and `fsl-eval`, sourced from the FSL
    repository's git url, and run the check on the resulting edges.
-9. Build a graph in which CG has normal dependencies on `qsl-replay` and
-   `qsl-eval`, sourced from the QSL repository's git url, on
-   `quire-semantic-value`, sourced from the `agent-ix/quire-semantic-value`
-   git url, and on `quire-eval` and `quire-eval-corpus`, sourced from the
-   `agent-ix/quire-eval` git url. Run the check, then run it on the same
-   graph without `qsl-eval`.
+9. Build a graph in which CG has normal dependencies on `fsl-replay` and
+   `fsl-eval`, sourced from the FSL repository's git url, on
+   `filament-semantic-value`, sourced from the `agent-ix/filament-semantic-value`
+   git url, and on `filament-eval` and `filament-eval-corpus`, sourced from the
+   `agent-ix/filament-eval` git url. Run the check, then run it on the same
+   graph without `fsl-eval`.
 10. Run `arch-lint direction` against real `cargo metadata` output for a
-    local checkout of quire-contract-codegen's current head, and list CG's
-    normal dependencies sourced from the QSL repository,
-    `agent-ix/quire-semantic-value` or `agent-ix/quire-eval`.
+    local checkout of filament-contract-codegen's current head, and list CG's
+    normal dependencies sourced from the FSL repository,
+    `agent-ix/filament-semantic-value` or `agent-ix/filament-eval`.
 
 ## Expected Results
 
@@ -69,28 +69,28 @@ through FR-059-AC-6 and FR-059-AC-8 through FR-059-AC-11.
   of which repository's edges the search started from; the report does not
   duplicate a cycle by rotation.
 - Step 5: the FB-11 report is empty.
-- Step 6: the FB-05 report names no edge from quire-contract-ir into QSL,
-  and the FB-11 report names no cycle between QSL and quire-contract-ir,
-  because neither IR manifest declares a QSL dependency (ADR-011 OBS-029);
-  step 2's seeded IR → QSL edge is still reported. This output is captured
+- Step 6: the FB-05 report names no edge from filament-contract-ir into FSL,
+  and the FB-11 report names no cycle between FSL and filament-contract-ir,
+  because neither IR manifest declares an FSL dependency (ADR-011 OBS-029);
+  step 2's seeded IR → FSL edge is still reported. This output is captured
   for the PR body as real, not synthetic, evidence. Separately, an automated
-  test resolves QSL's own workspace manifest through the edge-resolution
-  path `direction` uses for `--qsl` and asserts that the edge set contains
-  QSL's normal edge on the git-sourced `quire-contract-model`, classified as
-  QSL → IR (the permitted direction); a classifier that no longer recognises
+  test resolves FSL's own workspace manifest through the edge-resolution
+  path `direction` uses for `--fsl` and asserts that the edge set contains
+  FSL's normal edge on the git-sourced `filament-contract-model`, classified as
+  FSL → IR (the permitted direction); a classifier that no longer recognises
   the real IR crate drops that edge and fails the test.
-- Step 7: the only edge is RT → QSL via `qsl-eval`, and the FB-05 report
-  names exactly that edge; the `quire-exact` dependency contributes no edge.
-- Step 8: the edges are RT → QSL via `qsl-eval` and via `qsl-semantics`, and
-  the FB-05 report names exactly those two; the `quire-semantic-value`
+- Step 7: the only edge is RT → FSL via `fsl-eval`, and the FB-05 report
+  names exactly that edge; the `filament-exact` dependency contributes no edge.
+- Step 8: the edges are RT → FSL via `fsl-eval` and via `fsl-semantics`, and
+  the FB-05 report names exactly those two; the `filament-semantic-value`
   dependency contributes no edge.
-- Step 9: the FB-05 report names exactly the CG → QSL edge via `qsl-eval`;
-  the `qsl-replay`, `quire-semantic-value`, `quire-eval` and
-  `quire-eval-corpus` dependencies are not reported.
-  Without `qsl-eval`, the FB-05 report is empty (FR-059-AC-10).
-- Step 10: the listed dependencies are only `qsl-replay`,
-  `quire-semantic-value` and crates of `agent-ix/quire-eval`; every CG → QSL
-  normal edge is via `qsl-replay`, and the FB-05 report names no CG edge
+- Step 9: the FB-05 report names exactly the CG → FSL edge via `fsl-eval`;
+  the `fsl-replay`, `filament-semantic-value`, `filament-eval` and
+  `filament-eval-corpus` dependencies are not reported.
+  Without `fsl-eval`, the FB-05 report is empty (FR-059-AC-10).
+- Step 10: the listed dependencies are only `fsl-replay`,
+  `filament-semantic-value` and crates of `agent-ix/filament-eval`; every CG → FSL
+  normal edge is via `fsl-replay`, and the FB-05 report names no CG edge
   (FR-059-AC-11). This output is captured for the
   PR body as real evidence, as step 6's is.
 
@@ -98,7 +98,7 @@ through FR-059-AC-6 and FR-059-AC-8 through FR-059-AC-11.
 
 - Priority: P1
 - Target Integration: `tools/arch-lint/graph.rs`, `tools/arch-lint/metadata.rs`
-- Automation: Automated Rust unit tests, including step 6's resolution of QSL's own manifest, plus one manual real-data `direction` run (step 6)
+- Automation: Automated Rust unit tests, including step 6's resolution of FSL's own manifest, plus one manual real-data `direction` run (step 6)
 
 ## Dependencies
 

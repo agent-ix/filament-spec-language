@@ -3,7 +3,7 @@ id: TC-260
 title: "ValueTypeRef is exactly the four-member union Clock/Native/Package/Unit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-260: ValueTypeRef is exactly the four-member union Clock/Native/Package/Unit

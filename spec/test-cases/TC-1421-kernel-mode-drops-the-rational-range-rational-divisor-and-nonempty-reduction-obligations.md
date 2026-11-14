@@ -3,7 +3,7 @@ id: TC-1421
 title: "Kernel mode drops the rational-range, rational divisor and nonempty-reduction obligations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-495
+  - target: ix://agent-ix/filament-spec-language/FR-495
     type: verifies
 ---
 # TC-1421: Kernel mode drops the rational-range, rational divisor and nonempty-reduction obligations

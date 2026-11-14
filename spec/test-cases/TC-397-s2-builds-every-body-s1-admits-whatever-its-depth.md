@@ -3,7 +3,7 @@ id: TC-397
 title: "S2 builds every body S1 admits, whatever its depth"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-397: S2 builds every body S1 admits, whatever its depth

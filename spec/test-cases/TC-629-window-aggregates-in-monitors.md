@@ -3,7 +3,7 @@ id: TC-629
 title: "Window aggregates evaluate exactly over past windows and keep the temporal layer Boolean"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-194
+  - target: ix://agent-ix/filament-spec-language/FR-194
     type: verifies
 ---
 # TC-629: Window aggregates evaluate exactly over past windows and keep the temporal layer Boolean

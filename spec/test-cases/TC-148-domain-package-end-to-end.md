@@ -3,9 +3,9 @@ id: TC-148
 title: "Link native source against a domain-package bundle end to end"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-036, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/IT-012, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-036, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/IT-012, type: references }
 ---
 # TC-148: Link native source against a domain-package bundle end to end
 

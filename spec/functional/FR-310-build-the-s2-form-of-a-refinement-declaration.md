@@ -3,11 +3,11 @@ id: FR-310
 title: "Build the S2 form of a refinement declaration"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: depends_on
 ---
 # FR-310: Build the S2 form of a refinement declaration
@@ -16,7 +16,7 @@ relationships:
 
 The S2 value form builder SHALL build a `RefinementForm` for every
 `refinement` declaration (ADR-020 §1 RM-1, RM-9; the surface spelling is
-QSpec FR-375's), holding its header and every row as written with its span.
+FSpec FR-375's), holding its header and every row as written with its span.
 The form carries syntax only; S3 resolves names and checks it (FR-135 to
 FR-139, FR-147).
 
@@ -33,7 +33,7 @@ the row the author wrote.
   selection, its abstract side (a model alias, or a model alias and a
   protocol clause name), its concrete model alias, and its `population`,
   `object` (with field rows), `step`, `history`, `assume` and `ensure` rows,
-  the rows of QSpec FR-375's `refinement-row` production and, over a protocol
+  the rows of FSpec FR-375's `refinement-row` production and, over a protocol
   subject, FR-432's `protocol-step-row`.
 
 ## Outputs
@@ -58,14 +58,14 @@ pub enum RefinementRowForm {
     Fairness { side: FairnessSide, constraint: FairnessConstraintForm, span: Span },
 }
 
-pub enum StepSourceForm {                      // QSpec FR-432 protocol-step-source
+pub enum StepSourceForm {                      // FSpec FR-432 protocol-step-source
     // keyword optional: an operation, attempt node, event, send, receive,
     // timeout, finish node or fence is a bare qualified name; fork, join, ...
     Named { kind: Option<StepClassKeyword>, name: QualifiedName },
     Memory(Name),                              // `memory <kind>`
 }
 
-// QSpec FR-375's closed `history-literal` production
+// FSpec FR-375's closed `history-literal` production
 pub enum HistoryLiteralForm {
     Integer(SignedInt), Boolean(bool), None, Text(StringLiteral),
     Exact(ExactNumberForm), EnumMember(QualifiedName),
@@ -84,30 +84,30 @@ pub enum StepTargetForm {
 - S2 SHALL build one `RefinementForm` for each `refinement` declaration,
   holding every row in source order with its span.
 - S2 SHALL build each history row's initial value as the
-  `HistoryLiteralForm` of QSpec FR-375's `history-literal` production,
+  `HistoryLiteralForm` of FSpec FR-375's `history-literal` production,
   and SHALL NOT build it as an expression form: a collection, record,
   float or other non-literal spelling is not a form, because S1 refuses it
-  (QSpec FR-375-AC-9). Whether the literal is a member of the declared type,
+  (FSpec FR-375-AC-9). Whether the literal is a member of the declared type,
   and whether an enum path resolves, are S3's (FR-138).
-- S2 SHALL build the rows QSpec FR-375 and FR-432 define and no others. The
+- S2 SHALL build the rows FSpec FR-375 and FR-432 define and no others. The
   grammar has no `internal` or `visible` row: a concrete step is internal
   when its step row is `stutter`, and an abstract step is internal only when
-  the refinement's internal list (the compilation's `refinement_internals` input) names it (QSpec FR-432), so the form holds
+  the refinement's internal list (the compilation's `refinement_internals` input) names it (FSpec FR-432), so the form holds
   neither a row nor a list for it.
 - S2 SHALL build a step row's source as `Named` with the keyword exactly as
   written (absent when none is written) or as `Memory`, and SHALL NOT
   decide whether an unkeyworded name is an operation, a node or a fence:
-  S3 classifies the source by resolving the name (FR-136, QSpec FR-432).
-- S2 SHALL build the header's `abstract-subject` (QSpec FR-375) as
+  S3 classifies the source by resolving the name (FR-136, FSpec FR-432).
+- S2 SHALL build the header's `abstract-subject` (FSpec FR-375) as
   `AbstractSideForm::Model(alias)` for an alias alone and as
   `AbstractSideForm::Protocol(alias, clause)` for `abstract <A>::<protocol>`.
   Whether the clause resolves is S3's (FR-147; ADR-020 QS-11). The header
-  is QSpec FR-375's `abstract-subject = ident, [ '::', member-name ]`
+  is FSpec FR-375's `abstract-subject = ident, [ '::', member-name ]`
   production (the shared grammar's refinement header). S2 builds the
   concrete side as one model alias and never as a protocol: the concrete
   protocol is selected by the step rows (FR-136), which S2 builds
   unclassified.
-- S1 SHALL refuse a header spelling outside that production, as QSpec
+- S1 SHALL refuse a header spelling outside that production, as FSpec
   FR-375-AC-11 states, with `invalid_syntax`/`unexpected-token` at the
   token it names: a third segment (`abstract Spec::Twice::finish concrete
   Impl`, at the second `::`), a leading `::` (at the `::`), a trailing `::`
@@ -147,9 +147,9 @@ pub enum StepTargetForm {
   check the form.
 - [FR-136](FR-136-check-a-refinement-s-step-rows.md) classifies step
   sources at S3.
-- QSpec owns the surface grammar: FR-375 (rows, `history-literal`, fairness
+- FSpec owns the surface grammar: FR-375 (rows, `history-literal`, fairness
   rows) and FR-432 (protocol step rows) (ADR-020 QS-1, QS-11).
 
 ## References
 
-- ADR-020. QSpec half: QSpec FR-375 (Linear STD-133; ADR-020 QS-1, QS-11).
+- ADR-020. FSpec half: FSpec FR-375 (Linear STD-133; ADR-020 QS-1, QS-11).

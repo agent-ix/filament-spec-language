@@ -3,7 +3,7 @@ id: TC-801
 title: "RustPath, RustField and RustReceiver segments are checked against Rust syntax"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: verifies
 ---
 # TC-801: RustPath, RustField and RustReceiver segments are checked against Rust syntax

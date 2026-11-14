@@ -3,7 +3,7 @@ id: TC-132
 title: "Preserve workflow, role and channel occurrence identities"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-048, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-048, type: verifies }
 ---
 # TC-132: Preserve workflow, role and channel occurrence identities
 

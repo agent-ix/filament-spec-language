@@ -164,7 +164,7 @@ cases! {
         input: Input::Update { pre: HEALTHY, post: &[ROOT, Row { parent: None, ..CHILD }] },
         ..PARENT_CASE
     },
-    // FR-108's QSpec FR-180-AC-4 boundary cases: 0, 1000 (in range) and
+    // FR-108's FSpec FR-180-AC-4 boundary cases: 0, 1000 (in range) and
     // -1, 1001 (out of range) against ConfigVersion's own `Int[0, 1000]`
     // bound.
     BoundaryZero => CaseSpec {

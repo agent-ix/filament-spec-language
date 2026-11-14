@@ -3,7 +3,7 @@ id: TC-050
 title: "Check lexical scope and guarded evaluation order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-050: Check lexical scope and guarded evaluation order

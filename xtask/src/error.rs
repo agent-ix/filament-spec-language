@@ -33,7 +33,7 @@ pub enum Code {
     CanonicalTypes,
     /// `cargo metadata` could not be run or read.
     Metadata,
-    /// The local QSpec conformance gate failed.
+    /// The local FSpec conformance gate failed.
     Conformance,
     /// QSL#157: `cargo xtask test-suites` found an undeclared empty suite or
     /// a wrong declaration, or `cargo` itself failed.
@@ -77,8 +77,8 @@ pub enum Error {
     /// A command-line invocation was malformed.
     #[error("usage: {0}")]
     Usage(&'static str),
-    /// The QSpec checkout is absent, missing vectors, or cannot be resolved.
-    #[error("conformance: invalid QSPEC_DIR {path:?}: {reason}")]
+    /// The FSpec checkout is absent, missing vectors, or cannot be resolved.
+    #[error("conformance: invalid FSPEC_DIR {path:?}: {reason}")]
     ConformanceInput {
         /// The caller's unmodified path.
         path: PathBuf,
@@ -202,10 +202,10 @@ pub enum Error {
         /// The findings, formatted for display.
         summary: String,
     },
-    /// The `qsl-string-edge` scanner could not complete: a request, rule,
+    /// The `fsl-string-edge` scanner could not complete: a request, rule,
     /// read or parse failure. Never a clean result.
     #[error(transparent)]
-    StringEdgeScan(#[from] qsl_string_edge::Error),
+    StringEdgeScan(#[from] fsl_string_edge::Error),
     /// A source file could not be parsed as Rust source by
     /// `xtask::import_graph`'s resolver (TC-172/TC-176).
     #[error("import-graph: cannot parse {path} as Rust source: {source}")]
@@ -446,7 +446,7 @@ impl Error {
             | Code::TestSuites => 1,
             Code::Usage | Code::Io | Code::Metadata | Code::StringEdgeScan => 2,
             Code::Qualification => 2,
-            // QSpec FR-301's tool-failure code: the gate could not report.
+            // FSpec FR-301's tool-failure code: the gate could not report.
             Code::Refinement => Verdict::ToolFailure.exit_code(),
         }
     }

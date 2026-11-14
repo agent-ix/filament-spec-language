@@ -3,7 +3,7 @@ id: TC-377
 title: "Function declaration checking accepts a well-typed declaration, reports its calls, and refuses an ill-typed body"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: verifies
 ---
 # TC-377: Function declaration checking accepts a well-typed declaration, reports its calls, and refuses an ill-typed body

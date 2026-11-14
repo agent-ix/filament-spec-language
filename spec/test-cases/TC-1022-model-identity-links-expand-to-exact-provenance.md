@@ -3,7 +3,7 @@ id: TC-1022
 title: "Model identity links expand to exact provenance"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-1022: Model identity links expand to exact provenance

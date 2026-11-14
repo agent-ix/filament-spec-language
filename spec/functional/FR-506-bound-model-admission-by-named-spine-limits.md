@@ -3,17 +3,17 @@ id: FR-506
 title: "Bound model admission by named spine limits"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-041
+  - target: ix://agent-ix/filament-spec-language/FR-041
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: references
 ---
 # FR-506: Bound model admission by named spine limits
@@ -64,9 +64,9 @@ not use those keys to exercise `identity.input_bytes`.
   each declared type, field, operation, operation parameter, operation result
   and frame entry (`modifies`, `creates`, `deletes`), so that an entry
   counted by the legacy `entries` limit is counted here.
-- `model.sequence_maximum` is a member of QSL's model intake limits, a QSL-owned
-  member beside the intake limits type of FR-260 (not a field of QSpec's
-  `ModelNormalizationLimitsV1`, which QSL cannot extend), set through the library
+- `model.sequence_maximum` is a member of FSL's model intake limits, an FSL-owned
+  member beside the intake limits type of FR-260 (not a field of FSpec's
+  `ModelNormalizationLimitsV1`, which FSL cannot extend), set through the library
   limits builder method of that name, the replay request's `stage_limits`
   entry `model.sequence_maximum` and the settings operation operand
   `model.sequence_maximum=<value>` (FR-255-AC-4).

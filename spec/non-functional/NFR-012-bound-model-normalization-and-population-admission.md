@@ -4,11 +4,11 @@ title: "Bound model normalization and population admission work"
 type: NFR
 quality_attribute: performance_efficiency
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: constrains
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: constrains
-  - target: ix://agent-ix/quire-spec-language/NFR-011
+  - target: ix://agent-ix/filament-spec-language/NFR-011
     type: depends_on
 ---
 # NFR-012: Bound model normalization and population admission work

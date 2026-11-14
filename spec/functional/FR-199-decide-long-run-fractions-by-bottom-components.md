@@ -3,13 +3,13 @@ id: FR-199
 title: "Decide long-run fractions by bottom components"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: depends_on
 ---
 # FR-199: Decide long-run fractions by bottom components
@@ -96,6 +96,6 @@ the zero centered mean does not replace the transported ratio by zero.
 
 ## References
 
-- QSpec half, which owns the long-run semantics and `ZeroWeightComponent`:
-  QSpec FR-411 (Linear STD-137).
+- FSpec half, which owns the long-run semantics and `ZeroWeightComponent`:
+  FSpec FR-411 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

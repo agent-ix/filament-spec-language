@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
-use qsl_semantics::value::HeaderLayer;
+use fsl_semantics::value::HeaderLayer;
 use serde::Deserialize;
 
 use super::compare::CaseResult;

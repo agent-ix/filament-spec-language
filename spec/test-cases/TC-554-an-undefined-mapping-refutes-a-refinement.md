@@ -3,13 +3,13 @@ id: TC-554
 title: "An undefined mapping row or history update refutes a refinement and replays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-138
+  - target: ix://agent-ix/filament-spec-language/FR-138
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-145
+  - target: ix://agent-ix/filament-spec-language/FR-145
     type: verifies
 ---
 # TC-554: An undefined mapping row or history update refutes a refinement and replays

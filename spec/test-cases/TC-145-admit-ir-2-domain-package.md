@@ -3,7 +3,7 @@ id: TC-145
 title: "Admit a Semantic IR 2.0.0 domain package as model declarations"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: verifies }
 ---
 # TC-145: Admit a Semantic IR 2.0.0 domain package as model declarations
 
@@ -17,7 +17,7 @@ FR-056-AC-12, FR-056-AC-13, FR-056-AC-14, FR-056-AC-15, FR-056-AC-44.
 ## Test Procedure
 
 1. Lift a small bundle through `agent-ix-extraction-frontend`: one object type
-   (`quire.meaning.model.object-type/v1`) with a field member, a field member
+   (`filament.meaning.model.object-type/v1`) with a field member, a field member
    typed by an object type, an operation member and a relationship member with a
    declared name; one value type; one variant type; and one population.
    Pass the lifted bytes and a ModelSelection naming their identity to the intake seam.
@@ -130,7 +130,7 @@ FR-056-AC-12, FR-056-AC-13, FR-056-AC-14, FR-056-AC-15, FR-056-AC-44.
   order, and within one node FR-154's table order) and admits no declaration of
   the package.
 - Step 7 is retired.
-- Step 8 runs the actual FCD lift and QSL intake path. It admits declarations
+- Step 8 runs the actual FCD lift and FSL intake path. It admits declarations
   keyed by `ix://<package identity>/FR-001` and
   `ix://<package identity>/OP-001`; the underscore-named field, operation and
   parameter identities are preserved verbatim, and the field reference from

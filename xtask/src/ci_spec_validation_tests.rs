@@ -165,7 +165,7 @@ fn full_ci_composes_the_unrestricted_scoped_validator() {
     assert!(stdout.contains("validate --scope . \"$SPEC_VALIDATION_DOCUMENTS\""));
     assert!(
         stdout.contains("cargo run --locked --package xtask -- ci"),
-        "aggregate invokes the canonical QSPEC wrapper"
+        "aggregate invokes the canonical FSPEC wrapper"
     );
     let baseline = run(make(&workspace()).arg("check-spec-validation"));
     assert!(
@@ -273,7 +273,7 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
     let calls = root.join("cargo calls");
     let prechecks = root.join("precheck calls");
     let target = root.join("target");
-    let checkout = root.join("invocation-only QSpec sentinel");
+    let checkout = root.join("invocation-only FSpec sentinel");
     let vectors = checkout.join("proposals/checked-package-v2");
     std::fs::create_dir_all(&vectors).unwrap();
     // Presence seam only, as in the parent fixture; never vector evidence.
@@ -285,7 +285,7 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
             .arg("ci")
             .env("PATH", &path)
             .env("CARGO_TARGET_DIR", &target)
-            .env("QSPEC_DIR", &checkout)
+            .env("FSPEC_DIR", &checkout)
             .env_remove("CI_DEFAULT_TARGET_DIR")
             .env_remove("CI_ALL_TARGET_DIR")
             .env_remove("CI_CLEAN_TARGET_DIR")
@@ -328,7 +328,7 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
     }
 
     // Mutation sensitivity: alter only the deny target's validation edge in an
-    // owned copy. Native Quire still refuses, but deny alone now invokes Cargo;
+    // owned copy. Filament still refuses, but deny alone now invokes Cargo;
     // the unchanged zero-call oracle above must reject this graph.
     let source = std::fs::read_to_string(&makefile).unwrap();
     let edge = "ci: check-spec-validation";

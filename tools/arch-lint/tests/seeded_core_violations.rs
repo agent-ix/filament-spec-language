@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-284-AC-1 and AC-4 through the built `arch-lint` binary: a stub QSL
+//! FR-284-AC-1 and AC-4 through the built `arch-lint` binary: a stub FSL
 //! workspace with the core's real crate names is clean, and each seeded
 //! violation (a forbidden dependency written into a real manifest, an
 //! ambient read written into core source) makes `qualified-core` exit 1 with
@@ -12,22 +12,22 @@ use std::process::{Command, Output};
 use ix_trace_rs::trace;
 
 const CORE: [&str; 9] = [
-    "qsl-foundation",
-    "qsl-cst",
-    "qsl-source",
-    "qsl-forms",
-    "qsl-semantics",
-    "qsl-package",
-    "qsl-eval",
-    "qsl-route",
-    "qsl-replay",
+    "fsl-foundation",
+    "fsl-cst",
+    "fsl-source",
+    "fsl-forms",
+    "fsl-semantics",
+    "fsl-package",
+    "fsl-eval",
+    "fsl-route",
+    "fsl-replay",
 ];
 
 /// `(crate, dependency)` edges of a clean core, none above the core.
 const CLEAN_EDGES: [(&str, &str); 3] = [
-    ("qsl-cst", "qsl-foundation"),
-    ("qsl-eval", "qsl-foundation"),
-    ("qsl-replay", "qsl-eval"),
+    ("fsl-cst", "fsl-foundation"),
+    ("fsl-eval", "fsl-foundation"),
+    ("fsl-replay", "fsl-eval"),
 ];
 
 fn write(root: &Path, relative: &str, contents: &str) {
@@ -37,7 +37,7 @@ fn write(root: &Path, relative: &str, contents: &str) {
 }
 
 /// A workspace of path-only stub crates: the nine core crates and the
-/// above-core `qsl-analyze`, plus the given extra edges.
+/// above-core `fsl-analyze`, plus the given extra edges.
 fn stub_workspace(extra_edges: &[(&str, &str)]) -> tempfile::TempDir {
     stub_workspace_with(&[], extra_edges)
 }
@@ -46,9 +46,9 @@ fn stub_workspace(extra_edges: &[(&str, &str)]) -> tempfile::TempDir {
 /// such as an argument parser or FCD's extraction frontend.
 fn stub_workspace_with(extra_crates: &[&str], extra_edges: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let root = dir.path().join("qsl");
+    let root = dir.path().join("fsl");
     let mut members: Vec<&str> = CORE.to_vec();
-    members.push("qsl-analyze");
+    members.push("fsl-analyze");
     let list: Vec<String> = members.iter().map(|name| format!("\"{name}\"")).collect();
     write(
         &root,
@@ -102,14 +102,14 @@ fn stub_workspace_with(extra_crates: &[&str], extra_edges: &[(&str, &str)]) -> t
     dir
 }
 
-/// The QSL workspace root inside a stub workspace's temp dir.
+/// The FSL workspace root inside a stub workspace's temp dir.
 fn root(dir: &tempfile::TempDir) -> std::path::PathBuf {
-    dir.path().join("qsl")
+    dir.path().join("fsl")
 }
 
 fn qualified_core(root: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_arch-lint"))
-        .args(["qualified-core", "--qsl"])
+        .args(["qualified-core", "--fsl"])
         .arg(root)
         .output()
         .expect("arch-lint runs")
@@ -133,12 +133,12 @@ fn the_clean_stub_workspace_passes_the_binary() {
 #[trace("TC-767", "FR-284-AC-1")]
 #[test]
 fn a_seeded_forbidden_dependency_fails_the_direction_gate() {
-    let dir = stub_workspace(&[("qsl-eval", "qsl-analyze")]);
+    let dir = stub_workspace(&[("fsl-eval", "fsl-analyze")]);
     let output = qualified_core(&root(&dir));
     assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     let report = stdout(&output);
     assert!(report.contains("Direction: FAIL"), "{report}");
-    assert!(report.contains("(qsl-eval, qsl-analyze)"), "{report}");
+    assert!(report.contains("(fsl-eval, fsl-analyze)"), "{report}");
     assert!(report.contains("Ambient input: PASS"), "{report}");
 }
 
@@ -148,14 +148,14 @@ fn a_seeded_ambient_read_fails_the_ambient_gate() {
     let dir = stub_workspace(&[]);
     write(
         &root(&dir),
-        "qsl-eval/src/lib.rs",
+        "fsl-eval/src/lib.rs",
         "pub fn stub() {}\npub fn seeded() -> Option<String> {\n    std::env::var(\"HOME\").ok()\n}\n",
     );
     let output = qualified_core(&root(&dir));
     assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     let report = stdout(&output);
     assert!(report.contains("Ambient input: FAIL"), "{report}");
-    assert!(report.contains("qsl-eval/src/lib.rs:3"), "{report}");
+    assert!(report.contains("fsl-eval/src/lib.rs:3"), "{report}");
     assert!(report.contains("Direction: PASS"), "{report}");
 }
 
@@ -164,34 +164,34 @@ const FRONTEND: &str = "agent-ix-extraction-frontend";
 #[trace("TC-767", "FR-284-AC-1")]
 #[test]
 fn a_seeded_argument_parser_fails_and_only_the_fcd_clap_edge_passes() {
-    // An argument-parser crate under `qsl-replay` fails naming the pair.
-    let dir = stub_workspace_with(&["clap"], &[("qsl-replay", "clap")]);
+    // An argument-parser crate under `fsl-replay` fails naming the pair.
+    let dir = stub_workspace_with(&["clap"], &[("fsl-replay", "clap")]);
     let output = qualified_core(&root(&dir));
     assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     let report = stdout(&output);
     assert!(report.contains("Direction: FAIL"), "{report}");
-    assert!(report.contains("(qsl-replay, clap)"), "{report}");
+    assert!(report.contains("(fsl-replay, clap)"), "{report}");
 
-    // `qsl-semantics` -> the FCD frontend -> `clap` is the one exemption.
-    let sanctioned = [("qsl-semantics", FRONTEND), (FRONTEND, "clap")];
+    // `fsl-semantics` -> the FCD frontend -> `clap` is the one exemption.
+    let sanctioned = [("fsl-semantics", FRONTEND), (FRONTEND, "clap")];
     let dir = stub_workspace_with(&[FRONTEND, "clap"], &sanctioned);
     let output = qualified_core(&root(&dir));
     assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
 
-    // Any other crate reaching the frontend, or `qsl-semantics` reaching
+    // Any other crate reaching the frontend, or `fsl-semantics` reaching
     // `clap` directly, still fails.
     let dir = stub_workspace_with(
         &[FRONTEND, "clap"],
-        &[("qsl-eval", FRONTEND), (FRONTEND, "clap")],
+        &[("fsl-eval", FRONTEND), (FRONTEND, "clap")],
     );
     let report = stdout(&qualified_core(&root(&dir)));
     assert!(
-        report.contains(&format!("(qsl-eval, {FRONTEND})")),
+        report.contains(&format!("(fsl-eval, {FRONTEND})")),
         "{report}"
     );
-    let dir = stub_workspace_with(&["clap"], &[("qsl-semantics", "clap")]);
+    let dir = stub_workspace_with(&["clap"], &[("fsl-semantics", "clap")]);
     let report = stdout(&qualified_core(&root(&dir)));
-    assert!(report.contains("(qsl-semantics, clap)"), "{report}");
+    assert!(report.contains("(fsl-semantics, clap)"), "{report}");
 }
 
 /// Core source that the ambient scan must report, as
@@ -241,7 +241,7 @@ fn every_seeded_ambient_category_fails_and_exclusions_pass() {
         };
         write(
             &root(&dir),
-            "qsl-eval/src/lib.rs",
+            "fsl-eval/src/lib.rs",
             &format!("pub fn stub() {{}}\n{body}\n"),
         );
         let output = qualified_core(&root(&dir));
@@ -250,11 +250,11 @@ fn every_seeded_ambient_category_fails_and_exclusions_pass() {
         assert!(report.contains("Ambient input: FAIL"), "{seed}: {report}");
         let line = if seed.starts_with("static") { 2 } else { 3 };
         assert!(
-            report.contains(&format!("qsl-eval/src/lib.rs:{line} {category}")),
+            report.contains(&format!("fsl-eval/src/lib.rs:{line} {category}")),
             "{seed}: {report}"
         );
     }
-    write(&root(&dir), "qsl-eval/src/lib.rs", AMBIENT_EXCLUSIONS);
+    write(&root(&dir), "fsl-eval/src/lib.rs", AMBIENT_EXCLUSIONS);
     let output = qualified_core(&root(&dir));
     assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
 }

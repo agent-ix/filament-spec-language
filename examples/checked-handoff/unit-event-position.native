@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 language "ix:native" edition "1-draft";
-profile v = "quire.model.complete/v1";
-profile p = "quire.protocol.finite-global/v1";
-profile t = "quire.temporal.event-position.false-extension/v1";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+profile t = "filament.temporal.event-position.false-extension/v1";
 import "agent-ix/checked-handoff-library" as L;
 model M = "agent-ix/checked-handoff";
 dimension Money;

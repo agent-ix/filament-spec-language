@@ -3,17 +3,17 @@ id: US-001
 title: "Author native source with precise feedback"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-035
+  - target: ix://agent-ix/filament-spec-language/FR-035
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
-  - target: "ix://agent-ix/quire-spec-language/FR-001"
+  - target: "ix://agent-ix/filament-spec-language/FR-001"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-002"
+  - target: "ix://agent-ix/filament-spec-language/FR-002"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-003"
+  - target: "ix://agent-ix/filament-spec-language/FR-003"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-010"
+  - target: "ix://agent-ix/filament-spec-language/FR-010"
     type: exercises
 ---
 # US-001: Author native source with precise feedback

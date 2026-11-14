@@ -3,7 +3,7 @@ id: TC-451
 title: "Spine run binds arguments by name and maps each outcome and refusal to its exit code"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
 ---
 # TC-451: Spine run binds arguments by name and maps each outcome and refusal to its exit code
@@ -42,7 +42,7 @@ Tag the tests `#[trace("TC-451", "FR-100-AC-4")]` (steps 1 to 4),
 `#[trace("TC-451", "FR-100-AC-6")]` (step 7).
 
 FND-012: `origin` is a reserved keyword
-(`qsl-cst`'s token table), so the fixture's record-result function is
+(`fsl-cst`'s token table), so the fixture's record-result function is
 named `corner`, not `origin`, in `tests/fixtures/spine-run.native`; every
 fixture name above is exact. Nothing about the scenario changes --
 still a function whose declared result is a record, still refusing

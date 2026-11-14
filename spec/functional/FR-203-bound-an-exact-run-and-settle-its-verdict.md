@@ -3,21 +3,21 @@ id: FR-203
 title: "Bound an exact run and settle its verdict"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-202
+  - target: ix://agent-ix/filament-spec-language/FR-202
     type: depends_on
 ---
 # FR-203: Bound an exact run and settle its verdict
@@ -27,7 +27,7 @@ relationships:
 EN-5's cost SHALL be bounded only by `ExactProbLimits`, ADR-014 B-5 budgets
 that the request sets, each with a published default (ADR-028 LM-1 to
 LM-3). Reaching one SHALL stop the run and name the budget, its value and
-the request setting that raises it. QSL SHALL settle every item routed to
+the request setting that raises it. FSL SHALL settle every item routed to
 EN-5 as exactly one FR-331 terminal record with ADR-018's verdict kinds and
 the `ProofBasis` members `ExactValue` and `ValueBounds` (XV-1 to XV-7),
 never with ADR-024's `measured`.
@@ -80,9 +80,9 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
   default above when omitted. Every member's setting name SHALL be
   `exact_prob.` followed by the member name, the `model` members included
   (`exact_prob.max_states`, `exact_prob.max_transitions`,
-  `exact_prob.max_automaton_states`), as QSpec FR-411's flat limits object
+  `exact_prob.max_automaton_states`), as FSpec FR-411's flat limits object
   names them (FR-255's engine table); the `model` members keep FR-126's
-  defaults. QSpec FR-411 owns each limit and its setting name; QSL
+  defaults. FSpec FR-411 owns each limit and its setting name; FSL
   publishes the default values. No member SHALL be fixed by the language, and none
   enters the obligation identity. The method choices the budgets drive
   SHALL be recorded in the result.
@@ -162,7 +162,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
 | FR-203-AC-4 | A request whose proof summary holds AC-1's two proofs counts 2 proved items. `P95` with and without stated confidence parameters have different obligation identities, and the same claim requested with `exact` and with a changed `precision_bits` has one obligation identity. | Test (TC-638) |
 | FR-203-AC-5 | FR-196-AC-5's refutation settles `refuted`, `decisive-counterexample`, `Refuted`, category violation, with cause `UndefinedEvaluation{where: 1, cause: absent-key}`, after FR-202's replay; the claim's threshold plays no part. | Test (TC-641) |
 | FR-203-AC-6 | A build stopped at `max_automaton_states` settles `incomplete`, `Incomplete(LimitReached{MaxAutomatonStates, value, exact_prob.max_automaton_states})`; a cancelled build settles `Incomplete(Cancelled{source})`; a build that meets an undecided successor settles `inconclusive`, `Inconclusive(UndecidedSuccessor)`; an expansion stop naming no limit settles `failed`, as an internal fault `runtime_invariant`/`established-invariant-broken` and otherwise with the stop's own cause; an `Internal` refusal settles `failed`. | Test (TC-638) |
-| FR-203-AC-7 | The build-result map is exhaustive over `ProductRefusal` and `ClauseOutcome` with no `_` arm. A build whose expansion stops at `max_candidates` 2 settles `incomplete`, `Incomplete(LimitReached{max_candidates, 2, expansion.max_candidates})`. A build whose `ProductRefusal`, asserted before settling, is `Expansion(stop)` naming `EvaluationMeter` (a subject whose successor expansion charges the meter before the claim reads any predicate, under an accounting bound `B` of `work_units` its first expansion exceeds) settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, naming the exhausted counter, `B` and the setting `accounting.<counter>` by FR-255 Behavior 9's rule (QSpec FR-461-AC-5); a build whose `ProductRefusal`, asserted before settling, is `PredicateRefused(Incomplete(i))` (the expansion fits under `B`, the predicate read's charge is the first one denied) settles the same way for `i`'s counter. A predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a constructed `PredicateRefused(NotBoolean)`, `PredicateRefused(KernelRefused(CheckedInvariant))` and `Translation` error each settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal return no terminal record. | Test (TC-1166) |
+| FR-203-AC-7 | The build-result map is exhaustive over `ProductRefusal` and `ClauseOutcome` with no `_` arm. A build whose expansion stops at `max_candidates` 2 settles `incomplete`, `Incomplete(LimitReached{max_candidates, 2, expansion.max_candidates})`. A build whose `ProductRefusal`, asserted before settling, is `Expansion(stop)` naming `EvaluationMeter` (a subject whose successor expansion charges the meter before the claim reads any predicate, under an accounting bound `B` of `work_units` its first expansion exceeds) settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, naming the exhausted counter, `B` and the setting `accounting.<counter>` by FR-255 Behavior 9's rule (FSpec FR-461-AC-5); a build whose `ProductRefusal`, asserted before settling, is `PredicateRefused(Incomplete(i))` (the expansion fits under `B`, the predicate read's charge is the first one denied) settles the same way for `i`'s counter. A predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a constructed `PredicateRefused(NotBoolean)`, `PredicateRefused(KernelRefused(CheckedInvariant))` and `Translation` error each settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal return no terminal record. | Test (TC-1166) |
 
 ## Dependencies
 
@@ -176,7 +176,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
 
 ## References
 
-- QSpec half, which owns `ExactProbLimits` and its setting names in the
-  request, while QSL publishes the default values, and the result content
-  onto FR-331 and FR-243: QSpec FR-411 (Linear STD-137).
+- FSpec half, which owns `ExactProbLimits` and its setting names in the
+  request, while FSL publishes the default values, and the result content
+  onto FR-331 and FR-243: FSpec FR-411 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

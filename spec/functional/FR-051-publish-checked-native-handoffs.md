@@ -3,13 +3,13 @@ id: FR-051
 title: "Publish checked native predicate and temporal handoffs"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-040, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-090, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-092, type: depends_on }
-  - { target: ix://agent-ix/quire-contract-ir/FR-025, type: supports }
-  - { target: ix://agent-ix/quire-contract-ir/FR-026, type: supports }
+  - { target: ix://agent-ix/filament-spec-language/FR-040, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-090, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-092, type: depends_on }
+  - { target: ix://agent-ix/filament-contract-ir/FR-025, type: supports }
+  - { target: ix://agent-ix/filament-contract-ir/FR-026, type: supports }
   - { target: ix://agent-ix/tl-syntax/IF-001, type: implements }
   - { target: ix://agent-ix/tl-syntax/VO-003, type: implements }
 ---
@@ -17,11 +17,11 @@ relationships:
 
 ## Description
 
-**RETIRED (M-6d), which deletes `protocol_artifact::checked_predicate` and `protocol_artifact::temporal_subject`.** This description specified that when a consumer requested an immutable native definition handoff, the compiler derived either `quire.checked-predicate/v1` or `quire.checked-temporal-subject/v1` from the exact admitted `quire.compiled-protocol/2` package and returned canonical bounded bytes plus a constructor-private validated view. That surface is deleted for the same reason as FR-051-AC-1 (see Acceptance Criteria): the spine `ProtocolClause` path no longer needs this producer/consumer round trip, and nothing outside the deleted modules' own tests called them. This description is retired, not amended, since there is no successor module for it to describe.
+**RETIRED (M-6d), which deletes `protocol_artifact::checked_predicate` and `protocol_artifact::temporal_subject`.** This description specified that when a consumer requested an immutable native definition handoff, the compiler derived either `filament.checked-predicate/v1` or `filament.checked-temporal-subject/v1` from the exact admitted `filament.compiled-protocol/2` package and returned canonical bounded bytes plus a constructor-private validated view. That surface is deleted for the same reason as FR-051-AC-1 (see Acceptance Criteria): the spine `ProtocolClause` path no longer needs this producer/consumer round trip, and nothing outside the deleted modules' own tests called them. This description is retired, not amended, since there is no successor module for it to describe.
 
-**Consumer successor (FR-515).** The claim above that nothing outside the deleted modules called them is wrong for quire-protocol (QSL-1501). FR-515 specifies the checked-package views that succeed them; the modules stay until FR-515-AC-1 to AC-9 are green (FR-521 row 1).
+**Consumer successor (FR-515).** The claim above that nothing outside the deleted modules called them is wrong for filament-protocol (QSL-1501). FR-515 specifies the checked-package views that succeed them; the modules stay until FR-515-AC-1 to AC-9 are green (FR-521 row 1).
 
-**Live: the production dependency graph (FR-051-AC-6).** QSL's resolved dependency graph is cycle-free: no dependency of QSL depends back on QSL. `arch-lint direction` (FR-059, FB-05/FB-11) checks this across the four repositories when given their checkouts.
+**Live: the production dependency graph (FR-051-AC-6).** FSL's resolved dependency graph is cycle-free: no dependency of FSL depends back on FSL. `arch-lint direction` (FR-059, FB-05/FB-11) checks this across the four repositories when given their checkouts.
 
 ## Contract set and public API (RETIRED M-6d)
 
@@ -89,7 +89,7 @@ requirements, the checked root expression, the exact FR-050 definition/profile/
 clock selection, inclusive intervals, operator population, required history,
 evaluation anchor and the sorted checked predicate leaves reachable from the
 root. Its history boundary kind is exactly `execution-origin` or
-`history-cutoff` under `quire-specification/FR-293`. It asserts no observation,
+`history-cutoff` under `filament-specification/FR-293`. It asserts no observation,
 progress, closure, completeness or temporal result.
 
 ## Admission, reading, and limits (RETIRED M-6d)
@@ -123,7 +123,7 @@ Contract-IR vocabulary, TL proposition value or Boolean coercion participates.
 | FR-051-AC-3 | **RETIRED (M-6d)**, for the same reason as FR-051-AC-1: unknown fields/contracts, trailing bytes, noncanonical encodings, invalid spans, duplicate/unbounded populations and exact-limit-plus-one inputs refused before excess state was retained. | Retired |
 | FR-051-AC-4 | **RETIRED (M-6d)**, for the same reason as FR-051-AC-1: independent schema vectors matched the producer, and same identity on unequal canonical bytes refused. | Retired |
 | FR-051-AC-5 | **RETIRED (M-6d)**, for the same reason as FR-051-AC-1: a textual or externally built expression, self-asserted trust/total flag, non-Boolean leaf, evaluator callback, and copied consumer vocabulary could not construct either validated view. | Retired |
-| FR-051-AC-6 | **Amended (M-6d).** This criterion previously read: "The temporal view preserves exact activation, clock, inclusive interval, history kind and reachable formula predicate identities without asserting observation or result state; the predicate view admits the exact optional temporal activation guard separately and asserts no truth"; that text is retired for the same reason as FR-051-AC-1. The criterion now states: QSL's resolved dependency graph is cycle-free, with no dependency of QSL depending back on QSL; `arch-lint direction` (FR-059) verifies it. | Test (TC-139) |
+| FR-051-AC-6 | **Amended (M-6d).** This criterion previously read: "The temporal view preserves exact activation, clock, inclusive interval, history kind and reachable formula predicate identities without asserting observation or result state; the predicate view admits the exact optional temporal activation guard separately and asserts no truth"; that text is retired for the same reason as FR-051-AC-1. The criterion now states: FSL's resolved dependency graph is cycle-free, with no dependency of FSL depending back on FSL; `arch-lint direction` (FR-059) verifies it. | Test (TC-139) |
 
 ## Ownership
 
@@ -136,8 +136,8 @@ artifacts/results; Contract IR owns deterministic correspondence and decisions.
 
 FR-040 supplies checked composed values; FR-042 and FR-050 supply the admitted
 compiled-protocol package and temporal binding. The shared semantic objects are
-owned by `quire-specification`; downstream projection and results remain owned
-by Contract IR, Quire Observation, Quire Protocol and the TL crates. QSL depends on
-the cycle-free `quire-contract-model` package under its existing dependency
+owned by `filament-specification`; downstream projection and results remain owned
+by Contract IR, Quire Observation, Quire Protocol and the TL crates. FSL depends on
+the cycle-free `filament-contract-model` package under its existing dependency
 key; it does not depend on the compatibility bridge package that consumes these
 handoffs.

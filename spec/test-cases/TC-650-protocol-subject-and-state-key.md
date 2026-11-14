@@ -3,7 +3,7 @@ id: TC-650
 title: "The protocol subject builds, refuses bad bindings and keys states canonically"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: verifies
 ---
 # TC-650: The protocol subject builds, refuses bad bindings and keys states canonically

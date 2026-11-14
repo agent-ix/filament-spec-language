@@ -3,9 +3,9 @@ id: FR-030
 title: "Extract a selected clause through actual Quire extraction"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: references
 ---
 ## Description
@@ -38,11 +38,11 @@ No extraction status is rewritten into a parsing or runtime result.
 Preflight checks the context by content. Its failures distinguish the byte
 and line limits, and source identity, path and authored-package mismatches
 against the original and the binding, with typed causes carrying actual and expected values. Their existing native code
-families remain unchanged. The consumer is the `qsl-source` crate. It re-exports
+families remain unchanged. The consumer is the `fsl-source` crate. It re-exports
 Quire's contracts (ClausesOutcome, SemanticContext and the result and failure
-types), so a caller names them through `qsl-source`. The consumer also builds
+types), so a caller names them through `fsl-source`. The consumer also builds
 the validated clause-only Quire context for an original source and authored
-package. QSL reaches Quire only through `qsl-source`.
+package. FSL reaches Quire only through `fsl-source`.
 
 ## Behavior
 
@@ -60,7 +60,7 @@ LF of an original CRLF pair, the compiler body also drops the remaining terminal
 CR. Indentation and interior CR bytes stay intact; the source map admits only
 the resulting final LF or CRLF deletion. Quire's raw body remains in its unchanged
 extraction outcome. No header, import or newline is inserted.
-The spine clause runner shall compile the verified body under its body identity with the declared language; a language other than QSL native refuses at compile with `unknown_language` (FR-031).
+The spine clause runner shall compile the verified body under its body identity with the declared language; a language other than FSL native refuses at compile with `unknown_language` (FR-031).
 If extraction or correspondence fails, then the caller shall run no compile, return no partial package and retain the actual failure.
 
 The original byte limit has a published default of 1 MiB and the line limit
@@ -70,10 +70,10 @@ limits work in the existing extractor before it builds its clause population;
 it is not a new Quire-wide performance guarantee. The spine limits, including the
 source-byte limit on the extracted body, remain independent and fresh for each
 request and apply at compilation.
-The `quire-extraction` Cargo feature of `qsl-source` is optional and is enabled
-only through `qsl-replay`'s feature of the same name; it is what lets QSL code
+The `quire-extraction` Cargo feature of `fsl-source` is optional and is enabled
+only through `fsl-replay`'s feature of the same name; it is what lets FSL code
 name quire-rs. The root crate has no `quire-extraction` feature (ADR-011 §7.3
-X-4), and a build without `qsl-replay`'s feature calls no Quire extraction. quire-rs is
+X-4), and a build without `fsl-replay`'s feature calls no Quire extraction. quire-rs is
 still built transitively in every build, through FCD's
 `agent-ix-extraction-frontend` (`model::intake`). C retains changes to existing
 repositories, schemas, CLI/wire adoption and broader integration.
@@ -86,7 +86,7 @@ repositories, schemas, CLI/wire adoption and broader integration.
 | FR-030-AC-2 | A successful extraction yields an ExtractedSource whose ClausesOutcome equals Quire's actual output unchanged: its availability, its complete clause population, its diagnostics and, for a clause tagged with an unchecked language, Quire's unchecked-language advisory. After a successful and after a failed spine compile of the body, the retained ClausesOutcome is still that one; an unchecked tag alone does not pass the S1 parser. | Test (TC-108) |
 | FR-030-AC-3 | Foreign context, missing/duplicate selected clauses and unavailable extraction refuse without a package; each foreign context field retains its distinct typed preflight cause before extraction. | Test (TC-108) |
 | FR-030-AC-4 | Verified original/body coordinates remain exact at body EOF and with trailing layout; invalid body identity and out-of-range mapping requests refuse. | Test (TC-108) |
-| FR-030-AC-5 | Original byte/line and spine limits return incomplete, with successful fresh retry; a build without `qsl-replay`'s `quire-extraction` calls no Quire extraction. | Test (TC-108) |
+| FR-030-AC-5 | Original byte/line and spine limits return incomplete, with successful fresh retry; a build without `fsl-replay`'s `quire-extraction` calls no Quire extraction. | Test (TC-108) |
 
 ## Dependencies
 

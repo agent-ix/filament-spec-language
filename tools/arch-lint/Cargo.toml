@@ -5,10 +5,10 @@ publish = false
 edition = "2021"
 rust-version = "1.98"
 license = "AGPL-3.0-or-later"
-description = "FR-059/FR-060/FR-284 and ADR-013 §2 architecture-conformance checks over the QSL/IR/RT/CG ecosystem."
+description = "FR-059/FR-060/FR-284 and ADR-013 §2 architecture-conformance checks over the FSL/IR/RT/CG ecosystem."
 
 # A workspace member of its own, like `xtask`, so its `syn`/`proc-macro2`
-# dependencies stay out of the `quire-spec-language` library's dependency
+# dependencies stay out of the `filament-spec-language` library's dependency
 # graph.
 # The library holds what other workspace tools share: FR-059's
 # `graph::classify`, which `xtask canonical-types` uses to find ecosystem
@@ -24,7 +24,7 @@ path = "main.rs"
 [dependencies]
 serde_json = { version = "1.0.151" }
 thiserror = "2.0.20"
-# FR-060 T12-G parses and tokenizes QSL source: `#[cfg(test)]`
+# FR-060 T12-G parses and tokenizes FSL source: `#[cfg(test)]`
 # exclusion, enclosing-function resolution, and token-level pattern matching.
 syn = { version = "2.0.119", features = ["full", "visit"] }
 # `span-locations` gives each token its real source line.

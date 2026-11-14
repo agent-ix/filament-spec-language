@@ -3,7 +3,7 @@ id: TC-1085
 title: "The liveness engine reads positions past a dead automaton and refuses unbuilt clauses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: verifies
 ---
 # TC-1085: The liveness engine reads positions past a dead automaton and refuses unbuilt clauses

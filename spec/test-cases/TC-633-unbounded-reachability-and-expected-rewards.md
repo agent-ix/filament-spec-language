@@ -3,7 +3,7 @@ id: TC-633
 title: "Unbounded reachability and expected rewards are decided by graph precomputation, interval iteration and exact policy iteration"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: verifies
 ---
 # TC-633: Unbounded reachability and expected rewards are decided by graph precomputation, interval iteration and exact policy iteration

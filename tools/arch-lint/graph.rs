@@ -9,13 +9,13 @@
 
 use std::fmt;
 
-/// The four repositories ADR-011 §7.1 and §3 FB-05/FB-11 name. `Qsl` is the
+/// The four repositories ADR-011 §7.1 and §3 FB-05/FB-11 name. `Fsl` is the
 /// repository this crate lives in; `Ir`, `Rt` and `Cg` are Contract IR,
 /// Runtime and Codegen.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Repo {
-    /// Quire Spec Language, this repository.
-    Qsl,
+    /// Filament Specification Language, this repository.
+    Fsl,
     /// Contract IR.
     Ir,
     /// Contract Runtime.
@@ -26,15 +26,15 @@ pub enum Repo {
 
 impl Repo {
     /// Every repository, in declaration order.
-    pub const ALL: [Repo; 4] = [Repo::Qsl, Repo::Ir, Repo::Rt, Repo::Cg];
+    pub const ALL: [Repo; 4] = [Repo::Fsl, Repo::Ir, Repo::Rt, Repo::Cg];
 
     /// The repository's name.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Qsl => "quire-spec-language",
-            Self::Ir => "quire-contract-ir",
-            Self::Rt => "quire-contract-runtime",
-            Self::Cg => "quire-contract-codegen",
+            Self::Fsl => "filament-spec-language",
+            Self::Ir => "filament-contract-ir",
+            Self::Rt => "filament-contract-runtime",
+            Self::Cg => "filament-contract-codegen",
         }
     }
 }
@@ -46,23 +46,25 @@ impl fmt::Display for Repo {
 }
 
 /// Classify a resolved package as one of the four ADR-011 ecosystem
-/// repositories, by package name or by its `source` string. This is QSL's one
+/// repositories, by package name or by its `source` string. This is FSL's one
 /// definition of an ecosystem *repository* component: a package published
 /// from the same git repository under a different crate name (for example
-/// IR's own workspace member, published as `quire-contract-model`) still
+/// IR's own workspace member, published as `filament-contract-model`) still
 /// classifies as that one repository, never a second, distinct one.
 pub fn classify(name: &str, source: Option<&str>) -> Option<Repo> {
     let haystack = source.unwrap_or(name);
-    if name == "quire-spec-language" || haystack.contains("quire-spec-language") {
-        Some(Repo::Qsl)
-    } else if name == "quire-contract-ir"
-        || name == "quire-contract-model"
-        || haystack.contains("quire-contract-ir")
+    if name == "filament-spec-language" || haystack.contains("filament-spec-language") {
+        Some(Repo::Fsl)
+    } else if name == "filament-contract-ir"
+        || name == "filament-contract-model"
+        || haystack.contains("filament-contract-ir")
     {
         Some(Repo::Ir)
-    } else if name == "quire-contract-runtime" || haystack.contains("quire-contract-runtime") {
+    } else if name == "filament-contract-runtime" || haystack.contains("filament-contract-runtime")
+    {
         Some(Repo::Rt)
-    } else if name == "quire-contract-codegen" || haystack.contains("quire-contract-codegen") {
+    } else if name == "filament-contract-codegen" || haystack.contains("filament-contract-codegen")
+    {
         Some(Repo::Cg)
     } else {
         None
@@ -71,7 +73,7 @@ pub fn classify(name: &str, source: Option<&str>) -> Option<Repo> {
 
 /// A normal dependency edge is a build-time link; a dev edge exists only for
 /// tests, examples or benches. FB-11 forbids a cycle over either kind; FB-05
-/// forbids most normal or dev edges into QSL.
+/// forbids most normal or dev edges into FSL.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EdgeKind {
     /// A build-time link.
@@ -92,7 +94,7 @@ impl EdgeKind {
 
 /// One resolved cross-repository dependency edge: `from` depends on `to`
 /// through `via_crate` (the dependency's package name, which may differ from
-/// its owning repository's own crate name, e.g. IR's `quire-contract-model`).
+/// its owning repository's own crate name, e.g. IR's `filament-contract-model`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Edge {
     /// The depending repository.
@@ -105,16 +107,16 @@ pub struct Edge {
     pub via_crate: String,
 }
 
-/// One FB-05 finding: an edge into QSL that the only stated exception
-/// (ADR-011 §3 FB-05: CG's normal dependency on the QSL layer-6 `replay`
+/// One FB-05 finding: an edge into FSL that the only stated exception
+/// (ADR-011 §3 FB-05: CG's normal dependency on the FSL layer-6 `replay`
 /// facade) does not cover.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fb05Violation {
-    /// The edge into QSL.
+    /// The edge into FSL.
     pub edge: Edge,
 }
 
-/// One FB-11 finding: a cycle over QSL/IR/RT/CG, normal and dev edges
+/// One FB-11 finding: a cycle over FSL/IR/RT/CG, normal and dev edges
 /// combined. `path` lists the repositories in cycle order, starting and
 /// ending at the same repository.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,7 +142,7 @@ impl DirectionReport {
 }
 
 /// A resolved dependency of a repository on the checked-term leaf
-/// `quire-checked` (ADR-011 layer C), with the leaf's `construct` feature
+/// `filament-checked` (ADR-011 layer C), with the leaf's `construct` feature
 /// enabled in that repository's resolution. The leaf classifies as no
 /// ecosystem repository, so it has no [`Edge`]; this is its own kind of edge.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,23 +155,23 @@ pub struct ConstructEdge {
 
 /// FR-059, FR-400-AC-3 / ADR-011 FB-14: the FB-05 violations among `edges`
 /// that enable `construct`. A backend (IR, RT or CG) reads checked terms and
-/// never builds one; QSL's own `qsl-semantics` is the one crate that does.
+/// never builds one; FSL's own `fsl-semantics` is the one crate that does.
 pub fn construct_violations(edges: &[ConstructEdge]) -> Vec<ConstructEdge> {
     edges
         .iter()
-        .filter(|edge| edge.from != Repo::Qsl)
+        .filter(|edge| edge.from != Repo::Fsl)
         .cloned()
         .collect()
 }
 
-/// The QSL crate that holds the layer-6 `replay` facade, the one QSL crate
+/// The FSL crate that holds the layer-6 `replay` facade, the one FSL crate
 /// CG may take a normal dependency on (ADR-011 FB-05).
-const REPLAY_FACADE_CRATE: &str = "qsl-replay";
+const REPLAY_FACADE_CRATE: &str = "fsl-replay";
 
-/// ADR-011 §3 FB-05: no backend (IR, RT, CG) depends on QSL, normal or dev,
+/// ADR-011 §3 FB-05: no backend (IR, RT, CG) depends on FSL, normal or dev,
 /// except CG's normal dependency on the layer-6 `replay` facade's crate,
-/// [`REPLAY_FACADE_CRATE`]. A CG edge to any other QSL crate, such as
-/// `qsl-semantics`, is a finding. This check is crate-level only -- FR-060's
+/// [`REPLAY_FACADE_CRATE`]. A CG edge to any other FSL crate, such as
+/// `fsl-semantics`, is a finding. This check is crate-level only -- FR-060's
 /// API-surface check is what verifies the dependency is used through
 /// `replay` alone. A shared leaf lives in its own repository, which
 /// `classify` places in no ecosystem repository, so its edges never reach
@@ -177,7 +179,7 @@ const REPLAY_FACADE_CRATE: &str = "qsl-replay";
 fn fb05_violations(edges: &[Edge]) -> Vec<Fb05Violation> {
     edges
         .iter()
-        .filter(|edge| edge.to == Repo::Qsl && edge.from != Repo::Qsl)
+        .filter(|edge| edge.to == Repo::Fsl && edge.from != Repo::Fsl)
         .filter(|edge| {
             !(edge.from == Repo::Cg
                 && edge.kind == EdgeKind::Normal
@@ -189,7 +191,7 @@ fn fb05_violations(edges: &[Edge]) -> Vec<Fb05Violation> {
 }
 
 /// ADR-011 §3 FB-11: no dependency or test-time edge closes a cycle among
-/// QSL, IR, RT and CG. Normal and dev edges are combined into one directed
+/// FSL, IR, RT and CG. Normal and dev edges are combined into one directed
 /// graph over the four repositories, then every simple cycle reachable from
 /// each repository is reported once (by its lexicographically smallest
 /// rotation, so `A -> B -> A` and `B -> A -> B` are the same finding).
@@ -284,49 +286,54 @@ mod tests {
     }
 
     /// tc_arch_lint_direction_010: a resolved backend dependency on
-    /// `quire-checked` with `construct` enabled is an FB-05 violation; QSL's
+    /// `filament-checked` with `construct` enabled is an FB-05 violation; FSL's
     /// own is not (FR-059, FR-400-AC-3).
     #[trace("TC-156", "FR-400-AC-3")]
     #[test]
     fn tc_arch_lint_direction_010_construct_edge_from_a_backend_is_fb05_violation() {
         let rt = ConstructEdge {
             from: Repo::Rt,
-            via_crate: "quire-contract-runtime".to_owned(),
+            via_crate: "filament-contract-runtime".to_owned(),
         };
-        let qsl = ConstructEdge {
-            from: Repo::Qsl,
-            via_crate: "qsl-semantics".to_owned(),
+        let fsl = ConstructEdge {
+            from: Repo::Fsl,
+            via_crate: "fsl-semantics".to_owned(),
         };
-        assert_eq!(construct_violations(&[rt.clone(), qsl.clone()]), vec![rt]);
-        assert!(construct_violations(&[qsl]).is_empty());
+        assert_eq!(construct_violations(&[rt.clone(), fsl.clone()]), vec![rt]);
+        assert!(construct_violations(&[fsl]).is_empty());
         assert!(construct_violations(&[]).is_empty());
     }
 
-    /// tc_arch_lint_direction_001: a clean ecosystem (only the CG -> QSL
-    /// normal replay-facade edge into QSL, no cycle) reports nothing.
+    /// tc_arch_lint_direction_001: a clean ecosystem (only the CG -> FSL
+    /// normal replay-facade edge into FSL, no cycle) reports nothing.
     #[trace("TC-156", "FR-059-AC-1")]
     #[test]
     fn tc_arch_lint_direction_001_clean_graph_reports_nothing() {
         let edges = vec![
-            edge(Repo::Cg, Repo::Qsl, EdgeKind::Normal, "qsl-replay"),
-            edge(Repo::Cg, Repo::Ir, EdgeKind::Normal, "quire-contract-ir"),
-            edge(Repo::Cg, Repo::Rt, EdgeKind::Dev, "quire-contract-runtime"),
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-replay"),
+            edge(Repo::Cg, Repo::Ir, EdgeKind::Normal, "filament-contract-ir"),
+            edge(
+                Repo::Cg,
+                Repo::Rt,
+                EdgeKind::Dev,
+                "filament-contract-runtime",
+            ),
         ];
         let report = check(&edges);
         assert!(report.is_clean(), "{report:?}");
     }
 
-    /// tc_arch_lint_direction_002 (negative control): a synthetic IR -> QSL
+    /// tc_arch_lint_direction_002 (negative control): a synthetic IR -> FSL
     /// normal edge exercises the FB-05 check and is reported: the only
-    /// permitted edge into QSL is CG's normal dependency.
+    /// permitted edge into FSL is CG's normal dependency.
     #[trace("TC-156", "FR-059-AC-2")]
     #[test]
-    fn tc_arch_lint_direction_002_ir_to_qsl_is_fb05_violation() {
+    fn tc_arch_lint_direction_002_ir_to_fsl_is_fb05_violation() {
         let edges = vec![edge(
             Repo::Ir,
-            Repo::Qsl,
+            Repo::Fsl,
             EdgeKind::Normal,
-            "quire-spec-language",
+            "filament-spec-language",
         )];
         let report = check(&edges);
         assert_eq!(report.fb05.len(), 1);
@@ -335,15 +342,15 @@ mod tests {
     }
 
     /// tc_arch_lint_direction_003 (negative control): a dev-only edge from
-    /// RT into QSL is still forbidden -- FB-05 has no dev exception.
+    /// RT into FSL is still forbidden -- FB-05 has no dev exception.
     #[trace("TC-156", "FR-059-AC-2")]
     #[test]
-    fn tc_arch_lint_direction_003_dev_edge_into_qsl_is_violation() {
+    fn tc_arch_lint_direction_003_dev_edge_into_fsl_is_violation() {
         let edges = vec![edge(
             Repo::Rt,
-            Repo::Qsl,
+            Repo::Fsl,
             EdgeKind::Dev,
-            "quire-spec-language",
+            "filament-spec-language",
         )];
         let report = check(&edges);
         assert_eq!(report.fb05.len(), 1);
@@ -352,74 +359,89 @@ mod tests {
 
     /// tc_arch_lint_direction_004: CG's normal dependency on the replay
     /// facade's crate is the one stated exception and is not reported; its
-    /// normal dependency on any other QSL crate, the layer-3
-    /// `qsl-semantics` or the root crate, is reported.
+    /// normal dependency on any other FSL crate, the layer-3
+    /// `fsl-semantics` or the root crate, is reported.
     #[trace("TC-156", "FR-059-AC-1", "FR-356-AC-1")]
     #[test]
     fn tc_arch_lint_direction_004_cg_normal_edge_is_the_named_exception() {
-        let report = check(&[edge(Repo::Cg, Repo::Qsl, EdgeKind::Normal, "qsl-replay")]);
+        let report = check(&[edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-replay")]);
         assert!(report.fb05.is_empty(), "{report:?}");
         let edges = vec![
-            edge(Repo::Cg, Repo::Qsl, EdgeKind::Normal, "qsl-semantics"),
-            edge(Repo::Cg, Repo::Qsl, EdgeKind::Normal, "quire-spec-language"),
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-semantics"),
+            edge(
+                Repo::Cg,
+                Repo::Fsl,
+                EdgeKind::Normal,
+                "filament-spec-language",
+            ),
         ];
         let flagged: Vec<_> = check(&edges)
             .fb05
             .into_iter()
             .map(|violation| violation.edge.via_crate)
             .collect();
-        assert_eq!(flagged, ["qsl-semantics", "quire-spec-language"]);
+        assert_eq!(flagged, ["fsl-semantics", "filament-spec-language"]);
     }
 
     /// tc_arch_lint_direction_005 (negative control): CG's *dev* dependency
-    /// on QSL is not the stated exception (the exception names a normal
+    /// on FSL is not the stated exception (the exception names a normal
     /// dependency only) and is reported.
     #[trace("TC-156", "FR-059-AC-3")]
     #[test]
-    fn tc_arch_lint_direction_005_cg_dev_edge_into_qsl_is_violation() {
+    fn tc_arch_lint_direction_005_cg_dev_edge_into_fsl_is_violation() {
         let edges = vec![edge(
             Repo::Cg,
-            Repo::Qsl,
+            Repo::Fsl,
             EdgeKind::Dev,
-            "quire-spec-language",
+            "filament-spec-language",
         )];
         let report = check(&edges);
         assert_eq!(report.fb05.len(), 1);
     }
 
-    /// tc_arch_lint_direction_006 (negative control): QSL -> IR -> QSL is a
+    /// tc_arch_lint_direction_006 (negative control): FSL -> IR -> FSL is a
     /// two-repository FB-11 cycle.
     #[trace("TC-156", "FR-059-AC-4")]
     #[test]
     fn tc_arch_lint_direction_006_two_repo_cycle_is_fb11_violation() {
         let edges = vec![
             edge(
-                Repo::Qsl,
+                Repo::Fsl,
                 Repo::Ir,
                 EdgeKind::Normal,
-                "quire-contract-model",
+                "filament-contract-model",
             ),
-            edge(Repo::Ir, Repo::Qsl, EdgeKind::Normal, "quire-spec-language"),
+            edge(
+                Repo::Ir,
+                Repo::Fsl,
+                EdgeKind::Normal,
+                "filament-spec-language",
+            ),
         ];
         let report = check(&edges);
         assert_eq!(report.fb11.len(), 1);
         assert_eq!(report.fb11[0].path.first(), report.fb11[0].path.last());
     }
 
-    /// tc_arch_lint_direction_007 (negative control): a longer QSL -> CG ->
-    /// RT -> QSL cycle is also caught, combining normal and dev edges.
+    /// tc_arch_lint_direction_007 (negative control): a longer FSL -> CG ->
+    /// RT -> FSL cycle is also caught, combining normal and dev edges.
     #[trace("TC-156", "FR-059-AC-4")]
     #[test]
     fn tc_arch_lint_direction_007_three_repo_cycle_is_fb11_violation() {
         let edges = vec![
-            edge(Repo::Qsl, Repo::Cg, EdgeKind::Dev, "quire-contract-codegen"),
+            edge(
+                Repo::Fsl,
+                Repo::Cg,
+                EdgeKind::Dev,
+                "filament-contract-codegen",
+            ),
             edge(
                 Repo::Cg,
                 Repo::Rt,
                 EdgeKind::Normal,
-                "quire-contract-runtime",
+                "filament-contract-runtime",
             ),
-            edge(Repo::Rt, Repo::Qsl, EdgeKind::Dev, "quire-spec-language"),
+            edge(Repo::Rt, Repo::Fsl, EdgeKind::Dev, "filament-spec-language"),
         ];
         let report = check(&edges);
         assert_eq!(report.fb11.len(), 1);
@@ -427,18 +449,18 @@ mod tests {
     }
 
     /// tc_arch_lint_direction_009: `classify` maps a package published from
-    /// IR's repository under a different crate name (`quire-contract-model`)
+    /// IR's repository under a different crate name (`filament-contract-model`)
     /// to the same `Repo::Ir` as the repository's own facade package name,
-    /// so the direction check reads QSL's edge on `quire-contract-model` as
-    /// QSL -> IR.
+    /// so the direction check reads FSL's edge on `filament-contract-model` as
+    /// FSL -> IR.
     #[trace("TC-156", "FR-059-AC-6")]
     #[test]
     fn tc_arch_lint_direction_009_classify_shares_repo_across_package_names() {
-        assert_eq!(classify("quire-contract-ir", None), Some(Repo::Ir));
+        assert_eq!(classify("filament-contract-ir", None), Some(Repo::Ir));
         assert_eq!(
             classify(
-                "quire-contract-model",
-                Some("git+https://github.com/agent-ix/quire-contract-ir?rev=53cc03c#53cc03c")
+                "filament-contract-model",
+                Some("git+https://github.com/agent-ix/filament-contract-ir?rev=53cc03c#53cc03c")
             ),
             Some(Repo::Ir)
         );
@@ -451,14 +473,14 @@ mod tests {
     #[test]
     fn tc_arch_lint_direction_008_acyclic_chain_reports_no_cycle() {
         let edges = vec![
-            edge(Repo::Cg, Repo::Ir, EdgeKind::Normal, "quire-contract-ir"),
+            edge(Repo::Cg, Repo::Ir, EdgeKind::Normal, "filament-contract-ir"),
             edge(
                 Repo::Cg,
                 Repo::Rt,
                 EdgeKind::Normal,
-                "quire-contract-runtime",
+                "filament-contract-runtime",
             ),
-            edge(Repo::Cg, Repo::Qsl, EdgeKind::Normal, "qsl-replay"),
+            edge(Repo::Cg, Repo::Fsl, EdgeKind::Normal, "fsl-replay"),
         ];
         let report = check(&edges);
         assert!(report.fb11.is_empty());

@@ -3,15 +3,15 @@ id: FR-342
 title: "Classify a clause-run disposition into one refinement class"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-034
+  - target: ix://agent-ix/filament-spec-language/US-034
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-341
+  - target: ix://agent-ix/filament-spec-language/FR-341
     type: depends_on
 ---
 # FR-342: Classify a clause-run disposition into one refinement class

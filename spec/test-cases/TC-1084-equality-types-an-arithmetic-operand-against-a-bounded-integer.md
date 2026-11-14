@@ -3,14 +3,14 @@ id: TC-1084
 title: "An equality types an arithmetic operand against a bounded integer wherever it is written"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
 ---
 # TC-1084: An equality types an arithmetic operand against a bounded integer wherever it is written
 
 ## Description
 
-Verify QSpec FR-149's expected-type rule in a guard, an invariant and a function body, and the forms it does not coerce; and that the decimal literal expressions of QSpec TC-185 D25 type as FR-104-AC-16 states; and that infix decimal arithmetic takes its type from its operands (QSpec FR-140).
+Verify FSpec FR-149's expected-type rule in a guard, an invariant and a function body, and the forms it does not coerce; and that the decimal literal expressions of FSpec TC-185 D25 type as FR-104-AC-16 states; and that infix decimal arithmetic takes its type from its operands (FSpec FR-140).
 
 Scope: FR-104-AC-12, FR-104-AC-13, FR-104-AC-16.
 
@@ -22,7 +22,7 @@ Fixture: the header of FR-108's unit and TC-459 step 7's extended fixture packag
 2. Check `later.tally = earlier.tally` as the body of `f`.
 3. Check `later.tally = -earlier.tally` and `later.tally = n` as the body of `f`.
 4. Add `type P = Decimal[-99, 99; 2, 2; nearest-even];` and `type R = Decimal[0, 1000; 1, 1; exact];`, and let `c` be `function c using v(a: P, b: P): Boolean pure { <body> }`. Check `c` with the bodies `a + b = b + a`, `a * b = b * a`, `a - b = a - b` and `a + decimal(1, 2) = b`; with `b: R` and the body `a + b = b + a`; and with the body `let s = decimal(1, 2) + decimal(2, 2) in s = a`. Run `c` with body `a + b = b + a` at `a = decimal(1, 2)`, `b = decimal(2, 2)` and at `a = decimal(99, 2)`, `b = decimal(1, 2)`. Add `type W = Decimal[-198, 198; 2, 2; nearest-even];` and run `function w using v(a: P, b: P): W pure { convert<W>(a) + convert<W>(b) }`, then with body `convert<W>(a + b)`, at `a = decimal(99, 2)`, `b = decimal(1, 2)`. Check `function d using v(a: P): P pure { a / decimal(8, 2) }` and `function e using v(a: P): Boolean pure { a / decimal(8, 2) = a }`, run `d` at `a = decimal(1, 2)` and `function d2 using v(a: P): P pure { a / decimal(2, 2) }` at `a = decimal(5, 2)`, and check `function f using v(a: P, b: P): P pure { a / b }` `function g using v(a: P, b: P): Boolean pure { a / b = a }` and `function h using v(a: P, b: P): Boolean pure { let s = a / b in s = a }`. Check `c` with the body `-a = b`, and with `b: R` and the body `a / b = a`.
-5. With `type P = Decimal[0, 1000; 2, 2; exact];`, `type R = Decimal[0, 1000; 1, 1; exact];`, check the six functions `e1` to `e6` of FR-104-AC-16 (QSpec TC-185 D25), counting charges on the refused ones.
+5. With `type P = Decimal[0, 1000; 2, 2; exact];`, `type R = Decimal[0, 1000; 1, 1; exact];`, check the six functions `e1` to `e6` of FR-104-AC-16 (FSpec TC-185 D25), counting charges on the refused ones.
 
 ## Expected Results
 

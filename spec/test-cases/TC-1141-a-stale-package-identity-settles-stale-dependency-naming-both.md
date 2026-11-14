@@ -3,15 +3,15 @@ id: TC-1141
 title: "Retired: the package-identity staleness check is withdrawn"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-282
+  - target: ix://agent-ix/filament-spec-language/FR-282
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-339
+  - target: ix://agent-ix/filament-spec-language/FR-339
     type: verifies
 ---
 # TC-1141: Retired: the package-identity staleness check is withdrawn

@@ -3,15 +3,15 @@ id: TC-1331
 title: "Evaluate from a checked package read from its bytes alone"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-531
+  - target: ix://agent-ix/filament-spec-language/FR-531
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-517
+  - target: ix://agent-ix/filament-spec-language/FR-517
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-251
+  - target: ix://agent-ix/filament-spec-language/FR-251
     type: references
-  - target: ix://agent-ix/quire-contract-ir/FR-357
+  - target: ix://agent-ix/filament-contract-ir/FR-357
     type: references
-  - target: ix://agent-ix/quire-contract-ir/FR-358
+  - target: ix://agent-ix/filament-contract-ir/FR-358
     type: references
 ---
 # TC-1331: Evaluate from a checked package read from its bytes alone
@@ -20,10 +20,10 @@ relationships:
 
 Verify the bytes-only entry and its selected-monitor preparation boundary.
 Scope: FR-531-AC-1 through FR-531-AC-33. **R** is the package of FR-517.
-The isolated bytes-only consumer test crate depends on `quire-contract-model`,
-`qsl-package` and `qsl-eval` only. Producer transport and selected-monitor
+The isolated bytes-only consumer test crate depends on `filament-contract-model`,
+`fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
-inputs and the FR-251 plan context through their public QSL APIs before handing
+inputs and the FR-251 plan context through their public FSL APIs before handing
 rows or bytes to the consumer.
 
 ## Test Procedure

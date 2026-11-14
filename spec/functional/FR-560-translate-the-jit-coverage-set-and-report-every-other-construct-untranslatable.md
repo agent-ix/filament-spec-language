@@ -3,36 +3,36 @@ id: FR-560
 title: "Translate the JIT coverage set and report every other construct as Untranslatable"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-035
+  - target: ix://agent-ix/filament-spec-language/ADR-035
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-306"
+  - target: "ix://agent-ix/filament-specification/FR-306"
     type: depends_on
 ---
 # FR-560: Translate the JIT coverage set and report every other construct as Untranslatable
 
 ## Description
 
-The JIT backend (`qsl-jit`, ADR-029 EB-1) SHALL publish the constructs it
-translates as one typed value, `qsl_jit::coverage() -> &'static BackendCoverage`,
+The JIT backend (`fsl-jit`, ADR-029 EB-1) SHALL publish the constructs it
+translates as one typed value, `fsl_jit::coverage() -> &'static BackendCoverage`,
 translate every selected entry whose constructs all lie in that coverage, and
 list every other selected entry as unsupported with FR-294's
 `Untranslatable` cause.
 
-`BackendCoverage` is a seam type in `qsl-eval`'s `execution` module, beside
+`BackendCoverage` is a seam type in `fsl-eval`'s `execution` module, beside
 FR-294's types, so the parity runner (FR-563) reads a coverage without
-depending on `qsl-jit`. It holds three sets: the expression forms, by their ADR-012 form
+depending on `fsl-jit`. It holds three sets: the expression forms, by their ADR-012 form
 names; the value types; and the operations, each a Value-family operator over
 named operand types. A construct "lies in the coverage" when its form, the
 value type of every operand and result it has, and its operation are each
@@ -124,10 +124,10 @@ An entry the JIT cannot prepare because the operating system refuses
 executable memory (a `PROT_EXEC` `mmap` or `mprotect` denied, as on a
 hardened Linux) is listed unsupported with
 `UnsupportedCause::EnvironmentRefused(ExecutableMemoryRefused)` (FR-294), for
-every selected entry, and `prepare` returns `Ok`. This cause belongs to QSL's
-seam type `UnsupportedCause`; it is not a result cause of QSpec's FR-331
+every selected entry, and `prepare` returns `Ok`. This cause belongs to FSL's
+seam type `UnsupportedCause`; it is not a result cause of FSpec's FR-331
 provider envelope, whose `unsupported` causes are a closed set that holds no
-executable-memory member. QSL reports it only as an `UnsupportedEntry`
+executable-memory member. FSL reports it only as an `UnsupportedEntry`
 (FR-294) and exit 21 (FR-285), and emits no FR-331 cause for it. The refusal is not a
 `PrepareFailure::Fault`, and a `call` on such an entry returns
 `CallFailure::Unsupported` with that entry (FR-294), which the driver
@@ -148,7 +148,7 @@ A checked package and the selected entries (FR-294).
 
 ## Behavior
 
-- The JIT shall return its coverage from `qsl_jit::coverage()`, holding at
+- The JIT shall return its coverage from `fsl_jit::coverage()`, holding at
   least the coverage floor.
 - When every construct of a selected entry lies in the coverage, the JIT's
   `prepare` shall translate the entry without listing it unsupported.
@@ -174,7 +174,7 @@ A checked package and the selected entries (FR-294).
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-560-AC-1 | `qsl_jit::coverage()` lists the floor forms, the floor value types (`Boolean`, bounded and unbounded `Integer`, `Rational`, `Decimal`, `Text`, and records and collections of them) and every `Value`-family operator over them. | Test (TC-1380) |
+| FR-560-AC-1 | `fsl_jit::coverage()` lists the floor forms, the floor value types (`Boolean`, bounded and unbounded `Integer`, `Rational`, `Decimal`, `Text`, and records and collections of them) and every `Value`-family operator over them. | Test (TC-1380) |
 | FR-560-AC-2 | The JIT prepared over each of the 10,000 units the FR-295 parity program generator yields at the default seed, every function selected, lists unsupported only entries whose first outside construct is one the table names, and lists no entry whose constructs all lie in the coverage; prepared over `add(a: Integer, b: Integer): Integer { a + b }`, `half(a: Rational[-9, 9; 1, 9], h: Rational[1, 1; 2, 2]): Rational[-9, 9; 1, 18] { a * h }` and `name(t: Text[0, 8; nfc]): Text[0, 8; nfc] { t }`, it lists none of the three unsupported. | Test (TC-1380) |
 | FR-560-AC-3 | For a form and a value type that `coverage()` does not list (the test takes the `SumCase` form `case` and the type `Timestamp` when unlisted, and otherwise the first unlisted ADR-012 form and K2 value type), an entry whose first outside construct is that form is listed with `ExpressionForm(<its name>)`, one whose first outside construct is a parameter of that type with `ValueType(<that type>)`, each with that construct's `Location`; an entry that calls the first entry is listed with `Operation(k)`, `k` the node key of the `call`, while the first entry keeps its own cause; and the other selected entries are prepared. | Test (TC-1381) |
 | FR-560-AC-4 | Over a property-generated set of entries built from the listed forms and types, the JIT lists none unsupported, and over the same entries with one construct replaced by an unlisted form, each is listed with that form's `ExpressionForm` cause. | Test (TC-1381) |
@@ -192,7 +192,7 @@ A checked package and the selected entries (FR-294).
 - [FR-093](FR-093-lower-checked-value-expressions-to-fr-322-terms.md): the node key of a checked operation.
 - [FR-295](FR-295-return-interpreter-outcomes-from-jit-and-aot.md): the parity program generator.
 - [FR-563](FR-563-run-the-parity-gate-and-fail-on-any-difference-from-the-interpreter.md): the gate that fails on a coverage gap.
-- QSpec FR-306: an entry a backend cannot translate settles unsupported for
+- FSpec FR-306: an entry a backend cannot translate settles unsupported for
   that entry only.
 
 ## References

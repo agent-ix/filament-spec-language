@@ -3,25 +3,25 @@ id: FR-221
 title: "Explore the x86-TSO memory model"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-229
+  - target: ix://agent-ix/filament-spec-language/FR-229
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-436
+  - target: ix://agent-ix/filament-specification/FR-436
     type: depends_on
 ---
 # FR-221: Explore the x86-TSO memory model
 
 ## Description
 
-Crate `qsl-eval`'s `simulation` module SHALL provide `Tso: MemoryModel` (ADR-027 SE-1), which
-implements QSpec FR-436's x86-TSO rules through the memory-model seam: its
+Crate `fsl-eval`'s `simulation` module SHALL provide `Tso: MemoryModel` (ADR-027 SE-1), which
+implements FSpec FR-436's x86-TSO rules through the memory-model seam: its
 component is one FIFO store buffer per thread of the active weak
 `parallel`, and its internal step is `flush(b)` (ADR-025 TSO-1 to TSO-8).
 
@@ -46,7 +46,7 @@ store is still in its buffer when the other thread loads, then add
 
 ## Behavior
 
-- `Tso` SHALL implement QSpec FR-436's store, load, flush, locked-access,
+- `Tso` SHALL implement FSpec FR-436's store, load, flush, locked-access,
   fence, fork, join and send rules, and SHALL apply them only through the
   ADR-027 SE-1 members: the buffers as the component (a), a thread's load
   as observe (b), a store's delta as write (c), `flush(b)` as the one
@@ -57,7 +57,7 @@ store is still in its buffer when the other thread loads, then add
   summary as the state key's memory member (FR-229), with each buffered
   element's race map as its `race` member, each queue entry's race map as
   its `race` member, and the `race-summaries` and `race-memory` entries of
-  QSpec FR-438.
+  FSpec FR-438.
 
 ## Acceptance Criteria
 
@@ -73,8 +73,8 @@ store is still in its buffer when the other thread loads, then add
 - ADR-025 §3.2 TSO-1 to TSO-8 (as amended by ADR-027); ADR-027 SE-1.
 - FR-220 (classification and orderings), FR-229 (the component in the
   state and the seam).
-- QSpec FR-436 owns the `tso` semantics and the litmus vectors.
+- FSpec FR-436 owns the `tso` semantics and the litmus vectors.
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-436 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-436 (Linear STD-138).

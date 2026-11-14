@@ -3,9 +3,9 @@ id: TC-196
 title: "A conflicting backend identity registration refuses both and withdraws the held registration"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: verifies
 ---
 # TC-196: A conflicting backend identity registration refuses both and withdraws the held registration
@@ -13,7 +13,7 @@ relationships:
 ## Description
 
 Verify that registering a `BackendId` already held by the registry, with a
-descriptor that differs from the held one, is a conflict (quire-specification
+descriptor that differs from the held one, is a conflict (filament-specification
 FR-290 "Candidate set and negotiation"): both the held registration and the
 new one are refused with `invalid_capability`/`duplicate-backend`, naming the
 identity, and the held registration is withdrawn -- **not** left standing.

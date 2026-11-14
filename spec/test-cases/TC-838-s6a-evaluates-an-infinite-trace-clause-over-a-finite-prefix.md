@@ -3,7 +3,7 @@ id: TC-838
 title: "S6a evaluates an infinite-trace clause three-valued over a finite prefix"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: verifies
 ---
 # TC-838: S6a evaluates an infinite-trace clause three-valued over a finite prefix

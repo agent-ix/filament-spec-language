@@ -7,7 +7,7 @@
 //! the temporal entries select, and writes every entry into a directory the
 //! gate reads.
 //!
-//! The corpus holds, for each of QSpec FR-453's edges E1 to E6, a `case`
+//! The corpus holds, for each of FSpec FR-453's edges E1 to E6, a `case`
 //! both layers refuse with a typed refusal, a `case` over the edge's
 //! distinguishing form and a `distinguishing` entry; and for each of the six
 //! layers one `witness` entry, whose unit selects only that layer and holds
@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::Path;
 
-use qsl_semantics::value::HeaderLayer;
+use fsl_semantics::value::HeaderLayer;
 use serde_json::{json, Value};
 
 use super::layering::{Edge, EDGES};
@@ -87,7 +87,7 @@ enum Selects {
     Timed,
 }
 
-/// The form each edge's child adds over its parent (QSpec FR-453 "Each
+/// The form each edge's child adds over its parent (FSpec FR-453 "Each
 /// layer is a subset users pick"), and the model it is written over;
 /// `None` for a pair that is no FR-453 edge.
 fn distinguishing(edge: &Edge) -> Option<(Selects, String)> {
@@ -102,7 +102,7 @@ fn distinguishing(edge: &Edge) -> Option<(Selects, String)> {
         (StateQueries, StateGraph) | (ValueComplete, ModelComplete) => untimed(NAVIGATION),
         // A function, a complete-value declaration.
         (StateCore, ValueComplete) | (StateGraph, ModelComplete) => untimed(FUNCTION),
-        // A `time` member of a state model (QSpec FR-453-AC-7).
+        // A `time` member of a state model (FSpec FR-453-AC-7).
         (ModelComplete, TemporalComplete) => {
             Some((Selects::Timed, format!("{TIME}{TIMED_INVARIANT}")))
         }
@@ -140,7 +140,7 @@ fn witness_unit(layer: HeaderLayer) -> (Selects, String) {
              invariant Ordered using v on M::ConfigVersion at current { \
              not reaches(self, self, parent) and atMost(self.versionNumber) }\n",
         ),
-        // QSpec FR-453-AC-8: a `time` member, the clock field `x`, a reset,
+        // FSpec FR-453-AC-8: a `time` member, the clock field `x`, a reset,
         // a guard `x >= 1 ms`, a time invariant and one `invariant` clause.
         HeaderLayer::TemporalComplete => (
             Selects::Timed,
@@ -169,7 +169,7 @@ fn timed_document() -> Vec<u8> {
             "identity": identity, "name": name, "typeRef": type_ref, "presence": "required",
             "nullable": false, "defaultKind": "none",
             "multiplicity": {"lower": 1, "upper": 1, "ordered": false,
-                "unique": type_ref != "ix://quire/native/Clock"},
+                "unique": type_ref != "ix://filament/native/Clock"},
             "origin": origin(&identity),
         })
     };
@@ -177,7 +177,7 @@ fn timed_document() -> Vec<u8> {
         let identity = ident(&format!("Timer/{name}"));
         json!({
             "identity": identity, "name": name, "params": [], "pre": [], "post": [],
-            "origin": {"source": {"sourceIdentity": ident("spec"), "path": "spec.qspec",
+            "origin": {"source": {"sourceIdentity": ident("spec"), "path": "spec.fspec",
                 "startLine": 1, "startColumn": 1}},
             "frame": {
                 "modifies": modifies.iter().map(|field| ident(&format!("Timer/{field}"))).collect::<Vec<_>>(),
@@ -200,16 +200,16 @@ fn timed_document() -> Vec<u8> {
             "mappingVersions": [], "profileVersions": []},
         "occurrences": [], "extensions": [],
         "constructs": [
-            construct("object_type", qsl_semantics::model::intake::meaning::OBJECT_TYPE),
-            construct("population", qsl_semantics::model::intake::meaning::POPULATION),
+            construct("object_type", fsl_semantics::model::intake::meaning::OBJECT_TYPE),
+            construct("population", fsl_semantics::model::intake::meaning::POPULATION),
         ],
         "types": [{
             "identity": timer, "displayName": timer,
             "kind": {"module": TIMED_PACKAGE, "name": "object_type"}, "roles": [],
             "origin": origin(&timer), "constraints": [], "extensions": [],
             "unknownPolicy": "reject", "supertypes": [], "relationships": [],
-            "fields": [field("armed", "ix://quire/native/Boolean"),
-                field("x", "ix://quire/native/Clock")],
+            "fields": [field("armed", "ix://filament/native/Boolean"),
+                field("x", "ix://filament/native/Clock")],
             "operations": [operation("arm", &["armed", "x"]), operation("fire", &["armed"])],
         }],
         "populations": [{
@@ -276,14 +276,14 @@ fn witness(layer: HeaderLayer, model: &Model, body: &str) -> Entry {
     }
 }
 
-/// The layer identity's name between `quire.` and `/v1`, for a directory.
+/// The layer identity's name between `filament.` and `/v1`, for a directory.
 // Intake proof: the_generated_corpus_compares_every_edge (tests/refinement_layering.rs).
 // The slug is spelled from the layer's identity text, never branched on.
 #[ix_trace_rs::string_edge]
 fn layer_slug(layer: HeaderLayer) -> String {
     layer
         .identity()
-        .trim_start_matches("quire.")
+        .trim_start_matches("filament.")
         .trim_end_matches("/v1")
         .replace('.', "-")
 }

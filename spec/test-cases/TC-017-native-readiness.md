@@ -3,7 +3,7 @@ id: TC-017
 title: "Source intake at a non-UTF-8 path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-010
+  - target: ix://agent-ix/filament-spec-language/FR-010
     type: verifies
 ---
 

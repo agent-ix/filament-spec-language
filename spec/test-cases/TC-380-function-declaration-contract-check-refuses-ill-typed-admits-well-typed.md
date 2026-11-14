@@ -3,7 +3,7 @@ id: TC-380
 title: "The function-declaration contract check refuses an ill-typed declaration and admits a well-typed one"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: verifies
 ---
 # TC-380: The function-declaration contract check refuses an ill-typed declaration and admits a well-typed one

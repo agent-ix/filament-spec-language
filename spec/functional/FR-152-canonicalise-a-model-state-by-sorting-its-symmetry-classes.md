@@ -3,15 +3,15 @@ id: FR-152
 title: "Canonicalise a model state by sorting its symmetry classes"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: depends_on
 ---
 # FR-152: Canonicalise a model state by sorting its symmetry classes
@@ -39,7 +39,7 @@ at a cost of one sort per class per state (US-019).
 
 ## Outputs
 
-`Permutation` is owned by `quire-semantic-value`, as a type `qsl-eval`
+`Permutation` is owned by `filament-semantic-value`, as a type `fsl-eval`
 produces and CG reads. `ModelSystem` implements FR-101's `canonical` hook and
 always returns `Some((canonical state, permutation))`.
 
@@ -87,7 +87,7 @@ It has `compose`, `inverse` and `identity`.
   With an empty group it makes no comparison and no re-encoding and charges
   nothing.
 - **The run's meter.** A model-check run SHALL hold one
-  `quire.value.accounting/v1` meter from its start to its end, whose
+  `filament.value.accounting/v1` meter from its start to its end, whose
   `work_units` limit is the subject's evaluation meter budget (FR-120) and
   which every charge of the run adds to; it is distinct from the fresh meter
   each clause evaluation is given (FR-120). FR-153, FR-158 and FR-161 charge
@@ -111,15 +111,15 @@ It has `compose`, `inverse` and `identity`.
 ## Dependencies
 
 - ADR-021 SYM-7, RU-2, EI-2, EI-3.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (state key, coalescing), [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (state-key record and reference encoding), [FR-151](FR-151-admit-a-request-s-symmetry-declarations.md)
   (the group).
-- QSpec owns the sort canonicaliser, its sort key and coalescing on
+- FSpec owns the sort canonicaliser, its sort key and coalescing on
   canonical keys as normative semantics (ADR-021 QS-2); the placeholder
-  record's spelling is QSpec's.
+  record's spelling is FSpec's.
 
 ## References
 
-- QSpec half: QSpec FR-383 (Linear STD-134; ADR-021 §9 QS-2). Owning ticket: Linear
+- FSpec half: FSpec FR-383 (Linear STD-134; ADR-021 §9 QS-2). Owning ticket: Linear
   QSL-368.

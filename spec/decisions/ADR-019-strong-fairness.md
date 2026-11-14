@@ -3,23 +3,23 @@ id: ADR-019
 title: "Strong fairness of operations"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: relates_to
-  - target: ix://agent-ix/quire-specification/FR-161
+  - target: ix://agent-ix/filament-specification/FR-161
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-243
+  - target: ix://agent-ix/filament-specification/FR-243
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-360
+  - target: ix://agent-ix/filament-specification/FR-360
     type: depends_on
 ---
 # ADR-019: Strong fairness of operations
@@ -45,13 +45,13 @@ that can rejoin an election only in the windows between other nodes leaving.
 Their liveness needs strong fairness. TLA+ writes it `SF`, Quint
 `strongFair`.
 
-QSpec FR-161 states that fairness filters the admitted infinite traces before
+FSpec FR-161 states that fairness filters the admitted infinite traces before
 evaluation and that the fairness set enters every proof and counterexample
-identity (FR-161-AC-5). QSpec FR-362 settles a missing fairness premise
+identity (FR-161-AC-5). FSpec FR-362 settles a missing fairness premise
 `unsupported`, cause `unsupported_projection`/`missing-fairness-premise`.
 
-"QSpec FR-nnn" names a quire-specification requirement; a bare FR id is a QSL
-requirement. QSpec FR-360 is the infinite-trace result disposition
+"FSpec FR-nnn" names a filament-specification requirement; a bare FR id is an FSL
+requirement. FSpec FR-360 is the infinite-trace result disposition
 vocabulary, as in ADR-018. Item ids `SY-`, `SF-`, `FS-`, `BE-`,
 `SV-`, `QS-` and `AM-` are local to this record. Other artifacts cite them as
 `ADR-019 FS-2`.
@@ -68,7 +68,7 @@ vocabulary, as in ADR-018. Item ids `SY-`, `SF-`, `FS-`, `BE-`,
 | SY-4 | A clause may carry weak and strong constraints together, including both kinds on the same operation. Strong implies weak (§2), so a weak constraint beside a strong one on the same operation and granularity adds nothing to the premise; both stay in the fairness set. |
 | SY-5 | The constraint type is ADR-018 FA-5's `FairnessConstraint{kind, operation, granularity}` with `FairnessKind::Strong` added beside `FairnessKind::Weak`. Strong constraints are admitted on infinite-trace clauses only, as weak ones are. |
 
-The spelling, illustrative as in ADR-018 §6 (QSpec's shared grammar owns it,
+The spelling, illustrative as in ADR-018 §6 (FSpec's shared grammar owns it,
 QS-1):
 
 ```text
@@ -83,7 +83,7 @@ temporal Served using inf over (m: M::Mutex) clock "model-steps" on origin {
 
 | ID | Rule |
 | --- | --- |
-| SF-1 | **One semantics.** Strong fairness is a filter on behaviours, applied before SM-1 evaluates the formula (ADR-018 SM-1, SM-5; QSpec FR-161). A strong constraint changes which behaviours are admitted; it never changes how a formula evaluates on an admitted behaviour. |
+| SF-1 | **One semantics.** Strong fairness is a filter on behaviours, applied before SM-1 evaluates the formula (ADR-018 SM-1, SM-5; FSpec FR-161). A strong constraint changes which behaviours are admitted; it never changes how a formula evaluates on an admitted behaviour. |
 | SF-2 | **Enabled and taken.** A constraint is enabled at a position exactly as ADR-018 FA-2 defines it: a transition identity is enabled at a state when the operation's effective precondition holds for that receiver and argument vector and at least one post-state satisfies its postcondition; a `whole` constraint is enabled when any of its identities is. A constraint is taken at a step when the step's transition identity belongs to it. Enabledness is a property of the model state at the position and never of the automaton state. |
 | SF-3 | **Strong fairness.** A behaviour satisfies a strong constraint when, if the constraint is enabled at infinitely many positions, it is taken at infinitely many steps. In automata terms it is a Streett pair: the states where the constraint is enabled, and the edges that take it. |
 | SF-4 | **On a lasso.** The positions of the loop recur forever and the stem's do not, so on a lasso SF-3 reduces to the loop: if the constraint is enabled at some state of the loop, some step of the loop takes it. A lasso whose loop is the terminal stutter step (ADR-018 SM-4) satisfies every strong constraint, since no operation is enabled at a terminal state. Every terminal state, intended or not, reads this way under infinite-trace (ADR-018 DL-6). A deadlock is a reachable terminal state that the model does not mark intended (ADR-018 DL-2: `terminal when P`, or `terminal any` to opt out), and it is reported through the derived deadlock-freedom item (ADR-018 DL-3). DL-2 reads the state graph alone and that item is a TP-1 invariant with no fairness set, so strong fairness neither hides nor creates a deadlock. |
@@ -107,7 +107,7 @@ fairness in explicit-state LTL checking (References).
 | FS-3 | **Why the refinement is exact.** No cycle inside `S` takes a member of `B`, since `S` has no edge that takes it. A fair cycle inside `S` therefore visits no state where a member of `B` is enabled, so every fair accepting cycle of `S` lies in `S \ R`. The recursion re-tests (a), (b) and (c) on the sub-SCCs, because removing states can remove the accepting state, the weak constraint's edge or its disabled state, or a strong constraint's edge. |
 | FS-4 | **Termination and depth.** A strong constraint that triggers a refinement of `S` is disabled at every state of every sub-SCC of `S \ R`, so it never triggers again below `S`. Every refinement removes at least one state. The recursion depth is therefore at most `min(k, n) + 1`, where `k` is the number of strong constraints after `each` expansion and `n` the number of product states. Amended by ADR-025 MF-2: a visibility refinement removes at least one edge and its pair never triggers again below `S`, so the depth bound also counts visibility pairs. |
 | FS-5 | **Complexity.** The components at one depth are disjoint, so each depth costs one SCC decomposition and one pass of the tests over at most the whole retained graph: `O(n + m')`, with `m'` the product edges plus the enabled-set entries of FS-1. Phase two costs `O((min(k, n) + 1) · (n + m'))`. With weak constraints only, the depth is one and phase two is ADR-018's single pass. Under `each` granularity, `k` is the number of transition identities of each strongly fair operation (receivers times argument vectors), which is where the cost of strong fairness grows. Phase two runs under EN-1's `ModelCheckLimits`, ADR-014 B-5 budgets: the subject's evaluation meter and the `Cancel` handle (ADR-029 FR-276) settle V-7. Fairness constraints are not part of the formula, so they add no automaton states: `n` is the reachable product phase one built, whose automaton factor ADR-018 IV-5 bounds and whose `max_automaton_states` budget, one of the `ModelCheckLimits` (ADR-018 IV-6), settles V-7 in phase one, before refinement starts. |
-| FS-6 | **Canonical result.** Sub-SCCs are enumerated in discovery order within their parent, and the first passing component in that order, depth-first through the refinement, is the one the counterexample uses. The stem is the first path in QSpec FR-181 canonical breadth-first order from an initial product state to that component. The loop is built by ADR-018 CX-5, the greedy walk, applied to that passing component and its entry state. Amended by ADR-025 MF-2: for an edge refinement the sub-SCCs, their order and the CX-5 walk use only the edges the decomposition kept. Sub-SCCs are ranked by their earliest-discovered state under FR-181 breadth-first order, not by completion order. |
+| FS-6 | **Canonical result.** Sub-SCCs are enumerated in discovery order within their parent, and the first passing component in that order, depth-first through the refinement, is the one the counterexample uses. The stem is the first path in FSpec FR-181 canonical breadth-first order from an initial product state to that component. The loop is built by ADR-018 CX-5, the greedy walk, applied to that passing component and its entry state. Amended by ADR-025 MF-2: for an edge refinement the sub-SCCs, their order and the CX-5 walk use only the edges the decomposition kept. Sub-SCCs are ranked by their earliest-discovered state under FR-181 breadth-first order, not by completion order. |
 | FS-7 | **The loop is fair by construction.** The loop lies inside the passing component `P` and is built by ADR-018 CX-5, whose obligations include each fairness obligation of `P`, weak or strong. It visits a state of every acceptance set and, for every weak constraint, an edge of it or a state where it is disabled. For every strong constraint enabled at some state of `P`, CX-5 discharges the obligation only by an edge that takes it, and `P` has one (FS-2 (c)). Every other strong constraint is disabled at every state of `P`, hence at every state of the loop, and CX-5 gives it no obligation. So every strong constraint enabled at a loop state is taken in the loop, which is SF-4. Amended by ADR-025 MF-2: for a visibility pair the passing component's loop takes only kept edges and discharges the pair by an edge on which the thread loads the location from its mo-last message. |
 | FS-8 | **Replay re-establishes fairness.** The engine's claim of fairness is not trusted. ADR-018 CX-3 replay re-executes the lasso through `ModelSystem`, computes the enabled transition identities at every loop state from FR-120 itself, and checks every constraint of the fairness set against the loop: weak by FA-3, strong by SF-4. A lasso that fails a strong constraint is refused as an unfair lasso, with ADR-018 CX-3's existing refusal. Replay decides from the fairness set ADR-018 CX-2 already carries, with each constraint's kind. |
 | FS-9 | **Mixed formulas.** The filter reads only model states, model transitions and enabled sets; the property automaton enters only through its acceptance sets (FS-2 (a)). An automaton that unrolls interval operators nested under unbounded ones into chains of next steps is one more automaton, so FS-1 to FS-8 hold for mixed formulas unchanged. Interval lengths enlarge `n` and `m'` as ADR-018 IV-5 states, and phase two's cost (FS-5) scales with that product. |
@@ -120,7 +120,7 @@ fairness in explicit-state LTL checking (References).
 | BE-2 | **EN-2, SMT lasso unrolling** (ADR-018 §3) | Encodes a strong constraint as a condition on the loop segment: for each loop position and each strong constraint, enabled at that position implies some loop step takes it. Enabledness is an existential over post-states, so each pair adds one existentially chosen successor. Refutation (V-4) only, otherwise V-5. It arrives with EN-2, after IR admits state nodes and temporal forms, as ADR-018 RU-1 orders it. |
 | BE-3 | **EN-3, `k`-induction** (ADR-018 §3) | Settles safety forms. By SF-7 strong constraints leave a safety verdict unchanged, so EN-3 reads the claim without them. |
 | BE-4 | **Lasso monitor** (ADR-014 A-4) | Checks strong fairness on the one lasso it is given, by SF-4, using enabledness at each loop position. A model-subject lasso has enabledness from `ModelSystem`, and a true result on a fair one is `tested`, evidence for that lasso only. A supplied trace carries no enabledness, so a clause with a fairness constraint over it settles `unsupported`, `MissingFairnessPremise` (SV-2). |
-| BE-5 | **TLC** | Checks `SF`. QSL reaches it only through lowering a QSL model to TLA+, which is later research outside this record. The correspondence that lowering would use: `fair strong whole Op` is `SF_vars(\E args : Op(args))`; `fair strong each Op` is `\A args : SF_vars(Op(args))` over the finite receiver and argument domains. |
+| BE-5 | **TLC** | Checks `SF`. FSL reaches it only through lowering an FSL model to TLA+, which is later research outside this record. The correspondence that lowering would use: `fair strong whole Op` is `SF_vars(\E args : Op(args))`; `fair strong each Op` is `\A args : SF_vars(Op(args))` over the finite receiver and argument domains. |
 
 Negotiation never drops or weakens a fairness constraint to fit a back end.
 An item whose fairness set contains a strong constraint is routed only to a
@@ -134,12 +134,12 @@ Every verdict is one of ADR-018 V-1 to V-8, with ADR-018's `ProofBasis` and
 
 | ID | Rule |
 | --- | --- |
-| SV-1 | **Capability.** A temporal provider manifest advertises the fairness kinds its candidate decides. When no candidate for (`temporal-satisfaction`, `unbounded`) advertises `strong`, an item with a strong constraint settles V-8, `unsupported-requested-capability`, with a warning naming the strong-fairness capability, as QSpec FR-161-AC-7 does for a missing liveness backend. |
-| SV-2 | **Missing fairness premise.** `MissingFairnessPremise{constraint}` is a new `Unsupported` cause, QSpec FR-362's "missing fairness premise": `unsupported`, basis `unavailable`, wire cause `unsupported_projection`/`missing-fairness-premise`. Enabledness comes from a model subject only, through FR-120. A supplied trace, replayed or monitored with no model subject behind it, carries states and steps and no enabledness. A clause with any fairness constraint, weak or strong, evaluated over a supplied trace settles `unsupported` with this cause, naming the first constraint of its checked fairness set, which holds the constraints in source order of first occurrence (FR-123). A clause with an empty fairness set over a supplied trace evaluates as ADR-014 A-4 states. |
+| SV-1 | **Capability.** A temporal provider manifest advertises the fairness kinds its candidate decides. When no candidate for (`temporal-satisfaction`, `unbounded`) advertises `strong`, an item with a strong constraint settles V-8, `unsupported-requested-capability`, with a warning naming the strong-fairness capability, as FSpec FR-161-AC-7 does for a missing liveness backend. |
+| SV-2 | **Missing fairness premise.** `MissingFairnessPremise{constraint}` is a new `Unsupported` cause, FSpec FR-362's "missing fairness premise": `unsupported`, basis `unavailable`, wire cause `unsupported_projection`/`missing-fairness-premise`. Enabledness comes from a model subject only, through FR-120. A supplied trace, replayed or monitored with no model subject behind it, carries states and steps and no enabledness. A clause with any fairness constraint, weak or strong, evaluated over a supplied trace settles `unsupported` with this cause, naming the first constraint of its checked fairness set, which holds the constraints in source order of first occurrence (FR-123). A clause with an empty fairness set over a supplied trace evaluates as ADR-014 A-4 states. |
 | SV-3 | **Undecided enabledness.** A contract conjunction that evaluates undecided while EN-1 computes an enabled set leaves both the successor relation and enabledness unknown, and settles V-6 `UndecidedSuccessor`, as ADR-018 states. |
 | SV-4 | **Unfair counterexample.** A lasso that fails a strong constraint on replay is refused by ADR-018 CX-3 and settles no `refuted`. An EN-1 counterexample is fair by FS-7; a refusal of one is an engine defect and settles V-6 `ReplayParity`. |
-| SV-5 | **Identity.** Each constraint's kind enters the clause's obligation identity with its operation and granularity (QSpec FR-161-AC-5). A claim under `strong each` and the same claim under `weak each` are different obligations, and a verdict on one never joins the other's request. |
-| SV-6 | **Strong-fairness hint.** A `refuted` TP-4 item whose counterexample lasso would be excluded by a strong constraint the clause does not carry names that constraint in a diagnostic. Replay computes it after CX-3 settles `reproduced-with-evaluated-witness`, from the enabled sets it already recomputes at each loop state (FS-8), so every engine's refutation gets it. The replay result carries the hints, and the writer of the item's terminal record copies them onto it: the `qsl-replay` settlement map (FR-127) for an EN-1 refutation, and the orchestrating driver (ADR-011 T-13) for an SMT-backend refutation settled through CG's map (ADR-018 DS-2). For each operation of the model in canonical order: if the operation is enabled at some loop state and no loop step takes it, the hint names `fair strong whole Op`; otherwise, if some transition identity of it is enabled at a loop state and no loop step takes that identity, the hint names `fair strong each Op` with that identity. A hint names only a constraint the lasso starves: replay checks the lasso fair under every constraint of the clause (FS-8, SF-4) and refuses a lasso that is not fair with `UnfairLasso`, so no hint repeats a constraint the clause holds. Each hint is a warning-severity diagnostic `fairness.strong-would-exclude` on the item's FR-331 terminal record, beside the counterexample, with members: the suggested constraint (kind, operation, granularity), the identity for `each`, and the first loop position where it is enabled. It is outside the counterexample, its replay identity and the obligation identity, and it changes no verdict. |
+| SV-5 | **Identity.** Each constraint's kind enters the clause's obligation identity with its operation and granularity (FSpec FR-161-AC-5). A claim under `strong each` and the same claim under `weak each` are different obligations, and a verdict on one never joins the other's request. |
+| SV-6 | **Strong-fairness hint.** A `refuted` TP-4 item whose counterexample lasso would be excluded by a strong constraint the clause does not carry names that constraint in a diagnostic. Replay computes it after CX-3 settles `reproduced-with-evaluated-witness`, from the enabled sets it already recomputes at each loop state (FS-8), so every engine's refutation gets it. The replay result carries the hints, and the writer of the item's terminal record copies them onto it: the `fsl-replay` settlement map (FR-127) for an EN-1 refutation, and the orchestrating driver (ADR-011 T-13) for an SMT-backend refutation settled through CG's map (ADR-018 DS-2). For each operation of the model in canonical order: if the operation is enabled at some loop state and no loop step takes it, the hint names `fair strong whole Op`; otherwise, if some transition identity of it is enabled at a loop state and no loop step takes that identity, the hint names `fair strong each Op` with that identity. A hint names only a constraint the lasso starves: replay checks the lasso fair under every constraint of the clause (FS-8, SF-4) and refuses a lasso that is not fair with `UnfairLasso`, so no hint repeats a constraint the clause holds. Each hint is a warning-severity diagnostic `fairness.strong-would-exclude` on the item's FR-331 terminal record, beside the counterexample, with members: the suggested constraint (kind, operation, granularity), the identity for `each`, and the first loop position where it is enabled. It is outside the counterexample, its replay identity and the obligation identity, and it changes no verdict. |
 
 ### 6. Worked example: a contended mutex
 
@@ -152,8 +152,8 @@ Int[1, 2])` and operation `release()`, both with frame `modifies [owner]` and
 no result.
 
 ```text
-profile v   = "quire.value.complete/v1" …;
-profile inf = "quire.temporal.infinite-trace/v1" …;
+profile v   = "filament.value.complete/v1" …;
+profile inf = "filament.temporal.infinite-trace/v1" …;
 model M = "example/mutex" …;
 
 pre  Free  using v on M::Mutex::acquire { self.owner = 0 }
@@ -222,27 +222,27 @@ whole while process 1 starves (SF-6).
 
 | ID | Repository | Change |
 | --- | --- | --- |
-| DS-1 | QSL | S3: admit the `strong` kind and check the constraint (SY-1 to SY-5). Layer A `qsl-analyze` `model_check`: enabled sets per model state (FS-1), the recursive filter (FS-2), the canonical component and loop (FS-6, FS-7). `qsl-replay`: the strong check in CX-3 replay and in the lasso monitor, `MissingFairnessPremise`, the SV-6 hint. The EN-1 manifest's fairness kinds, and the layer-R registry's candidate filter on fairness kinds (DS-2). |
-| DS-2 | QSL and CG | QSL's layer-R registry filters candidates by fairness kind: a backend that does not advertise `strong` is not a candidate for an item with a strong constraint, and when no candidate is left the item settles V-8 `unsupported`, `unsupported-requested-capability`, naming the missing fairness capability (SV-1). The registry already computes candidates (FR-075), so the correctness decision stays where candidates are made. CG negotiates over the filtered set and carries the kind in the obligation identity (SV-5). |
+| DS-1 | FSL | S3: admit the `strong` kind and check the constraint (SY-1 to SY-5). Layer A `fsl-analyze` `model_check`: enabled sets per model state (FS-1), the recursive filter (FS-2), the canonical component and loop (FS-6, FS-7). `fsl-replay`: the strong check in CX-3 replay and in the lasso monitor, `MissingFairnessPremise`, the SV-6 hint. The EN-1 manifest's fairness kinds, and the layer-R registry's candidate filter on fairness kinds (DS-2). |
+| DS-2 | FSL and CG | FSL's layer-R registry filters candidates by fairness kind: a backend that does not advertise `strong` is not a candidate for an item with a strong constraint, and when no candidate is left the item settles V-8 `unsupported`, `unsupported-requested-capability`, naming the missing fairness capability (SV-1). The registry already computes candidates (FR-075), so the correctness decision stays where candidates are made. CG negotiates over the filtered set and carries the kind in the obligation identity (SV-5). |
 | DS-3 | IR | The EN-2 loop-segment encoding of BE-2, as part of EN-2. |
-| DS-4 | QSpec | §8. |
+| DS-4 | FSpec | §8. |
 
 **Sequencing.** Strong fairness on EN-1 follows EN-1 (ADR-018 §7 step 3)
 and depends on nothing else in ADR-018. Its EN-2 part lands with EN-2, which
 follows IR state-node admission and the SMT backend (ADR-018 RU-1). It adds no stage, edge or layer to ADR-011.
 
-### 8. What QSpec must specify
+### 8. What FSpec must specify
 
 | ID | Item | Where |
 | --- | --- | --- |
 | QS-1 | Surface syntax: the `strong` kind beside `weak`, unmarked kind `weak` and `strong` always written (SY-2), the same `whole`/`each` granularity with unmarked `whole` (SY-3), so `fair Op` is `fair weak whole Op`; admission on infinite-trace clauses only | shared grammar |
-| QS-2 | Strong fairness semantics on infinite traces (SF-3) and on lassos (SF-4), the shared enabled/taken definition (SF-2), strong implies weak (SF-5), granularity ordering (SF-6), machine closure and its two consequences (SF-7) | QSpec FR-161 |
-| QS-3 | "Missing fairness premise": enabledness comes from a model subject only; a supplied trace carries none, so a clause with any fairness constraint, weak or strong, over a supplied trace settles `unsupported` (SV-2) | QSpec FR-161, FR-360, FR-362 |
-| QS-4 | Provider advertisement of supported fairness kinds, and the rule that negotiation never drops or weakens a fairness constraint; the `unsupported` warning naming the strong-fairness capability | QSpec FR-290 and the provider manifest contract |
-| QS-5 | The fairness set in the obligation identity and the counterexample wire carries each constraint's kind, operation and granularity | QSpec FR-161-AC-5, FR-331 and the counterexample contract |
+| QS-2 | Strong fairness semantics on infinite traces (SF-3) and on lassos (SF-4), the shared enabled/taken definition (SF-2), strong implies weak (SF-5), granularity ordering (SF-6), machine closure and its two consequences (SF-7) | FSpec FR-161 |
+| QS-3 | "Missing fairness premise": enabledness comes from a model subject only; a supplied trace carries none, so a clause with any fairness constraint, weak or strong, over a supplied trace settles `unsupported` (SV-2) | FSpec FR-161, FR-360, FR-362 |
+| QS-4 | Provider advertisement of supported fairness kinds, and the rule that negotiation never drops or weakens a fairness constraint; the `unsupported` warning naming the strong-fairness capability | FSpec FR-290 and the provider manifest contract |
+| QS-5 | The fairness set in the obligation identity and the counterexample wire carries each constraint's kind, operation and granularity | FSpec FR-161-AC-5, FR-331 and the counterexample contract |
 | QS-6 | Replay checks every constraint of the fairness set against the loop with enabledness recomputed from the model, and refuses an unfair lasso | the counterexample contract |
-| QS-7 | Conformance vectors, each with expected verdict kind and, for a refutation, a counterexample that must replay: (a) the §6 mutex under `strong each` (proved), `weak each` (refuted) and `strong whole` (refuted); (b) lassos with fairness verdicts: strongly fair; weakly fair and strongly unfair (refused under the strong premise); terminal stutter loop (fair); (c) a model whose accepting SCC fails a strong constraint and whose refined remainder still contains a fair accepting cycle, so the recursion is exercised past one level; (d) a supplied trace with a weak constraint and one with a strong constraint (both `unsupported`, missing fairness premise); (e) no candidate advertising `strong` (`unsupported`, with the warning); (f) the §6 `weak each` refutation carries the SV-6 hint `fair strong each M::Mutex::acquire`, and the `strong whole` refutation carries the same hint; (g) `fair Op` and `fair weak whole Op` produce the same obligation identity | QSpec TC-200 and new TCs |
-| QS-8 | The strong-fairness hint (SV-6): when it is emitted, how the suggested constraint and granularity are chosen, its diagnostic code and members on the terminal record, and that it sits outside the counterexample, replay identity and obligation identity | QSpec FR-331 and the diagnostic contract |
+| QS-7 | Conformance vectors, each with expected verdict kind and, for a refutation, a counterexample that must replay: (a) the §6 mutex under `strong each` (proved), `weak each` (refuted) and `strong whole` (refuted); (b) lassos with fairness verdicts: strongly fair; weakly fair and strongly unfair (refused under the strong premise); terminal stutter loop (fair); (c) a model whose accepting SCC fails a strong constraint and whose refined remainder still contains a fair accepting cycle, so the recursion is exercised past one level; (d) a supplied trace with a weak constraint and one with a strong constraint (both `unsupported`, missing fairness premise); (e) no candidate advertising `strong` (`unsupported`, with the warning); (f) the §6 `weak each` refutation carries the SV-6 hint `fair strong each M::Mutex::acquire`, and the `strong whole` refutation carries the same hint; (g) `fair Op` and `fair weak whole Op` produce the same obligation identity | FSpec TC-200 and new TCs |
+| QS-8 | The strong-fairness hint (SV-6): when it is emitted, how the suggested constraint and granularity are chosen, its diagnostic code and members on the terminal record, and that it sits outside the counterexample, replay identity and obligation identity | FSpec FR-331 and the diagnostic contract |
 
 ### 9. Rulings on the draft's questions
 
@@ -259,7 +259,7 @@ The owner ruled on the draft's open questions on 2026-10-01.
 ## Consequences
 
 - Liveness of contended and retrying systems is provable on a finite model
-  subject by QSL's own explicit-state engine.
+  subject by FSL's own explicit-state engine.
 - One filter function covers weak and strong fairness; with weak constraints
   only it is ADR-018's single pass, so strong fairness costs nothing to
   claims that do not use it.
@@ -324,13 +324,13 @@ ADR-019" note.
 ## References
 
 - Owning ticket: Linear QSL-365. ADR-018's owning ticket: QSL-366. §8 is
-  carried into QSpec by QSpec FR-362 (weak and strong fairness, the missing
+  carried into FSpec by FSpec FR-362 (weak and strong fairness, the missing
   fairness premise), FR-364 (replay), FR-365 (the canonical counterexample),
   FR-368 (fairness kinds in negotiation) and FR-369 (the strong-fairness
   hint) (Linear STD-132).
 - Later research on lowering to TLA+ and Quint, which BE-5 depends on:
   RES-42.
-- QSpec V1-TEMP-021 to V1-TEMP-026: infinite-trace capability inventory rows.
+- FSpec V1-TEMP-021 to V1-TEMP-026: infinite-trace capability inventory rows.
 - E. A. Emerson and C.-L. Lei, "Modalities for model checking: branching time
   logic strikes back", Science of Computer Programming, 1987: fair-SCC
   analysis under Streett-type fairness by recursive SCC decomposition.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-1336 step 1: the checked-package bytes of each quantity-power function
 //! of FR-093-AC-58 read back through IR's strict v2 reader, and the
-//! `quire.op.quantity.pow` nodes they carry have the operands and result
-//! types the criterion names (QSpec TC-187 QP-01 to QP-03).
+//! `filament.op.quantity.pow` nodes they carry have the operands and result
+//! types the criterion names (FSpec TC-187 QP-01 to QP-03).
 
 use std::path::Path;
 
@@ -24,17 +24,17 @@ const UNITS: &str = "\
 fn unit(function: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n{UNITS}{function}\n"
+         profile v = \"filament.value.complete/v1\";\n{UNITS}{function}\n"
     )
 }
 
-/// Every `quire.op.quantity.pow` application in `wire`, anywhere in it.
+/// Every `filament.op.quantity.pow` application in `wire`, anywhere in it.
 fn power_nodes<'w>(wire: &'w Value, found: &mut Vec<&'w Value>) {
     match wire {
         Value::Object(object) => {
             if object
                 .get("operation")
-                .is_some_and(|operation| operation["identity"] == "quire.op.quantity.pow")
+                .is_some_and(|operation| operation["identity"] == "filament.op.quantity.pow")
                 && object.get("term").is_some_and(|term| term == "application")
             {
                 found.push(wire);
@@ -72,7 +72,7 @@ fn path(reference: &Value) -> Vec<Value> {
 /// compound unit of the exponents times `n`: `m` squared for w1 and w2, the
 /// dimensionless unit for w3, `s` to the power 1 for w5, `m` to the power -1
 /// for w6.
-#[trace("FR-093-AC-58", "TC-1336", "QSpec-TC-187")]
+#[trace("FR-093-AC-58", "TC-1336", "FSpec-TC-187")]
 #[test]
 fn each_quantity_power_package_reads_back_with_its_power_nodes_typed_by_the_result_unit() {
     // (function, exponent, base is a quantity literal, result unit exponent)

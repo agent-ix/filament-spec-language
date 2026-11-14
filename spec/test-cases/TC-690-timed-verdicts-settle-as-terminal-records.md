@@ -3,7 +3,7 @@ id: TC-690
 title: "Timed outcomes settle as FR-331 terminal records with zone-certified, exhaustive and new-cause rows"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-235
+  - target: ix://agent-ix/filament-spec-language/FR-235
     type: verifies
 ---
 # TC-690: Timed outcomes settle as FR-331 terminal records with zone-certified, exhaustive and new-cause rows

@@ -3,7 +3,7 @@ id: TC-228
 title: "lookup returns the declared absence mode for a genuinely unmatched key"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: verifies
 ---
 # TC-228: lookup returns the declared absence mode for a genuinely unmatched key

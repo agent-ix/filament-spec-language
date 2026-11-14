@@ -3,7 +3,7 @@ id: TC-823
 title: "S3 reports exactly one refusal per case, in builder order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-318
+  - target: ix://agent-ix/filament-spec-language/FR-318
     type: verifies
 ---
 # TC-823: S3 reports exactly one refusal per case, in builder order

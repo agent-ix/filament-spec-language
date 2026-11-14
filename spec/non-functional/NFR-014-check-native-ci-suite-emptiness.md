@@ -5,9 +5,9 @@ title: "Check native CI suite emptiness"
 type: NFR
 quality_attribute: reliability
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-002
+  - target: ix://agent-ix/filament-spec-language/NFR-002
     type: references
-  - target: ix://agent-ix/quire-spec-language/NFR-005
+  - target: ix://agent-ix/filament-spec-language/NFR-005
     type: depends_on
 ---
 # NFR-014: Check native CI suite emptiness
@@ -25,8 +25,8 @@ The four existing local `make ci` test invocations are:
 | Lane | Original Cargo test arguments, in order |
 | --- | --- |
 | default-workspace | `--locked --workspace` |
-| default-qsl-semantics | `--locked -p qsl-semantics` |
-| default-qsl-cst | `--locked -p qsl-cst` |
+| default-fsl-semantics | `--locked -p fsl-semantics` |
+| default-fsl-cst | `--locked -p fsl-cst` |
 | all-features-workspace | `--locked --workspace --all-features` |
 
 A suite identity includes its selected workspace package and Cargo target

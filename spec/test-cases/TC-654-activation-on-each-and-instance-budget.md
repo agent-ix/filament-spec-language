@@ -3,7 +3,7 @@ id: TC-654
 title: "Activation on each starts instances under max_live_instances and states the bound used"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-209
+  - target: ix://agent-ix/filament-spec-language/FR-209
     type: verifies
 ---
 # TC-654: Activation on each starts instances under max_live_instances and states the bound used

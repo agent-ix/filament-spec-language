@@ -6,23 +6,23 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use logos::Logos;
-use qsl_analyze::analyze::Engines;
-use qsl_cst::token::Kind;
-use qsl_foundation::source::provenance::RawSourceRef;
-use qsl_foundation::{Code, Setting, SettingLimits, SourceIdentity};
-use qsl_replay::spine::{
+use fsl_analyze::analyze::Engines;
+use fsl_cst::token::Kind;
+use fsl_foundation::source::provenance::RawSourceRef;
+use fsl_foundation::{Code, Setting, SettingLimits, SourceIdentity};
+use fsl_replay::spine::{
     self, CheckedUnit, DependencyInput, ParseRequest, RefinementClass, RefusalCause, SpineLimits,
     SuppliedLibrary,
 };
-use qsl_replay::Cancel;
-use qsl_route::routing::Disposition;
-use qsl_route::{
+use fsl_replay::Cancel;
+use fsl_route::routing::Disposition;
+use fsl_route::{
     BackendDescriptor, Candidate, CandidateOutcome, ItemEvidence, RegistrationRefusal, Registry,
 };
-use qsl_semantics::check::Capability;
-use qsl_semantics::check::CheckedStateClause;
-use qsl_semantics::value::{HeaderLayer, WitnessKind, WitnessRequest};
+use fsl_semantics::check::Capability;
+use fsl_semantics::check::CheckedStateClause;
+use fsl_semantics::value::{HeaderLayer, WitnessKind, WitnessRequest};
+use logos::Logos;
 use serde::{Deserialize, Serialize};
 
 use super::compare::CaseResult;
@@ -35,7 +35,7 @@ pub struct RegistrySnapshot {
 }
 
 impl RegistrySnapshot {
-    /// Build a fresh snapshot from the descriptors owned by QSL's linked
+    /// Build a fresh snapshot from the descriptors owned by FSL's linked
     /// analyzer engines.
     ///
     /// # Errors
@@ -44,13 +44,13 @@ impl RegistrySnapshot {
     /// or if the registry refuses any descriptor. No partial snapshot is
     /// returned.
     pub fn production() -> Result<Self, RegistryBuildError> {
-        let engines = Engines::qsl().map_err(RegistryBuildError::DescriptorSource)?;
+        let engines = Engines::fsl().map_err(RegistryBuildError::DescriptorSource)?;
         Self::build_registrations(engines.registrations().cloned(), |builder, descriptor| {
             builder.register(descriptor)
         })
     }
 
-    /// Take ownership of a caller-built QSL registry as one immutable run snapshot.
+    /// Take ownership of a caller-built FSL registry as one immutable run snapshot.
     pub fn from_registry(registry: Registry) -> Self {
         Self { registry }
     }
@@ -137,7 +137,7 @@ impl RegistrySnapshotBuilder {
     }
 }
 
-/// One AD-003 profile-layering edge (QSpec FR-453).
+/// One AD-003 profile-layering edge (FSpec FR-453).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Edge {
     /// Stable edge label.
@@ -390,7 +390,7 @@ impl Report {
     }
 }
 
-/// The six edges in QSpec FR-453's lock order.
+/// The six edges in FSpec FR-453's lock order.
 pub const EDGES: [Edge; 6] = [
     Edge {
         name: "E1",
@@ -480,7 +480,7 @@ impl Compilation {
 /// label.
 pub fn package_name_of(identity: &SourceIdentity) -> String {
     identity
-        .label(qsl_foundation::source::SourceLabel::Identity)
+        .label(fsl_foundation::source::SourceLabel::Identity)
         .to_owned()
 }
 
@@ -488,7 +488,7 @@ pub fn package_name_of(identity: &SourceIdentity) -> String {
 pub fn compile_unit(input: &UnitInput) -> Compilation {
     let cancellation = Cancel::new();
     let Ok(packages) =
-        qsl_semantics::model::intake::package_input(input.packages.iter().map(Vec::as_slice))
+        fsl_semantics::model::intake::package_input(input.packages.iter().map(Vec::as_slice))
     else {
         return Compilation::classified(RefinementClass::ToolFailure, Vec::new());
     };
@@ -692,7 +692,7 @@ fn load_entry(directory: &Path) -> Result<LoadedEntry, String> {
             }
             let edge = edge(parent.layer, child.layer).ok_or_else(|| {
                 format!(
-                    "{} and {} are not a QSpec FR-453 edge",
+                    "{} and {} are not an FSpec FR-453 edge",
                     parent.layer.identity(),
                     child.layer.identity()
                 )
@@ -911,7 +911,7 @@ pub fn compare(
     Report::new(results)
 }
 
-/// Run the FR-345 gate with QSL's compile composition and a caller-owned
+/// Run the FR-345 gate with FSL's compile composition and a caller-owned
 /// provider snapshot, without witness negotiation.
 pub fn run(corpus: &Path, registry: &RegistrySnapshot) -> Report {
     compare(corpus, compile_unit, registry, None)
@@ -970,7 +970,7 @@ fn witness_result(
         };
     };
     let graph = checked.package().graph();
-    // The witness item is the unit's one `invariant` clause (QSpec
+    // The witness item is the unit's one `invariant` clause (FSpec
     // FR-453-AC-8): the temporal witness also holds its guard and reset as
     // `pre` and `post` state clauses.
     let invariants: Vec<&CheckedStateClause> = graph
@@ -1103,7 +1103,7 @@ fn aggregate_layer_result(witnesses: &[WitnessResult]) -> CaseResult {
         .unwrap_or(CaseResult::ToolFailure)
 }
 
-/// FR-345 / QSpec FR-453: compare the compile classes of an edge case.
+/// FR-345 / FSpec FR-453: compare the compile classes of an edge case.
 pub fn compare_case(parent: RefinementClass, child: RefinementClass) -> CaseResult {
     use CaseResult::{
         Holds, NotApplicable, Regression, ToolFailure, UnresolvedIncomplete, UnresolvedUnsupported,
@@ -1127,11 +1127,11 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    use qsl_foundation::bound::DomainKind;
-    use qsl_foundation::BackendId;
-    use qsl_route::EvidenceKind;
-    use qsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin};
-    use qsl_semantics::check::Capability;
+    use fsl_foundation::bound::DomainKind;
+    use fsl_foundation::BackendId;
+    use fsl_route::EvidenceKind;
+    use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin};
+    use fsl_semantics::check::Capability;
     use serde_json::json;
     use std::collections::BTreeSet;
     use std::fs;
@@ -1204,11 +1204,11 @@ mod tests {
     }
 
     fn refusal() -> RegistrationRefusal {
-        qsl_route::descriptor_from_manifest(
+        fsl_route::descriptor_from_manifest(
             Candidate::new(BackendId::new("injected-invalid")),
             ProviderOrigin::Linked,
             [(Some("unknown-kind"), Some("bounded"))],
-            qsl_route::ManifestMembers::default(),
+            fsl_route::ManifestMembers::default(),
         )
         .expect_err("unknown capability labels are refused")
     }
@@ -1236,7 +1236,7 @@ mod tests {
             ["en-1", "en-6"]
         );
 
-        let engines = Engines::qsl().expect("linked engine descriptors are admitted");
+        let engines = Engines::fsl().expect("linked engine descriptors are admitted");
         let registrations: Vec<_> = engines.registrations().collect();
         assert_eq!(registrations[1].id().as_str(), "en-4");
         assert_eq!(
@@ -1328,7 +1328,7 @@ mod tests {
             Err(RegistryBuildError::DescriptorSource(found)) if found == source_refusal
         ));
 
-        let descriptors: Vec<_> = Engines::qsl()
+        let descriptors: Vec<_> = Engines::fsl()
             .expect("linked engines build")
             .registrations()
             .cloned()
@@ -1358,7 +1358,7 @@ mod tests {
         let temp = crate::test_support::tempdir();
         let root = temp.path().join("state-core-witness");
         fs::create_dir_all(&root).unwrap();
-        let source = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.state.core/v1\";\nmodel Config = \"example/config-version\";\ninvariant One using v on Config::ConfigVersion at current { true }\n";
+        let source = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.state.core/v1\";\nmodel Config = \"example/config-version\";\ninvariant One using v on Config::ConfigVersion at current { true }\n";
         let package = fs::read(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -1375,7 +1375,7 @@ mod tests {
                 "authority": "agent-ix",
                 "identity": "ix://test/layering/state-core-witness"
             },
-            "layer": "quire.state.core/v1",
+            "layer": "filament.state.core/v1",
             "packages": ["model.semantic-ir.json"],
             "dependencies": []
         });
@@ -1403,7 +1403,7 @@ mod tests {
                     layer,
                     witnesses,
                     result,
-                } if layer == "quire.state.core/v1" => Some((witnesses, result)),
+                } if layer == "filament.state.core/v1" => Some((witnesses, result)),
                 _ => None,
             })
             .expect("state core layer has one witness result");
@@ -1655,7 +1655,7 @@ mod tests {
             .collect();
         assert_eq!(failures.len(), 2);
         assert!(failures.contains(&"E5/distinguishing"));
-        assert!(failures.contains(&"quire.state.graph/v1/witness"));
+        assert!(failures.contains(&"filament.state.graph/v1/witness"));
         assert_eq!(report.exit, 30);
     }
 
@@ -1828,8 +1828,8 @@ mod tests {
     #[trace("TC-868", "FR-345-AC-5")]
     #[test]
     fn a_case_pair_may_change_only_the_profile_identity_string() {
-        let parent = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.state.core/v1\";\ninvariant I using v { true }\n";
-        let child = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.state.queries/v1\";\ninvariant I using v { true }\n";
+        let parent = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.state.core/v1\";\ninvariant I using v { true }\n";
+        let child = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.state.queries/v1\";\ninvariant I using v { true }\n";
         assert!(differs_only_by_profile_identity(parent.as_bytes(), child.as_bytes()).unwrap());
         let changed = child.replace("invariant I", "invariant J");
         assert!(!differs_only_by_profile_identity(parent.as_bytes(), changed.as_bytes()).unwrap());
@@ -1838,9 +1838,9 @@ mod tests {
     #[trace("TC-868", "FR-345-AC-5")]
     #[test]
     fn profile_metadata_uses_tokens_without_admitting_the_body() {
-        let text = "// profile ignored = \"not-a-profile\";\nprofile\n v // identity\n =\n \"quire.state.core/v1\";\ninvariant Broken { @ }";
+        let text = "// profile ignored = \"not-a-profile\";\nprofile\n v // identity\n =\n \"filament.state.core/v1\";\ninvariant Broken { @ }";
         let (identity, start, end) = profile_identity_span(text.as_bytes()).unwrap();
-        assert_eq!(identity, "quire.state.core/v1");
+        assert_eq!(identity, "filament.state.core/v1");
         assert_eq!(&text[start..end], identity);
         assert!(profile_identity_span(b"// profile v = \"ignored\";\n").is_err());
         assert!(profile_identity_span(b"profile v = \"one\"; profile w = \"two\";").is_err());

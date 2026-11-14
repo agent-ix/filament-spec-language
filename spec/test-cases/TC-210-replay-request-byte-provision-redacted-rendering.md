@@ -3,7 +3,7 @@ id: TC-210
 title: "The replay request's Debug and Display rendering never reproduces a byte-provision entry's raw bytes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-073
+  - target: ix://agent-ix/filament-spec-language/FR-073
     type: verifies
 ---
 # TC-210: The replay request's Debug and Display rendering never reproduces a byte-provision entry's raw bytes

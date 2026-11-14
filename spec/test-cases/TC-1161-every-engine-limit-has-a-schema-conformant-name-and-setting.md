@@ -3,7 +3,7 @@ id: TC-1161
 title: "Every engine and typed-operation limit has a schema-conformant name and setting"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: verifies
 ---
 # TC-1161: Every engine and typed-operation limit has a schema-conformant name and setting

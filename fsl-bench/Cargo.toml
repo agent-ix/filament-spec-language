@@ -1,0 +1,71 @@
+[package]
+name = "fsl-bench"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "The committed performance benchmarks (parser, checker, CST identity hashing, model layer, evaluator) and the probe that records per-run counts."
+
+# A benchmark-only crate: no workspace crate depends on it. It reaches the
+# layer crates through their public API only, so an internal rewrite behind
+# that API needs no bench change; a change to the API itself does (for
+# example a change to `intake::admit`'s return type). Every model-intake call goes
+# through `src/model.rs` so such a change is one edit there.
+[dependencies]
+fsl-cst = { path = "../fsl-cst" }
+fsl-foundation = { path = "../fsl-foundation" }
+fsl-forms = { path = "../fsl-forms" }
+fsl-semantics = { path = "../fsl-semantics" }
+fsl-package = { path = "../fsl-package" }
+fsl-eval = { path = "../fsl-eval" }
+# `deep_input`: the S1-to-S4 spine compile the deep-input fuzz target drives.
+fsl-replay = { path = "../fsl-replay" }
+filament-exact = { workspace = true }
+# ADR-011 §6.1 layer C: the checked terms (FR-400) the benches build.
+filament-checked = { workspace = true }
+filament-semantic-value = { workspace = true }
+# ADR-011 §6.1 layer E: the evaluation interface and result vocabulary (FR-401).
+filament-eval = { workspace = true }
+# The package document's bytes are its RFC 8785 encoding (ADR-013:113).
+quire-canonical = { workspace = true }
+serde_json = "1.0.151"
+# FR-064: the probe's two command-line dispatch functions carry
+# `#[string_edge]`, since `xtask string-edge` scans this crate.
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+
+[dev-dependencies]
+# Default features off: no rayon, no plotters. `cargo_bench_support` is the
+# one feature `cargo bench` needs.
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "parser"
+harness = false
+
+[[bench]]
+name = "checker"
+harness = false
+
+[[bench]]
+name = "cst"
+harness = false
+
+[[bench]]
+name = "model"
+harness = false
+
+[[bench]]
+name = "evaluator"
+harness = false
+
+[[bench]]
+name = "text_cluster"
+harness = false
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"

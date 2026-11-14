@@ -1,0 +1,1480 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The one shared index over a [`DomainPackage`].
+//!
+//! Every model-layer rung used to rebuild its own maps from
+//! `domain_package.records` on every call: the `specific -> supertypes[]`
+//! map five times, a conformance index once per check, a dispatch index once
+//! per link, and a per-call ancestor walk with its own visited set.
+//! [`ModelIndex::build`] reads the records once, and every rung reads this
+//! index instead. A [`ModelIndex`] owns its package (shared by [`Arc`]) and
+//! refers to records by their position in `domain_package.records`, never by
+//! a copy:
+//!
+//! - [`crate::model::normalize`] indexes the package once per normalization
+//!   and keeps the index in the [`crate::model::normalize::EffectiveView`],
+//!   together with the package, so dispatch linking and population admission
+//!   read the view's index.
+//! - A caller that checks conformance or systems rules over a package it
+//!   has not normalized builds the index itself, once, and passes it to
+//!   every check.
+//!
+//! Declarations are interned as `DeclIdx` in ascending [`DeclarationKey`]
+//! order, so iterating indices ascending is iterating keys ascending: every
+//! "ascending by declaration key" rule reads the index order directly.
+//!
+//! Conformance is answered from each type's ancestry, computed once per
+//! type the first time a check asks about it and kept for every later check.
+//! The ancestry records the exact state of the bounded walk the conformance
+//! rule specifies (see `RecordIndex::conforms`), so an answer, including a
+//! refusal at the caller's `ancestor_steps` ceiling, is the same one that
+//! walk would give.
+//!
+//! A type's first conformance check walks that type's whole ancestry, to
+//! completion, whatever the caller's `ancestor_steps` ceiling: the ceiling
+//! decides the answer read from the ancestry, not how much of it is
+//! computed. That first walk expands each interned type at most once and
+//! keeps one entry per ancestor, so it is bounded by the package's own size,
+//! not by the ceiling; a deep chain refused at a small ceiling still costs
+//! one pass over the chain, once per start type.
+//!
+//! The index adds no charge. Its size is a function of the package's own
+//! records, which normalization already charges as `normalize.record`, and
+//! the conformance decisions it serves were never charged (FR-151 prices
+//! `conformance.axis`, and `value-accounting.md` selects a population member
+//! "without a charge, exactly when that type conforms to `T`").
+#![allow(
+    clippy::result_large_err,
+    reason = "cold refusal path; ModelRefusalCause carries DeclarationKeys inline for typed model-admission failures"
+)]
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, OnceLock};
+
+use crate::model::domain_package::{
+    DomainPackage, DomainPackageRecord, FieldMemberRecord, NativeValueType, OperationMemberRecord,
+    ScalarValueDomain, ValueTypeRef,
+};
+use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
+use filament_checked::key::DeclarationKey;
+use fsl_foundation::diagnostic::Code;
+
+/// One interned declaration key. Index order is [`DeclarationKey`] order.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DeclIdx(usize);
+
+/// Which record kinds declare one key. A key can carry several flags only in
+/// a package that normalization refuses (`conflicting-binding`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DeclFlags {
+    object_type: bool,
+    /// Some `ObjectType` record under this key is `abstract`.
+    abstract_type: bool,
+    /// Some `ObjectType` record under this key declares a supertype.
+    non_root: bool,
+    scalar_type: bool,
+    record_value_type: bool,
+    tuple_value_type: bool,
+    /// A package `alias` or `sequence` type definition (FR-230 "Units",
+    /// "Clock collections").
+    core_type: bool,
+    event_type: bool,
+    variant_type: bool,
+    state_machine: bool,
+    persistence_interface: bool,
+    namespace: bool,
+    field_member: bool,
+    operation_member: bool,
+    /// Some `Relationship` record under this key is a navigation
+    /// relationship, one read from an object type's `relationships` array.
+    navigation_relationship: bool,
+}
+
+/// One member's own `redefines` edge, as normalization's phase 4 reads it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Redefiner {
+    /// The member's position in `domain_package.records`.
+    pub(crate) record: usize,
+    /// The redefining member.
+    pub(crate) member: DeclIdx,
+    /// The member it redefines.
+    pub(crate) target: DeclIdx,
+    /// `true` for a field member, `false` for an operation member.
+    pub(crate) is_field: bool,
+}
+
+/// One field member's own `subsets` edge, as normalization's phase 4 reads it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Subsetter {
+    /// The subsetting field member.
+    pub(crate) member: DeclIdx,
+    /// The subsetted feature.
+    pub(crate) target: DeclIdx,
+}
+
+/// One type's ancestry: the walk [`RecordIndex::conforms`] specifies, run to
+/// completion from that type once.
+#[derive(Clone, Debug, Default)]
+struct Ancestry {
+    /// How many `supertypes` edges the walk follows in all: every edge of
+    /// the start type's closure, once.
+    edges: u64,
+    /// Every type some expanded type names as a direct supertype, ascending
+    /// by [`DeclIdx`], with the 1-based ordinal of the first edge that names
+    /// it.
+    first_named_at: Box<[(DeclIdx, u64)]>,
+}
+
+/// The shared index over one [`DomainPackage`], together with that package.
+/// See the module docs.
+///
+/// A package and its index are built together and never paired afterwards,
+/// so no caller can read one package's records through another's index.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ModelIndex {
+    package: Arc<DomainPackage>,
+    records: RecordIndex,
+    type_fact_counts: BTreeMap<DeclarationKey, u64>,
+}
+
+/// The positional index [`ModelIndex`] keeps over its package's records.
+/// Normalization builds it over a borrowed package, before a completed
+/// view takes a shared copy of that package.
+///
+/// Built from the records alone and never mutated after [`Self::build`],
+/// apart from each type's ancestry, which is computed on first use.
+#[derive(Debug)]
+pub(crate) struct RecordIndex {
+    /// Every key a record declares or references, ascending.
+    keys: Vec<DeclarationKey>,
+    positions: HashMap<DeclarationKey, DeclIdx>,
+    flags: Vec<DeclFlags>,
+    /// Each type's declared `supertypes[]`, in record order, concatenated
+    /// over every object or record value type record under the key.
+    generals: Vec<Vec<DeclIdx>>,
+    /// The position of the last field record under each key.
+    fields: HashMap<DeclIdx, usize>,
+    /// The position of the last operation record under each key, ascending
+    /// by key.
+    operations: BTreeMap<DeclIdx, usize>,
+    /// The last scalar record's `[lower, upper]` under each key.
+    scalars: HashMap<DeclIdx, (i128, i128)>,
+    /// Each native-alias scalar's target.
+    scalar_natives: HashMap<DeclIdx, NativeValueType>,
+    /// Each member's owning type, from the last member record under its key.
+    member_owner: HashMap<DeclIdx, DeclIdx>,
+    /// Each owner's field members, in record order.
+    fields_by_owner: HashMap<DeclIdx, Vec<DeclIdx>>,
+    /// Each original declaration's position in the admitted records.
+    declarations: HashMap<DeclIdx, usize>,
+    /// Every qualified feature and systems member, keyed by owning type.
+    members_by_owner: HashMap<DeclIdx, Vec<DeclIdx>>,
+    /// Each owner's operation members, in record order.
+    operations_by_owner: HashMap<DeclIdx, Vec<DeclIdx>>,
+    /// Original clause record positions, indexed once under their owner.
+    clauses_by_owner: HashMap<DeclIdx, Vec<usize>>,
+    /// Each owner's redefining members, in record order.
+    redefiners_by_owner: HashMap<DeclIdx, Vec<Redefiner>>,
+    /// Each owner's subsetting edges: one per `subsets[]` entry of each
+    /// of its field members, in record order.
+    subsetters_by_owner: HashMap<DeclIdx, Vec<Subsetter>>,
+    /// Each member's `redefines` target, from the first member record under
+    /// its key that declares one.
+    redefines: HashMap<DeclIdx, DeclIdx>,
+    record_count: usize,
+    ancestry: Vec<OnceLock<Ancestry>>,
+}
+
+impl PartialEq for RecordIndex {
+    /// Compares what [`Self::build`] read from the records. The ancestries
+    /// are a cache of values derived from `generals`, so two indexes with
+    /// equal `generals` have equal ancestries whichever were computed.
+    fn eq(&self, other: &Self) -> bool {
+        self.keys == other.keys
+            && self.flags == other.flags
+            && self.generals == other.generals
+            && self.fields == other.fields
+            && self.operations == other.operations
+            && self.scalars == other.scalars
+            && self.scalar_natives == other.scalar_natives
+            && self.member_owner == other.member_owner
+            && self.fields_by_owner == other.fields_by_owner
+            && self.declarations == other.declarations
+            && self.members_by_owner == other.members_by_owner
+            && self.operations_by_owner == other.operations_by_owner
+            && self.clauses_by_owner == other.clauses_by_owner
+            && self.redefiners_by_owner == other.redefiners_by_owner
+            && self.subsetters_by_owner == other.subsetters_by_owner
+            && self.redefines == other.redefines
+            && self.record_count == other.record_count
+    }
+}
+
+impl Eq for RecordIndex {}
+
+/// Every key `record` declares or references, for interning.
+fn referenced_keys(record: &DomainPackageRecord) -> Vec<&DeclarationKey> {
+    match record {
+        DomainPackageRecord::ObjectType(object) => std::iter::once(&object.key)
+            .chain(&object.supertypes)
+            .collect(),
+        DomainPackageRecord::FieldMember(field) => std::iter::once(&field.key)
+            .chain([&field.owner])
+            .chain(&field.redefines)
+            .chain(&field.subsets)
+            .collect(),
+        DomainPackageRecord::OperationMember(operation) => std::iter::once(&operation.key)
+            .chain([&operation.owner])
+            .chain(&operation.redefines)
+            .collect(),
+        DomainPackageRecord::RecordValueType(record) => std::iter::once(&record.key)
+            .chain(&record.supertypes)
+            .collect(),
+        DomainPackageRecord::TupleValueType(record) => vec![&record.key],
+        DomainPackageRecord::TuplePosition(position) => std::iter::once(&position.key)
+            .chain([&position.owner])
+            .chain(position.value_type.as_package())
+            .collect(),
+        DomainPackageRecord::Enum(record) => vec![&record.key],
+        DomainPackageRecord::Variant(record) => std::iter::once(&record.key)
+            .chain([&record.owner])
+            .chain(
+                record
+                    .payload_type
+                    .as_ref()
+                    .and_then(crate::model::domain_package::ValueTypeRef::as_package),
+            )
+            .collect(),
+        DomainPackageRecord::EventType(record) => std::iter::once(&record.key)
+            .chain(&record.identity_fields)
+            .chain(record.occurrence_field.iter())
+            .chain(&record.supertypes)
+            .collect(),
+        DomainPackageRecord::StateMachine(record) => std::iter::once(&record.key)
+            .chain(&record.supertypes)
+            .chain(record.states.iter().map(|state| &state.key))
+            .chain(record.transitions.iter().flat_map(|transition| {
+                [
+                    &transition.key,
+                    &transition.from,
+                    &transition.to,
+                    &transition.trigger,
+                ]
+                .into_iter()
+                .chain(&transition.emits)
+            }))
+            .collect(),
+        DomainPackageRecord::Process(process) => std::iter::once(&process.key)
+            .chain(&process.identity_fields)
+            .chain(&process.supertypes)
+            .chain(process.steps.iter().flat_map(|step| {
+                std::iter::once(&step.key)
+                    .chain(&step.consumes)
+                    .chain(&step.emits)
+            }))
+            .collect(),
+        DomainPackageRecord::Clause(clause) => vec![&clause.key, &clause.owner],
+        DomainPackageRecord::Namespace(namespace) => std::iter::once(&namespace.key)
+            .chain(&namespace.members)
+            .collect(),
+        DomainPackageRecord::PersistenceInterface(interface) => std::iter::once(&interface.key)
+            .chain(&interface.persists)
+            .collect(),
+        DomainPackageRecord::Component(part) => {
+            vec![&part.key, &part.owning_type, &part.value_type]
+        }
+        DomainPackageRecord::Endpoint(port) => {
+            vec![&port.key, &port.owning_component, &port.value_type]
+        }
+        DomainPackageRecord::Relationship(relationship) => vec![
+            &relationship.key,
+            &relationship.source.type_identity,
+            &relationship.target.type_identity,
+        ],
+        DomainPackageRecord::Allocation(allocation) => vec![
+            &allocation.key,
+            &allocation.source_element,
+            &allocation.target_element,
+        ],
+        DomainPackageRecord::ScalarType(_) | DomainPackageRecord::Population(_) => {
+            vec![record.key()]
+        }
+        DomainPackageRecord::SequenceType(sequence) => std::iter::once(&sequence.key)
+            .chain(sequence.items.as_package())
+            .collect(),
+        DomainPackageRecord::OptionType(option) => std::iter::once(&option.key)
+            .chain(option.inner.as_package())
+            .collect(),
+        DomainPackageRecord::MapType(map) => std::iter::once(&map.key)
+            .chain(map.values.as_package())
+            .collect(),
+        DomainPackageRecord::AliasType(alias) => std::iter::once(&alias.key)
+            .chain(alias.target.as_package())
+            .collect(),
+        DomainPackageRecord::ValueBound(bound) => std::iter::once(&bound.key)
+            .chain([&bound.owner])
+            .chain(bound.alias.iter())
+            .collect(),
+    }
+}
+
+impl ModelIndex {
+    /// Reads `domain_package`'s records once into an index that keeps the
+    /// package. Passing an `Arc<DomainPackage>` shares that package; passing
+    /// a `DomainPackage` moves it; neither copies its records.
+    pub fn build(domain_package: impl Into<Arc<DomainPackage>>) -> Self {
+        let package = domain_package.into();
+        let records = RecordIndex::build(&package);
+        let type_fact_counts = records.type_fact_counts();
+        Self {
+            package,
+            records,
+            type_fact_counts,
+        }
+    }
+
+    /// `package` with `records`, the index normalization already built over
+    /// it.
+    pub(crate) fn from_parts(
+        package: Arc<DomainPackage>,
+        records: RecordIndex,
+        type_fact_counts: BTreeMap<DeclarationKey, u64>,
+    ) -> Self {
+        debug_assert_eq!(
+            records.record_count,
+            package.records.len(),
+            "the record index was built over this package's records"
+        );
+        Self {
+            package,
+            records,
+            type_fact_counts,
+        }
+    }
+
+    /// Actual qualify/inherit fact count for an object type; non-object
+    /// value-domain conversion is priced as one work unit.
+    pub(crate) fn type_fact_count(&self, value_type: &ValueTypeRef) -> u64 {
+        value_type
+            .as_package()
+            .and_then(|key| self.type_fact_counts.get(key))
+            .copied()
+            .unwrap_or(1)
+    }
+
+    /// FR-151 conformance after its owning axis charge has admitted.
+    /// Every walk has its own edge ceiling; its denial does not refund work.
+    pub(crate) fn conformance_walk(
+        &self,
+        s: &DeclarationKey,
+        t: &DeclarationKey,
+        limit: u64,
+    ) -> Result<bool, crate::model::accounting::NormalizationIncomplete> {
+        if s == t {
+            return Ok(true);
+        }
+        let Some(start) = self.records.position(s) else {
+            return Ok(false);
+        };
+        let mut stack = vec![start];
+        let mut expanded = std::collections::HashSet::new();
+        let mut consumed = 0;
+        while let Some(current) = stack.pop() {
+            if !expanded.insert(current) {
+                continue;
+            }
+            for general in &self.records.generals[current.0] {
+                if consumed == limit {
+                    return Err(crate::model::accounting::NormalizationIncomplete {
+                        limit_kind: crate::model::accounting::LimitKind::AncestorSteps,
+                        limit,
+                        consumed,
+                        next_charge: 1,
+                        charge_point: crate::model::accounting::ChargePoint::ModelAncestorEdge,
+                    });
+                }
+                consumed += 1;
+                if self.records.key(*general) == t {
+                    return Ok(true);
+                }
+                stack.push(*general);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `owner`'s direct supertypes, ascending by key: the first edge of every
+    /// lineage that leaves `owner` upward.
+    pub(crate) fn direct_supertypes(&self, owner: &DeclarationKey) -> Vec<&DeclarationKey> {
+        let Some(position) = self.records.position(owner) else {
+            return Vec::new();
+        };
+        let mut generals: Vec<_> = self.records.generals[position.0]
+            .iter()
+            .map(|general| self.records.key(*general))
+            .collect();
+        generals.sort();
+        generals.dedup();
+        generals
+    }
+
+    /// Object reachability or exact native/scalar domain conversion.
+    pub(crate) fn value_conformance_walk(
+        &self,
+        s: &ValueTypeRef,
+        t: &ValueTypeRef,
+        limit: u64,
+    ) -> Result<bool, crate::model::accounting::NormalizationIncomplete> {
+        match (s, t) {
+            (ValueTypeRef::Native(a), ValueTypeRef::Native(b)) => Ok(a == b),
+            (ValueTypeRef::Unit(a), ValueTypeRef::Unit(b)) => Ok(a == b),
+            // A bounded integer scalar is an Integer; a native alias is its
+            // own target.
+            (ValueTypeRef::Package(a), ValueTypeRef::Native(b)) => {
+                let alias = self
+                    .records
+                    .position(a)
+                    .and_then(|position| self.records.scalar_natives.get(&position));
+                Ok(alias == Some(b)
+                    || (self.scalar_bounds(a).is_some() && *b == NativeValueType::Integer))
+            }
+            (ValueTypeRef::Package(a), ValueTypeRef::Package(b)) => {
+                match (self.scalar_bounds(a), self.scalar_bounds(b)) {
+                    (Some((lo, hi)), Some((parent_lo, parent_hi))) => {
+                        Ok(parent_lo <= lo && hi <= parent_hi)
+                    }
+                    (Some(_), None) | (None, Some(_)) => Ok(false),
+                    (None, None) => self.conformance_walk(a, b, limit),
+                }
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// All declared field redefinition links followed by an effect test,
+    /// including the written member itself; cycles remain bounded by records.
+    pub(crate) fn field_lineage(&self, field: &DeclarationKey) -> Vec<&DeclarationKey> {
+        let Some(mut current) = self.records.position(field) else {
+            return Vec::new();
+        };
+        let mut path = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while seen.insert(current) {
+            path.push(self.records.key(current));
+            let Some(next) = self.records.redefines.get(&current) else {
+                break;
+            };
+            current = *next;
+        }
+        path
+    }
+
+    /// The indexed package.
+    pub(crate) fn package(&self) -> &DomainPackage {
+        &self.package
+    }
+
+    /// Whether some `ObjectType` record declares `key`.
+    pub(crate) fn is_object_type(&self, key: &DeclarationKey) -> bool {
+        self.records.is_object_type(key)
+    }
+
+    /// Whether some `ObjectType` record declares `key` abstract (D05,
+    /// `model-complete.md:156`).
+    pub(crate) fn is_abstract(&self, key: &DeclarationKey) -> bool {
+        self.records.is_abstract(key)
+    }
+
+    /// The field record declared under `key` (the last one, if several).
+    pub(crate) fn field(&self, key: &DeclarationKey) -> Option<&FieldMemberRecord> {
+        self.records.field(&self.package.records, key)
+    }
+
+    /// The operation record declared under `key` (the last one, if several).
+    pub(crate) fn operation(&self, key: &DeclarationKey) -> Option<&OperationMemberRecord> {
+        self.records.operation(&self.package.records, key)
+    }
+
+    /// Every operation record, ascending by key.
+    pub(crate) fn operations(&self) -> impl Iterator<Item = &OperationMemberRecord> {
+        self.records.operations(&self.package.records)
+    }
+
+    /// The `[lower, upper]` of the scalar type declared under `key`.
+    pub(crate) fn scalar_bounds(&self, key: &DeclarationKey) -> Option<(i128, i128)> {
+        self.records.scalar_bounds(key)
+    }
+
+    /// The owning type of the field or operation member `key`.
+    pub(crate) fn member_owner(&self, key: &DeclarationKey) -> Option<&DeclarationKey> {
+        self.records.member_owner(key)
+    }
+
+    /// See [`RecordIndex::redefinition_walk`].
+    pub(crate) fn redefinition_walk<E>(
+        &self,
+        field: &DeclarationKey,
+        admits: impl Fn(&DeclarationKey) -> bool,
+        before_link: impl FnMut() -> Result<(), E>,
+    ) -> Result<bool, E> {
+        self.records.redefinition_walk(field, admits, before_link)
+    }
+
+    /// See [`RecordIndex::redefinition_reaches`].
+    pub(crate) fn redefinition_reaches(
+        &self,
+        field: &DeclarationKey,
+        admits: impl Fn(&DeclarationKey) -> bool,
+    ) -> bool {
+        self.records.redefinition_reaches(field, admits)
+    }
+
+    /// See [`RecordIndex::conforms`].
+    pub(crate) fn conforms(
+        &self,
+        s: &DeclarationKey,
+        t: &DeclarationKey,
+        max_steps: u64,
+        setting: fsl_foundation::Setting,
+    ) -> Result<bool, ModelRefusal> {
+        self.records.conforms(s, t, max_steps, setting)
+    }
+
+    /// See [`RecordIndex::conforms_admitted`].
+    pub(crate) fn conforms_admitted(&self, s: &DeclarationKey, t: &DeclarationKey) -> bool {
+        self.records.conforms_admitted(s, t)
+    }
+}
+
+/// The record at `position`, when it is a field member.
+fn field_at(records: &[DomainPackageRecord], position: usize) -> Option<&FieldMemberRecord> {
+    match records.get(position)? {
+        DomainPackageRecord::FieldMember(field) => Some(field),
+        _ => None,
+    }
+}
+
+/// The record at `position`, when it is an operation member.
+fn operation_at(
+    records: &[DomainPackageRecord],
+    position: usize,
+) -> Option<&OperationMemberRecord> {
+    match records.get(position)? {
+        DomainPackageRecord::OperationMember(operation) => Some(operation),
+        _ => None,
+    }
+}
+
+impl RecordIndex {
+    /// Count every declared inheritance path using one explicit-stack
+    /// dynamic program. Structural normalization refuses cycles before its
+    /// resulting view is passed to conformance.
+    fn type_fact_counts(&self) -> BTreeMap<DeclarationKey, u64> {
+        let mut counts: HashMap<DeclIdx, u64> = HashMap::new();
+        for key in self.object_types() {
+            let Some(start) = self.position(key) else {
+                continue;
+            };
+            let mut active = std::collections::HashSet::new();
+            let mut stack = vec![(start, false)];
+            while let Some((current, closing)) = stack.pop() {
+                if counts.contains_key(&current) {
+                    continue;
+                }
+                if closing {
+                    let count = self.generals[current.0].iter().fold(1_u64, |sum, general| {
+                        sum.saturating_add(counts.get(general).copied().unwrap_or(u64::MAX))
+                    });
+                    counts.insert(current, count);
+                    active.remove(&current);
+                } else if active.insert(current) {
+                    stack.push((current, true));
+                    for general in self.generals[current.0].iter().rev() {
+                        if !counts.contains_key(general) {
+                            stack.push((*general, false));
+                        }
+                    }
+                } else {
+                    counts.insert(current, u64::MAX);
+                }
+            }
+        }
+        counts
+            .into_iter()
+            .map(|(key, count)| (self.key(key).clone(), count))
+            .collect()
+    }
+
+    /// Reads `domain_package`'s records once into the index.
+    pub(crate) fn build(domain_package: &DomainPackage) -> Self {
+        let mut keys: Vec<DeclarationKey> = domain_package
+            .records
+            .iter()
+            .flat_map(referenced_keys)
+            .cloned()
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        let positions: HashMap<DeclarationKey, DeclIdx> = keys
+            .iter()
+            .enumerate()
+            .map(|(position, key)| (key.clone(), DeclIdx(position)))
+            .collect();
+        let at = |key: &DeclarationKey| positions[key];
+
+        let mut index = Self {
+            flags: vec![DeclFlags::default(); keys.len()],
+            generals: vec![Vec::new(); keys.len()],
+            ancestry: std::iter::repeat_with(OnceLock::new)
+                .take(keys.len())
+                .collect(),
+            fields: HashMap::new(),
+            operations: BTreeMap::new(),
+            scalars: HashMap::new(),
+            scalar_natives: HashMap::new(),
+            member_owner: HashMap::new(),
+            fields_by_owner: HashMap::new(),
+            declarations: HashMap::new(),
+            members_by_owner: HashMap::new(),
+            operations_by_owner: HashMap::new(),
+            clauses_by_owner: HashMap::new(),
+            redefiners_by_owner: HashMap::new(),
+            subsetters_by_owner: HashMap::new(),
+            redefines: HashMap::new(),
+            record_count: domain_package.records.len(),
+            keys: Vec::new(),
+            positions: HashMap::new(),
+        };
+        let mut element_owners = HashMap::new();
+        let mut ports = BTreeMap::new();
+        let mut end_members = Vec::new();
+        for (record_position, record) in domain_package.records.iter().enumerate() {
+            let own = at(record.key());
+            index.declarations.insert(own, record_position);
+            match record {
+                DomainPackageRecord::ObjectType(object) => {
+                    let flags = &mut index.flags[own.0];
+                    flags.object_type = true;
+                    flags.abstract_type |= object.abstract_type;
+                    flags.non_root |= !object.supertypes.is_empty();
+                    index.generals[own.0].extend(object.supertypes.iter().map(at));
+                    element_owners.insert(own, own);
+                }
+                DomainPackageRecord::FieldMember(field) => {
+                    let owner = at(&field.owner);
+                    index.flags[own.0].field_member = true;
+                    index.member_owner.insert(own, owner);
+                    element_owners.insert(own, owner);
+                    index.members_by_owner.entry(owner).or_default().push(own);
+                    index.fields_by_owner.entry(owner).or_default().push(own);
+                    if let Some(target) = &field.redefines {
+                        index.note_redefiner(owner, record_position, own, at(target), true);
+                    }
+                    for target in &field.subsets {
+                        index
+                            .subsetters_by_owner
+                            .entry(owner)
+                            .or_default()
+                            .push(Subsetter {
+                                member: own,
+                                target: at(target),
+                            });
+                    }
+                    index.fields.insert(own, record_position);
+                }
+                DomainPackageRecord::OperationMember(operation) => {
+                    let owner = at(&operation.owner);
+                    index.flags[own.0].operation_member = true;
+                    index.member_owner.insert(own, owner);
+                    element_owners.insert(own, owner);
+                    index.members_by_owner.entry(owner).or_default().push(own);
+                    index
+                        .operations_by_owner
+                        .entry(owner)
+                        .or_default()
+                        .push(own);
+                    if let Some(target) = &operation.redefines {
+                        index.note_redefiner(owner, record_position, own, at(target), false);
+                    }
+                    index.operations.insert(own, record_position);
+                }
+                DomainPackageRecord::RecordValueType(record) => {
+                    index.flags[own.0].record_value_type = true;
+                    index.generals[own.0].extend(record.supertypes.iter().map(at));
+                }
+                DomainPackageRecord::TupleValueType(_) => {
+                    index.flags[own.0].tuple_value_type = true;
+                }
+                DomainPackageRecord::TuplePosition(position) => {
+                    let owner = at(&position.owner);
+                    index.member_owner.insert(own, owner);
+                    index.members_by_owner.entry(owner).or_default().push(own);
+                }
+                DomainPackageRecord::EventType(event) => {
+                    index.flags[own.0].event_type = true;
+                    index.generals[own.0].extend(event.supertypes.iter().map(at));
+                }
+                DomainPackageRecord::StateMachine(machine) => {
+                    index.flags[own.0].state_machine = true;
+                    index.generals[own.0].extend(machine.supertypes.iter().map(at));
+                }
+                DomainPackageRecord::Process(process) => {
+                    index.flags[own.0].object_type = true;
+                    index.flags[own.0].non_root |= !process.supertypes.is_empty();
+                    index.generals[own.0].extend(process.supertypes.iter().map(at));
+                }
+                DomainPackageRecord::Clause(clause) => {
+                    let owner = at(&clause.owner);
+                    index.member_owner.insert(own, owner);
+                    index
+                        .clauses_by_owner
+                        .entry(owner)
+                        .or_default()
+                        .push(record_position);
+                }
+                DomainPackageRecord::Namespace(_) => {
+                    index.flags[own.0].namespace = true;
+                }
+                DomainPackageRecord::PersistenceInterface(_) => {
+                    index.flags[own.0].persistence_interface = true;
+                }
+                DomainPackageRecord::SequenceType(_)
+                | DomainPackageRecord::OptionType(_)
+                | DomainPackageRecord::MapType(_)
+                | DomainPackageRecord::AliasType(_) => {
+                    index.flags[own.0].core_type = true;
+                }
+                DomainPackageRecord::ValueBound(_) => {}
+                DomainPackageRecord::ScalarType(scalar) => {
+                    index.flags[own.0].scalar_type = true;
+                    match &scalar.domain {
+                        ScalarValueDomain::Integer { lower, upper } => {
+                            index.scalars.insert(own, (*lower, *upper));
+                        }
+                        // A Text scalar names no integer bound and no native
+                        // alias target: it conforms only through the declared
+                        // subtype graph.
+                        ScalarValueDomain::Text(_) | ScalarValueDomain::Rational { .. } => {}
+                        ScalarValueDomain::Native(native) => {
+                            index.scalar_natives.insert(own, *native);
+                        }
+                    }
+                }
+                // FR-153 population declarations are read by
+                // `crate::model::normalize` from the records themselves.
+                DomainPackageRecord::Enum(_) => {
+                    index.flags[own.0].variant_type = true;
+                }
+                // A case carries no inheritance, field or operation
+                // structure for the index to hold.
+                DomainPackageRecord::Variant(_) => {}
+                DomainPackageRecord::Component(part) => {
+                    let owner = at(&part.owning_type);
+                    element_owners.insert(own, owner);
+                    index.members_by_owner.entry(owner).or_default().push(own);
+                }
+                DomainPackageRecord::Endpoint(port) => {
+                    ports.insert(own, at(&port.owning_component));
+                }
+                DomainPackageRecord::Relationship(relationship) => {
+                    index.flags[own.0].navigation_relationship = relationship.declared_at.is_some();
+                    end_members.push((
+                        own,
+                        at(&relationship.source.type_identity),
+                        at(&relationship.target.type_identity),
+                        relationship.declared_at.is_none(),
+                    ));
+                }
+                DomainPackageRecord::Allocation(allocation) => {
+                    end_members.push((
+                        own,
+                        at(&allocation.source_element),
+                        at(&allocation.target_element),
+                        true,
+                    ));
+                }
+                DomainPackageRecord::Population(_) => {}
+            }
+        }
+        // Resolve ports from the recorded owning part, then end-owner
+        // members. This reads the one index, not a second record scan or
+        // kind checker. Connection and allocation source ends come first.
+        for (port, part) in &ports {
+            if let Some(owner) = element_owners.get(part).copied() {
+                element_owners.insert(*port, owner);
+                index.members_by_owner.entry(owner).or_default().push(*port);
+            }
+        }
+        for (member, source, target, both_end_owners) in end_members {
+            let ends = if both_end_owners {
+                vec![source, target]
+            } else {
+                vec![source]
+            };
+            for end in ends {
+                if let Some(owner) = element_owners.get(&end).copied() {
+                    index
+                        .members_by_owner
+                        .entry(owner)
+                        .or_default()
+                        .push(member);
+                }
+            }
+        }
+        for members in index.members_by_owner.values_mut() {
+            members.sort();
+            members.dedup();
+        }
+        index.keys = keys;
+        index.positions = positions;
+        index
+    }
+
+    fn note_redefiner(
+        &mut self,
+        owner: DeclIdx,
+        record: usize,
+        member: DeclIdx,
+        target: DeclIdx,
+        is_field: bool,
+    ) {
+        self.redefiners_by_owner
+            .entry(owner)
+            .or_default()
+            .push(Redefiner {
+                record,
+                member,
+                target,
+                is_field,
+            });
+        self.redefines.entry(member).or_insert(target);
+    }
+
+    /// `key`'s interned index, when some record declares or references it.
+    pub(crate) fn position(&self, key: &DeclarationKey) -> Option<DeclIdx> {
+        self.positions.get(key).copied()
+    }
+
+    /// The key interned at `index`.
+    pub(crate) fn key(&self, index: DeclIdx) -> &DeclarationKey {
+        &self.keys[index.0]
+    }
+
+    fn flags(&self, key: &DeclarationKey) -> DeclFlags {
+        self.position(key)
+            .map(|index| self.flags[index.0])
+            .unwrap_or_default()
+    }
+
+    /// Whether some `ObjectType` record declares `key`.
+    pub(crate) fn is_object_type(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).object_type
+    }
+
+    /// Whether some `ObjectType` record declares `key` abstract (D05,
+    /// `model-complete.md:156`).
+    pub(crate) fn is_abstract(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).abstract_type
+    }
+
+    /// Whether `key`'s own `supertypes[]` is non-empty, so it is not a root.
+    pub(crate) fn is_non_root(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).non_root
+    }
+
+    /// Whether some `ScalarType` record declares `key`.
+    pub(crate) fn is_scalar_type(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).scalar_type
+    }
+
+    /// Whether some `RecordValueType` record declares `key`.
+    pub(crate) fn is_record_value_type(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).record_value_type
+    }
+
+    /// Whether a tuple value type declares `key`.
+    pub(crate) fn is_tuple_value_type(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).tuple_value_type
+    }
+
+    /// Whether a package `alias` or `sequence` type definition declares
+    /// `key`.
+    pub(crate) fn is_alias_or_sequence_type(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).core_type
+    }
+
+    /// Whether some `EventType` record declares `key`.
+    pub(crate) fn is_event_type(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).event_type
+    }
+
+    /// Whether some `Enum` record (a variant type) declares `key`.
+    pub(crate) fn is_variant_type(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).variant_type
+    }
+
+    /// Whether `key` is an FR-208 state-machine type.
+    pub(crate) fn is_state_machine(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).state_machine
+    }
+
+    /// Whether some FR-208 `PersistenceInterfaceRecord` declares `key`.
+    pub(crate) fn is_persistence_interface(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).persistence_interface
+    }
+
+    /// Whether some `FieldMember` record declares `key`.
+    pub(crate) fn is_field_member(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).field_member
+    }
+
+    /// Whether some navigation `Relationship` record declares `key`.
+    pub(crate) fn is_navigation_relationship(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).navigation_relationship
+    }
+
+    /// Whether some `OperationMember` record declares `key`.
+    pub(crate) fn is_operation_member(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).operation_member
+    }
+
+    /// Every declared object type, ascending by key.
+    pub(crate) fn object_types(&self) -> impl Iterator<Item = &DeclarationKey> {
+        self.keys
+            .iter()
+            .zip(&self.flags)
+            .filter(|(_, flags)| flags.object_type)
+            .map(|(key, _)| key)
+    }
+
+    /// Original namespace nodes are never normalizable types.
+    pub(crate) fn is_namespace(&self, key: &DeclarationKey) -> bool {
+        self.flags(key).namespace
+    }
+
+    /// Types and operation-owning persistence interfaces that have effective
+    /// identities, ascending by key. Processes already carry the
+    /// `object_type` flag because their identified runs form object
+    /// universes; persistence interfaces gain only an effective identity and
+    /// never enter [`Self::object_types`].
+    pub(crate) fn normalizable_types(&self) -> impl Iterator<Item = &DeclarationKey> {
+        self.keys
+            .iter()
+            .zip(&self.flags)
+            .filter(|(_, flags)| {
+                flags.object_type
+                    || flags.record_value_type
+                    || flags.variant_type
+                    || flags.event_type
+                    || flags.state_machine
+                    || flags.persistence_interface
+            })
+            .map(|(key, _)| key)
+    }
+
+    /// Authored quire invariants directly owned by this type, ascending by key.
+    #[ix_trace_rs::string_edge]
+    pub(crate) fn sorted_direct_clauses<'r>(
+        &self,
+        records: &'r [DomainPackageRecord],
+        owner: &DeclarationKey,
+    ) -> Vec<&'r super::domain_package::ClauseRecord> {
+        let Some(owner) = self.position(owner) else {
+            return Vec::new();
+        };
+        let mut clauses: Vec<_> = self
+            .clauses_by_owner
+            .get(&owner)
+            .into_iter()
+            .flatten()
+            .filter_map(|position| match records.get(*position) {
+                Some(DomainPackageRecord::Clause(clause)) if clause.language == "quire" => {
+                    Some(clause)
+                }
+                _ => None,
+            })
+            .collect();
+        clauses.sort_by(|a, b| a.key.cmp(&b.key));
+        clauses
+    }
+
+    /// `specific`'s declared `supertypes[]`, ascending by key.
+    pub(crate) fn sorted_generals(&self, specific: &DeclarationKey) -> Vec<DeclarationKey> {
+        let Some(specific) = self.position(specific) else {
+            return Vec::new();
+        };
+        let mut generals = self.generals[specific.0].clone();
+        generals.sort_unstable();
+        generals
+            .into_iter()
+            .map(|general| self.key(general).clone())
+            .collect()
+    }
+
+    /// Every `(specific, general)` supertype edge, specifics ascending, each
+    /// specific's generals in record order.
+    pub(crate) fn generalization_edges(
+        &self,
+    ) -> impl Iterator<Item = (&DeclarationKey, &DeclarationKey)> {
+        self.keys
+            .iter()
+            .zip(&self.generals)
+            .flat_map(move |(specific, generals)| {
+                generals
+                    .iter()
+                    .map(move |general| (specific, self.key(*general)))
+            })
+    }
+
+    /// The field record declared under `key` (the last one, if several),
+    /// read from `records`, the indexed package's own records.
+    fn field<'r>(
+        &self,
+        records: &'r [DomainPackageRecord],
+        key: &DeclarationKey,
+    ) -> Option<&'r FieldMemberRecord> {
+        field_at(records, *self.fields.get(&self.position(key)?)?)
+    }
+
+    /// The operation record declared under `key` (the last one, if several),
+    /// read from `records`, the indexed package's own records.
+    fn operation<'r>(
+        &self,
+        records: &'r [DomainPackageRecord],
+        key: &DeclarationKey,
+    ) -> Option<&'r OperationMemberRecord> {
+        operation_at(records, *self.operations.get(&self.position(key)?)?)
+    }
+
+    /// Every operation record, ascending by key, read from `records`.
+    fn operations<'r>(
+        &'r self,
+        records: &'r [DomainPackageRecord],
+    ) -> impl Iterator<Item = &'r OperationMemberRecord> {
+        self.operations
+            .values()
+            .filter_map(|position| operation_at(records, *position))
+    }
+
+    /// The `[lower, upper]` of the scalar type declared under `key`.
+    pub(crate) fn scalar_bounds(&self, key: &DeclarationKey) -> Option<(i128, i128)> {
+        self.scalars.get(&self.position(key)?).copied()
+    }
+
+    /// The owning type of the field or operation member `key`.
+    pub(crate) fn member_owner(&self, key: &DeclarationKey) -> Option<&DeclarationKey> {
+        let owner = self.member_owner.get(&self.position(key)?)?;
+        Some(self.key(*owner))
+    }
+
+    /// `owner`'s directly declared field members, ascending by key, read
+    /// from `records`, the indexed package's own records.
+    pub(crate) fn sorted_direct_fields<'r>(
+        &self,
+        records: &'r [DomainPackageRecord],
+        owner: &DeclarationKey,
+    ) -> Vec<&'r FieldMemberRecord> {
+        let Some(owner) = self.position(owner) else {
+            return Vec::new();
+        };
+        let mut members: Vec<DeclIdx> = self
+            .fields_by_owner
+            .get(&owner)
+            .cloned()
+            .unwrap_or_default();
+        members.sort();
+        members
+            .into_iter()
+            .filter_map(|member| field_at(records, *self.fields.get(&member)?))
+            .collect()
+    }
+
+    /// `owner`'s directly declared operation members, in record order.
+    pub(crate) fn direct_operations(&self, owner: &DeclarationKey) -> &[DeclIdx] {
+        self.position(owner)
+            .and_then(|owner| self.operations_by_owner.get(&owner))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// `owner`'s own redefining members, in record order.
+    pub(crate) fn redefiners_of_owner(&self, owner: &DeclarationKey) -> &[Redefiner] {
+        self.position(owner)
+            .and_then(|owner| self.redefiners_by_owner.get(&owner))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// `owner`'s own subsetting edges, in record order.
+    pub(crate) fn subsetters_of_owner(&self, owner: &DeclarationKey) -> &[Subsetter] {
+        self.position(owner)
+            .and_then(|owner| self.subsetters_by_owner.get(&owner))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Walks `field`'s redefinition chain one member's own `redefines` hop
+    /// at a time (`model-complete.md`:162), returning `true` as soon as
+    /// `admits` accepts `field` or a member the chain reaches, and `false`
+    /// once the chain ends. A chain (`C.x -> B.x -> A.x`, with no direct
+    /// `C.x -> A.x` edge) is legal (`model-complete.md`:56/:64), so this
+    /// follows every hop, not only the first.
+    ///
+    /// Bounded by the package's record count, since an acyclic chain visits
+    /// no more members than there are records: past that bound the chain is
+    /// a cycle and the walk returns `false` rather than looping.
+    pub(crate) fn redefinition_reaches(
+        &self,
+        field: &DeclarationKey,
+        admits: impl Fn(&DeclarationKey) -> bool,
+    ) -> bool {
+        self.redefinition_walk(field, admits, || Ok::<(), std::convert::Infallible>(()))
+            .unwrap_or_else(|never| match never {})
+    }
+
+    /// [`Self::redefinition_reaches`], calling `before_link` before each
+    /// `redefines` link it follows (and so never for the member `admits`
+    /// accepts first, nor for a member with no link). The first `Err`
+    /// `before_link` returns ends the walk and is returned: that is how a
+    /// caller meters the walk (FR-013's `frame.redefines-link`).
+    pub(crate) fn redefinition_walk<E>(
+        &self,
+        field: &DeclarationKey,
+        admits: impl Fn(&DeclarationKey) -> bool,
+        mut before_link: impl FnMut() -> Result<(), E>,
+    ) -> Result<bool, E> {
+        if admits(field) {
+            return Ok(true);
+        }
+        let Some(mut current) = self.position(field) else {
+            return Ok(false);
+        };
+        for _ in 0..self.record_count {
+            let Some(&redefined) = self.redefines.get(&current) else {
+                return Ok(false);
+            };
+            before_link()?;
+            if admits(self.key(redefined)) {
+                return Ok(true);
+            }
+            current = redefined;
+        }
+        Ok(false) // Cycle: exceeded the maximum possible acyclic chain length.
+    }
+
+    /// `index`'s ancestry, computed on first use.
+    ///
+    /// The walk: an explicit stack seeded with `index`; pop a type, skip it
+    /// if already expanded, otherwise expand it and follow each of its
+    /// declared supertypes in record order, one edge at a time. Every
+    /// supertype an edge names is recorded with that edge's ordinal the
+    /// first time it is named, whether or not it was already expanded.
+    fn ancestry(&self, index: DeclIdx) -> &Ancestry {
+        self.ancestry[index.0].get_or_init(|| {
+            let mut stack = vec![index];
+            let mut expanded: std::collections::HashSet<DeclIdx> = std::collections::HashSet::new();
+            let mut first_named_at: HashMap<DeclIdx, u64> = HashMap::new();
+            let mut edges: u64 = 0;
+            while let Some(current) = stack.pop() {
+                if !expanded.insert(current) {
+                    continue;
+                }
+                for general in &self.generals[current.0] {
+                    edges += 1;
+                    first_named_at.entry(*general).or_insert(edges);
+                    stack.push(*general);
+                }
+            }
+            let mut first_named_at: Vec<(DeclIdx, u64)> = first_named_at.into_iter().collect();
+            first_named_at.sort_unstable();
+            Ancestry {
+                edges,
+                first_named_at: first_named_at.into_boxed_slice(),
+            }
+        })
+    }
+
+    /// Whether `s` conforms to `t`: the same key, or a chain of declared
+    /// supertypes from `s` to `t`.
+    ///
+    /// The rule is a bounded depth-first walk from `s` (an explicit stack, a
+    /// visited set, supertypes pushed in record order) that stops as soon as
+    /// an edge names `t`. `max_steps` is the caller's `ancestor_steps`
+    /// ceiling
+    /// ([`crate::model::accounting::ModelNormalizationLimits::ancestor_steps`]),
+    /// used as given: it bounds how many `supertypes` edges the walk follows,
+    /// each charged before it is followed, so under multiple supertypes it
+    /// bounds the walk's closure, never a chain depth. A target `n` edges
+    /// above `s` along a chain is reached at `max_steps == n`. Following one
+    /// edge more refuses [`ModelRefusalCause::AncestorSteps`] naming `s` and
+    /// `max_steps`; the walk is never truncated into a verdict, so a cycle
+    /// refuses rather than loops.
+    ///
+    /// The answer is read from `s`'s ancestry, not by walking again: `t` is
+    /// found at the first edge that names it, so the walk admits it when
+    /// that edge's ordinal is within `max_steps`, and a walk that never finds
+    /// `t` follows every edge of the closure.
+    pub(crate) fn conforms(
+        &self,
+        s: &DeclarationKey,
+        t: &DeclarationKey,
+        max_steps: u64,
+        setting: fsl_foundation::Setting,
+    ) -> Result<bool, ModelRefusal> {
+        if s == t {
+            return Ok(true);
+        }
+        let exceeded = || ModelRefusal {
+            code: Code::ResourceExhausted,
+            cause: ModelRefusalCause::ancestor_steps(s.clone(), max_steps, setting),
+            detail: format!(
+                "conformance check from {} exceeded the ancestor_steps limit of {max_steps}",
+                s.node
+            ),
+        };
+        let Some(start) = self.position(s) else {
+            // An uninterned `s` declares no supertype: the walk follows no
+            // edge.
+            return Ok(false);
+        };
+        let ancestry = self.ancestry(start);
+        let found = self.position(t).and_then(|target| {
+            ancestry
+                .first_named_at
+                .binary_search_by_key(&target, |(ancestor, _)| *ancestor)
+                .ok()
+                .map(|slot| ancestry.first_named_at[slot].1)
+        });
+        match found {
+            Some(ordinal) if ordinal <= max_steps => Ok(true),
+            None if ancestry.edges <= max_steps => Ok(false),
+            Some(_) | None => Err(exceeded()),
+        }
+    }
+
+    /// Whether `s` conforms to `t` over edges normalization already
+    /// admitted: [`Self::conforms`] with no `ancestor_steps` ceiling, since
+    /// phase 3 charged every declared `supertypes` edge when the view
+    /// completed, so this follows no edge that was not admitted and charges
+    /// nothing.
+    pub(crate) fn conforms_admitted(&self, s: &DeclarationKey, t: &DeclarationKey) -> bool {
+        if s == t {
+            return true;
+        }
+        let (Some(start), Some(target)) = (self.position(s), self.position(t)) else {
+            return false;
+        };
+        self.ancestry(start)
+            .first_named_at
+            .binary_search_by_key(&target, |(ancestor, _)| *ancestor)
+            .is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use ix_trace_rs::trace;
+
+    use super::*;
+    use crate::model::domain_package::{DomainPackageRef, ObjectTypeRecord};
+
+    fn key(node: &str) -> DeclarationKey {
+        DeclarationKey::fixture(node)
+    }
+
+    fn package(types: &[(&str, &[&str])]) -> DomainPackage {
+        DomainPackage::new(
+            DomainPackageRef::fixture("bundle.qsl202"),
+            types
+                .iter()
+                .map(|(name, supertypes)| {
+                    DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                        key: key(name),
+                        interface_features: None,
+                        abstract_type: false,
+                        supertypes: supertypes.iter().map(|general| key(general)).collect(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// The reference edge-charging walk of FR-082, the oracle
+    /// [`RecordIndex::conforms`] must match: a depth-first walk over the
+    /// records with a visited set, charging each `supertypes` edge before it
+    /// is followed and refusing at the first edge past `max_steps`.
+    fn walked(
+        domain_package: &DomainPackage,
+        s: &DeclarationKey,
+        t: &DeclarationKey,
+        max_steps: u64,
+    ) -> Result<bool, ModelRefusal> {
+        let mut generals_by_specific: HashMap<DeclarationKey, Vec<DeclarationKey>> = HashMap::new();
+        for record in &domain_package.records {
+            if let DomainPackageRecord::ObjectType(object_type) = record {
+                if !object_type.supertypes.is_empty() {
+                    generals_by_specific
+                        .entry(object_type.key.clone())
+                        .or_default()
+                        .extend(object_type.supertypes.iter().cloned());
+                }
+            }
+        }
+        if s == t {
+            return Ok(true);
+        }
+        let mut stack: Vec<DeclarationKey> = vec![s.clone()];
+        let mut visited: HashSet<DeclarationKey> = HashSet::new();
+        let mut steps: u64 = 0;
+        let found = 'walk: {
+            while let Some(current) = stack.pop() {
+                if !visited.insert(current.clone()) {
+                    continue;
+                }
+                for general in generals_by_specific.get(&current).into_iter().flatten() {
+                    if steps >= max_steps {
+                        return Err(ModelRefusal {
+                            code: Code::ResourceExhausted,
+                            cause: ModelRefusalCause::ancestor_steps(
+                                s.clone(),
+                                max_steps,
+                                fsl_foundation::Setting::ModelAncestorSteps,
+                            ),
+                            detail: format!(
+                                "conformance check from {} exceeded the ancestor_steps limit of {max_steps}",
+                                s.node
+                            ),
+                        });
+                    }
+                    steps += 1;
+                    if general == t {
+                        break 'walk true;
+                    }
+                    stack.push(general.clone());
+                }
+            }
+            false
+        };
+        Ok(found)
+    }
+
+    /// Interning assigns [`DeclIdx`] in ascending
+    /// [`DeclarationKey`] order, whatever the record order, so reading the
+    /// index ascending reads keys ascending.
+    ///
+    /// Mutation used: interning in record order (dropping the sort in
+    /// `build`) fails the first assertion.
+    #[test]
+    #[trace("FSpec-TC-195", "FSpec-FR-150-AC-4")]
+    fn decl_idx_order_is_declaration_key_order() {
+        let domain_package = package(&[
+            ("model.Z", &["model.M"]),
+            ("model.A", &[]),
+            ("model.M", &["model.A", "model.Q"]),
+        ]);
+        let index = RecordIndex::build(&domain_package);
+        let interned: Vec<&DeclarationKey> = (0..index.keys.len())
+            .map(|position| index.key(DeclIdx(position)))
+            .collect();
+        let mut ascending = interned.clone();
+        ascending.sort();
+        assert_eq!(interned, ascending);
+        assert_eq!(
+            interned,
+            [
+                &key("model.A"),
+                &key("model.M"),
+                &key("model.Q"),
+                &key("model.Z")
+            ],
+            "every declared and referenced key is interned once"
+        );
+        for (position, interned_key) in interned.iter().enumerate() {
+            assert_eq!(index.position(interned_key), Some(DeclIdx(position)));
+        }
+        assert_eq!(
+            index.object_types().collect::<Vec<_>>(),
+            [&key("model.A"), &key("model.M"), &key("model.Z")],
+            "a referenced but undeclared supertype is not an object type"
+        );
+    }
+
+    /// Native UUID and String leaves retain separate identity and conformance.
+    ///
+    /// Mutation used: treating all native leaves as one identity makes the
+    /// mixed UUID/String conformance assertion fail.
+    #[test]
+    fn native_uuid_and_string_types_are_distinct_identity_leaves() {
+        use super::super::domain_package::{NativeValueType, ValueTypeRef};
+
+        let uuid = ValueTypeRef::Native(NativeValueType::Uuid);
+        let string = ValueTypeRef::Native(NativeValueType::String);
+        assert_eq!(uuid, ValueTypeRef::Native(NativeValueType::Uuid));
+        assert_eq!(string, ValueTypeRef::Native(NativeValueType::String));
+        assert_ne!(uuid, string);
+        assert_eq!(uuid.to_string(), "ix://filament/native/UUID");
+        assert_eq!(string.to_string(), "ix://filament/native/String");
+
+        let package = DomainPackage::new(DomainPackageRef::fixture("native-leaves"), Vec::new());
+        let index = ModelIndex::build(package);
+        for native in [&uuid, &string] {
+            assert_eq!(index.value_conformance_walk(native, native, 0), Ok(true));
+        }
+        assert_eq!(index.value_conformance_walk(&uuid, &string, 0), Ok(false));
+    }
+
+    #[test]
+    #[trace("FSpec-TC-196", "FSpec-FR-151-AC-2", "FSpec-FR-151-AC-5")]
+    fn conforms_matches_the_bounded_walk_everywhere() {
+        let packages = [
+            package(&[
+                ("model.C3", &["model.C2"]),
+                ("model.C2", &["model.C1"]),
+                ("model.C1", &["model.C0"]),
+                ("model.C0", &[]),
+            ]),
+            package(&[
+                ("model.D", &["model.B", "model.C"]),
+                ("model.B", &["model.A"]),
+                ("model.C", &["model.A"]),
+                ("model.A", &[]),
+            ]),
+            package(&[
+                ("model.X", &["model.Y"]),
+                ("model.Y", &["model.Z"]),
+                ("model.Z", &["model.X", "model.W"]),
+                ("model.W", &[]),
+            ]),
+            package(&[
+                ("model.S", &["model.S", "model.R", "model.R"]),
+                ("model.R", &["model.Gone"]),
+                ("model.T", &["model.R"]),
+                ("model.T", &["model.S"]),
+            ]),
+        ];
+        let mut checked = 0usize;
+        for domain_package in &packages {
+            let index = RecordIndex::build(domain_package);
+            let mut names: Vec<DeclarationKey> = index.keys.clone();
+            names.push(key("model.Unknown"));
+            for s in &names {
+                for t in &names {
+                    for max_steps in 0..=6 {
+                        assert_eq!(
+                            index.conforms(
+                                s,
+                                t,
+                                max_steps,
+                                fsl_foundation::Setting::ModelAncestorSteps
+                            ),
+                            walked(domain_package, s, t, max_steps),
+                            "{} conforms to {} under ancestor_steps {max_steps}",
+                            s.node,
+                            t.node
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 500, "{checked} cases compared");
+    }
+}

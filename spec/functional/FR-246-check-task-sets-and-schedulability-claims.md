@@ -3,30 +3,30 @@ id: FR-246
 title: "Check task sets and schedulability claims"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
 ---
 # FR-246: Check task sets and schedulability claims
 
 ## Description
 
-QSL's S3 checker SHALL admit a package's task sets for one preemptive
+FSL's S3 checker SHALL admit a package's task sets for one preemptive
 uniprocessor and the schedulability and response claims over them, and
 route each claim to the closed-form engine EN-7, module `schedulability`
-in layer A, crate `qsl-analyze`,
-under the QSpec FR-290 capability kind `schedulability` (ADR-026 RT-1 to
+in layer A, crate `fsl-analyze`,
+under the FSpec FR-290 capability kind `schedulability` (ADR-026 RT-1 to
 RT-3). WCETs, blocking terms and jitter are stated premises of the claim:
 they are part of the task set, so part of the subject and its obligation
 identity.
@@ -43,12 +43,12 @@ changing one gives a different obligation.
 - A parsed `taskset S { task τ … }` declaration and `schedulable N on S
   under P;` and `response N on S.τ <= d under fixed_priority;` claims, `N`
   the claim's name, `S` the task set and `P` one of `fixed_priority`, `edf`
-  and `amc`, in the spelling QSpec's shared grammar fixes. The grammar admits
+  and `amc`, in the spelling FSpec's shared grammar fixes. The grammar admits
   a task set with no task, a negative time value, a negative `bcet`, a
   `bcet` above the task's upper execution bound and a `lo` task with
   `wcet_hi`, so that S3 refuses them below. A task may write `bcet <time>`
   once, after `deadline` and before `wcet`; it is the task's lower bound on
-  actual job demand (QSpec FR-419), and a task that omits it has `bcet` zero.
+  actual job demand (FSpec FR-419), and a task that omits it has `bcet` zero.
 
 ## Outputs
 
@@ -71,14 +71,14 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
 
 ## Behavior
 
-- Every time value SHALL be an exact rational time quantity (QSpec FR-142,
+- Every time value SHALL be an exact rational time quantity (FSpec FR-142,
   FR-230's time units); a value of another dimension SHALL refuse
   `ill_typed`/`type-mismatch` at its span.
 - **The task set's unit.** The checker SHALL order the tasks by task name in
   Unicode scalar value order (the order FR-482 writes them), then take the
   unit of the first task's period or minimum inter-arrival time as the task
   set's unit. It SHALL convert every time value of the task set, and the
-  bound `d` of every `response` claim over it, exactly into that unit (QSpec
+  bound `d` of every `response` claim over it, exactly into that unit (FSpec
   FR-142). Reordering task declarations SHALL NOT change the chosen unit or
   any checked value. EN-7's
   evidence (FR-247) and the settled record (FR-248) state their values in
@@ -96,7 +96,7 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
   deadline that is not positive; a WCET that is not positive; a jitter or
   blocking term that is negative; a `bcet` that is negative; a `bcet` above
   `C` for a `LO` task or above `C(HI)` for a `HI` task; a `HI` task whose `C(LO)` exceeds `C(HI)`;
-  a `LO` task with dual budgets. QSpec FR-419 states the code and every
+  a `LO` task with dual budgets. FSpec FR-419 states the code and every
   one of these conditions, the claim-dependent ones below included, so that
   one invalid task set refuses under one code.
 - Two tasks with one name SHALL refuse `conflicting_declaration`/
@@ -105,7 +105,7 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
   two tasks share a priority, the checker SHALL refuse `invalid_timed_model`/
   `invalid-task-set`, naming both tasks; when a task has no priority, the
   checker SHALL refuse the same way, naming that task. For an `edf` claim the
-  checker SHALL ignore priorities (QSpec FR-419).
+  checker SHALL ignore priorities (FSpec FR-419).
 - When an `edf` claim is over a task with a jitter or blocking term other than
   zero, or an `amc` claim is over a task whose deadline exceeds its period,
   the checker SHALL refuse `invalid_timed_model`/`invalid-task-set`, naming
@@ -126,7 +126,7 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
   other time value.
 - The task set, including every BCET, WCET, blocking term and jitter, SHALL be
   part of the claim's subject and obligation identity (ADR-013 O-09): S4
-  emits each checked claim as one QSpec FR-482 `claim`/`schedulability`
+  emits each checked claim as one FSpec FR-482 `claim`/`schedulability`
   node holding the task set (FR-454), and the identity is keyed from that
   node.
 - The request writer SHALL give each claim the requirement
@@ -147,10 +147,10 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
 - [FR-075](FR-075-compute-candidates-from-registered-backends.md),
   [FR-230](FR-230-check-time-declarations-clocks-and-clock-constraints.md)
   (time units shared with timed models).
-- QSpec FR-142 (units), QSpec FR-290 (capability kinds).
+- FSpec FR-142 (units), FSpec FR-290 (capability kinds).
 
 ## References
 
-- QSpec half: QSpec FR-419 (Linear STD-139) owns the `taskset` grammar,
+- FSpec half: FSpec FR-419 (Linear STD-139) owns the `taskset` grammar,
   the `schedulable` and `response` claims and the FR-290 capability kind
   `schedulability` (ADR-026 OV-10).

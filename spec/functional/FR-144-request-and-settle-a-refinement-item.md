@@ -3,43 +3,43 @@ id: FR-144
 title: "Request and settle a refinement item"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-143
+  - target: ix://agent-ix/filament-spec-language/FR-143
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: depends_on
-  - target: ix://agent-ix/quire-semantic-value/FR-121
+  - target: ix://agent-ix/filament-semantic-value/FR-121
     type: depends_on
 ---
 # FR-144: Request and settle a refinement item
 
 ## Description
 
-QSL SHALL write one requirement record for each refinement declaration and
+FSL SHALL write one requirement record for each refinement declaration and
 settle it as exactly one FR-331 terminal record (ADR-020 §5 "Claim kinds",
 "Strength" and "Negotiation", RE-4, RS-9). The record's kind is
 `temporal-satisfaction`, its property form is TP-5 `Refinement` with a
 safety half and, when `F_A` is non-empty, a liveness half. Layer 6,
-`qsl-replay`, owns the map from a `RefinementOutcome` (FR-142, FR-143) and the replay of
+`fsl-replay`, owns the map from a `RefinementOutcome` (FR-142, FR-143) and the replay of
 its counterexample (FR-145) to `TerminalValue`, extending FR-127's map.
 
 ## Use case
@@ -47,7 +47,7 @@ its counterexample (FR-145) to `TerminalValue`, extending FR-127's map.
 A verification operator reads the result of a refinement request. A
 `proved` refinement says it was proved by exhaustive exploration of the
 concrete subject. A refuted one has a replayed counterexample. A
-refinement whose liveness half QSL cannot decide says so and still reports
+refinement whose liveness half FSL cannot decide says so and still reports
 what the safety half found. The concrete model's own deadlocks are reported
 beside it as a separate item.
 
@@ -69,14 +69,14 @@ beside it as a separate item.
 - A requirement record (`temporal-satisfaction`, `Unbounded{domains}`)
   with `PropertyForm::Refinement{liveness: bool}` (TP-5), where `liveness`
   is `true` exactly when `F_A` is non-empty. The variant is
-  `quire_semantic_value::fairness::PropertyForm::Refinement { liveness }`,
-  a fifth variant of QSV FR-121's `PropertyForm` (the type FR-123
+  `filament_semantic_value::fairness::PropertyForm::Refinement { liveness }`,
+  a fifth variant of FSV FR-121's `PropertyForm` (the type FR-123
   records), encoded as the JSON object `{"refinement":{"liveness":<bool>}}`
   and ordered after `Liveness`, `liveness: false` before `true`.
-  `RefinementFailure` (ADR-020 RC-1, FR-141) stays a QSL type: only the
+  `RefinementFailure` (ADR-020 RC-1, FR-141) stays an FSL type: only the
   property form crosses the semantic-value seam.
 - `InconclusiveCause::MappingUndetermined` beside FR-127's causes, written
-  on the wire as cause `mapping-undetermined` (QSpec FR-379).
+  on the wire as cause `mapping-undetermined` (FSpec FR-379).
 - `InconclusiveCause::ProtocolAssumptionNotEstablished{reason, identities,
   witness}` for FR-148. It is written `protocol-assumption-not-established`
   and carries the paired assumption witness when one exists; it is not a
@@ -84,7 +84,7 @@ beside it as a separate item.
 - One FR-331 terminal record per refinement item, carrying the item's
   `TerminalValue`, each half's `TerminalValue` (none for an item settled from a
   refusal), the method
-  `explicit-state`, its QSpec FR-360 label, QSpec FR-243
+  `explicit-state`, its FSpec FR-360 label, FSpec FR-243
   basis and O-16 category by FR-127's table.
 
 ## Behavior
@@ -140,7 +140,7 @@ beside it as a separate item.
 - A `Violated` half SHALL settle `refuted` only through its replay (FR-145)
   settling `reproduced-with-evaluated-witness`; a replay that settles
   `inconclusive` SHALL settle V-6 with `ReplayParity` (wire cause
-  `replay-parity`, QSpec FR-379), a refusal V-6 with
+  `replay-parity`, FSpec FR-379), a refusal V-6 with
   `ReplayRefused`, and a fault `failed`. A `StepVerdict::Fault` (FR-141), from
   an internal fault in the mapping, settles the item `failed` likewise. A
   refusal from `check_refinement` (FR-143: an internal fault in the second
@@ -193,12 +193,12 @@ beside it as a separate item.
   [FR-142](FR-142-check-a-refinement-s-safety-half-on-the-explicit-state-product.md),
   [FR-143](FR-143-check-a-refinement-s-liveness-half-under-abstract-fairness.md),
   [FR-148](FR-148-decide-steps-against-an-abstract-protocol.md).
-- quire-semantic-value FR-121: the shared `PropertyForm`, which must carry
+- filament-semantic-value FR-121: the shared `PropertyForm`, which must carry
   the `Refinement { liveness }` variant, its spelling and its order before
   FR-144-AC-8 can pass.
 
 ## References
 
-- The QSpec half (claim kinds and the `mapping-undetermined` cause): QSpec FR-379 (Linear STD-133).
-- The quire-semantic-value half (the `Refinement { liveness }` variant of
-  QSV FR-121's `PropertyForm`): Linear STD-326.
+- The FSpec half (claim kinds and the `mapping-undetermined` cause): FSpec FR-379 (Linear STD-133).
+- The filament-semantic-value half (the `Refinement { liveness }` variant of
+  FSV FR-121's `PropertyForm`): Linear STD-326.

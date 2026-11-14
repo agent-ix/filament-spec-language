@@ -1,12 +1,12 @@
 ---
 id: TC-832
-title: "S6a charges union construction at QSpec's accounting point and nothing for case selection"
+title: "S6a charges union construction at FSpec's accounting point and nothing for case selection"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-322
+  - target: ix://agent-ix/filament-spec-language/FR-322
     type: verifies
 ---
-# TC-832: S6a charges union construction at QSpec's accounting point and nothing for case selection
+# TC-832: S6a charges union construction at FSpec's accounting point and nothing for case selection
 
 ## Description
 

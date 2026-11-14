@@ -3,19 +3,19 @@ id: FR-204
 title: "Check probabilistic timed automata through digital clocks"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-197
+  - target: ix://agent-ix/filament-spec-language/FR-197
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-202
+  - target: ix://agent-ix/filament-spec-language/FR-202
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-195
+  - target: ix://agent-ix/filament-spec-language/FR-195
     type: depends_on
 ---
 # FR-204: Check probabilistic timed automata through digital clocks
@@ -213,7 +213,7 @@ FR-197 and FR-198 over it, and FR-203's unsupported causes
 ## Rulings
 
 Lead rulings of 2026-11-04 on the post-draw choice (QSL-1667), relayed from
-the QSL plan lead (not an owner answer; Peter may veto). Each row is decided;
+the FSL plan lead (not an owner answer; Peter may veto). Each row is decided;
 the last column names the fact that reopens it.
 
 | Question | Ruling | Reason | Reopen when |
@@ -237,7 +237,7 @@ the last column names the fact that reopens it.
 
 ## References
 
-- QSpec half, which owns the digital route's semantics: QSpec FR-421
+- FSpec half, which owns the digital route's semantics: FSpec FR-421
   (Linear STD-139), with FR-420's given and free delays.
 - ADR-026 (timed subjects, delay distributions and the race) is on its own
   draft branch: Linear QSL-373.

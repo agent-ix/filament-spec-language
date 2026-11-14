@@ -3,7 +3,7 @@ id: TC-119
 title: "Check exact composed types and guarded value obligations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-040
+  - target: ix://agent-ix/filament-spec-language/FR-040
     type: verifies
 ---
 # TC-119: Check exact composed types and guarded value obligations
@@ -24,7 +24,7 @@ Expected type identities, source spans, proof premises and costs come from fixed
 authored source/model contracts and the public charging rules. Missing model
 or proof capability has its own expected refusal control; that control does not
 pass the positive semantic case it blocks. Supported guarded IR discharge and exact authored correspondence are exercised
-through `qsl_replay::spine::check`.
+through `fsl_replay::spine::check`.
 
 ## Test Procedure
 
@@ -108,7 +108,7 @@ through `qsl_replay::spine::check`.
     expected types, identities, proof results and atomic refusals. Attempt to
     pass composed typed-only or partial output into historical checked/package
     execution boundaries; no label change or empty diagnostic list admits it.
-11. Through `qsl_replay::spine::parse`, `select` and `check`, bind a protocol
+11. Through `fsl_replay::spine::parse`, `select` and `check`, bind a protocol
     declaration containing a Boolean `check` value root to its exact formal
     source, authored clause and handler execution point. Inspect the per-
     declaration typed protocol-proof result: require `Discharged`, retained

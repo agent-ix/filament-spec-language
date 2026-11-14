@@ -3,23 +3,23 @@ id: FR-092
 title: "Build type, parameter, value and declared function nodes with structural identity"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: traces_to
 ---
 # FR-092: Build type, parameter, value and declared function nodes with structural identity
@@ -27,7 +27,7 @@ relationships:
 ## Description
 
 `check` builds the checked type, parameter, value, function and protocol nodes
-below. QSpec FR-322 (quire-specification main at 686e49e8) owns their
+below. FSpec FR-322 (filament-specification main at 686e49e8) owns their
 `node_id`: the closed `{package, path, ordinal}` object, compared
 componentwise and never hashed. Its `package` is the containing package's
 name, a declared node's path is its declaration path, and a derived node's
@@ -41,14 +41,14 @@ rules. This requirement does not define an identity preimage or digest.
 
 ## Outputs
 
-- Checked nodes with QSpec FR-322 structural ids, or typed refusal with no
+- Checked nodes with FSpec FR-322 structural ids, or typed refusal with no
   partial checked package.
 
 ## Behavior
 
 ### Node identity and ownership
 
-`check` SHALL give every emitted node a QSpec FR-322 `node_id`. A declared
+`check` SHALL give every emitted node an FSpec FR-322 `node_id`. A declared
 node carries its source owner and its declaration path. A derived node's id
 uses the FR-322 path for its tag, semantic form and operands outside a
 recursion group; inside a group FR-322's group rules apply. The producer
@@ -68,7 +68,7 @@ explicit base-versus-derived discriminator independently of normalized
 terms. A base dimension and a derived dimension whose terms cancel to empty
 remain distinct declared nodes. The v2 dimension preimage, the
 checked-package wire body the emitter writes (through IR's `NominalBody::try_dimension`
-base argument, QSpec FR-322 dimension form) and replay admission SHALL preserve
+base argument, FSpec FR-322 dimension form) and replay admission SHALL preserve
 their respective `base` values; replay MUST NOT
 infer that a dimension is base solely because its terms are empty. The v1
 preimage's empty-means-base rule remains version-specific.
@@ -136,7 +136,7 @@ The row keeps both the declared field name and the record node's binding
 name, which a writer that renames a binding changes independently; a writer
 that renames a binding SHALL carry the final binding name in the row's
 `admitted_name`, so the row names each member by the binding the written
-package holds at that position (QSL FR-251 "Plan root"). A
+package holds at that position (FSL FR-251 "Plan root"). A
 model-owned record carries no source record row. A record node that is not
 emitted has no row. An emitted source record node that no declared record
 joins to, a record whose bindings disagree with its declaration in count, and
@@ -225,9 +225,9 @@ identity-preimage spellings.
 | `Option<T>` | `composite_type` / `option` | itself | reference to `T` |
 | a collection `K<T>` | `composite_type` / collection form | itself | reference to `T` |
 | bounded collection `K<T>[min,max]` | `bounded_domain` / `collection_bounds` | `K<T>` | `min`, `max` bindings |
-| `Map<K, V>` | `composite_type` / `map` | itself | `key` binding referencing `K`'s node (a package map's key is the native String, which lowers to the bare Text scalar node of QSpec FR-322), then `value` binding referencing `V` (QSpec FR-322 "Derived type forms and forwarding"; quire-exact FR-386) |
+| `Map<K, V>` | `composite_type` / `map` | itself | `key` binding referencing `K`'s node (a package map's key is the native String, which lowers to the bare Text scalar node of FSpec FR-322), then `value` binding referencing `V` (FSpec FR-322 "Derived type forms and forwarding"; filament-exact FR-386) |
 | bounded map `Map<K, V>[min,max]` | `bounded_domain` / `collection_bounds` | `Map<K, V>` | `min`, `max` bindings |
-| `Quantity<u, C>` | `scalar_type` / `carried_quantity` | itself | `unit`, `carrier` and `rounding` bindings; its structural path is `[scalar_type, carried_quantity, U, C, "rounding", T, mode]` with `U` the unit node, `C` the carrier node, `T` the text type of the `rounding` literal and `mode` its rounding mode (QSpec FR-322 "Derived type forms and forwarding") |
+| `Quantity<u, C>` | `scalar_type` / `carried_quantity` | itself | `unit`, `carrier` and `rounding` bindings; its structural path is `[scalar_type, carried_quantity, U, C, "rounding", T, mode]` with `U` the unit node, `C` the carrier node, `T` the text type of the `rounding` literal and `mode` its rounding mode (FSpec FR-322 "Derived type forms and forwarding") |
 | `Quantity<u>[min,max]` with both endpoints and nominal unit `u` | `scalar_type` / `bounded_quantity` | itself | `unit = reference(U)`, `min = literal(R,min)`, `max = literal(R,max)` in that order; `R` is the rational scalar type, and the endpoints are reduced exact rational magnitudes in `U`, inclusive with `min <= max` |
 | declared record | `composite_type` / `record` | itself | fields in declaration order; an optional field has an `optional` group |
 | declared tuple | `composite_type` / `tuple` | itself | element references in position order |
@@ -235,12 +235,12 @@ identity-preimage spellings.
 The type of a bounded numeric or collection form is its `bounded_domain`
 node, not its base; a bounded quantity is the self-typed scalar above. Its
 structural path SHALL be `["scalar_type", "bounded_quantity", U, "min", R,
-min, "max", R, max]`, using QSpec FR-322's canonical exact endpoint spelling.
+min, "max", R, max]`, using FSpec FR-322's canonical exact endpoint spelling.
 Its dependencies SHALL be exactly `U` and `R` in ascending node-id order;
 it has no declaration, owner or recursion group. Equal bounds through an
 alias share the node; changing either endpoint or unit changes its identity.
 This form SHALL retain the magnitude interval directly, without projecting
-it into a numerator/denominator carrier (QSpec FR-322-AC-384). The form
+it into a numerator/denominator carrier (FSpec FR-322-AC-384). The form
 defines neither a missing endpoint nor a compound-unit operand: those
 checked types retain a typed unsupported refusal rather than an invented
 endpoint or a different wire form. A
@@ -269,7 +269,7 @@ applications are separate nodes. A predicate with a recursion group is
 refused under FR-146's missing-measure rule. Model-owned clause functions
 carry FR-094's model owner and clause binding.
 
-A recursion group is represented under QSpec FR-322's group rules. The
+A recursion group is represented under FSpec FR-322's group rules. The
 producer assigns each member's structural id independently of declaration
 visit order and never derives an id from group order or an RFC 8785
 preimage. Two groups with different declarations retain distinct member
@@ -289,7 +289,7 @@ the derived carrier's structural path from the target id. An absent or stale
 target refuses `missing_declaration`/`missing-name` and emits no carrier.
 
 For a protocol declaration that checks, `check` SHALL build the
-`protocol`/`protocol_clause` node with the FR-383 `quire.op.protocol.control`
+`protocol`/`protocol_clause` node with the FR-383 `filament.op.protocol.control`
 body, selected law and thirteen clause arguments, Boolean semantic type,
 source declaration and owner, and a declaration occurrence. Its structural
 id follows FR-322; a reference resolves to it. Unsupported constructs and
@@ -313,17 +313,17 @@ missing profile selections retain FR-383 and FR-218's refusals.
 | FR-092-AC-5 | A function with an unread second parameter still lists both parameter references in order; a second function in the same package may reference the same parameter node where its structural id is equal. | Test (TC-414) |
 | FR-092-AC-6 | A function body contains no inline application term. The `a and b` expression is a separate application node, and both it and the function have FR-322 structural ids. | Test (TC-414) |
 | FR-092-AC-7 | On a 512 KiB stack, 100,000 nested `Option`s check under limits raised to fit, with the same structural type id as on an 8 MiB stack. At default limits a 30-record optional-field chain checks on a 2 MiB stack. Two otherwise equal recursive declarations named `f` and `g` have distinct declared ids and do not collide solely because their conditional bodies are equal. | Test (TC-413) |
-| FR-092-AC-8 | A source enum and member carry their QSpec FR-322 structural ids, the declaration path and source owner; neither is assigned a nominal preimage key. | Test (TC-413) |
+| FR-092-AC-8 | A source enum and member carry their FSpec FR-322 structural ids, the declaration path and source owner; neither is assigned a nominal preimage key. | Test (TC-413) |
 | FR-092-AC-9 | Rational and decimal bounded types, a tuple and two records differing only by optional-field syntax produce the distinct type-node shapes above. `rational(1,2)` and `rational(2,4)` lower to the same reduced rational value. All nodes have structural ids. | Test (TC-413) |
 | FR-092-AC-10 | A function with `decreases(x)` binds the measure to a reference to its parameter node and retains parameter order. | Test (TC-414) |
-| FR-092-AC-11 | Recursive function and record groups (`f`, `List`, `Tree`, `ping` and `pong`) retain their references, semantic-type links and QSpec FR-322 group membership; reversing `ping` and `pong` declarations leaves their declared structural ids unchanged. Repeated references to one call use one node id where their package, path and ordinal are equal. | Test (TC-413) |
+| FR-092-AC-11 | Recursive function and record groups (`f`, `List`, `Tree`, `ping` and `pong`) retain their references, semantic-type links and FSpec FR-322 group membership; reversing `ping` and `pong` declarations leaves their declared structural ids unchanged. Repeated references to one call use one node id where their package, path and ordinal are equal. | Test (TC-413) |
 | FR-092-AC-12 | The id of declared `Point` derives from its package, declaration path and producer ordinal, independent of any caller handle; no checked node stores a caller handle as its id. | Test (TC-413) |
 | FR-092-AC-13 | A predicate `Positive` and pure function `Positive` have distinct semantic forms. A source enum `Status` and member `READY` have their declared node tags, semantic forms, declaration paths and source owners. | Test (TC-481) |
 | FR-092-AC-14 | Parameters with `Int` bounds through unsigned-64 and signed-128 extremes construct valid bounded-domain type nodes with exact integer bounds, without magnitude-based identity refusal; their ids satisfy FR-322's structural ordinal bound. | Test (TC-910) |
-| FR-092-AC-15 | Withdrawn: QSpec FR-322 replaced RFC 8785 preimage-counter spelling with a bounded structural `node_id.ordinal`; no counter-encoding key oracle remains. | Inspection |
+| FR-092-AC-15 | Withdrawn: FSpec FR-322 replaced RFC 8785 preimage-counter spelling with a bounded structural `node_id.ordinal`; no counter-encoding key oracle remains. | Inspection |
 | FR-092-AC-16 | A unit that declares `protocol Fill` and holds `protocol Fill` as an expression emits one `protocol`/`protocol_reference` node whose body is exactly `{term: "reference", target: Fill's node_id}`, whose `semantic_type` equals `Fill`'s, and whose `dependencies` are exactly that id. It has one `expression` occurrence at the reference's region (ordinal 0), its own source-map row, and no `declaration`, `owner` or recursion group. The graph has one node collection and no protocol-reference collection. The IR V2 reader admits it as `ProtocolForm::ProtocolReference`. | Test (TC-1021) |
 | FR-092-AC-17 | Repeating a reference to one protocol adds an occurrence and source-map row without changing the carrier id, body or dependencies. Changing its bound target changes the target operand in its FR-322 structural path and gives a distinct id. Removing the second occurrence leaves the carrier id unchanged. | Test (TC-1021) |
-| FR-092-AC-18 | A unit that declares `protocol Fill` made only of FR-383's emitted constructs (static and replicated roles, channels and queues, `sequence`/`branch`/`case` controls, binders, captures, an `each` guard with no declaration read, a finish with no declaration read, and scheduling) emits one `protocol`/`protocol_clause` node. Its body is a `quire.op.protocol.control` application with the selected `protocol_profile` law, the `protocol` `profile_operator` member and FR-383's thirteen clause arguments; it has Boolean semantic type and one `declaration` occurrence at the declaration's region. The IR V2 reader admits it, and a reference to `Fill` resolves to its structural id. If no profile is selected, QSpec FR-322-AC-22 admits no `protocol_control` application: QSL emits no protocol node and no refusal for the declaration, while a reference to it refuses `missing_declaration`/`missing-selection` (FR-218-AC-8). An FR-383 construct not yet emitted refuses `unsupported_construct`/`not-yet-implemented` at that construct, names it and the ticket that writes it, and writes no clause node. | Test (TC-1021) |
+| FR-092-AC-18 | A unit that declares `protocol Fill` made only of FR-383's emitted constructs (static and replicated roles, channels and queues, `sequence`/`branch`/`case` controls, binders, captures, an `each` guard with no declaration read, a finish with no declaration read, and scheduling) emits one `protocol`/`protocol_clause` node. Its body is a `filament.op.protocol.control` application with the selected `protocol_profile` law, the `protocol` `profile_operator` member and FR-383's thirteen clause arguments; it has Boolean semantic type and one `declaration` occurrence at the declaration's region. The IR V2 reader admits it, and a reference to `Fill` resolves to its structural id. If no profile is selected, FSpec FR-322-AC-22 admits no `protocol_control` application: FSL emits no protocol node and no refusal for the declaration, while a reference to it refuses `missing_declaration`/`missing-selection` (FR-218-AC-8). An FR-383 construct not yet emitted refuses `unsupported_construct`/`not-yet-implemented` at that construct, names it and the ticket that writes it, and writes no clause node. | Test (TC-1021) |
 | FR-092-AC-19 | Emitting a unit that declares `enum Status { READY, DONE }` and reads `Status::READY` gives one `SelectedEnumDeclarationRow` and two `SelectedEnumMemberRow`s. Each row's structural id names an emitted `scalar_type`/`enum` or `value`/`enum_value` node; its source authority and identity equal that node's source owner; its qualified declaration is `["Status"]`; its key is the node's key; each member row names the declaration's emitted id and its own case. A unit with a model variant type and no source enum has no source enum row. | Test (TC-1021) |
 | FR-092-AC-20 | Emitting a unit that declares `union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }` and constructs `Shape::Rect(2, 3)` gives one `SelectedSourceUnionRow`. Its structural id names the emitted `composite_type`/`union` node; its source authority and identity equal that node's source owner; its qualified declaration is `["Shape"]`; its type handle is the checked declaration's key and its settled key is the key of the node it names. Its members are `Empty`, `Circle` and `Rect` in declaration order, each the sealed `UnionMember` the check minted, with payload types `[]`, `[Integer]` and `[Integer, Integer]` and payload node ids equal to the references in the union node's member bindings. For a recursive union the payload node of an optional self-reference is the emitted `option` node naming the union node. IR's `with_source_union_rows` accepts the row against the package read back and `project_exact_type` of the union node returns `Composite` of the type handle, while the same node with no row refuses `UnavailableIdentityWitness` and a row that misorders its members or drops a payload node refuses `MismatchedIdentityWitness`. A unit with no source union, and a unit with a model variant type, has no union row, and every emitted union node has exactly one row. | Test (TC-1021) |
 | FR-092-AC-21 | Emitting a unit that declares `record Point { x: Integer; y: Integer; }` and `record Tagged { p: Point; note: Boolean?; maybe: Option<Integer>; }` gives one `SelectedSourceRecordRow` per record. `Tagged`'s row names the emitted `composite_type`/`record` node; its source authority and identity equal that node's source owner; its qualified declaration is `["Tagged"]`; its record key is the checked declaration's key. Its members are `p`, `note` and `maybe` in declaration order with equal declared and binding names, presence `Required`, `Optional` and `Required`, field types `Composite(Point)`, `Boolean` and `Option<Integer>`, and type node ids equal to the targets of the node's bindings; `p`'s type node is `Point`'s row node. For a recursive record each member type node that reaches the record shares the record node's recursion group. A binding list whose count disagrees with the declaration, a type node that is not emitted, and an emitted source record node that no declared record joins to are writer faults; a binding whose name differs from the declared name keeps both names. A unit with no source record, a tuple or union unit, and a unit whose records are model-owned has no source record row, and every emitted source record node has exactly one row. | Test (TC-1021) |
@@ -332,16 +332,16 @@ missing profile selections retain FR-383 and FR-218's refusals.
 | FR-092-AC-24 | Emitting a unit that declares `record R { xs: Sequence<Integer>[0, 3]; s: Set<Boolean>; }` gives one `SelectedSourceCollectionRow` per collection type node. The bounded sequence's row names its emitted `collection_bounds` node, typed by its emitted `sequence` composite node, which references the `integer` element node the row names, with the checked `Sequence<Integer>[0, 3]`; the set's row has equal structural and base nodes, a `set` composite and a `boolean` element. `R`'s source record row binds each field to its collection row's node. A value type that is not a collection, a base that does not reference exactly the row's element and an unemitted node are writer faults; a re-pointed element or a bound typed by another node than its collection is followed or refused from the final nodes. A unit with no collection has none. | Test (TC-1021) |
 | FR-092-AC-25 | With `dimension L; dimension N = L / L; unit m : L = rational(1, 1); unit one : N = rational(1, 1);`, checked and replay-admitted dimension nodes remain distinct: `L` has `base=true` and empty base terms, while `N` has `base=false` and empty derived terms. Their checked payloads and v2 preimages preserve those values; replay reports `L.is_base()` true and `N.is_base()` false. The units reference their respective dimensions and only `one` is dimensionless. | Test (TC-483) |
 | FR-092-AC-26 | Emitting a unit that selects a domain model with a variant type of cases `Beta` and `Alpha` gives one `SelectedModelEnumShapeRow` for it. Its shape is unordered with the variants in case-name byte order `Alpha`, `Beta`, each case's variant is the shape's variant at that rank, the declaration id equals the model enum declaration row's id and each case's node id and original identity equal the matching member row's. A shape with a variant reordered, removed or added is not equal to the row's shape. A declaration whose case set differs from its shape, or a case whose variant is not at its rank, is a writer fault. | Test (TC-1021) |
-| FR-092-AC-27 | `Quantity<m, Decimal[-100, 100; 2, 2; exact]>`, `Quantity<m, Int[-2, 2]>` and `Quantity<m, Int[-2, 2; nearest-even]>` lower to `carried_quantity` nodes whose structural paths hold the unit node, the carrier node, `"rounding"`, the text type node and the mode in that order, and the `Decimal[-100, 100; 2, 2; exact]` carrier's `decimal_range` path repeats its equal `scale_min` and `scale_max` text, as QSpec's `dec_cents` vector does; a repeated operand node is written once. The checked-package reader admits each package, and a carried node whose path is truncated is refused `invalid_package`/`invalid-derived-shape`. | Test (TC-413) |
+| FR-092-AC-27 | `Quantity<m, Decimal[-100, 100; 2, 2; exact]>`, `Quantity<m, Int[-2, 2]>` and `Quantity<m, Int[-2, 2; nearest-even]>` lower to `carried_quantity` nodes whose structural paths hold the unit node, the carrier node, `"rounding"`, the text type node and the mode in that order, and the `Decimal[-100, 100; 2, 2; exact]` carrier's `decimal_range` path repeats its equal `scale_min` and `scale_max` text, as FSpec's `dec_cents` vector does; a repeated operand node is written once. The checked-package reader admits each package, and a carried node whose path is truncated is refused `invalid_package`/`invalid-derived-shape`. | Test (TC-413) |
 | FR-092-AC-28 | `Map<String, Boolean>`, `Map<String, Int[0, 9]>` and `Map<String, Boolean>[1, 4]` lower to self-typed `composite_type`/`map` nodes whose bodies are the `key` binding, a reference to the key type's node (the bare Text scalar node for a String key), then the `value` binding, a reference to the value type's node; the two `Map<String, Boolean>` types are one node, the `Int[0, 9]` map is another, a `Map<Integer, Boolean>` is another (the key type is part of the node), and the bounded map's `collection_bounds` domain is typed by the `Map<String, Boolean>` node. Emitting a checked package whose declared `record R { m: Map<String, Boolean>[1, 4]; n: Map<String, Int[0, 9]>; }` (source text spells no map, so the checker's declaration API declares it) gives one `SelectedSourceCollectionRow` per map whose checked type is the `ValueType::Map`, whose element node is the value node and whose key node is the key type's node, and a sequence's row has no key node. The retained-row carry re-keys a row's key node with its other nodes. A `Map` channel `carries` that is bounded lowers to a `bounded_domain` as any bounded carrier does. A map row with no key node, a key node on a collection row, a base that does not reference the key then the value, and an unemitted key are writer faults; a re-pointed key or value is followed from the final nodes. | Test (TC-1021) |
 | FR-092-AC-29 | The emitter writes the checked payload's `base` value as the explicit `base` field of every source `dimension` node body on the checked-package wire, and never derives it from empty terms. With `dimension L; dimension N = L / L; dimension M = L * L;` and units over each, the emitted body of `L` has `base=true` and no terms, that of `N` has `base=false` and no terms, and that of `M` has `base=false` and one term; IR's strict V2 reader admits the package and reports `dimension_base()` equal to each written value. | Test (TC-483) |
-| FR-092-AC-30 | A checked `Quantity<m>[-3/2,7/4]` emits exactly the self-typed `bounded_quantity` body, path and sorted dependency set above. An alias and equivalent reduced endpoints share its identity; changing `m` to `cm` or either endpoint gives a distinct node. Bounds `[0,20]` use exact rational endpoint literals. Missing endpoints or a compound unit refuse without an invented bound or carrier. QSpec BQ-01..BQ-06 govern the emitted shape and reader refusal controls. | Test (TC-413) |
+| FR-092-AC-30 | A checked `Quantity<m>[-3/2,7/4]` emits exactly the self-typed `bounded_quantity` body, path and sorted dependency set above. An alias and equivalent reduced endpoints share its identity; changing `m` to `cm` or either endpoint gives a distinct node. Bounds `[0,20]` use exact rational endpoint literals. Missing endpoints or a compound unit refuse without an invented bound or carrier. FSpec BQ-01..BQ-06 govern the emitted shape and reader refusal controls. | Test (TC-413) |
 
 
 ## Dependencies
 
-- QSpec FR-322, `Structural node identity` and the checked-package V2 reader
-  contract, at quire-specification main 686e49e8. The authoritative file is
+- FSpec FR-322, `Structural node identity` and the checked-package V2 reader
+  contract, at filament-specification main 686e49e8. The authoritative file is
   read in place; it is not copied into this repository.
 - FR-091, FR-093, FR-094, FR-218, FR-258, FR-383 and ADR-011/012 for
   checked graph construction, source owners, type and expression lowering,

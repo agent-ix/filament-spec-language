@@ -1,17 +1,17 @@
 ---
 id: TC-440
-title: "QSL's extent agrees with IR's requires-bound"
+title: "FSL's extent agrees with IR's requires-bound"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: verifies
 ---
-# TC-440: QSL's extent agrees with IR's requires-bound
+# TC-440: FSL's extent agrees with IR's requires-bound
 
 ## Description
 
-Verify that QSL's extent classification and IR's `requires-bound` agree
-over the v2 wire QSL emits. Scope: FR-097-AC-6.
+Verify that FSL's extent classification and IR's `requires-bound` agree
+over the v2 wire FSL emits. Scope: FR-097-AC-6.
 
 ## Test Procedure
 
@@ -33,9 +33,9 @@ over the v2 wire QSL emits. Scope: FR-097-AC-6.
 
 ## Expected Results
 
-- IR returns `RequiresBound` exactly when QSL's extent is `Unbounded`, and
-  IR's first unbounded node is the form QSL names; for a recursive type it
-  is a member of the recursion group of the root QSL names `Recursive`.
+- IR returns `RequiresBound` exactly when FSL's extent is `Unbounded`, and
+  IR's first unbounded node is the form FSL names; for a recursive type it
+  is a member of the recursion group of the root FSL names `Recursive`.
 - Step 4: IR answers `requires-bound` for the outer `+` node, whose record
   is `Unbounded` at `n`, and not for the inner `+` node, whose record is
   `Bounded`. For RR-7's `*` record (rooted through `t`'s bound value) and

@@ -1,18 +1,18 @@
 ---
 id: TC-1124
-title: "quire-eval is QSL's only evaluator after the switch"
+title: "filament-eval is FSL's only evaluator after the switch"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-405
+  - target: ix://agent-ix/filament-spec-language/FR-405
     type: verifies
 ---
-# TC-1124: quire-eval is QSL's only evaluator after the switch
+# TC-1124: filament-eval is FSL's only evaluator after the switch
 
 ## Description
 
-Verify FR-405. The switch from the std reference evaluator to `quire-eval`
-is made only on its criterion. After it, `quire-eval` evaluates every family
-in QSL, the std reference evaluator is gone, and the corpus is checked
+Verify FR-405. The switch from the std reference evaluator to `filament-eval`
+is made only on its criterion. After it, `filament-eval` evaluates every family
+in FSL, the std reference evaluator is gone, and the corpus is checked
 against recorded expectations. Scope: FR-405-AC-1 to FR-405-AC-10.
 
 ## Test Procedure
@@ -23,15 +23,15 @@ against recorded expectations. Scope: FR-405-AC-1 to FR-405-AC-10.
    switch change's description.
 2. On the switch base, run FR-262-AC-1 to AC-8, AC-10 and AC-11 with each
    implementation, AC-1 and AC-2 on a thread with a 512 KiB stack, and
-   FR-401-AC-8, including its run over `g(3)`, on `quire-eval`'s evaluator.
+   FR-401-AC-8, including its run over `g(3)`, on `filament-eval`'s evaluator.
    Read the switch change's description.
-3. Read the `quire-eval` revision in QSL's `Cargo.lock` at the switch head.
-   In `agent-ix/quire-eval` at that revision, run FR-401-AC-1's
+3. Read the `filament-eval` revision in FSL's `Cargo.lock` at the switch head.
+   In `agent-ix/filament-eval` at that revision, run FR-401-AC-1's
    `thumbv7em-none-eabi` build and NFR-016's `make audit-unsafe`.
-4. At the switch head, list `qsl-eval`'s files and its shipped types. For
-   each `qsl-eval` function returning a `Value`, `Outcome` or `Evaluation`,
+4. At the switch head, list `fsl-eval`'s files and its shipped types. For
+   each `fsl-eval` function returning a `Value`, `Outcome` or `Evaluation`,
    trace where the result comes from. List every `NodeKind` match in
-   `qsl-eval` with what it returns. Read every QSL manifest, `quire-eval`'s
+   `fsl-eval` with what it returns. Read every FSL manifest, `filament-eval`'s
    manifest, the `xtask` commands, the Makefile and the test-support
    features.
 5. Build the test inventory (crate, file, test name, expected values) on
@@ -50,12 +50,12 @@ against recorded expectations. Scope: FR-405-AC-1 to FR-405-AC-10.
 8. At the switch head, run `make ci`. Run `evaluator-regression` over a
    bundle holding `fr402/count-3` with `expected.consumed.work_units` one
    less than the run's, and again with `expected` `null`. Feed the
-   comparator expectations and a `quire-eval` record set that differ only
+   comparator expectations and a `filament-eval` record set that differ only
    in one `charges` entry's `sizes`, and a record set that lacks one
    admitted case. Try `make evaluator-differential`.
 9. At the switch head, run `make evaluator-regression
    EVALUATOR_CORPUS_DIR=<dir>` over CG's bundle with expectations recorded
-   through `quire-eval`, and again with one record's `expected` set to
+   through `filament-eval`, and again with one record's `expected` set to
    `null`.
 10. Read the history of `main` around the switch change.
 
@@ -64,13 +64,13 @@ against recorded expectations. Scope: FR-405-AC-1 to FR-405-AC-10.
 1. Every case admits, and both runs report zero divergences. The
    description reports the switch base and both results.
 2. Every FR-262 criterion passes with each implementation, and FR-401-AC-8
-   passes on `quire-eval`'s evaluator. No depth refusal and
+   passes on `filament-eval`'s evaluator. No depth refusal and
    no stack overflow occur. The description reports the result.
 3. Both gates pass.
-4. `qsl-eval/src/value/expression/evaluate.rs` and its submodules,
-   `Machine`, the std reference adapter and the separate `quire-eval`
+4. `fsl-eval/src/value/expression/evaluate.rs` and its submodules,
+   `Machine`, the std reference adapter and the separate `filament-eval`
    entry are absent. No type keeps an evaluation's task or value stack.
-   Every traced result comes from a `quire-eval` session. Every remaining
+   Every traced result comes from a `filament-eval` session. Every remaining
    `NodeKind` match is a structural walk that returns no value, such as the
    ADR-031 SW-2 decision-path walk. No feature selects an evaluator, no test-only path
    holds one, and no deleted path re-exports or forwards.
@@ -80,20 +80,20 @@ against recorded expectations. Scope: FR-405-AC-1 to FR-405-AC-10.
    values. Every other test exists with unchanged expected values, and
    every suite passes.
 6. The `Value`-family Begin returns `CallFailure::Fault` with stage
-   `quire-eval`, invariant `outside-value-family` and no charge. The clause
+   `filament-eval`, invariant `outside-value-family` and no charge. The clause
    entry completes with `a` and `b` in ascending reference-key order, with
    the fixture's admitted charges.
 7. Every `expected` is non-null and equal to the base record. The
    generator's output equals the generated bundle with each `expected`
    replaced by `null`, byte for byte.
 8. `make ci` runs `evaluator-regression` with zero divergences. The first
-   bundle reports `fr402/count-3` with pair `expected/quire-eval` and
+   bundle reports `fr402/count-3` with pair `expected/filament-eval` and
    pointer `/consumed/work_units`, and every other case still runs. The
    second reports `missing_expected`. The `sizes` difference reports pair
-   `expected/quire-eval` and a pointer under `/charges`; the missing case is
-   reported as a divergence with `quire-eval` producing no record.
+   `expected/filament-eval` and a pointer under `/charges`; the missing case is
+   reported as a divergence with `filament-eval` producing no record.
    `evaluator-differential` does not exist. No setting tolerates, skips or excludes a case.
 9. The first run reports zero divergences. The second reports that case as
    `missing_expected`.
 10. No commit of `main` holds both `Machine` and a production path that
-    evaluates on `quire-eval`.
+    evaluates on `filament-eval`.

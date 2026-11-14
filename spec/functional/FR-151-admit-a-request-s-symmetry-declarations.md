@@ -3,17 +3,17 @@ id: FR-151
 title: "Admit a request's symmetry declarations and compute the run's group"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-150
+  - target: ix://agent-ix/filament-spec-language/FR-150
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: depends_on
 ---
 # FR-151: Admit a request's symmetry declarations and compute the run's group
@@ -21,7 +21,7 @@ relationships:
 ## Description
 
 A model-check request opts in to symmetry with one `SymmetryDeclaration` per
-symmetric universe (ADR-021 SYM-1). QSL's `model_check`, in `qsl-analyze` (ADR-018 LA-1), SHALL check
+symmetric universe (ADR-021 SYM-1). FSL's `model_check`, in `fsl-analyze` (ADR-018 LA-1), SHALL check
 each declaration's form against the checked package and the subject
 (SYM-2), check that the subject's initial states are closed under the
 declared group (SYM-4), and compute the group each `over` instance runs
@@ -131,10 +131,10 @@ pub struct InstanceGroup {
   (the annotation), [FR-152](FR-152-canonicalise-a-model-state-by-sorting-its-symmetry-classes.md)
   (the permutation action), [FR-160](FR-160-settle-reduced-verdicts-and-reduction-causes.md)
   (`SymmetryBroken`).
-- QSpec owns the request member, generator closure and binding orbits as
+- FSpec owns the request member, generator closure and binding orbits as
   normative semantics (ADR-021 QS-1, QS-3).
 
 ## References
 
-- QSpec half: QSpec FR-382 (Linear STD-134; ADR-021 §9 QS-1, QS-3). Owning ticket: Linear
+- FSpec half: FSpec FR-382 (Linear STD-134; ADR-021 §9 QS-1, QS-3). Owning ticket: Linear
   QSL-368.

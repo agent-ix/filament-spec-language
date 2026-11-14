@@ -3,7 +3,7 @@ id: TC-981
 title: "An evidence-kind difference conflicts a repeated backend identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-981: An evidence-kind difference conflicts a repeated backend identity

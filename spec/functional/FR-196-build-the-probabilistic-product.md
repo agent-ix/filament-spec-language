@@ -3,24 +3,24 @@ id: FR-196
 title: "Build the probabilistic product"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-187
+  - target: ix://agent-ix/filament-spec-language/FR-187
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-195
+  - target: ix://agent-ix/filament-spec-language/FR-195
     type: depends_on
 ---
 # FR-196: Build the probabilistic product
 
 ## Description
 
-QSL's `exact_probabilistic` module in layer A, crate `qsl-analyze`
+FSL's `exact_probabilistic` module in layer A, crate `fsl-analyze`
 (ADR-028 SP-2), SHALL build, for a probabilistic
 claim, the finite product on which EN-5 computes (ADR-028 §2, SCH-2): the
 MDP over FR-187's actions and draws, or under a workload the DTMC over
@@ -46,13 +46,13 @@ pub struct ExactProbRequest<'a> {
     pub limits: ExactProbLimits,                  // FR-203
 }
 
-// EN-5's entry, in `qsl-analyze` (ADR-028 SP-2)
+// EN-5's entry, in `fsl-analyze` (ADR-028 SP-2)
 pub fn check_exact_probabilistic(
     request: ExactProbRequest<'_>,
     cancel: &Cancel,                              // FR-276
 ) -> Result<ExactOutcome, ExactProbRefusal>;
 
-// In `qsl-replay`, read by the settlement map (FR-203)
+// In `fsl-replay`, read by the settlement map (FR-203)
 pub enum ExactOutcome {
     Holds { entries: Vec<ExactEntry>, certificate: ProbabilityCertificate },   // FR-201
     Violated { counterexample: ProbabilisticCounterexample },                  // FR-202
@@ -65,7 +65,7 @@ pub enum ExactProbRefusal { Admission(AdmissionFailure), NotMarkov(NotMarkov), Z
 
 ### The build entry
 
-The untimed product is built by the following entry in `qsl-analyze`. It is
+The untimed product is built by the following entry in `fsl-analyze`. It is
 the part of `check_exact_probabilistic` that precedes the solver, and it
 takes the `model` member of `ExactProbLimits` (FR-203), FR-126's three
 budgets.
@@ -108,7 +108,7 @@ pub struct ProbProduct {
     pub decided: Vec<(ProbStateId, MonitorVerdict)>, // MonitorVerdict { Accept, Reject }: a bounded event's decided states
     pub labels: Vec<Vec<bool>>,                   // unbounded forms: per state, the claim's predicates' truths in claim order (P; A then B; B; P of a long-run fraction); empty for a bounded form
 }
-// The builder's in-memory key. `ProductKey`, in `qsl-replay` with the
+// The builder's in-memory key. `ProductKey`, in `fsl-replay` with the
 // certificate types so the checker reads it, is this key's canonical encoding
 // (see "Canonical probability product key"); the builder does not encode it.
 pub struct ProbKey {
@@ -136,7 +136,7 @@ pub struct UndefinedPath {
     pub steps: Vec<PathStep>,            // the model steps from the initial state, in order
     pub probability: Rational,           // the product of the steps' probabilities
     pub position: u64,                   // the trace position of the state: the number of steps
-    pub state_key: StateKey,             // the quire.simulation.state-key/v1 canonical byte string of the model state
+    pub state_key: StateKey,             // the filament.simulation.state-key/v1 canonical byte string of the model state
     pub key: ProbKey,                    // the complete pre-read product key at the undefined read (ADR-028 WS-1)
     pub read: UndefinedRead,             // the event atom or the state predicate (From, Until, Target) that has no value
     pub cause: UndefinedCause,
@@ -175,10 +175,10 @@ without it replays to several model states. Every other step has
 `resolved: None`.
 
 `ProductAction` is the following new closed semantic action type, owned with
-ProductKey in qsl-replay. The untimed build uses its first three members,
+ProductKey in fsl-replay. The untimed build uses its first three members,
 `Identity`, `PostState` and `TerminalStutter`; the six delay, observation
 and race members exist in a timed product only (FR-204). The enum below is the
-`qsl-replay` form, whose `PostState` holds the canonical `ProductKey`; the
+`fsl-replay` form, whose `PostState` holds the canonical `ProductKey`; the
 builder's `ProductAction` holds the in-memory `ProbKey` in the same member. An edge's `action` is its operation projection;
 None alone SHALL NOT identify a delay or observation choice.
 
@@ -222,7 +222,7 @@ UTF-8 bytes, and so does action order, except between two `FreeDelays`
 actions: those order row by row in row order, and within a row by the free
 delays read as unsigned integers in `free` order (numeric, so delay 9 precedes
 delay 10). This is the canonical transition order FR-198 breaks ties by. These are explicit new semantic choices, not a claim that
-QSpec FR-413/412 transport already accepts these spellings. No fake operation
+FSpec FR-413/412 transport already accepts these spellings. No fake operation
 NodeId, receiver or random draw is assigned to a timed tail choice.
 
 UnitDelay is enabled only in running mode and stays running. EnterIdleDelay
@@ -282,7 +282,7 @@ undefined-evaluation evidence and certificate rejection loci. A model
 state key alone or a partial tuple SHALL NOT replace it.
 
 `probabilityProductKey` SHALL be the RFC 8785 UTF-8 JCS octets of
-`["quire.probability-product-key/v1",binding,model,monitor,accumulator,pending]`,
+`["filament.probability-product-key/v1",binding,model,monitor,accumulator,pending]`,
 through ADR-013/FR-259's one encoder. These are complete octets.
 Equality SHALL compare complete canonical octets;
 ordering SHALL be ascending unsigned lexicographic octet order. All
@@ -319,15 +319,15 @@ futures, and a key without the binding would merge them. A product is built
 over every binding of the claim (`initial` is per binding), and the key of a
 state names the binding that state was reached under.
 
-`model` is `["quire.simulation.state-key/v1",model_form]`, with
-`model_form` the full FR-101/QSpec FR-181 typed simulation-state form,
+`model` is `["filament.simulation.state-key/v1",model_form]`, with
+`model_form` the full FR-101/FSpec FR-181 typed simulation-state form,
 including semantic state, control, queues, roles, observations, bounds
 and memory. Exploration compares its full octets, not a hash. Traces
 name a model state by this same state key; a certificate's complete product
 key contains the full canonical model form.
 
 For FR-204 the **new closed timed alternative** is
-`model = ["quire.simulation.state-key/v1",["digital",discrete,unit,scale,clocks,deadline,tail]]`.
+`model = ["filament.simulation.state-key/v1",["digital",discrete,unit,scale,clocks,deadline,tail]]`.
 `discrete` is exactly the preceding complete simulation-state form for
 non-clock data/control/queues/roles/observations/bounds/memory. Clock fields
 are absent from that data form, rather than represented by fabricated kernel
@@ -483,7 +483,7 @@ magnitude zero and from an active one at zero. A quantile claim is
 conditioned on activation (ADR-024 PF-4), so an unactivated behaviour lies
 outside the distribution the quantile is taken over, and its decided state
 takes XF-2's terminal reward `[activated] · (…)`, which is 0.
-These rules are QSpec FR-407's measure semantics, not a new activation
+These rules are FSpec FR-407's measure semantics, not a new activation
 convention. At a terminal model state the bounded measure continues on
 the specified zero-reward stutter steps through its horizon; a bounded
 formula instead uses FR-126's profile closure. On a terminal stutter step,
@@ -540,7 +540,7 @@ plain numeric reward with no unit, otherwise the admitted UnitId represented as
 `["declared",unit_key]` for a declared unit, with `unit_key` the unit
 declaration's structural node key, or `["compound",unit_form]` for a compound
 unit, with `unit_form` its canonical unit-expression form (ADR-013 T-6,
-QSpec FR-142). Neither a display `ms` nor another equal-dimension unit
+FSpec FR-142). Neither a display `ms` nor another equal-dimension unit
 substitutes for the selected unit. Amounts use the checked claim's
 normalized comparison unit for accumulate, and the checked weight's
 unit for weighted fraction; conversion is the existing exact unit graph.
@@ -596,7 +596,7 @@ order, including a genuinely drawn empty vector. Neither vector is a
 set, sorted by value or combined with the other. The schedule omits
 random arguments; the pending pair retains them separately.
 
-All argument/draw leaves SHALL use QSpec FR-181's complete typed
+All argument/draw leaves SHALL use FSpec FR-181's complete typed
 canonical forms: integer strings; Boolean truth; float32/64 exact bits;
 reduced rational; retained decimal coefficient/scale; exact text;
 option with true None; set/bag canonical element order with bag
@@ -604,7 +604,7 @@ multiplicity; sequence/ordered-set own order; declared record fields
 and tuple positions; enum/union declared qualified identity and member;
 and reference universe/type/object-identity bytes. Quantities retain
 the declared unit identity in that form. Existing field absence differs
-from a typed null value. The leaf type is quire-exact Value with QSL's
+from a typed null value. The leaf type is filament-exact Value with FSL's
 checked type/identity resolution; FCD's retained SemanticValue JSON
 object arrival order, duplicate members and number lexemes are not
 canonical Value identity. No new leaf algebra or wire transition alias
@@ -851,6 +851,6 @@ rejection loci, with no model-only shortcut.
 
 ## References
 
-- QSpec half, which owns the probabilistic product's semantics: QSpec
+- FSpec half, which owns the probabilistic product's semantics: FSpec
   FR-406 and FR-411 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

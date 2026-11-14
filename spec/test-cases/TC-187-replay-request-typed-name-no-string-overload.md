@@ -3,7 +3,7 @@ id: TC-187
 title: "The replay request's function selection accepts only a typed QualifiedName, never a bare string"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: verifies
 ---
 # TC-187: The replay request's function selection accepts only a typed QualifiedName, never a bare string

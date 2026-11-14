@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-use qsl_foundation::node_wire::{node_key_to_json, node_key_to_text};
-use qsl_foundation::{SettingLimits, SettingName};
-use qsl_replay::{
+use fsl_foundation::node_wire::{node_key_to_json, node_key_to_text};
+use fsl_foundation::{SettingLimits, SettingName};
+use fsl_replay::{
     DeclaredDomain, DomainKey, DomainKind, FiniteBound, Integer, ProofBound, ReplayRequestWire,
     ReplaySource, RequestTargetWire, WitnessValue,
 };
@@ -19,7 +19,7 @@ use super::{
 pub(super) fn execute(
     inputs: &Inputs<'_>,
     root: &Path,
-    limits: &qsl_replay::CallerLimits,
+    limits: &fsl_replay::CallerLimits,
     overrides: &[String],
     schema: &jsonschema::JSONSchema,
 ) -> Result<Execution, Failure> {
@@ -31,7 +31,7 @@ pub(super) fn execute(
         .get("package")
         .ok_or_else(|| Failure::decode("/package", "missing package"))?;
     let package =
-        qsl_replay::ReplayPackage::read(raw_package.get().as_bytes(), limits.replay.input_bytes)
+        fsl_replay::ReplayPackage::read(raw_package.get().as_bytes(), limits.replay.input_bytes)
             .map_err(|error| Failure::decode("/package", error.to_string()))?;
     let mut request = decode(&value, inputs, root, package)?;
     if let Some((path, error)) = inputs.unreadable_bytes.first() {
@@ -57,7 +57,7 @@ pub(super) fn execute(
             None => None,
         };
         if let Some(bound) = bound {
-            if qsl_replay::StageLimits::default()
+            if fsl_replay::StageLimits::default()
                 .with_named(name, bound)
                 .is_ok()
             {
@@ -65,16 +65,16 @@ pub(super) fn execute(
             }
         }
     }
-    let result = qsl_replay::replay(request, limits.replay);
+    let result = fsl_replay::replay(request, limits.replay);
     let actual = result.as_ref().ok().map(replay_value).transpose()?;
-    let mut execution = from_document(qsl_replay::OutcomeDocument::from_replay(&result), actual)?;
+    let mut execution = from_document(fsl_replay::OutcomeDocument::from_replay(&result), actual)?;
     if result.as_ref().is_ok_and(|result| {
         result.limit().is_some()
             || result.pre_call_limit().is_some_and(|stop| {
                 matches!(
                     stop.cause,
-                    quire_semantic_value::supplied_stop::SuppliedCause::Limit(_)
-                        | quire_semantic_value::supplied_stop::SuppliedCause::Cancelled(_)
+                    filament_semantic_value::supplied_stop::SuppliedCause::Limit(_)
+                        | filament_semantic_value::supplied_stop::SuppliedCause::Cancelled(_)
                 )
             })
     }) {
@@ -86,8 +86,8 @@ pub(super) fn execute(
 fn node(
     value: &Value,
     pointer: &str,
-    graph: &qsl_replay::WireGraph,
-) -> Result<qsl_replay::NodeKey, Failure> {
+    graph: &fsl_replay::WireGraph,
+) -> Result<fsl_replay::NodeKey, Failure> {
     graph
         .key_of_value(value)
         .map_err(|message| Failure::decode(pointer, message))
@@ -108,15 +108,15 @@ fn sources(value: &Value, pointer: &str) -> Result<Vec<(String, String)>, Failur
         .collect()
 }
 
-fn name(value: &Value, pointer: &str) -> Result<qsl_replay::QualifiedName, Failure> {
+fn name(value: &Value, pointer: &str) -> Result<fsl_replay::QualifiedName, Failure> {
     let segments = text(value, pointer)?
         .split('.')
         .map(|segment| {
-            qsl_replay::Identifier::new(segment)
+            fsl_replay::Identifier::new(segment)
                 .map_err(|_| Failure::decode(pointer, "invalid qualified name"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    qsl_replay::QualifiedName::new(segments)
+    fsl_replay::QualifiedName::new(segments)
         .map_err(|_| Failure::decode(pointer, "empty qualified name"))
 }
 
@@ -138,15 +138,15 @@ fn decode(
     value: &Value,
     inputs: &Inputs<'_>,
     root: &Path,
-    raw_package: qsl_replay::ReplayPackage,
+    raw_package: fsl_replay::ReplayPackage,
 ) -> Result<ReplayRequestWire, Failure> {
     let package = &value["package"];
-    let graph = qsl_replay::WireGraph::of_package_value(package)
+    let graph = fsl_replay::WireGraph::of_package_value(package)
         .map_err(|message| Failure::decode("/package", message))?;
     let target = &value["replay_target"];
     let members = &target["members"];
     let mut target_wire = RequestTargetWire {
-        members: qsl_replay::ReplayTargetMembers {
+        members: fsl_replay::ReplayTargetMembers {
             function: members
                 .get("function")
                 .map(|value| name(value, "/replay_target/members/function"))
@@ -154,7 +154,7 @@ fn decode(
             function_owner: members
                 .get("function_owner")
                 .map(|value| {
-                    qsl_replay::LibraryName::new(text(
+                    fsl_replay::LibraryName::new(text(
                         value,
                         "/replay_target/members/function_owner",
                     )?)
@@ -169,12 +169,12 @@ fn decode(
             frame_operation: members
                 .get("frame_operation")
                 .map(|value| {
-                    Ok(qsl_replay::FrameOperation {
+                    Ok(fsl_replay::FrameOperation {
                         object: name(
                             &value["object"],
                             "/replay_target/members/frame_operation/object",
                         )?,
-                        operation: qsl_replay::Identifier::new(text(
+                        operation: fsl_replay::Identifier::new(text(
                             &value["operation"],
                             "/replay_target/members/frame_operation/operation",
                         )?)
@@ -196,14 +196,14 @@ fn decode(
             .as_bool()
             .ok_or_else(|| Failure::decode("/replay_target/arguments", "expected a Boolean"))?,
         occurrence_key: optional(&target["occurrence_key"], |value| {
-            Ok(qsl_replay::OccurrenceKey::new(
+            Ok(fsl_replay::OccurrenceKey::new(
                 node(
                     &value["node_id"],
                     "/replay_target/occurrence_key/node_id",
                     &graph,
                 )?,
-                qsl_replay::Origin::new(
-                    qsl_replay::Role::new(text(
+                fsl_replay::Origin::new(
+                    fsl_replay::Role::new(text(
                         &value["role"],
                         "/replay_target/occurrence_key/role",
                     )?),
@@ -212,7 +212,7 @@ fn decode(
             ))
         })?,
         over: optional(&target["over"], |value| {
-            Ok(qsl_replay::ReplayOverBinding {
+            Ok(fsl_replay::ReplayOverBinding {
                 population: text(&value["population"], "/replay_target/over/population")?
                     .to_owned(),
                 key: text(&value["key"], "/replay_target/over/key")?.to_owned(),
@@ -224,7 +224,7 @@ fn decode(
     let source_value = &value["source"];
     let replay_source = match text(&source_value["kind"], "/source/kind")? {
         "witness" => ReplaySource::Witness(
-            qsl_replay::Witness::parse(text(&source_value["transcript"], "/source/transcript")?)
+            fsl_replay::Witness::parse(text(&source_value["transcript"], "/source/transcript")?)
                 .map_err(|error| Failure::decode("/source/transcript", error.to_string()))?,
         ),
         "input" => ReplaySource::Input(
@@ -232,7 +232,7 @@ fn decode(
                 .iter()
                 .enumerate()
                 .map(|(index, assignment)| {
-                    Ok(qsl_replay::CanonicalAssignment {
+                    Ok(fsl_replay::CanonicalAssignment {
                         parameter: node(
                             &assignment["parameter"],
                             &format!("/source/assignments/{index}/parameter"),
@@ -253,12 +253,12 @@ fn decode(
     for (setting, bound) in object(&value["stage_limits"], "/stage_limits")? {
         let pointer = format!("/stage_limits/{setting}");
         let bound = unsigned(bound, &pointer)?;
-        qsl_replay::StageLimits::default()
+        fsl_replay::StageLimits::default()
             .with_named(setting, bound)
             .map_err(|error| Failure::decode(&pointer, error.to_string()))?;
         stage_limits.insert(setting.clone(), bound);
     }
-    let mut accounting = qsl_replay::AccountingLimits::default();
+    let mut accounting = fsl_replay::AccountingLimits::default();
     for (counter, bound) in object(&value["accounting_limits"], "/accounting_limits")? {
         let Some(SettingName::Accounting(setting)) =
             SettingName::from_name(&format!("accounting.{counter}"))
@@ -283,7 +283,7 @@ fn decode(
                 ))
             })
             .collect::<Result<serde_json::Map<_, _>, Failure>>()?;
-        qsl_replay::read_supplied_limits(&Value::Object(parsed))
+        fsl_replay::read_supplied_limits(&Value::Object(parsed))
             .map_err(|error| Failure::decode("/supplied_limits", error.to_string()))
     })?;
     let obligation = &value["obligation_identity"];
@@ -340,7 +340,7 @@ fn decode(
         .iter()
         .enumerate()
         .map(|(index, dependency)| {
-            Ok(qsl_replay::DependencyEntryWire {
+            Ok(fsl_replay::DependencyEntryWire {
                 identity: text(
                     &dependency["identity"],
                     &format!("/dependencies/{index}/identity"),
@@ -386,7 +386,7 @@ fn decode(
         profile_selections: array(&value["profile_selections"], "/profile_selections")?
             .iter()
             .map(|selection| {
-                Ok(qsl_replay::ProfileSelection::new(
+                Ok(fsl_replay::ProfileSelection::new(
                     text(&selection["profile"], "/profile_selections/profile")?.to_owned(),
                     text(&selection["value"], "/profile_selections/value")?.to_owned(),
                 ))
@@ -395,24 +395,24 @@ fn decode(
         dependencies,
         replay_target: std::mem::take(&mut target_wire),
         source: replay_source,
-        obligation_identity: qsl_replay::ObligationIdentity::new(
+        obligation_identity: fsl_replay::ObligationIdentity::new(
             node(
                 &obligation["node_id"],
                 "/obligation_identity/node_id",
                 &graph,
             )?,
             optional(&obligation["model"], |value| {
-                text(value, "/obligation_identity/model").map(qsl_replay::ModelIdentity::new)
+                text(value, "/obligation_identity/model").map(fsl_replay::ModelIdentity::new)
             })?,
             ordinal,
         ),
         backend: text(&value["backend"], "/backend")?.to_owned(),
-        state_environment: qsl_replay::StateEnvironment::new(state_environment),
+        state_environment: fsl_replay::StateEnvironment::new(state_environment),
         accounting_limits: accounting.0,
         stage_limits,
         supplied_limits,
         object_environment: optional(&value["object_environment"], |value| {
-            qsl_replay::read_object_environment(value)
+            fsl_replay::read_object_environment(value)
                 .map_err(|error| Failure::decode("/object_environment", error.to_string()))
         })?,
         declared_domains: array(&value["declared_domains"], "/declared_domains")?
@@ -443,7 +443,7 @@ fn decode(
 fn declared_domain(
     value: &Value,
     pointer: &str,
-    graph: &qsl_replay::WireGraph,
+    graph: &fsl_replay::WireGraph,
 ) -> Result<DeclaredDomain, Failure> {
     let key = &value["domain"];
     let integer32 = |value, pointer: &str| {
@@ -520,14 +520,14 @@ enum WitnessForm {
     Record,
     Tuple,
     Union,
-    Collection(quire_exact::CollectionKind),
+    Collection(filament_exact::CollectionKind),
 }
 
 /// Read the corpus witness discriminator once. Subsequent traversal and
 /// encoding use this typed parser state, then the native owner codec.
 #[ix_trace_rs::string_edge]
 fn witness_form(value: &Value, pointer: &str) -> Result<WitnessForm, Failure> {
-    use quire_exact::CollectionKind;
+    use filament_exact::CollectionKind;
     Ok(match text(&value["kind"], pointer)? {
         "boolean" => WitnessForm::Boolean,
         "integer" => WitnessForm::Integer,
@@ -577,7 +577,7 @@ fn slot_form(value: &Value, pointer: &str) -> Result<SlotForm, Failure> {
 fn witness(
     value: &Value,
     pointer: &str,
-    graph: &qsl_replay::WireGraph,
+    graph: &fsl_replay::WireGraph,
 ) -> Result<WitnessValue, Failure> {
     let form = witness_form(value, pointer)?;
     match form {
@@ -608,7 +608,7 @@ fn witness(
 fn node_text(
     value: &Value,
     pointer: &str,
-    graph: &qsl_replay::WireGraph,
+    graph: &fsl_replay::WireGraph,
 ) -> Result<String, Failure> {
     node_key_to_text(&node(value, pointer, graph)?)
         .map_err(|error| Failure::decode(pointer, error.to_string()))
@@ -626,7 +626,7 @@ fn wire_object<const N: usize>(members: [(&str, Value); N]) -> Value {
 fn witness_json(
     value: &Value,
     pointer: &str,
-    graph: &qsl_replay::WireGraph,
+    graph: &fsl_replay::WireGraph,
     form: WitnessForm,
 ) -> Result<super::super::DeepValue, Failure> {
     use super::super::DeepValue;
@@ -782,10 +782,10 @@ fn witness_json(
                         (
                             "type",
                             json!(match kind {
-                                quire_exact::CollectionKind::Sequence => "sequence",
-                                quire_exact::CollectionKind::OrderedSet => "ordered-set",
-                                quire_exact::CollectionKind::Set => "set",
-                                quire_exact::CollectionKind::Bag => "bag",
+                                filament_exact::CollectionKind::Sequence => "sequence",
+                                filament_exact::CollectionKind::OrderedSet => "ordered-set",
+                                filament_exact::CollectionKind::Set => "set",
+                                filament_exact::CollectionKind::Bag => "bag",
                             }),
                         ),
                         (
@@ -807,7 +807,7 @@ fn witness_json(
 fn witness_leaf(
     value: &Value,
     pointer: &str,
-    graph: &qsl_replay::WireGraph,
+    graph: &fsl_replay::WireGraph,
     form: WitnessForm,
 ) -> Result<Value, Failure> {
     Ok(match form {
@@ -852,7 +852,7 @@ fn witness_leaf(
     })
 }
 
-fn replay_value(result: &qsl_replay::ReplayResult) -> Result<Value, Failure> {
+fn replay_value(result: &fsl_replay::ReplayResult) -> Result<Value, Failure> {
     let row = result
         .to_function_json()
         .map_err(|error| Failure::decode("", error.to_string()))?;
@@ -868,18 +868,18 @@ mod depth_tests {
     #[trace("TC-1325", "FR-350-AC-11")]
     #[test]
     fn typed_wire_states_retain_slots_collections_and_declaration_refusal_order() {
-        use qsl_replay::{WitnessSlot, WitnessValue};
+        use fsl_replay::{WitnessSlot, WitnessValue};
         use serde_json::json;
         // A structural codec fixture, not a claim about a checked declaration.
         // The executor still owns declaration-kind and value-type admission.
-        let key = quire_exact::NodeKey::new(
+        let key = filament_exact::NodeKey::new(
             "fixture",
-            vec![quire_exact::PathSegment::Text("shape".into())],
+            vec![filament_exact::PathSegment::Text("shape".into())],
             0,
         )
         .unwrap();
-        let id = qsl_semantics::check::wire_id::structural_id(&key);
-        let graph = qsl_replay::WireGraph::new([&id]).unwrap();
+        let id = fsl_semantics::check::wire_id::structural_id(&key);
+        let graph = fsl_replay::WireGraph::new([&id]).unwrap();
         let declaration = graph.wire_value(&key).unwrap();
         let record = json!({"kind":"record", "declaration":declaration, "fields":[
             {"name":"held", "slot":{"kind":"present", "value":{"kind":"boolean", "value":true}}},
@@ -986,18 +986,18 @@ mod depth_tests {
                     super::super::super::parse_unique_json(&bytes)
                         .expect("the byte-bounded witness reads past 128 levels"),
                 );
-                let graph = qsl_replay::WireGraph::new([]).expect("an unused, empty key lookup");
+                let graph = fsl_replay::WireGraph::new([]).expect("an unused, empty key lookup");
                 let witness = super::witness(&value, "/source/assignments/0/value", &graph)
                     .unwrap_or_else(|_| panic!("the owner admits the complete typed witness"));
                 let mut current = &witness;
                 for _ in 0..depth {
-                    let qsl_replay::WitnessValue::Sequence(elements) = current else {
+                    let fsl_replay::WitnessValue::Sequence(elements) = current else {
                         panic!("every sequence layer is retained");
                     };
                     assert_eq!(elements.len(), 1);
                     current = &elements[0];
                 }
-                let qsl_replay::WitnessValue::ExactInteger(value) = current else {
+                let fsl_replay::WitnessValue::ExactInteger(value) = current else {
                     panic!("the leaf remains an exact integer");
                 };
                 assert_eq!(value.to_string(), "9007199254740993");
@@ -1013,17 +1013,17 @@ mod depth_tests {
     #[trace("TC-1325", "FR-350-AC-11")]
     #[test]
     fn malformed_typed_witnesses_at_depth_keep_the_decode_partition() {
-        let qspec = std::env::var_os("QSPEC_DIR")
+        let fspec = std::env::var_os("FSPEC_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .ancestors()
-                    .map(|parent| parent.join("quire-specification"))
+                    .map(|parent| parent.join("filament-specification"))
                     .find(|path| path.is_dir())
-                    .expect("a QSpec checkout or QSPEC_DIR")
+                    .expect("an FSpec checkout or FSPEC_DIR")
             });
         let mut schema: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(qspec.join("proposals/conformance-corpus-v1/schema.json"))
+            &std::fs::read(fspec.join("proposals/conformance-corpus-v1/schema.json"))
                 .expect("the published corpus schema"),
         )
         .expect("the selected schema is JSON");
@@ -1037,9 +1037,9 @@ mod depth_tests {
         );
         let schema = jsonschema::JSONSchema::options()
             .with_draft(jsonschema::Draft::Draft202012)
-            .with_document("urn:quire:conformance-corpus:v1".to_owned(), schema)
+            .with_document("urn:filament:conformance-corpus:v1".to_owned(), schema)
             .compile(
-                &serde_json::json!({"$ref":"urn:quire:conformance-corpus:v1#/$defs/WitnessValue"}),
+                &serde_json::json!({"$ref":"urn:filament:conformance-corpus:v1#/$defs/WitnessValue"}),
             )
             .expect("the actual published witness schema compiles");
         let mut valid = br#"{"kind":"sequence","elements":["#.repeat(192);

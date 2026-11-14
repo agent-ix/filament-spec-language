@@ -3,34 +3,34 @@ id: FR-062
 title: "Implement the shared checked-family contract"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-063
+  - target: ix://agent-ix/filament-spec-language/FR-063
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
 ---
 # FR-062: Implement the shared checked-family contract
 
 ## Description
 
-QSL semantic families (`Value`, `StateModel`, `SumCase`, `TemporalTrace`,
+FSL semantic families (`Value`, `StateModel`, `SumCase`, `TemporalTrace`,
 `ProtocolClause`, `Relation`) each own their own grammar, checked nodes and
 diagnostics, but check, requirement-derivation and evaluation are reached
 through the same shape for every family, and every family's checked nodes
-reach the checked package through the same S4 v2 emitter. QSL SHALL
+reach the checked package through the same S4 v2 emitter. FSL SHALL
 implement one shared contract, with the parts below, that every family
 implements once and that no family bypasses.
 
@@ -53,7 +53,7 @@ The contract's six parts (ADR-012 §2):
    occurrence of a node separately from the node's identity, by (identity,
    role, ordinal).
 2. **Provenance.** Every checked node occurrence SHALL map to its source span
-   through a source map keyed by that occurrence key, minted only by QSL.
+   through a source map keyed by that occurrence key, minted only by FSL.
 3. **Checked input (typing context).** A family's `check` SHALL receive a
    mutable typing context through which resolved declarations, the type
    environment and limits are read-only, and through which only a
@@ -182,13 +182,13 @@ configured limit as bound, the actual count and the locus of the node whose
 entry failed ([FR-096](FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md)),
 reported as `stage_limit_exceeded`/`node-count-exceeded`, including when
 each declaration alone is within the budget. The `CheckingLimits` ceilings
-are caller-configured stage limits, distinct from the caller work-budget meter: the `quire.native.diagnostics/v1` `stage_limit_exceeded` row covers a family `check`
+are caller-configured stage limits, distinct from the caller work-budget meter: the `filament.native.diagnostics/v1` `stage_limit_exceeded` row covers a family `check`
 and compiler stages S1 to S4, and the `resource_exhausted` row is the work-budget code, saying that a maximum fixed by the language is not a
 caller work budget.
 
 ### Packaging is all-or-nothing
 
-The S4 v2 emitter (`qsl_package::emit_checked`) SHALL write a node only
+The S4 v2 emitter (`fsl_package::emit_checked`) SHALL write a node only
 when it writes every node that node names: its `dependencies` (FR-093
 "Node dependencies"), its `semantic_type` and its body's type annotations.
 When the emitter omits a node, it SHALL omit every node that names it,
@@ -204,10 +204,10 @@ body it cannot encode) SHALL return its `EmitRefusal` and no bytes.
 **Scalar operation application.** A scalar operation application is an
 application node that FR-093 lowers from a checked expression, whose
 `operation.identity` is in one of these operation families:
-`quire.op.integer`, `quire.op.rational`, `quire.op.decimal`,
-`quire.op.ieee`, `quire.op.quantity`, `quire.op.numeric`, `quire.op.text`
-and `quire.op.enum`, other than `quire.op.numeric.narrow`. Every other
-application (`let`, `if`, a Boolean connective, `quire.op.boolean.eq` and
+`filament.op.integer`, `filament.op.rational`, `filament.op.decimal`,
+`filament.op.ieee`, `filament.op.quantity`, `filament.op.numeric`, `filament.op.text`
+and `filament.op.enum`, other than `filament.op.numeric.narrow`. Every other
+application (`let`, `if`, a Boolean connective, `filament.op.boolean.eq` and
 `.ne`, structural and reference equality, a projection, an option read, a
 call, a dispatch, a collection or model operation) carries no claim of its
 own.
@@ -219,10 +219,10 @@ in the function's `decreases` measure is not in the body. The claim covers
 one site. A claim site (design name `ClaimSite`; the implementing ticket
 chooses the Rust spelling) holds:
 
-- the checked application's `quire_semantic_value::location::ExpressionLocation`: the region of the unit the
+- the checked application's `filament_semantic_value::location::ExpressionLocation`: the region of the unit the
   checked expression was read from (FR-096);
 - the application's **result bound**: the target range of the
-  `quire.op.numeric.narrow` that wraps it, when a narrow's operand is this
+  `filament.op.numeric.narrow` that wraps it, when a narrow's operand is this
   application, and otherwise the application's own result type;
 - its **direct conversion context**: the canonical `OccurrenceKey` of the
   `expression` occurrence for the narrow that directly wraps it (the
@@ -256,7 +256,7 @@ claim sites, whatever their extents, result bounds or path conditions.
 result bound, for every assignment of its extent roots under which its
 path condition holds. `check` proves definedness and narrow ranges under
 those same guards (FR-093's definedness walk, `check::facts`), so a body `check` admits never
-yields a claim that fails on an assignment `check` excluded. Under `CheckMode::Linked` a package holds no such failing claim, and a narrowing operand that leaves its range is refused at admission. `CheckMode::Kernel` leaves obligations to the kernel (FR-495 for integer `div`, `rem` and `mod`, which record no range or nonzero obligation; FR-562-AC-6), so a Kernel-checked package can hold a claim that a candidate refutes (QSpec TC-973 VV-05 and VV-08).
+yields a claim that fails on an assignment `check` excluded. Under `CheckMode::Linked` a package holds no such failing claim, and a narrowing operand that leaves its range is refused at admission. `CheckMode::Kernel` leaves obligations to the kernel (FR-495 for integer `div`, `rem` and `mod`, which record no range or nonzero obligation; FR-562-AC-6), so a Kernel-checked package can hold a claim that a candidate refutes (FSpec TC-973 VV-05 and VV-08).
 
 A narrow wraps exactly one expression. A narrow whose operand is not a
 scalar operation application (a literal, a parameter or binder read, a
@@ -300,7 +300,7 @@ site:
   `operation-contract` and `temporal-satisfaction` record, has the empty set.
   FR-098's application claim reads it to decide which owner parameters the
   replay source need not bind ("Application claim: unread parameters"); the
-  consumer is `qsl-replay`'s function-claim selection.
+  consumer is `fsl-replay`'s function-claim selection.
 - **Result bound and path condition**, as the site holds them, the result
   bound as its checked `ValueType` and the `WireNodeId` of its FR-092 type
   node.
@@ -336,7 +336,7 @@ missing from the type environment, then `check` SHALL return an internal
 fault (FR-097-AC-2).
 
 **Fixtures.** Each unit below holds the functions shown; `v` is the
-`quire.value.complete/v1` profile. A record is written as its
+`filament.value.complete/v1` profile. A record is written as its
 application's operation identity, then its extent, result bound and path
 condition.
 
@@ -364,32 +364,32 @@ condition.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-062-AC-1 | The contract exposes exactly the six parts (identity, provenance, checked input, requirements, structured outcome, stage hooks) as one set of associated types and methods that a family implements once. Its stage hooks are `check` and `requirements` (`FamilyContract`) and `evaluate` (`ReferenceEvaluation`). A family implementation that omits the checked-input parameter type on `check` or the `requirements` method fails to compile. `evaluate` is a member of `ReferenceEvaluation`, a trait crate-private to `qsl-eval`, so an external implementor cannot name or supply it and its omission is not a case outside `qsl-eval`; inside `qsl-eval` the compiler requires it of the one implementor (`ValueFunctionFamily`). Identity and provenance are structural properties of the `Checked` node type and the package's source map, not separate trait items a family can individually omit; they are instead enforced behaviorally by FR-062-AC-2. A correct-looking implementation that instead defines its own free-standing `check`/`requirements`/`evaluate` functions with no shared associated-type binding does not satisfy this criterion. | Test (TC-160) |
+| FR-062-AC-1 | The contract exposes exactly the six parts (identity, provenance, checked input, requirements, structured outcome, stage hooks) as one set of associated types and methods that a family implements once. Its stage hooks are `check` and `requirements` (`FamilyContract`) and `evaluate` (`ReferenceEvaluation`). A family implementation that omits the checked-input parameter type on `check` or the `requirements` method fails to compile. `evaluate` is a member of `ReferenceEvaluation`, a trait crate-private to `fsl-eval`, so an external implementor cannot name or supply it and its omission is not a case outside `fsl-eval`; inside `fsl-eval` the compiler requires it of the one implementor (`ValueFunctionFamily`). Identity and provenance are structural properties of the `Checked` node type and the package's source map, not separate trait items a family can individually omit; they are instead enforced behaviorally by FR-062-AC-2. A correct-looking implementation that instead defines its own free-standing `check`/`requirements`/`evaluate` functions with no shared associated-type binding does not satisfy this criterion. | Test (TC-160) |
 | FR-062-AC-2 | Given two parsed forms with identical structure checked into the same package, the checker mints one identity for both, and given the same node occurring twice in the source, the source map carries two distinct occurrence keys (identity, role, ordinal) for the one identity. Reordering the two source occurrences changes only their ordinal, never the identity. | Test (TC-160) |
-| FR-062-AC-3 | A family's `check` compiles with no path to global or thread-local state, and a test that mutates only the typing context's meter, diagnostic sink and scope stack observes those mutations reflected in the returned outcome; a test that constructs two typing contexts from the same resolved declarations and checks the same form through each produces identical checked output, showing no hidden shared mutable state. A per-check counter is not global or thread-local state: a running total held as a field of one check's scope (`qsl_foundation::tally::Tally`, an atomic only so that a shared `&Scope` can count, starting at zero in each new scope and copied, not shared, by a clone) is allowed (FR-284's monotonic-counter allowance is the same distinction). This is a design rule: the held counter is no `static`, starts at zero in each scope and is copied by a clone. The scan enforces only that the scanned source has no `static mut`, `thread_local!` or `lazy_static!` item and names none of the std interior-mutable, lazy and atomic types. | Test (TC-160) |
+| FR-062-AC-3 | A family's `check` compiles with no path to global or thread-local state, and a test that mutates only the typing context's meter, diagnostic sink and scope stack observes those mutations reflected in the returned outcome; a test that constructs two typing contexts from the same resolved declarations and checks the same form through each produces identical checked output, showing no hidden shared mutable state. A per-check counter is not global or thread-local state: a running total held as a field of one check's scope (`fsl_foundation::tally::Tally`, an atomic only so that a shared `&Scope` can count, starting at zero in each new scope and copied, not shared, by a clone) is allowed (FR-284's monotonic-counter allowance is the same distinction). This is a design rule: the held counter is no `static`, starts at zero in each scope and is copied by a clone. The scan enforces only that the scanned source has no `static mut`, `thread_local!` or `lazy_static!` item and names none of the std interior-mutable, lazy and atomic types. | Test (TC-160) |
 | FR-062-AC-4 | A claim form with no FR-057 capability kind yields no `Requirements` value from the pure requirements function, and each claim with a kind yields exactly one `Requirements` value naming that kind at its checked site: a function declaration whose body is `b and c` over Boolean parameters yields none, and one whose body is `x + y` over `Int[0, 9]` parameters yields exactly one, `value-validity`, at the `+` application. Calling the requirements function twice on the same checked item yields equal values. | Test (TC-160) |
-| FR-062-AC-5 | A `check` that reaches a limit (input bytes, node count or work budget) returns a `Limit` outcome naming that limit kind, and a test asserts the returned value is not a refusal, not a checked node and not `Incomplete`; a family's `evaluate` hook that exhausts its meter budget returns `Incomplete`, and a test asserts that neither `check` nor the S4 v2 emitter (`qsl_package::emit_checked`) returns `Incomplete` across each stage's fixture set. | Test (TC-160) |
+| FR-062-AC-5 | A `check` that reaches a limit (input bytes, node count or work budget) returns a `Limit` outcome naming that limit kind, and a test asserts the returned value is not a refusal, not a checked node and not `Incomplete`; a family's `evaluate` hook that exhausts its meter budget returns `Incomplete`, and a test asserts that neither `check` nor the S4 v2 emitter (`fsl_package::emit_checked`) returns `Incomplete` across each stage's fixture set. | Test (TC-160) |
 | FR-062-AC-6 | The `Relation` family has no evaluation hook, and S6a's input type admits no `Relation` node, so a `Relation` node never reaches evaluation and yields neither a panic, a silently omitted call, nor a successful evaluated result (FR-090-AC-4). Every other family's evaluation hook, invoked on a checked node built only from checked input, returns without reading any CST, token or display string. A display string is rendered text (`Display` or `Debug` output, diagnostic text, source spelling), not a declared name carried on a checked node; this is verified by a scan that the evaluator has no path to source text and calls nothing that renders text or reads a string-shaped accessor of the checked package, and by a test that renaming every declared name in a package leaves the evaluation outcome, loss count and metered work unchanged. | Test (TC-160) |
 | FR-062-AC-7 | Given a fixture of N expression nodes nested N deep (for example, `not` applied N - 1 times to `true`), checking it with the `CheckingLimits` node limit configured to N - 1 returns a `Limit` outcome naming the node-count limit, bound N - 1, count N and setting `s3.nodes`. Checking the identical fixture with the limit configured to N, one greater and nothing else changed, checks it. A test holds the fixture fixed and varies only the configured limit by exactly one, so the limit value, not the fixture's depth or the host's available stack, is shown to be the proximate cause of the refusal. | Test (TC-378) |
 | FR-062-AC-8 | A family `Cause` enum's `catalog_code()` mapping contains no fallback arm; this is verified by FR-063's seam probe reporting `E0004` at that mapping under the `seam-probe` feature (S4), never by inspecting the source for the absence of a `_` arm. | Test (TC-161) |
-| FR-062-AC-9 | Given a checked package holding two functions, one of whose body names a node the emitter omits and one that names no omitted node: `emit_checked` omits the first function's declaration node and each node on its path to the omitted node, each with cause `NamesOmittedNode`; it writes the second function and its body; and QSL's I2 read of the bytes reads back Verified and exports the second function and not the first. Given the same package with an occurrence the region conversion cannot place, `emit_package` returns `EmitRefusal::UnlocatedOccurrence` and no bytes. | Test (TC-160) |
+| FR-062-AC-9 | Given a checked package holding two functions, one of whose body names a node the emitter omits and one that names no omitted node: `emit_checked` omits the first function's declaration node and each node on its path to the omitted node, each with cause `NamesOmittedNode`; it writes the second function and its body; and FSL's I2 read of the bytes reads back Verified and exports the second function and not the first. Given the same package with an occurrence the region conversion cannot place, `emit_package` returns `EmitRefusal::UnlocatedOccurrence` and no bytes. | Test (TC-160) |
 | FR-062-AC-10 | The layer-6 `replay` facade's function-selection key, when it calls a family's widened `evaluate` hook, is a typed `QualifiedName`; a test that attempts to call the facade's entry point with a bare `&str` in place of a `QualifiedName` fails to compile, and a call with an unresolvable `QualifiedName` returns a typed refusal rather than falling back to a string comparison against a display name. | Test (TC-166) |
 | FR-062-AC-11 | The package-wide `CheckingLimits` node budget counts the nodes of every declaration together, and exceeding it is a `Limit` outcome with kind node count, reported as `stage_limit_exceeded`/`node-count-exceeded`. Given declarations `a() -> Integer = 1 + 1` and `b() -> Integer = 1 + 1`: package checking with `CheckingLimits::new(4)` admits a package holding `a` alone; with `CheckingLimits::new(100)` it admits a package holding both; with `CheckingLimits::new(4)` it stops on the package holding both with `StageFailure::Limit` of kind node count, bound 4. | Test (TC-381) |
 | FR-062-AC-12 | A family `check` that reaches one of its two stage-entry limits returns `StageFailure::Limit` naming the limit kind, the configured bound and the actual counter: the measured preimage byte length for input bytes and the cumulative spend the denied charge would reach for work budget. Configured one below that counter, or at 0 for a declaration whose counter exceeds 1, `check` returns that same counter; configured at it, that limit does not stop `check`. A family `check` compares no measured node count before typing: its node limit is `CheckingLimits::nodes`, charged at the node (FR-062-AC-7). With a work budget of exactly one declaration's charge `w`, the first check passes and the second returns counter `2w`. | Test (TC-432) |
-| FR-062-AC-13 | `CheckedGraph::requirements` is the S3 stage output's requirement records (ADR-012 §13.5, ADR-011 E7), one per claim site, not dropped after `check`, and `qsl_package::CheckedPackage::graph().requirements()` reaches the same records from S4 (ADR-012 §2's package row). For each fixture RR-1 to RR-17 of this requirement's "Requirement records of a value function", the map holds exactly the records the fixture lists and no other: each `value-validity`, keyed by its application node's `expression` occurrence at its own site, with the listed extent, result bound, direct conversion context and path condition. Where a fixture has two records at one node (RR-5, RR-15, RR-16), the keys differ only in ordinal, in source order, and each record's extent, result bound, direct conversion context and guards are those of its own occurrence. RR-16's two records retain their own narrow occurrence identities along with bounds `Int[0, 10]` and `Int[0, 20]`; no conversion identity is recovered by looking up the shared application node alone. A record whose result bound is the application's own result type has no conversion context. For a narrowed bound, zero or multiple matching direct narrow occurrences cause `KeyFault::UnkeyableRequirements` and no checked package. Checking the same unit twice gives equal maps. ADR-012 §13.5's authored bound (#222) is not yet a `Requirements` member; #222 owns adding it. | Test (TC-160, TC-449) |
+| FR-062-AC-13 | `CheckedGraph::requirements` is the S3 stage output's requirement records (ADR-012 §13.5, ADR-011 E7), one per claim site, not dropped after `check`, and `fsl_package::CheckedPackage::graph().requirements()` reaches the same records from S4 (ADR-012 §2's package row). For each fixture RR-1 to RR-17 of this requirement's "Requirement records of a value function", the map holds exactly the records the fixture lists and no other: each `value-validity`, keyed by its application node's `expression` occurrence at its own site, with the listed extent, result bound, direct conversion context and path condition. Where a fixture has two records at one node (RR-5, RR-15, RR-16), the keys differ only in ordinal, in source order, and each record's extent, result bound, direct conversion context and guards are those of its own occurrence. RR-16's two records retain their own narrow occurrence identities along with bounds `Int[0, 10]` and `Int[0, 20]`; no conversion identity is recovered by looking up the shared application node alone. A record whose result bound is the application's own result type has no conversion context. For a narrowed bound, zero or multiple matching direct narrow occurrences cause `KeyFault::UnkeyableRequirements` and no checked package. Checking the same unit twice gives equal maps. ADR-012 §13.5's authored bound (#222) is not yet a `Requirements` member; #222 owns adding it. | Test (TC-160, TC-449) |
 | FR-062-AC-14 | For each fixture RR-1 to RR-17, every record has exactly one owner, the qualified name of the function that holds its claim site; for RR-5's three records the owner is `sq`. The `operation-contract` records of the clause `post Q using v on Config::ConfigVersion::attemptUpdate { true }` over the ConfigVersion domain package and the `temporal-satisfaction` record the check stage writes into the map for the temporal clause `temporal Reaches using t over (c: Config::ConfigVersion) clock "model-steps" on origin { eventually holds(c.versionNumber = 2) }` in the unit of TC-1089 step 6 (TC-842, FR-332-AC-1) each have no owner; a state-graph claim's record, held on the checked claim and not in the map, is not read here. | Test (TC-1089) |
 | FR-062-AC-15 | `RequirementRecord::extent_roots()` returns: for RR-3's `x + y`, the parameter nodes of `x` and `y`, though its extent is `Bounded` and names no domain; for RR-7's `t * 2`, the parameter node of `x`, read through `t`'s bound value; for RR-8's `1 + 1`, the empty set; for RR-11's `integer.le`, the parameter node of `n`, which it reads in its argument and in its guard; for each of RR-14's records, the binder `v`'s node and not `s`'s; for `function u using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { 10 mod x }`'s `mod`, the parameter node of `x` alone; for `size(filter(v in s: v > 0)) + 1` over `s: Sequence<Integer>[0, 5]`, `v`'s node for the `>` and `s`'s node alone for the `+`; and for a state clause's `operation-contract` record, the empty set. | Test (TC-160) |
 
 The state scan for FR-062-AC-3 covers the non-test items of every `.rs` file
-under `qsl-semantics/src/check` and `qsl-semantics/src/family`
+under `fsl-semantics/src/check` and `fsl-semantics/src/family`
 (files with `tests` in the name and `#[cfg(test)]` items are
-skipped). Callees outside them (`quire-exact`, `qsl-forms`,
-`qsl-foundation` and the rest of `qsl-semantics`) are not scanned.
-The scan flags a `static mut`, `thread_local!` or `lazy_static!` item and the names `Once`, `OnceLock`, `OnceCell`, `Lazy*`, `Mutex`, `RwLock`, `UnsafeCell` and `Atomic*` in the scanned source. A scope-held counter reaches the scanned source only as the `qsl-foundation` `Tally` type, which is a callee outside the scan and not a banned name, so the scan does not flag it; the scan does not check that no `static` holds a `Tally`.
+skipped). Callees outside them (`filament-exact`, `fsl-forms`,
+`fsl-foundation` and the rest of `fsl-semantics`) are not scanned.
+The scan flags a `static mut`, `thread_local!` or `lazy_static!` item and the names `Once`, `OnceLock`, `OnceCell`, `Lazy*`, `Mutex`, `RwLock`, `UnsafeCell` and `Atomic*` in the scanned source. A scope-held counter reaches the scanned source only as the `fsl-foundation` `Tally` type, which is a callee outside the scan and not a banned name, so the scan does not flag it; the scan does not check that no `static` holds a `Tally`.
 
 The evaluator display-string scan for FR-062-AC-6 reads
-`qsl-eval/src/value/expression/evaluate.rs` and the `evaluate` method in
-`qsl-eval/src/value/expression/family.rs`
+`fsl-eval/src/value/expression/evaluate.rs` and the `evaluate` method in
+`fsl-eval/src/value/expression/family.rs`
 only; `causes.rs`, `mod.rs`, `s6a.rs` and callees in other crates are
 not scanned.
 
@@ -411,7 +411,7 @@ not scanned.
   O-04 (checked node identity), O-07 (source occurrence identity), O-11
   (qualified names), O-12 (source locations and provenance) and O-16
   (outcomes) own the canonical types this contract's parts are built from;
-  `quire-exact` (#213 S-1) implements them.
+  `filament-exact` (#213 S-1) implements them.
 - [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md) §2.1
   and §2.3 own the stage edges and the structured-result shape
   (`Result<Staged<T>, StageFailure<C>>`) the contract's outcomes are built

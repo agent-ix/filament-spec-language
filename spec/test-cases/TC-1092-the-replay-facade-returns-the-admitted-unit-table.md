@@ -3,20 +3,20 @@ id: TC-1092
 title: "The replay facade returns the admitted unit table"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-398
+  - target: ix://agent-ix/filament-spec-language/FR-398
     type: verifies
 ---
 # TC-1092: The replay facade returns the admitted unit table
 
 ## Description
 
-Verify `qsl_replay::compile_admitted`'s context lists the admitted dimensions
+Verify `fsl_replay::compile_admitted`'s context lists the admitted dimensions
 and declared units, finds them by wire node id, returns each unit's kernel id
 and conversion data, and refuses as typed. Scope: FR-398-AC-1 to FR-398-AC-8.
 
 ## Test Procedure
 
-1. From an integration test that names only the `qsl_replay` root and the
+1. From an integration test that names only the `fsl_replay` root and the
    kernel, compile a unit declaring `dimension Length;`, `unit m` and
    `unit km : Length = rational(1000, 1) * m`; look both units up; build a type environment over
    `unit_table`, a quantity of `m`, and convert it to `km` exactly.
@@ -44,12 +44,12 @@ and conversion data, and refuses as typed. Scope: FR-398-AC-1 to FR-398-AC-8.
 The producer-origin identity controls additionally compile the same deterministic
 family of distinct root units over derived dimensions sharing one base map.
 Short package names permit exact dimensionless handoff. A long explicit package
-name increases the actual structural terms' encoding past QSV's fixed 16 MiB
+name increases the actual structural terms' encoding past FSV's fixed 16 MiB
 handoff boundary, returning `Identity(InputBytes)` with no retained result.
 The source generates declarations; it never supplies a constructed node key.
 For the cross-arm control, power one of an admitted declared root yields
 `Compound([(root, 1)])`, unequal to `Declared(root)` despite their shared root
-component. This is the structural control of QSV FR-124-AC-5 and QSL
+component. This is the structural control of FSV FR-124-AC-5 and FSL
 FR-088-AC-12, rather than a raw-byte identity comparison.
 
 1. Both are found; the environment admits the `m` quantity at

@@ -3,21 +3,21 @@ id: US-002
 title: "Link clauses to the intended domain model"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-040
+  - target: ix://agent-ix/filament-spec-language/FR-040
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-041
+  - target: ix://agent-ix/filament-spec-language/FR-041
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
-  - target: "ix://agent-ix/quire-spec-language/FR-004"
+  - target: "ix://agent-ix/filament-spec-language/FR-004"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-005"
+  - target: "ix://agent-ix/filament-spec-language/FR-005"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-006"
+  - target: "ix://agent-ix/filament-spec-language/FR-006"
     type: exercises
 ---
 # US-002: Link clauses to the intended domain model

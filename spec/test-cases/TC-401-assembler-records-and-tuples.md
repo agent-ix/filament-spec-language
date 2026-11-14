@@ -3,7 +3,7 @@ id: TC-401
 title: "The assembler builds record and tuple declarations with check-minted keys and resolves names to them"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-401: The assembler builds record and tuple declarations with check-minted keys and resolves names to them
@@ -12,7 +12,7 @@ relationships:
 
 Verify that record and tuple forms become composite declarations whose
 keys `check` mints from the required checked-package name and declared paths
-(QSpec FR-322, FR-480-AC-5), and that a parameter typed by a record name resolves
+(FSpec FR-322, FR-480-AC-5), and that a parameter typed by a record name resolves
 to `ValueType::Composite` of that key.
 
 This catches keys minted over a constant package identity, keys that differ
@@ -46,5 +46,5 @@ Tag the test `#[trace("FR-091-AC-18", "TC-401")]`.
 - Checking succeeds.
 - Under (`a`, `u`) again, the `Point` key, the `Pair` key and `px`'s node id
   equal step 1's. Under (`a`, `w`) with the same `package_name`, all three
-  still equal step 1's and have QSpec FR-322 structural package/path/ordinal components. With a different required `package_name`, all three keys differ in their package component.
+  still equal step 1's and have FSpec FR-322 structural package/path/ordinal components. With a different required `package_name`, all three keys differ in their package component.
 - Step 5 finds no such item.

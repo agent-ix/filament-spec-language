@@ -3,7 +3,7 @@ id: TC-702
 title: "EN-7 computes fixed-priority, EDF and AMC verdicts in exact arithmetic"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-247
+  - target: ix://agent-ix/filament-spec-language/FR-247
     type: verifies
 ---
 # TC-702: EN-7 computes fixed-priority, EDF and AMC verdicts in exact arithmetic

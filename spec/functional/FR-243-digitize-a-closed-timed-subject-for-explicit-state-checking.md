@@ -3,17 +3,17 @@ id: FR-243
 title: "Route timed items to the zone engine or the digital-clock route"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-235
+  - target: ix://agent-ix/filament-spec-language/FR-235
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-238
+  - target: ix://agent-ix/filament-spec-language/FR-238
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
 ---
 # FR-243: Route timed items to the zone engine or the digital-clock route

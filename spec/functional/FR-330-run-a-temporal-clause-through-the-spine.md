@@ -3,30 +3,30 @@ id: FR-330
 title: "Run a selected temporal clause over a supplied trace through the spine"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-301
+  - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
 ---
 # FR-330: Run a selected temporal clause over a supplied trace through the spine
 
 ## Description
 
-`qsl_replay::spine::run_clause` (FR-109) SHALL accept a `Temporal` selection
+`fsl_replay::spine::run_clause` (FR-109) SHALL accept a `Temporal` selection
 that names one temporal clause, a supplied trace and the clause's `over`
 binding. It compiles the unit through the spine, admits each observation of
 the trace (FR-106), evaluates the clause at S6a through the TemporalTrace
@@ -36,7 +36,7 @@ runtime's exit asks (ADR-011 §5).
 
 ## Use case
 
-An operator has recorded observations of a running system and a QSL unit
+An operator has recorded observations of a running system and an FSL unit
 with temporal clauses. They run one clause by name over the recording, as
 they already run a state clause, and get one report: held on this trace,
 violated at a named position, pending, unsupported, or incomplete.
@@ -104,7 +104,7 @@ unchanged. Its `category` adds `pending` (a pending result, with the pending cla
 and `unsupported` (a missing fairness premise). Its `disposition` for a
 `violation` (`Completed(false)` or an `Undefined` that is a violation)
 carries the failing `TemporalPosition` and the refutation's
-`TemporalCounterexample`, QSpec FR-364's observed arm, which the entry
+`TemporalCounterexample`, FSpec FR-364's observed arm, which the entry
 builds from what it ran: one `{document}` step per represented position
 from the identities of the trace's `DocumentRef`s (the `Finite`
 trace as `prefix` with an empty `loop`, or the `Lasso`'s `prefix` and
@@ -128,7 +128,7 @@ decides) and the FR-207 value path, all read by evaluating the atom over the
 observation at `decisive.position`. When no collection quantifier decides it,
 `quantifier` and `index` are absent, `element` is `false` and `value_path` is
 the empty path at the observation's root. `decisive` is not a member of the
-`TemporalCounterexample`, whose shape stays QSpec FR-364's, and FR-267 does
+`TemporalCounterexample`, whose shape stays FSpec FR-364's, and FR-267 does
 not write it. The report's violation position stays the failing activation's
 position (FR-327); `decisive.position` may be later or earlier than it.
 
@@ -188,11 +188,11 @@ position (FR-327); `decisive.position` may be later or earlier than it.
   FR-109 reports a state clause that evaluates undefined;
   `InsufficientData` to `undefined` (exit 10, FR-285) with its position,
   `count` and `min_count`, no `truth` and no counterexample, as the trace
-  lacks the data to decide the claim (QSpec FR-414);
+  lacks the data to decide the claim (FSpec FR-414);
   `Pending` to `pending` (exit 0, completed without violation) with the status and the pending clause ids in the report;
   `MissingFairnessPremise` to `unsupported` (exit 21) with cause
   `unsupported_projection`/`missing-fairness-premise`; and `Incomplete` to
-  `incomplete` (exit 22), by QSpec FR-301's exit contract. Every
+  `incomplete` (exit 22), by FSpec FR-301's exit contract. Every
   `violation`, an undefined evaluation included, exits with the violation
   exit, 10.
 
@@ -301,7 +301,7 @@ position (FR-327); `decisive.position` may be later or earlier than it.
   [FR-327](FR-327-evaluate-a-temporal-clause-over-a-finite-trace.md),
   [FR-328](FR-328-evaluate-an-infinite-trace-clause-over-a-finite-prefix.md),
   [FR-329](FR-329-evaluate-an-infinite-trace-clause-exactly-over-a-lasso.md).
-- QSpec FR-301 (exit codes), FR-362 (the missing fairness premise).
+- FSpec FR-301 (exit codes), FR-362 (the missing fairness premise).
 
 ## References
 

@@ -1,0 +1,3850 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The typing loop: [`Typer::check_as`] and [`Typer::infer`] type
+//! an expression on an explicit heap stack, not the host stack.
+//!
+//! A form whose operands are still to type is a [`Frame`] on that stack.
+//! The loop either descends into the next operand ([`Goal`]) or hands the
+//! node it just typed to the frame below, which types its next operand or
+//! finishes its own node. The host stack a check needs is therefore the same
+//! at every nesting depth, and an expression of any depth checks within the
+//! node ceiling (FR-258). Each frame is pushed for a form whose node
+//! `Typer::enter` has already charged against that ceiling, so the frame
+//! stack grows by at most a constant per charged node.
+//!
+//! Operands are typed in the order the earlier recursive typer typed
+//! them, and every node charge, binding, formed unit and refusal happens at
+//! the same point of that order, so every checked tree, slot and refusal is
+//! that typer's.
+
+use filament_checked::node::{
+    CheckedLiteral, Connective, ConnectiveOrigin, IntegerDivisionOperator, NodeKind, RecordSlot,
+    Visit,
+};
+use std::borrow::Cow;
+use std::sync::Arc;
+
+use super::native_literal::NativeConstructor;
+use super::{
+    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
+    node, refuse, LocalKind, Typer,
+};
+use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::family::Application;
+use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
+use crate::check::refusal::{CheckCause, CheckRefusal, IdentityForm, IdentityNode, KeyFault};
+use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
+use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
+use crate::check::DispatchOperation;
+use filament_exact::{
+    ArithmeticOperator, CollectionKind, CollectionType, FloatType, IeeeValue, IeeeWidth,
+    IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, RoundingMode, Value,
+    ValueType,
+};
+use filament_semantic_value::absence::AbsenceMode;
+use filament_semantic_value::call::WrongSnapshotCause;
+use filament_semantic_value::declaration::{EqualityOperand, EqualityOperator, FieldDeclaration};
+use filament_semantic_value::location::ExpressionLocation as Location;
+use fsl_forms::{
+    Accumulation, BinaryOperator, BinderQuery, CaseForm, ClauseKind, ExprNode, ExprRef, Expression,
+    FieldInitializer, NameForm, PopulationForm,
+};
+use fsl_foundation::Span;
+use ix_trace_rs::string_edge;
+
+/// An operand's expected type or hint: borrowed from the declarations or
+/// the caller, or owned when an operand typed before it formed it.
+type Want<'r> = Cow<'r, ValueType>;
+
+/// The type a condition, a connective's operand, a filter, a quantifier or
+/// a count predicate is checked against.
+static BOOLEAN: ValueType = ValueType::Boolean;
+
+fn boolean<'r>() -> Want<'r> {
+    Cow::Borrowed(&BOOLEAN)
+}
+
+/// The type of the binder of `seq(i in low .. high: e)` and the declared
+/// maximum length of the sequence, from the static bounds of `low` and
+/// `high` (FR-139, FSpec FR-376): `i` is `Int[lo_min, hi_max]` and the
+/// maximum is `max(0, hi_max - lo_min + 1)`. An operand with no static bound
+/// leaves `i` an `Integer` and the sequence with no maximum.
+fn seq_binder(
+    (low, high): (Option<IntegerRange>, Option<IntegerRange>),
+    location: &Location,
+) -> Result<(ValueType, Option<u64>), CheckRefusal> {
+    let (Some((lower, _)), Some((_, high_upper))) = (low, high) else {
+        return Ok((ValueType::Integer, None));
+    };
+    // An empty range never binds `i`; keep its interval well formed.
+    let upper = if high_upper < lower {
+        lower.clone()
+    } else {
+        high_upper.clone()
+    };
+    let interval = IntegerInterval::new(lower.clone(), upper)
+        .map_err(|_| refuse(location, CheckCause::UnrepresentableBound))?;
+    let length = high_upper.sub(&lower).add(&Integer::one());
+    let maximum = if length.is_negative() {
+        0
+    } else {
+        length
+            .to_u64()
+            .ok_or_else(|| refuse(location, CheckCause::UnrepresentableBound))?
+    };
+    Ok((ValueType::Int(interval), Some(maximum)))
+}
+
+/// The population operand node of `population` at `location` (FR-391).
+fn population_operand(population: &super::NamedPopulation, location: &Location) -> Node {
+    node(
+        NodeKind::NamedPopulation {
+            population: population.key.clone(),
+            members: population.members.clone(),
+        },
+        ValueType::Population(population.domain.maximum),
+        location,
+    )
+}
+
+/// `Int[low, high]`.
+fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueType, CheckRefusal> {
+    IntegerInterval::new(low, high)
+        .map(ValueType::Int)
+        .map_err(|_| refuse(location, CheckCause::UnrepresentableBound))
+}
+
+/// A two-segment name whose alias also names an enum of the unit (FR-391
+/// "Resolution"): ambiguous, naming the alias, which the model selection and
+/// the enum both declare. Neither declaration is a position of the checked
+/// tree, so the one locus is the name.
+fn qualified_name_refusal(refusal: CheckRefusal, name: &NameForm) -> CheckRefusal {
+    if name.is_qualified() && matches!(refusal.cause, CheckCause::MissingName(_)) {
+        CheckRefusal {
+            location: refusal.location,
+            cause: CheckCause::MissingQualifiedName(name.clone()),
+        }
+    } else {
+        refusal
+    }
+}
+
+fn ambiguous_alias(name: &str, location: &Location) -> CheckRefusal {
+    let alias = name.split("::").next().unwrap_or(name);
+    refuse(
+        location,
+        CheckCause::AmbiguousName {
+            name: alias.to_owned(),
+            loci: vec![location.clone()],
+        },
+    )
+}
+
+/// `ambiguous_declaration`/`ambiguous-name` for a source population named
+/// like a binder or parameter in scope, at the use.
+fn ambiguous_source_population(name: &str, location: &Location) -> CheckRefusal {
+    refuse(
+        location,
+        CheckCause::AmbiguousName {
+            name: name.to_owned(),
+            loci: vec![location.clone(), location.child(0)],
+        },
+    )
+}
+
+/// `missing_declaration`/`missing-name` for a two-segment `M::P` name that
+/// names no population here, located at its second segment (FR-391
+/// "Resolution").
+fn missing_segment(name: &str, location: &Location) -> CheckRefusal {
+    missing_segment_at(name, location, None)
+}
+
+/// [`missing_segment`] for a name written at `span`, when its form records
+/// one (an empty span is a form not read from a source unit).
+fn missing_segment_at(name: &str, location: &Location, span: Option<Span>) -> CheckRefusal {
+    let offset = name.rfind("::").map_or(0, |at| at + 2);
+    refuse(
+        location,
+        CheckCause::MissingSegment {
+            name: name.to_owned(),
+            offset,
+            span: span.filter(|span| span.start < span.end),
+        },
+    )
+}
+
+/// Where a typed operand is admitted.
+enum Expected<'r> {
+    /// Where this type is expected ([`Typer::check_as`]): an integer is
+    /// coerced into it.
+    Checked(Want<'r>),
+    /// As a dispatch call's argument of this declared parameter type:
+    /// identical, or a reference upcast.
+    Argument(Want<'r>),
+}
+
+impl Expected<'_> {
+    fn into_type(self) -> ValueType {
+        match self {
+            Self::Checked(required) | Self::Argument(required) => required.into_owned(),
+        }
+    }
+}
+
+/// How a conditional's branches or a `let`'s body is typed.
+enum Branches<'r> {
+    /// Admitted where expected, like the conditional or `let` itself.
+    Expected(Expected<'r>),
+    /// Inferred, with this hint for a contextual literal.
+    Inferred(Option<Want<'r>>),
+}
+
+impl<'r> Branches<'r> {
+    /// The goal of typing `expression`, a branch or body, at `location`.
+    fn goal<'e>(&self, expression: ExprRef<'e>, location: Location) -> Goal<'e, 'r> {
+        match self {
+            Self::Expected(Expected::Checked(required)) => {
+                Goal::Expect(expression, Expected::Checked(required.clone()), location)
+            }
+            Self::Expected(Expected::Argument(required)) => {
+                Goal::Expect(expression, Expected::Argument(required.clone()), location)
+            }
+            Self::Inferred(hint) => Goal::Infer(expression, hint.clone(), location),
+        }
+    }
+}
+
+/// Typing one sub-expression.
+enum Goal<'e, 'r> {
+    /// Type it where a type is expected.
+    Expect(ExprRef<'e>, Expected<'r>, Location),
+    /// Infer its type ([`Typer::infer`]), with a hint for a contextual
+    /// literal.
+    Infer(ExprRef<'e>, Option<Want<'r>>, Location),
+}
+
+/// What the loop does next.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Step is a per-iteration return value, never stored in a Vec; boxing its typed Node would add an allocation per checked node"
+)]
+enum Step<'e, 'r> {
+    /// Type a sub-expression.
+    Descend(Goal<'e, 'r>),
+    /// Hand this typed node to the frame below.
+    Typed(Node),
+}
+
+/// A `ref(p)` waiting on the owner of its place and the selectors on the way.
+struct ClockRefFrame<'e> {
+    /// The steps below the owner, outermost last.
+    path: Vec<RefStep<'e>>,
+    /// The `ref` node's location.
+    location: Location,
+    /// The typed owner, once seen.
+    owner: Option<Node>,
+    /// The types of the selectors typed so far.
+    selectors: Vec<ValueType>,
+}
+
+/// One step of the place `ref` names: a field, or a selector `[s]` with the
+/// expression it holds and its location.
+enum RefStep<'e> {
+    Field(&'e str),
+    Select(ExprRef<'e>, Location),
+}
+
+/// A form waiting on the node of one of its operands.
+enum Frame<'e, 'r> {
+    /// Admit the typed node where this type is expected ([`coerce`]).
+    Coerce(Want<'r>),
+    /// Admit the typed node as a dispatch argument of this parameter type,
+    /// refusing at this location.
+    Upcast(Want<'r>, Location),
+    If(Box<IfFrame<'e, 'r>>),
+    Let(Box<LetFrame<'e, 'r>>),
+    Case(Box<CaseFrame<'e, 'r>>),
+    Connective(Box<ConnectiveFrame<'e>>),
+    Peer(Box<PeerFrame<'e, 'r>>),
+    Unary(Box<UnaryFrame<'r>>),
+    /// `e.f`: the field name and the form's location.
+    Field(&'e str, Location),
+    /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
+    /// field's name, the union case, and the `present` node's location;
+    /// admits the typed owner `r` (FR-230 "Presence is derived").
+    PlacePresence(&'e str, Option<&'e str>, Location),
+    /// `ref(r.f[s]...)` of a clock place: the path below the owner `r`, then
+    /// each selector as typed; admits the typed owner and selectors in turn
+    /// (FR-230 "Clock references", "Selection").
+    ClockRef(Box<ClockRefFrame<'e>>),
+    /// `forall(e in r.q: present(e))` (`true`) or `exists(..)` over a
+    /// `Sequence<Option<Clock>>` place: the field, the quantifier and the
+    /// query's location; admits the typed owner `r` (FR-415-AC-20).
+    SlotPresence(&'e str, bool, Location),
+    Attribute(Box<AttributeFrame<'e>>),
+    Application(Box<ApplicationFrame<'e, 'r>>),
+    Record(Box<RecordFrame<'e, 'r>>),
+    Collection(Box<CollectionFrame<'e>>),
+    Query(Box<QueryFrame<'e>>),
+    Accumulate(Box<AccumulateFrame<'e>>),
+    Tally(Box<TallyFrame<'e>>),
+    Population(Box<PopulationFrame<'e>>),
+    Seq(Box<SeqFrame<'e>>),
+    Contains(Box<ContainsFrame<'e>>),
+    Reaches(Box<ReachesFrame<'e>>),
+    Lookup(Box<LookupFrame<'e>>),
+    Dispatch(Box<DispatchFrame<'e>>),
+    DispatchArguments(Box<DispatchArgumentsFrame<'e, 'r>>),
+}
+
+/// `if condition then then else otherwise`.
+struct IfFrame<'e, 'r> {
+    branches: Branches<'r>,
+    location: Location,
+    stage: IfStage<'e>,
+}
+
+#[allow(
+    clippy::large_enum_variant,
+    reason = "this stage lives inside an already boxed Frame; boxing its Node payload would add a second allocation per node"
+)]
+enum IfStage<'e> {
+    Condition {
+        then: ExprRef<'e>,
+        otherwise: ExprRef<'e>,
+    },
+    Then {
+        condition: Node,
+        otherwise: ExprRef<'e>,
+    },
+    Otherwise {
+        condition: Node,
+        then: Node,
+    },
+}
+
+/// `let name = value in body`.
+struct LetFrame<'e, 'r> {
+    branches: Branches<'r>,
+    name: &'e str,
+    body: ExprRef<'e>,
+    location: Location,
+    /// The typed value and the slot it is bound to, once typed.
+    value: Option<(Node, Slot)>,
+}
+
+/// `case scrutinee { arms }` (FR-318): the scrutinee first, then each arm
+/// whose head resolved, in source order.
+struct CaseFrame<'e, 'r> {
+    branches: Branches<'r>,
+    /// The `case` expression, whose arena holds its scrutinee and bodies.
+    expression: ExprRef<'e>,
+    case: &'e CaseForm,
+    location: Location,
+    stage: CaseStage<'r>,
+}
+
+enum CaseStage<'r> {
+    /// The scrutinee is being typed.
+    Scrutinee,
+    /// The arms are being resolved and their bodies typed.
+    Arms(Box<CaseArms<'r>>),
+}
+
+/// The arms of a `case` whose scrutinee is typed.
+struct CaseArms<'r> {
+    builder: CaseBuilder<'r>,
+    /// The next arm to resolve.
+    next: usize,
+    /// The arm whose body is being typed.
+    open: Option<OpenArm>,
+    /// The result type the arm bodies inferred so far.
+    result: Option<ValueType>,
+}
+
+/// An arm whose binders are bound and whose body is being typed.
+struct OpenArm {
+    member: usize,
+    binders: Vec<Slot>,
+}
+
+/// Which operand of a pair is being typed.
+enum Pair<'e, T> {
+    /// The first; the other is still to type, at this location.
+    First(ExprRef<'e>, Location),
+    /// The second; the first is typed.
+    Second(T),
+}
+
+/// `left and right`, `left or right` or `left implies right`.
+struct ConnectiveFrame<'e> {
+    connective: Connective,
+    location: Location,
+    pair: Pair<'e, Node>,
+}
+
+/// An arithmetic, ordering or equality operator: the non-contextual
+/// operand is typed first, so a literal can take its peer's type.
+struct PeerFrame<'e, 'r> {
+    form: PeerForm<'e, 'r>,
+    /// Whether the right operand is typed first.
+    right_first: bool,
+    location: Location,
+}
+
+/// A binary operator typed as an operand pair.
+enum PeerOperator {
+    Arithmetic(ArithmeticOperator),
+    IntegerDivision(IntegerDivisionOperator),
+    Ordering(OrderingOperator),
+    Equality(EqualityOperator),
+}
+
+#[allow(
+    clippy::large_enum_variant,
+    reason = "this stage lives inside an already boxed Frame; boxing its Node payload would add a second allocation per node"
+)]
+enum PeerForm<'e, 'r> {
+    Arithmetic {
+        operator: ArithmeticOperator,
+        hint: Option<Want<'r>>,
+        pair: Pair<'e, Node>,
+    },
+    IntegerDivision {
+        operator: IntegerDivisionOperator,
+        pair: Pair<'e, Node>,
+    },
+    Ordering {
+        operator: OrderingOperator,
+        pair: Pair<'e, Node>,
+    },
+    Equality {
+        operator: EqualityOperator,
+        pair: Pair<'e, TypedOperand>,
+        /// The target and location of the operand being typed, when it is
+        /// a non-collection `convert<T>(e)` compared as converted.
+        converted: Option<(ValueType, Location)>,
+    },
+}
+
+/// A typed `=` operand with the equality operand the pair is first checked
+/// with (`checked`, which names a conversion) and the one the stored equality
+/// compares (`stored`, which compares an already converted operand as typed).
+pub(super) struct TypedOperand {
+    pub(super) node: Node,
+    /// The equality operand authored before it is rewritten for the checked
+    /// comparison. In particular, this preserves explicit conversion intent
+    /// when the checked tree has a separate conversion node.
+    pub(super) authored: EqualityOperand,
+    pub(super) checked: EqualityOperand,
+    pub(super) stored: EqualityOperand,
+    /// The operand's source type before an explicit equality conversion.
+    pub(super) source_type: ValueType,
+    /// The explicit conversion target, including an identity conversion.
+    pub(super) conversion_target: Option<ValueType>,
+}
+
+impl TypedOperand {
+    /// An operand compared as it is typed.
+    fn typed(node: Node) -> Self {
+        let source_type = node.value_type.clone();
+        let operand = EqualityOperand::typed(source_type.clone());
+        Self {
+            node,
+            authored: operand.clone(),
+            checked: operand.clone(),
+            stored: operand,
+            source_type,
+            conversion_target: None,
+        }
+    }
+}
+
+/// A form over one operand whose node it finishes once the operand is
+/// typed.
+struct UnaryFrame<'r> {
+    form: Unary<'r>,
+    location: Location,
+}
+
+enum Unary<'r> {
+    Negate(Option<Want<'r>>),
+    Power(Integer),
+    Not,
+    Present,
+    Value,
+    OptionSome(Option<Want<'r>>),
+    Deref,
+    Pre,
+    Flatten,
+    DropFirst,
+    Size,
+    Convert(ValueType),
+    AllInstances(ValueType),
+}
+
+/// Whether an HP-1 relation's `pre(...)` contains a receiver-state read.
+/// Operation arguments and results are execution inputs, not model state, so
+/// they do not by themselves make a pre-read meaningful.
+#[string_edge]
+fn relation_pre_eligible(expression: ExprRef<'_>, hyper: &super::HyperTyping) -> bool {
+    let mut pending = vec![expression];
+    while let Some(expression) = pending.pop() {
+        if let ExprNode::Field { operand, field } = expression.node() {
+            if field == "self"
+                && matches!(expression.at(*operand).node(), ExprNode::Name(name)
+                    if hyper.executions.contains_key(&name.name))
+            {
+                return true;
+            }
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
+/// Whether an unqualified expression call names the built-in present-option
+/// value constructor. This is a source-spelling intake point, like the native
+/// literal classifier.
+#[ix_trace_rs::string_edge]
+fn is_option_some_constructor(name: &str) -> bool {
+    name == "Some"
+}
+
+/// `deref(r).f`, its `deref(r)` operand at `operand_location`.
+struct AttributeFrame<'e> {
+    field: &'e str,
+    operand_location: Location,
+    location: Location,
+}
+
+/// What an [`ApplicationFrame`] applies: `Value`'s call target, or the
+/// `SumCase` family's union member (FR-317).
+enum Callee<'r> {
+    Value(Application<'r>),
+    Union(UnionMember<'r>),
+}
+
+impl<'r> Callee<'r> {
+    /// The type the argument at `index` is checked against.
+    fn parameter(&self, index: usize) -> Option<ValueType> {
+        match self {
+            Self::Value(application) => application.parameter(index),
+            Self::Union(member) => member.parameter(index).cloned(),
+        }
+    }
+
+    /// The declared parameter type at `index` of a function or imported
+    /// call, the only calls whose argument type node FR-347 compares.
+    fn call_parameter(&self, index: usize) -> Option<ValueType> {
+        match self {
+            Self::Value(application) => application.call_parameter(index),
+            Self::Union(_) => None,
+        }
+    }
+
+    /// The expected type of an IEEE intrinsic's next argument.
+    fn intrinsic_hint(&self, siblings: &[ValueType]) -> Option<Option<ValueType>> {
+        match self {
+            Self::Value(application) => application.intrinsic_hint(siblings),
+            Self::Union(_) => None,
+        }
+    }
+
+    /// The node over its checked `arguments`.
+    fn finish(
+        self,
+        arguments: Vec<NodeId>,
+        argument_types: Vec<ValueType>,
+        location: &Location,
+    ) -> Result<Node, CheckRefusal> {
+        match self {
+            Self::Value(application) => application.finish(arguments, argument_types, location),
+            Self::Union(member) => Ok(member.finish(arguments, location)),
+        }
+    }
+}
+
+/// Whether an integer of type `source` is admitted where `target` is declared
+/// by widening: a different integer type that contains it.
+fn integer_widens(source: &ValueType, target: &ValueType) -> bool {
+    match (source, target) {
+        (ValueType::Integer | ValueType::Int(_), ValueType::Integer) => source != target,
+        (ValueType::Int(from), ValueType::Int(to)) => {
+            from != to && to.lower() <= from.lower() && from.upper() <= to.upper()
+        }
+        _ => false,
+    }
+}
+
+/// A function, tuple-constructor or union-member call.
+struct ApplicationFrame<'e, 'r> {
+    application: Callee<'r>,
+    arguments: Vec<ExprRef<'e>>,
+    location: Location,
+    /// The source index of each argument in the order they are checked: an
+    /// IEEE intrinsic checks its contextual constants after the operands
+    /// that type them.
+    order: Vec<usize>,
+    /// Checked in `order`.
+    typed: Vec<NodeId>,
+    argument_types: Vec<ValueType>,
+}
+
+/// A record literal, admitting its initializers in source order.
+struct RecordFrame<'e, 'r> {
+    /// The record literal, whose arena holds its initializers' values.
+    record: ExprRef<'e>,
+    key: NodeKey,
+    declared: &'r [FieldDeclaration],
+    fields: &'e [(String, FieldInitializer)],
+    /// The next initializer to admit.
+    next: usize,
+    /// The next value initializer's location child index.
+    child: usize,
+    supplied: Vec<Option<RecordSlot<NodeId>>>,
+    /// The declared field the operand being typed fills.
+    awaiting: Option<usize>,
+    location: Location,
+}
+
+/// A collection literal, its elements checked against its element type.
+struct CollectionFrame<'e> {
+    collection_type: CollectionType,
+    elements: Vec<ExprRef<'e>>,
+    location: Location,
+    typed: Vec<NodeId>,
+}
+
+/// A one-binder query `q(binder in source: body)`.
+struct QueryFrame<'e> {
+    query: BinderQuery,
+    binder: &'e str,
+    body: ExprRef<'e>,
+    location: Location,
+    /// The typed source, the binder's slot and the source's collection
+    /// type, once the source is typed.
+    source: Option<(Node, Slot, Arc<CollectionType>)>,
+}
+
+/// `fold<A>(acc, x in c: step, identity: i)` or `reduce<A>(acc, x in c:
+/// step)`.
+struct AccumulateFrame<'e> {
+    form: Accumulation,
+    value_type: ValueType,
+    accumulator: &'e str,
+    binder: &'e str,
+    step: ExprRef<'e>,
+    identity: Option<ExprRef<'e>>,
+    location: Location,
+    stage: AccumulateStage,
+}
+
+#[allow(
+    clippy::large_enum_variant,
+    reason = "this stage lives inside an already boxed Frame; boxing its Node payload would add a second allocation per node"
+)]
+enum AccumulateStage {
+    Source,
+    Step {
+        source: Node,
+        accumulator: Slot,
+        binder: Slot,
+        source_type: Arc<CollectionType>,
+    },
+    Identity(Fold),
+}
+
+/// A `fold`/`reduce` whose source and step are typed.
+struct Fold {
+    source: Node,
+    step: Node,
+    accumulator: Slot,
+    binder: Slot,
+    source_type: Arc<CollectionType>,
+    /// Whether the step is in the FR-145 set-and-bag catalog.
+    catalogued: bool,
+}
+
+/// Whether a summand of type `summand` is of the numeric family of `total`,
+/// the type `N` of `sum<N>` (FR-145): any integer for an integer total, any
+/// rational for a rational total, any decimal for a decimal total (the
+/// addition rounds into `N`, recording the loss), and the very float or unit of
+/// a float or quantity total. A bounded quantity of the unit is a
+/// quantity of it: its bounds restrict the members, not the sum.
+fn summand_of_family(total: &ValueType, summand: &ValueType) -> bool {
+    match (total, summand) {
+        (ValueType::Integer | ValueType::Int(_), _) => is_integer(summand),
+        (ValueType::Rational(_), ValueType::Rational(_)) => true,
+        (ValueType::Decimal(_), ValueType::Decimal(_)) => true,
+        (ValueType::Float(total), ValueType::Float(summand)) => total == summand,
+        (ValueType::Quantity(total), ValueType::Quantity(summand)) => total == summand,
+        (ValueType::Quantity(total), ValueType::BoundedQuantity(summand)) => {
+            total == summand.unit()
+        }
+        // FSpec FR-142 "Carried quantity sum": the summand has the very
+        // carried type `N` (unit, carrier bounds and mode); none is widened,
+        // narrowed or converted implicitly.
+        (ValueType::CarriedQuantity(total), ValueType::CarriedQuantity(summand)) => {
+            total == summand
+        }
+        _ => false,
+    }
+}
+
+/// A counting or summing query.
+#[derive(Clone, Copy)]
+enum Tally {
+    /// `count<N>(x in c: p)`.
+    Count,
+    /// `sum<N>(x in c: e)`.
+    Sum,
+}
+
+/// `count<N>(x in c: p)` or `sum<N>(x in c: e)`.
+struct TallyFrame<'e> {
+    tally: Tally,
+    value_type: ValueType,
+    binder: &'e str,
+    body: ExprRef<'e>,
+    location: Location,
+    /// The typed source and the binder's slot, once the source is typed.
+    source: Option<(Node, Slot)>,
+}
+
+/// Which operand of a population-valued form is being typed.
+enum PopulationAwait {
+    /// The `where` condition.
+    Condition,
+    /// The body of `sum` and `only`.
+    Body,
+}
+
+/// `count`, `sum`, `exists`, `all` or `only` over a concrete population
+/// (FR-139).
+struct PopulationFrame<'e> {
+    form: PopulationForm,
+    /// The population's objects, typed.
+    source: Node,
+    /// The slot the binder reads.
+    slot: Slot,
+    /// The body of `sum` and `only`.
+    body: Option<ExprRef<'e>>,
+    /// The typed condition, once typed.
+    typed_condition: Option<Node>,
+    awaiting: PopulationAwait,
+    location: Location,
+}
+
+/// Which operand of `seq(i in lo .. hi: e)` is being typed.
+enum SeqStage {
+    Low,
+    High {
+        low: Box<Node>,
+    },
+    Body {
+        low: Box<Node>,
+        high: Box<Node>,
+        slot: Slot,
+        maximum: Option<u64>,
+    },
+}
+
+/// `seq(i in lo .. hi: e)` (FR-139).
+struct SeqFrame<'e> {
+    binder: &'e str,
+    high: ExprRef<'e>,
+    body: ExprRef<'e>,
+    location: Location,
+    stage: SeqStage,
+}
+
+/// Which form a [`ContainsFrame`] types: both type `v` as the element type.
+#[derive(Clone, Copy)]
+enum ProbeForm {
+    Contains,
+    RemoveOne,
+}
+
+/// `contains(c, v)` or `removeOne(c, v)`.
+struct ContainsFrame<'e> {
+    form: ProbeForm,
+    item: ExprRef<'e>,
+    location: Location,
+    /// The typed collection and its element type, once typed.
+    collection: Option<(Node, ValueType)>,
+}
+
+/// `reaches(source, target, edge)` (FR-104): the source is typed first,
+/// then the target.
+struct ReachesFrame<'e> {
+    edge: &'e str,
+    location: Location,
+    pair: Pair<'e, Node>,
+}
+
+/// `lookup<T>(p, r) absent m`.
+struct LookupFrame<'e> {
+    target: ValueType,
+    reference: ExprRef<'e>,
+    absence: AbsenceMode,
+    location: Location,
+    population: Option<Node>,
+}
+
+/// `receiver.member(args)`, its receiver being typed.
+struct DispatchFrame<'e> {
+    member: &'e str,
+    arguments: Vec<ExprRef<'e>>,
+    location: Location,
+}
+
+/// `receiver.member(args)`, its receiver typed and resolved to an
+/// operation, its arguments being typed.
+struct DispatchArgumentsFrame<'e, 'r> {
+    receiver: Node,
+    operation_index: usize,
+    operation: &'r DispatchOperation,
+    arguments: Vec<ExprRef<'e>>,
+    location: Location,
+    typed: Vec<NodeId>,
+}
+
+/// The result type the arm bodies infer once `body`, the next one in source
+/// order, is typed (FSpec FR-146 "Case result type"): the type every body
+/// shares, `Integer` when every body is `Integer` or an `Int[..]` type, and
+/// otherwise a refusal at the first body that has neither.
+fn case_result(result: Option<ValueType>, body: &Node) -> Result<ValueType, CheckRefusal> {
+    match result {
+        None => Ok(body.value_type.clone()),
+        Some(result) if result == body.value_type => Ok(result),
+        Some(result) if is_integer(&result) && is_integer(&body.value_type) => {
+            Ok(ValueType::Integer)
+        }
+        Some(_) => Err(mismatch(&body.location)),
+    }
+}
+
+/// A broken invariant of the `case` frame, never a refusal of the input.
+fn case_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+    refuse(
+        location,
+        CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+            filament_semantic_value::catalog::InternalFault::new("S3", invariant),
+        ))),
+    )
+}
+
+/// `(first, second)` in source order: `second` is the left operand when
+/// the right one was typed first.
+fn ordered<T>(right_first: bool, first: T, second: T) -> (T, T) {
+    if right_first {
+        (second, first)
+    } else {
+        (first, second)
+    }
+}
+
+impl<'a> Typer<'a> {
+    /// Type `expression` where `required` is expected. A conditional or `let`
+    /// passes the requirement into its branches or body.
+    pub(crate) fn check_as(
+        &mut self,
+        expression: &Expression,
+        required: &ValueType,
+        location: &Location,
+    ) -> Result<CheckedBody, CheckRefusal> {
+        let root = self.run(Goal::Expect(
+            expression.root(),
+            Expected::Checked(Cow::Borrowed(required)),
+            location.clone(),
+        ))?;
+        Ok(std::mem::take(&mut self.body).finish(root))
+    }
+
+    /// Type `expression` and append an explicit quantity conversion to the
+    /// caller-supplied checked target type. This is the programmatic route
+    /// for compound-unit targets that source `TypeForm` cannot name.
+    pub(crate) fn infer_conversion(
+        &mut self,
+        expression: &Expression,
+        target: &ValueType,
+        location: &Location,
+    ) -> Result<Node, CheckRefusal> {
+        let source = self.run(Goal::Infer(expression.root(), None, location.clone()))?;
+        self.convert(target, source, location)
+    }
+
+    /// Finish the current body at `root` without consuming the typing state;
+    /// the caller still reads its slots and retained formed units.
+    pub(crate) fn finish_body(&mut self, root: Node) -> CheckedBody {
+        std::mem::take(&mut self.body).finish(root)
+    }
+
+    /// Type `expression`, with `hint` as the expected type of a contextual
+    /// literal.
+    pub(crate) fn infer(
+        &mut self,
+        expression: &Expression,
+        hint: Option<&ValueType>,
+        location: &Location,
+    ) -> Result<CheckedBody, CheckRefusal> {
+        let root = self.run(Goal::Infer(
+            expression.root(),
+            hint.map(Cow::Borrowed),
+            location.clone(),
+        ))?;
+        Ok(std::mem::take(&mut self.body).finish(root))
+    }
+
+    /// Type `expression`, then convert it to `unit_of` when both are
+    /// quantities whose units convert into one another and differ (FR-337-AC-15's
+    /// converted aggregate threshold). Any other type is returned unconverted
+    /// for the caller to judge.
+    pub(crate) fn infer_in_unit_of(
+        &mut self,
+        expression: &Expression,
+        unit_of: &ValueType,
+        location: &Location,
+    ) -> Result<CheckedBody, CheckRefusal> {
+        let root = self.run(Goal::Infer(expression.root(), None, location.clone()))?;
+        let root = match (&root.value_type, unit_of) {
+            (ValueType::Quantity(source), ValueType::Quantity(target))
+                if source != target
+                    && self
+                        .units
+                        .get(source.clone())
+                        .zip(self.units.get(target.clone()))
+                        .is_some_and(|(source, target)| source.converts_to(target)) =>
+            {
+                self.convert(unit_of, root, location)?
+            }
+            _ => root,
+        };
+        Ok(std::mem::take(&mut self.body).finish(root))
+    }
+
+    /// Type the subexpression of `expression` rooted at `root`, located at
+    /// `location`: a `match` conjunct is one subtree of its block.
+    pub(crate) fn infer_subtree(
+        &mut self,
+        expression: &Expression,
+        root: fsl_forms::ExprId,
+        hint: Option<&ValueType>,
+        location: &Location,
+    ) -> Result<CheckedBody, CheckRefusal> {
+        let root = self.run(Goal::Infer(
+            expression.at(root),
+            hint.map(Cow::Borrowed),
+            location.clone(),
+        ))?;
+        Ok(std::mem::take(&mut self.body).finish(root))
+    }
+
+    /// The loop: descend into the next goal, or hand the node just typed to
+    /// the frame below; the node no frame waits on is the root's.
+    fn run<'e, 'r>(&mut self, goal: Goal<'e, 'r>) -> Result<Node, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        let mut frames: Vec<Frame<'e, 'r>> = Vec::new();
+        let mut step = Step::Descend(goal);
+        loop {
+            step = match step {
+                Step::Descend(goal) => self.descend(goal, &mut frames)?,
+                Step::Typed(typed) => match frames.pop() {
+                    None => return Ok(typed),
+                    Some(frame) => self.accept(frame, typed, &mut frames)?,
+                },
+            };
+        }
+    }
+
+    /// Start `goal`: a form with no operand to type is typed now; any other
+    /// pushes its frame and descends into its first operand.
+    fn descend<'e, 'r>(
+        &mut self,
+        goal: Goal<'e, 'r>,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        match goal {
+            Goal::Expect(expression, expected, location) => {
+                self.expect(expression, expected, location, frames)
+            }
+            Goal::Infer(expression, hint, location) => {
+                self.enter(&location)?;
+                self.infer_form(expression, hint, location, frames)
+            }
+        }
+    }
+
+    /// Start typing `expression` where `expected`: a conditional or `let`
+    /// passes the expectation into its branches or body; any other form is
+    /// inferred, hinted with the expected type, and then admitted.
+    fn expect<'e, 'r>(
+        &mut self,
+        expression: ExprRef<'e>,
+        expected: Expected<'r>,
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        match expression.node() {
+            ExprNode::If {
+                condition,
+                then,
+                otherwise,
+            } => {
+                self.enter(&location)?;
+                Ok(Self::conditional(
+                    Branches::Expected(expected),
+                    (
+                        expression.at(*condition),
+                        expression.at(*then),
+                        expression.at(*otherwise),
+                    ),
+                    location,
+                    frames,
+                ))
+            }
+            ExprNode::Let { name, value, body } => {
+                self.enter(&location)?;
+                Ok(Self::binding(
+                    Branches::Expected(expected),
+                    (name, expression.at(*value), expression.at(*body)),
+                    location,
+                    frames,
+                ))
+            }
+            ExprNode::Case(case) => {
+                self.enter(&location)?;
+                Ok(Self::case(
+                    Branches::Expected(expected),
+                    (expression, case),
+                    location,
+                    frames,
+                ))
+            }
+            _ => {
+                let hint = match expected {
+                    Expected::Checked(required) => {
+                        frames.push(Frame::Coerce(required.clone()));
+                        required
+                    }
+                    Expected::Argument(required) => {
+                        frames.push(Frame::Upcast(required.clone(), location.clone()));
+                        required
+                    }
+                };
+                Ok(Step::Descend(Goal::Infer(expression, Some(hint), location)))
+            }
+        }
+    }
+
+    /// Start `if condition then then else otherwise`.
+    fn conditional<'e, 'r>(
+        branches: Branches<'r>,
+        (condition, then, otherwise): (ExprRef<'e>, ExprRef<'e>, ExprRef<'e>),
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Step<'e, 'r> {
+        let condition_location = location.child(0);
+        frames.push(Frame::If(Box::new(IfFrame {
+            branches,
+            location,
+            stage: IfStage::Condition { then, otherwise },
+        })));
+        Step::Descend(Goal::Expect(
+            condition,
+            Expected::Checked(boolean()),
+            condition_location,
+        ))
+    }
+
+    /// Start `let name = value in body`.
+    fn binding<'e, 'r>(
+        branches: Branches<'r>,
+        (name, value, body): (&'e str, ExprRef<'e>, ExprRef<'e>),
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Step<'e, 'r> {
+        let value_location = location.child(0);
+        frames.push(Frame::Let(Box::new(LetFrame {
+            branches,
+            name,
+            body,
+            location,
+            value: None,
+        })));
+        Step::Descend(Goal::Infer(value, None, value_location))
+    }
+
+    /// Start `case scrutinee { arms }` (FR-318): type the scrutinee first.
+    fn case<'e, 'r>(
+        branches: Branches<'r>,
+        (expression, case): (ExprRef<'e>, &'e CaseForm),
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Step<'e, 'r> {
+        let scrutinee = Goal::Infer(expression.at(case.scrutinee), None, location.child(0));
+        frames.push(Frame::Case(Box::new(CaseFrame {
+            branches,
+            expression,
+            case,
+            location,
+            stage: CaseStage::Scrutinee,
+        })));
+        Step::Descend(scrutinee)
+    }
+
+    /// Type the next selector of a `ref`'s place, or the `ref` itself once
+    /// every selector is typed.
+    fn next_selector<'e, 'r>(
+        &mut self,
+        frame: Box<ClockRefFrame<'e>>,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let next = frame
+            .path
+            .iter()
+            .filter_map(|step| match step {
+                RefStep::Select(selector, at) => Some((*selector, at.clone())),
+                RefStep::Field(_) => None,
+            })
+            .nth(frame.selectors.len());
+        if let Some((selector, at)) = next {
+            frames.push(Frame::ClockRef(frame));
+            return Ok(Step::Descend(Goal::Infer(selector, None, at)));
+        }
+        let ClockRefFrame {
+            path,
+            location,
+            owner,
+            selectors,
+        } = *frame;
+        let owner = owner.ok_or_else(|| mismatch(&location))?;
+        let steps: Vec<_> = path
+            .iter()
+            .map(|step| match step {
+                RefStep::Field(name) => (Some(*name), None),
+                RefStep::Select(_, at) => (None, Some(at.clone())),
+            })
+            .collect();
+        self.clock_ref(owner, &steps, &selectors, &location)
+            .map(Step::Typed)
+    }
+
+    /// Start a form over one operand, `goal`.
+    fn unary<'e, 'r>(
+        form: Unary<'r>,
+        goal: Goal<'e, 'r>,
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Step<'e, 'r> {
+        frames.push(Frame::Unary(Box::new(UnaryFrame { form, location })));
+        Step::Descend(goal)
+    }
+
+    /// FR-065's dispatch seam over [`Expression`] (ADR-012 §4.3): start
+    /// inferring `expression`'s type, its node already charged.
+    ///
+    /// **`Expression::Call` is thin (FR-065-CON-3).** Its arm makes one call
+    /// into [`Application::resolve`] -- `Value`'s application check -- and
+    /// holds no name, arity or argument-type logic of its own. Each argument
+    /// is then checked against [`Application::parameter`] under this typer's
+    /// clause kind, and the node is built by [`Application::finish`].
+    /// FR-065-AC-4 states the verdicts that check gives; FR-065-AC-5 states
+    /// that a call gets the same verdict from a declaration body, a
+    /// `decreases` measure and a clause expression.
+    ///
+    /// `Expression::Call` is `Value`'s variant of the one [`Expression`]
+    /// enum: its owning family is the family whose check its arm calls
+    /// (ADR-012 §4.3).
+    ///
+    /// `#[deny(...)]` (FR-063's residual paragraph, carried into the
+    /// QSL-25 implementation by owner ruling): a future change that wants
+    /// to delete an arm from this `match` cannot restore exhaustiveness
+    /// with a `_ => ...` catch-all -- that is the exact "escape hatch"
+    /// closed here, not merely by convention; what this attribute forbids
+    /// is silently absorbing a *future* removed arm behind a catch-all
+    /// instead of deleting the corresponding variant.
+    #[deny(clippy::wildcard_enum_match_arm)]
+    #[deny(clippy::match_wildcard_for_single_variants)]
+    fn infer_form<'e, 'r>(
+        &mut self,
+        expression: ExprRef<'e>,
+        hint: Option<Want<'r>>,
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        let typed = match expression.node() {
+            ExprNode::Boolean(value) => node(
+                NodeKind::Literal(CheckedLiteral(Value::Boolean(*value))),
+                ValueType::Boolean,
+                &location,
+            ),
+            ExprNode::Integer(value) => {
+                if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, value) {
+                    return Err(CheckRefusal {
+                        location,
+                        cause: CheckCause::IntegerOutsideI128(outside),
+                    });
+                }
+                node(
+                    NodeKind::Literal(CheckedLiteral(Value::Integer(value.clone()))),
+                    ValueType::Integer,
+                    &location,
+                )
+            }
+            ExprNode::Float32(bits) => self.ieee_literal(
+                IeeeWidth::Binary32,
+                u64::from(*bits),
+                hint.as_deref(),
+                &location,
+            )?,
+            ExprNode::Float64(bits) => {
+                self.ieee_literal(IeeeWidth::Binary64, *bits, hint.as_deref(), &location)?
+            }
+            ExprNode::String(text) => node(
+                NodeKind::Literal(CheckedLiteral(Value::String(text.text().to_owned()))),
+                ValueType::String,
+                &location,
+            ),
+            ExprNode::Rational(numerator, denominator) => {
+                self.rational_literal(numerator, denominator, hint.as_deref(), &location)?
+            }
+            ExprNode::DecimalValue { coefficient, scale } => {
+                self.decimal_literal(coefficient, *scale, hint.as_deref(), &location)?
+            }
+            ExprNode::Absent => self.absent_literal(hint.as_deref(), &location)?,
+            // FR-185: a quantity literal is its magnitude, measured and
+            // reduced as an exact value, in the unit its name declares.
+            ExprNode::Quantity(quantity) => {
+                let magnitude = super::super::probabilistic::quantity_magnitude(
+                    &quantity.magnitude,
+                    self.limits.rational_bits(),
+                    &location,
+                )?;
+                let Some(unit) = self
+                    .scope
+                    .unit_named(self.source_owner.as_ref(), &quantity.unit.name)
+                else {
+                    return Err(CheckRefusal {
+                        location,
+                        cause: if quantity.unit.is_qualified() {
+                            CheckCause::MissingQualifiedName(quantity.unit.clone())
+                        } else {
+                            CheckCause::UnresolvedUnitName {
+                                name: quantity.unit.name.clone(),
+                                packages: self
+                                    .scope
+                                    .unit_packages(self.source_owner.as_ref(), &quantity.unit.name),
+                            }
+                        },
+                    });
+                };
+                node(
+                    NodeKind::Literal(CheckedLiteral(Value::Quantity(
+                        filament_exact::Quantity::new(magnitude, unit.clone()),
+                    ))),
+                    ValueType::Quantity(unit),
+                    &location,
+                )
+            }
+            // FR-487: inside a `hyper` clause a label constant is the text of
+            // the operation it names, and `e @ t` types as `e`: the trace
+            // variable chose the object parameter's slot before typing.
+            ExprNode::Name(name)
+                if self
+                    .hyper
+                    .as_ref()
+                    .is_some_and(|hyper| hyper.labels.contains_key(&name.name)) =>
+            {
+                let text = self
+                    .hyper
+                    .as_ref()
+                    .and_then(|hyper| hyper.labels.get(&name.name))
+                    .cloned()
+                    .unwrap_or_default();
+                node(
+                    NodeKind::Literal(CheckedLiteral(Value::String(text))),
+                    ValueType::String,
+                    &location,
+                )
+            }
+            ExprNode::Indexed { read, .. } if self.hyper.is_some() => {
+                return Ok(Step::Descend(Goal::Infer(
+                    expression.at(*read),
+                    hint,
+                    location.child(0),
+                )));
+            }
+            ExprNode::StepLabel { trace, label } if self.hyper.is_some() => self.name(
+                &crate::check::hyper_clause::lowering::step_slot_name(trace, label),
+                hint.as_deref(),
+                &location,
+            )?,
+            ExprNode::Stutter if self.hyper.is_some() => node(
+                NodeKind::Literal(CheckedLiteral(Value::String(
+                    crate::check::hyper_clause::lowering::STUTTER_TEXT.to_owned(),
+                ))),
+                ValueType::String,
+                &location,
+            ),
+            ExprNode::Name(name)
+                if self
+                    .named
+                    .as_ref()
+                    .is_some_and(|named| named.is_ambiguous(&name.name)) =>
+            {
+                return Err(ambiguous_alias(&name.name, &location));
+            }
+            // FR-391: in a population position a population is no value;
+            // anywhere else outside a refinement `M::P` names nothing.
+            ExprNode::Name(name)
+                if self.populations.is_none()
+                    && !self.population_hidden(&name.name)
+                    && self
+                        .scope
+                        .known_populations
+                        .iter()
+                        .any(|known| known == &name.name) =>
+            {
+                return Err(if self.named.is_some() {
+                    CheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
+                } else {
+                    missing_segment(&name.name, &location)
+                })
+            }
+            ExprNode::Name(name) if self.population_named(&name.name).is_some() => {
+                self.population_objects(&name.name, &location)?
+            }
+            ExprNode::Name(name) => {
+                let resolved = match resolve_target(self, &name.name, &location, || Ok(())) {
+                    Ok(ResolvedTarget::UnionMember(member)) => member
+                        .admit_shape(None, &location)
+                        .map(|()| member.finish(Vec::new(), &location)),
+                    Ok(ResolvedTarget::Value(())) => {
+                        self.name(&name.name, hint.as_deref(), &location)
+                    }
+                    Err(refusal) => Err(refusal),
+                };
+                // FR-391 "Resolution": in a population position an `M::X`
+                // that names no population (a type such as `M::Counter`
+                // included) is missing at its second segment.
+                let under_alias = self
+                    .named
+                    .as_ref()
+                    .is_some_and(|named| named.is_under_alias(&name.name));
+                match resolved {
+                    Err(refusal)
+                        if under_alias && matches!(refusal.cause, CheckCause::MissingName(_)) =>
+                    {
+                        return Err(missing_segment(&name.name, &location));
+                    }
+                    Err(refusal) => return Err(qualified_name_refusal(refusal, name)),
+                    Ok(node) => node,
+                }
+            }
+            ExprNode::ProtocolReference { target } => self.protocol_reference(target, &location)?,
+            // A `hyper` clause's reads and labels have a meaning only inside
+            // the clause; S2 builds them nowhere else.
+            ExprNode::Indexed { .. } | ExprNode::StepLabel { .. } | ExprNode::Stutter => {
+                return Err(CheckRefusal {
+                    location,
+                    cause: CheckCause::Hyper(Box::new(
+                        crate::check::hyper_clause::HyperCause::OutsideHyperClause,
+                    )),
+                });
+            }
+            ExprNode::Case(case) => {
+                return Ok(Self::case(
+                    Branches::Inferred(hint),
+                    (expression, case),
+                    location,
+                    frames,
+                ))
+            }
+            ExprNode::Let { name, value, body } => {
+                return Ok(Self::binding(
+                    Branches::Inferred(hint),
+                    (name, expression.at(*value), expression.at(*body)),
+                    location,
+                    frames,
+                ));
+            }
+            ExprNode::If {
+                condition,
+                then,
+                otherwise,
+            } => {
+                return Ok(Self::conditional(
+                    Branches::Inferred(hint),
+                    (
+                        expression.at(*condition),
+                        expression.at(*then),
+                        expression.at(*otherwise),
+                    ),
+                    location,
+                    frames,
+                ));
+            }
+            ExprNode::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                return self.binary(
+                    *operator,
+                    (expression.at(*left), expression.at(*right)),
+                    hint,
+                    location,
+                    frames,
+                )
+            }
+            ExprNode::Negate(operand) => {
+                // A negated `decimal(c, s)` literal takes its operand's
+                // decimal type from the expected one (FR-104-AC-16).
+                let operand = expression.at(*operand);
+                let operand_hint = hint.clone().filter(|each| {
+                    matches!(**each, ValueType::Decimal(_))
+                        && matches!(operand.node(), ExprNode::DecimalValue { .. })
+                });
+                let goal = Goal::Infer(operand, operand_hint, location.child(0));
+                return Ok(Self::unary(Unary::Negate(hint), goal, location, frames));
+            }
+            ExprNode::Power { base, exponent } => {
+                if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, exponent) {
+                    return Err(CheckRefusal {
+                        location,
+                        cause: CheckCause::IntegerOutsideI128(outside),
+                    });
+                }
+                let goal = Goal::Infer(expression.at(*base), None, location.child(0));
+                return Ok(Self::unary(
+                    Unary::Power(exponent.clone()),
+                    goal,
+                    location,
+                    frames,
+                ));
+            }
+            ExprNode::Not(operand) => {
+                let goal = Goal::Expect(
+                    expression.at(*operand),
+                    Expected::Checked(boolean()),
+                    location.child(0),
+                );
+                return Ok(Self::unary(Unary::Not, goal, location, frames));
+            }
+            ExprNode::Field { operand, field } => {
+                let operand = expression.at(*operand);
+                let operand_location = location.child(0);
+                // FR-180: an HP-1 execution variable is a typed root, not a
+                // local value. Its `self`, `result` and operation-parameter
+                // fields name the execution's own distinct binder slots.
+                if let ExprNode::Name(execution) = operand.node() {
+                    if let Some((slot, value_type)) = self
+                        .hyper
+                        .as_ref()
+                        .and_then(|hyper| hyper.executions.get(&execution.name))
+                        .and_then(|fields| fields.get(field))
+                    {
+                        return Ok(Step::Typed(node(
+                            NodeKind::Local(*slot),
+                            value_type.clone(),
+                            &location,
+                        )));
+                    }
+                }
+                if let ExprNode::Deref(reference) = operand.node() {
+                    let reference = operand.at(*reference);
+                    self.enter(&operand_location)?;
+                    let reference_location = operand_location.child(0);
+                    frames.push(Frame::Attribute(Box::new(AttributeFrame {
+                        field,
+                        operand_location,
+                        location,
+                    })));
+                    return Ok(Step::Descend(Goal::Infer(
+                        reference,
+                        None,
+                        reference_location,
+                    )));
+                }
+                frames.push(Frame::Field(field, location));
+                return Ok(Step::Descend(Goal::Infer(operand, None, operand_location)));
+            }
+            ExprNode::Present(operand) => {
+                // `present(r.f)` / `present(r.f.c)` of a guarded clock
+                // place: its owner `r` is typed, the place is no value.
+                if let Some((owner, field, case, depth)) =
+                    self.place_operand(expression.at(*operand))
+                {
+                    let owner_location = (0..=depth).fold(location.clone(), |at, _| at.child(0));
+                    frames.push(Frame::PlacePresence(field, case, location));
+                    return Ok(Step::Descend(Goal::Infer(owner, None, owner_location)));
+                }
+                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                return Ok(Self::unary(Unary::Present, goal, location, frames));
+            }
+            ExprNode::Value(operand) => {
+                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                return Ok(Self::unary(Unary::Value, goal, location, frames));
+            }
+            ExprNode::Deref(operand) => {
+                // Only `deref(r).f` is a value.
+                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                return Ok(Self::unary(Unary::Deref, goal, location, frames));
+            }
+            ExprNode::Ref(operand) => {
+                // `ref(p)`: `p` is a path of fields and selectors below a
+                // typed owner.
+                let mut path = Vec::new();
+                let mut base = expression.at(*operand);
+                let mut at = location.child(0);
+                loop {
+                    if let ExprNode::Field { operand, field } = base.node() {
+                        path.push(RefStep::Field(field.as_str()));
+                        base = base.at(*operand);
+                    } else if let ExprNode::Select { place, selector } = base.node() {
+                        path.push(RefStep::Select(base.at(*selector), at.child(1)));
+                        base = base.at(*place);
+                    } else {
+                        break;
+                    }
+                    at = at.child(0);
+                }
+                path.reverse();
+                if path.is_empty() {
+                    return Err(mismatch(&location));
+                }
+                frames.push(Frame::ClockRef(Box::new(ClockRefFrame {
+                    path,
+                    location,
+                    owner: None,
+                    selectors: Vec::new(),
+                })));
+                return Ok(Step::Descend(Goal::Infer(base, None, at)));
+            }
+            ExprNode::Select { .. } => {
+                // A selector is part of a clock place expression (FR-230
+                // "Selection"); only `ref` checks one so far, and a place
+                // read or reset by selection is not checked yet.
+                let selector = location.child(1);
+                return Err(refuse(
+                    &selector,
+                    CheckCause::UnsupportedFeature {
+                        loci: vec![selector.clone()],
+                    },
+                ));
+            }
+            ExprNode::Pre(operand) => {
+                let operand = expression.at(*operand);
+                // FR-153/FR-042 (FR-208 applies FR-042 to invariants and
+                // preconditions, naming this same cause explicitly): `pre(...)`
+                // is legal only in an operation's postcondition -- every other
+                // clause kind (a function body, its measure, an invariant, a
+                // precondition, or a bare `check_expression` call) refuses it
+                // here, before looking at `operand` at all, as
+                // `wrong_snapshot`/`forbidden-pre-read`. `wrong-anchor` is a
+                // different, catalogued cause for a different case this
+                // checker cannot see: a postcondition it does admit, evaluated
+                // at runtime over a population with no attached pre anchor
+                // (`evaluate.rs`'s `select_anchor`) -- never a `pre(...)`
+                // written in the wrong clause.
+                let relation_body = self
+                    .hyper
+                    .as_ref()
+                    .is_some_and(|hyper| !hyper.executions.is_empty());
+                if self.clause_kind != ClauseKind::Postcondition && !relation_body {
+                    return Err(refuse(
+                        &location,
+                        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead),
+                    ));
+                }
+                // FR-042's Behavior clause: "Pre is refused ... on bare
+                // parameters/constants/captures". `operand` must contain, in
+                // its own syntax, at least one form `pre(...)`'s anchor can
+                // actually act on -- see `contains_pre_eligible_read`'s own
+                // doc for exactly which forms count and why a bare `Name`
+                // (a parameter, or a `let` bound outside this very
+                // `pre(...)`) never does.
+                // FR-104: a state clause's `pre(e)` also reads `self` and
+                // fields through `self` or a parameter reference.
+                let eligible = if relation_body {
+                    relation_pre_eligible(operand, self.hyper.as_ref().expect("relation body"))
+                } else if self.in_state_clause() {
+                    self.state_pre_eligible(operand)
+                } else {
+                    contains_pre_eligible_read(operand)
+                };
+                if !eligible {
+                    return Err(refuse(
+                        &location,
+                        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead),
+                    ));
+                }
+                // FR-042-AC-3's `let s = self in pre(s.version)` analogue:
+                // an eligible read this operand does contain must not take
+                // its population operand from a `let` local captured before
+                // this `pre(...)` was reached -- see
+                // `contains_captured_pre_alias`'s own doc.
+                if self.contains_captured_pre_alias(operand, self.slots) {
+                    return Err(refuse(
+                        &location,
+                        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead),
+                    ));
+                }
+                // FR-153: `pre(e)` is identity-typed; only the anchor that
+                // `allInstances`/`lookup` read underneath it changes.
+                let goal = Goal::Infer(operand, hint, location.child(0));
+                return Ok(Self::unary(Unary::Pre, goal, location, frames));
+            }
+            // FR-104: `self` and `result` read the state clause's own
+            // bindings; outside a state clause `self` names nothing
+            // (`missing-name`) and `result` has no anchor (`wrong-anchor`).
+            ExprNode::SelfRef => self.self_reference(&location)?,
+            ExprNode::Result => self.operation_result(&location)?,
+            ExprNode::Reaches {
+                source,
+                target,
+                edge,
+                ..
+            } => {
+                let (source, target) = (expression.at(*source), expression.at(*target));
+                // FR-104 (ADR-012 §15.2): only a state clause has an
+                // observation to traverse.
+                self.model_check(
+                    super::super::state_model::Form::ReachesContext(self.in_state_clause()),
+                    &location,
+                )?;
+                let source_location = location.child(0);
+                frames.push(Frame::Reaches(Box::new(ReachesFrame {
+                    edge,
+                    location,
+                    pair: Pair::First(target, source_location.clone()),
+                })));
+                return Ok(Step::Descend(Goal::Infer(source, None, source_location)));
+            }
+            ExprNode::Call { name, arguments } => {
+                if is_option_some_constructor(&name.name) {
+                    let [argument] = arguments.as_slice() else {
+                        return Err(mismatch(&location));
+                    };
+                    let payload_hint = hint.as_deref().and_then(|value_type| {
+                        if let ValueType::Option(payload) = value_type {
+                            Some(Cow::Owned((**payload).clone()))
+                        } else {
+                            None
+                        }
+                    });
+                    let argument_location = location.child(0);
+                    return Ok(Self::unary(
+                        Unary::OptionSome(payload_hint.clone()),
+                        Goal::Infer(expression.at(*argument), payload_hint, argument_location),
+                        location,
+                        frames,
+                    ));
+                }
+                if let Some(constructor) = NativeConstructor::named(&name.name) {
+                    self.native_literal(
+                        constructor,
+                        &name.name,
+                        expression,
+                        arguments,
+                        hint.as_deref(),
+                        &location,
+                    )?
+                } else {
+                    let arity = arguments.len();
+                    let application = match resolve_target(self, &name.name, &location, || {
+                        Application::resolve(self, &name.name, arity, hint.as_deref(), &location)
+                    })
+                    .map_err(|refusal| qualified_name_refusal(refusal, name))?
+                    {
+                        ResolvedTarget::UnionMember(member) => {
+                            member.admit_shape(Some(arity), &location)?;
+                            Callee::Union(member)
+                        }
+                        ResolvedTarget::Value(application) => Callee::Value(application),
+                    };
+                    if let Callee::Value(application) = &application {
+                        if let Some(target) = application.pending_dependency_target() {
+                            self.record_dependency_reference(
+                                super::super::PendingDependencyReference {
+                                    name: name.name.clone(),
+                                    site: location.clone(),
+                                    target,
+                                },
+                            );
+                        }
+                    }
+                    let arguments: Vec<_> = arguments.iter().map(|id| expression.at(*id)).collect();
+                    let count = arguments.len();
+                    let mut order: Vec<usize> = (0..count).collect();
+                    if application.intrinsic_hint(&[]).is_some() {
+                        order.sort_by_key(|index| contextual(arguments[*index]));
+                    }
+                    return Self::application(
+                        Box::new(ApplicationFrame {
+                            application,
+                            arguments,
+                            order,
+                            location,
+                            typed: Vec::with_capacity(count),
+                            argument_types: Vec::with_capacity(count),
+                        }),
+                        frames,
+                    );
+                }
+            }
+            ExprNode::Record { name, fields } => {
+                let (key, declared) = self
+                    .record_declaration(&name.name, &location)
+                    .map_err(|refusal| qualified_name_refusal(refusal, name))?;
+                return Self::record_step(
+                    Box::new(RecordFrame {
+                        record: expression,
+                        key,
+                        declared,
+                        fields,
+                        next: 0,
+                        child: 0,
+                        supplied: declared.iter().map(|_| None).collect(),
+                        awaiting: None,
+                        location,
+                    }),
+                    frames,
+                );
+            }
+            ExprNode::Collection { kind, elements } => {
+                let collection_type = Self::collection_type(*kind, hint.as_deref(), &location)?;
+                return Ok(Self::collection(
+                    Box::new(CollectionFrame {
+                        collection_type,
+                        elements: elements.iter().map(|id| expression.at(*id)).collect(),
+                        location,
+                        typed: Vec::with_capacity(elements.len()),
+                    }),
+                    frames,
+                ));
+            }
+            ExprNode::Convert { target, operand } => {
+                let target = self.declared_target(target, &location)?;
+                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                return Ok(Self::unary(Unary::Convert(target), goal, location, frames));
+            }
+            ExprNode::Query {
+                query,
+                binder,
+                source,
+                body,
+            } => {
+                // `forall(e in r.q: present(e))` over a
+                // `Sequence<Option<Clock>>` place: its owner is typed, the
+                // place is no value (FSpec FR-415-AC-20).
+                if let Some((owner, field, all)) = self.slot_presence_operand(expression) {
+                    let owner_location = location.child(0).child(0);
+                    frames.push(Frame::SlotPresence(field, all, location));
+                    return Ok(Step::Descend(Goal::Infer(owner, None, owner_location)));
+                }
+                let source_location = location.child(0);
+                // FR-391: a quantifier ranges over a named population.
+                let domain = match query {
+                    BinderQuery::Forall | BinderQuery::Exists => {
+                        self.named_domain(expression.at(*source), binder, &source_location)?
+                    }
+                    BinderQuery::Map | BinderQuery::Filter | BinderQuery::FlatMap => None,
+                };
+                frames.push(Frame::Query(Box::new(QueryFrame {
+                    query: *query,
+                    binder,
+                    body: expression.at(*body),
+                    location,
+                    source: None,
+                })));
+                return Ok(match domain {
+                    Some(domain) => Step::Typed(domain),
+                    None => {
+                        Step::Descend(Goal::Infer(expression.at(*source), None, source_location))
+                    }
+                });
+            }
+            ExprNode::Flatten(source) => {
+                let goal = Goal::Infer(expression.at(*source), None, location.child(0));
+                return Ok(Self::unary(Unary::Flatten, goal, location, frames));
+            }
+            ExprNode::Accumulate {
+                accumulator_type_span: _,
+                form,
+                accumulator_type,
+                accumulator,
+                binder,
+                source,
+                step,
+                identity,
+            } => {
+                let value_type = self.type_named(accumulator_type, &location)?;
+                let source_location = location.child(0);
+                frames.push(Frame::Accumulate(Box::new(AccumulateFrame {
+                    form: *form,
+                    value_type,
+                    accumulator,
+                    binder,
+                    step: expression.at(*step),
+                    identity: identity.map(|identity| expression.at(identity)),
+                    location,
+                    stage: AccumulateStage::Source,
+                })));
+                return Ok(Step::Descend(Goal::Infer(
+                    expression.at(*source),
+                    None,
+                    source_location,
+                )));
+            }
+            ExprNode::Count {
+                result_type_span: _,
+                result_type,
+                binder,
+                source,
+                predicate,
+            } => {
+                return self.tally(
+                    Tally::Count,
+                    (result_type, binder),
+                    (expression.at(*source), expression.at(*predicate)),
+                    location,
+                    frames,
+                )
+            }
+            ExprNode::Sum {
+                result_type_span: _,
+                result_type,
+                binder,
+                source,
+                summand,
+            } => {
+                return self.tally(
+                    Tally::Sum,
+                    (result_type, binder),
+                    (expression.at(*source), expression.at(*summand)),
+                    location,
+                    frames,
+                );
+            }
+            ExprNode::Population {
+                form,
+                binder,
+                population,
+                population_span,
+                condition,
+                body,
+            } => {
+                return self.population_form(
+                    (*form, binder, population, *population_span),
+                    (
+                        condition.map(|id| expression.at(id)),
+                        body.map(|id| expression.at(id)),
+                    ),
+                    location,
+                    frames,
+                );
+            }
+            ExprNode::Seq {
+                binder,
+                low,
+                high,
+                body,
+            } => {
+                if self.populations.is_none() {
+                    return Err(refuse(
+                        &location,
+                        CheckCause::PopulationFormOutsideRefinement,
+                    ));
+                }
+                let low_location = location.child(0);
+                frames.push(Frame::Seq(Box::new(SeqFrame {
+                    binder,
+                    high: expression.at(*high),
+                    body: expression.at(*body),
+                    location,
+                    stage: SeqStage::Low,
+                })));
+                return Ok(Step::Descend(Goal::Infer(
+                    expression.at(*low),
+                    None,
+                    low_location,
+                )));
+            }
+            ExprNode::Size(operand) => {
+                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                return Ok(Self::unary(Unary::Size, goal, location, frames));
+            }
+            ExprNode::DropFirst(operand) => {
+                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                return Ok(Self::unary(Unary::DropFirst, goal, location, frames));
+            }
+            ExprNode::Contains { collection, item } | ExprNode::RemoveOne { collection, item } => {
+                let form = if matches!(expression.node(), ExprNode::Contains { .. }) {
+                    ProbeForm::Contains
+                } else {
+                    ProbeForm::RemoveOne
+                };
+                let collection_location = location.child(0);
+                frames.push(Frame::Contains(Box::new(ContainsFrame {
+                    form,
+                    item: expression.at(*item),
+                    location,
+                    collection: None,
+                })));
+                return Ok(Step::Descend(Goal::Infer(
+                    expression.at(*collection),
+                    None,
+                    collection_location,
+                )));
+            }
+            ExprNode::AllInstances { target, population } => {
+                let target = self.population_target(target, &location)?;
+                let population_location = location.child(0);
+                let named = self.named_operand(expression.at(*population), &population_location)?;
+                let goal = Goal::Infer(expression.at(*population), None, population_location);
+                let step = Self::unary(Unary::AllInstances(target), goal, location, frames);
+                return Ok(named.map_or(step, Step::Typed));
+            }
+            ExprNode::Lookup {
+                target,
+                population,
+                reference,
+                absence,
+            } => {
+                let target = self.population_target(target, &location)?;
+                let population_location = location.child(0);
+                let named = self.named_operand(expression.at(*population), &population_location)?;
+                frames.push(Frame::Lookup(Box::new(LookupFrame {
+                    target,
+                    reference: expression.at(*reference),
+                    absence: *absence,
+                    location,
+                    population: None,
+                })));
+                return Ok(match named {
+                    Some(named) => Step::Typed(named),
+                    None => Step::Descend(Goal::Infer(
+                        expression.at(*population),
+                        None,
+                        population_location,
+                    )),
+                });
+            }
+            ExprNode::Dispatch {
+                receiver,
+                member,
+                arguments,
+            } => {
+                self.dispatch_admitted(&location)?;
+                let receiver_location = location.child(0);
+                let frame = Frame::Dispatch(Box::new(DispatchFrame {
+                    member,
+                    arguments: arguments.iter().map(|id| expression.at(*id)).collect(),
+                    location,
+                }));
+                let receiver = expression.at(*receiver);
+                if let ExprNode::Deref(inner) = receiver.node() {
+                    let inner = receiver.at(*inner);
+                    self.enter(&receiver_location)?;
+                    frames.push(frame);
+                    let inner_location = receiver_location.child(0);
+                    return Ok(Step::Descend(Goal::Infer(inner, None, inner_location)));
+                }
+                frames.push(frame);
+                return Ok(Step::Descend(Goal::Infer(
+                    receiver,
+                    None,
+                    receiver_location,
+                )));
+            }
+            // FR-063/S2 seam: no arm for `ExprNode::__SeamProbe`
+            // under `--cfg seam_probe` alone -- this match is deliberately
+            // non-exhaustive (`E0004`) in `xtask seam-probe`'s build of
+            // `fsl-semantics`, the seam probe's evidence for "the check seam
+            // over the parsed form enum" (ADR-012 §5.1 row S2). Do not add a
+            // catch-all to make it compile (this function's own
+            // `#[deny(clippy::wildcard_enum_match_arm)]` already forbids
+            // that for every other arm).
+            //
+            // The arm below exists only in the probe's build of the crates
+            // that depend on this one (`--cfg seam_probe --cfg
+            // seam_probe_downstream`), the same shape `FamilyKind::
+            // catalog_code_prefix`'s own doc explains.
+            #[cfg(seam_probe_downstream)]
+            ExprNode::__SeamProbe => unreachable!("never constructed outside the probe build"),
+        };
+        Ok(Step::Typed(typed))
+    }
+
+    /// Start `left op right`: a connective checks both operands Boolean;
+    /// any other operator types its operands as a pair.
+    /// The bit-exact IEEE literal, using its same-width expected type's
+    /// rounding mode and strict `exact` otherwise.
+    fn ieee_literal(
+        &self,
+        width: IeeeWidth,
+        bits: u64,
+        hint: Option<&ValueType>,
+        location: &Location,
+    ) -> Result<Node, CheckRefusal> {
+        let rounding = match hint {
+            Some(ValueType::Float(float)) if float.width() == width => float.rounding(),
+            Some(_) => return Err(mismatch(location)),
+            None => RoundingMode::Exact,
+        };
+        if self.scope.ieee_profile.is_none() {
+            return Err(refuse(location, CheckCause::IeeeProfileNotAdmitted));
+        }
+        let value = match width {
+            IeeeWidth::Binary32 => IeeeValue::binary32(bits as u32),
+            IeeeWidth::Binary64 => IeeeValue::binary64(bits),
+        };
+        Ok(node(
+            NodeKind::Literal(CheckedLiteral(Value::Float(value))),
+            ValueType::Float(FloatType::new(width, rounding)),
+            location,
+        ))
+    }
+
+    fn binary<'e, 'r>(
+        &mut self,
+        operator: BinaryOperator,
+        (left, right): (ExprRef<'e>, ExprRef<'e>),
+        hint: Option<Want<'r>>,
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        let (left_location, right_location) = (location.child(0), location.child(1));
+        let peer = match operator {
+            BinaryOperator::IntegerDiv
+            | BinaryOperator::IntegerRem
+            | BinaryOperator::IntegerMod => {
+                if !self.complete_value {
+                    return Err(refuse(
+                        &location,
+                        CheckCause::ProfileProhibitedOperator(operator),
+                    ));
+                }
+                PeerOperator::IntegerDivision(match operator {
+                    BinaryOperator::IntegerDiv => IntegerDivisionOperator::Div,
+                    BinaryOperator::IntegerRem => IntegerDivisionOperator::Rem,
+                    BinaryOperator::IntegerMod => IntegerDivisionOperator::Mod,
+                    _ => return Err(ineligible(&location)),
+                })
+            }
+            BinaryOperator::Add
+            | BinaryOperator::Subtract
+            | BinaryOperator::Multiply
+            | BinaryOperator::Divide => PeerOperator::Arithmetic(match operator {
+                BinaryOperator::Add => ArithmeticOperator::Add,
+                BinaryOperator::Subtract => ArithmeticOperator::Subtract,
+                BinaryOperator::Multiply => ArithmeticOperator::Multiply,
+                BinaryOperator::Divide => ArithmeticOperator::Divide,
+                _ => return Err(ineligible(&location)),
+            }),
+            BinaryOperator::Equal | BinaryOperator::NotEqual => {
+                PeerOperator::Equality(if operator == BinaryOperator::Equal {
+                    EqualityOperator::Equal
+                } else {
+                    EqualityOperator::NotEqual
+                })
+            }
+            BinaryOperator::Less
+            | BinaryOperator::LessOrEqual
+            | BinaryOperator::Greater
+            | BinaryOperator::GreaterOrEqual => PeerOperator::Ordering(match operator {
+                BinaryOperator::Less => OrderingOperator::Less,
+                BinaryOperator::LessOrEqual => OrderingOperator::LessOrEqual,
+                BinaryOperator::Greater => OrderingOperator::Greater,
+                BinaryOperator::GreaterOrEqual => OrderingOperator::GreaterOrEqual,
+                _ => return Err(ineligible(&location)),
+            }),
+            BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Implies => {
+                let connective = match operator {
+                    BinaryOperator::And => Connective::And,
+                    BinaryOperator::Or => Connective::Or,
+                    BinaryOperator::Implies => Connective::Implies,
+                    _ => return Err(ineligible(&location)),
+                };
+                frames.push(Frame::Connective(Box::new(ConnectiveFrame {
+                    connective,
+                    location,
+                    pair: Pair::First(right, right_location),
+                })));
+                return Ok(Step::Descend(Goal::Expect(
+                    left,
+                    Expected::Checked(boolean()),
+                    left_location,
+                )));
+            }
+        };
+        let right_first = contextual(left) && !contextual(right);
+        let ((first, first_location), (second, second_location)) =
+            ordered(right_first, (left, left_location), (right, right_location));
+        let (form, goal) = match peer {
+            PeerOperator::IntegerDivision(operator) => (
+                PeerForm::IntegerDivision {
+                    operator,
+                    pair: Pair::First(second, second_location),
+                },
+                Goal::Infer(first, None, first_location),
+            ),
+            // A float result type is the rounding mode of a contextual
+            // float literal operand (FR-397-AC-24): `float32(bits: ..) + x`
+            // under a `Float32[nearest-even]` result rounds by it.
+            // A `decimal(c, s)` literal with no typed peer takes the declared
+            // `Decimal[..]` result type and its peer then takes the
+            // literal's type (FR-104-AC-16).
+            PeerOperator::Arithmetic(operator) => {
+                let literal = matches!(first.node(), ExprNode::DecimalValue { .. });
+                let first_hint = hint.clone().filter(|each| match **each {
+                    ValueType::Float(_) => true,
+                    ValueType::Decimal(_) => literal,
+                    _ => false,
+                });
+                (
+                    PeerForm::Arithmetic {
+                        operator,
+                        hint,
+                        pair: Pair::First(second, second_location),
+                    },
+                    Goal::Infer(first, first_hint, first_location),
+                )
+            }
+            PeerOperator::Ordering(operator) => (
+                PeerForm::Ordering {
+                    operator,
+                    pair: Pair::First(second, second_location),
+                },
+                Goal::Infer(first, None, first_location),
+            ),
+            PeerOperator::Equality(operator) => {
+                let mut converted = None;
+                let goal = self.equality_operand(&mut converted, first, None, first_location)?;
+                (
+                    PeerForm::Equality {
+                        operator,
+                        pair: Pair::First(second, second_location),
+                        converted,
+                    },
+                    goal,
+                )
+            }
+        };
+        frames.push(Frame::Peer(Box::new(PeerFrame {
+            form,
+            right_first,
+            location,
+        })));
+        Ok(Step::Descend(goal))
+    }
+
+    /// Start one equality operand, hinted with its typed peer's type: a
+    /// non-collection `convert<T>(e)` is compared as converted, its own
+    /// node charged here and `converted` set to its target; a
+    /// contextual operand with a typed peer is checked as the peer's type;
+    /// any other operand is inferred.
+    fn equality_operand<'e, 'r>(
+        &mut self,
+        converted: &mut Option<(ValueType, Location)>,
+        expression: ExprRef<'e>,
+        peer: Option<Want<'r>>,
+        location: Location,
+    ) -> Result<Goal<'e, 'r>, CheckRefusal> {
+        if let ExprNode::Convert { target, operand } = expression.node() {
+            let operand = expression.at(*operand);
+            let target = self.resolve_type(target, &location)?;
+            if !matches!(target, ValueType::Collection(_)) {
+                self.enter(&location)?;
+                self.check_declared_type(&target, &location)?;
+                let operand_location = location.child(0);
+                *converted = Some((target, location));
+                return Ok(Goal::Infer(operand, None, operand_location));
+            }
+        }
+        Ok(match peer {
+            Some(peer) if contextual(expression) => {
+                Goal::Expect(expression, Expected::Checked(peer), location)
+            }
+            peer => Goal::Infer(expression, peer, location),
+        })
+    }
+
+    /// A typed equality operand and the type its peer is hinted with. A
+    /// `convert<T>(e)` operand that changes the type is a `ConvertScalar`
+    /// node of type `T`, which the stored equality compares as typed; the
+    /// pair is first checked with the operand naming the conversion. IEEE
+    /// conversion is its own checked operation rather than an exact equality
+    /// coercion.
+    fn equality_typed(
+        &mut self,
+        typed: Node,
+        converted: Option<(ValueType, Location)>,
+    ) -> Result<(TypedOperand, ValueType), CheckRefusal> {
+        match converted {
+            Some((target, location)) => {
+                if typed.value_type != target {
+                    if let Some(refusal) = self.identity_observing(
+                        &location,
+                        IdentityNode::Convert,
+                        IdentityForm::ReferenceConversion,
+                        &typed.value_type,
+                    ) {
+                        return Err(refusal);
+                    }
+                }
+                if matches!(typed.value_type, ValueType::Float(_)) {
+                    let source = typed.value_type.clone();
+                    let converted = self.convert(&target, typed, &location)?;
+                    let authored = EqualityOperand::converted(source.clone(), target.clone());
+                    return Ok((
+                        TypedOperand {
+                            node: converted,
+                            authored,
+                            checked: EqualityOperand::typed(target.clone()),
+                            stored: EqualityOperand::typed(target.clone()),
+                            source_type: source,
+                            conversion_target: Some(target.clone()),
+                        },
+                        target,
+                    ));
+                }
+                let source = typed.value_type.clone();
+                // A carried quantity is the quantity of its unit with a
+                // restricted carrier (FR-497), so the exact conversion the
+                // equality admits starts from that quantity.
+                let compared_source = match &source {
+                    ValueType::CarriedQuantity(carried) => {
+                        ValueType::Quantity(carried.unit().clone())
+                    }
+                    other => other.clone(),
+                };
+                let operand = EqualityOperand::converted(source.clone(), target.clone());
+                let compared = EqualityOperand::converted(compared_source, target.clone());
+                // A conversion that changes the type is its own typed node,
+                // so FR-093 lowers it as a `numeric.convert` operand and
+                // the equality compares at the converted type.
+                if source == target {
+                    let part = TypedOperand {
+                        node: typed,
+                        authored: operand.clone(),
+                        checked: operand.clone(),
+                        stored: operand,
+                        source_type: source,
+                        conversion_target: Some(target.clone()),
+                    };
+                    return Ok((part, target));
+                }
+                let node = node(
+                    NodeKind::ConvertScalar(operand.clone(), self.push(typed)),
+                    target.clone(),
+                    &location,
+                );
+                let stored = EqualityOperand::typed(target.clone());
+                Ok((
+                    TypedOperand {
+                        node,
+                        authored: compared.clone(),
+                        checked: compared,
+                        stored,
+                        source_type: source,
+                        conversion_target: Some(target.clone()),
+                    },
+                    target,
+                ))
+            }
+            None => {
+                let value_type = typed.value_type.clone();
+                Ok((TypedOperand::typed(typed), value_type))
+            }
+        }
+    }
+
+    /// Check a call's next argument, or build the call once every argument
+    /// is checked.
+    fn application<'e, 'r>(
+        frame: Box<ApplicationFrame<'e, 'r>>,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let position = frame.typed.len();
+        match frame.order.get(position).copied() {
+            Some(index) => {
+                let argument = frame.arguments[index];
+                let location = frame.location.child(index);
+                if let Some(hint) = frame.application.intrinsic_hint(&frame.argument_types) {
+                    frames.push(Frame::Application(frame));
+                    return Ok(Step::Descend(Goal::Infer(
+                        argument,
+                        hint.map(Cow::Owned),
+                        location,
+                    )));
+                }
+                let expected = frame.application.parameter(index);
+                frames.push(Frame::Application(frame));
+                match expected {
+                    Some(parameter) => Ok(Step::Descend(Goal::Expect(
+                        argument,
+                        Expected::Checked(Cow::Owned(parameter)),
+                        location,
+                    ))),
+                    None => Ok(Step::Descend(Goal::Infer(argument, None, location))),
+                }
+            }
+            None => {
+                let ApplicationFrame {
+                    application,
+                    location,
+                    order,
+                    typed,
+                    argument_types,
+                    ..
+                } = *frame;
+                // Back to source order.
+                let mut by_source: Vec<_> = order
+                    .into_iter()
+                    .zip(typed.into_iter().zip(argument_types))
+                    .collect();
+                by_source.sort_by_key(|(index, _)| *index);
+                let (typed, argument_types): (Vec<_>, Vec<_>) =
+                    by_source.into_iter().map(|(_, pair)| pair).unzip();
+                application
+                    .finish(typed, argument_types, &location)
+                    .map(Step::Typed)
+            }
+        }
+    }
+
+    /// Admit a record literal's initializers in source order up to the next
+    /// value to check, or build the record once every initializer is
+    /// admitted.
+    fn record_step<'e, 'r>(
+        mut frame: Box<RecordFrame<'e, 'r>>,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let fields = frame.fields;
+        while let Some((field, initializer)) = fields.get(frame.next) {
+            let initializer = *initializer;
+            frame.next += 1;
+            let field_location = match initializer {
+                FieldInitializer::Value(_) => {
+                    let at = frame.location.child(frame.child);
+                    frame.child += 1;
+                    at
+                }
+                FieldInitializer::Null => frame.location.clone(),
+            };
+            let admitted = Self::record_field(
+                frame.declared,
+                &mut frame.supplied,
+                field,
+                initializer,
+                &field_location,
+            )?;
+            if let Some((index, value_type, value)) = admitted {
+                let expression = frame.record.at(value);
+                frame.awaiting = Some(index);
+                frames.push(Frame::Record(frame));
+                return Ok(Step::Descend(Goal::Expect(
+                    expression,
+                    Expected::Checked(Cow::Borrowed(value_type)),
+                    field_location,
+                )));
+            }
+        }
+        let RecordFrame {
+            key,
+            declared,
+            supplied,
+            location,
+            ..
+        } = *frame;
+        Self::record(key, declared, supplied, &location).map(Step::Typed)
+    }
+
+    /// Check a collection literal's next element, or build the literal once
+    /// every element is checked.
+    fn collection<'e, 'r>(
+        frame: Box<CollectionFrame<'e>>,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Step<'e, 'r> {
+        let index = frame.typed.len();
+        match frame.elements.get(index).copied() {
+            Some(element) => {
+                let location = frame.location.child(index);
+                let element_type = frame.collection_type.element().clone();
+                frames.push(Frame::Collection(frame));
+                Step::Descend(Goal::Expect(
+                    element,
+                    Expected::Checked(Cow::Owned(element_type)),
+                    location,
+                ))
+            }
+            None => {
+                let CollectionFrame {
+                    collection_type,
+                    location,
+                    typed,
+                    ..
+                } = *frame;
+                let value_type = ValueType::collection(collection_type.clone());
+                Step::Typed(node(
+                    NodeKind::Collection {
+                        collection_type,
+                        elements: typed,
+                    },
+                    value_type,
+                    &location,
+                ))
+            }
+        }
+    }
+
+    /// Start `count<N>(x in c: p)` or `sum<N>(x in c: e)`: `N` names an
+    /// integer type.
+    fn tally<'e, 'r>(
+        &mut self,
+        tally: Tally,
+        (result_type, binder): (&str, &'e str),
+        (source, body): (ExprRef<'e>, ExprRef<'e>),
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let value_type = self.type_named(result_type, &location)?;
+        let admitted = match tally {
+            Tally::Count => is_integer(&value_type),
+            // FR-145: a `sum` totals any numeric family a
+            // `filament.op.collection.sum` identity exists for.
+            Tally::Sum => matches!(
+                value_type,
+                ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::Decimal(_)
+                    | ValueType::Float(_)
+                    | ValueType::Quantity(_)
+                    | ValueType::CarriedQuantity(_)
+            ),
+        };
+        if !admitted {
+            return Err(mismatch(&location));
+        }
+        if matches!(tally, Tally::Sum)
+            && matches!(value_type, ValueType::Float(_))
+            && self.scope.ieee_profile.is_none()
+        {
+            return Err(refuse(&location, CheckCause::IeeeProfileNotAdmitted));
+        }
+        let source_location = location.child(0);
+        let domain = self.named_domain(source, binder, &source_location)?;
+        frames.push(Frame::Tally(Box::new(TallyFrame {
+            tally,
+            value_type,
+            binder,
+            body,
+            location,
+            source: None,
+        })));
+        Ok(match domain {
+            Some(domain) => Step::Typed(domain),
+            None => Step::Descend(Goal::Infer(source, None, source_location)),
+        })
+    }
+
+    /// Check a dispatch call's next argument, or build the call once every
+    /// argument is checked.
+    fn dispatch_arguments<'e, 'r>(
+        &mut self,
+        frame: Box<DispatchArgumentsFrame<'e, 'r>>,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let index = frame.typed.len();
+        let operation = frame.operation;
+        match (
+            frame.arguments.get(index).copied(),
+            operation.parameters.get(index),
+        ) {
+            (Some(argument), Some(parameter)) => {
+                let location = frame.location.child(index + 1);
+                frames.push(Frame::DispatchArguments(frame));
+                Ok(Step::Descend(Goal::Expect(
+                    argument,
+                    Expected::Argument(Cow::Borrowed(parameter)),
+                    location,
+                )))
+            }
+            _ => {
+                let DispatchArgumentsFrame {
+                    receiver,
+                    operation_index,
+                    location,
+                    typed,
+                    ..
+                } = *frame;
+                let receiver = self.push(receiver);
+                self.model_node(
+                    super::super::state_model::Form::Dispatch {
+                        receiver,
+                        operation: operation_index,
+                        arguments: typed,
+                    },
+                    &location,
+                )
+                .map(Step::Typed)
+            }
+        }
+    }
+
+    /// Hand the node `typed` to `frame`, which types its next operand or
+    /// finishes its own node.
+    fn accept<'e, 'r>(
+        &mut self,
+        frame: Frame<'e, 'r>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        match frame {
+            Frame::Coerce(required) => self.coerce(typed, &required).map(Step::Typed),
+            Frame::Upcast(required, location) => {
+                self.upcast(typed, &required, &location).map(Step::Typed)
+            }
+            Frame::If(frame) => self.accept_if(frame, typed, frames),
+            Frame::Let(frame) => self.accept_let(frame, typed, frames),
+            Frame::Case(frame) => self.accept_case(frame, typed, frames),
+            Frame::Connective(frame) => Ok(self.accept_connective(frame, typed, frames)),
+            Frame::Peer(frame) => self.accept_peer(frame, typed, frames),
+            Frame::Unary(frame) => self.accept_unary(*frame, typed).map(Step::Typed),
+            // FR-104: in a state clause, a field read through a reference
+            // (`self.f`, `s.f`) is the `Attribute` node `deref(r).f` gives.
+            // FR-363: `r.name` over a relationship end of a reference is a
+            // `Navigate` node. Only a receiver that can be a model receiver
+            // reaches the `StateModel` hook; every other `x.f` is the record
+            // field read it was.
+            Frame::Field(field, location) if self.is_model_receiver(&typed.value_type, field) => {
+                let operand_location = location.child(0);
+                self.attribute(typed, field, &operand_location, &location, false)
+                    .map(Step::Typed)
+            }
+            Frame::Field(field, location) => self.field(typed, field, &location).map(Step::Typed),
+            Frame::SlotPresence(field, all, location) => self
+                .slot_presence(typed, field, all, &location)
+                .map(Step::Typed),
+            Frame::ClockRef(mut frame) => {
+                let Some(owner) = frame.owner.take() else {
+                    frame.owner = Some(typed);
+                    return self.next_selector(frame, frames);
+                };
+                frame.owner = Some(owner);
+                frame.selectors.push(typed.value_type);
+                self.next_selector(frame, frames)
+            }
+            Frame::PlacePresence(field, case, location) => self
+                .place_presence(typed, field, case, &location)
+                .map(Step::Typed),
+            Frame::Reaches(frame) => {
+                let ReachesFrame {
+                    edge,
+                    location,
+                    pair,
+                } = *frame;
+                match pair {
+                    Pair::First(target, target_location) => {
+                        frames.push(Frame::Reaches(Box::new(ReachesFrame {
+                            edge,
+                            location,
+                            pair: Pair::Second(typed),
+                        })));
+                        Ok(Step::Descend(Goal::Infer(target, None, target_location)))
+                    }
+                    Pair::Second(source) => self
+                        .reaches(source, typed, edge, &location)
+                        .map(Step::Typed),
+                }
+            }
+            Frame::Attribute(frame) => self
+                .attribute(
+                    typed,
+                    frame.field,
+                    &frame.operand_location,
+                    &frame.location,
+                    true,
+                )
+                .map(Step::Typed),
+            Frame::Application(mut frame) => {
+                // FR-347 "Function-call arguments" (QSL-1824): an integer
+                // argument whose type differs from a declared function
+                // parameter's is made explicit as the exact integer
+                // conversion, so the argument's type node is the
+                // parameter's.
+                let typed = match frame
+                    .order
+                    .get(frame.typed.len())
+                    .and_then(|index| frame.application.call_parameter(*index))
+                {
+                    Some(parameter) if integer_widens(&typed.value_type, &parameter) => {
+                        let location = typed.location.clone();
+                        self.convert(&parameter, typed, &location)?
+                    }
+                    _ => typed,
+                };
+                frame.argument_types.push(typed.value_type.clone());
+                frame.typed.push(self.push(typed));
+                Self::application(frame, frames)
+            }
+            Frame::Record(mut frame) => {
+                if let Some(index) = frame.awaiting.take() {
+                    if let Some(slot) = frame.supplied.get_mut(index) {
+                        *slot = Some(RecordSlot::<NodeId>::Present(self.push(typed)));
+                    }
+                }
+                Self::record_step(frame, frames)
+            }
+            Frame::Collection(mut frame) => {
+                frame.typed.push(self.push(typed));
+                Ok(Self::collection(frame, frames))
+            }
+            Frame::Query(frame) => self.accept_query(frame, typed, frames),
+            Frame::Accumulate(frame) => self.accept_accumulate(frame, typed, frames),
+            Frame::Tally(frame) => self.accept_tally(frame, typed, frames),
+            Frame::Population(frame) => self.accept_population(frame, typed, frames),
+            Frame::Seq(frame) => self.accept_seq(frame, typed, frames),
+            Frame::Contains(frame) => self.accept_contains(frame, typed, frames),
+            Frame::Lookup(mut frame) => match frame.population.take() {
+                None => {
+                    self.lookup_population(&typed)?;
+                    let reference_location = frame.location.child(1);
+                    let reference = frame.reference;
+                    frame.population = Some(typed);
+                    frames.push(Frame::Lookup(frame));
+                    Ok(Step::Descend(Goal::Infer(
+                        reference,
+                        None,
+                        reference_location,
+                    )))
+                }
+                Some(population) => self
+                    .lookup(
+                        &frame.target,
+                        population,
+                        typed,
+                        frame.absence,
+                        &frame.location,
+                    )
+                    .map(Step::Typed),
+            },
+            Frame::Dispatch(frame) => {
+                let DispatchFrame {
+                    member,
+                    arguments,
+                    location,
+                } = *frame;
+                let (operation_index, operation) =
+                    self.dispatch_operation(&typed, member, arguments.len(), &location)?;
+                let count = arguments.len();
+                self.dispatch_arguments(
+                    Box::new(DispatchArgumentsFrame {
+                        receiver: typed,
+                        operation_index,
+                        operation,
+                        arguments,
+                        location,
+                        typed: Vec::with_capacity(count),
+                    }),
+                    frames,
+                )
+            }
+            Frame::DispatchArguments(mut frame) => {
+                frame.typed.push(self.push(typed));
+                self.dispatch_arguments(frame, frames)
+            }
+        }
+    }
+
+    fn accept_if<'e, 'r>(
+        &mut self,
+        frame: Box<IfFrame<'e, 'r>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let IfFrame {
+            branches,
+            location,
+            stage,
+        } = *frame;
+        match stage {
+            IfStage::Condition { then, otherwise } => {
+                let goal = branches.goal(then, location.child(1));
+                frames.push(Frame::If(Box::new(IfFrame {
+                    branches,
+                    location,
+                    stage: IfStage::Then {
+                        condition: typed,
+                        otherwise,
+                    },
+                })));
+                Ok(Step::Descend(goal))
+            }
+            IfStage::Then {
+                condition,
+                otherwise,
+            } => {
+                let goal = branches.goal(otherwise, location.child(2));
+                frames.push(Frame::If(Box::new(IfFrame {
+                    branches,
+                    location,
+                    stage: IfStage::Otherwise {
+                        condition,
+                        then: typed,
+                    },
+                })));
+                Ok(Step::Descend(goal))
+            }
+            IfStage::Otherwise { condition, then } => {
+                let otherwise = typed;
+                let value_type = match branches {
+                    Branches::Expected(expected) => expected.into_type(),
+                    Branches::Inferred(_) => {
+                        if then.value_type == otherwise.value_type {
+                            then.value_type.clone()
+                        } else if is_integer(&then.value_type) && is_integer(&otherwise.value_type)
+                        {
+                            ValueType::Integer
+                        } else {
+                            return Err(mismatch(&otherwise.location));
+                        }
+                    }
+                };
+                Ok(Step::Typed(node(
+                    NodeKind::If {
+                        condition: self.push(condition),
+                        then: self.push(then),
+                        otherwise: self.push(otherwise),
+                    },
+                    value_type,
+                    &location,
+                )))
+            }
+        }
+    }
+
+    fn accept_let<'e, 'r>(
+        &mut self,
+        mut frame: Box<LetFrame<'e, 'r>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        match frame.value.take() {
+            None => {
+                let slot = self.bind(
+                    frame.name,
+                    typed.value_type.clone(),
+                    &frame.location,
+                    LocalKind::Bound,
+                )?;
+                let goal = frame.branches.goal(frame.body, frame.location.child(1));
+                frame.value = Some((typed, slot));
+                frames.push(Frame::Let(frame));
+                Ok(Step::Descend(goal))
+            }
+            Some((value, slot)) => {
+                self.unbind(1);
+                let LetFrame {
+                    branches, location, ..
+                } = *frame;
+                let body = typed;
+                let value_type = match branches {
+                    Branches::Expected(expected) => expected.into_type(),
+                    Branches::Inferred(_) => body.value_type.clone(),
+                };
+                Ok(Step::Typed(node(
+                    NodeKind::Let {
+                        slot,
+                        value: self.push(value),
+                        body: self.push(body),
+                    },
+                    value_type,
+                    &location,
+                )))
+            }
+        }
+    }
+
+    /// Hand `typed` to a `case`: its scrutinee, or the body of its open arm.
+    fn accept_case<'e, 'r>(
+        &mut self,
+        mut frame: Box<CaseFrame<'e, 'r>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        let arms = match std::mem::replace(&mut frame.stage, CaseStage::Scrutinee) {
+            CaseStage::Scrutinee => {
+                // A scrutinee refusal, including a type that is no declared
+                // union, ends the case before any arm is resolved.
+                let scope: &'a super::Scope = self.scope;
+                let union = UnionRef::of(scope.types(), &typed.value_type)
+                    .ok_or_else(|| mismatch(&typed.location))?;
+                let scrutinee = self.push(typed);
+                Box::new(CaseArms {
+                    builder: CaseBuilder::new(union, scrutinee),
+                    next: 0,
+                    open: None,
+                    result: None,
+                })
+            }
+            CaseStage::Arms(mut arms) => {
+                let open = arms
+                    .open
+                    .take()
+                    .ok_or_else(|| case_fault(&frame.location, "case-arm-body-unexpected"))?;
+                self.unbind(open.binders.len());
+                if matches!(frame.branches, Branches::Inferred(_)) {
+                    arms.result = Some(case_result(arms.result.take(), &typed)?);
+                }
+                let body = self.push(typed);
+                arms.builder.arm(open.member, open.binders, body);
+                arms
+            }
+        };
+        self.next_arm(frame, arms, frames)
+    }
+
+    /// Resolve arm heads in source order until one whose binders are typed
+    /// has a body to check, or every arm is resolved and the `case`
+    /// finishes. Recording a head refuses nothing.
+    fn next_arm<'e, 'r>(
+        &mut self,
+        mut frame: Box<CaseFrame<'e, 'r>>,
+        mut arms: Box<CaseArms<'r>>,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        while let Some(arm) = frame.case.arms.get(arms.next) {
+            let at = frame.location.child(1 + arms.next);
+            arms.next += 1;
+            let ArmHead::Resolved(member) = arms.builder.head(&arm.member.name, arm.binders.len())
+            else {
+                continue;
+            };
+            let mut binders = Vec::with_capacity(arm.binders.len());
+            for (binder, value_type) in arm.binders.iter().zip(arms.builder.payload(member)) {
+                binders.push(self.bind(&binder.name, value_type.clone(), &at, LocalKind::Bound)?);
+            }
+            let goal = frame.branches.goal(frame.expression.at(arm.body), at);
+            arms.open = Some(OpenArm { member, binders });
+            frame.stage = CaseStage::Arms(arms);
+            frames.push(Frame::Case(frame));
+            return Ok(Step::Descend(goal));
+        }
+        let CaseFrame {
+            branches, location, ..
+        } = *frame;
+        let CaseArms {
+            builder, result, ..
+        } = *arms;
+        let (scrutinee, declaration, arms) = builder.finish(&location)?;
+        let value_type = match branches {
+            Branches::Expected(expected) => expected.into_type(),
+            // Only a union with no member has no arm body to infer from.
+            Branches::Inferred(_) => result.ok_or_else(|| {
+                CheckRefusal::ill_typed(&location, IllTypedCause::AmbiguousLiteral)
+            })?,
+        };
+        Ok(Step::Typed(node(
+            NodeKind::Case {
+                scrutinee,
+                declaration,
+                arms,
+            },
+            value_type,
+            &location,
+        )))
+    }
+
+    fn accept_connective<'e, 'r>(
+        &mut self,
+        frame: Box<ConnectiveFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Step<'e, 'r> {
+        let ConnectiveFrame {
+            connective,
+            location,
+            pair,
+        } = *frame;
+        match pair {
+            Pair::First(right, right_location) => {
+                frames.push(Frame::Connective(Box::new(ConnectiveFrame {
+                    connective,
+                    location,
+                    pair: Pair::Second(typed),
+                })));
+                Step::Descend(Goal::Expect(
+                    right,
+                    Expected::Checked(boolean()),
+                    right_location,
+                ))
+            }
+            Pair::Second(left) => Step::Typed(node(
+                NodeKind::Connective(
+                    connective,
+                    ConnectiveOrigin::Authored,
+                    self.push(left),
+                    self.push(typed),
+                ),
+                ValueType::Boolean,
+                &location,
+            )),
+        }
+    }
+
+    fn accept_peer<'e, 'r>(
+        &mut self,
+        frame: Box<PeerFrame<'e, 'r>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let PeerFrame {
+            form,
+            right_first,
+            location,
+        } = *frame;
+        match form {
+            PeerForm::IntegerDivision { operator, pair } => match pair {
+                Pair::First(second, second_location) => {
+                    let peer = typed.value_type.clone();
+                    frames.push(Frame::Peer(Box::new(PeerFrame {
+                        form: PeerForm::IntegerDivision {
+                            operator,
+                            pair: Pair::Second(typed),
+                        },
+                        right_first,
+                        location,
+                    })));
+                    Ok(Step::Descend(Goal::Infer(
+                        second,
+                        Some(Cow::Owned(peer)),
+                        second_location,
+                    )))
+                }
+                Pair::Second(first) => {
+                    let (left, right) = ordered(right_first, first, typed);
+                    if !is_integer(&left.value_type) || !is_integer(&right.value_type) {
+                        return Err(mismatch(&location));
+                    }
+                    let selection = match operator {
+                        IntegerDivisionOperator::Div | IntegerDivisionOperator::Rem => {
+                            Some(self.scope.integer_division.ok_or_else(|| {
+                                refuse(
+                                    &location,
+                                    CheckCause::MissingSelection {
+                                        role: crate::check::node_key::LawRole::IntegerDivision,
+                                    },
+                                )
+                            })?)
+                        }
+                        IntegerDivisionOperator::Mod => None,
+                    };
+                    let left = self.push(left);
+                    let right = self.push(right);
+                    Ok(Step::Typed(node(
+                        NodeKind::IntegerDivision {
+                            operator,
+                            selection,
+                            left,
+                            right,
+                        },
+                        ValueType::Integer,
+                        &location,
+                    )))
+                }
+            },
+            PeerForm::Arithmetic {
+                operator,
+                hint,
+                pair,
+            } => match pair {
+                Pair::First(second, second_location) => {
+                    let peer = typed.value_type.clone();
+                    frames.push(Frame::Peer(Box::new(PeerFrame {
+                        form: PeerForm::Arithmetic {
+                            operator,
+                            hint,
+                            pair: Pair::Second(typed),
+                        },
+                        right_first,
+                        location,
+                    })));
+                    Ok(Step::Descend(Goal::Infer(
+                        second,
+                        Some(Cow::Owned(peer)),
+                        second_location,
+                    )))
+                }
+                Pair::Second(first) => {
+                    let (left, right) = ordered(right_first, first, typed);
+                    self.arithmetic(operator, left, right, hint.as_deref(), &location)
+                        .map(Step::Typed)
+                }
+            },
+            PeerForm::Ordering { operator, pair } => match pair {
+                Pair::First(second, second_location) => {
+                    let peer = typed.value_type.clone();
+                    frames.push(Frame::Peer(Box::new(PeerFrame {
+                        form: PeerForm::Ordering {
+                            operator,
+                            pair: Pair::Second(typed),
+                        },
+                        right_first,
+                        location,
+                    })));
+                    Ok(Step::Descend(Goal::Infer(
+                        second,
+                        Some(Cow::Owned(peer)),
+                        second_location,
+                    )))
+                }
+                Pair::Second(first) => {
+                    let (left, right) = ordered(right_first, first, typed);
+                    self.ordering(operator, left, right, &location)
+                        .map(Step::Typed)
+                }
+            },
+            PeerForm::Equality {
+                operator,
+                pair,
+                converted,
+            } => {
+                let (typed, peer) = self.equality_typed(typed, converted)?;
+                match pair {
+                    Pair::First(second, second_location) => {
+                        let mut converted = None;
+                        let goal = self.equality_operand(
+                            &mut converted,
+                            second,
+                            Some(Cow::Owned(peer)),
+                            second_location,
+                        )?;
+                        frames.push(Frame::Peer(Box::new(PeerFrame {
+                            form: PeerForm::Equality {
+                                operator,
+                                pair: Pair::Second(typed),
+                                converted,
+                            },
+                            right_first,
+                            location,
+                        })));
+                        Ok(Step::Descend(goal))
+                    }
+                    Pair::Second(first) => {
+                        let (left, right) = ordered(right_first, first, typed);
+                        let (left, right) = self.admit_sum_into_peer(left, right)?;
+                        self.equality(operator, left, right, &location)
+                            .map(Step::Typed)
+                    }
+                }
+            }
+        }
+    }
+
+    /// FR-381-AC-10: an `Integer`-typed arithmetic operand of `=` against an
+    /// unconverted `Int[..]` operand is admitted into that interval through
+    /// a range-obligated coercion, so `x = y + 1` over `Int[0, 3]` operands
+    /// proves `y + 1` a member or refuses `unproved-range`. Any other
+    /// `Int[..]`-against-`Integer` pair is left for the equality matrix.
+    fn admit_sum_into_peer(
+        &mut self,
+        left: TypedOperand,
+        right: TypedOperand,
+    ) -> Result<(TypedOperand, TypedOperand), CheckRefusal> {
+        let is_sum = |part: &TypedOperand| {
+            part.node.value_type == ValueType::Integer
+                && matches!(part.node.kind, NodeKind::Arithmetic(..))
+                && part.checked.target().is_none()
+        };
+        let interval = |part: &TypedOperand| match &part.node.value_type {
+            ValueType::Int(_) if part.checked.target().is_none() => {
+                Some(part.node.value_type.clone())
+            }
+            _ => None,
+        };
+        let admit = |typer: &mut Self, sum: TypedOperand, into: &ValueType| {
+            typer.coerce(sum.node, into).map(TypedOperand::typed)
+        };
+        if let (true, Some(into)) = (is_sum(&right), interval(&left)) {
+            let right = admit(self, right, &into)?;
+            return Ok((left, right));
+        }
+        if let (true, Some(into)) = (is_sum(&left), interval(&right)) {
+            let left = admit(self, left, &into)?;
+            return Ok((left, right));
+        }
+        Ok((left, right))
+    }
+
+    fn accept_unary(&mut self, frame: UnaryFrame<'_>, operand: Node) -> Result<Node, CheckRefusal> {
+        let UnaryFrame { form, location } = frame;
+        match form {
+            Unary::Negate(hint) => self.negate(operand, hint.as_deref(), &location),
+            Unary::Power(exponent) => self.power(operand, exponent, &location),
+            Unary::Not => Ok(node(
+                NodeKind::Not(self.push(operand)),
+                ValueType::Boolean,
+                &location,
+            )),
+            Unary::Present => {
+                if !matches!(operand.value_type, ValueType::Option(_)) {
+                    return Err(mismatch(&location));
+                }
+                Ok(node(
+                    NodeKind::Present(self.push(operand)),
+                    ValueType::Boolean,
+                    &location,
+                ))
+            }
+            Unary::Value => {
+                let ValueType::Option(payload) = &operand.value_type else {
+                    return Err(mismatch(&location));
+                };
+                let payload = ValueType::clone(payload);
+                Ok(node(
+                    NodeKind::Value(self.push(operand)),
+                    payload,
+                    &location,
+                ))
+            }
+            Unary::OptionSome(payload_hint) => {
+                if let Some(expected) = payload_hint {
+                    if &operand.value_type != expected.as_ref() {
+                        return Err(mismatch(&location));
+                    }
+                }
+                let value_type = ValueType::Option(Arc::new(operand.value_type.clone()));
+                Ok(node(
+                    NodeKind::OptionSome(self.push(operand)),
+                    value_type,
+                    &location,
+                ))
+            }
+            Unary::Deref => Err(mismatch(&location)),
+            Unary::Pre => {
+                let value_type = operand.value_type.clone();
+                Ok(node(
+                    NodeKind::Pre(self.push(operand)),
+                    value_type,
+                    &location,
+                ))
+            }
+            Unary::Flatten => self.flatten(operand, &location),
+            Unary::DropFirst => self.drop_first(operand, &location),
+            Unary::Size => {
+                // FR-093-AC-63: a Text operand's size is its profile length,
+                // bounded by the text type's own bounds.
+                let value_type = if let ValueType::Text(text) = &operand.value_type {
+                    int_type(
+                        Integer::from(text.min()),
+                        Integer::from(text.max()),
+                        &location,
+                    )?
+                } else {
+                    self.element_type(&operand)?;
+                    ValueType::Integer
+                };
+                Ok(node(
+                    NodeKind::Size(self.push(operand)),
+                    value_type,
+                    &location,
+                ))
+            }
+            Unary::Convert(target) => self.convert(&target, operand, &location),
+            Unary::AllInstances(target) => self.all_instances(&target, operand, &location),
+        }
+    }
+
+    fn accept_query<'e, 'r>(
+        &mut self,
+        mut frame: Box<QueryFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        match frame.source.take() {
+            None => {
+                let (slot, source_type) =
+                    self.bind_element(&typed, frame.binder, &frame.location)?;
+                let body_location = frame.location.child(1);
+                let goal = match frame.query {
+                    BinderQuery::Map | BinderQuery::FlatMap => {
+                        Goal::Infer(frame.body, None, body_location)
+                    }
+                    BinderQuery::Filter | BinderQuery::Forall | BinderQuery::Exists => {
+                        Goal::Expect(frame.body, Expected::Checked(boolean()), body_location)
+                    }
+                };
+                frame.source = Some((typed, slot, source_type));
+                frames.push(Frame::Query(frame));
+                Ok(Step::Descend(goal))
+            }
+            Some((source, slot, source_type)) => self
+                .query(
+                    frame.query,
+                    (slot, source_type),
+                    source,
+                    typed,
+                    &frame.location,
+                )
+                .map(Step::Typed),
+        }
+    }
+
+    fn accept_accumulate<'e, 'r>(
+        &mut self,
+        mut frame: Box<AccumulateFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        match std::mem::replace(&mut frame.stage, AccumulateStage::Source) {
+            AccumulateStage::Source => {
+                let (accumulator, binder, source_type) = self.bind_accumulation(
+                    (frame.form, frame.identity.is_some()),
+                    &frame.value_type,
+                    (frame.accumulator, frame.binder),
+                    &typed,
+                    &frame.location,
+                )?;
+                let goal = Goal::Infer(
+                    frame.step,
+                    Some(Cow::Owned(frame.value_type.clone())),
+                    frame.location.child(1),
+                );
+                frame.stage = AccumulateStage::Step {
+                    source: typed,
+                    accumulator,
+                    binder,
+                    source_type,
+                };
+                frames.push(Frame::Accumulate(frame));
+                Ok(Step::Descend(goal))
+            }
+            AccumulateStage::Step {
+                source,
+                accumulator,
+                binder,
+                source_type,
+            } => {
+                let raw = typed;
+                self.unbind(2);
+                let catalogued = catalogued_step(&self.body, &raw, accumulator, &frame.value_type);
+                let step = self.coerce(raw, &frame.value_type)?;
+                let fold = Fold {
+                    source,
+                    step,
+                    accumulator,
+                    binder,
+                    source_type,
+                    catalogued,
+                };
+                match frame.identity {
+                    Some(identity) => {
+                        let goal = Goal::Expect(
+                            identity,
+                            Expected::Checked(Cow::Owned(frame.value_type.clone())),
+                            frame.location.child(2),
+                        );
+                        frame.stage = AccumulateStage::Identity(fold);
+                        frames.push(Frame::Accumulate(frame));
+                        Ok(Step::Descend(goal))
+                    }
+                    None => self.fold(*frame, fold, None).map(Step::Typed),
+                }
+            }
+            AccumulateStage::Identity(fold) => {
+                self.fold(*frame, fold, Some(typed)).map(Step::Typed)
+            }
+        }
+    }
+
+    /// A `fold`/`reduce` node over its typed source, step and identity: an
+    /// unordered source needs a catalogued step.
+    fn fold(
+        &mut self,
+        frame: AccumulateFrame<'_>,
+        fold: Fold,
+        identity: Option<Node>,
+    ) -> Result<Node, CheckRefusal> {
+        if !fold.source_type.kind().is_ordered() && !fold.catalogued {
+            let node = match frame.form {
+                Accumulation::Fold => IdentityNode::Fold,
+                Accumulation::Reduce => IdentityNode::Reduce,
+            };
+            return Err(self
+                .identity_observing(
+                    &frame.location,
+                    node,
+                    IdentityForm::OrderSensitiveTraversal,
+                    &fold.source.value_type,
+                )
+                .unwrap_or_else(|| ineligible(&frame.location)));
+        }
+        Ok(node(
+            NodeKind::Fold {
+                accumulator: fold.accumulator,
+                binder: fold.binder,
+                source: self.push(fold.source),
+                step: self.push(fold.step),
+                identity: identity.map(|identity| self.push(identity)),
+            },
+            frame.value_type,
+            &frame.location,
+        ))
+    }
+
+    fn accept_tally<'e, 'r>(
+        &mut self,
+        mut frame: Box<TallyFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        match frame.source.take() {
+            None => {
+                let element = self.element_type(&typed)?;
+                let slot = self.bind(frame.binder, element, &frame.location, LocalKind::Bound)?;
+                let body_location = frame.location.child(1);
+                let goal = match frame.tally {
+                    Tally::Count => {
+                        Goal::Expect(frame.body, Expected::Checked(boolean()), body_location)
+                    }
+                    Tally::Sum => Goal::Infer(frame.body, None, body_location),
+                };
+                frame.source = Some((typed, slot));
+                frames.push(Frame::Tally(frame));
+                Ok(Step::Descend(goal))
+            }
+            Some((source, slot)) => {
+                self.unbind(1);
+                let body = typed;
+                let visit = match frame.tally {
+                    Tally::Count => Visit::Count,
+                    Tally::Sum => Visit::Sum,
+                };
+                let TallyFrame {
+                    value_type,
+                    location,
+                    ..
+                } = *frame;
+                if matches!(visit, Visit::Sum) && !summand_of_family(&value_type, &body.value_type)
+                {
+                    return Err(mismatch(&body.location));
+                }
+                Ok(Step::Typed(node(
+                    NodeKind::Query {
+                        visit,
+                        slot,
+                        source: self.push(source),
+                        body: self.push(body),
+                    },
+                    value_type,
+                    &location,
+                )))
+            }
+        }
+    }
+
+    /// The population a refinement row names `name`, when this pass reads
+    /// one (FR-139).
+    fn population_named(&self, name: &str) -> Option<&super::ScopedPopulation> {
+        self.populations
+            .as_ref()?
+            .populations
+            .iter()
+            .find(|population| population.name == name)
+    }
+
+    /// A concrete population name: the objects of the population in the
+    /// observed state, `Set<Reference<T>>` with the universe size left
+    /// symbolic (FR-139).
+    fn population_objects(&self, name: &str, location: &Location) -> Result<Node, CheckRefusal> {
+        let population = self
+            .population_named(name)
+            .ok_or_else(|| refuse(location, CheckCause::MissingName(name.to_owned())))?;
+        Ok(node(
+            NodeKind::PopulationObjects {
+                population: population.key.clone(),
+            },
+            ValueType::collection(CollectionType::new(
+                CollectionKind::Set,
+                ValueType::Reference(population.member.clone()),
+                None,
+            )),
+            location,
+        ))
+    }
+
+    /// Whether `name` is an unqualified population this clause's unit does
+    /// not see: a source population of another unit.
+    fn population_hidden(&self, name: &str) -> bool {
+        crate::check::source_model::is_unqualified(name)
+            && self
+                .named
+                .as_ref()
+                .is_some_and(|named| named.named(name).is_none())
+    }
+
+    /// Whether `name`, an unqualified source population, is also a local
+    /// binder in scope or the `binder` the form itself introduces.
+    fn shadows_source_population(&self, name: &str, binder: Option<&str>) -> bool {
+        crate::check::source_model::is_unqualified(name)
+            && (binder == Some(name) || self.local(name).is_some())
+    }
+
+    /// The population `expression` names in a population position (FR-391),
+    /// when it is a `M::P` name of one; a two-segment name under an alias
+    /// that is also an enum refuses as ambiguous.
+    fn named_population(
+        &self,
+        expression: ExprRef<'_>,
+        binder: Option<&str>,
+        location: &Location,
+    ) -> Result<Option<super::NamedPopulation>, CheckRefusal> {
+        let (Some(named), ExprNode::Name(name)) = (&self.named, expression.node()) else {
+            return Ok(None);
+        };
+        if named.is_ambiguous(&name.name) {
+            return Err(ambiguous_alias(&name.name, location));
+        }
+        match named.named(&name.name) {
+            Some(_) if self.shadows_source_population(&name.name, binder) => {
+                Err(ambiguous_source_population(&name.name, location))
+            }
+            Some(population) => Ok(Some(population.clone())),
+            None if named.is_under_alias(&name.name) => Err(missing_segment(&name.name, location)),
+            None => Ok(None),
+        }
+    }
+
+    /// The population operand `expression` of `allInstances` or `lookup`,
+    /// when it names a population in a population position (FR-391):
+    /// `Population<U>[N]`, carrying the population's declaration key.
+    fn named_operand(
+        &mut self,
+        expression: ExprRef<'_>,
+        location: &Location,
+    ) -> Result<Option<Node>, CheckRefusal> {
+        let Some(population) = self.named_population(expression, None, location)? else {
+            return Ok(None);
+        };
+        self.enter(location)?;
+        Ok(Some(population_operand(&population, location)))
+    }
+
+    /// The domain `expression` of a quantifier or tally, when it names a
+    /// population in a population position (FR-391).
+    fn named_domain(
+        &mut self,
+        expression: ExprRef<'_>,
+        binder: &str,
+        location: &Location,
+    ) -> Result<Option<Node>, CheckRefusal> {
+        let Some(population) = self.named_population(expression, Some(binder), location)? else {
+            return Ok(None);
+        };
+        self.population_domain(&population, location).map(Some)
+    }
+
+    /// A named population read as a domain (FR-391 "Lowering"):
+    /// `allInstances<U>(M::P)` for its canonical member type `U`, typed
+    /// `Set<Reference<U>>[0,N]`.
+    fn population_domain(
+        &mut self,
+        population: &super::NamedPopulation,
+        location: &Location,
+    ) -> Result<Node, CheckRefusal> {
+        self.enter(location)?;
+        let operand = population_operand(population, &location.child(0));
+        self.all_instances(
+            &ValueType::Reference(population.domain.object.clone()),
+            operand,
+            location,
+        )
+    }
+
+    /// Start `form(binder in population where c [: e])` (FR-139).
+    fn population_form<'e, 'r>(
+        &mut self,
+        (form, binder, population, population_span): (PopulationForm, &'e str, &str, Span),
+        (condition, body): (Option<ExprRef<'e>>, Option<ExprRef<'e>>),
+        location: Location,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        // FR-139 in a refinement row; FR-391 in a population position;
+        // anywhere else `M::P` names no population.
+        let source = match (&self.populations, &self.named) {
+            (Some(_), _) => self.population_objects(population, &location)?,
+            (None, Some(named)) => {
+                if named.is_ambiguous(population) {
+                    return Err(ambiguous_alias(population, &location));
+                }
+                match named.named(population).cloned() {
+                    Some(_) if self.shadows_source_population(population, Some(binder)) => {
+                        return Err(ambiguous_source_population(population, &location));
+                    }
+                    Some(named) => self.population_domain(&named, &location.child(0))?,
+                    None if named.is_under_alias(population) => {
+                        return Err(missing_segment_at(
+                            population,
+                            &location,
+                            Some(population_span),
+                        ))
+                    }
+                    None => {
+                        return Err(refuse(
+                            &location,
+                            CheckCause::PopulationFormOutsideRefinement,
+                        ))
+                    }
+                }
+            }
+            // A function body or type-level invariant: `M::P` names nothing
+            // there (FR-391); any other domain is FR-139's expression form.
+            (None, None) => {
+                return Err(refuse(
+                    &location,
+                    if self
+                        .scope
+                        .known_populations
+                        .iter()
+                        .any(|known| known == population)
+                    {
+                        return Err(missing_segment_at(
+                            population,
+                            &location,
+                            Some(population_span),
+                        ));
+                    } else {
+                        CheckCause::PopulationFormOutsideRefinement
+                    },
+                ))
+            }
+        };
+        let element = self.element_type(&source)?;
+        let slot = self.bind(binder, element, &location, LocalKind::Bound)?;
+        let (awaiting, first) = match (condition, body) {
+            (Some(condition), _) => (
+                PopulationAwait::Condition,
+                Goal::Expect(condition, Expected::Checked(boolean()), location.child(0)),
+            ),
+            (None, Some(body)) => (
+                PopulationAwait::Body,
+                Goal::Infer(body, None, location.child(0)),
+            ),
+            (None, None) => {
+                return self
+                    .finish_population(form, source, slot, None, None, &location)
+                    .map(Step::Typed)
+            }
+        };
+        frames.push(Frame::Population(Box::new(PopulationFrame {
+            form,
+            source,
+            slot,
+            body,
+            typed_condition: None,
+            awaiting,
+            location,
+        })));
+        Ok(Step::Descend(first))
+    }
+
+    fn accept_population<'e, 'r>(
+        &mut self,
+        mut frame: Box<PopulationFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        match frame.awaiting {
+            PopulationAwait::Condition => match frame.body {
+                Some(body) => {
+                    let body_location = frame.location.child(1);
+                    frame.typed_condition = Some(typed);
+                    frame.awaiting = PopulationAwait::Body;
+                    frames.push(Frame::Population(frame));
+                    Ok(Step::Descend(Goal::Infer(body, None, body_location)))
+                }
+                None => {
+                    let PopulationFrame {
+                        form,
+                        source,
+                        slot,
+                        location,
+                        ..
+                    } = *frame;
+                    self.finish_population(form, source, slot, Some(typed), None, &location)
+                        .map(Step::Typed)
+                }
+            },
+            PopulationAwait::Body => {
+                let PopulationFrame {
+                    form,
+                    source,
+                    slot,
+                    typed_condition,
+                    location,
+                    ..
+                } = *frame;
+                self.finish_population(form, source, slot, typed_condition, Some(typed), &location)
+                    .map(Step::Typed)
+            }
+        }
+    }
+
+    /// The node of a population-valued form over its typed operands
+    /// (FR-139). `count` and `sum` types leave the universe size symbolic:
+    /// they are `Integer` here, and the bound `Int[0, n]` is checked against
+    /// the type of the form's use when a subject admits its universes.
+    fn finish_population(
+        &mut self,
+        form: PopulationForm,
+        source: Node,
+        slot: Slot,
+        condition: Option<Node>,
+        body: Option<Node>,
+        location: &Location,
+    ) -> Result<Node, CheckRefusal> {
+        self.unbind(1);
+        let truth = |location: &Location| {
+            node(
+                NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+                ValueType::Boolean,
+                location,
+            )
+        };
+        let query = |typer: &mut Self, visit, source: Node, body: Node, value_type| {
+            node(
+                NodeKind::Query {
+                    visit,
+                    slot,
+                    source: typer.push(source),
+                    body: typer.push(body),
+                },
+                value_type,
+                location,
+            )
+        };
+        let tally = |typer: &mut Self, visit, value_type, source: Node, condition: Option<Node>| {
+            let body = condition.unwrap_or_else(|| truth(location));
+            query(typer, visit, source, body, value_type)
+        };
+        // FR-391: over a named population with an authored maximum `N` the
+        // bounds are `N`'s, not the universe size's.
+        let maximum = match &source.value_type {
+            ValueType::Collection(collection) => collection.bound().map(|bound| bound.maximum()),
+            _ => None,
+        };
+        let named = matches!(source.kind, NodeKind::AllInstances { .. });
+        match form {
+            PopulationForm::Count => {
+                let value_type = match (named, maximum) {
+                    (true, Some(maximum)) => {
+                        int_type(Integer::zero(), Integer::from(maximum), location)?
+                    }
+                    _ => ValueType::Integer,
+                };
+                Ok(tally(self, Visit::Count, value_type, source, condition))
+            }
+            PopulationForm::Exists => Ok(tally(
+                self,
+                Visit::Exists,
+                ValueType::Boolean,
+                source,
+                condition,
+            )),
+            PopulationForm::All => Ok(tally(
+                self,
+                Visit::Forall,
+                ValueType::Boolean,
+                source,
+                condition,
+            )),
+            PopulationForm::Sum | PopulationForm::Only => {
+                let body = body.ok_or_else(|| mismatch(location))?;
+                // A `sum` folds its condition into the summand, so each object
+                // is visited once; an `only` filters, and visits only the one
+                // object that passes again without a charge.
+                let (source, body) = match (condition, form) {
+                    (Some(condition), PopulationForm::Sum) if is_integer(&body.value_type) => {
+                        let zero = node(
+                            NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+                            ValueType::Integer,
+                            location,
+                        );
+                        let guarded = node(
+                            NodeKind::If {
+                                condition: self.push(condition),
+                                then: self.push(body),
+                                otherwise: self.push(zero),
+                            },
+                            ValueType::Integer,
+                            location,
+                        );
+                        (source, guarded)
+                    }
+                    (Some(condition), _) => {
+                        let filtered = source.value_type.clone();
+                        (
+                            query(self, Visit::Filter, source, condition, filtered),
+                            body,
+                        )
+                    }
+                    (None, _) => (source, body),
+                };
+                if form == PopulationForm::Sum {
+                    if !is_integer(&body.value_type) {
+                        return Err(refuse(
+                            &body.location,
+                            CheckCause::PopulationFormNotChecked {
+                                what: "a sum over a value that is not an integer",
+                            },
+                        ));
+                    }
+                    let value_type = match (named, maximum, self.static_range(&body)) {
+                        (true, Some(maximum), Some((low, high))) => {
+                            let count = Integer::from(maximum);
+                            let product_low = count.mul(&low);
+                            let product_high = count.mul(&high);
+                            int_type(
+                                product_low.min(Integer::zero()),
+                                product_high.max(Integer::zero()),
+                                location,
+                            )?
+                        }
+                        _ => ValueType::Integer,
+                    };
+                    Ok(query(self, Visit::Sum, source, body, value_type))
+                } else {
+                    let value_type = body.value_type.clone();
+                    Ok(query(self, Visit::Only, source, body, value_type))
+                }
+            }
+        }
+    }
+
+    fn accept_seq<'e, 'r>(
+        &mut self,
+        mut frame: Box<SeqFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        match std::mem::replace(&mut frame.stage, SeqStage::Low) {
+            SeqStage::Low => {
+                if !is_integer(&typed.value_type) {
+                    return Err(mismatch(&typed.location));
+                }
+                let high = frame.high;
+                let high_location = frame.location.child(1);
+                frame.stage = SeqStage::High {
+                    low: Box::new(typed),
+                };
+                frames.push(Frame::Seq(frame));
+                Ok(Step::Descend(Goal::Infer(high, None, high_location)))
+            }
+            SeqStage::High { low } => {
+                if !is_integer(&typed.value_type) {
+                    return Err(mismatch(&typed.location));
+                }
+                let (binder_type, maximum) = seq_binder(
+                    (self.static_range(&low), self.static_range(&typed)),
+                    &frame.location,
+                )?;
+                let slot =
+                    self.bind(frame.binder, binder_type, &frame.location, LocalKind::Bound)?;
+                let body = frame.body;
+                let body_location = frame.location.child(2);
+                frame.stage = SeqStage::Body {
+                    low,
+                    high: Box::new(typed),
+                    slot,
+                    maximum,
+                };
+                frames.push(Frame::Seq(frame));
+                Ok(Step::Descend(Goal::Infer(body, None, body_location)))
+            }
+            SeqStage::Body {
+                low,
+                high,
+                slot,
+                maximum,
+            } => {
+                self.unbind(1);
+                let location = frame.location.clone();
+                let bound = maximum
+                    .map(|maximum| super::bound(0, maximum, &location))
+                    .transpose()?;
+                let value_type = ValueType::collection(CollectionType::new(
+                    CollectionKind::Sequence,
+                    typed.value_type.clone(),
+                    bound,
+                ));
+                self.check_declared_type(&value_type, &location)?;
+                Ok(Step::Typed(node(
+                    NodeKind::Seq {
+                        slot,
+                        low: self.push(*low),
+                        high: self.push(*high),
+                        body: self.push(typed),
+                    },
+                    value_type,
+                    &location,
+                )))
+            }
+        }
+    }
+
+    fn accept_contains<'e, 'r>(
+        &mut self,
+        mut frame: Box<ContainsFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        match frame.collection.take() {
+            None => {
+                let element = self.element_type(&typed)?;
+                let goal = Goal::Expect(
+                    frame.item,
+                    Expected::Checked(Cow::Owned(element.clone())),
+                    frame.location.child(1),
+                );
+                frame.collection = Some((typed, element));
+                frames.push(Frame::Contains(frame));
+                Ok(Step::Descend(goal))
+            }
+            Some((collection, element)) => match frame.form {
+                ProbeForm::Contains => self.contains(collection, typed, element, &frame.location),
+                ProbeForm::RemoveOne => {
+                    self.remove_one(collection, typed, element, &frame.location)
+                }
+            }
+            .map(Step::Typed),
+        }
+    }
+}

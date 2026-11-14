@@ -3,23 +3,23 @@ id: FR-262
 title: "Evaluate, key and handle values and calls at any depth"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-027
+  - target: ix://agent-ix/filament-spec-language/US-027
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/NFR-015
+  - target: ix://agent-ix/filament-spec-language/NFR-015
     type: references
 ---
 # FR-262: Evaluate, key and handle values and calls at any depth
@@ -28,12 +28,12 @@ relationships:
 
 The S6a evaluator and simulation SHALL evaluate calls of any depth and
 handle values and value types of any depth, bounded by the execution budget
-under `quire.value.accounting/v1` (ADR-030 D-4.7). QSpec FR-146 defines
+under `filament.value.accounting/v1` (ADR-030 D-4.7). FSpec FR-146 defines
 execution fuel as the `work_units` limit, with one `function.call` charge per
-call and no call-depth counter; this requirement carries it through QSL's
+call and no call-depth counter; this requirement carries it through FSL's
 evaluator.
 
-The QSL-owned shared evaluation-core interface SHALL own resumable application
+The FSL-owned shared evaluation-core interface SHALL own resumable application
 state, the scheduler step and execution fuel for interpreted checked expressions
 and registered generated host bodies. This specifies a required interface;
 leaf extraction and host registration are not claimed to be implemented.
@@ -44,16 +44,16 @@ leaf extraction and host registration are not claimed to be implemented.
    explicit heap task stack, so no evaluation step uses native recursion
    whose depth grows with the input.
 2. **Fuel.** Each call SHALL charge `function.call` under
-   `quire.value.accounting/v1`. When a charge would exceed `work_units`, the
+   `filament.value.accounting/v1`. When a charge would exceed `work_units`, the
    evaluator SHALL return `incomplete { limit_kind: work_units, ... }` at the
    denied charge, naming the counter, which is its setting.
-3. **Iterative value types.** `quire_exact::ValueType` SHALL clone, compare,
+3. **Iterative value types.** `filament_exact::ValueType` SHALL clone, compare,
    hash, format for debug and drop over an explicit heap stack, as
-   `quire_exact::Value` does, including on `no_std` targets.
+   `filament_exact::Value` does, including on `no_std` targets.
 4. **State keys.** A simulation state key and a transition identity SHALL be
    written into `quire-canonical`'s canonical writer from an explicit stack
    through an event-source bound on `TransitionSystem::Key` and
-   `TransitionId`. `quire_exact::Value` SHALL implement that bound
+   `TransitionId`. `filament_exact::Value` SHALL implement that bound
    iteratively, and a key of fixed shape SHALL implement it through its
    `FixedShape` serde path (FR-259).
 5. **Exploration limits.** Simulation SHALL keep its exploration limits
@@ -61,11 +61,11 @@ leaf extraction and host registration are not claimed to be implemented.
 
 ### Ownership and admission
 
-The shared interface belongs to QSL, in a leaf crate in its own repository:
-`quire-eval` in `agent-ix/quire-eval`, at ADR-011 layer E
-([FR-401](FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md),
+The shared interface belongs to FSL, in a leaf crate in its own repository:
+`filament-eval` in `agent-ix/filament-eval`, at ADR-011 layer E
+([FR-401](FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md),
 which also places every type the interface names).
-It SHALL use `core` and `alloc` and forbid unsafe code. QSL's existing std
+It SHALL use `core` and `alloc` and forbid unsafe code. FSL's existing std
 evaluator remains the semantic reference behind that interface. The interface
 deliverable (IR-583) and checked-term separation (IR-586) are independent of
 each other; the no_std evaluator implementation behind the interface is a
@@ -75,14 +75,14 @@ depending on evaluator internals.
 
 For this extraction, [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)'s
 layer 5 remains the S6a family, simulation and checked-package adapter owner.
-The shared core sits below it, without dependencies on QSL's checker, package,
+The shared core sits below it, without dependencies on FSL's checker, package,
 model-intake, routing, replay or backend crates. Separating constructor-private
 checked-term types and runtime model-admission dependencies from the checker
 precedes extraction of the no_std evaluator implementation, rather than
 definition of the interface. That separation SHALL preserve checking authority, source
 locations, declaration identities, model correspondence and proof closure.
 [FR-400](FR-400-separate-checked-terms-from-the-checker.md) states that
-separation: the `quire-checked` crate at ADR-011 layer C, the types it holds,
+separation: the `filament-checked` crate at ADR-011 layer C, the types it holds,
 the source-location representation, the checker's sole construction
 authority and the checks that prove each.
 
@@ -151,10 +151,10 @@ Begin SHALL take no `Cancel` of its own. Cancellation reaches a session
 only through its meter's installed handle, which is the handle the caller
 cancels; a session whose meter has no installed handle cannot be cancelled.
 For a callable root, the checked-closure contract's
-`root_call_site(&NodeKey) -> Option<quire_semantic_value::location::Location>`
+`root_call_site(&NodeKey) -> Option<filament_semantic_value::location::Location>`
 accessor SHALL return the
-`quire_semantic_value::location::Location` of that callable's checked body
-root node from the package that declares it. In QSL this is the location
+`filament_semantic_value::location::Location` of that callable's checked body
+root node from the package that declares it. In FSL this is the location
 `CheckedGraph::function_by_identity(callable).body.location()` reads from the
 declaring checked package, including an imported dependency; it carries the
 checker's `Origin::Body { function, index }` and root path. The core SHALL
@@ -166,7 +166,7 @@ handle. It SHALL NOT accept a caller-provided location for Begin, synthesize
 one from a function name or package id, use the selected unit's location for
 an imported callable, or substitute a nested `ChildRequest.site`. If an
 admitted callable has no checked body root location, Begin SHALL return
-`CallFailure::Fault` with stage `quire-eval` and invariant
+`CallFailure::Fault` with stage `filament-eval` and invariant
 `root-call-site-absent`, no session or charge, leaving the registry open.
 Begin's argument admission, for a callable's arguments and for a checked
 expression's parameter values, SHALL take the session's meter. The
@@ -209,7 +209,7 @@ member of its parameter's `ValueType`. For a `Population<T>[N]` parameter,
 membership is decided as Begin decides it: the environment contract resolves
 the argument's `PopulationId`, and the resolved binding's declared maximum
 must equal the parameter's
-([FR-403](FR-403-implement-the-no-std-evaluator-in-quire-eval.md) argument
+([FR-403](FR-403-implement-the-no-std-evaluator-in-filament-eval.md) argument
 admission check 2). For every other parameter, membership is decided in the
 type environment of the session's checked closure. Neither check uses a
 supplied-value run: each charges neither the meter nor a supplied-value
@@ -219,7 +219,7 @@ these checks, including a `Population` argument whose `PopulationId` the
 environment does not resolve or whose binding's declared maximum differs, is a
 broken invariant of the requesting body, not caller input:
 the session SHALL terminate with `CallFailure::Fault` carrying an
-`InternalFault` whose stage is `quire-eval` and whose invariant is
+`InternalFault` whose stage is `filament-eval` and whose invariant is
 `child-request-not-admitted`, category `internal failure`
 ([FR-090](FR-090-return-a-family-outcome-or-a-typed-family-refusal.md)). It
 terminates before the child's `function.call` charge, invokes no callee body,
@@ -247,7 +247,7 @@ latency guarantee is allocated here.
 
 ### Fuel and terminal boundaries
 
-All frames and bodies SHALL use the same existing `quire.value.accounting/v1`
+All frames and bodies SHALL use the same existing `filament.value.accounting/v1`
 meter, including its non-work counters. Fuel is its `work_units` limit, not a
 second budget or scheduler-step count. Source arguments SHALL evaluate left to
 right before completed-input validation. Validation SHALL precede
@@ -277,7 +277,7 @@ the handle reads `tripped()` and returns its own cancelled failure, as FR-276
 states. A cancellation made between two steps is observed at the next charge;
 a transition that makes no charge runs to its end. The core returns
 `CallFailure::Cancelled` only as a pre-charge Begin failure from the
-supplied-value run ([FR-403](FR-403-implement-the-no-std-evaluator-in-quire-eval.md)).
+supplied-value run ([FR-403](FR-403-implement-the-no-std-evaluator-in-filament-eval.md)).
 When the session terminates with completion, refusal, undefinedness,
 incomplete, fault or storage failure, the core SHALL release suspended frames without executing
 continuations.
@@ -307,35 +307,35 @@ and JIT preparation retain their existing contracts.
 | FR-262-AC-8 | A body performs charged work, saves a local, requests a child and continues with its returned value. Each body transition and child occurs exactly once across steps; prepared-entry execution matches the synchronous reference, including a kernel loss record, and unsupported preparation stays a pre-application disposition. | Test |
 | FR-262-AC-9 | An interface crate with only a std reference adapter does not satisfy RT's complete evaluator migration. That migration consumes the shared implementation with std disabled on RT's governed no_std target, supplies checked-input and generated-body evaluation through this interface, and leaves no RT-local evaluator copy or compatibility re-export. | Inspection |
 | FR-262-AC-10 | Begin takes no `Cancel` argument. With a meter whose installed handle is cancelled with `Deadline` at the first kernel charge a registered body makes, the session terminates with that charge's located incomplete result (`limit_kind: work_units`, `limit` equal to `consumed`), not `CallFailure::Cancelled`; `tripped()` returns `Deadline`. With the handle cancelled at a `function.call` charge, the result has the same form at that charge. When a caller cancels between two steps and the next transition makes no charge, that transition runs and the session terminates at the first charge after it. | Test |
-| FR-262-AC-11 | A registered body requests, in five runs: a `NodeKey` that no function of the closure has; the admitted `f(x: Int[0, 9]): Boolean` with two arguments; `f` with the argument `10`; a function `h(p: Population<T>[3]): Boolean` with a `Population` value whose `PopulationId` the environment does not resolve; and `h` with a `Population` value the environment resolves to a binding of declared maximum `4`. Each run terminates with `CallFailure::Fault` whose `InternalFault` has stage `quire-eval` and invariant `child-request-not-admitted`, category `internal failure`. The run makes no `function.call` charge for the child, invokes no callee body, does not resume the requesting body, and keeps the charges made before the request. In a sixth run, `h` requested with a `Population` value the environment resolves to a binding of declared maximum `3` is applied, with one `function.call` charge for it. Begin of `f` with two arguments returns `CallFailure::Input(InputRefusal::Arity)`, and Begin of `f` with `10` returns `CallFailure::Input` from argument admission, each with no charge. | Test |
-| FR-262-AC-12 | Begin of the admitted `g(x: Int[0, 9], y: Int[0, 9]): Boolean` with arguments `3` and `4`, and Begin of a checked expression with those two parameter values, each return `CallFailure::Cancelled` with no session, all of the meter's consumed counters zero and no `function.call` charge recorded, in two runs: the meter's installed handle cancelled with `Requested` before Begin (cause `Requested`); and the meter's handle tripping with `Deadline` at the supplied-value run's first poll point for the second argument (cause `Deadline`). With no handle cancelled, both Begins return a session; with a meter that has no installed handle, both Begins return a session. This criterion binds `quire-eval`'s Begin with contract admission only; the pre-admitted Begin, which `qsl-eval`'s `call`, `evaluate` and `call_supplied` use, is FR-401-AC-9's. | Test (TC-1191) |
-| FR-262-AC-13 | Begin of an own callable and of an imported dependency callable obtains each callable's checked body root `Location` from its declaring checked graph. After successful Begin, cancelling the meter's installed handle before the first `function.call` charge returns a terminal incomplete evaluation whose `location` is exactly that graph's checked body root location, with no admitted charge and no body invocation; a work-limit denial at that charge has the same location. An admitted callable whose closure cannot return that location makes Begin return `CallFailure::Fault` with stage `quire-eval`, invariant `root-call-site-absent`, no session or charge, and an open registry. Begin has no caller-supplied location parameter; nested child requests continue to use their own `site`. | Test |
+| FR-262-AC-11 | A registered body requests, in five runs: a `NodeKey` that no function of the closure has; the admitted `f(x: Int[0, 9]): Boolean` with two arguments; `f` with the argument `10`; a function `h(p: Population<T>[3]): Boolean` with a `Population` value whose `PopulationId` the environment does not resolve; and `h` with a `Population` value the environment resolves to a binding of declared maximum `4`. Each run terminates with `CallFailure::Fault` whose `InternalFault` has stage `filament-eval` and invariant `child-request-not-admitted`, category `internal failure`. The run makes no `function.call` charge for the child, invokes no callee body, does not resume the requesting body, and keeps the charges made before the request. In a sixth run, `h` requested with a `Population` value the environment resolves to a binding of declared maximum `3` is applied, with one `function.call` charge for it. Begin of `f` with two arguments returns `CallFailure::Input(InputRefusal::Arity)`, and Begin of `f` with `10` returns `CallFailure::Input` from argument admission, each with no charge. | Test |
+| FR-262-AC-12 | Begin of the admitted `g(x: Int[0, 9], y: Int[0, 9]): Boolean` with arguments `3` and `4`, and Begin of a checked expression with those two parameter values, each return `CallFailure::Cancelled` with no session, all of the meter's consumed counters zero and no `function.call` charge recorded, in two runs: the meter's installed handle cancelled with `Requested` before Begin (cause `Requested`); and the meter's handle tripping with `Deadline` at the supplied-value run's first poll point for the second argument (cause `Deadline`). With no handle cancelled, both Begins return a session; with a meter that has no installed handle, both Begins return a session. This criterion binds `filament-eval`'s Begin with contract admission only; the pre-admitted Begin, which `fsl-eval`'s `call`, `evaluate` and `call_supplied` use, is FR-401-AC-9's. | Test (TC-1191) |
+| FR-262-AC-13 | Begin of an own callable and of an imported dependency callable obtains each callable's checked body root `Location` from its declaring checked graph. After successful Begin, cancelling the meter's installed handle before the first `function.call` charge returns a terminal incomplete evaluation whose `location` is exactly that graph's checked body root location, with no admitted charge and no body invocation; a work-limit denial at that charge has the same location. An admitted callable whose closure cannot return that location makes Begin return `CallFailure::Fault` with stage `filament-eval`, invariant `root-call-site-absent`, no session or charge, and an open registry. Begin has no caller-supplied location parameter; nested child requests continue to use their own `site`. | Test |
 
 ## Dependencies
 
 - Shared interface ownership: QSL-682 then IR-583; checked-term extraction:
   IR-586 under FR-400, independent of the interface; no_std evaluator
   implementation: IR-590 after both and its other prerequisites. RT consumes this contract in
-  `ix://agent-ix/quire-contract-runtime/FR-273` (IR-512); its resumable-body
+  `ix://agent-ix/filament-contract-runtime/FR-273` (IR-512); its resumable-body
   implementation is downstream work.
 
 - The `std` feature, target, toolchain and `make build-no-std` gate for the
-  QSL crates on the evaluator path:
+  FSL crates on the evaluator path:
   [NFR-015](../non-functional/NFR-015-build-evaluator-crates-no-std-behind-a-default-std-feature.md).
-- The `no_std` implementation in `quire-eval`, its environment contract and
+- The `no_std` implementation in `filament-eval`, its environment contract and
   its rerun of AC-1 to AC-8, AC-10 and AC-11:
-  [FR-403](FR-403-implement-the-no-std-evaluator-in-quire-eval.md).
+  [FR-403](FR-403-implement-the-no-std-evaluator-in-filament-eval.md).
 - [ADR-030](../decisions/ADR-030-arbitrary-nesting-depth-no-fixed-caps.md)
   D-4.7 and D-6.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   defines exploration and its state keys.
 - [FR-259](FR-259-encode-identities-and-read-json-through-quire-canonical-at-any-depth.md)
   defines the event API and the fixed-shape path.
 
 ## References
 
-- QSpec FR-146 (execution fuel is `work_units`; call nesting depth is not a
+- FSpec FR-146 (execution fuel is `work_units`; call nesting depth is not a
   counter).
-- QSpec FR-460, the ecosystem depth rule (Linear STD-143, which supersedes
+- FSpec FR-460, the ecosystem depth rule (Linear STD-143, which supersedes
   STD-125).
 - Linear QSL-381.

@@ -3,9 +3,9 @@ id: TC-462
 title: "S4 emits state clause, operation anchor and frame nodes with their bodies"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-104-AC-15
+  - target: ix://agent-ix/filament-spec-language/FR-104-AC-15
     type: verifies
 ---
 # TC-462: S4 emits state clause, operation anchor and frame nodes with their bodies
@@ -20,7 +20,7 @@ Scope: FR-104-AC-15; FR-105-AC-1, FR-105-AC-2, FR-105-AC-5, FR-105-AC-8 to FR-10
 ## Test Procedure
 
 1. Spine-compile FR-108's unit without `sameIdentity` against TC-458's
-   fixture package, and decode the emitted `quire.checked-package/v2` graph.
+   fixture package, and decode the emitted `filament.checked-package/v2` graph.
 2. For each `state` node, compare its `semantic_type`, `body`,
    `dependencies` and occurrences with FR-105's Outputs table.
 3. Walk `VersionUnchanged`'s, `NoCycle`'s and `ParentOrder`'s condition
@@ -37,8 +37,8 @@ Scope: FR-104-AC-15; FR-105-AC-1, FR-105-AC-2, FR-105-AC-5, FR-105-AC-8 to FR-10
    whose frame occurrence has its region removed (FR-105-AC-9).
 7. Spine-compile step 1's unit with `constraint Low using v on
    Config::ConfigVersion at current { self.versionNumber <= 1 }` added, then
-   with `constraint` replaced by `invariant`; read each package with QSL's I2
-   read; decode (`state`, `state_clause`, `quire.op.state.clause`,
+   with `constraint` replaced by `invariant`; read each package with FSL's I2
+   read; decode (`state`, `state_clause`, `filament.op.state.clause`,
    `constraint`).
 8. Compile a unit with only an attempt naming `attemptUpdate`, then units with
    both the attempt and a point-bearing `pre` clause for `attemptUpdate`, once
@@ -69,10 +69,10 @@ Tag the tests `#[trace("TC-462", "FR-105-AC-n")]`.
   and the `ConfigVersion` node is in the frame's `dependencies`.
   `VersionUnchanged`'s anchor argument references the `operation_anchor`
   node; each invariant's references the `ConfigVersion` node. Each clause
-  application's operation is `quire.op.state.clause`.
-- Step 3: `VersionUnchanged`'s condition holds a `quire.op.state.pre`
+  application's operation is `filament.op.state.clause`.
+- Step 3: `VersionUnchanged`'s condition holds a `filament.op.state.pre`
   application over the field read of `versionNumber`. `NoCycle`'s holds a
-  `quire.op.model.reaches_field` application whose member is
+  `filament.op.model.reaches_field` application whose member is
   `{kind: "field", declaration: <ConfigVersion node>, name: "parent"}`, and
   `ParentOrder`'s `self.parent` read carries a member of the same shape.
 - Step 4: each variant gives one triple, no two share one, each triple

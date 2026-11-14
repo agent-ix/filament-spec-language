@@ -1,26 +1,26 @@
 ---
 id: FR-566
-title: "Keep QSL outcomes unchanged by a registered process plugin"
+title: "Keep FSL outcomes unchanged by a registered process plugin"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-288
+  - target: ix://agent-ix/filament-spec-language/FR-288
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-289
+  - target: ix://agent-ix/filament-spec-language/FR-289
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-281
+  - target: ix://agent-ix/filament-spec-language/FR-281
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-565
+  - target: ix://agent-ix/filament-spec-language/FR-565
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-305"
+  - target: "ix://agent-ix/filament-specification/FR-305"
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-339"
+  - target: "ix://agent-ix/filament-specification/FR-339"
     type: depends_on
 ---
-# FR-566: Keep QSL outcomes unchanged by a registered process plugin
+# FR-566: Keep FSL outcomes unchanged by a registered process plugin
 
 ## Description
 
@@ -30,28 +30,28 @@ manifests. A third-party provider arrives as a process plugin (ADR-029 PL-1),
 whose descriptor has origin `Process` (FR-288). This requirement extends
 FR-289 to that case over the FR-565 matrix.
 
-The test plugin manifest is a QSpec FR-331 manifest for the `BackendId`
-`qsl.test-plugin` that advertises (`value-validity`, `unbounded`) and nothing
+The test plugin manifest is an FSpec FR-331 manifest for the `BackendId`
+`fsl.test-plugin` that advertises (`value-validity`, `unbounded`) and nothing
 else; no FR-565 case's item has that capability. Its descriptor is built
 with `descriptor_from_manifest` and origin `Process`, as the driver builds
 one from a plugin's `hello` frame. The test plugin provider is an in-process
 stand-in that answers as FR-281-AC-14's provider does, added to `Engines`
 under that descriptor through the value-validity arm (FR-281-AC-17).
 
-For every `Case` of FR-565, QSL's typed `OutcomeDocument` (or item) SHALL be
+For every `Case` of FR-565, FSL's typed `OutcomeDocument` (or item) SHALL be
 equal across three configurations:
 
-1. an empty registry and `Engines::qsl()`, which is `run_case`'s default;
-2. a registry holding one `Linked` test descriptor, `qsl.test-linked`, built
+1. an empty registry and `Engines::fsl()`, which is `run_case`'s default;
+2. a registry holding one `Linked` test descriptor, `fsl.test-linked`, built
    with `descriptor_from_manifest` from a test manifest advertising a
-   (kind, mode) pair no case's item uses, and `Engines::qsl()`. QSL cannot
+   (kind, mode) pair no case's item uses, and `Engines::fsl()`. FSL cannot
    link CG, so it holds no Kani descriptor; the Kani configuration is the
    driver's (Overlap);
 3. configuration 2 with the test plugin's `Process` descriptor registered and
    a provider under that descriptor added to `Engines`.
 
 An item whose kind the test plugin does advertise gains exactly
-`qsl.test-plugin` in its candidate set, and every other item's candidate set
+`fsl.test-plugin` in its candidate set, and every other item's candidate set
 is unchanged (FR-289 item 3).
 
 ## Inputs
@@ -65,7 +65,7 @@ FR-286 documents and items; candidate sets (FR-075).
 
 ## Behavior
 
-- For each FR-565 case, QSL shall return equal typed documents or items in
+- For each FR-565 case, FSL shall return equal typed documents or items in
   the three configurations.
 - When a `Process` descriptor that does not advertise an item's matching
   capability is registered, layer R shall give that item the same candidate
@@ -78,8 +78,8 @@ FR-286 documents and items; candidate sets (FR-075).
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-566-AC-1 | For every `Case` of `lifecycle_matrix()`, `run_case_with` over configurations 1, 2 and 3 returns `Ok` with equal `OutcomeDocument` (or item) values and equal exit codes; FR-275-AC-1's `package` bytes are byte-equal in the three. As a control that configuration 3 is live, FR-281-AC-14's item settled `Supported(qsl.test-plugin)` runs on the test plugin provider in configuration 3 and its record names `qsl.test-plugin` with certification `trusted`. | Test (TC-1395) |
-| FR-566-AC-2 | For FR-281-AC-1's item, the candidate set in configuration 3 equals configuration 2's; for an item of a kind the test plugin advertises, configuration 3's candidate set is configuration 2's plus `qsl.test-plugin`, and registering the plugin's descriptor before or after the linked ones gives equal candidate sets. | Test (TC-1395) |
+| FR-566-AC-1 | For every `Case` of `lifecycle_matrix()`, `run_case_with` over configurations 1, 2 and 3 returns `Ok` with equal `OutcomeDocument` (or item) values and equal exit codes; FR-275-AC-1's `package` bytes are byte-equal in the three. As a control that configuration 3 is live, FR-281-AC-14's item settled `Supported(fsl.test-plugin)` runs on the test plugin provider in configuration 3 and its record names `fsl.test-plugin` with certification `trusted`. | Test (TC-1395) |
+| FR-566-AC-2 | For FR-281-AC-1's item, the candidate set in configuration 3 equals configuration 2's; for an item of a kind the test plugin advertises, configuration 3's candidate set is configuration 2's plus `fsl.test-plugin`, and registering the plugin's descriptor before or after the linked ones gives equal candidate sets. | Test (TC-1395) |
 
 ## Dependencies
 
@@ -88,13 +88,13 @@ FR-286 documents and items; candidate sets (FR-075).
 - [FR-289](FR-289-keep-results-unchanged-by-provider-installation.md): the invariants this extends.
 - [FR-281](FR-281-analyze-claims-with-in-process-engines.md): `Engines` and providers under a descriptor.
 - [FR-565](FR-565-publish-the-lifecycle-matrix-cases-the-driver-cli-half-runs.md): the cases.
-- QSpec FR-305, FR-339-AC-3.
+- FSpec FR-305, FR-339-AC-3.
 
 ## Overlap
 
 The driver repository runs the same cases through `quire`, with its Kani
 registry, and with a real process plugin executable speaking
-`quire.plugin-wire/v1` named and not named on the command line. It asserts
+`filament.plugin-wire/v1` named and not named on the command line. It asserts
 equal `ix_cli_kit` canonical JSON encodings of the documents and equal exit
 codes.
 

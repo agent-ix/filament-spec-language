@@ -3,28 +3,28 @@ id: FR-272
 title: "Fail on a second definition or copy of a canonical type"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-028
+  - target: ix://agent-ix/filament-spec-language/US-028
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-032
+  - target: ix://agent-ix/filament-spec-language/ADR-032
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-271
+  - target: ix://agent-ix/filament-spec-language/FR-271
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-059
+  - target: ix://agent-ix/filament-spec-language/FR-059
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-401
+  - target: ix://agent-ix/filament-spec-language/FR-401
     type: depends_on
 ---
 # FR-272: Fail on a second definition or copy of a canonical type
 
 ## Description
 
-QSL SHALL provide `cargo xtask canonical-types`, a gate that reads the
+FSL SHALL provide `cargo xtask canonical-types`, a gate that reads the
 canonical set from FR-271's tags and fails when a canonical type has a
 namesake inside the workspace, a re-export from a crate other than its
 owner, or a same-shaped copy in an ecosystem dependency, as ADR-032 DT-2 to
 DT-6 decide. It extends `xtask::definition_scan`. It runs on demand until M-6d
 lands, and joins `make ci` in the change after M-6d lands, once it reports
-nothing over the QSL workspace (ADR-032 R-1, FR-273-AC-1). No merge gate
+nothing over the FSL workspace (ADR-032 R-1, FR-273-AC-1). No merge gate
 waits on IR.
 
 ## Inputs
@@ -33,8 +33,8 @@ waits on IR.
   every target of every workspace member (for example `tools/arch-lint`'s
   `[[bin]] path = "main.rs"`), and every resolved package that FR-059's shared
   `graph::classify` assigns to an ecosystem repository, read from its manifest
-  directory, and the shared leaf crates `quire-exact`,
-  `quire-semantic-value`, `quire-checked` and `quire-eval`, each as its own
+  directory, and the shared leaf crates `filament-exact`,
+  `filament-semantic-value`, `filament-checked` and `filament-eval`, each as its own
   ecosystem repository wherever it is sourced from.
 - The shipped source of those directories (test code excluded, as
   `definition_scan` excludes it).
@@ -66,18 +66,18 @@ waits on IR.
   (`crate`, `self`, `super` or a child module) re-exports the crate's own
   item, which the `identifier` rule reports.
 - The gate SHALL apply the `re-export` rule only to canonical types a
-  workspace member owns; a backend's re-export of a QSL type through the
-  QSL facade is not a finding (ADR-032 DT-2, DT-5).
+  workspace member owns; a backend's re-export of an FSL type through the
+  FSL facade is not a finding (ADR-032 DT-2, DT-5).
 - If an item in an ecosystem dependency's shipped code has a canonical
   type's identifier, the same item kind and the same member names in the
   same order (field names of a struct, variant names of an enum, method
   names of a trait), then the gate SHALL report a `copy` finding. The
   comparison ignores documentation, attributes, visibility and the paths of
   member types.
-- The gate SHALL scan the shared leaves `quire-exact`,
-  `quire-semantic-value`, `quire-checked` and `quire-eval` (the last two from
-  the repository `agent-ix/quire-eval`, FR-400 and FR-401), which live in
-  their own repositories, as ecosystem dependencies in every run, QSL's
+- The gate SHALL scan the shared leaves `filament-exact`,
+  `filament-semantic-value`, `filament-checked` and `filament-eval` (the last two from
+  the repository `agent-ix/filament-eval`, FR-400 and FR-401), which live in
+  their own repositories, as ecosystem dependencies in every run, FSL's
   included, whenever the running workspace's `cargo metadata` resolves them,
   so their tags enter the canonical set, the `copy` rule holds them against
   the running workspace's code, and the `identifier` and `re-export` rules
@@ -85,11 +85,11 @@ waits on IR.
   repositories. A shared leaf the workspace does not resolve is not scanned
   and is no finding.
 - A canonical type tagged in a shared leaf is canonical in every run that
-  scans that leaf: `quire_eval::Evaluation`'s tag makes an `Evaluation`
-  namesake in a QSL workspace member an `identifier` finding.
+  scans that leaf: `filament_eval::Evaluation`'s tag makes an `Evaluation`
+  namesake in an FSL workspace member an `identifier` finding.
 - The gate SHALL take the scanned directories from `cargo metadata` and
   FR-059's `graph::classify`, so the same subcommand run in a backend's
-  workspace takes QSL's tagged crates as ecosystem dependencies and applies
+  workspace takes FSL's tagged crates as ecosystem dependencies and applies
   the `copy` rule to the backend's own code.
 - The gate SHALL report every finding it meets before it exits.
 
@@ -99,9 +99,9 @@ waits on IR.
 |----|----------|--------------|
 | FR-272-AC-1 | Over a fixture workspace whose crate K tags `pub enum Value`: a private `struct Value` in crate W and a `pub(crate) enum Value` in a nested module of W each give an `identifier` finding naming K's definition and theirs; a serde visitor's `type Value = T;` inside an `impl` in W, and a `struct Value` inside W's `#[cfg(test)]` module, give none. In crate W, `pub use v::Value`, where crate V has `pub use k::Value`, `pub use k::Value as Datum` and `pub use v::*` each give a `re-export` finding; `mod m; pub use m::Value;` in W gives only the `identifier` finding for `m`'s `Value`; `pub use k::Value` in W, a path through K's public API where K defines `Value` in a private module and re-exports it at its root, gives none. A `struct Outcome` in a workspace member whose only target is `[[bin]] path = "main.rs"` outside `src/` gives an `identifier` finding when K tags `Outcome`. | Test (TC-747) |
 | FR-272-AC-2 | Over a fixture `cargo metadata` whose ecosystem package E sits beside K: an `enum ComparisonOperator` in E whose variants match K's tagged one in name and order gives a `copy` finding, and still does with E's docs, derives, visibility and member type paths changed; with one variant renamed (`LessEqual` for `LessOrEqual`), with two variants swapped, or as a `struct` with those field names, it gives none. A package outside the ecosystem holding the same copy gives none. | Test (TC-747) |
-| FR-272-AC-3 | Backend run: a fixture backend workspace that depends on K as an ecosystem package and defines its own `pub enum Value` with K's variant names gives a `copy` finding in the backend's run, and its `pub use qsl_replay::Value as Kernel` through QSL's facade gives none. Over the QSL workspace, `quire-contract-model`'s `ValueType` gives no `copy` finding, because its members differ from the tagged kernel `ValueType`. | Test (TC-747) |
+| FR-272-AC-3 | Backend run: a fixture backend workspace that depends on K as an ecosystem package and defines its own `pub enum Value` with K's variant names gives a `copy` finding in the backend's run, and its `pub use fsl_replay::Value as Kernel` through FSL's facade gives none. Over the FSL workspace, `filament-contract-model`'s `ValueType` gives no `copy` finding, because its members differ from the tagged kernel `ValueType`. | Test (TC-747) |
 | FR-272-AC-4 | Two planted namesakes give two findings in one run, each naming both locations and its rule, and the gate exits non-zero; a fixture with no namesake, re-export or copy exits 0. | Test (TC-747) |
-| FR-272-AC-5 | Over a fixture `cargo metadata` in which `quire-eval` and `quire-checked` resolve from a git source outside the ecosystem repositories FR-059's `graph::classify` names: `quire-eval` tagging `pub struct Evaluation` puts `Evaluation` in the canonical set, a `struct Evaluation` in a workspace member gives an `identifier` finding naming both locations, a `struct Evaluation` with the same field names in another ecosystem package gives a `copy` finding, and a second `Evaluation` inside `quire-eval` itself gives none; a struct in `quire-checked` matching a canonical type tagged in the workspace by name and member names gives a `copy` finding; with neither crate resolved, the run scans neither and reports no finding for them. | Test (TC-747) |
+| FR-272-AC-5 | Over a fixture `cargo metadata` in which `filament-eval` and `filament-checked` resolve from a git source outside the ecosystem repositories FR-059's `graph::classify` names: `filament-eval` tagging `pub struct Evaluation` puts `Evaluation` in the canonical set, a `struct Evaluation` in a workspace member gives an `identifier` finding naming both locations, a `struct Evaluation` with the same field names in another ecosystem package gives a `copy` finding, and a second `Evaluation` inside `filament-eval` itself gives none; a struct in `filament-checked` matching a canonical type tagged in the workspace by name and member names gives a `copy` finding; with neither crate resolved, the run scans neither and reports no finding for them. | Test (TC-747) |
 
 ## Dependencies
 
@@ -113,11 +113,11 @@ waits on IR.
   [FR-059](FR-059-check-backend-dependency-direction.md) (ecosystem
   classification, `graph::classify`),
   [FR-400](FR-400-separate-checked-terms-from-the-checker.md) and
-  [FR-401](FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md)
-  (the `quire-checked` and `quire-eval` shared leaves).
+  [FR-401](FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md)
+  (the `filament-checked` and `filament-eval` shared leaves).
 
 ## References
 
 - Owning ticket: Linear QSL-391. Implementation: Linear QSL-13.
 - The backend lint gates that run the subcommand:
-  agent-ix/quire-contract-runtime#56 and agent-ix/quire-contract-codegen#89.
+  agent-ix/filament-contract-runtime#56 and agent-ix/filament-contract-codegen#89.

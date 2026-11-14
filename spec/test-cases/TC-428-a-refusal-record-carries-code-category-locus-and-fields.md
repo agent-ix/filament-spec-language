@@ -3,7 +3,7 @@ id: TC-428
 title: "A refusal record carries its code, category, locus and the catalog's fields"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-428: A refusal record carries its code, category, locus and the catalog's fields

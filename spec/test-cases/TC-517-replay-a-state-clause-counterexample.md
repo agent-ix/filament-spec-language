@@ -3,7 +3,7 @@ id: TC-517
 title: "The replay facade replays a state-clause counterexample and keeps its identities"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-122
+  - target: ix://agent-ix/filament-spec-language/FR-122
     type: verifies
 ---
 # TC-517: The replay facade replays a state-clause counterexample and keeps its identities
@@ -62,13 +62,13 @@ Tag the tests `#[trace("TC-517", "FR-122-AC-n")]`.
 
 - Step 1: `reproduced-with-evaluated-witness`,
   `reproduced-without-witness`, `reproduced-with-evaluated-witness`. No
-  payload carries a `witness` and no result carries an QSpec FR-351 record; each
+  payload carries a `witness` and no result carries an FSpec FR-351 record; each
   result holds the evaluated `false`. Each
   result holds the sources, `package_id`, the request's `state_clause`, the
   envelope's `clause_node` and `occurrence_key`, and the identities of the
   invocation and both snapshots, or of the one current snapshot.
 - Step 2: `inconclusive`, `Verdicts` (`violation`, `success`) twice, each
-  holding the evaluated `true` and no QSpec FR-351 record;
+  holding the evaluated `true` and no FSpec FR-351 record;
   `inconclusive`, `NoValue`.
 - Step 3: `missing_declaration`/`missing-name` twice, each naming the target.
 - Step 4: `reproduced-with-evaluated-witness`, holding the one pre

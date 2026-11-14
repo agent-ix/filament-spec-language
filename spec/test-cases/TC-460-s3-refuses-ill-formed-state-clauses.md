@@ -3,9 +3,9 @@ id: TC-460
 title: "S3 refuses ill-formed state clauses with their catalog codes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-104-AC-9
+  - target: ix://agent-ix/filament-spec-language/FR-104-AC-9
     type: verifies
 ---
 # TC-460: S3 refuses ill-formed state clauses with their catalog codes
@@ -34,8 +34,8 @@ clause shown (plus `ParentOrder` for the duplicate case).
 | 8 | `invariant G using v on Config::ConfigVersion at current { deref(value(self.parent)).versionNumber < 5 }` |
 | 9 | `function ParentOrder using v(): Boolean pure { true }` beside `ParentOrder` |
 | 10 | `function r using v(x: Config::ConfigVersion, y: Config::ConfigVersion): Boolean pure { reaches(x, y, parent) }` |
-| 11 | Under `quire.model.complete/v1`, the precondition on `ArchivedConfigVersion::probe` from TC-459 step 6, but declare `target: UnrelatedVersion` where `UnrelatedVersion` does not conform to the `ConfigVersion` edge owner. |
-| 12 | At the S3 checker seam with the same admitted subtype/edge type environment and precondition as TC-459 step 6, select an otherwise admitted model definition other than `quire.model.complete/v1`; the operands have different exact reference types. |
+| 11 | Under `filament.model.complete/v1`, the precondition on `ArchivedConfigVersion::probe` from TC-459 step 6, but declare `target: UnrelatedVersion` where `UnrelatedVersion` does not conform to the `ConfigVersion` edge owner. |
+| 12 | At the S3 checker seam with the same admitted subtype/edge type environment and precondition as TC-459 step 6, select an otherwise admitted model definition other than `filament.model.complete/v1`; the operands have different exact reference types. |
 | 13 | With TC-459 step 7's package (process `Flow` and its operation `go`): `pre M using v on Config::Flow::missing { true }` |
 
 Tag the tests `#[trace("TC-460", "FR-104-AC-n")]`.
@@ -54,7 +54,7 @@ Tag the tests `#[trace("TC-460", "FR-104-AC-n")]`.
 9. `ambiguous_declaration`/`ambiguous-name` at the clause and the function.
 10. `ill_typed`/`operator-ineligible` at the `reaches`.
 11. `ill_typed`/`operator-ineligible` at the `reaches`: the target does not
-    conform to the edge owner under QSpec FR-043.
+    conform to the edge owner under FSpec FR-043.
 12. `ill_typed`/`operator-ineligible` at the `reaches`: the complete/v1
     conformance rule is not selected and the exact-type rule applies.
 13. `missing_declaration`/`missing-name` at `missing`: `Flow` is resolved as a context and `go` is its only operation.

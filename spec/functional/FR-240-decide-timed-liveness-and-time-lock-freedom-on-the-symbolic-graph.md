@@ -3,21 +3,21 @@ id: FR-240
 title: "Decide timed liveness and time-lock freedom on the symbolic graph"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-232
+  - target: ix://agent-ix/filament-spec-language/FR-232
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-236
+  - target: ix://agent-ix/filament-spec-language/FR-236
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
 ---
 # FR-240: Decide timed liveness and time-lock freedom on the symbolic graph

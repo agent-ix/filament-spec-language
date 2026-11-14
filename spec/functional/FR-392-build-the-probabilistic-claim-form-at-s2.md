@@ -3,34 +3,34 @@ id: FR-392
 title: "Build the probabilistic claim form at S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-186
+  - target: ix://agent-ix/filament-spec-language/FR-186
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-311
+  - target: ix://agent-ix/filament-spec-language/FR-311
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-195
+  - target: ix://agent-ix/filament-spec-language/FR-195
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-204
+  - target: ix://agent-ix/filament-spec-language/FR-204
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-407
+  - target: ix://agent-ix/filament-specification/FR-407
     type: depends_on
 ---
 # FR-392: Build the probabilistic claim form at S2
 
 ## Description
 
-When a `1-draft` unit holds a `probabilistic-clause`, the production of QSpec's shared grammar (§
+When a `1-draft` unit holds a `probabilistic-clause`, the production of FSpec's shared grammar (§
 "Probabilistic, timed and real-time forms", Linear STD-137), S2
-(`qsl-forms`) SHALL build one claim form for it from S1's parse, so S3 can
-check it (FR-186, FR-195, FR-204). QSpec owns the production and its meaning (QSpec
-FR-407); this requirement specifies the form QSL builds. It completes the
+(`fsl-forms`) SHALL build one claim form for it from S1's parse, so S3 can
+check it (FR-186, FR-195, FR-204). FSpec owns the production and its meaning (FSpec
+FR-407); this requirement specifies the form FSL builds. It completes the
 S2 half of the probabilistic facet beside the declaration forms of FR-311.
 
 ## Use case
@@ -96,8 +96,8 @@ when}}` and FR-325's `TemporalFormulaForm`, which is the type of
   `probabilistic`, and no other production. The dispatch arm SHALL make
   exactly one call (FR-102-AC-4).
 - S2 SHALL build the form whether or not the unit selects the complete
-  facets. QSpec's facet rule (an unselected facet gives
-  `unsupported_construct`) applies to it, but QSL has no header layer for
+  facets. FSpec's facet rule (an unselected facet gives
+  `unsupported_construct`) applies to it, but FSL has no header layer for
   that profile, so the gate is not enforced at S2 (FR-308, FR-361 item 8).
 - S2 SHALL resolve no name (FR-310): the profile, subject, workload,
   rewards, predicates and fairness operations stay as written.
@@ -107,7 +107,7 @@ when}}` and FR-325's `TemporalFormulaForm`, which is the type of
 - S2 SHALL record each stated confidence item as written, in declared
   order, and SHALL fill no default and drop no repeat, so a claim that
   states one or two of `alpha`, `beta` and `indifference`, or one of them
-  twice, still builds. QSpec refuses a repeat and FR-186 refuses a partial
+  twice, still builds. FSpec refuses a repeat and FR-186 refuses a partial
   set, both at S3.
 - S2 SHALL add no diagnostic of its own for a well-formed CST.
 - S2 SHALL leave thresholds' ranges and units, the scheduler's validity, the
@@ -144,8 +144,8 @@ when}}` and FR-325's `TemporalFormulaForm`, which is the type of
 
 ## References
 
-- QSpec half: the shared grammar's `probabilistic-clause`,
+- FSpec half: the shared grammar's `probabilistic-clause`,
   `scheduler-clause`, `confidence`, `probabilistic-form`, `event`,
-  `measure` and `fraction` productions, and QSpec FR-407 for their meaning
+  `measure` and `fraction` productions, and FSpec FR-407 for their meaning
   (Linear STD-137).
 - Owning ticket: Linear QSL-568.

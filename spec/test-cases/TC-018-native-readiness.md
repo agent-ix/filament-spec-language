@@ -3,7 +3,7 @@ id: TC-018
 title: "Native diagnostic error interoperability"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-010
+  - target: ix://agent-ix/filament-spec-language/FR-010
     type: verifies
 ---
 

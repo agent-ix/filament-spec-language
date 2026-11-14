@@ -3,9 +3,9 @@ id: TC-1401
 title: "Check unweighted DTMC long-run documents against independent bottom components"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-199
+  - target: ix://agent-ix/filament-spec-language/FR-199
     type: verifies
 ---
 # TC-1401: Check unweighted DTMC long-run documents against independent bottom components
@@ -34,7 +34,7 @@ profile or its bounded key owner is already implemented.
    recurrent value and all harmonic V rows while leaving the predicate
    unchanged. Keep a control with correct equations and coverage.
 3. Write canonical bytes and check them in a fresh process through the
-   qualified source/document entry without linking qsl-analyze or the
+   qualified source/document entry without linking fsl-analyze or the
    provider. Apply every malformed, identity, binding and objective
    mutation of AC-29 separately. Shift all biases in one component by the
    same nonzero constant to preserve its equations but violate canonical

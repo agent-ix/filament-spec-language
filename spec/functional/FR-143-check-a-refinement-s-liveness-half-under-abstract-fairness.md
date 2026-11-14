@@ -3,21 +3,21 @@ id: FR-143
 title: "Check a refinement's liveness half under abstract fairness"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-137
+  - target: ix://agent-ix/filament-spec-language/FR-137
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: depends_on
 ---
 # FR-143: Check a refinement's liveness half under abstract fairness
@@ -25,7 +25,7 @@ relationships:
 ## Description
 
 When the abstract fairness set `F_A` is non-empty and the safety half
-holds, QSL's layer-A crate `qsl-analyze`, module `model_check`, SHALL decide the liveness half of
+holds, FSL's layer-A crate `fsl-analyze`, module `model_check`, SHALL decide the liveness half of
 a refinement in EN-1's second phase (ADR-020 RS-7, RS-10, RS-13, CO-2,
 RE-1): every behaviour of the concrete subject that is fair under `F_C`
 satisfies `F_A` on its mapped behaviour. It decomposes FR-142's retained
@@ -169,6 +169,6 @@ the concrete subject with failure `Divergence{constraint}` or
 
 ## References
 
-- The QSpec half (abstract progress through `F_A`, RS-7): QSpec FR-377 (Linear STD-133).
+- The FSpec half (abstract progress through `F_A`, RS-7): FSpec FR-377 (Linear STD-133).
 - Liveness refinement with hidden abstract fields, explored later: Linear
   QSL-380.

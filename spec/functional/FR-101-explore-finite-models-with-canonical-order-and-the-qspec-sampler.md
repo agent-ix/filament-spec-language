@@ -1,36 +1,36 @@
 ---
 id: FR-101
-title: "Explore finite models with canonical order, typed state keys and the QSpec sampler"
+title: "Explore finite models with canonical order, typed state keys and the FSpec sampler"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-201
+  - target: ix://agent-ix/filament-specification/FR-201
     type: depends_on
 ---
-# FR-101: Explore finite models with canonical order, typed state keys and the QSpec sampler
+# FR-101: Explore finite models with canonical order, typed state keys and the FSpec sampler
 
 ## Description
 
-QSpec FR-181 is the normative source for finite simulation. This requirement
-states how `qsl_eval::simulation` implements it. It adds no rule to FR-181;
-where FR-181 leaves a choice open, this requirement names QSL's choice and
+FSpec FR-181 is the normative source for finite simulation. This requirement
+states how `fsl_eval::simulation` implements it. It adds no rule to FR-181;
+where FR-181 leaves a choice open, this requirement names FSL's choice and
 says so.
 
-QSL implements these parts of FR-181:
+FSL implements these parts of FR-181:
 
 - the exploration contract's canonical successor order;
 - the simulator state key and its typed canonical form;
-- seeded sampling with the `quire.simulation.sampler/v1` generator
-  (QSpec `proposals/quire-v1/definitions/simulation-sampler.md`), selected
+- seeded sampling with the `filament.simulation.sampler/v1` generator
+  (FSpec `proposals/filament-v1/definitions/simulation-sampler.md`), selected
   by its identity;
 - trace replay;
 - the stopped outcomes: exhaustion of an exploration limit, and caller
@@ -40,7 +40,7 @@ QSL implements these parts of FR-181:
 A `TransitionSystem` implementation supplies the successor relation and
 each expanded state's findings; the engine orders, keys, explores, samples
 and replays it, and records the findings. The model-level successor
-relation (operation × finite argument domains × frame post-states, QSpec
+relation (operation × finite argument domains × frame post-states, FSpec
 FR-013-AC-1), the invariant findings of FR-181-AC-4's last clause and the
 effects of FR-181-AC-6 are
 [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)'s, through its
@@ -53,12 +53,12 @@ AC-14).
 
 - A `TransitionSystem`: its initial states and, per expanded state, an
   `Expansion` (its successors, each a transition identity and a post-state
-  in the typed canonical form of QSpec FR-181's exploration contract, and
+  in the typed canonical form of FSpec FR-181's exploration contract, and
   its findings) or an `ExpansionStop`.
 - The simulation request's parameter-domain and population types, as
   `domains: &[(WireNodeId, &ValueType)]`: each type with the wire id of the
   checked node that carries it.
-- The package's `TypeEnvironment` (`qsl_semantics`) and the extent walk's
+- The package's `TypeEnvironment` (`fsl_semantics`) and the extent walk's
   `position_limit: u64`, both passed to `classify_extent`.
 - For exploration: `Limits{max_states, max_transitions}`, the horizon
   `max_depth: Option<usize>` and a cancellation poll `impl FnMut() -> bool`.
@@ -81,7 +81,7 @@ AC-14).
   result (see "Workers"). `explore_request` has no worker count and runs
   as `workers` 1 does.
 - For sampling: a `u64` seed, a `u64` trace index, a `usize` step ceiling
-  and the sampler's `DefinitionRef` (`qsl_foundation::selection`), whose
+  and the sampler's `DefinitionRef` (`fsl_foundation::selection`), whose
   identity names the generator.
 
 ## Outputs
@@ -99,10 +99,10 @@ AC-14).
 
 ## Behavior
 
-**Entry points and owners.** Every type below is owned by `qsl-eval`
-(`qsl_eval::simulation`) unless another owner is named. `qsl-eval` reaches
+**Entry points and owners.** Every type below is owned by `fsl-eval`
+(`fsl_eval::simulation`) unless another owner is named. `fsl-eval` reaches
 only the crates ADR-011 X-8 and TC-390 list; it gains no dependency on
-`qsl-replay` or `qsl-cst`.
+`fsl-replay` or `fsl-cst`.
 
 ```rust
 pub trait TransitionSystem {
@@ -200,7 +200,7 @@ pub enum NotSimulated {
     /// The request's extent is unbounded (ADR-014 §4).
     RequiresBound(RequiresBound),
     /// `classify_extent` stopped: a node-count stage limit or an
-    /// internal fault (`qsl_semantics::family::ClassifyFailure`).
+    /// internal fault (`fsl_semantics::family::ClassifyFailure`).
     Extent(ClassifyFailure),
     /// `sampler` names a generator other than the one that runs.
     GeneratorMismatch { supplied: DefinitionRef },
@@ -215,7 +215,7 @@ pub enum NotSimulated {
 
 pub struct RequiresBound {
     /// Every unbounded domain, by key, with its kind
-    /// (`qsl_semantics::family::UnboundedDomains`).
+    /// (`fsl_semantics::family::UnboundedDomains`).
     pub domains: UnboundedDomains,
 }
 
@@ -230,7 +230,7 @@ pub struct EncodingRefusal(String);
 only public entries that explore or sample: `explore`, `sample` and the `Sampler` trait are
 `pub(crate)`, so no caller skips the requires-bound check or the
 `GeneratorMismatch` check. `replay` stays public; it explores nothing new.
-Integration tests in `qsl-eval/tests/it/` call the three entries with a
+Integration tests in `fsl-eval/tests/it/` call the three entries with a
 bounded or empty `domains` set; a check that needs draw internals is an
 in-crate unit test.
 
@@ -241,11 +241,11 @@ transition identity reached mid-walk that has no RFC 8785 encoding: a
 implementer-supplied, not engine-built, so an encoding failure is a caller
 defect the engine refuses rather than a broken internal invariant.
 
-`RequiresBound` is not a refusal: ADR-014 §4 and QSpec FR-181 treat
+`RequiresBound` is not a refusal: ADR-014 §4 and FSpec FR-181 treat
 requires-bound as a negotiation disposition the caller answers with a
-bounded request, the same disposition `qsl-route`'s own
+bounded request, the same disposition `fsl-route`'s own
 `Disposition::RequiresBound` carries with no catalog code
-(`qsl-route/src/routing.rs:29-31`). `NotSimulated` gives `catalog_code` and
+(`fsl-route/src/routing.rs:29-31`). `NotSimulated` gives `catalog_code` and
 `catalog_fields` as inherent methods, not a `CatalogCoded` impl -- a
 `CatalogCoded` cause is always `Category::Refusal`, which `RequiresBound`
 is not -- and `catalog_code` returns `None` for `RequiresBound`. It is
@@ -262,11 +262,11 @@ two failure types stopped it: `LimitExceeded`'s own
 the order a `TransitionSystem` lists them in. Breadth-first exploration
 keeps parent states in FIFO discovery order within a level. Each parent's
 successors are visited in ascending unsigned-lexicographic order of the
-RFC 8785 JCS UTF-8 bytes of the QSpec FR-181 transition identity.
+RFC 8785 JCS UTF-8 bytes of the FSpec FR-181 transition identity.
 FR-181 does not order two successors with equal transition identities and
-different post-states. QSL orders them by the post-state's state-key bytes,
+different post-states. FSL orders them by the post-state's state-key bytes,
 ascending. Initial states are admitted in ascending state-key byte order,
-with equal keys coalesced into one state. Both are QSL's choices; QSpec
+with equal keys coalesced into one state. Both are FSL's choices; FSpec
 settles them upstream in FR-181.
 
 **Initial states.** A `max_states` cap reached while admitting initial
@@ -277,10 +277,10 @@ initial state is in the frontier. Exploring a system with no initial state
 returns `Exhaustive` with zero states, transitions and depth: its reachable
 set is empty and fully visited.
 
-**State key.** QSL uses the typed canonical form specified by QSpec FR-181.
+**State key.** FSL uses the typed canonical form specified by FSpec FR-181.
 The state key is that form's canonical (RFC 8785) byte string; it is the
 identity of a state in every output: the trace, the frontier, the findings,
-a replay and a certificate. QSL coalesces states by equality of the complete
+a replay and a certificate. FSL coalesces states by equality of the complete
 canonical key bytes, and by nothing weaker.
 
 **Seen set and packed state.** The set of states already reached is an
@@ -339,9 +339,9 @@ claim kind and engine accepts `workers` above 1.
 
 *Note (current state, not a requirement).* Single-threaded state that the
 bounds exclude today: `RefCell` memo tables and key budgets in
-`qsl-eval` `simulation::model` (`ModelSystem`, its application and
+`fsl-eval` `simulation::model` (`ModelSystem`, its application and
 key-budget caches), `Rc` footprints and `RefCell` in the partial-order
-system (`qsl-analyze` `model_check::ample`), `RefCell` and `Cell` in the
+system (`fsl-analyze` `model_check::ample`), `RefCell` and `Cell` in the
 liveness product and the hyper explorer (`model_check::liveness`,
 `model_check::hyper`) and `Rc<RefCell<Shared>>` in the statistical model
 sampler (`statistical::model`). The coding tickets (QSL-1835 for the memo
@@ -382,18 +382,18 @@ comparison. The ordinal of a successor is its zero-based position among the
 successors of that state that share its transition identity, in the system's
 canonical successor order; each `Step` records it.
 
-**Sampler.** Sampling uses QSpec's `quire.simulation.sampler/v1` definition
-and the sampling contract in QSpec FR-181; that contract owns the draw
+**Sampler.** Sampling uses FSpec's `filament.simulation.sampler/v1` definition
+and the sampling contract in FSpec FR-181; that contract owns the draw
 preimage and selection algorithm. `sample_request` first compares the
-supplied `DefinitionRef`'s identity with `quire.simulation.sampler/v1`, and
+supplied `DefinitionRef`'s identity with `filament.simulation.sampler/v1`, and
 refuses any other with `NotSimulated::GeneratorMismatch`, before any draw.
-QSL advances its trace step once per transition taken, including a
+FSL advances its trace step once per transition taken, including a
 single-successor step that requires no draw. A system with no enabled
 successor ends the trace with `StopReason::NoSuccessors`; reaching
 `max_steps` ends it with `StopReason::StepLimit`. When a
 `TransitionSystem` has `m > 1` initial states after coalescing equal keys,
-QSL starts trace `t` from the initial state at index `t mod m` in canonical
-order, with no draw. This is QSL's choice.
+FSL starts trace `t` from the initial state at index `t mod m` in canonical
+order, with no draw. This is FSL's choice.
 Provenance records the seed, the trace index and the sampler identity
 (ADR-014 TR-1). `CounterSampler` is removed.
 
@@ -406,7 +406,7 @@ it never reports `Exhaustive`. A run whose frontier empties before depth
 
 **Stopped outcomes.** A run that stops before its frontier empties never
 reports `Exhaustive`. `Bounded` carries the resource limit that stopped it.
-`Cancelled` carries `cause: CatalogCode` (`qsl_foundation::diagnostic`),
+`Cancelled` carries `cause: CatalogCode` (`fsl_foundation::diagnostic`),
 always `CatalogCode::new("cancelled", "caller-cancelled")`. Both carry the
 unexplored frontier in the order the run would have expanded it next.
 `Outcome::category()` is FR-097-AC-5's map.
@@ -444,7 +444,7 @@ recomputed expansion does not, or both stop with different causes;
 
 **Requires-bound.** Before any `TransitionSystem` method is called,
 `explore_request` and `sample_request` classify `domains` with the ADR-014
-§4 extent rule (`qsl_semantics::family::classify_extent(domains, types,
+§4 extent rule (`fsl_semantics::family::classify_extent(domains, types,
 position_limit)`). `ClaimExtent::Unbounded(domains)` returns
 `NotSimulated::RequiresBound`. A `ClassifyFailure` returns
 `NotSimulated::Extent` with it, which is neither `RequiresBound` nor an
@@ -452,8 +452,8 @@ exploration. `requires-bound` is never an `Outcome` variant. No
 exploration `Limits` value answers it, because an accounting limit is not a
 proof bound (ADR-014 §1).
 
-**Traceability.** Every simulation test in `qsl-eval/tests/it/` traces to
-this requirement's ACs and to TC-453 to TC-455. None carries QSpec's
+**Traceability.** Every simulation test in `fsl-eval/tests/it/` traces to
+this requirement's ACs and to TC-453 to TC-455. None carries FSpec's
 `TC-210` or `FR-181-AC-*` ids, which name different artifacts in this
 repository (this repository's TC-210 is a witness-envelope case).
 
@@ -461,16 +461,16 @@ repository (this repository's TC-210 is a witness-envelope case).
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-101-AC-1 | Exploration visits each parent's successors in ascending JCS byte order of their QSpec FR-181 transition identities, whatever order the `TransitionSystem` lists them in and whatever their post-states' keys: a state listing `z` before `a` is expanded `a` first, and `step(10)` is visited before `step(9)`, because `{"arguments":[{"type":"integer","value":"10"}],…}` precedes `{"arguments":[{"type":"integer","value":"9"}],…}` bytewise. Successors with equal transition identities are visited in ascending state-key byte order. Parent states keep FIFO discovery order within a level, whatever their keys. | Test (TC-453) |
-| FR-101-AC-2 | The state key is the JCS encoding of FR-181's typed canonical form, and exploration coalesces two states exactly when their full key bytes are equal. The state whose `semantic` member is `float64` bits `0000000000000000` and every map empty has its JCS key bytes as its key; with bits `8000000000000000` (negative zero) it has its own, different, key bytes, and the two remain two states. Two NaNs with different payloads are two states. Each key is a `StateKey` under `quire.simulation.state-key/v1`. | Test (TC-453) |
-| FR-101-AC-3 | The sampler reproduces QSpec TC-210's vector, as amended with QSpec FR-181's `choice` preimage member: seed `424242`, trace `0`, choice `0`, `n = 5` draws indices `1, 3, 3, 4, 4` at steps 0 to 4,, each draw made by QSpec FR-181's sampler contract. Seed `424242`, trace `1`, `n = 5` draws `4, 4, 1, 3, 4`; seed `424242`, trace `0`, `n = 3` draws `1, 2, 0, 0, 1`. `n = 1` selects index 0 and makes no draw, and still advances the step: seed `424242`, trace `0`, with `n = 1` at steps 0 and 1 and `n = 5` at step 2, selects index `3` at step 2. `n = 0` ends the trace with `StopReason::NoSuccessors`. | Test (TC-454) |
+| FR-101-AC-1 | Exploration visits each parent's successors in ascending JCS byte order of their FSpec FR-181 transition identities, whatever order the `TransitionSystem` lists them in and whatever their post-states' keys: a state listing `z` before `a` is expanded `a` first, and `step(10)` is visited before `step(9)`, because `{"arguments":[{"type":"integer","value":"10"}],…}` precedes `{"arguments":[{"type":"integer","value":"9"}],…}` bytewise. Successors with equal transition identities are visited in ascending state-key byte order. Parent states keep FIFO discovery order within a level, whatever their keys. | Test (TC-453) |
+| FR-101-AC-2 | The state key is the JCS encoding of FR-181's typed canonical form, and exploration coalesces two states exactly when their full key bytes are equal. The state whose `semantic` member is `float64` bits `0000000000000000` and every map empty has its JCS key bytes as its key; with bits `8000000000000000` (negative zero) it has its own, different, key bytes, and the two remain two states. Two NaNs with different payloads are two states. Each key is a `StateKey` under `filament.simulation.state-key/v1`. | Test (TC-453) |
+| FR-101-AC-3 | The sampler reproduces FSpec TC-210's vector, as amended with FSpec FR-181's `choice` preimage member: seed `424242`, trace `0`, choice `0`, `n = 5` draws indices `1, 3, 3, 4, 4` at steps 0 to 4,, each draw made by FSpec FR-181's sampler contract. Seed `424242`, trace `1`, `n = 5` draws `4, 4, 1, 3, 4`; seed `424242`, trace `0`, `n = 3` draws `1, 2, 0, 0, 1`. `n = 1` selects index 0 and makes no draw, and still advances the step: seed `424242`, trace `0`, with `n = 1` at steps 0 and 1 and `n = 5` at step 2, selects index `3` at step 2. `n = 0` ends the trace with `StopReason::NoSuccessors`. | Test (TC-454) |
 | FR-101-AC-4 | Two sampled runs with equal seeds and trace indices over the same `TransitionSystem` produce identical traces, including provenance. The provenance records the seed, the trace index and the sampler identity; a different seed or trace index gives different provenance. With `m > 1` initial states after coalescing equal keys, trace `t` starts at canonical initial state `t mod m`, and no draw selects the start. | Test (TC-454) |
 | FR-101-AC-5 | A trace records its initial state and each step's state as state keys and replays against the `TransitionSystem` that produced it without the simulator, by recomputed key; replay picks among successors sharing a transition identity by transition identity and then by ordinal, compares no recorded key, and refuses a trace whose initial key matches no initial state with `UnknownInitial` and a step naming a transition, or an ordinal, the current state does not offer with `MissingTransition`, at that step. | Test (TC-454) |
 | FR-101-AC-6 | A run the poll cancels returns `Outcome::Cancelled` with `cause` `CatalogCode::new("cancelled", "caller-cancelled")`, category incomplete, and the unexplored frontier as state keys in next-expansion order. It never returns `Exhaustive` or `Bounded`. | Test (TC-455) |
 | FR-101-AC-7 | A run that reaches `max_states` or `max_transitions` before its frontier empties returns `Outcome::Bounded` with that `Limit` and the unexplored frontier as state keys in next-expansion order, category incomplete. On the chain 0 → 1 → 2, `max_depth` 2 returns `Outcome::BoundReached{depth: 2}` with frontier `[<2>]`, category inconclusive, and `Limit` has no depth member. The same model returns `Exhaustive` once `max_states` is at least its reachable state count, `max_transitions` at least its transition count, and `max_depth` greater than its deepest state's depth. `Exhaustive` is returned only when the frontier is empty, and its `Stats` count distinct states, explored transitions and the deepest depth. | Test (TC-455) |
 | FR-101-AC-8 | `explore_request` or `sample_request` over `domains` that include an unbounded domain under the ADR-014 §4 extent rule returns `NotSimulated::RequiresBound` naming each unbounded domain's key and kind, calls no `TransitionSystem` method, and returns no `Outcome`. A `classify_extent` stage limit returns `NotSimulated::Extent`. The same request with every domain bounded explores. Raising exploration `Limits` does not change a `RequiresBound` result. | Test (TC-455) |
 | FR-101-AC-9 | Initial states are admitted in ascending state-key byte order, and equal keys coalesce into one state. A `max_states` cap reached during admission returns `Bounded` at `Limit::States` with frontier: admitted, then refused, then the rest, in canonical order; `max_states` 0 admits none and puts every initial state in the frontier. Exploring a system with no initial state returns `Exhaustive` with zero stats. | Test (TC-453) |
-| FR-101-AC-10 | `sample_request` refuses before any draw with `NotSimulated::GeneratorMismatch` when the supplied `DefinitionRef`'s identity is not `quire.simulation.sampler/v1`, and with `NotSimulated::EmptyInitial` when the system has no initial state. A run that reaches `max_steps` stops with `StopReason::StepLimit`, whether or not the current state has successors. `GeneratorMismatch`'s catalog code is `invalid_runtime_input`/`invalid-value`. | Test (TC-454) |
+| FR-101-AC-10 | `sample_request` refuses before any draw with `NotSimulated::GeneratorMismatch` when the supplied `DefinitionRef`'s identity is not `filament.simulation.sampler/v1`, and with `NotSimulated::EmptyInitial` when the system has no initial state. A run that reaches `max_steps` stops with `StopReason::StepLimit`, whether or not the current state has successors. `GeneratorMismatch`'s catalog code is `invalid_runtime_input`/`invalid-value`. | Test (TC-454) |
 | FR-101-AC-11 | A `TransitionSystem::Key` or `TransitionId` with no RFC 8785 encoding -- for example a `u64` above `2^53` -- refuses `NotSimulated::KeyEncoding` from `explore_request` and `sample_request`, and `ReplayError::KeyEncoding` from `replay`, instead of aborting the process. | Test (TC-453) |
 | FR-101-AC-12 | On a test system `0 → {1, 2}`, `1 → 3`, whose expansion of `1` returns `ExpansionStop` with `resource_exhausted`/`insufficient-next-charge`, exploration returns `Outcome::Stopped` with that cause, frontier `[<1>, <2>]` (the stopped state, then the queue), category incomplete; with `runtime_invariant`/`established-invariant-broken` it returns `Stopped`, category internal failure. | Test (TC-474) |
 | FR-101-AC-13 | On a test system whose expansion of state `s` returns finding `f`, `Exploration.findings` holds one `StateFindings` for `s` with its key, its depth and `[f]`, in expansion order; a system whose `s` sits in a `Bounded` frontier has no entry for it; the stopped state of AC-12 has no entry. | Test (TC-474) |
@@ -484,22 +484,22 @@ repository (this repository's TC-210 is a witness-envelope case).
 | FR-101-AC-21 | For a system whose checked types admit a `PackedLayout`, `unpack(pack(s))` is `s` and its canonical key bytes equal those of `s`, for every reachable state of a 200-state system; two reachable states have equal packed forms exactly when their canonical key bytes are equal, checked over every pair, including `float64` zero against negative zero (two states) and an integer at each end of its declared range. A state that holds a value outside the layout's domain is explored, and coalesces with another exactly when their canonical key bytes are equal. | Test (TC-1417) |
 | FR-101-AC-22 | For each explorer whose system has checked types and so a `PackedLayout` (the FR-126 and FR-142 product explorers; not the generic `explore_request` over an opaque `TransitionSystem`, which has none and runs with `Packing::Auto` as `Off`), a run with `Packing::Auto` and one with `Packing::Off` return byte-equal results: every `StateKey` in the frontier, the trace, the findings and a replay is the canonical key bytes; `replay` of a trace from one run succeeds against the other; no output holds a packed form. | Test (TC-1417) |
 
-FR-101-AC-5 withdrawn clause: the `KeyMismatch` refusal (recorded key compared with the recomputed successor key), retired because no QSL check could fail on it.
+FR-101-AC-5 withdrawn clause: the `KeyMismatch` refusal (recorded key compared with the recomputed successor key), retired because no FSL check could fail on it.
 
 ## Dependencies
 
-- QSpec FR-181's exploration contract, typed canonical form and transition
-  identity; QSpec TC-210's sampler vector, read in place from the QSpec
+- FSpec FR-181's exploration contract, typed canonical form and transition
+  identity; FSpec TC-210's sampler vector, read in place from the FSpec
   checkout.
-- QSpec `quire.simulation.sampler/v1`
-  (`proposals/quire-v1/definitions/simulation-sampler.md`), which owns the
+- FSpec `filament.simulation.sampler/v1`
+  (`proposals/filament-v1/definitions/simulation-sampler.md`), which owns the
   sampler's draw contract.
 - [ADR-014](../decisions/ADR-014-temporal-trace-and-boundedness-architecture.md)
   §1, §4, §7 and TR-1, TR-6, TR-7.
 - [ADR-013](../decisions/ADR-013-canonical-type-package-conversion-ownership.md)
   §2: `quire-canonical` is the one RFC 8785 encoder.
 - [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
-  X-8: `qsl-eval`'s `[dependencies]` gain `quire-canonical` and `serde` for
+  X-8: `fsl-eval`'s `[dependencies]` gain `quire-canonical` and `serde` for
   the state key and the sampler preimage.
 - [FR-097](FR-097-classify-claim-extent-and-write-bounded-requests.md): the
   extent rule and `Outcome::category()`.

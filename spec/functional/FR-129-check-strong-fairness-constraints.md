@@ -3,13 +3,13 @@ id: FR-129
 title: "Check strong fairness constraints and the unmarked fairness kind"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-016
+  - target: ix://agent-ix/filament-spec-language/US-016
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
 ---
 # FR-129: Check strong fairness constraints and the unmarked fairness kind
@@ -34,7 +34,7 @@ which premise was checked.
 
 ## Semantic authority and boundary
 
-QSpec owns the surface grammar of the `strong` kind and the unmarked kind,
+FSpec owns the surface grammar of the `strong` kind and the unmarked kind,
 and the meaning of strong fairness (ADR-019 QS-1, QS-2; References). This
 requirement specifies what S3 checks once the shared grammar has parsed a
 constraint form. Spellings in the acceptance criteria follow ADR-019 §1 and
@@ -79,7 +79,7 @@ are illustrative.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-129-AC-1 | Over ADR-019 §6's mutex unit, a constraint on `acquire` with no kind and no granularity checks to `{Weak, acquire, Whole}`, and the clause holding it has the node identity of the same clause with `weak whole` written. A `strong` constraint with no granularity checks to `{Strong, acquire, Whole}`, and `strong each` to `{Strong, acquire, Each}`. The `strong each` clause and the `weak each` clause have different node identities. | Test (TC-530) |
-| FR-129-AC-2 | A clause carrying `strong each` on `acquire` and `weak each` on `acquire` checks to a two-member fairness set in source order. A `strong` constraint written twice checks to one member. A `strong` constraint on a clause under `quire.temporal.event-position.false-extension/v1` refuses `unsupported_construct`/`expression-form` at the constraint's span. | Test (TC-530) |
+| FR-129-AC-2 | A clause carrying `strong each` on `acquire` and `weak each` on `acquire` checks to a two-member fairness set in source order. A `strong` constraint written twice checks to one member. A `strong` constraint on a clause under `filament.temporal.event-position.false-extension/v1` refuses `unsupported_construct`/`expression-form` at the constraint's span. | Test (TC-530) |
 
 ## Dependencies
 
@@ -91,5 +91,5 @@ are illustrative.
 
 ## References
 
-- QSpec FR-362 (weak and strong fairness) and FR-369 (the strong-fairness
-  hint): the QSpec half of ADR-019 QS-1 to QS-8 (Linear STD-132).
+- FSpec FR-362 (weak and strong fairness) and FR-369 (the strong-fairness
+  hint): the FSpec half of ADR-019 QS-1 to QS-8 (Linear STD-132).

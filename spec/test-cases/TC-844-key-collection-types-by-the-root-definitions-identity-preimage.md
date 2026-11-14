@@ -3,7 +3,7 @@ id: TC-844
 title: "Collection and population nodes are keyed by the root definitions' identity preimage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-334
+  - target: ix://agent-ix/filament-spec-language/FR-334
     type: verifies
 ---
 # TC-844: Collection and population nodes are keyed by the root definitions' identity preimage
@@ -24,8 +24,8 @@ Scope: FR-334-AC-1 to FR-334-AC-4.
 2. Lower `Population<Account>`, `Population<Account>[4]` and an unbounded
    `Set<Reference<Account>>`; compare node keys.
 3. Compile one bounded unit twice.
-4. Read QSpec FR-322's collection and population node identity vectors in
-   place from the QSpec repository and key each with QSL's emitter; the
+4. Read FSpec FR-322's collection and population node identity vectors in
+   place from the FSpec repository and key each with FSL's emitter; the
    vectors exercise the type cases covered by FR-144-AC-9, AC-13 and
    FR-153-AC-9.
 

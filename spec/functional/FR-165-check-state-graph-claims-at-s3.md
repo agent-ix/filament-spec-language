@@ -3,23 +3,23 @@ id: FR-165
 title: "Check state-graph claims at S3 and record their form"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
 ---
 # FR-165: Check state-graph claims at S3 and record their form
@@ -47,7 +47,7 @@ does not recognise is a syntax error.
 
 ## Inputs
 
-- Parsed state-graph claim syntax (S1), in the spellings QSpec's shared
+- Parsed state-graph claim syntax (S1), in the spellings FSpec's shared
   grammar gives the three forms. The `over` parameter is optional in all
   three, and a predicate is read through `graph-predicate` (see Parsing).
 - The admitted domain packages and the unit's state models (FR-103).
@@ -86,9 +86,9 @@ pub enum StateGraphForm {
   binding.
 - S1 SHALL parse each predicate of a state-graph claim (a body, a `from`
   operand, a `to` operand) through the `graph-predicate` production of
-  QSpec's shared grammar (state-graph section), and a body's leading
+  FSpec's shared grammar (state-graph section), and a body's leading
   fairness constraints through `graph-body`. The production is recognition
-  only and is owned by QSpec; this requirement does not restate it. QSpec
+  only and is owned by FSpec; this requirement does not restate it. FSpec
   FR-390 and its TC-330 vectors SG-R09 to SG-R18 are the reference for what
   it recognises.
 - S1 SHALL NOT refuse a temporal operator, with or without an interval, that
@@ -203,9 +203,9 @@ pub enum StateGraphForm {
   (model subject and `over` instantiation),
   [FR-057](FR-057-admit-shared-capability-kinds.md)
   (`temporal-satisfaction`).
-- QSpec owns the surface grammar of the three forms and their refusals
+- FSpec owns the surface grammar of the three forms and their refusals
   (ADR-022 QS-1); the spellings here follow ADR-022 §7.
 
 ## References
 
-- ADR-022. QSpec half: QSpec FR-390 (Linear STD-135; ADR-022 QS-1, QS-8).
+- ADR-022. FSpec half: FSpec FR-390 (Linear STD-135; ADR-022 QS-1, QS-8).

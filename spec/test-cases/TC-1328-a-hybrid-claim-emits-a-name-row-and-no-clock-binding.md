@@ -3,9 +3,9 @@ id: TC-1328
 title: "A hybrid claim emits a name row and no clock binding"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-447
+  - target: ix://agent-ix/filament-spec-language/FR-447
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: verifies
 ---
 # TC-1328: A hybrid claim emits a name row and no clock binding

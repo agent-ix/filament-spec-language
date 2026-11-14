@@ -3,13 +3,13 @@ id: FR-247
 title: "Analyse a task set in closed form (EN-7)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-246
+  - target: ix://agent-ix/filament-spec-language/FR-246
     type: depends_on
 ---
 # FR-247: Analyse a task set in closed form (EN-7)
@@ -49,7 +49,7 @@ pub enum ClosedFormOutcome {
 
 ## Behavior
 
-- **Analyses.** EN-7 SHALL implement QSpec FR-419's fixed-priority
+- **Analyses.** EN-7 SHALL implement FSpec FR-419's fixed-priority
   response-time analysis with the busy-period extension, its EDF
   processor-demand test with Quick Processor-demand Analysis, and its
   AMC-rtb test, in exact rationals. A fixed-priority iteration SHALL stop
@@ -85,7 +85,7 @@ pub enum ClosedFormOutcome {
 
 ## Dependencies
 
-- ADR-026 §12 RT-4 to RT-6; ADR-014 B-5; QSpec FR-419 (the analyses).
+- ADR-026 §12 RT-4 to RT-6; ADR-014 B-5; FSpec FR-419 (the analyses).
 - [FR-246](FR-246-check-task-sets-and-schedulability-claims.md).
 
 ## References

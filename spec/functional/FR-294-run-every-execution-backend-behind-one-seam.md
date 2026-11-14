@@ -3,34 +3,34 @@ id: FR-294
 title: "Run every execution backend behind one seam that admits checked input only"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-279
+  - target: ix://agent-ix/filament-spec-language/FR-279
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-306"
+  - target: "ix://agent-ix/filament-specification/FR-306"
     type: depends_on
 ---
 # FR-294: Run every execution backend behind one seam that admits checked input only
 
 ## Description
 
-One trait in layer 5 (`qsl-eval`, module `execution`) holds every execution
+One trait in layer 5 (`fsl-eval`, module `execution`) holds every execution
 backend (ADR-029 EB-1):
 
 - `ExecutionBackend::prepare(&self, package: &CheckedPackage, entries:
@@ -70,9 +70,9 @@ The seam's types:
 
 Beside its admission, fault and cancellation arms, `CallFailure` has
 `Unsupported(UnsupportedEntry)` and `Limit(PrepareLimitReached)`; `Limit`
-comes only from `prepare` (FR-279). `CallFailure` lives in the `quire-eval`
-leaf, which depends on no QSL crate (FR-401), so its arm cannot hold
-`qsl-foundation`'s `LimitExceeded` and its `Locus`.
+comes only from `prepare` (FR-279). `CallFailure` lives in the `filament-eval`
+leaf, which depends on no FSL crate (FR-401), so its arm cannot hold
+`fsl-foundation`'s `LimitExceeded` and its `Locus`.
 `PrepareLimitReached { setting, bound, actual }` is the leaf's own,
 locus-free record of a reached prepare limit: `setting` is
 `PrepareSetting::CompileWorkUnits` or `PrepareSetting::CodeBytes`, whose
@@ -97,8 +97,8 @@ that would exceed its bound is not admitted and returns
 `PrepareFailure::Limit` with the counter the charge would have reached. A
 `prepare` that stops returns no prepared value.
 
-Three backends implement the seam: the interpreter in `qsl-eval`, which
-accepts every entry S6a accepts and runs S6a; AOT in QSL's `quire-aot`; and JIT in QSL's `qsl-jit` (layer X).
+Three backends implement the seam: the interpreter in `fsl-eval`, which
+accepts every entry S6a accepts and runs S6a; AOT in FSL's `fsl-aot`; and JIT in FSL's `fsl-jit` (layer X).
 
 The interpreter is the reference: S6a defines what a checked package means,
 and replay runs only through S6a (ADR-029 EB-3, ADR-011 FB-07).
@@ -177,11 +177,11 @@ As the trait signatures state.
 - [FR-277](FR-277-bound-every-lifecycle-operation-by-caller-limits.md): `SuppliedLimits` and explicit supply of `ScalarLimits`.
 - [FR-279](FR-279-execute-a-checked-entry-as-a-library-operation.md): `execute`.
 - [FR-098](FR-098-execute-a-replay-request.md): replay.
-- QSpec FR-306: AOT and JIT execution, as the QSpec half in References aligns it.
+- FSpec FR-306: AOT and JIT execution, as the FSpec half in References aligns it.
 
 ## Overlap
 
-QSL owns the AOT backend, the crate `quire-aot` (ADR-029 EB-6): the
+FSL owns the AOT backend, the crate `fsl-aot` (ADR-029 EB-6): the
 toolchain build of the artifact `generate` emitted and the child-process run.
 Lowering and generation with the AOT target stay with the driver and CG.
 
@@ -189,4 +189,4 @@ Lowering and generation with the AOT target stay with the driver and CG.
 
 - QSL-393 (V1-A06a): checked-only AOT and JIT.
 - QSL-390 (ARCH-50): owner ruling 3, recorded on the ticket.
-- QSpec FR-306 (STD-141): the QSpec half.
+- FSpec FR-306 (STD-141): the FSpec half.

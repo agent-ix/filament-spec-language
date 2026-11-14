@@ -3,7 +3,7 @@ id: TC-129
 title: "Bind exact finite graph identities and inputs"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-047, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-047, type: verifies }
 ---
 # TC-129: Bind exact finite graph identities and inputs
 
@@ -41,6 +41,6 @@ or closure is incomplete and does not classify the offered subset as empty,
 closed or dangling. No string identifier or ambient lookup repairs a mutation.
 
 The executable trace includes
-`qsl-eval/tests/it/model_reference_queries.rs::explicit_object_references_use_identity_and_refuse_foreign_universes`
+`fsl-eval/tests/it/model_reference_queries.rs::explicit_object_references_use_identity_and_refuse_foreign_universes`
 and `a_surviving_object_compares_equal_across_pre_and_post`; both carry TC-129
 and the applicable FR-047/FR-049 criteria tags.

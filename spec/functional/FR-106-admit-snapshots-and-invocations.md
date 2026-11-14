@@ -3,43 +3,43 @@ id: FR-106
 title: "Read and admit state snapshots and invocations as the spine clause-execution input"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: traces_to
-  - target: ix://agent-ix/quire-semantic-value/FR-106
+  - target: ix://agent-ix/filament-semantic-value/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-semantic-value/FR-130
+  - target: ix://agent-ix/filament-semantic-value/FR-130
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-001
+  - target: ix://agent-ix/filament-spec-language/FR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-038
+  - target: ix://agent-ix/filament-spec-language/FR-038
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-141
+  - target: ix://agent-ix/filament-specification/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-144
+  - target: ix://agent-ix/filament-specification/FR-144
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-148
+  - target: ix://agent-ix/filament-specification/FR-148
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-205
+  - target: ix://agent-ix/filament-specification/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-207
+  - target: ix://agent-ix/filament-specification/FR-207
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-208
+  - target: ix://agent-ix/filament-specification/FR-208
     type: depends_on
 ---
 # FR-106: Read and admit state snapshots and invocations as the spine clause-execution input
@@ -61,7 +61,7 @@ The spine has the model-layer admission already (`model::population::
 admit_binding`, `admit_invocation` with its frame check, `ObjectEnvironment`),
 but no document form, no per-observation field values, and a frame check
 that compares only reference-valued fields (`PopulationMember::field_values`,
-`qsl-semantics/src/model/population.rs:466-475`).
+`fsl-semantics/src/model/population.rs:466-475`).
 
 ## Inputs
 
@@ -97,7 +97,7 @@ that compares only reference-valued fields (`PopulationMember::field_values`,
   value of every object and the relationship extents of the snapshot
   (FR-364), and keeps its document identity. An observation's occurrence identity is its document
   reference, the authority and identity labels of FR-001 (the authority-qualified
-  observation identity QSpec FR-207 selects; QSL FR-049 names it
+  observation identity FSpec FR-207 selects; FSL FR-049 names it
   `ObservationIdentity`). Two admissions of one snapshot's content under two
   distinct document references are two observations: each keeps its own
   authority and identity labels, and every object of each keeps the same complete
@@ -114,7 +114,7 @@ that compares only reference-valued fields (`PopulationMember::field_values`,
   machine's one context in the selected side of the invocation (its `pre` or
   its `post` snapshot), the invocation's identity labels, and no self object,
   parameter values or result. A state machine's context has no object identity
-  (QSpec FR-208, State-machine context anchors), so an observation holds it as
+  (FSpec FR-208, State-machine context anchors), so an observation holds it as
   a value of the machine's effective fields next to its objects and
   relationships; for a precondition or postcondition of a state machine
   operation the same context stands where the self object stands for an object
@@ -123,9 +123,9 @@ that compares only reference-valued fields (`PopulationMember::field_values`,
   `reference`.
 - Or an `AdmissionFailure`: `Refused(AdmissionRecord)` or
   `Incomplete(AdmissionRecord)`, each with the exact shared
-  `quire_semantic_value::admission::AdmissionRecord`; an admission invariant
+  `filament_semantic_value::admission::AdmissionRecord`; an admission invariant
   break retains its existing `Fault(InternalFault)` arm. FR-106 SHALL use
-  `quire_semantic_value::admission::PathStep` for nested paths and SHALL
+  `filament_semantic_value::admission::PathStep` for nested paths and SHALL
   declare no local record or path copy. The shared record's `catalog` carries
   the original code/cause pair; `fields`, `path` and `kernel` retain the named
   input path and construction cause without rendering or reconstruction.
@@ -133,9 +133,9 @@ that compares only reference-valued fields (`PopulationMember::field_values`,
 ## Admitted current-observation authority for protocol slots
 
 For [FR-390](FR-390-evaluate-a-protocol-node-expression-from-a-checked-package.md),
-layer-4 `qsl-package` SHALL retain successful current-snapshot admission as an
+layer-4 `fsl-package` SHALL retain successful current-snapshot admission as an
 opaque, immutable
-`qsl_package::observation::AdmittedProtocolObservation<'view>` tied to the exact
+`fsl_package::observation::AdmittedProtocolObservation<'view>` tied to the exact
 `AdmittedEvaluationView` that selected the models. The authority SHALL retain
 the admitted snapshot's document identity, its selected-model provenance,
 the normalized model/type/population associations used by this admission,
@@ -156,8 +156,8 @@ pub fn admit_protocol_observation<'view>(
     snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
     selected: &DocumentRef,
     limits: ObservationLimits,
-) -> quire_semantic_value::admission::ObservationAdmission<
-    qsl_package::observation::AdmittedProtocolObservation<'view>,
+) -> filament_semantic_value::admission::ObservationAdmission<
+    fsl_package::observation::AdmittedProtocolObservation<'view>,
 >;
 ```
 
@@ -177,22 +177,22 @@ S6a charges. The authority SHALL expose `usage(&self) -> AdmissionUsage`,
 `identity(&self) -> &DocumentRef`, `model_selection(&self) -> &DomainPackageRef`
 and `environment(&self) -> &ObjectEnvironment` as read-only accessors.
 
-The observation result SHALL be the existing QSV
-`quire_semantic_value::admission::ObservationAdmission<T>`, specialized with
-`T = qsl_package::observation::AdmittedProtocolObservation<'view>`, as shared
-[FR-130](ix://agent-ix/quire-semantic-value/FR-130) defines. Its existing
+The observation result SHALL be the existing FSV
+`filament_semantic_value::admission::ObservationAdmission<T>`, specialized with
+`T = fsl_package::observation::AdmittedProtocolObservation<'view>`, as shared
+[FR-130](ix://agent-ix/filament-semantic-value/FR-130) defines. Its existing
 `Admitted(T)`, `Refused(AdmissionRecord)`, `Incomplete(AdmissionRecord)` and
 `Fault(InternalFault)` arms SHALL retain their payloads unchanged. The existing
 `authority(&self) -> Result<&T, &Self>` method SHALL expose the admitted
-authority or the original non-admitted arm; QSL SHALL NOT implement another
+authority or the original non-admitted arm; FSL SHALL NOT implement another
 authority query or flatten that result to `None`.
 
-Layer-4 `qsl-package` SHALL import this generic directly from QSV. It SHALL
+Layer-4 `fsl-package` SHALL import this generic directly from FSV. It SHALL
 declare no observation-result enum or result alias and SHALL NOT import the
-generic through `quire-eval`'s re-export. The authority and its factory remain
-QSL layer-4 responsibilities; QSV owns the result, record and path vocabulary,
+generic through `filament-eval`'s re-export. The authority and its factory remain
+FSL layer-4 responsibilities; FSV owns the result, record and path vocabulary,
 and `InternalFault` remains the existing fault vocabulary. This factory SHALL
-introduce no layer-4 dependency on `quire-eval`.
+introduce no layer-4 dependency on `filament-eval`.
 
 An authority SHALL expose read accessors only: no public fields, mutable
 environment, mutable completeness flag, mutable model provenance or mutable
@@ -242,11 +242,11 @@ manifest/bundles; neither changes the shared `AdmissionRecord`,
 the meter. A defect retains the original shared record and the exact population
 declaration node; no parallel checker or population inference is introduced.
 
-Shared FR-130 governs the QSV record and `quire-eval`'s downstream call-record
-and population-locus transport; QSL owns the observation API above and the
+Shared FR-130 governs the FSV record and `filament-eval`'s downstream call-record
+and population-locus transport; FSL owns the observation API above and the
 admission decision. Runtime delivery of that consumer transport is an
-implementation dependency tracked as IR-1199; IR-1200 governs direct QSV
-result ownership below both consumers. This requirement defines no future `quire-eval` field
+implementation dependency tracked as IR-1199; IR-1200 governs direct FSV
+result ownership below both consumers. This requirement defines no future `filament-eval` field
 or variant spelling. Complete AC-6 transport requires the full shared record
 and population node; a flattened binder locus is not a replacement for them.
 
@@ -257,11 +257,11 @@ not change its typed value. Integers are decimal strings in FR-038's integer spe
 optional leading `-`, no `+`, no leading zero, `0` for zero and never `-0`),
 because RFC 8785 reads a JSON number as an IEEE double.
 
-Snapshot, format `quire.state.snapshot/v1`:
+Snapshot, format `filament.state.snapshot/v1`:
 
 ```json
 {
-  "format": "quire.state.snapshot/v1",
+  "format": "filament.state.snapshot/v1",
   "identity": {"authority": "agent-ix", "identity": "ix://example/config-version/current/healthy-parent"},
   "observation": "current",
   "anchor": {"kind": "handler", "name": "validate"},
@@ -283,7 +283,7 @@ Snapshot, format `quire.state.snapshot/v1`:
 - `observation` is `current`, `pre` or `post`. `anchor` is present exactly
   when `observation` is `current`: the named initialization or handler
   observation the snapshot was taken at (`kind` `initialization` or
-  `handler`), as QSpec's state contract requires of an invariant.
+  `handler`), as FSpec's state contract requires of an invariant.
 - `invocation` is optional on a `pre` or `post` snapshot: the two identity
   labels (`authority`, `identity`) of the
   invocation document the snapshot observes. A snapshot without it
@@ -334,7 +334,7 @@ Snapshot, format `quire.state.snapshot/v1`:
 - `contexts` is optional on a `pre` or `post` snapshot and is not a member of
   a `current` snapshot. A **context** is the state of one instance of a state
   machine in this observation: the values of the machine's effective fields,
-  which is all QSpec binds (FR-208: no member binds the machine's current
+  which is all FSpec binds (FR-208: no member binds the machine's current
   state, so the document carries no `state`, `states` or `transitions`
   member; a machine's declared states, transitions and guards are model
   declarations and a snapshot restates none of them). Each entry has exactly
@@ -376,8 +376,8 @@ Snapshot, format `quire.state.snapshot/v1`:
   `{"kind": "quantity", "unit": "<unit>", "magnitude": <Rational or Decimal
   object>}`.
 
-A set, bag or ordered-set value is the native spelling of QSpec FR-181's
-`set`, `bag` and `ordered-set` forms, with QSpec FR-144's "Supplied
+A set, bag or ordered-set value is the native spelling of FSpec FR-181's
+`set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
 collection values" admission:
 
 - Each element is a value of this grammar for the declared element type. A
@@ -393,17 +393,17 @@ collection values" admission:
   `invalid_runtime_input`/`wrong-value-kind` at the element's path with its
   index.
 - In a set or ordered set, an element that is the same member as an earlier
-  one under QSpec FR-144's collection membership relation (FR-149 equality,
+  one under FSpec FR-144's collection membership relation (FR-149 equality,
   with a float compared by its bits) SHALL refuse
   `invalid_runtime_input`/`duplicate-member` at the later element, naming the
   earlier; a supplied set is never deduplicated. A bag groups the elements
   that are the same member into one member whose multiplicity is their
   number.
 - **Collection document members.** FR-106's collection document is the native
-  counterpart of QSpec FR-181's tagged form (ADR-034 CS-1, CS-2): FR-181's `type`
+  counterpart of FSpec FR-181's tagged form (ADR-034 CS-1, CS-2): FR-181's `type`
   member (the kind) and `elements` member (the entries) are carried by one
   member, the tag, whose name is the kind (`sequence`, `set`, `bag` or
-  `ordered-set`) and whose array value is the entries. QSpec FR-144-AC-16's
+  `ordered-set`) and whose array value is the entries. FSpec FR-144-AC-16's
   causes therefore apply to the document as follows, in this order: a value
   that is not a JSON object is `invalid_runtime_input`/`wrong-value-kind` at
   the field; an object with no member named by the declared kind is
@@ -413,7 +413,7 @@ collection values" admission:
   other than the declared one is `missing-member` naming the declared kind; an object with the declared tag and any other member is
   `unknown-member` naming the first other member in document order, a second
   collection tag included; a tag whose value is not an array is
-  `wrong-value-kind` naming the tag. A QSpec FR-181 tagged form
+  `wrong-value-kind` naming the tag. An FSpec FR-181 tagged form
   `{"type": "set", "elements": [...]}` is no value of this grammar (ADR-034
   CS-1): it has no member named by the declared kind and is `missing-member`
   naming it. These checks run before the bound check and before any element
@@ -429,8 +429,8 @@ collection values" admission:
   ordered by key and then population; a record with `fields` keyed by field
   name). An ordered set is written in its own order.
 - Every Decimal inside an element of a set or bag SHALL be written with its
-  normalized coefficient and scale (QSpec FR-181's canonical element
-  encoding, QSpec FR-140's normalization), at any depth and through every
+  normalized coefficient and scale (FSpec FR-181's canonical element
+  encoding, FSpec FR-140's normalization), at any depth and through every
   nesting the grammar has: options, sequences, sets, bags, ordered sets,
   records and FR-360 variant payloads (FR-181's options, collections,
   records, tuples and unions). The set or bag element is ordered by that
@@ -446,9 +446,9 @@ collection values" admission:
   record, option, sequence or variant holding them at any depth, is read and
   ordered exactly as any other element type.
 - A set, bag or ordered-set type whose element type is, or contains at any
-  depth, a population (which is not a value and has no QSpec FR-181 form)
+  depth, a population (which is not a value and has no FSpec FR-181 form)
   SHALL refuse `unknown_required_feature`/`unsupported-feature` naming the
-  element type (QSpec FR-144).
+  element type (FSpec FR-144).
 
 A record value is `{"record": {"type": "<declaration identity>",
 "fields": {"<field name>": <value>, ...}}}`. The outer object has exactly
@@ -460,7 +460,7 @@ the exact field name; an optional field is present with `{"absent": {}}`
 or `{"present": <value>}`. Its field values use this same closed value
 grammar, so nested records, optionals and sequence elements may contain
 records. A record's actual type SHALL conform to the field, parameter or
-result's declared record type by QSpec FR-208's record specialization rule.
+result's declared record type by FSpec FR-208's record specialization rule.
 The record carries no object key, population or identity, and an object
 `reference` tag cannot stand in for it. Two admitted records compare under
 FR-208 by most-specific type and every effective field; JSON member order
@@ -515,7 +515,7 @@ Text, Decimal, Rational, Float or Quantity object counts as one value against
 the values-per-document setting; the magnitude object inside a Quantity is
 part of that value and counts nothing further.
 Two admitted String, UUID or Timestamp values of one kind are equal exactly
-when their canonical payloads are equal (QSpec FR-149; FR-056 for String,
+when their canonical payloads are equal (FSpec FR-149; FR-056 for String,
 whose payloads are equal when the scalar sequences are identical), so the
 frame check (check 11) compares a String, UUID or Timestamp field by payload,
 as it does a scalar. A Decimal is not compared by its payload: two Decimals
@@ -526,8 +526,8 @@ sequence element.
 
 A **Text value** is the object `{"kind": "text", "text": "<any Unicode scalar
 sequence>"}`, the value of a field, parameter or result of declared type
-`Text[min, max; profile]` (QSpec FR-141; FR-056 admits that type from a scalar
-type bound to `Text`). FR-056 and QSpec define no wire object for Text: the
+`Text[min, max; profile]` (FSpec FR-141; FR-056 admits that type from a scalar
+type bound to `Text`). FR-056 and FSpec define no wire object for Text: the
 K2 payloads are String, UUID and Timestamp. The Text object is this
 grammar's own, spelled with the String object's members, so one envelope rule
 reads every payload object. `Text` is a distinct type from `String`. Its
@@ -535,7 +535,7 @@ reads every payload object. `Text` is a distinct type from `String`. Its
 String object's rules for JSON escape spelling, lone surrogate escapes and
 bytes that are not UTF-8, which the document reader and check 1.3 settle
 before any value is read. The value retains the sequence under the
-declared profile, as QSpec FR-141 states: the scalar sequence itself under
+declared profile, as FSpec FR-141 states: the scalar sequence itself under
 `unicode-scalars`, its normalization under `nfc`, `nfd`, `nfkc` and `nfkd`,
 and its UTF-8 bytes under `binary-utf8`. Its length is the profile length of
 the retained sequence: the scalar count, or the byte count under
@@ -543,7 +543,7 @@ the retained sequence: the scalar count, or the byte count under
 profile and never refuses it for being unnormalized; it never case-folds,
 trims, truncates, escapes or repairs a text. The empty text is a Text value
 exactly when the declared minimum is `0`. Two Text values of one declared
-type are equal exactly when their retained sequences are equal (QSpec FR-141
+type are equal exactly when their retained sequences are equal (FSpec FR-141
 and FR-149), so the frame check compares a Text field by its retained
 sequence: under `nfc`, U+00E9 and U+0065 U+0301 are one value, and under
 `unicode-scalars` they are two. Two documents holding those spellings give one
@@ -552,35 +552,35 @@ typed value.
 A **Decimal value** is the object `{"kind": "decimal", "coefficient":
 "<integer>", "scale": "<scale>"}`, the value of a field, parameter, result or
 element of declared type `Decimal` or `Decimal[lo, hi; smin, smax; mode]`
-(QSpec FR-140). It carries the members of QSpec FR-181's `decimal` form and
+(FSpec FR-140). It carries the members of FSpec FR-181's `decimal` form and
 denotes `coefficient × 10^-scale`. `coefficient` is the signed coefficient in
 FR-038's integer spelling; `scale` is the nonnegative scale, spelled `0` or a
-nonzero digit then more digits, at most `4294967295` (QSpec FR-140's `u32`).
+nonzero digit then more digits, at most `4294967295` (FSpec FR-140's `u32`).
 A Decimal object has exactly the members `kind`, `coefficient` and `scale`.
 Admission retains the supplied coefficient and scale as the value's
-representation (QSpec FR-140's retained representation), except as the
+representation (FSpec FR-140's retained representation), except as the
 element of a set or bag, which is normalized (above). Two Decimal values are
-equal exactly when their mathematical values are equal (QSpec FR-149), so
+equal exactly when their mathematical values are equal (FSpec FR-149), so
 `{"kind": "decimal", "coefficient": "150", "scale": "2"}` and `{"kind":
 "decimal", "coefficient": "15", "scale": "1"}` are one value with two
 representations, the frame check compares a Decimal field by value, and the
 two in one set or ordered set are duplicates. Membership in a declared
-`Decimal[lo, hi; smin, smax; mode]` is QSpec FR-140's, decided by value, so
+`Decimal[lo, hi; smin, smax; mode]` is FSpec FR-140's, decided by value, so
 the supplied representation never decides it.
 
 A **Rational value** is the object `{"kind": "rational", "numerator":
 "<integer>", "denominator": "<integer>"}`, the value of a field, parameter,
 result or element of declared type `Rational` or `Rational[nmin, nmax; dmin,
-dmax]` (QSpec FR-205). Both members are in FR-038's integer spelling, and a
+dmax]` (FSpec FR-205). Both members are in FR-038's integer spelling, and a
 Rational object has exactly the members `kind`, `numerator` and
-`denominator`. Admission reduces the supplied pair to QSpec FR-205's
+`denominator`. Admission reduces the supplied pair to FSpec FR-205's
 normalized form (greatest common divisor 1, positive denominator, zero as
 `0`/`1`) and retains only that form, wherever the Rational stands:
 `{"numerator": "2", "denominator": "4"}`, `{"numerator": "-1", "denominator":
 "-2"}` and `{"numerator": "1", "denominator": "2"}` are one value `1/2`, and
 `0`/`-7` is `0`/`1`. A zero denominator is refused before normalization. The
 declared bounds are checked on the normalized components, every inclusive
-boundary value admitting (QSpec FR-039). Two Rationals are equal exactly when
+boundary value admitting (FSpec FR-039). Two Rationals are equal exactly when
 their normalized components are equal, so the frame check compares a
 Rational field by value.
 
@@ -589,18 +589,18 @@ A **Float value** is the object `{"kind": "float32", "bits": "<hex>"}` or
 result or element of declared type `Float32` or `Float64`, with or without a
 rounding mode (the mode governs operations, not a stored value). `bits` is the
 IEEE 754 binary32 or binary64 bit pattern as exactly 8 or 16 lowercase
-hexadecimal digits, big-endian (QSpec FR-181), and a Float object has exactly
+hexadecimal digits, big-endian (FSpec FR-181), and a Float object has exactly
 the members `kind` and `bits`. Every bit pattern is a Float value: admission
 retains the bits unchanged, never rounds, canonicalizes a NaN or merges a
 signed zero. Two Floats of one width are equal exactly when their bits are
-identical (QSpec FR-148 `bitIdentical`), so `+0` and `-0` are two values, two
+identical (FSpec FR-148 `bitIdentical`), so `+0` and `-0` are two values, two
 NaNs are one value only with the same payload, and the frame check compares a
 Float field by bits. A set, bag or ordered set holds Floats by the same
-relation (QSpec FR-144).
+relation (FSpec FR-144).
 
 A **Quantity value** is the object `{"kind": "quantity", "unit": "<unit>",
 "magnitude": <magnitude>}`, the value of a field, parameter, result or element
-of declared type `Quantity<u>` (QSpec FR-142). `unit` is the qualified name of
+of declared type `Quantity<u>` (FSpec FR-142). `unit` is the qualified name of
 the declared unit `u`, and `magnitude` is a Rational object or a Decimal object
 that denotes the quantity's exact rational magnitude, which has no declared
 bound: a Decimal magnitude `{"kind": "decimal", "coefficient": "5", "scale":
@@ -609,9 +609,9 @@ the magnitude by the rules of its own object and retains the exact value as the
 normalized Rational, so a Quantity keeps no supplied representation. A
 Quantity object has exactly the members `kind`, `unit` and `magnitude`. Two
 Quantities are equal exactly when their unit and exact magnitude are equal
-(QSpec FR-149), so the frame check compares a Quantity field by value.
+(FSpec FR-149), so the frame check compares a Quantity field by value.
 
-Each of these objects denotes one QSpec FR-181 form, which fixes its meaning in
+Each of these objects denotes one FSpec FR-181 form, which fixes its meaning in
 a state key: a String object the `string` form with its `text` as `value`, a
 Rational object the `rational` form, a `float32` or `float64` object the form
 of that name with the same `bits`, and a Quantity object the `rational` form
@@ -679,7 +679,7 @@ catalog codes):
    Noncanonical text takes precedence over the range check. A Text payload
    whose profile length, measured on the retained sequence, lies outside the
    declared `[min, max]` refuses `invalid-value`, naming `text`, the declared
-   bounds, the profile and the measured length; QSpec FR-141's text-length
+   bounds, the profile and the measured length; FSpec FR-141's text-length
    refusal maps to this cause as the kernel's payload refusals do (FR-056),
    and no value is produced. A String payload has no defect to refuse here,
    because every Unicode scalar sequence is a String. A Decimal
@@ -704,11 +704,11 @@ A repeated member name in a document, a lone surrogate escape in a `text` and
 bytes that are not UTF-8 are settled earlier, by check 1.3's shared-reader
 rule, and never reach this order.
 
-Invocation, format `quire.state.invocation/v1`:
+Invocation, format `filament.state.invocation/v1`:
 
 ```json
 {
-  "format": "quire.state.invocation/v1",
+  "format": "filament.state.invocation/v1",
   "identity": {"authority": "agent-ix", "identity": "ix://example/config-version/invocation/changed-version"},
   "model": {"identity": "example/config-version", "version": "1"},
   "context": "ix://example/config-version/ConfigVersion",
@@ -738,7 +738,7 @@ DocumentRef, side }`, where `DocumentRef` is the two
 FR-001 labels, `side` is `pre` or `post`, `anchor` is `{kind, name}`, and
 `parameters` maps each declared parameter name to a value in the snapshot
 value form, as an invocation's `parameters` member does. `Context` selects the
-invariant of a state machine over one side of an invocation: QSpec FR-208-AC-10
+invariant of a state machine over one side of an invocation: FSpec FR-208-AC-10
 holds that invariant in the pre observation and separately in the post
 observation of every invocation of the machine's operations, so a caller
 selects each side and gets one verdict per selection. For a clause whose
@@ -784,7 +784,7 @@ entry, whatever check number each has.
 A `Context` selection with `side` `pre` reads the same documents as a
 precondition selected by `Invocation` (the invocation and its `pre` snapshot)
 and skips the same members and checks, and additionally skips the invocation's
-`parameters` (an invariant binds no operation parameter, QSpec FR-208): check
+`parameters` (an invariant binds no operation parameter, FSpec FR-208): check
 10 does not run for it. A `Context` selection with `side` `post` reads the
 documents of a postcondition (the invocation and its `pre` and `post`
 snapshots) and runs every check including check 11, because the post side is
@@ -793,7 +793,7 @@ evidence only of an invocation whose frame and delta hold. Its parameters and
 Its observation is the selected side's snapshot, which roots the clause's
 value paths (FR-107).
 
-A precondition's input is the pre-call observation (QSpec FR-046-AC-7,
+A precondition's input is the pre-call observation (FSpec FR-046-AC-7,
 FR-208-AC-13). For a precondition selected by `Invocation`, the selected
 documents are the invocation document and its `pre` snapshot only. Admission SHALL
 read the invocation's `self`, `parameters` and `pre` members and that
@@ -830,7 +830,7 @@ required; check 10 settles it.
    1. If no document is in its provision under the selected identity labels, then
       admission SHALL return `Incomplete` with `unavailable_observation`/
       `missing-required-artifact` (missing observation evidence is
-      incomplete input, QSpec state contract).
+      incomplete input, FSpec state contract).
    2. If the bytes exceed the document byte limit, then admission SHALL
       refuse `stage_limit_exceeded`/`input-bytes-exceeded` naming setting
       `observation.input_bytes`. A byte error from check 3's read or
@@ -895,7 +895,7 @@ required; check 10 settles it.
    that machine, or (for a precondition or postcondition) is not the clause's
    operation, then admission SHALL refuse `wrong_snapshot`/
    `wrong-invocation`. An invariant names no operation, so `Context`
-   accepts any effective operation of the machine (QSpec FR-208-AC-10: every
+   accepts any effective operation of the machine (FSpec FR-208-AC-10: every
    invocation of every operation). If a `pre` or `post` snapshot of the invocation
    names an `invocation` whose two labels differ from the selected
    invocation's own identity, then admission SHALL refuse `wrong_snapshot`/
@@ -910,7 +910,7 @@ required; check 10 settles it.
       refuse `invalid_runtime_input`/`wrong-role-mapping`.
    2. If the object's type declares a set, bag or ordered-set field whose
       element type is, or contains at any depth, a population (not a value,
-      so a type with no QSpec FR-181 form), then admission SHALL refuse
+      so a type with no FSpec FR-181 form), then admission SHALL refuse
       `unknown_required_feature`/`unsupported-feature` at that field.
    3. If an object's key repeats an earlier key of its population, then
       admission SHALL refuse `invalid_runtime_input`/`conflicting-identity`
@@ -924,7 +924,7 @@ required; check 10 settles it.
       outside its `Int[lower, upper]` (such as `"1001"` for
       `versionNumber`), then admission SHALL refuse `invalid_runtime_input`/
       `invalid-value`. A `reference` value fits a declared `Reference<T>`
-      exactly when its target object's type conforms to `T` (QSpec FR-151:
+      exactly when its target object's type conforms to `T` (FSpec FR-151:
       the same type, or a chain of declared supertypes leads from it to
       `T`).
       For a record value, admission SHALL resolve its `type` to an admitted
@@ -1009,12 +1009,12 @@ required; check 10 settles it.
        included), then admission SHALL refuse `invalid_runtime_input`/
        `wrong-role-mapping`; if an earlier entry of the snapshot names the
        same machine, then admission SHALL refuse `invalid_runtime_input`/
-       `duplicate-member` at the later entry (QSpec FR-208: one context per
+       `duplicate-member` at the later entry (FSpec FR-208: one context per
        machine in an observation).
    12. For each entry, over the machine's effective fields in exposed
        effective field order: if the machine declares a set, bag or
        ordered-set field whose element type is, or contains at any depth, a
-       population (not a value, so a type with no QSpec FR-181 form), then
+       population (not a value, so a type with no FSpec FR-181 form), then
        admission SHALL refuse
        `unknown_required_feature`/
        `unsupported-feature` at that field; if a declared field is missing,
@@ -1037,7 +1037,7 @@ required; check 10 settles it.
    `incomplete-scope`, naming the first such population in walk order. A
    required population with no row at all in the snapshot is a missing row, not
    an open extent, and returns `Incomplete` with `incomplete_population`/
-   `missing-required-artifact` (QSpec FR-153-AC-14) naming that population; a
+   `missing-required-artifact` (FSpec FR-153-AC-14) naming that population; a
    listed row not marked `complete` keeps `incomplete-scope`. The first required
    population in walk order that is unlisted or not complete is the one named,
    with the cause of its own kind. This rule is about a required **population**;
@@ -1090,7 +1090,7 @@ required; check 10 settles it.
    `invalid_model_binding`/`wrong-context` naming the machine and the
    snapshot; if there are two (a machine and one of its specializations both
    listed), then admission SHALL refuse `invalid_runtime_input`/
-   `duplicate-member` at the later entry (QSpec FR-208: exactly one context in
+   `duplicate-member` at the later entry (FSpec FR-208: exactly one context in
    each observation). The context found is the clause's `self`; a context of
    another machine in the snapshot is validated by check 6 and then ignored.
    A context is never marked incomplete: a snapshot that lists no context of
@@ -1126,7 +1126,7 @@ required; check 10 settles it.
     deletions. The check SHALL compare every declared field of every
     surviving object, scalar, reference and record alike. The frame check SHALL
     compare a changed record value by its most-specific type and the fields
-    exposed after QSpec FR-150 normalization, under QSpec FR-208. The frame
+    exposed after FSpec FR-150 normalization, under FSpec FR-208. The frame
     check SHALL decide whether a field changed by comparing the pre and post
     values as admitted typed values under the equality of the field's
     declared type, never the document's raw JSON: JSON member order,
@@ -1134,7 +1134,7 @@ required; check 10 settles it.
     normalizes are no change. The equality of each declared type is: `Boolean`
     the same truth value; `Int[lo, hi]` the same integer; `String` the same
     scalar sequence, with no normalization; `Text[min, max; profile]` the same
-    retained sequence under that profile (QSpec FR-141), so U+00E9 and U+0065
+    retained sequence under that profile (FSpec FR-141), so U+00E9 and U+0065
     U+0301 are one value under `nfc`, `nfd`, `nfkc` and `nfkd` and two under
     `unicode-scalars` and `binary-utf8`; `UUID` and `Timestamp` the same
     canonical payload; `Rational[..]` the same normalized numerator and
@@ -1146,7 +1146,7 @@ required; check 10 settles it.
     array order; `OrderedSet<T>` equal elements in the same order; a record the same most-specific type
     and equal effective fields; a variant the same case and, where it carries
     one, an equal payload. The frame check SHALL apply the
-    selected QSpec FR-013 and FR-340 frame grant to
+    selected FSpec FR-013 and FR-340 frame grant to
     the changed declared object field. A record value's member comparison
     detects changes to that field without introducing another frame grant.
     Within one population it SHALL report the first violation in this
@@ -1161,7 +1161,7 @@ required; check 10 settles it.
        `frame_violation`/`unauthorized-change`;
     3. a changed field of a surviving object outside `modifies`, objects in
        pre document order and fields in ascending `DeclarationKey` order
-       (`enforce_frame`'s `BTreeSet`, `qsl-semantics/src/model/
+       (`enforce_frame`'s `BTreeSet`, `fsl-semantics/src/model/
        population.rs:1488-1490`): `frame_violation`/`unauthorized-change`;
     4. over that population's entries of `created` and `deleted`: a repeated
        identity in either, an identity in both, then a list that differs
@@ -1193,7 +1193,7 @@ required; check 10 settles it.
        `unauthorized-change` naming both machines, before any field is
        compared. A
        changed field that the operation's frame does not grant in `modifies`
-       (QSpec FR-013 and FR-340) refuses `frame_violation`/
+       (FSpec FR-013 and FR-340) refuses `frame_violation`/
        `unauthorized-change`, naming the machine and the field. A context
        needs no `creates` or `deletes` grant and has no entry in `created` or
        `deleted`.
@@ -1221,13 +1221,13 @@ required; check 10 settles it.
   supplied values within the byte and value limits, with no call-stack or
   schema-depth limit. A nested refusal SHALL carry its exact FR-207 `field`,
   `option_value` and `index` steps from the root object or invocation binding.
-  Invariant evaluation follows QSpec FR-208-AC-10 after admission, once for
+  Invariant evaluation follows FSpec FR-208-AC-10 after admission, once for
   each reachable record value, with the same path; admission does not turn a
   false invariant into an input refusal.
 - Admission re-runs the model walks of the selected domain packages. A
   ceiling of `ModelNormalizationLimitsV1` reached there refuses
   `resource_exhausted` with the compile path's cause (FR-255 Behavior 1).
-- Every code and cause above is in QSpec `native-diagnostics.md`.
+- Every code and cause above is in FSpec `native-diagnostics.md`.
 
 ## Acceptance Criteria
 
@@ -1248,7 +1248,7 @@ required; check 10 settles it.
 | FR-106-AC-14 | A current snapshot of `Account` whose required `address: Address` field is `{"record":{"type":"ix://example/model/PostalAddress","fields":{"street":{"present":{"record":{"type":"ix://example/model/Street","fields":{"name":{"integer":"7"}}}}},"zip":{"integer":"42"}}}}` admits when `PostalAddress` specializes `Address`, its effective `street` field is optional `Street`, its `zip` field is `Integer`, and `Street.name` is `Integer`. Reordering JSON object members yields the same typed observation. The two nested records retain their most-specific types and are reached by distinct FR-207 field and option-value paths. | Test |
 | FR-106-AC-15 | A record payload with a missing effective field refuses `invalid_runtime_input`/`missing-member`; one with an extra field refuses `unknown-member`; a `type` naming an object type, an unrelated record subtype, or no selected record refuses `wrong-value-kind`; and an object reference in place of a record refuses `wrong-value-kind`. Each refusal names the first nested path reached in field order, including an index for a sequence element. The same cases in a parameter or result use the invocation binding as the path root. | Test |
 | FR-106-AC-16 | A finite `Node { next?: Node }` value nested through 10,000 present `next` fields admits when byte and value limits allow it, with no reader or validator stack-depth refusal. At the exact values-per-document bound the document admits; one more nested value returns `stage_limit_exceeded`/`node-count-exceeded` naming `observation.values`, the bound and the count reached, before that value is admitted. A false invariant on one nested `Node` is reported as a logical violation at its FR-207 runtime value path after admission, not as an input refusal. | Test |
-| FR-106-AC-17 | An invocation changing `Account.address` from one admitted record value to another admits its frame when the selected `modifies` grant covers that declared object field. Without that grant it refuses `frame_violation`/`unauthorized-change` naming `Account.address`, whether the change is to a record member or its most-specific type. The existing QSpec FR-013 and FR-340 receiver and grant semantics apply. | Test |
+| FR-106-AC-17 | An invocation changing `Account.address` from one admitted record value to another admits its frame when the selected `modifies` grant covers that declared object field. Without that grant it refuses `frame_violation`/`unauthorized-change` naming `Account.address`, whether the change is to a record member or its most-specific type. The existing FSpec FR-013 and FR-340 receiver and grant semantics apply. | Test |
 | FR-106-AC-18 | Over the TC-1029 fixture, a current snapshot whose `child` holds `token` `{"kind":"uuid","text":"00112233-4455-6677-8899-aabbccddeeff"}` and `stamp` `{"kind":"timestamp","nanoseconds":"0"}` admits both as a UUID and a Timestamp value of the retained canonical payloads; reordering the members of either object, and the whitespace of the document, gives the same typed observation. Nil (`00000000-0000-0000-0000-000000000000`), Max (`ffffffff-ffff-ffff-ffff-ffffffffffff`), a UUID whose version nibble is `0`, outside RFC 9562's version table (`00112233-4455-0677-8899-aabbccddeeff`), and Timestamps `1`, `-1`, `170141183460469231731687303715884105727` and `-170141183460469231731687303715884105728` admit unchanged. A present optional `prior`, each element of a `Sequence<Timestamp>` field `seen`, and the `id` and `at` parameters and a UUID `result` of an invocation admit by the same rule, and each object counts as one value toward `observation.values`. | Test (TC-1029) |
 | FR-106-AC-19 | A UUID `text` in uppercase (`00112233-4455-6677-8899-AABBCCDDEEFF`), mixed case, hyphenless, braced, `urn:uuid:`-prefixed, with a moved hyphen, with a non-hex digit, of the wrong length, padded with whitespace or holding a non-ASCII digit refuses `invalid_runtime_input`/`invalid-value` naming `child`, `token` and member `text`, with kernel class `noncanonical-payload`. A Timestamp `nanoseconds` of `-0`, `+1`, `01`, `-01`, the empty string, ` 1`, `1.0`, `1e3` and `2026-10-15T00:00:00Z` refuses `invalid-value` with class `noncanonical-payload`. `170141183460469231731687303715884105728` and `-170141183460469231731687303715884105729` refuse `invalid-value` with class `payload-out-of-domain`; `0170141183460469231731687303715884105728` refuses with `noncanonical-payload`, never the range class. No refusal produces a value or a repaired spelling. | Test (TC-1029) |
 | FR-106-AC-20 | Native payload objects refuse in the listed order: `kind` as `1` or `null` refuses `wrong-value-kind` naming `kind`, even beside a missing payload member; `kind` `String`, `UUID` and `uuidv4` refuse `invalid-value` naming `kind`, and `{"kind":"String","nanoseconds":"0"}` refuses the same way, its members unexamined; a UUID object with no `text` (and `{"kind":"uuid","nanoseconds":"0"}`) and a Timestamp object with no `nanoseconds` refuse `missing-member` naming that member; an extra member refuses `unknown-member` naming it; `nanoseconds` as the JSON number `0`, and `text` as `null` or `5`, refuse `wrong-value-kind` naming the member. An object with both an extra member and a noncanonical `text` refuses `unknown-member`. | Test (TC-1029) |
@@ -1278,7 +1278,7 @@ required; check 10 settles it.
 | FR-106-AC-44 | Each condition of checks 6.10 to 6.12 has one case that fails only it and returns exactly its code and cause, naming the snapshot and the entry: `contexts` on a snapshot that says `current` (`unknown-member` naming `contexts`); `contexts` as an object (`wrong-value-kind`); an entry without `machine`, without `fields`, with an extra member, with a numeric `machine`, with an array `fields`; a `machine` naming the object type `Pump`, the process `Fulfilment` and the unknown identity `ix://test/orders/Missing` (`wrong-role-mapping`); a field missing from `fields` (`missing-member` naming it); an undeclared field, a `state` member and a `transitions` member among them (`unknown-member` naming the first in document order); `placed` as `{"integer": "1"}` (`wrong-value-kind` at the context path `OrderLifecycle`, `placed`). Defects in two entries report the first entry's, and a defect in a context after a bad object reports the object's (objects, relationships, then contexts). | Test (TC-1045) |
 | FR-106-AC-45 | The post-state range witness reaches a context: over `ExpressLifecycle` with a field `retries: Int[0, 5]`, a `post` context holding `-1` under `PostStateRange::Witness` admits side `post` and reports one `OutOfRange` naming the machine `ExpressLifecycle`, the field `retries`, the range `[0, 5]` and the observed `-1`; the same value in a `pre` context, and in a post context under `Refuse`, refuses `invalid_runtime_input`/`invalid-value` at `ExpressLifecycle`, `retries`. A context field of a record, String, UUID, Timestamp or Text type follows the value rules and payload order of the object fields. | Test (TC-1045) |
 | FR-106-AC-46 | The frame check compares contexts: with `place` modifying `placed` and `cancelled`, a post context changing both admits; with `place` modifying only `placed`, a post context that also changes `cancelled` refuses `frame_violation`/`unauthorized-change` naming `OrderLifecycle` and `cancelled`, for the postcondition and for the invariant on side `post`, and side `pre` runs no frame check and admits. A `post` context equal to the `pre` context in every field, written in another member order, is no change. An invocation whose `self` is an object reference for a state-machine operation, and one whose `self` is `null` for an object operation, refuse `invalid_runtime_input`/`wrong-value-kind`. A machine invariant selected by `Current`, `PreCall` or `Invocation`, an object invariant selected by `Context`, and a `Current` selection naming a `self` for a machine precondition refuse `wrong_snapshot`/`wrong-observation`. | Test (TC-1045) |
-| FR-106-AC-47 | A context field `owner: Reference<Pump>` of the machine `Owned` naming `p9`, absent from the complete population `Q` of the same snapshot, refuses `dangling_reference`/`absent-target-in-complete-population` naming `Owned`, `owner`, `p9` and `Q`; with `Q` marked `"complete": false` it returns `Incomplete` with `incomplete_population`/`incomplete-scope` naming `Q`, and the same field naming a listed key of `Q` admits. A second population `Spare` listed incomplete that no reference names admits. Each context entry and each of its field values counts toward `observation.values`: a document at the exact bound admits and one more value returns `stage_limit_exceeded`/`node-count-exceeded` naming `observation.values`. A `quire.state.snapshot/v1` environment document supplied to replay (FR-098) that holds `contexts` refuses `invalid_runtime_input`/`unknown-member` naming `contexts`, because an environment document is a current snapshot. | Test (TC-1045) |
+| FR-106-AC-47 | A context field `owner: Reference<Pump>` of the machine `Owned` naming `p9`, absent from the complete population `Q` of the same snapshot, refuses `dangling_reference`/`absent-target-in-complete-population` naming `Owned`, `owner`, `p9` and `Q`; with `Q` marked `"complete": false` it returns `Incomplete` with `incomplete_population`/`incomplete-scope` naming `Q`, and the same field naming a listed key of `Q` admits. A second population `Spare` listed incomplete that no reference names admits. Each context entry and each of its field values counts toward `observation.values`: a document at the exact bound admits and one more value returns `stage_limit_exceeded`/`node-count-exceeded` naming `observation.values`. A `filament.state.snapshot/v1` environment document supplied to replay (FR-098) that holds `contexts` refuses `invalid_runtime_input`/`unknown-member` naming `contexts`, because an environment document is a current snapshot. | Test (TC-1045) |
 | FR-106-AC-48 | `ValueInvariants` over TC-235 K2 with `Order` given `quoted`, `history`, `discount` and operation `requote(amount: Money)` admits observation `s1` holding `o1` and invocation `i1` of `requote` with `amount` `{amount_minor: -7, currency: "EUR"}`, and names `s1`, `i1`'s `pre` snapshot and `i1`'s parameter `amount`; the same selection with a `pre` document as `snapshot` refuses `wrong_snapshot`/`wrong-observation`, and with an `i1` whose `amount` is missing refuses `invalid_runtime_input`/`missing-member`. | Test (TC-1051) |
 | FR-106-AC-49 | Over TC-1044's fixture with the record `Address { street: Title }` held by the field `address`, the frame check compares a record's field by that field's declared type: `street` changed from U+00E9 to U+0065 U+0301 under `nfc` is no change and admits without a grant, and `street` changed to another text is a change and refuses `frame_violation`/`unauthorized-change` naming `child` and `address`. | Test (TC-1044) |
 | FR-106-AC-50 | Over TC-1171's fixture (object type `Tagged` with fields `ids: Set<UUID>[0, 3]`, `counts: Bag<Int[0, 9]>[0, 4]`, `order: OrderedSet<Int[0, 9]>[0, 3]`, `stamps: OrderedSet<Timestamp>[0, 2]` and `peers: Set<Reference<Tagged>>[0, 2]`; populations `ix://test/tagged/T` holding `t1` and `z1` and `ix://test/tagged/U` holding `a1`), a current snapshot whose `t1` holds `ids` `{"set": [{"kind":"uuid","text":"00000000-0000-0000-0000-000000000002"}, {"kind":"uuid","text":"00000000-0000-0000-0000-000000000001"}]}`, `counts` `{"bag": [{"integer":"2"}, {"integer":"1"}, {"integer":"2"}]}`, `order` `{"ordered-set": [{"integer":"3"}, {"integer":"1"}]}`, `stamps` `{"ordered-set": [{"kind":"timestamp","nanoseconds":"5"}, {"kind":"timestamp","nanoseconds":"-1"}]}` and `peers` `{"set": [{"reference":{"population":"ix://test/tagged/T","key":"z1"}}, {"reference":{"population":"ix://test/tagged/U","key":"a1"}}]}`, and whose `z1` and `a1` each hold `ids` `{"set": []}`, `counts` `{"bag": []}`, `order` `{"ordered-set": []}`, `stamps` `{"ordered-set": []}` and `peers` `{"set": []}`, admits: `ids` has two members, `counts` member `1` with multiplicity 1 and `2` with multiplicity 2, `order` the order `3, 1`, `stamps` the order `5, -1`, and `peers` is written `a1` of `U` before `z1` of `T` (ordered by key, then population). The same document with `ids`, `counts` and `peers` elements in reversed order gives an equal typed observation; with `order` reversed it gives an unequal typed observation. | Test (TC-1171) |
@@ -1294,22 +1294,22 @@ required; check 10 settles it.
 | FR-106-AC-60 | Over TC-1171's numeric fixture (also declaring `names: Set<String>[0, 4]`, `notes: Set<Option<String>>[0, 2]` and `lines: OrderedSet<String>[0, 3]`), a current snapshot whose `t1` holds `names` `{"set": [b, "", "\u00e9", "e\u0301"]}` (each as a String object) admits four members, the composed and the decomposed spelling of `é` being two, written `[{"kind":"string","text":""},{"kind":"string","text":"b"},{"kind":"string","text":"e\u0301"},{"kind":"string","text":"\u00e9"}]` ordered by those bytes; `notes` `{"set": [{"present": {"kind":"string","text":"x"}}, {"absent": {}}]}` is written `[{"absent":{}},{"present":{"kind":"string","text":"x"}}]`; `lines` keeps its order. `names` holding `a` twice and `lines` holding `a` twice refuse `invalid_runtime_input`/`duplicate-member` at element 1 naming element 0; a Text object `{"kind":"text","text":"a"}` as an element of `names`, a UUID object, and `{"kind":"string","text":1}` refuse `wrong-value-kind` at element 0, the last naming `text`; `names` with five elements refuses `cardinality_out_of_bound`/`above-maximum` before any element is read. A `retag` invocation whose post `names` holds the pre members in another order is no change, and one whose post `names` replaces U+00E9 by U+0065 U+0301 refuses `frame_violation`/`unauthorized-change` naming `t1` and `names`. | Test (TC-1171) |
 | FR-106-AC-61 | A snapshot whose object type has fields `blob: Bytes`, `doc: JsonObject` and `span: Duration` (the unit of compilation declaring `dimension Time; unit s : Time = rational(1, 1);`) admits `blob` `{"kind":"bytes","text":"00ff"}`, `doc` `{"kind":"json_object","text":"{\"a\":1}"}` and `span` as the quantity form of `3/2` over `s`, and two snapshots differing only in JSON member order of the enclosing document have one typed observation. `blob` `00FF`, `doc` `{"a": 1}` refuse `invalid_runtime_input`/`invalid-value`; the Bytes object in `doc`, the JsonObject object in `blob` and a String object in either refuse `wrong-value-kind`; an object with an extra member or a non-string `text` refuses as the String object does. | Test (TC-1231) |
 
-| FR-106-AC-62 | A current snapshot admitted through the view entry returns QSV `ObservationAdmission::Admitted`; its authority retains the exact selected model, document identity, population manifest/bundles and admission usage after the caller drops the provisions. Public struct construction, mutation of its environment or completeness/provenance, and conversion from a caller-built `Observation` fail to compile; reading the documented accessors compiles. The factory's result type is QSV's generic specialized to the opaque QSL authority; no local result declaration/alias or layer-4 dependency on `quire-eval` exists. | Test |
-| FR-106-AC-63 | A snapshot of another model yields `Refused` with the original QSV `AdmissionRecord` and `invalid_model_binding`/`wrong-model-selection`; a nested-value refusal preserves every `catalog`, `fields`, `path` and `kernel` component. `authority()` on `Refused`, `Incomplete` and `Fault` returns that same distinct arm and payload; `Fault` preserves the original `InternalFault`. The QSL admission implementation uses QSV's record/path types with no local copies. | Test |
+| FR-106-AC-62 | A current snapshot admitted through the view entry returns FSV `ObservationAdmission::Admitted`; its authority retains the exact selected model, document identity, population manifest/bundles and admission usage after the caller drops the provisions. Public struct construction, mutation of its environment or completeness/provenance, and conversion from a caller-built `Observation` fail to compile; reading the documented accessors compiles. The factory's result type is FSV's generic specialized to the opaque FSL authority; no local result declaration/alias or layer-4 dependency on `filament-eval` exists. | Test |
+| FR-106-AC-63 | A snapshot of another model yields `Refused` with the original FSV `AdmissionRecord` and `invalid_model_binding`/`wrong-model-selection`; a nested-value refusal preserves every `catalog`, `fields`, `path` and `kernel` component. `authority()` on `Refused`, `Incomplete` and `Fault` returns that same distinct arm and payload; `Fault` preserves the original `InternalFault`. The FSL admission implementation uses FSV's record/path types with no local copies. | Test |
 | FR-106-AC-64 | Over TC-1071 row 20, an authority retaining `n5` but marking its required `nodes` population incomplete yields `incomplete_population`/`incomplete-scope` naming that population's exact node, before any dangling check. With `nodes` complete and a second unreferenced population incomplete, the same supplied source admits. A recursively required incomplete population is reported in FR-106 walk order; completing it exposes any subsequent check-8 dangling defect. | Test |
 | FR-106-AC-65 | For FR-390's reference-occurrence seeds, two same-universe, same-effective-type populations retain distinct checked declaration nodes, including when one is empty or unlisted. A supplied ghost reference attributed to the empty/unlisted declaration makes only that declaration and its recursive check-7 closure required; with its row listed and incomplete, the original `AdmissionRecord` is `incomplete_population`/`incomplete-scope` at that node before check 8, with no row for it `incomplete_population`/`missing-required-artifact` at that node before check 8, and with it complete check 8 reports the ghost against that same population. Snapshot reference fields and relationship ends extend the recursive closure in existing walk order. No object key, normalized type/universe pair, caller label, or mutable authority state substitutes for the declaration identity. | Test |
-| FR-106-AC-66 | Over TC-1171's fixture, `ids: Set<UUID>[0, 3]` written `{}` and written `{"type": "set", "elements": []}` each refuse `invalid_runtime_input`/`missing-member` naming `set`, as does `ids` written `{"bag": [], "sequence": []}` (two collection tags, neither the declared one); the same cases in a parameter or a state-machine context field use their own path roots. This is the native counterpart of QSpec FR-144-AC-16's absent `type` or `elements`. | Test (TC-1171) |
+| FR-106-AC-66 | Over TC-1171's fixture, `ids: Set<UUID>[0, 3]` written `{}` and written `{"type": "set", "elements": []}` each refuse `invalid_runtime_input`/`missing-member` naming `set`, as does `ids` written `{"bag": [], "sequence": []}` (two collection tags, neither the declared one); the same cases in a parameter or a state-machine context field use their own path roots. This is the native counterpart of FSpec FR-144-AC-16's absent `type` or `elements`. | Test (TC-1171) |
 | FR-106-AC-67 | A snapshot with a required population `P` that has no row returns `Incomplete` with `incomplete_population`/`missing-required-artifact` naming `P` and no collection; the same snapshot with a `P` row marked `"complete": false` returns `incomplete_population`/`incomplete-scope`; with both an unlisted required population and a listed incomplete one, the first in walk order is named with the cause of its own kind. | Test (TC-1076) |
-| FR-106-AC-68 | Over TC-1171's fixture, `ids` written `{"set": [], "extra": 1}` refuses `unknown-member` naming `extra`, and `counts: Bag<Int[0, 9]>[0, 4]` written `{"bag": [], "set": []}` refuses `unknown-member` naming `set`; the first other member in document order is named. This is the native counterpart of QSpec FR-144-AC-16's extra member. | Test (TC-1171) |
-| FR-106-AC-69 | Over TC-1171's fixture, `order: OrderedSet<Int[0, 9]>[0, 3]` written `{"ordered-set": 1}`, `ids` written `[]`, and `ids` written `{"bag": []}` each refuse `wrong-value-kind` (naming the tag for the non-array, the field otherwise). This is the native counterpart of QSpec FR-144-AC-16's wrong-kind tag. | Test (TC-1171) |
+| FR-106-AC-68 | Over TC-1171's fixture, `ids` written `{"set": [], "extra": 1}` refuses `unknown-member` naming `extra`, and `counts: Bag<Int[0, 9]>[0, 4]` written `{"bag": [], "set": []}` refuses `unknown-member` naming `set`; the first other member in document order is named. This is the native counterpart of FSpec FR-144-AC-16's extra member. | Test (TC-1171) |
+| FR-106-AC-69 | Over TC-1171's fixture, `order: OrderedSet<Int[0, 9]>[0, 3]` written `{"ordered-set": 1}`, `ids` written `[]`, and `ids` written `{"bag": []}` each refuse `wrong-value-kind` (naming the tag for the non-array, the field otherwise). This is the native counterpart of FSpec FR-144-AC-16's wrong-kind tag. | Test (TC-1171) |
 | FR-106-AC-70 | One snapshot's content admitted under two distinct document references gives two observations whose `identity` values are those two references, each holding the same populations, completeness flags and `ObjectEnvironment`, with the selected `self` object carrying the same universe, object type and object identifier in both. The same holds for the `pre` and `post` observations of one invocation admitted under two pairs of references. Neither observation reports the other's document identity. | Test (TC-1308) |
 
 ## Dependencies
 
 - FR-084 and FR-089 (population binding and identity), FR-103 (operation
-  effect), FR-001 (the two labels; QSpec STD-150), FR-056 (the K2 String, UUID and Timestamp payloads and their runtime-input
+  effect), FR-001 (the two labels; FSpec STD-150), FR-056 (the K2 String, UUID and Timestamp payloads and their runtime-input
   refusals), FR-038 (integer spelling).
-- QSpec FR-208 (State-machine context anchors: the context, exactly one per
+- FSpec FR-208 (State-machine context anchors: the context, exactly one per
   machine in each observation, `wrong-context` and `duplicate-member`; AC-10:
   the invariant in the pre and post observation of every invocation), FR-207
   (the receiver binding path), FR-013 and FR-340 (frame grants). FR-107
@@ -1317,10 +1317,10 @@ required; check 10 settles it.
   current snapshot).
 - FR-364 (relationship extents: the instance model, its admission conditions
   and the read contract navigation uses).
-- QSpec FR-141 and FR-149 (the `Text[min, max; profile]` retained sequence, its
+- FSpec FR-141 and FR-149 (the `Text[min, max; profile]` retained sequence, its
   length and its equality; the Text object's profile semantics).
-- QSpec FR-153 and `state-contract.md` (anchors, completeness and closure),
+- FSpec FR-153 and `state-contract.md` (anchors, completeness and closure),
   `native-diagnostics.md` (every code and cause above).
-- QSpec FR-046-AC-7 and FR-208-AC-13 make a precondition's input the
+- FSpec FR-046-AC-7 and FR-208-AC-13 make a precondition's input the
   pre-call observation; `PreCall` and a precondition selected by
   `Invocation` both admit exactly that observation.

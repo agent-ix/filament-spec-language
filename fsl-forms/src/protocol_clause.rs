@@ -1,0 +1,1388 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The `ProtocolClause` family's one S2 production (FR-102, ADR-012 §15.2,
+//! §15.3 stage table row S2): `invariant`/`constraint`/`pre`/`post` state clauses.
+//!
+//! This module reads the CST of one `StateClause` declaration and builds
+//! its [`StateClauseForm`]. It resolves no name and mints no identity, the
+//! same contract `value`'s productions keep (FR-091): the `using` alias,
+//! the model context and the operation member stay spelled and spanned,
+//! unresolved, for the assembler and S3 (FR-104) to read. It shares the
+//! `Value` family's own CST-walking helpers (`items`, `only`, `text`, ...)
+//! and its one `Expression` builder, since the `Expression` enum and its
+//! builder are defined once, in the `forms` core (ADR-012 §4.3): only the
+//! declaration-level production is `ProtocolClause`'s own.
+
+use fsl_cst::{CstNode, LosslessCst, Production, TokenKind};
+use fsl_foundation::Span;
+
+use std::ops::ControlFlow;
+
+use super::dispatch::{Construct, FormsRefusal};
+use super::protocol_control::{
+    access_ordering, await_form, channel_form, choice_form, member_forms, parallel_form,
+    repeat_form, role_form, AwaitForm, ChannelOrdering, FenceForm, ParallelForm,
+    ProtocolMemberForm, RepeatForm, TerminalForm,
+};
+use super::spans::DeclarationSpans;
+use super::syntax::{
+    ActivationForm, AnchorForm, AnchorSegment, AnchorSite, AttemptForm, BinderForm, BinderKind,
+    CheckForm, ChoiceForm, ClockForm, CompensationAttempts, CompensationCommit, CompensationForm,
+    CompensationRecover, CompensationRetry, DeclarationForm, DeclaredName, ExpressionForm,
+    NameForm, OperationBodyForm, ProtocolBodyForm, ProtocolConstructForm, ProtocolConstructKind,
+    ProtocolDeclarationForm, ProtocolNodeDeclaration, ProtocolNodeKind, RelatedForm,
+    RelationshipForm, RequirementForm, ScopeEntry, ScopeId, ScopeName, ScopedAnchorForm,
+    StateClauseForm, StateClauseKind, TypeForm, UsingAlias,
+};
+use super::temporal_clause::{capture_form, expression_form, interval_form, parameter_form};
+use super::value::{
+    declared_name, expression, has_token, items, name_form, nodes_of, only, production_node, text,
+    tokens_of, type_form, unexpected, Item,
+};
+
+/// The protocol form's output collections, threaded together through every
+/// S2 control-tree walk function (FR-113 Inputs/Outputs): one struct rather
+/// than one `&mut Vec` parameter per collection, so a new output needs one
+/// field added here, not a new parameter at every call site (SR-765
+/// FND-008).
+struct Collector<'a> {
+    /// Every named control's scope, entered once each.
+    scopes: &'a mut Vec<ScopeEntry>,
+    /// FR-112's scoped anchors, in source order of their references.
+    anchors: &'a mut Vec<ScopedAnchorForm>,
+    /// FR-113's declaration collection: every static node a scope declares
+    /// directly, in source order.
+    declarations: &'a mut Vec<ProtocolNodeDeclaration>,
+    /// FR-113's binder collection, in source order.
+    binders: &'a mut Vec<BinderForm>,
+    /// FR-114's attempt operation/contracts collection, in source order.
+    attempts: &'a mut Vec<AttemptForm>,
+    /// Every event node, `commit` and `check` body block.
+    bodies: &'a mut Vec<ProtocolBodyForm>,
+    /// Every `related by` clause of an event node, alongside the
+    /// protocol's top-level constructs.
+    constructs: &'a mut Vec<ProtocolConstructForm>,
+    /// Every `parallel` control, in source order.
+    parallels: &'a mut Vec<ParallelForm>,
+    /// Every `fence` control, in source order.
+    fences: &'a mut Vec<FenceForm>,
+    /// Every `repeat` control, in source order.
+    repeats: &'a mut Vec<RepeatForm>,
+    /// Every `await` control, in source order.
+    awaits: &'a mut Vec<AwaitForm>,
+    /// Every `choice` control, in source order.
+    choices: &'a mut Vec<ChoiceForm>,
+    /// Every `check` control, in source order.
+    checks: &'a mut Vec<CheckForm>,
+}
+
+/// `invariant N using p on M::T at current { e }`, `constraint N using p on
+/// M::T at current { e }`, `pre N using p on M::T::op { e }` or `post N using
+/// p on M::T::op { e }` (FR-102 "Behavior"):
+/// the kind is read from the leading token alone, and the body is built
+/// exactly as a function body is (`value::expression`).
+pub(crate) fn state_clause(construct: Construct<'_>) -> Result<DeclarationForm, FormsRefusal> {
+    let cst = construct.cst;
+    let node = production_node(construct)?;
+    let clause_items = items(cst, node);
+    let kind = match clause_items.first() {
+        Some(Item::Token(token)) if token.spelling() == b"invariant" => StateClauseKind::Invariant,
+        Some(Item::Token(token)) if token.spelling() == b"constraint" => {
+            StateClauseKind::Constraint
+        }
+        Some(Item::Token(token)) if token.spelling() == b"pre" => StateClauseKind::Precondition,
+        Some(Item::Token(token)) if token.spelling() == b"post" => StateClauseKind::Postcondition,
+        Some(Item::Token(_) | Item::Node(_)) | None => return Err(unexpected(node)),
+    };
+    let identifiers = tokens_of(&clause_items, TokenKind::Identifier);
+    let [name, alias] = identifiers.as_slice() else {
+        return Err(unexpected(node));
+    };
+    let (context, operation) = match kind {
+        StateClauseKind::Invariant | StateClauseKind::Constraint => {
+            let type_name = only(&clause_items, Production::TypeName, node)?;
+            (name_form(cst, type_name)?, None)
+        }
+        StateClauseKind::Precondition | StateClauseKind::Postcondition => {
+            let operation_name = only(&clause_items, Production::OperationName, node)?;
+            let operation_items = items(cst, operation_name);
+            let member =
+                operation_member(&operation_items).ok_or_else(|| unexpected(operation_name))?;
+            let context = operation_context(&operation_items, operation_name)?;
+            let operation = DeclaredName {
+                name: text(member, operation_name)?,
+                span: member.span(),
+            };
+            (context, Some(operation))
+        }
+    };
+    let block = only(&clause_items, Production::Block, node)?;
+    let block_items = items(cst, block);
+    let body_node = only(&block_items, Production::Expression, block)?;
+    let (body, body_spans) = expression(cst, body_node)?;
+    let form = StateClauseForm {
+        kind,
+        name: DeclaredName {
+            name: text(name, node)?,
+            span: name.span(),
+        },
+        profile: UsingAlias {
+            alias: text(alias, node)?,
+            span: alias.span(),
+        },
+        context,
+        operation,
+        body,
+        spans: DeclarationSpans {
+            declaration: construct.node.span(),
+            body: body_spans,
+            measure: None,
+        },
+    };
+    Ok(DeclarationForm::StateClause(Box::new(form)))
+}
+
+/// `body L using p on M::T::op (a, b) { e }` (FR-102 "Outputs"): the label,
+/// the `using` alias, every segment of the target name, every parameter name
+/// and the body expression, all spelled and spanned, none resolved.
+pub(crate) fn operation_body(construct: Construct<'_>) -> Result<DeclarationForm, FormsRefusal> {
+    let cst = construct.cst;
+    let node = production_node(construct)?;
+    let body_items = items(cst, node);
+    // `body L using p on <target> ( a, b ) { e }`: the label, the `using`
+    // alias and then the parameter names are the only direct identifier
+    // tokens (the target and the block are nested nodes).
+    let identifiers = tokens_of(&body_items, TokenKind::Identifier);
+    let [label, alias, parameter_tokens @ ..] = identifiers.as_slice() else {
+        return Err(unexpected(node));
+    };
+    let target_node = only(&body_items, Production::QualifiedName, node)?;
+    let target_items = items(cst, target_node);
+    let mut target = Vec::new();
+    for item in &target_items {
+        if let Item::Token(token) = item {
+            if token.spelling() != b"::" {
+                target.push(DeclaredName {
+                    name: text(token, target_node)?,
+                    span: token.span(),
+                });
+            }
+        }
+    }
+    let mut parameters = Vec::with_capacity(parameter_tokens.len());
+    for token in parameter_tokens {
+        parameters.push(DeclaredName {
+            name: text(token, node)?,
+            span: token.span(),
+        });
+    }
+    let block = only(&body_items, Production::Block, node)?;
+    let block_items = items(cst, block);
+    let body_node = only(&block_items, Production::Expression, block)?;
+    let (body, body_spans) = expression(cst, body_node)?;
+    let form = OperationBodyForm {
+        label: DeclaredName {
+            name: text(label, node)?,
+            span: label.span(),
+        },
+        profile: UsingAlias {
+            alias: text(alias, node)?,
+            span: alias.span(),
+        },
+        target,
+        target_span: target_node.span(),
+        parameters,
+        body,
+        spans: DeclarationSpans {
+            declaration: construct.node.span(),
+            body: body_spans,
+            measure: None,
+        },
+    };
+    Ok(DeclarationForm::OperationBody(Box::new(form)))
+}
+
+/// `protocol Name using p over (params) activation { ... run Control Finish
+/// }` (FR-112, ADR-012 §12.2 Form row). S2 builds only the declaration's
+/// scoped anchors, in source order of their references: the `for` and
+/// `commit` references of every top-level `compensate` declaration (empty
+/// scope), then the references the `run` control tree holds, each with the
+/// names of its enclosing named controls. It also records what S3 needs to
+/// decide whether it checks the protocol in full: the `using` alias, each
+/// role, each binder's declared type, each body block (whether it is a bare
+/// Boolean literal) and every other construct present, by kind and span.
+pub(crate) fn protocol_declaration(
+    construct: Construct<'_>,
+) -> Result<DeclarationForm, FormsRefusal> {
+    let cst = construct.cst;
+    let node = production_node(construct)?;
+    let clause_items = items(cst, node);
+    let name = declared_name(&clause_items, node)?;
+    // `protocol Name using p ...`: the protocol's own name and its `using`
+    // alias are its only two direct identifier tokens (the `over`
+    // parameter, the activation and every body part are nested nodes).
+    let [_, alias] = tokens_of(&clause_items, TokenKind::Identifier)[..] else {
+        return Err(unexpected(node));
+    };
+    let using = UsingAlias {
+        alias: text(alias, node)?,
+        span: alias.span(),
+    };
+
+    let mut scopes = Vec::new();
+    let mut scoped_anchors = Vec::new();
+    let mut declarations = Vec::new();
+    let mut binders = Vec::new();
+    let mut attempts = Vec::new();
+    let mut roles = Vec::new();
+    let mut bodies = Vec::new();
+    let mut constructs = Vec::new();
+    let mut parallels = Vec::new();
+    let mut fences = Vec::new();
+    let mut repeats = Vec::new();
+    let mut awaits = Vec::new();
+    let mut choices = Vec::new();
+    let mut checks = Vec::new();
+    // The complete-form members FR-308 builds beside the checker's inputs,
+    // each in source order and resolved to nothing.
+    let captures = nodes_of(&clause_items, Production::Capture)
+        .into_iter()
+        .map(|capture| capture_form(cst, capture))
+        .collect::<Result<Vec<_>, _>>()?;
+    let relationships = nodes_of(&clause_items, Production::Relationship)
+        .into_iter()
+        .map(|relationship| relationship_form(cst, relationship))
+        .collect::<Result<Vec<_>, _>>()?;
+    let requirements = nodes_of(&clause_items, Production::ProtocolRequirement)
+        .into_iter()
+        .map(|requirement| requirement_form(cst, requirement))
+        .collect::<Result<Vec<_>, _>>()?;
+    let compensations = nodes_of(&clause_items, Production::Compensation)
+        .into_iter()
+        .map(|compensation| compensation_form(cst, compensation))
+        .collect::<Result<Vec<_>, _>>()?;
+    let channels = nodes_of(&clause_items, Production::Channel)
+        .into_iter()
+        .map(|channel| channel_form(cst, channel))
+        .collect::<Result<Vec<_>, _>>()?;
+    let members = member_forms(cst, &clause_items)?;
+    // The protocol's own `over (p)` input parameter (FR-113 "Refusals"
+    // binder no-shadowing rule): visible everywhere in the protocol, at the
+    // empty top-level scope (composed lane: `BinderKind::Input`).
+    let input = only(&clause_items, Production::Parameter, node)?;
+    binders.push(parameter_binder(cst, input, BinderKind::Input, None)?);
+    // The protocol's own `activation on each (p) [when (...)]` parameter,
+    // when written: `on origin` binds nothing, so this is only sometimes
+    // present.
+    let activation = only(&clause_items, Production::Activation, node)?;
+    let activation_items = items(cst, activation);
+    let activation_form = match nodes_of(&activation_items, Production::Parameter).first() {
+        None => ActivationForm::Origin,
+        Some(parameter) => ActivationForm::Each {
+            parameter: Box::new(parameter_form(cst, parameter)?),
+            when: nodes_of(&activation_items, Production::Expression)
+                .first()
+                .map(|condition| expression_form(cst, condition))
+                .transpose()?,
+        },
+    };
+    if let Some(&activation_parameter) = nodes_of(&activation_items, Production::Parameter).first()
+    {
+        constructs.push(ProtocolConstructForm {
+            kind: ProtocolConstructKind::ActivationEach,
+            span: activation.span(),
+        });
+        binders.push(parameter_binder(
+            cst,
+            activation_parameter,
+            BinderKind::ActivationParameter,
+            None,
+        )?);
+    }
+    // The protocol's own top-level captures (FR-113 "Refusals" binder
+    // no-shadowing rule): written before the declaration's roles, at the
+    // empty top-level scope every other top-level binder shares.
+    for capture in nodes_of(&clause_items, Production::Capture) {
+        constructs.push(ProtocolConstructForm {
+            kind: ProtocolConstructKind::Capture,
+            span: capture.span(),
+        });
+        binders.push(capture_binder(cst, capture, None)?);
+    }
+    for role in nodes_of(&clause_items, Production::Role) {
+        let role_items = items(cst, role);
+        roles.push(role_form(cst, role)?);
+        if has_token(&role_items, b"each") {
+            constructs.push(ProtocolConstructForm {
+                kind: ProtocolConstructKind::ReplicatedRole,
+                span: role.span(),
+            });
+        }
+    }
+    for (production, kind) in [
+        (
+            Production::Relationship,
+            ProtocolConstructKind::Relationship,
+        ),
+        (Production::Channel, ProtocolConstructKind::Channel),
+        (
+            Production::ProtocolRequirement,
+            ProtocolConstructKind::Requirement,
+        ),
+    ] {
+        for part in nodes_of(&clause_items, production) {
+            constructs.push(ProtocolConstructForm {
+                kind,
+                span: part.span(),
+            });
+        }
+    }
+    // The members whose content no checker reads yet are recorded beside the
+    // channels and members themselves.
+    constructs.extend(
+        channels
+            .iter()
+            .filter(|channel| matches!(channel.ordering.value, ChannelOrdering::Fifo { .. }))
+            .map(|channel| ProtocolConstructForm {
+                kind: ProtocolConstructKind::FifoOrdering,
+                span: channel.ordering.span,
+            }),
+    );
+    constructs.extend(members.iter().filter_map(|member| match member {
+        ProtocolMemberForm::Terminal(TerminalForm::When { span, .. }) => {
+            Some(ProtocolConstructForm {
+                kind: ProtocolConstructKind::TerminalWhen,
+                span: *span,
+            })
+        }
+        ProtocolMemberForm::Terminal(TerminalForm::Any { .. })
+        | ProtocolMemberForm::Scheduling(_) => None,
+    }));
+    {
+        let mut collector = Collector {
+            scopes: &mut scopes,
+            anchors: &mut scoped_anchors,
+            declarations: &mut declarations,
+            binders: &mut binders,
+            attempts: &mut attempts,
+            bodies: &mut bodies,
+            constructs: &mut constructs,
+            parallels: &mut parallels,
+            fences: &mut fences,
+            repeats: &mut repeats,
+            awaits: &mut awaits,
+            choices: &mut choices,
+            checks: &mut checks,
+        };
+        for compensation in nodes_of(&clause_items, Production::Compensation) {
+            compensation_anchors(cst, compensation, &mut collector)?;
+        }
+        let run = only(&clause_items, Production::Control, node)?;
+        control_anchors(cst, run, &mut collector)?;
+        let finish = only(&clause_items, Production::Finish, node)?;
+        let finish_items = items(cst, finish);
+        let owner = collector.declarations.len();
+        collector.declarations.push(ProtocolNodeDeclaration {
+            kind: ProtocolNodeKind::Finish,
+            name: declared_name(&finish_items, finish)?,
+            scope: None,
+            channel: None,
+            related: Vec::new(),
+            role: None,
+        });
+        collector
+            .binders
+            .push(record_binder(cst, &finish_items, finish, None)?);
+        collector.body(cst, &finish_items, finish, owner)?;
+    }
+    // Top-level parts are pushed by production above, `related by` clauses
+    // during the control-tree walk: sort once so both lists read in true
+    // source order.
+    constructs.sort_by_key(|construct| construct.span.start);
+    bodies.sort_by_key(|body| body.span.start);
+
+    Ok(DeclarationForm::Protocol(Box::new(
+        ProtocolDeclarationForm {
+            name,
+            using,
+            roles,
+            bodies,
+            constructs,
+            scopes,
+            scoped_anchors,
+            declarations,
+            binders,
+            attempts,
+            activation: activation_form,
+            captures,
+            relationships,
+            requirements,
+            compensations,
+            channels,
+            parallels,
+            fences,
+            repeats,
+            awaits,
+            choices,
+            checks,
+            members,
+        },
+    )))
+}
+
+impl Collector<'_> {
+    /// Enter the scope `name` opens inside `parent`.
+    fn open_scope(&mut self, name: DeclaredName, parent: Option<ScopeId>) -> ScopeId {
+        let id = ScopeId(self.scopes.len());
+        self.scopes.push(ScopeEntry {
+            name: ScopeName {
+                name: name.name,
+                span: name.span,
+            },
+            parent,
+        });
+        id
+    }
+
+    /// Records the one `{ e }` body block directly among `items`, owned by
+    /// declaration `owner`: its expression and span.
+    fn body(
+        &mut self,
+        cst: &LosslessCst,
+        items: &[Item<'_>],
+        node: &CstNode,
+        owner: usize,
+    ) -> Result<(), FormsRefusal> {
+        let block = only(items, Production::Block, node)?;
+        let block_items = super::value::items(cst, block);
+        let expression = only(&block_items, Production::Expression, block)?;
+        self.bodies.push(ProtocolBodyForm {
+            owner,
+            expression: expression_form(cst, expression)?,
+            span: expression.span(),
+        });
+        Ok(())
+    }
+}
+
+/// The one `as (x: T)` bound parameter directly among `items` (FR-113
+/// "Refusals": a record binder, "the `as (x: T)` of an event node", plus
+/// the same-shaped binder of a `commit`, a `finish` or a `compensate`
+/// declaration), scoped at `scope`.
+fn record_binder(
+    cst: &LosslessCst,
+    items: &[Item<'_>],
+    node: &CstNode,
+    scope: Option<ScopeId>,
+) -> Result<BinderForm, FormsRefusal> {
+    let parameter = only(items, Production::Parameter, node)?;
+    parameter_binder(cst, parameter, BinderKind::RecordBinder, scope)
+}
+
+/// One `capture p = e;`'s own parameter, scoped at `scope` (FR-113
+/// "Refusals").
+fn capture_binder(
+    cst: &LosslessCst,
+    node: &CstNode,
+    scope: Option<ScopeId>,
+) -> Result<BinderForm, FormsRefusal> {
+    let capture_items = items(cst, node);
+    let parameter = only(&capture_items, Production::Parameter, node)?;
+    parameter_binder(cst, parameter, BinderKind::Capture, scope)
+}
+
+/// One `Parameter` node's own declared name as a binder of `kind`, scoped
+/// at `scope`: a `Parameter` (`ident : ParameterType`) names itself with
+/// its one identifier token, the same shape [`declared_name`] reads, and
+/// declares its type with its `ParameterType`'s one `TypeReference`, the
+/// same shape a function parameter's is read with.
+fn parameter_binder(
+    cst: &LosslessCst,
+    parameter: &CstNode,
+    kind: BinderKind,
+    scope: Option<ScopeId>,
+) -> Result<BinderForm, FormsRefusal> {
+    let parameter_items = items(cst, parameter);
+    let declared = only(&parameter_items, Production::ParameterType, parameter)?;
+    let declared_items = items(cst, declared);
+    let reference = only(&declared_items, Production::TypeReference, declared)?;
+    Ok(BinderForm {
+        kind,
+        name: declared_name(&parameter_items, parameter)?,
+        scope,
+        value_type: type_form(cst, reference)?,
+    })
+}
+
+/// `relationship Name = M::target;` (FR-308): the name and the target as
+/// written.
+fn relationship_form(
+    cst: &LosslessCst,
+    relationship: &CstNode,
+) -> Result<RelationshipForm, FormsRefusal> {
+    let relationship_items = items(cst, relationship);
+    Ok(RelationshipForm {
+        name: declared_name(&relationship_items, relationship)?,
+        target: name_form(
+            cst,
+            only(&relationship_items, Production::ModelName, relationship)?,
+        )?,
+        span: relationship.span(),
+    })
+}
+
+/// `requires temporal Name;` (FR-308): the name as written.
+fn requirement_form(
+    cst: &LosslessCst,
+    requirement: &CstNode,
+) -> Result<RequirementForm, FormsRefusal> {
+    let requirement_items = items(cst, requirement);
+    Ok(RequirementForm {
+        temporal: declared_name(&requirement_items, requirement)?,
+        span: requirement.span(),
+    })
+}
+
+/// `related by Name (e1, e2)` (FR-308): the relationship name and both end
+/// expressions in written order.
+fn related_form(cst: &LosslessCst, related: &CstNode) -> Result<RelatedForm, FormsRefusal> {
+    let related_items = items(cst, related);
+    let [first, second] = nodes_of(&related_items, Production::Expression)[..] else {
+        return Err(unexpected(related));
+    };
+    Ok(RelatedForm {
+        relationship: declared_name(&related_items, related)?,
+        ends: [expression_form(cst, first)?, expression_form(cst, second)?],
+        span: related.span(),
+    })
+}
+
+/// The token directly after the own token spelled `keyword`, when it is a
+/// token rather than a node.
+fn token_after<'c>(items: &[Item<'c>], keyword: &[u8]) -> Option<&'c fsl_cst::CstToken> {
+    let at = items
+        .iter()
+        .position(|item| matches!(item, Item::Token(token) if token.spelling() == keyword))?;
+    match items.get(at + 1)? {
+        Item::Token(token) => Some(*token),
+        Item::Node(_) => None,
+    }
+}
+
+/// One `Block` node's body expression.
+fn block_form(cst: &LosslessCst, block: &CstNode) -> Result<ExpressionForm, FormsRefusal> {
+    let block_items = items(cst, block);
+    expression_form(cst, only(&block_items, Production::Expression, block)?)
+}
+
+/// One `compensate` template with every member as written (FR-308). The
+/// template's flat child list is read by the grammar's own keywords and
+/// positions: the captures before the `when` guard block are the
+/// registration stage, the ones after it the activation stage. A zero
+/// count or an inverted interval is built, never refused: S3 decides.
+fn compensation_form(cst: &LosslessCst, node: &CstNode) -> Result<CompensationForm, FormsRefusal> {
+    let compensation_items = items(cst, node);
+    let declared = |token: Option<&fsl_cst::CstToken>| -> Result<DeclaredName, FormsRefusal> {
+        let token = token
+            .filter(|token| token.kind() == TokenKind::Identifier)
+            .ok_or_else(|| unexpected(node))?;
+        Ok(DeclaredName {
+            name: text(token, node)?,
+            span: token.span(),
+        })
+    };
+    let [forward, trigger, earlier, later, recover_binder] =
+        nodes_of(&compensation_items, Production::Parameter)[..]
+    else {
+        return Err(unexpected(node));
+    };
+    let [guard, relation, predicate] = nodes_of(&compensation_items, Production::Block)[..] else {
+        return Err(unexpected(node));
+    };
+    let (registration, activation): (Vec<_>, Vec<_>) =
+        nodes_of(&compensation_items, Production::Capture)
+            .into_iter()
+            .partition(|capture| capture.span().start < guard.span().start);
+    let capture_forms = |captures: Vec<&CstNode>| {
+        captures
+            .into_iter()
+            .map(|capture| capture_form(cst, capture))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let clock = token_after(&compensation_items, b"clock")
+        .filter(|token| token.kind() == TokenKind::Text)
+        .ok_or_else(|| unexpected(node))?;
+    let count = token_after(&compensation_items, b"attempts")
+        .filter(|token| token.kind() == TokenKind::Integer)
+        .ok_or_else(|| unexpected(node))?;
+    let record = name_form(cst, only(&compensation_items, Production::TypeName, node)?)?;
+    let references = nodes_of(&compensation_items, Production::NodeReference);
+    let never = compensation_items.iter().find_map(|item| match item {
+        Item::Token(token) if token.spelling() == b"never" => Some(token.span()),
+        Item::Token(_) | Item::Node(_) => None,
+    });
+    let commit = match (references.get(1), never) {
+        (Some(reference), None) => CompensationCommit::Node(name_form(cst, reference)?),
+        (None, Some(span)) => CompensationCommit::Never(span),
+        (Some(_), Some(_)) | (None, None) => return Err(unexpected(node)),
+    };
+    Ok(CompensationForm {
+        name: declared_name(&compensation_items, node)?,
+        target: name_form(cst, references.first().ok_or_else(|| unexpected(node))?)?,
+        forward: parameter_form(cst, forward)?,
+        role: declared(token_after(&compensation_items, b"by"))?,
+        operation: name_form(
+            cst,
+            only(&compensation_items, Production::OperationName, node)?,
+        )?,
+        using: {
+            let alias = declared(token_after(&compensation_items, b"using"))?;
+            UsingAlias {
+                alias: alias.name,
+                span: alias.span,
+            }
+        },
+        clock: ClockForm {
+            text: fsl_cst::token::decode_quoted(&text(clock, node)?)
+                .ok_or_else(|| unexpected(node))?,
+            span: clock.span(),
+        },
+        registration_captures: capture_forms(registration)?,
+        trigger: parameter_form(cst, trigger)?,
+        guard: block_form(cst, guard)?,
+        activation_captures: capture_forms(activation)?,
+        within: interval_form(cst, only(&compensation_items, Production::Interval, node)?)?,
+        attempts: CompensationAttempts {
+            count: text(count, node)?
+                .parse::<u64>()
+                .map_err(|_| unexpected(node))?,
+            count_span: count.span(),
+            record: TypeForm::name(record.name, record.span),
+        },
+        retry: CompensationRetry {
+            earlier: parameter_form(cst, earlier)?,
+            later: parameter_form(cst, later)?,
+            relation: block_form(cst, relation)?,
+        },
+        commit,
+        recover: CompensationRecover {
+            binder: parameter_form(cst, recover_binder)?,
+            predicate: block_form(cst, predicate)?,
+        },
+        span: node.span(),
+    })
+}
+
+/// `compensate N for R as (p) by role on Op using alias clock "c" { ...
+/// commit (R2 | never); ... }`: the template's own declaration (FR-113
+/// Inputs: the top level declares the protocol's `compensate` templates),
+/// the `for` reference (`compensate-for`, FR-112 site list) and, when
+/// `commit` names a reference rather than `never`, the `commit` reference
+/// (`compensate-commit`). All three are protocol-level: neither is written
+/// inside `run`'s control tree, so all carry the empty scope.
+fn compensation_anchors(
+    cst: &LosslessCst,
+    node: &CstNode,
+    collector: &mut Collector<'_>,
+) -> Result<(), FormsRefusal> {
+    let compensation_items = items(cst, node);
+    let name = declared_name(&compensation_items, node)?;
+    let owner = collector.declarations.len();
+    collector.declarations.push(ProtocolNodeDeclaration {
+        kind: ProtocolNodeKind::CompensateTemplate,
+        name: name.clone(),
+        scope: None,
+        channel: None,
+        related: Vec::new(),
+        role: None,
+    });
+    let references = nodes_of(&compensation_items, Production::NodeReference);
+    let for_reference = references.first().ok_or_else(|| unexpected(node))?;
+    collector.anchors.push(scoped_anchor(
+        cst,
+        for_reference,
+        AnchorSite::CompensateFor,
+        None,
+        None,
+        owner,
+    )?);
+    // `commit never;` names no reference: `references` then holds only the
+    // `for` target, and this site builds no anchor (FR-112 "Behavior").
+    if let Some(commit_reference) = references.get(1) {
+        collector.anchors.push(scoped_anchor(
+            cst,
+            commit_reference,
+            AnchorSite::CompensateCommit,
+            None,
+            None,
+            owner,
+        )?);
+    }
+    // The declaration's own binders (FR-113 "Refusals"): its record binder
+    // (`as (p)`) at the empty top-level scope its own declaration lives in,
+    // then the trigger, every capture, and the retry/recovery parameters,
+    // one level inside it, scoped by the declaration's own name. This
+    // production has no wrapping node for `activate`'s guard, so its own
+    // `star(Capture)` and the declaration's other, earlier `star(Capture)`
+    // (written directly under the declaration, before `activate`) are the
+    // same flat child list -- a capture may legally appear on either side
+    // of the trigger -- and the trigger, the two retry parameters and the
+    // recovery parameter are the only `Parameter` nodes directly under it,
+    // in that fixed grammar order. Binders are sorted by their own span
+    // once collected, so they land in true source order regardless of
+    // which side of the trigger a capture is written on (FR-113's
+    // directionality rule needs the *later* binder to be the one refused;
+    // a mutation that instead pushes them in a fixed grammar-position order
+    // gets this backwards whenever a capture precedes the trigger).
+    let parameters = nodes_of(&compensation_items, Production::Parameter);
+    let [own, trigger, retry_first, retry_second, recover] = parameters.as_slice() else {
+        return Err(unexpected(node));
+    };
+    collector
+        .binders
+        .push(parameter_binder(cst, own, BinderKind::RecordBinder, None)?);
+    let inner_scope = Some(collector.open_scope(name, None));
+    let mut inner_binders = vec![parameter_binder(
+        cst,
+        trigger,
+        BinderKind::Trigger,
+        inner_scope,
+    )?];
+    for capture in nodes_of(&compensation_items, Production::Capture) {
+        inner_binders.push(capture_binder(cst, capture, inner_scope)?);
+    }
+    inner_binders.push(parameter_binder(
+        cst,
+        retry_first,
+        BinderKind::RetryParameter,
+        inner_scope,
+    )?);
+    inner_binders.push(parameter_binder(
+        cst,
+        retry_second,
+        BinderKind::RetryParameter,
+        inner_scope,
+    )?);
+    inner_binders.push(parameter_binder(
+        cst,
+        recover,
+        BinderKind::RecoveryParameter,
+        inner_scope,
+    )?);
+    inner_binders.sort_by_key(|binder| binder.name.span.start);
+    collector.binders.extend(inner_binders);
+    Ok(())
+}
+
+/// One node of the control-tree walk: a `Control`, or a `case` or `branch`
+/// that names its one inner `Control`.
+#[derive(Clone, Copy)]
+enum ControlNode<'c> {
+    /// A `Control` node, unwrapped to the alternative it matched.
+    Control(&'c CstNode),
+    /// `case N when { c } Control`: the case's own name encloses its one
+    /// control, the same shape a `branch` gives a `parallel` (FR-112
+    /// "Outputs": "the named controls that enclose the reference").
+    Case(&'c CstNode),
+    /// `branch N Control`: the branch's own name encloses its one control
+    /// (FR-112-AC-2: `branch left await Wait after Sent` records scope
+    /// `[..., left]`).
+    Branch(&'c CstNode),
+}
+
+/// The `run` control tree's walk (FR-112, FR-113), on the walker toolkit's
+/// explicit stack (ADR-030 D-4.2): each entered node's frame is the scope
+/// on entry, and leaving the node restores `scope` to it, so a named
+/// control's name encloses exactly its own children.
+///
+/// `await ... then <Control>` and `repeat ... exhausted <Control>` nest with
+/// no bracket, so such a chain is as deep as it is long; the walk's heap
+/// stack grows by one frame per CST node S1 already charged.
+struct ControlWalk<'c, 'k, 'a> {
+    cst: &'c LosslessCst,
+    /// The innermost named control enclosing the node being entered.
+    scope: Option<ScopeId>,
+    collector: &'k mut Collector<'a>,
+    #[cfg(test)]
+    gauge: crate::syntax::stack_peak::Gauge,
+}
+
+impl<'c> filament_walk::Walk for ControlWalk<'c, '_, '_> {
+    type Node = ControlNode<'c>;
+    /// The scope on entry.
+    type Frame = Option<ScopeId>;
+    type Stop = FormsRefusal;
+
+    fn enter(
+        &mut self,
+        node: ControlNode<'c>,
+        children: &mut filament_walk::Children<'_, ControlNode<'c>>,
+    ) -> ControlFlow<FormsRefusal, Option<ScopeId>> {
+        let entry = self.scope;
+        let mut named = Vec::new();
+        if let Err(failure) = self.visit(node, &mut named) {
+            return ControlFlow::Break(failure);
+        }
+        #[cfg(test)]
+        self.gauge.enter(named.len());
+        children.extend(named);
+        ControlFlow::Continue(entry)
+    }
+
+    fn exit(&mut self, entry: Option<ScopeId>) -> ControlFlow<FormsRefusal> {
+        #[cfg(test)]
+        self.gauge.exit();
+        self.scope = entry;
+        ControlFlow::Continue(())
+    }
+}
+
+impl<'c> ControlWalk<'c, '_, '_> {
+    /// Open `name` as one more enclosing named control, for the node's
+    /// children; [`filament_walk::Walk::exit`] closes it.
+    fn open(&mut self, name: DeclaredName) {
+        self.scope = Some(self.collector.open_scope(name, self.scope));
+    }
+
+    /// Record what `node` declares and anchors, open its own name when it
+    /// has one, and name its child controls.
+    ///
+    /// Every arm declares the node itself directly in the scope enclosing
+    /// it, before its own name (if any) is pushed: this is the single place
+    /// a control becomes a name other scopes and anchors can resolve
+    /// (FR-113 Inputs).
+    fn visit(
+        &mut self,
+        node: ControlNode<'c>,
+        children: &mut Vec<ControlNode<'c>>,
+    ) -> Result<(), FormsRefusal> {
+        let cst = self.cst;
+        let (enclosing, kind) = match node {
+            ControlNode::Case(case) => (case, ProtocolNodeKind::Case),
+            ControlNode::Branch(branch) => (branch, ProtocolNodeKind::Branch),
+            ControlNode::Control(control) => return self.control(control, children),
+        };
+        let enclosing_items = items(cst, enclosing);
+        let name = declared_name(&enclosing_items, enclosing)?;
+        declare(self.collector.declarations, kind, name.clone(), self.scope);
+        self.open(name);
+        children.push(ControlNode::Control(only(
+            &enclosing_items,
+            Production::Control,
+            enclosing,
+        )?));
+        Ok(())
+    }
+
+    /// One `Control` node: unwraps it to the alternative it actually
+    /// matched (`Sequence`, `Parallel`, ..., `EventNode`) and dispatches on
+    /// that alternative's own production.
+    fn control(
+        &mut self,
+        control: &'c CstNode,
+        children: &mut Vec<ControlNode<'c>>,
+    ) -> Result<(), FormsRefusal> {
+        let cst = self.cst;
+        let matched = items(cst, control)
+            .into_iter()
+            .find_map(|item| match item {
+                Item::Node(node) => Some(node),
+                Item::Token(_) => None,
+            })
+            .ok_or_else(|| unexpected(control))?;
+        let matched_items = items(cst, matched);
+        let named = |kind| -> Result<(ProtocolNodeKind, DeclaredName), FormsRefusal> {
+            Ok((kind, declared_name(&matched_items, matched)?))
+        };
+        match matched.production() {
+            Production::Sequence | Production::Repetition => {
+                let kind = if matched.production() == Production::Sequence {
+                    ProtocolNodeKind::Sequence
+                } else {
+                    ProtocolNodeKind::Repeat
+                };
+                if kind == ProtocolNodeKind::Repeat {
+                    let declaration = self.collector.declarations.len();
+                    self.collector
+                        .repeats
+                        .push(repeat_form(cst, matched, declaration)?);
+                }
+                let (kind, name) = named(kind)?;
+                declare(self.collector.declarations, kind, name.clone(), self.scope);
+                self.open(name);
+                children.extend(
+                    nodes_of(&matched_items, Production::Control)
+                        .into_iter()
+                        .map(ControlNode::Control),
+                );
+                Ok(())
+            }
+            Production::Choice => {
+                let declaration = self.collector.declarations.len();
+                self.collector
+                    .choices
+                    .push(choice_form(cst, matched, declaration)?);
+                let (kind, name) = named(ProtocolNodeKind::Choice)?;
+                declare(self.collector.declarations, kind, name.clone(), self.scope);
+                self.open(name);
+                children.extend(
+                    nodes_of(&matched_items, Production::Case)
+                        .into_iter()
+                        .map(ControlNode::Case),
+                );
+                Ok(())
+            }
+            Production::Parallel => {
+                let (kind, name) = named(ProtocolNodeKind::Parallel)?;
+                let form = parallel_form(cst, matched, self.collector.declarations.len())?;
+                self.collector.parallels.push(form);
+                declare(self.collector.declarations, kind, name.clone(), self.scope);
+                self.open(name);
+                children.extend(
+                    nodes_of(&matched_items, Production::Branch)
+                        .into_iter()
+                        .map(ControlNode::Branch),
+                );
+                Ok(())
+            }
+            Production::AwaitControl => self.await_control(matched, &matched_items, children),
+            Production::EventNode => event_node_anchors(cst, matched, self.scope, self.collector),
+            Production::Check => {
+                let (kind, name) = named(ProtocolNodeKind::Check)?;
+                let owner = self.collector.declarations.len();
+                declare(self.collector.declarations, kind, name, self.scope);
+                // `check N using p { e };`: the name and the alias are its
+                // only two identifier tokens.
+                let [_, alias] = tokens_of(&matched_items, TokenKind::Identifier)[..] else {
+                    return Err(unexpected(matched));
+                };
+                self.collector.checks.push(CheckForm {
+                    declaration: owner,
+                    using: UsingAlias {
+                        alias: text(alias, matched)?,
+                        span: alias.span(),
+                    },
+                });
+                // `check` holds no `NodeReference` and encloses no further
+                // control (FR-112 "Behavior": "No other position yields one").
+                self.collector.body(cst, &matched_items, matched, owner)
+            }
+            Production::Fence => {
+                // `fence` is a contextual word, so it is the first identifier
+                // token; the control's name is the second.
+                let identifiers = tokens_of(&matched_items, TokenKind::Identifier);
+                let token = identifiers.get(1).ok_or_else(|| unexpected(matched))?;
+                let name = DeclaredName {
+                    name: text(token, matched)?,
+                    span: token.span(),
+                };
+                let order = only(&matched_items, Production::FenceOrder, matched)?;
+                self.collector.fences.push(FenceForm {
+                    declaration: self.collector.declarations.len(),
+                    name: name.clone(),
+                    ordering: access_ordering(cst, order)?,
+                });
+                declare(
+                    self.collector.declarations,
+                    ProtocolNodeKind::Fence,
+                    name,
+                    self.scope,
+                );
+                Ok(())
+            }
+            Production::Commit => {
+                let (kind, name) = named(ProtocolNodeKind::Commit)?;
+                let owner = self.collector.declarations.len();
+                declare(self.collector.declarations, kind, name, self.scope);
+                // `commit N by R as (..) { e };`: the role is the
+                // identifier right after `by`.
+                let role = token_after(&matched_items, b"by")
+                    .filter(|token| token.kind() == TokenKind::Identifier)
+                    .ok_or_else(|| unexpected(matched))?;
+                if let Some(declaration) = self.collector.declarations.get_mut(owner) {
+                    declaration.role = Some(DeclaredName {
+                        name: text(role, matched)?,
+                        span: role.span(),
+                    });
+                }
+                self.collector.binders.push(record_binder(
+                    cst,
+                    &matched_items,
+                    matched,
+                    self.scope,
+                )?);
+                self.collector.body(cst, &matched_items, matched, owner)
+            }
+            _ => Err(unexpected(matched)),
+        }
+    }
+
+    /// `await N after R using alias clock "c" within i match Event then
+    /// Control timeout Control`.
+    ///
+    /// The `after` reference (`await-after`, FR-112-AC-2) is built under the
+    /// scope enclosing the await, before the await's own name is pushed: an
+    /// await is a leaf reference target for its own `after` anchor, the same
+    /// way an `effect`'s own name never encloses its own `of` reference.
+    ///
+    /// The matched event template and the `then`/`timeout` branches are
+    /// different: FR-113 Inputs says a control declares the names of its
+    /// direct child controls and event nodes, and lists `await` among the
+    /// structural controls, so these three are the await's own children --
+    /// the legacy checker FR-113 replaces puts them under the await's own
+    /// symbol (`src/linking/composed/scopes/protocol.rs` `ControlKind::Await`).
+    /// A reference inside any of them therefore resolves as if nested one
+    /// level inside this await.
+    fn await_control(
+        &mut self,
+        node: &'c CstNode,
+        await_items: &[Item<'c>],
+        children: &mut Vec<ControlNode<'c>>,
+    ) -> Result<(), FormsRefusal> {
+        let cst = self.cst;
+        let after_reference = only(await_items, Production::NodeReference, node)?;
+        let declaration = self.collector.declarations.len();
+        self.collector.anchors.push(scoped_anchor(
+            cst,
+            after_reference,
+            AnchorSite::AwaitAfter,
+            self.scope,
+            None,
+            declaration,
+        )?);
+        let name = declared_name(await_items, node)?;
+        self.collector
+            .awaits
+            .push(await_form(cst, node, declaration)?);
+        declare(
+            self.collector.declarations,
+            ProtocolNodeKind::Await,
+            name.clone(),
+            self.scope,
+        );
+        self.open(name);
+        let matched_event = only(await_items, Production::EventNode, node)?;
+        event_node_anchors(cst, matched_event, self.scope, self.collector)?;
+        children.extend(
+            nodes_of(await_items, Production::Control)
+                .into_iter()
+                .map(ControlNode::Control),
+        );
+        Ok(())
+    }
+}
+
+/// Walk the `run` control tree under `control`, collecting its anchors,
+/// declarations, binders and bodies into `collector`.
+fn control_anchors(
+    cst: &LosslessCst,
+    control: &CstNode,
+    collector: &mut Collector<'_>,
+) -> Result<(), FormsRefusal> {
+    let mut walk = ControlWalk {
+        cst,
+        scope: None,
+        collector,
+        #[cfg(test)]
+        gauge: crate::syntax::stack_peak::Gauge::new("control_anchors"),
+    };
+    match filament_walk::walk(&mut walk, ControlNode::Control(control)) {
+        ControlFlow::Continue(()) => Ok(()),
+        ControlFlow::Break(failure) => Err(failure),
+    }
+}
+
+/// Records `name` as a static node `kind` declares directly in `scope`
+/// (FR-113 Inputs), with no channel: every kind but `send` and `receive`
+/// carries none.
+fn declare(
+    out_decls: &mut Vec<ProtocolNodeDeclaration>,
+    kind: ProtocolNodeKind,
+    name: DeclaredName,
+    scope: Option<ScopeId>,
+) {
+    out_decls.push(ProtocolNodeDeclaration {
+        kind,
+        name,
+        scope,
+        channel: None,
+        related: Vec::new(),
+        role: None,
+    });
+}
+
+/// `send`, `receive ... of R`, `attempt`, `effect ... of R` or `event ...
+/// [for R]`: the event node's own kind, read from its leading token
+/// (mirrors [`state_clause`]'s kind read). Only `receive`, `effect` and
+/// `event` name a scoped-anchor site (FR-112 "Behavior"); `send` and
+/// `attempt` build no anchor.
+fn event_node_anchors(
+    cst: &LosslessCst,
+    node: &CstNode,
+    scope: Option<ScopeId>,
+    collector: &mut Collector<'_>,
+) -> Result<(), FormsRefusal> {
+    let event_items = items(cst, node);
+    let (kind, site) = match event_items.first() {
+        Some(Item::Token(token)) if token.spelling() == b"send" => (ProtocolNodeKind::Send, None),
+        Some(Item::Token(token)) if token.spelling() == b"receive" => {
+            (ProtocolNodeKind::Receive, Some(AnchorSite::ReceiveOf))
+        }
+        Some(Item::Token(token)) if token.spelling() == b"attempt" => {
+            (ProtocolNodeKind::Attempt, None)
+        }
+        Some(Item::Token(token)) if token.spelling() == b"effect" => {
+            (ProtocolNodeKind::Effect, Some(AnchorSite::EffectOf))
+        }
+        Some(Item::Token(token)) if token.spelling() == b"event" => {
+            (ProtocolNodeKind::Event, Some(AnchorSite::EventFor))
+        }
+        Some(Item::Token(_) | Item::Node(_)) | None => return Err(unexpected(node)),
+    };
+    let identifiers = tokens_of(&event_items, TokenKind::Identifier);
+    let name_token = identifiers.first().ok_or_else(|| unexpected(node))?;
+    let name = DeclaredName {
+        name: text(name_token, node)?,
+        span: name_token.span(),
+    };
+    // Only `send` and `receive` are written `via` a channel (FR-113's
+    // channel-mismatch check); every other kind's second identifier, when
+    // one exists, is a role or a `contracts` entry, never a channel.
+    let channel = match kind {
+        ProtocolNodeKind::Send | ProtocolNodeKind::Receive => {
+            let channel_token = identifiers.get(1).ok_or_else(|| unexpected(node))?;
+            Some(DeclaredName {
+                name: text(channel_token, node)?,
+                span: channel_token.span(),
+            })
+        }
+        _ => None,
+    };
+    let declaration_index = collector.declarations.len();
+    let related = nodes_of(&event_items, Production::Related)
+        .into_iter()
+        .map(|clause| related_form(cst, clause))
+        .collect::<Result<Vec<_>, _>>()?;
+    // `attempt N by R ...` and `event N by R ...` name their role right
+    // after `by`; no other event node kind is written `by` a role.
+    let role = match kind {
+        ProtocolNodeKind::Attempt | ProtocolNodeKind::Event => {
+            let role = token_after(&event_items, b"by")
+                .filter(|token| token.kind() == TokenKind::Identifier)
+                .ok_or_else(|| unexpected(node))?;
+            Some(DeclaredName {
+                name: text(role, node)?,
+                span: role.span(),
+            })
+        }
+        _ => None,
+    };
+    collector.declarations.push(ProtocolNodeDeclaration {
+        kind,
+        name,
+        scope,
+        channel: channel.clone(),
+        related,
+        role,
+    });
+    // Every event node kind (`send` and `attempt` included) carries its own
+    // `as (x: T)` record binder (FR-113 "Refusals"), its own body block and
+    // zero or more `related by` clauses.
+    collector
+        .binders
+        .push(record_binder(cst, &event_items, node, scope)?);
+    collector.body(cst, &event_items, node, declaration_index)?;
+    for related in nodes_of(&event_items, Production::Related) {
+        collector.constructs.push(ProtocolConstructForm {
+            kind: ProtocolConstructKind::Related,
+            span: related.span(),
+        });
+    }
+    // `attempt`'s own `on M::T::op` operation name and `contracts [...]`
+    // list (FR-114 "Inputs"): kept spelled and unresolved here, the same
+    // contract `state_clause`'s own `operation` capture keeps (FR-102) --
+    // the assembler resolves the operation, mirroring FR-104's resolution
+    // of a state clause's own operation.
+    if kind == ProtocolNodeKind::Attempt {
+        collector
+            .attempts
+            .push(attempt_form(cst, &event_items, node, declaration_index)?);
+    }
+    let Some(site) = site else {
+        return Ok(());
+    };
+    // `event`'s `for R` is optional (FR-112 "Behavior" names it as a site,
+    // and the grammar admits an `event` with none); `receive`'s `of R` and
+    // `effect`'s `of R` are both mandatory, so this is always exactly one
+    // when present.
+    if let Some(reference) = nodes_of(&event_items, Production::NodeReference).first() {
+        // Only `receive-of` carries the owning event node's own channel
+        // (FR-113's channel-mismatch check): `receive`'s `of` reference is
+        // the only site whose site check compares a channel.
+        let owner_channel = if site == AnchorSite::ReceiveOf {
+            channel.as_ref().map(|channel| channel.name.clone())
+        } else {
+            None
+        };
+        collector.anchors.push(scoped_anchor(
+            cst,
+            reference,
+            site,
+            scope,
+            owner_channel,
+            declaration_index,
+        )?);
+    }
+    Ok(())
+}
+
+/// An `attempt`'s own `on M::T::op` operation name and `contracts [...]`
+/// list (FR-114 "Inputs"), read from the attempt event node's own
+/// `event_items`: the operation's `M::T` context and `op` member from its
+/// `OperationName` child node (the same shape [`state_clause`] reads); the
+/// role from the identifier token right after the `by` keyword; and every
+/// `contracts` entry from the identifier tokens between the `[` after
+/// `contracts` and its `]` (SR-770 FND-008: read by delimiters, not by
+/// position, so an identifier the attempt production gains elsewhere never
+/// becomes a contract entry).
+fn attempt_form(
+    cst: &LosslessCst,
+    event_items: &[Item<'_>],
+    node: &CstNode,
+    declaration_index: usize,
+) -> Result<AttemptForm, FormsRefusal> {
+    let declared = |token: &fsl_cst::CstToken| -> Result<DeclaredName, FormsRefusal> {
+        Ok(DeclaredName {
+            name: text(token, node)?,
+            span: token.span(),
+        })
+    };
+    let tokens: Vec<&fsl_cst::CstToken> = event_items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Token(token) => Some(*token),
+            Item::Node(_) => None,
+        })
+        .collect();
+    let role = tokens
+        .iter()
+        .position(|token| token.spelling() == b"by")
+        .and_then(|at| tokens.get(at + 1))
+        .filter(|token| token.kind() == TokenKind::Identifier)
+        .ok_or_else(|| unexpected(node))?;
+    let role = declared(role)?;
+    let open = tokens
+        .iter()
+        .position(|token| token.spelling() == b"contracts")
+        .filter(|&at| tokens.get(at + 1).is_some_and(|t| t.spelling() == b"["))
+        .ok_or_else(|| unexpected(node))?
+        + 2;
+    let contracts = tokens
+        .get(open..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|token| token.spelling() != b"]")
+        .filter(|token| token.kind() == TokenKind::Identifier)
+        .map(|token| declared(token))
+        .collect::<Result<Vec<_>, FormsRefusal>>()?;
+    let operation_name = only(event_items, Production::OperationName, node)?;
+    let operation_items = items(cst, operation_name);
+    let context = operation_context(&operation_items, operation_name)?;
+    let member = operation_member(&operation_items).ok_or_else(|| unexpected(operation_name))?;
+    let operation = DeclaredName {
+        name: text(member, operation_name)?,
+        span: member.span(),
+    };
+    Ok(AttemptForm {
+        declaration: declaration_index,
+        role,
+        context,
+        operation,
+        contracts,
+        ordering: nodes_of(event_items, Production::MemoryOrder)
+            .first()
+            .map(|order| access_ordering(cst, order))
+            .transpose()?,
+    })
+}
+
+/// The context type of an `OperationName`: every segment but the last,
+/// spelled and spanned as one name.
+fn operation_context(
+    items: &[Item<'_>],
+    operation_name: &CstNode,
+) -> Result<NameForm, FormsRefusal> {
+    let segments: Vec<&fsl_cst::CstToken> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Token(token) if token.spelling() != b"::" => Some(*token),
+            Item::Token(_) | Item::Node(_) => None,
+        })
+        .collect();
+    let [context @ .., _member] = segments.as_slice() else {
+        return Err(unexpected(operation_name));
+    };
+    let (Some(first), Some(last)) = (context.first(), context.last()) else {
+        return Err(unexpected(operation_name));
+    };
+    let mut name = String::new();
+    for token in context {
+        if !name.is_empty() {
+            name.push_str("::");
+        }
+        name.push_str(&text(token, operation_name)?);
+    }
+    Ok(NameForm::new(
+        name,
+        Span {
+            start: first.span().start,
+            end: last.span().end,
+        },
+    ))
+}
+
+/// Read the final segment of an `OperationName` without requiring the
+/// segment to retain the ordinary identifier token class. Complete-V1
+/// reserves words such as `absent` for lookup syntax, while the grammar's
+/// `MemberName` deliberately admits those spellings after `::`; operation
+/// names must preserve that same member rule at S2.
+fn operation_member<'a>(items: &'a [Item<'a>]) -> Option<&'a fsl_cst::CstToken> {
+    items.iter().rev().find_map(|item| match item {
+        Item::Token(token) if token.spelling() != b"::" => Some(*token),
+        Item::Token(_) | Item::Node(_) => None,
+    })
+}
+
+/// One `ScopedAnchorForm` from a `NodeReference` CST node: its segments
+/// exactly as written, with each segment's own span and the span of the
+/// whole reference (FR-112 "Outputs" and "Behavior": "keep a reference's
+/// segments exactly as written").
+fn scoped_anchor(
+    cst: &LosslessCst,
+    reference: &CstNode,
+    site: AnchorSite,
+    scope: Option<ScopeId>,
+    channel: Option<String>,
+    owner: usize,
+) -> Result<ScopedAnchorForm, FormsRefusal> {
+    let reference_items = items(cst, reference);
+    let mut segments = Vec::new();
+    for token in tokens_of(&reference_items, TokenKind::Identifier) {
+        segments.push(AnchorSegment {
+            text: text(token, reference)?,
+            span: token.span(),
+        });
+    }
+    if segments.is_empty() {
+        return Err(unexpected(reference));
+    }
+    Ok(ScopedAnchorForm {
+        site,
+        anchor: AnchorForm {
+            segments,
+            span: reference.span(),
+        },
+        scope,
+        channel,
+        owner,
+    })
+}

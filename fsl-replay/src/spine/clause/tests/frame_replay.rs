@@ -1,0 +1,1234 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-515 (FR-116): `crate::replay_frame` over FR-108's
+//! ConfigVersion unit. Each envelope is built by hand for
+//! `Config::ConfigVersion::attemptUpdate`, its anchor, frame and occurrence
+//! identities taken from the compiled package, with the unit's source, the
+//! domain package and the invocation documents in the byte provision.
+//! `attemptUpdate`'s frame modifies exactly `versionNumber`.
+
+use super::frame::{identifier, object, snapshot};
+use super::*;
+use crate::spine::OperationName;
+use crate::{
+    replay_frame, ClaimedChange, DisagreementCause, FamilyPayload, FrameCounterexample,
+    FrameIdentityMismatch, FrameOperation, FrameReplayResult, ProfileSelection, ReplayRefusal,
+    ReplayRequestRefusal, ReplayRequestWire, ReplayResult, ReplaySource, ReplayTarget,
+    StateEnvironment, Verdict, Witness, WitnessEnvelope, WitnessPacket, WitnessSettlement,
+};
+use filament_exact::Identifier;
+use filament_exact::NodeKey;
+use filament_semantic_value::catalog::Category;
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_semantics::model::observation::{AdmissionFailure, FrameChange, SelectedObject};
+
+/// The labels `source()` gives the unit, as the request's source reference
+/// spells them; the recompile displays the unit under its identity.
+const AUTHORITY: &str = "agent-ix";
+pub(super) const IDENTITY: &str = "clause-run-fixture";
+
+/// A compiled ConfigVersion unit and what a request needs to recompile it.
+pub(super) struct Unit {
+    pub(super) bytes: Vec<u8>,
+    pub(super) domain_document: Vec<u8>,
+    pub(super) compiled: ComposedUnit,
+}
+
+pub(super) fn unit_for(unit: String, domain_document: Vec<u8>) -> Unit {
+    let packages =
+        fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
+    let compiled = compose(
+        source(),
+        IDENTITY,
+        unit.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+        SpineLimits::default(),
+    )
+    .expect("the ConfigVersion unit compiles");
+    Unit {
+        bytes: unit.into_bytes(),
+        domain_document,
+        compiled,
+    }
+}
+
+pub(super) fn config_version_unit() -> Unit {
+    let (unit, _) = config_version_unit_and_packages();
+    unit_for(unit, config_version_domain_document())
+}
+
+#[trace("FR-003-AC-9")]
+#[test]
+fn private_frame_source_variants_keep_format_identity() {
+    let _ = config_version_unit();
+    let _ = parent_modifying_unit();
+}
+
+/// The ConfigVersion domain package with `attemptUpdate`'s frame also
+/// modifying `parent`.
+fn parent_modifying_unit() -> Unit {
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&config_version_domain_document()).expect("the fixture is JSON");
+    let modifies = document["types"][1]["operations"][0]["frame"]["modifies"]
+        .as_array_mut()
+        .expect("attemptUpdate's frame lists modifies");
+    modifies.push(json!(format!("{}/parent", config_version_type())));
+    let document = document.to_string().into_bytes();
+    let (unit, _) = config_version_unit_and_packages_for(document.clone());
+    unit_for(unit, document)
+}
+
+pub(super) fn wire(node: filament_exact::NodeKey) -> NodeKey {
+    node.clone()
+}
+
+/// `attemptUpdate`'s anchor node, frame node and frame occurrence in
+/// `unit`'s compiled package.
+fn identities(unit: &Unit) -> (NodeKey, NodeKey, OccurrenceKey) {
+    let graph = unit.compiled.package.graph();
+    let selection = graph
+        .resolve_operation(
+            &identifier("Config"),
+            &identifier("ConfigVersion"),
+            &identifier("attemptUpdate"),
+        )
+        .expect("Config::ConfigVersion resolves");
+    let (_, frame) = graph
+        .operation_frame(&selection)
+        .expect("attemptUpdate is named by VersionUnchanged");
+    (
+        wire(frame.anchor()),
+        wire(frame.frame()),
+        OccurrenceKey::new(wire(frame.frame()), frame.frame_origin().clone()),
+    )
+}
+
+/// The wire node id of the one emitted node whose `semantic_form` is
+/// `form`: the emitted package, not the checked graph the replay reads.
+fn emitted_node(unit: &Unit, form: &str) -> filament_exact::NodeKey {
+    let mut package: serde_json::Value =
+        serde_json::from_slice(unit.compiled.emitted.bytes()).expect("the emitted package is JSON");
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut package)
+        .expect("every operand slot names a row entry");
+    let nodes: Vec<&serde_json::Value> = package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the package lists its nodes")
+        .iter()
+        .filter(|node| node["semantic_form"] == form)
+        .collect();
+    let [node] = nodes[..] else {
+        panic!("one {form} node: {nodes:#?}");
+    };
+    crate::WireGraph::of_package_value(&package)
+        .expect("the emitted graph")
+        .key_of_value(&node["node_id"])
+        .expect("a node id")
+}
+
+/// The `frame_operation` replay target for `Config::ConfigVersion::attemptUpdate`.
+pub(super) fn frame_target() -> ReplayTarget {
+    ReplayTarget::FrameOperation(operation("attemptUpdate"))
+}
+
+fn operation(name: &str) -> FrameOperation {
+    FrameOperation {
+        object: crate::QualifiedName::new(vec![
+            Identifier::new("Config").unwrap(),
+            Identifier::new("ConfigVersion").unwrap(),
+        ])
+        .unwrap(),
+        operation: Identifier::new(name).unwrap(),
+    }
+}
+
+fn child_change(field: &str) -> ClaimedChange {
+    ClaimedChange::FieldWrite {
+        object: SelectedObject {
+            population: config_version_population_identity(),
+            key: "child".to_owned(),
+        },
+        field: field.to_owned(),
+    }
+}
+
+/// One invocation of `attemptUpdate` with self `child`: its three document
+/// references and their bytes.
+struct Invocation {
+    invocation: DocumentRef,
+    pre: DocumentRef,
+    post: DocumentRef,
+    documents: Vec<(DocumentRef, Vec<u8>)>,
+}
+
+fn invocation(
+    pre_objects: &[serde_json::Value],
+    post_objects: &[serde_json::Value],
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> Invocation {
+    invocation_over(pre_objects, post_objects, edit)
+}
+
+/// [`invocation`] over the unit's domain package.
+fn invocation_over(
+    pre_objects: &[serde_json::Value],
+    post_objects: &[serde_json::Value],
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> Invocation {
+    let over_model = |bytes: Vec<u8>| bytes;
+    let (pre, pre_bytes) = document_ref_and_bytes("replay-pre", |label| {
+        over_model(snapshot(label, "pre", pre_objects))
+    });
+    let (post, post_bytes) = document_ref_and_bytes("replay-post", |label| {
+        over_model(snapshot(label, "post", post_objects))
+    });
+    let (invocation, invocation_bytes) = document_ref_and_bytes("replay-invocation", |label| {
+        let bytes = config_version_invocation_bytes(label, &pre, &post, "child");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("the fixture is JSON");
+        edit(&mut document);
+        document.to_string().into_bytes()
+    });
+    Invocation {
+        documents: vec![
+            (invocation.clone(), invocation_bytes),
+            (pre.clone(), pre_bytes),
+            (post.clone(), post_bytes),
+        ],
+        invocation,
+        pre,
+        post,
+    }
+}
+
+/// forbidden-parent-change: the post sets `child.parent` absent.
+fn forbidden_parent_change() -> Invocation {
+    invocation(
+        &[object("root", 1, None), object("child", 2, Some("root"))],
+        &[object("root", 1, None), object("child", 2, None)],
+        |_| {},
+    )
+}
+
+/// changed-version: `child.versionNumber` moves from 2 to 3, inside the
+/// frame.
+fn changed_version() -> Invocation {
+    invocation(
+        &[object("root", 1, None), object("child", 2, Some("root"))],
+        &[object("root", 1, None), object("child", 3, Some("root"))],
+        |_| {},
+    )
+}
+
+/// Withholds the document `reference` names from the provided documents.
+pub(super) fn withhold(wire: &mut ReplayRequestWire, reference: &DocumentRef) {
+    wire.documents.retain(|document| {
+        fsl_semantics::model::observation::document_reference(document).as_ref() != Some(reference)
+    });
+}
+
+pub(super) fn witness_source() -> ReplaySource {
+    ReplaySource::Witness(Witness::parse("<<<assertion|frame_harness|frame|>>>").unwrap())
+}
+
+/// FR-098's request for `source_bytes`, with the domain
+/// package and `documents` in the byte provision.
+pub(super) fn request(
+    source_bytes: &[u8],
+    domain_document: &[u8],
+    documents: &[(DocumentRef, Vec<u8>)],
+    target: ReplayTarget,
+) -> ReplayRequestWire {
+    let package = crate::compile_package(
+        crate::CompileUnit {
+            source: fsl_foundation::SourceIdentity::new(AUTHORITY, IDENTITY),
+            package_name: "fixture".to_owned(),
+            path: IDENTITY,
+            bytes: source_bytes,
+        },
+        [domain_document],
+        &crate::DependencyInput::default(),
+        crate::StageLimits::default(),
+        crate::ReplayLimits::default(),
+    )
+    .expect("actual frame source package");
+    request_from_package(
+        package.bytes(),
+        source_bytes,
+        domain_document,
+        documents,
+        target,
+    )
+}
+
+/// A request retaining the genuine package emitted by a caller's explicit compile.
+pub(super) fn request_from_package(
+    package_bytes: &[u8],
+    source_bytes: &[u8],
+    domain_document: &[u8],
+    documents: &[(DocumentRef, Vec<u8>)],
+    target: ReplayTarget,
+) -> ReplayRequestWire {
+    let byte_provision = vec![(
+        AUTHORITY.to_owned(),
+        IDENTITY.to_owned(),
+        source_bytes.to_vec(),
+    )];
+    let mut provided = vec![domain_document.to_vec()];
+    for (_, bytes) in documents {
+        provided.push(bytes.clone());
+    }
+    ReplayRequestWire {
+        package: crate::ReplayPackage::read(
+            package_bytes,
+            crate::ReplayLimits::default().input_bytes,
+        )
+        .unwrap(),
+        profile_selections: Vec::new(),
+        dependencies: Vec::new(),
+        replay_target: target.into(),
+        source: witness_source(),
+        obligation_identity: crate::ObligationIdentity::new(crate::fixture_node(2), None, 0),
+        backend: "kani-backend-1".to_owned(),
+        state_environment: StateEnvironment::new(Vec::new()),
+        accounting_limits: default_accounting(1_000_000),
+        stage_limits: std::collections::BTreeMap::new(),
+        supplied_limits: None,
+        object_environment: None,
+        declared_domains: Vec::new(),
+        byte_provision,
+        documents: provided,
+    }
+}
+
+/// The envelope carrying `payload`, from `source_bytes`,
+/// its `clause_node` and `occurrence_key` the payload's frame node and
+/// frame occurrence.
+fn envelope(
+    source_bytes: &[u8],
+    source: ReplaySource,
+    payload: FrameCounterexample,
+) -> WitnessEnvelope<FrameCounterexample> {
+    envelope_with(source_bytes, source, payload, |_| {})
+}
+
+/// [`envelope`], with `adjust` applied to the packet before it
+/// reconstructs.
+fn envelope_with(
+    source_bytes: &[u8],
+    source: ReplaySource,
+    payload: FrameCounterexample,
+    adjust: impl FnOnce(&mut WitnessPacket<FrameCounterexample>),
+) -> WitnessEnvelope<FrameCounterexample> {
+    let (clause_node, occurrence) = (payload.frame.clone(), payload.occurrence.clone());
+    let mut packet = packet(
+        source_bytes,
+        source,
+        clause_node,
+        occurrence,
+        payload,
+        frame_target(),
+    );
+    adjust(&mut packet);
+    WitnessEnvelope::reconstruct(packet, crate::ReplayLimits::default())
+        .expect("a complete packet reconstructs")
+}
+
+/// A complete packet carrying `payload`, from
+/// `source_bytes`, with `clause_node` and `occurrence_key` as given.
+pub(super) fn packet<P: FamilyPayload>(
+    _source_bytes: &[u8],
+    source: ReplaySource,
+    clause_node: NodeKey,
+    occurrence_key: OccurrenceKey,
+    payload: P,
+    target: ReplayTarget,
+) -> WitnessPacket<P> {
+    WitnessPacket {
+        obligation_identity: Some(crate::ObligationIdentity::new(
+            crate::fixture_node(1),
+            None,
+            0,
+        )),
+        occurrence_key: Some(occurrence_key),
+        clause_node: Some(clause_node),
+        replay_target: target.into(),
+        profile_selections: Some(vec![ProfileSelection::new(
+            "filament.profile.v1".to_owned(),
+            "finite-state".to_owned(),
+        )]),
+        run_limits: Some(default_accounting(1_000_000)),
+        declared_domains: Some(Vec::new()),
+        backend: Some("kani-backend-1".to_owned()),
+        trace_position: Some(None),
+        source: Some(match source {
+            ReplaySource::Witness(witness) => crate::EnvelopeSource::Witness(witness),
+            ReplaySource::Input(assignments) => crate::EnvelopeSource::Input(assignments),
+            ReplaySource::ObservedTemporal(_) => {
+                panic!("a counterexample envelope cannot recursively carry an observed source")
+            }
+            ReplaySource::ModelGraph(_) => {
+                panic!("a counterexample envelope cannot recursively carry a graph source")
+            }
+            ReplaySource::ProtocolAnalysis(_) => {
+                panic!("a counterexample envelope cannot carry a protocol analysis source")
+            }
+        }),
+        family_payload: Some(payload),
+    }
+}
+
+/// One replay case over the base unit: `input`'s documents in the
+/// provision, `payload` built from the compiled identities with
+/// `change`, then `adjust` applied to the request and payload.
+struct Case {
+    unit: Unit,
+    input: Invocation,
+    wire: ReplayRequestWire,
+    envelope: WitnessEnvelope<FrameCounterexample>,
+}
+
+fn case(input: Invocation, change: ClaimedChange) -> Case {
+    case_with(input, change, |_, _| {})
+}
+
+fn case_with(
+    input: Invocation,
+    change: ClaimedChange,
+    adjust: impl FnOnce(&mut ReplayRequestWire, &mut FrameCounterexample),
+) -> Case {
+    case_targeting(input, change, frame_target(), frame_target(), adjust)
+}
+
+/// [`case_with`] over `unit`, the request's replay target and the
+/// envelope's given.
+fn case_targeting(
+    input: Invocation,
+    change: ClaimedChange,
+    request_target: ReplayTarget,
+    envelope_target: ReplayTarget,
+    adjust: impl FnOnce(&mut ReplayRequestWire, &mut FrameCounterexample),
+) -> Case {
+    case_in(
+        config_version_unit(),
+        input,
+        change,
+        request_target,
+        envelope_target,
+        adjust,
+    )
+}
+
+fn case_in(
+    unit: Unit,
+    input: Invocation,
+    change: ClaimedChange,
+    request_target: ReplayTarget,
+    envelope_target: ReplayTarget,
+    adjust: impl FnOnce(&mut ReplayRequestWire, &mut FrameCounterexample),
+) -> Case {
+    let (anchor, frame, occurrence) = identities(&unit);
+    let mut payload = FrameCounterexample {
+        anchor,
+        frame,
+        occurrence,
+        invocation: input.invocation.clone(),
+        change,
+    };
+    let mut wire = request(
+        &unit.bytes,
+        &unit.domain_document,
+        &input.documents,
+        request_target,
+    );
+    adjust(&mut wire, &mut payload);
+    let envelope = envelope_with(&unit.bytes, witness_source(), payload, |packet| {
+        packet.replay_target = envelope_target.into()
+    });
+    Case {
+        unit,
+        input,
+        wire,
+        envelope,
+    }
+}
+
+fn replay(case: Case) -> Result<FrameReplayResult, ReplayRefusal> {
+    replay_frame(case.wire, &case.envelope, crate::ReplayLimits::default())
+}
+
+fn witness_arm(result: &FrameReplayResult) -> &crate::WitnessArmResult {
+    match result.result() {
+        ReplayResult::Witness(arm) => arm,
+        ReplayResult::Input(arm) => panic!("expected the witness arm, got {arm:?}"),
+        ReplayResult::ObservedTemporal(arm) => panic!("expected the witness arm, got {arm:?}"),
+        ReplayResult::ModelGraph(arm) => panic!("expected the witness arm, got {arm:?}"),
+        ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+    }
+}
+
+fn found_field_write(result: &FrameReplayResult) -> (&str, &str) {
+    let found = result.found().expect("the replay found a violation");
+    match &found.change {
+        FrameChange::FieldWrite { object, field, .. } => (object.as_str(), field.as_str()),
+        other => panic!("expected a field write, got {other:?}"),
+    }
+}
+
+/// TC-515 step 1 (FR-116-AC-1): forbidden-parent-change claiming (`child`,
+/// `parent`) reproduces with an evaluated witness, and the result holds the
+/// source identity, the payload's anchor, frame and occurrence
+/// identities -- which are the emitted package's own `operation_anchor` and
+/// `frame` nodes -- the three document identities and digests, and both
+/// changes.
+#[trace("TC-515", "FR-116-AC-1")]
+#[test]
+fn a_frame_counterexample_reproduces_and_keeps_its_identities() {
+    let case = case(forbidden_parent_change(), child_change("parent"));
+    let payload = case.envelope.family_payload().clone();
+    let documents = (
+        case.input.invocation.clone(),
+        case.input.pre.clone(),
+        case.input.post.clone(),
+    );
+    assert_eq!(payload.anchor, emitted_node(&case.unit, "operation_anchor"));
+    assert_eq!(payload.frame, emitted_node(&case.unit, "frame"));
+    let result = replay(case).expect("the replay settles");
+
+    let arm = witness_arm(&result);
+    assert_eq!(
+        arm.settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
+    assert_eq!(arm.category(), Category::Violation);
+    assert_eq!(arm.disagreement(), None);
+    assert_eq!(result.source().identity(), IDENTITY);
+    assert_eq!(result.operation(), &operation("attemptUpdate"));
+    assert_eq!(result.anchor().clone(), payload.anchor);
+    assert_eq!(result.frame().clone(), payload.frame);
+    assert_eq!(result.occurrence(), &payload.occurrence);
+    assert_eq!(
+        (result.invocation(), result.pre(), result.post()),
+        (&documents.0, &documents.1, &documents.2)
+    );
+    assert_eq!(result.claimed(), &child_change("parent"));
+    assert_eq!(found_field_write(&result), ("child", "parent"));
+    let found = result.found().unwrap();
+    assert_eq!(found.code.as_str(), "frame_violation");
+    assert_eq!(found.cause, "unauthorized-change");
+}
+
+/// TC-515 step 2 (FR-116-AC-2): changed-version stays inside the frame, so
+/// the replay finds nothing: `inconclusive`, `Verdicts`, `violation` proved
+/// and `success` replayed, with no found change.
+#[trace("TC-515", "FR-116-AC-2")]
+#[test]
+fn a_frame_respecting_invocation_is_inconclusive_by_verdicts() {
+    let result =
+        replay(case(changed_version(), child_change("versionNumber"))).expect("the replay settles");
+    let arm = witness_arm(&result);
+    assert_eq!(arm.settlement(), WitnessSettlement::Inconclusive);
+    assert_eq!(
+        arm.disagreement(),
+        Some(&DisagreementCause::Verdicts {
+            proved: Verdict::from_category(Category::Violation),
+            replayed: Verdict::from_category(Category::Success),
+        })
+    );
+    assert!(arm.record().is_none());
+    assert!(result.found().is_none());
+    assert_eq!(result.claimed(), &child_change("versionNumber"));
+}
+
+/// TC-515 step 2 (FR-116-AC-2): forbidden-parent-change claiming (`child`,
+/// `versionNumber`) still reproduces, and the result keeps the payload's
+/// change beside the replay's (`child`, `parent`), as found.
+#[trace("TC-515", "FR-116-AC-2")]
+#[test]
+fn a_mismatched_claim_reproduces_keeping_both_changes() {
+    let result = replay(case(
+        forbidden_parent_change(),
+        child_change("versionNumber"),
+    ))
+    .expect("the replay settles");
+    assert_eq!(
+        witness_arm(&result).settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
+    assert_eq!(result.claimed(), &child_change("versionNumber"));
+    assert_eq!(found_field_write(&result), ("child", "parent"));
+}
+
+/// TC-515 step 2 (FR-116-AC-2): an invocation whose `created` lists `child`
+/// disagrees with the computed empty delta; the check refuses
+/// `population_delta_mismatch`, which completes no value: `inconclusive`,
+/// `NoValue`.
+#[trace("TC-515", "FR-116-AC-2")]
+#[test]
+fn a_disagreeing_declared_delta_is_inconclusive_with_no_value() {
+    let input = invocation(
+        &[object("root", 1, None), object("child", 2, Some("root"))],
+        &[object("root", 1, None), object("child", 3, Some("root"))],
+        |document| {
+            document["created"] = json!([{
+                "population": config_version_population_identity(), "key": "child",
+            }]);
+        },
+    );
+    let result = replay(case(input, child_change("versionNumber"))).expect("the replay settles");
+    let arm = witness_arm(&result);
+    assert_eq!(arm.settlement(), WitnessSettlement::Inconclusive);
+    assert_eq!(
+        arm.disagreement(),
+        Some(&DisagreementCause::NoValue {
+            proved: Verdict::from_category(Category::Violation),
+            replayed: Verdict::from_category(Category::Refusal),
+        })
+    );
+    assert_eq!(arm.value(), None);
+    assert!(result.found().is_none());
+}
+
+/// TC-515 step 3 (FR-116-AC-3): an envelope whose identities are taken from
+/// a package whose `attemptUpdate` frame also modifies `parent` refuses
+/// `stale_dependency`/`content-mismatch` naming both frame identities --
+/// before admission: the pre snapshot is also missing from the provision,
+/// and admission would have refused that first. All three identities come
+/// from that package, as a real producer would emit them: its anchor
+/// differs too, since the anchor node references the frame node, and the
+/// refusal still names the frames.
+#[trace("TC-515", "FR-116-AC-3")]
+#[test]
+fn a_stale_frame_identity_refuses_before_admission() {
+    let other = parent_modifying_unit();
+    let (other_anchor, _, other_occurrence) = identities(&other);
+    let other_frame = filament_exact::NodeKey::new(
+        "fixture",
+        vec![filament_exact::PathSegment::Text("other-frame".into())],
+        0,
+    )
+    .expect("a fixture key");
+    let mut recompiled = None;
+    let input = forbidden_parent_change();
+    let pre = input.pre.clone();
+    let case = case_with(input, child_change("parent"), |wire, payload| {
+        recompiled = Some((payload.anchor.clone(), payload.frame.clone()));
+        payload.anchor = other_anchor.clone();
+        payload.frame = other_frame.clone();
+        payload.occurrence = other_occurrence;
+        withhold(wire, &pre);
+    });
+    let (recompiled_anchor, recompiled_frame) = recompiled.unwrap();
+    assert_eq!(other_anchor, recompiled_anchor);
+    let refusal = replay(case).unwrap_err();
+    assert_eq!(refusal.code(), fsl_foundation::Code::StaleDependency);
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::FrameIdentity(mismatch)
+                if matches!(&**mismatch, FrameIdentityMismatch::Frame { payload, recompiled }
+                    if *payload == other_frame && *recompiled == recompiled_frame)
+        ),
+        "{refusal:?}"
+    );
+    assert!(refusal
+        .to_string()
+        .starts_with("stale_dependency/content-mismatch"));
+}
+
+/// FR-116 Behavior: a stale anchor node, or a frame occurrence minted at
+/// another ordinal, refuses the same way, each naming both identities.
+#[trace("TC-515", "FR-116-AC-3")]
+#[test]
+fn a_stale_anchor_or_occurrence_refuses_content_mismatch() {
+    let stale_anchor = filament_exact::NodeKey::new(
+        "fixture",
+        vec![filament_exact::PathSegment::Text("node".into())],
+        0xAA,
+    )
+    .expect("a fixture key");
+    let refusal = replay(case_with(
+        forbidden_parent_change(),
+        child_change("parent"),
+        |_, payload| payload.anchor = stale_anchor.clone(),
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::FrameIdentity(mismatch)
+                if matches!(&**mismatch, FrameIdentityMismatch::Anchor { payload, .. }
+                    if *payload == stale_anchor)
+        ),
+        "{refusal:?}"
+    );
+
+    let mut stale_occurrence = None;
+    let refusal = replay(case_with(
+        forbidden_parent_change(),
+        child_change("parent"),
+        |_, payload| {
+            let origin = payload.occurrence.origin();
+            let other = OccurrenceKey::new(
+                payload.occurrence.node().clone(),
+                filament_exact::Origin::new(origin.role().clone(), origin.ordinal() + 1),
+            );
+            stale_occurrence = Some(other.clone());
+            payload.occurrence = other;
+        },
+    ))
+    .unwrap_err();
+    let stale_occurrence = stale_occurrence.unwrap();
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::FrameIdentity(mismatch)
+                if matches!(&**mismatch, FrameIdentityMismatch::Occurrence { payload, recompiled }
+                    if *payload == stale_occurrence && *recompiled != stale_occurrence)
+        ),
+        "{refusal:?}"
+    );
+}
+
+/// A request whose source does not compile, for the ConfigVersion unit's
+/// and the step-1 payload built from the compiled unit.
+fn uncompilable_request() -> (Unit, ReplayRequestWire, FrameCounterexample) {
+    let unit = config_version_unit();
+    let input = forbidden_parent_change();
+    let (anchor, frame, occurrence) = identities(&unit);
+    let payload = FrameCounterexample {
+        anchor,
+        frame,
+        occurrence,
+        invocation: input.invocation.clone(),
+        change: child_change("parent"),
+    };
+    let broken = b"this is not an FSL unit\n".to_vec();
+    let mut wire = request(
+        &unit.bytes,
+        &unit.domain_document,
+        &input.documents,
+        frame_target(),
+    );
+    wire.byte_provision[0].2 = broken;
+    (unit, wire, payload)
+}
+
+/// TC-515 step 3 (FR-116-AC-6): an envelope whose `clause_node` is not its
+/// payload's frame node refuses `stale_dependency`/`content-mismatch`
+/// naming both, before recompiling: the request's source does not compile,
+/// and the same request with a consistent envelope refuses at the
+/// recompile.
+#[trace("TC-515", "FR-116-AC-6")]
+#[test]
+fn an_envelope_clause_node_other_than_the_frame_refuses_before_recompiling() {
+    let (unit, wire, payload) = uncompilable_request();
+    let consistent = envelope(&unit.bytes, witness_source(), payload.clone());
+    let refusal = replay_frame(
+        uncompilable_request().1,
+        &consistent,
+        crate::ReplayLimits::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refusal, ReplayRefusal::Recompile(_)),
+        "{refusal:?}"
+    );
+
+    let other_frame = filament_exact::NodeKey::new(
+        "fixture",
+        vec![filament_exact::PathSegment::Text("other-frame".into())],
+        0,
+    )
+    .expect("a fixture key");
+    let frame = payload.frame.clone();
+    let stale = envelope_with(&unit.bytes, witness_source(), payload, |packet| {
+        packet.clause_node = Some(other_frame.clone());
+    });
+    let refusal = replay_frame(wire, &stale, crate::ReplayLimits::default()).unwrap_err();
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::FrameIdentity(mismatch)
+                if matches!(&**mismatch, FrameIdentityMismatch::EnvelopeFrame { envelope, payload }
+                    if *envelope == other_frame && *payload == frame)
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.code(), fsl_foundation::Code::StaleDependency);
+    let message = refusal.to_string();
+    assert!(message.starts_with("stale_dependency/content-mismatch"));
+    assert!(message.contains(&other_frame.to_string()), "{message}");
+    assert!(message.contains(&frame.to_string()), "{message}");
+}
+
+/// TC-515 step 3 (FR-116-AC-6): an envelope whose `occurrence_key` is not
+/// its payload's frame occurrence refuses `stale_dependency`/
+/// `content-mismatch` naming both, before recompiling.
+#[trace("TC-515", "FR-116-AC-6")]
+#[test]
+fn an_envelope_occurrence_other_than_the_frame_occurrence_refuses_before_recompiling() {
+    let (unit, wire, payload) = uncompilable_request();
+    let origin = payload.occurrence.origin();
+    let other = OccurrenceKey::new(
+        payload.occurrence.node().clone(),
+        filament_exact::Origin::new(origin.role().clone(), origin.ordinal() + 1),
+    );
+    let occurrence = payload.occurrence.clone();
+    let stale = envelope_with(&unit.bytes, witness_source(), payload, |packet| {
+        packet.occurrence_key = Some(other.clone());
+    });
+    let refusal = replay_frame(wire, &stale, crate::ReplayLimits::default()).unwrap_err();
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::FrameIdentity(mismatch)
+                if matches!(&**mismatch, FrameIdentityMismatch::EnvelopeOccurrence { envelope, payload }
+                    if *envelope == other && *payload == occurrence)
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.code(), fsl_foundation::Code::StaleDependency);
+    let message = refusal.to_string();
+    assert!(message.starts_with("stale_dependency/content-mismatch"));
+    assert!(message.contains(&format!("{other:?}")), "{message}");
+    assert!(message.contains(&format!("{occurrence:?}")), "{message}");
+}
+
+/// TC-515 step 3 (FR-116-AC-3): an `operation` naming `missing` refuses
+/// `missing_declaration`/`missing-name`.
+#[trace("TC-515", "FR-116-AC-3")]
+#[test]
+fn a_missing_operation_refuses_missing_name() {
+    let missing = ReplayTarget::FrameOperation(operation("missing"));
+    let refusal = replay(case_targeting(
+        forbidden_parent_change(),
+        child_change("parent"),
+        missing.clone(),
+        missing,
+        |_, _| {},
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::UnknownOperation { operation: named, .. }
+                if named.to_string() == "Config::ConfigVersion::missing"
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.code(), fsl_foundation::Code::MissingDeclaration);
+    assert!(refusal
+        .to_string()
+        .starts_with("missing_declaration/missing-name"));
+}
+
+/// TC-515 step 6 (FR-116-AC-8): over a package where `Sub` specializes
+/// `ConfigVersion` and inherits `attemptUpdate`, the target `call_site`
+/// returns (`{Config::ConfigVersion, attemptUpdate}`) settles reproduced and
+/// `{Config::Sub, attemptUpdate}`, which only inherits it, refuses
+/// `invalid_model_binding`/`malformed-declaration`.
+#[trace("TC-515", "FR-116-AC-8")]
+#[test]
+fn an_inherited_operation_is_selected_by_its_declaring_object() {
+    let sub_unit = || {
+        let document = config_version_domain_document_with_sub();
+        let (unit, _) = config_version_unit_and_packages_for(document.clone());
+        unit_for(unit, document)
+    };
+    let input = || {
+        invocation_over(
+            &[object("root", 1, None), object("child", 2, Some("root"))],
+            &[object("root", 1, None), object("child", 2, None)],
+            |_| {},
+        )
+    };
+    let target = |object: &str| {
+        ReplayTarget::FrameOperation(FrameOperation {
+            object: crate::QualifiedName::new(vec![
+                Identifier::new("Config").unwrap(),
+                Identifier::new(object).unwrap(),
+            ])
+            .unwrap(),
+            operation: Identifier::new("attemptUpdate").unwrap(),
+        })
+    };
+    let declaring = target("ConfigVersion");
+    let result = replay(case_in(
+        sub_unit(),
+        input(),
+        child_change("parent"),
+        declaring.clone(),
+        declaring,
+        |_, _| {},
+    ))
+    .expect("the declaring object's target replays");
+    assert_eq!(
+        witness_arm(&result).settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
+
+    let inheriting = target("Sub");
+    let refusal = replay(case_in(
+        sub_unit(),
+        input(),
+        child_change("parent"),
+        inheriting.clone(),
+        inheriting,
+        |_, _| {},
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::MalformedOperationTarget { operation, .. }
+                if operation.to_string() == "Config::Sub::attemptUpdate"
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidModelBinding);
+    assert_eq!(refusal.cause(), Some("malformed-declaration"));
+}
+
+/// A `frame_operation` request and envelope target `{object, operation}`
+/// over `Config`, replayed over `unit`; the refusal it settles.
+fn refuse_target(unit: Unit, object: &str, operation_name: &str) -> ReplayRefusal {
+    let target = ReplayTarget::FrameOperation(FrameOperation {
+        object: crate::QualifiedName::new(vec![
+            Identifier::new("Config").unwrap(),
+            Identifier::new(object).unwrap(),
+        ])
+        .unwrap(),
+        operation: Identifier::new(operation_name).unwrap(),
+    });
+    replay(case_in(
+        unit,
+        forbidden_parent_change(),
+        child_change("parent"),
+        target.clone(),
+        target,
+        |_, _| {},
+    ))
+    .unwrap_err()
+}
+
+/// TC-515 step 7 (FR-116-AC-9): an `object` naming a declaration that cannot
+/// declare operations (the value type `Config::VersionNumber`) refuses
+/// `invalid_model_binding`/`malformed-declaration` naming the target, and
+/// one naming nothing (`Config::Absent`) still refuses `missing-name`.
+#[trace("TC-515", "FR-116-AC-9")]
+#[test]
+fn an_object_that_cannot_declare_operations_is_malformed() {
+    let refusal = refuse_target(config_version_unit(), "VersionNumber", "attemptUpdate");
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::MalformedOperationTarget { operation, reason, .. }
+                if operation.to_string() == "Config::VersionNumber::attemptUpdate"
+                    && *reason == crate::MalformedOperationReason::NotAnObjectType
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidModelBinding);
+    assert_eq!(refusal.cause(), Some("malformed-declaration"));
+
+    let refusal = refuse_target(config_version_unit(), "Absent", "attemptUpdate");
+    assert!(
+        matches!(&refusal, ReplayRefusal::UnknownOperation { .. }),
+        "{refusal:?}"
+    );
+}
+
+/// TC-515 step 7 (FR-116-AC-9): over a package where `Sub` has the
+/// supertypes `ConfigVersion` and `Other`, both declaring `attemptUpdate`,
+/// `{Config::Sub, attemptUpdate}` refuses `ambiguous_declaration`/
+/// `ambiguous-name` naming the target.
+#[trace("TC-515", "FR-116-AC-9")]
+#[test]
+fn a_name_two_supertypes_expose_is_ambiguous() {
+    let document = config_version_domain_document_with_diamond();
+    let (unit, _) = config_version_unit_and_packages_for(document.clone());
+    let refusal = refuse_target(unit_for(unit, document), "Sub", "attemptUpdate");
+    assert!(
+        matches!(
+            &refusal,
+            ReplayRefusal::AmbiguousOperation { operation, .. }
+                if operation.to_string() == "Config::Sub::attemptUpdate"
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.code(), fsl_foundation::Code::AmbiguousDeclaration);
+    assert_eq!(refusal.cause(), Some("ambiguous-name"));
+}
+
+/// TC-515 step 6 (FR-116-AC-8): a request target that is a function refuses
+/// `invalid_runtime_input`/`unknown-member` at `/replay/function` naming
+/// `replay_frame` and `frame_operation` (check 1 precedes check 2), and a
+/// frame request against an envelope for another operation refuses
+/// `stale_dependency`/`content-mismatch` naming both targets, also with the
+/// envelope's `clause_node` replaced (check 2 precedes check 3). Each is
+/// unchanged when the request's source does not compile, and becomes the
+/// byte-provision refusal when the source's entry is removed.
+#[trace("TC-515", "FR-116-AC-8")]
+#[test]
+fn a_frame_replay_refuses_other_targets_before_the_recompile() {
+    #[derive(Clone, Copy)]
+    enum Source {
+        Compiles,
+        DoesNotCompile,
+        EntryRemoved,
+    }
+    let probe = ReplayTarget::FrameOperation(operation("probe"));
+    let function = ReplayTarget::function(
+        crate::QualifiedName::new(vec![Identifier::new("sameIdentity").unwrap()]).unwrap(),
+        Some(crate::target::test_key()),
+    );
+    for (request_target, envelope_target, replace_node) in [
+        (function, frame_target(), false),
+        (frame_target(), probe.clone(), false),
+        (frame_target(), probe, true),
+    ] {
+        for source in [
+            Source::Compiles,
+            Source::DoesNotCompile,
+            Source::EntryRemoved,
+        ] {
+            let unit = config_version_unit();
+            let input = forbidden_parent_change();
+            let mut case = case_in(
+                unit,
+                input,
+                child_change("parent"),
+                request_target.clone(),
+                envelope_target.clone(),
+                |wire, _| match source {
+                    Source::Compiles => {}
+                    Source::DoesNotCompile => {
+                        wire.byte_provision[0].2 = b"this is not an FSL unit\n".to_vec();
+                    }
+                    Source::EntryRemoved => wire.byte_provision.clear(),
+                },
+            );
+            if replace_node {
+                let mut packet = case.envelope.to_packet();
+                packet.clause_node = Some(
+                    filament_exact::NodeKey::new(
+                        "fixture",
+                        vec![filament_exact::PathSegment::Text("node".into())],
+                        9,
+                    )
+                    .expect("a fixture key"),
+                );
+                case.envelope =
+                    WitnessEnvelope::reconstruct(packet, crate::ReplayLimits::default()).unwrap();
+            }
+            let refusal = replay(case).unwrap_err();
+            match (&request_target, source, &refusal) {
+                (
+                    _,
+                    Source::EntryRemoved,
+                    ReplayRefusal::Request(ReplayRequestRefusal::IncompleteByteProvision {
+                        ..
+                    }),
+                ) => assert_eq!(refusal.code(), fsl_foundation::Code::MissingImport),
+                (
+                    ReplayTarget::Declaration { .. },
+                    Source::Compiles | Source::DoesNotCompile,
+                    ReplayRefusal::WrongReplayTarget {
+                        target,
+                        entry,
+                        member,
+                    },
+                ) => {
+                    assert_eq!(**target, request_target);
+                    assert_eq!(*entry, crate::ReplayEntry::ReplayFrame);
+                    assert_eq!(*member, crate::TargetMember::FrameOperation);
+                    assert_eq!(target.member().pointer(), "/replay/function");
+                    assert_eq!(refusal.cause(), Some("unknown-member"));
+                }
+                (
+                    ReplayTarget::FrameOperation(_),
+                    Source::Compiles | Source::DoesNotCompile,
+                    ReplayRefusal::TargetMismatch { request, envelope },
+                ) => {
+                    assert_eq!(**request, request_target);
+                    assert_eq!(**envelope, envelope_target);
+                    assert_eq!(refusal.code(), fsl_foundation::Code::StaleDependency);
+                    assert_eq!(refusal.cause(), Some("content-mismatch"));
+                }
+                _ => panic!("unexpected refusal for {request_target:?}: {refusal:?}"),
+            }
+        }
+    }
+}
+
+/// TC-515 step 4 (FR-116-AC-4): the pre snapshot absent from the byte
+/// provision refuses with FR-106's `unavailable_observation` record.
+#[trace("TC-515", "FR-116-AC-4")]
+#[test]
+fn an_absent_pre_snapshot_refuses_with_the_admission_record() {
+    let input = forbidden_parent_change();
+    let pre = input.pre.clone();
+    let refusal = replay(case_with(input, child_change("parent"), |wire, _| {
+        withhold(wire, &pre);
+    }))
+    .unwrap_err();
+    let ReplayRefusal::Admission(AdmissionFailure::Incomplete(record)) = &refusal else {
+        panic!("expected an incomplete admission, got {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unavailable_observation");
+    assert_eq!(refusal.code().as_str(), record.catalog.code());
+}
+
+/// TC-515 step 5 (FR-116-AC-5): replaying step 1's envelope twice gives
+/// equal results. `FrameCounterexample: FamilyPayload`, and the envelope
+/// carries it as its generic parameter.
+#[trace("TC-515", "FR-116-AC-5")]
+#[test]
+fn replaying_one_envelope_twice_gives_equal_results() {
+    fn family_payload<P: FamilyPayload>(envelope: &WitnessEnvelope<P>) -> &P {
+        envelope.family_payload()
+    }
+    let first = case(forbidden_parent_change(), child_change("parent"));
+    assert_eq!(
+        family_payload(&first.envelope).change,
+        child_change("parent")
+    );
+    let second = case(forbidden_parent_change(), child_change("parent"));
+    assert_eq!(replay(first).unwrap(), replay(second).unwrap());
+}
+
+/// FR-116 Outputs ("on the envelope's arm"): an `Input`-arm envelope
+/// settles the `Input` arm, reproduced without a witness.
+#[trace("TC-515", "FR-116-AC-1")]
+#[test]
+fn an_input_arm_envelope_settles_the_input_arm() {
+    let case = case(forbidden_parent_change(), child_change("parent"));
+    let payload = case.envelope.family_payload().clone();
+    let envelope = envelope(&case.unit.bytes, ReplaySource::Input(Vec::new()), payload);
+    let result = replay_frame(case.wire, &envelope, crate::ReplayLimits::default())
+        .expect("the replay settles");
+    let ReplayResult::Input(arm) = result.result() else {
+        panic!("expected the input arm, got {:?}", result.result());
+    };
+    assert_eq!(
+        arm.settlement(),
+        crate::InputSettlement::ReproducedWithoutWitness
+    );
+}
+
+/// FR-116 with FR-115: the violation `run_clause`'s `Frame` selection
+/// reports for forbidden-parent-change, decoded into a payload
+/// ([`ClaimedChange::of_witness`]), replays to the same verdict and the
+/// same frame witness.
+#[trace("TC-515", "FR-116-AC-1")]
+#[test]
+fn a_check_time_frame_violation_replays_to_the_same_witness() {
+    let input = forbidden_parent_change();
+    let mut clause_request = config_version_request(ClauseRunSelection::Frame {
+        operation: OperationName {
+            model: identifier("Config"),
+            object: identifier("ConfigVersion"),
+            operation: identifier("attemptUpdate"),
+        },
+        invocation: input.invocation.clone(),
+    });
+    for (reference, bytes) in &input.documents {
+        clause_request
+            .snapshots
+            .insert(reference.clone(), bytes.clone());
+        clause_request
+            .invocations
+            .insert(reference.clone(), bytes.clone());
+    }
+    let report = run_clause(clause_request).expect("a well-formed request reports");
+    let ClauseDisposition::FrameViolation(witness) = &report.disposition else {
+        panic!("expected FrameViolation, got {:?}", report.disposition);
+    };
+    let claimed = ClaimedChange::of_witness(witness);
+    // The decode names the object by the witness's population and key.
+    assert_eq!(claimed, child_change("parent"));
+
+    let result = replay(case(input, claimed.clone())).expect("the replay settles");
+    assert_eq!(
+        witness_arm(&result).settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
+    assert_eq!(result.claimed(), &claimed);
+    assert_eq!(result.found(), Some(witness.as_ref()));
+}
+
+/// An invocation taking `child.versionNumber` from 0 to -1, outside
+/// `Int[0, 1000]`, with the frame respected.
+fn wrapping_debit() -> Invocation {
+    invocation(
+        &[object("root", 1, None), object("child", 0, Some("root"))],
+        &[object("root", 1, None), object("child", -1, Some("root"))],
+        |_| {},
+    )
+}
+
+/// `request` with every document of `input` provided.
+fn provide(mut request: ClauseRunRequest, input: &Invocation) -> ClauseRunRequest {
+    for (reference, bytes) in &input.documents {
+        request.snapshots.insert(reference.clone(), bytes.clone());
+        request.invocations.insert(reference.clone(), bytes.clone());
+    }
+    request
+}
+
+fn assert_refused_invalid_value(disposition: &ClauseDisposition) {
+    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = disposition else {
+        panic!("expected a refused admission, got {disposition:?}");
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "invalid-value");
+    assert_eq!(
+        record.fields.get("object").map(String::as_str),
+        Some("child")
+    );
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("versionNumber")
+    );
+}
+
+/// FR-106-AC-13: a `Frame` run admits its post snapshot as an input, so the
+/// wrapping debit still refuses `invalid_runtime_input`/`invalid-value`.
+#[trace("TC-465", "FR-106-AC-13")]
+#[test]
+fn a_frame_run_still_refuses_an_out_of_range_post_state_value() {
+    let input = wrapping_debit();
+    let request = provide(
+        config_version_request(ClauseRunSelection::Frame {
+            operation: OperationName {
+                model: identifier("Config"),
+                object: identifier("ConfigVersion"),
+                operation: identifier("attemptUpdate"),
+            },
+            invocation: input.invocation.clone(),
+        }),
+        &input,
+    );
+    let report = run_clause(request).expect("a well-formed request reports");
+    assert_refused_invalid_value(&report.disposition);
+}
+
+/// FR-106-AC-13: `run_clause`'s `Clause` selection runs under the caller's
+/// `ObservationLimits`, whose default refuses the wrapping debit's post
+/// snapshot.
+#[trace("TC-465", "FR-106-AC-13")]
+#[test]
+fn run_clause_still_refuses_an_out_of_range_post_state_value() {
+    let input = wrapping_debit();
+    let request = provide(
+        config_version_request(ClauseRunSelection::Clause(ClauseSelection {
+            name: "VersionUnchanged".to_owned(),
+            input: ClauseSelectionInput::Invocation {
+                invocation: input.invocation.clone(),
+            },
+        })),
+        &input,
+    );
+    let report = run_clause(request).expect("a well-formed request reports");
+    assert_refused_invalid_value(&report.disposition);
+}

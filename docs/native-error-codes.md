@@ -52,8 +52,8 @@ reused; prose may change without changing classification.
 | resource_exhausted | A source, syntax, formatter, map, linking, checking/proof or run ceiling prevented completion. |
 | conflicting_declaration | Two declarations that must be unique resolve to one identity: two unit `operation-body` declarations resolving to one operation (FR-302), cause `duplicate-declaration`. |
 | ambiguous_dispatch | FR-151 dispatch linking found no, or several undominated, applicable candidates for a closed subtype. |
-| invalid_probabilistic_model | A random parameter, reward, workload or `probabilistic` claim breaks a rule of QSpec FR-405 or FR-407: cause `invalid-weight`, `repeated-support-value`, `duplicate-distribution`, `duplicate-weight`, `duplicate-reward`, `state-read-in-reward`, `qualitative-threshold`, `quantile-over-fraction`, `partial-confidence` or `invalid-confidence`; `duplicate-reward`, `quantile-over-fraction` and `invalid-confidence` are QSL-proposed pending QSpec (STD-188). |
-| noncanonical_wire | A document is not in its canonical form: a domain package or observation document carries a number with no exact RFC 8785 spelling (FR-056, FR-106), cause `inexact-integer` or `inexact-number` with the number's `document_pointer`; or a checked-package/v2 wire's bytes are not RFC 8785 bytes (FR-322's I2 reader), with neither cause nor pointer. QSpec FR-271's `## Values` row catalogs the code, and FR-272's `noncanonical_wire` row its causes and `document_pointer` (quire-specification#180). |
+| invalid_probabilistic_model | A random parameter, reward, workload or `probabilistic` claim breaks a rule of FSpec FR-405 or FR-407: cause `invalid-weight`, `repeated-support-value`, `duplicate-distribution`, `duplicate-weight`, `duplicate-reward`, `state-read-in-reward`, `qualitative-threshold`, `quantile-over-fraction`, `partial-confidence` or `invalid-confidence`; `duplicate-reward`, `quantile-over-fraction` and `invalid-confidence` are FSL-proposed pending FSpec (STD-188). |
+| noncanonical_wire | A document is not in its canonical form: a domain package or observation document carries a number with no exact RFC 8785 spelling (FR-056, FR-106), cause `inexact-integer` or `inexact-number` with the number's `document_pointer`; or a checked-package/v2 wire's bytes are not RFC 8785 bytes (FR-322's I2 reader), with neither cause nor pointer. FSpec FR-271's `## Values` row catalogs the code, and FR-272's `noncanonical_wire` row its causes and `document_pointer` (filament-specification#180). |
 
 Phase identifies the observing boundary: source, lex, parse, profile, format or
 source_map, link, check or validate. `Diagnostic` itself carries only the
@@ -75,8 +75,8 @@ built from a `FormalSourceError` (a `to_ir` coordinate-mapping failure) keeps
 the `source_map` phase from its origin and can still populate `upstream`, so
 `source_map` is not one of the phases that always leaves both fields null.
 Resource exhaustion is incomplete, never false. This
-six-code contract is FR-301's, and the `quire` driver (quire-driver) carries it
-to a process exit status; QSL's `command` API returns each outcome with the
+six-code contract is FR-301's, and the `fsl` driver (filament-driver) carries it
+to a process exit status; FSL's `command` API returns each outcome with the
 code FR-285 gives its category. On that contract the driver exits 0 for a
 successful parse or a completed-true run predicate; 10 for a completed-false
 run predicate, a logical violation, not a tool defect; 20 for malformed

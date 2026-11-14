@@ -3,7 +3,7 @@ id: TC-593
 title: "Backward reachability and path counting decide state-graph claims with canonical evidence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-168
+  - target: ix://agent-ix/filament-spec-language/FR-168
     type: verifies
 ---
 # TC-593: Backward reachability and path counting decide state-graph claims with canonical evidence

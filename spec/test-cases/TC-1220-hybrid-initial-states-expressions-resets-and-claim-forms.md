@@ -3,7 +3,7 @@ id: TC-1220
 title: "Hybrid initial states, expressions, resets and claim forms check to the checked model and claim"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-447
+  - target: ix://agent-ix/filament-spec-language/FR-447
     type: verifies
 ---
 # TC-1220: Hybrid initial states, expressions, resets and claim forms check to the checked model and claim
@@ -38,8 +38,8 @@ clause under the infinite-trace profile.
    the infinite-trace unit, and the `timed-interval` over the untimed state
    model.
 7. Run S4 over the package holding `Braking2`, `Slows` and `Recent` as
-   FR-447-AC-12 states them, and read it with QSpec's v2 reader; then over
-   the package holding `Braking`; read the first package back with QSL's
+   FR-447-AC-12 states them, and read it with FSpec's v2 reader; then over
+   the package holding `Braking`; read the first package back with FSL's
    I2 reader, and feed it a written default `initial` and a fairness member
    naming `Halted`.
 

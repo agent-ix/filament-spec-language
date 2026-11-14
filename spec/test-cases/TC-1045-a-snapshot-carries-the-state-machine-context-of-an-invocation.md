@@ -3,9 +3,9 @@ id: TC-1045
 title: "A snapshot carries the state-machine context an invocation's invariant, precondition and postcondition are evaluated against"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: verifies
 ---
 # TC-1045: A snapshot carries the state-machine context an invocation's invariant, precondition and postcondition are evaluated against

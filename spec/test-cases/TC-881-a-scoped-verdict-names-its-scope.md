@@ -3,7 +3,7 @@ id: TC-881
 title: "A scoped run's verdict names its scope, and a refused run has no verdict"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-353
+  - target: ix://agent-ix/filament-spec-language/FR-353
     type: verifies
 ---
 # TC-881: A scoped run's verdict names its scope, and a refused run has no verdict
@@ -20,8 +20,8 @@ Every step runs `cargo run --package xtask -- qualify --corpus <dir>`, adding th
 
 1. Over TC-880 step 2's corpus, run with one `--capability` per capability except the failing one.
 2. Run over a corpus location that does not exist.
-3. Run the gate over one corpus that QSpec FR-336 rejects for its
-   contract version, then another corpus QSpec FR-336 rejects for a missing
+3. Run the gate over one corpus that FSpec FR-336 rejects for its
+   contract version, then another corpus FSpec FR-336 rejects for a missing
    required member.
 4. Run over TC-880 step 1's corpus with `--capability CAP-Z`, an id the corpus does not declare.
 5. Starting from the valid corpus in TC-880, create four invalid corpora:
@@ -29,14 +29,14 @@ Every step runs `cargo run --package xtask -- qualify --corpus <dir>`, adding th
    `coverage.primary` entry's `applicability.consumer_types` member to an
    out-of-domain value; remove the `expected.disposition` member from one
    vector; and serialize the otherwise valid corpus with non-canonical JSON
-   whitespace. Run each through the QSL gate.
+   whitespace. Run each through the FSL gate.
 6. Over the valid corpus, run separately with `--limit s9.nodes=1`,
    `--limit s3.nodes=ten`, `--limit s3.nodes=-1`, and two occurrences of
    `--limit s3.nodes=5`. Observe the subject invocation boundary in every
    refusal case, including a bad operand after a valid operand.
 7. Create three valid corpora using TC-877's outside-default-scope
    capabilities: only monitor-only `CAP-F`, only `CAP-G` with its profile
-   absent from QSL's catalog, and both together. Run each with no
+   absent from FSL's catalog, and both together. Run each with no
    `--capability` operand in JSON and text modes, observing subject
    invocation counts. Give their recorded results passes.
 8. Repeat step 7's mixed corpus with `--capability CAP-F` in both output
@@ -48,7 +48,7 @@ Tag the tests `#[trace("TC-881", "FR-353-AC-n")]`.
 
 - Step 1: `qualified` for the named scope, no `complete-v1: qualified` line, exit 0.
 - Step 2: the I/O refusal, no verdict, exit 2.
-- Step 3: the QSL preflight refuses each corpus before vector execution, gives no verdict and exits 2; the schema diagnostic for the unsupported version includes `/contract_version`, and the missing-member diagnostic includes the validator's instance path.
+- Step 3: the FSL preflight refuses each corpus before vector execution, gives no verdict and exits 2; the schema diagnostic for the unsupported version includes `/contract_version`, and the missing-member diagnostic includes the validator's instance path.
 - Step 4: `unknown_required_feature`/`unknown-feature` naming `CAP-Z`, no verdict, no vector executed, exit 2.
 - Step 5: each corpus is refused before vector execution, with no verdict and
   exit 2. The duplicate-key diagnostic identifies `contract_version`; the

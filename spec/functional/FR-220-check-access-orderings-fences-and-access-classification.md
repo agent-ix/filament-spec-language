@@ -3,21 +3,21 @@ id: FR-220
 title: "Check access orderings and fences, and classify every access"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-219
+  - target: ix://agent-ix/filament-spec-language/FR-219
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-435
+  - target: ix://agent-ix/filament-specification/FR-435
     type: depends_on
 ---
 # FR-220: Check access orderings and fences, and classify every access
@@ -105,7 +105,7 @@ weak model corresponds to real accesses.
   reachable state with failures, before generating that state's outgoing
   transitions. Each failure is
   `{site, transition, shape}`;
-  `shape` is QSpec FR-439's `MultiLocation{locations}` (`multi-location`),
+  `shape` is FSpec FR-439's `MultiLocation{locations}` (`multi-location`),
   `JoinPolicy` (`join-policy`) or `OrderingMismatch{access, ordering}`
   (`ordering-mismatch`). The list contains every failure from instantiated
   attempts and failing protocol nodes in combined ascending JCS-byte order of
@@ -270,7 +270,7 @@ local access takes none).
 | FR-220-AC-2 | S3 refuses, naming the attempt and with `ill_typed`/`operator-ineligible`, an ordering on an attempt that touches no data place, `release` on an attempt that only reads, and `acquire` on an attempt that only writes. S3 admits an RMW with no ordering and a `release` load that also writes a register, which AC-14 leaves to EN-1. A fence with each of `acquire`, `release`, `acq_rel` and `seq_cst` checks. | Test (TC-665) |
 | FR-220-AC-3 | In a `parallel` declaring `memory tso`, an attempt whose operation writes two fields of its receiver checks at S3 with no refusal and no class, as it does with source default `sc`, and an attempt that writes an any-object field refuses `unsupported_construct`/`declaration-form`, naming the attempt and the location. | Test (TC-665) |
 | FR-220-AC-4 | `SB` under `sc` with every ordering `relaxed`, and again with every ordering `seq_cst`, reaches the same 16 states and settles `proved` both times. | Test (TC-665) |
-| FR-220-AC-5 | An entry of `WeakAccessShape.failures` takes QSpec FR-439's `MultiLocation` and `JoinPolicy` shapes for the access shapes AC-3 and FR-219-AC-4 name: AC-3's two-field attempt with a request selecting `tso` has an entry with `MultiLocation{locations}` naming both locations, written `{"type":"multi-location","locations":[…]}`; FR-219-AC-4's `parallel` that joins `any`, with a request selecting `tso`, has an entry with `JoinPolicy`, written `{"type":"join-policy"}`. Both entries use the common `{site, transition, shape}` form and are ordered with every other failure by FR-220's canonical transition-identity order. | Test (TC-665) |
+| FR-220-AC-5 | An entry of `WeakAccessShape.failures` takes FSpec FR-439's `MultiLocation` and `JoinPolicy` shapes for the access shapes AC-3 and FR-219-AC-4 name: AC-3's two-field attempt with a request selecting `tso` has an entry with `MultiLocation{locations}` naming both locations, written `{"type":"multi-location","locations":[…]}`; FR-219-AC-4's `parallel` that joins `any`, with a request selecting `tso`, has an entry with `JoinPolicy`, written `{"type":"join-policy"}`. Both entries use the common `{site, transition, shape}` form and are ordered with every other failure by FR-220's canonical transition-identity order. | Test (TC-665) |
 | FR-220-AC-6 | `fence F ordering relaxed;` refuses at S1 with `invalid_syntax` at the `relaxed` token and never reaches S3. | Test (TC-665) |
 | FR-220-AC-7 | Two branches, each with a `relaxed` store attempt to the same cell field of one object, and no attempt that reads it, check at S3 with no refusal under `tso` and under `ra`, each attempt atomic with ordering `relaxed` and no class recorded. | Test (TC-665) |
 | FR-220-AC-8 | A branch whose attempts write a register field of its core and then read that register again (the register-read-again shape of message passing and load buffering) checks at S3 with no refusal and no class recorded. | Test (TC-665) |
@@ -288,15 +288,15 @@ local access takes none).
 - ADR-025 §1 MM-6, §2 MA-1 to MA-4; ADR-021 POR-1, POR-3 (footprints).
 - [FR-114](FR-114-bind-a-protocol-attempt-to-its-operation-frame.md), FR-218
   (checked `parallel` and attempts, ADR-027), FR-219 (models).
-- QSpec owns the `ordering` member, the `fence` control and the catalog
-  spelling of the refusals (QSpec FR-435), and QSpec FR-435-AC-6 states the S1 refusal of a `relaxed`
+- FSpec owns the `ordering` member, the `fence` control and the catalog
+  spelling of the refusals (FSpec FR-435), and FSpec FR-435-AC-6 states the S1 refusal of a `relaxed`
   fence.
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-435 (Linear STD-138),
-  and QSpec FR-439 for the `weak-access-shape` cause and its shapes.
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-435 (Linear STD-138),
+  and FSpec FR-439 for the `weak-access-shape` cause and its shapes.
 - EN-1 sharing, classification and the ordering rule (FR-220-AC-11 to
-  FR-220-AC-14): Linear QSL-910 under QSL-565. QSpec FR-435 and FR-439 state
+  FR-220-AC-14): Linear QSL-910 under QSL-565. FSpec FR-435 and FR-439 state
   the same check-time rules, pre-check outcome and `ordering-mismatch` shape
   (FR-435-AC-2, FR-435-AC-9, FR-439-AC-11).

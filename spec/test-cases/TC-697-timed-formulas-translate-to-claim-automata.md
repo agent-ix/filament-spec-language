@@ -3,7 +3,7 @@ id: TC-697
 title: "Timed formulas translate to claim automata that agree with the evaluator"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-242
+  - target: ix://agent-ix/filament-spec-language/FR-242
     type: verifies
 ---
 # TC-697: Timed formulas translate to claim automata that agree with the evaluator

@@ -6,8 +6,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
 
-fn compile_in_process(directory: &Path) -> Result<Vec<u8>, Box<qsl_command::command::RunError>> {
-    qsl_command::command::compile(&directory.join("compile.json"))
+fn compile_in_process(directory: &Path) -> Result<Vec<u8>, Box<fsl_command::command::RunError>> {
+    fsl_command::command::compile(&directory.join("compile.json"))
 }
 
 /// The complete-V1 compile fixture (FR-027-AC-5).
@@ -16,7 +16,7 @@ const SPINE_FIXTURE: &str = "tests/fixtures/spine-compile.native";
 /// The fixture's header and profile selection, which every stage-refusal
 /// body below follows.
 const SPINE_HEADER: &str =
-    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.model.complete/v1\";\n";
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n";
 
 /// Write `program` as `program.native` under `directory` with a
 /// native-compile/1 request selecting it, with no model imports.
@@ -33,8 +33,8 @@ fn spine_request(directory: &Path, program: &[u8]) {
 }
 
 /// FR-027-AC-2 / AC-5 (TC-105 step 1, TC-435 step 2): a `1-draft` program compiles through the
-/// spine; stdout is exactly the bytes `qsl_replay::spine`'s operations emit, which
-/// qsl-package's TC-435 step 1 reads back Verified with nothing omitted.
+/// spine; stdout is exactly the bytes `fsl_replay::spine`'s operations emit, which
+/// fsl-package's TC-435 step 1 reads back Verified with nothing omitted.
 #[test]
 #[trace(
     "TC-105",
@@ -63,16 +63,16 @@ fn a_complete_v1_program_compiles_through_the_spine() {
     );
     assert!(output.stderr.is_empty());
     let library = crate::support::front_end::emitted(
-        qsl_foundation::SourceIdentity::new("agent-ix", "test:spine"),
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine"),
         "program.native",
         &program,
         &std::collections::BTreeMap::new(),
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_replay::spine::DependencyInput::default(),
     )
     .unwrap();
     assert_eq!(output.stdout, library.package().bytes());
     let wire: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(wire["contract_version"], "quire.checked-package/v2");
+    assert_eq!(wire["contract_version"], "filament.checked-package/v2");
 }
 
 /// FR-027-AC-2 (TC-105 step 2): compile rejects run-format requests and
@@ -131,7 +131,7 @@ fn compile_refuses_extraction_before_reading_selected_files() {
                 "extraction":extraction}}});
         let request_path = directory.path().join("compile.json");
         std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
-        let error = qsl_command::command::compile(&request_path).unwrap_err();
+        let error = fsl_command::command::compile(&request_path).unwrap_err();
         let value = error.value().unwrap();
         assert_eq!(error.category().exit_code(), 20);
         assert_eq!(value["code"], "extraction-requires-run", "{value}");
@@ -248,39 +248,39 @@ fn compile_accepts_a_multi_unit_program_array() {
 
     let source_identities: Vec<_> = units
         .iter()
-        .map(|(_, identity, _)| qsl_foundation::SourceIdentity::new("agent-ix", *identity))
+        .map(|(_, identity, _)| fsl_foundation::SourceIdentity::new("agent-ix", *identity))
         .collect();
     let parse_requests: Vec<_> = units
         .iter()
         .zip(&source_identities)
         .map(
-            |((path, _, bytes), source)| qsl_replay::spine::ParseRequest {
+            |((path, _, bytes), source)| fsl_replay::spine::ParseRequest {
                 source,
                 path,
                 bytes,
             },
         )
         .collect();
-    let dependencies = qsl_replay::spine::DependencyInput::default();
-    qsl_replay::spine::preflight_unit_list(&parse_requests, &dependencies).unwrap();
-    let cancel = quire_exact::Cancel::new();
-    let limits = qsl_replay::spine::SpineLimits::default();
+    let dependencies = fsl_replay::spine::DependencyInput::default();
+    fsl_replay::spine::preflight_unit_list(&parse_requests, &dependencies).unwrap();
+    let cancel = filament_exact::Cancel::new();
+    let limits = fsl_replay::spine::SpineLimits::default();
     let parsed = parse_requests
         .iter()
         .map(|request| {
-            qsl_replay::spine::parse(request, limits.source, &cancel)
+            fsl_replay::spine::parse(request, limits.source, &cancel)
                 .unwrap()
                 .into_value()
         })
         .collect();
-    let admitted = qsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies).unwrap();
+    let admitted = fsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies).unwrap();
     let packages =
-        qsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
     let models =
-        qsl_replay::spine::select_units(&admitted, &packages, limits.model, limits.source, &cancel)
+        fsl_replay::spine::select_units(&admitted, &packages, limits.model, limits.source, &cancel)
             .unwrap()
             .into_value();
-    let checked = qsl_replay::spine::check_units_with_refinement_internals(
+    let checked = fsl_replay::spine::check_units_with_refinement_internals(
         &admitted,
         "test:unit-a".to_owned(),
         Some(json!([])),
@@ -291,9 +291,9 @@ fn compile_accepts_a_multi_unit_program_array() {
     )
     .unwrap()
     .into_value();
-    let composed = qsl_replay::spine::package(
+    let composed = fsl_replay::spine::package(
         &checked[0],
-        qsl_replay::spine::PackageLimits::default(),
+        fsl_replay::spine::PackageLimits::default(),
         &cancel,
     )
     .unwrap()
@@ -453,7 +453,7 @@ fn compile_program_array_file_count_refusal_names_the_programs_group() {
     let path = directory.path().join("compile.json");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
 
-    let error = qsl_command::command::compile(&path).unwrap_err();
+    let error = fsl_command::command::compile(&path).unwrap_err();
     let value = error.value().unwrap();
     assert_eq!(error.category().exit_code(), 22);
     assert_eq!(value["code"], "resource_exhausted", "{value}");
@@ -649,7 +649,7 @@ fn spine_model_request(directory: &Path, program: &[u8], document: &[u8]) {
 
 /// FR-027-AC-9 (TC-442 step 2): a `1-draft` request selecting a domain
 /// package document compiles its program through the spine. Stdout is
-/// exactly the bytes `qsl_replay::spine`'s operations emit over the same source and
+/// exactly the bytes `fsl_replay::spine`'s operations emit over the same source and
 /// package input, and the lock and identity preimage select the domain
 /// package by the identity the program's `model` declaration
 /// names.
@@ -669,11 +669,11 @@ fn a_complete_v1_request_with_a_domain_package_locks_its_model_selection() {
         String::from_utf8_lossy(&output.stderr)
     );
     let library = crate::support::front_end::emitted(
-        qsl_foundation::SourceIdentity::new("agent-ix", "test:spine"),
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine"),
         "program.native",
         &program,
-        &qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap(),
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap(),
+        &fsl_replay::spine::DependencyInput::default(),
     )
     .unwrap();
     assert_eq!(output.stdout, library.package().bytes());
@@ -751,8 +751,8 @@ fn a_model_bearing_request_refuses_at_the_owning_stage() {
 const GEOMETRY: &str = "function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
 
 /// The source identity `geometry.native` is selected under.
-fn geometry_identity() -> qsl_foundation::SourceIdentity {
-    qsl_foundation::SourceIdentity::new("agent-ix", "test:geometry")
+fn geometry_identity() -> fsl_foundation::SourceIdentity {
+    fsl_foundation::SourceIdentity::new("agent-ix", "test:geometry")
 }
 
 /// [`spine_request`] for a program importing `test/geometry`, with
@@ -789,8 +789,8 @@ fn refinement_unit(imports_library: bool) -> String {
         "function geometryFn using v(x: Int[0, 9]): Boolean pure { true }\n"
     };
     format!(
-        "{SPINE_HEADER}profile inf = \"quire.temporal.infinite-trace/v1\";\n\
-         profile p = \"quire.protocol.finite-global/v1\";\n\
+        "{SPINE_HEADER}profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile p = \"filament.protocol.finite-global/v1\";\n\
          {import}model Spec = \"{spec}\";\n\
          model Impl = \"{concrete}\";\n\
          protocol Twice using p over (c: Spec::Counter) on origin {{\n\
@@ -812,7 +812,7 @@ fn refinement_unit(imports_library: bool) -> String {
 }
 
 /// FR-027-AC-10 (TC-446 step 7): a `1-draft` request's `libraries` supply
-/// the program's import. Stdout is exactly the bytes `qsl_replay::spine`'s
+/// the program's import. Stdout is exactly the bytes `fsl_replay::spine`'s
 /// operations emit over the same program and dependency input.
 #[test]
 #[trace(
@@ -830,7 +830,7 @@ fn a_complete_v1_request_supplies_its_libraries_to_the_spine() {
         "geometry.native",
         &library,
         &std::collections::BTreeMap::new(),
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_replay::spine::DependencyInput::default(),
     )
     .expect("the supplied library retains its formatted checked identity");
     let directory = tempfile::tempdir().unwrap();
@@ -844,7 +844,7 @@ fn a_complete_v1_request_supplies_its_libraries_to_the_spine() {
     );
     assert!(output.stderr.is_empty());
     let dependencies =
-        qsl_replay::spine::DependencyInput::new([qsl_replay::spine::SuppliedLibrary {
+        fsl_replay::spine::DependencyInput::new([fsl_replay::spine::SuppliedLibrary {
             identity: "test/geometry".to_owned(),
             source: geometry_identity(),
             path: "geometry.native".to_owned(),
@@ -852,7 +852,7 @@ fn a_complete_v1_request_supplies_its_libraries_to_the_spine() {
         }])
         .unwrap();
     let compiled = crate::support::front_end::emitted(
-        qsl_foundation::SourceIdentity::new("agent-ix", "test:spine"),
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine"),
         "program.native",
         &program,
         &std::collections::BTreeMap::new(),
@@ -911,7 +911,7 @@ fn refinement_internals_compile_matches_the_spine_composition() {
 
     let emit_composition = |root_internals: Option<Value>, library_internals: Option<Value>| {
         let dependencies =
-            qsl_replay::spine::DependencyInput::new([qsl_replay::spine::SuppliedLibrary {
+            fsl_replay::spine::DependencyInput::new([fsl_replay::spine::SuppliedLibrary {
                 identity: "test/geometry".to_owned(),
                 source: geometry_identity(),
                 path: "geometry.native".to_owned(),
@@ -924,28 +924,28 @@ fn refinement_internals_compile_matches_the_spine_composition() {
                 .unwrap(),
             None => dependencies,
         };
-        let source = qsl_foundation::SourceIdentity::new("agent-ix", "test:spine");
-        let cancel = quire_exact::Cancel::new();
-        let limits = qsl_replay::spine::SpineLimits::default();
-        let parse_requests = [qsl_replay::spine::ParseRequest {
+        let source = fsl_foundation::SourceIdentity::new("agent-ix", "test:spine");
+        let cancel = filament_exact::Cancel::new();
+        let limits = fsl_replay::spine::SpineLimits::default();
+        let parse_requests = [fsl_replay::spine::ParseRequest {
             source: &source,
             path: "program.native",
             bytes: &program,
         }];
-        qsl_replay::spine::preflight_unit_list(&parse_requests, &dependencies).unwrap();
+        fsl_replay::spine::preflight_unit_list(&parse_requests, &dependencies).unwrap();
         let parsed = parse_requests
             .iter()
             .map(|request| {
-                qsl_replay::spine::parse(request, limits.source, &cancel)
+                fsl_replay::spine::parse(request, limits.source, &cancel)
                     .unwrap()
                     .into_value()
             })
             .collect();
-        let admitted = qsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies).unwrap();
+        let admitted = fsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies).unwrap();
         let packages =
-            qsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice))
+            fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice))
                 .unwrap();
-        let models = qsl_replay::spine::select_units(
+        let models = fsl_replay::spine::select_units(
             &admitted,
             &packages,
             limits.model,
@@ -954,7 +954,7 @@ fn refinement_internals_compile_matches_the_spine_composition() {
         )
         .unwrap()
         .into_value();
-        let checked = qsl_replay::spine::check_units_with_refinement_internals(
+        let checked = fsl_replay::spine::check_units_with_refinement_internals(
             &admitted,
             "test:spine".to_owned(),
             root_internals,
@@ -965,9 +965,9 @@ fn refinement_internals_compile_matches_the_spine_composition() {
         )
         .unwrap()
         .into_value();
-        qsl_replay::spine::package(
+        fsl_replay::spine::package(
             &checked[0],
-            qsl_replay::spine::PackageLimits::default(),
+            fsl_replay::spine::PackageLimits::default(),
             &cancel,
         )
         .unwrap()

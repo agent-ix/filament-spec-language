@@ -3,7 +3,7 @@ id: TC-1276
 title: "The native package, runtime-input, front-end and protocol-artifact surfaces are absent"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-493
+  - target: ix://agent-ix/filament-spec-language/FR-493
     type: verifies
 ---
 # TC-1276: The native package, runtime-input, front-end and protocol-artifact surfaces are absent
@@ -27,7 +27,7 @@ without a test because its only test went with the retired path.
 1. Compile one downstream crate per package/runtime item and confirm each
    import fails because the item is absent: the root `package` and `runtime`
    modules, `NativePackage` and `runtime::execute`.
-2. Compile a downstream crate that matches exhaustively on `qsl-foundation`'s
+2. Compile a downstream crate that matches exhaustively on `fsl-foundation`'s
    `WireFormat` and confirm it names no variant for `native-linked-package/1`
    or `native-state-input/1`.
 3. Run the CLI `compile` on a source declaring `edition "0-draft"`, on one

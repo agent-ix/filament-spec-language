@@ -3,14 +3,14 @@ id: TC-1140
 title: "A state-graph claim emits a v2 claim node the I2 reader resolves"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-410
+  - target: ix://agent-ix/filament-spec-language/FR-410
     type: verifies
 ---
 # TC-1140: A state-graph claim emits a v2 claim node the I2 reader resolves
 
 ## Description
 
-Verify that S4 emits each checked state-graph claim as a QSpec FR-475
+Verify that S4 emits each checked state-graph claim as an FSpec FR-475
 `claim`/`state_graph` node, that the form and predicates enter the node id,
 and that the I2 reader resolves the claim by its triple and refuses a
 malformed node.

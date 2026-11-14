@@ -3,7 +3,7 @@ id: TC-513
 title: "S3 binds a protocol attempt to its operation's one anchor and frame"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: verifies
 ---
 # TC-513: S3 binds a protocol attempt to its operation's one anchor and frame

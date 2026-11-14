@@ -3,7 +3,7 @@ id: TC-592
 title: "EN-1 explores a state-graph subject once, labels it and tracks open nodes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-167
+  - target: ix://agent-ix/filament-spec-language/FR-167
     type: verifies
 ---
 # TC-592: EN-1 explores a state-graph subject once, labels it and tracks open nodes

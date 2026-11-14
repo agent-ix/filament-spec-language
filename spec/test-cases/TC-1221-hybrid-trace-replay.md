@@ -3,11 +3,11 @@ id: TC-1221
 title: "Hybrid traces replay statically and exactly against the checked hybrid model"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-450
+  - target: ix://agent-ix/filament-spec-language/FR-450
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-269
+  - target: ix://agent-ix/filament-spec-language/FR-269
     type: verifies
 ---
 # TC-1221: Hybrid traces replay statically and exactly against the checked hybrid model
@@ -47,7 +47,7 @@ provider, each returning a scripted entry with a scripted `HybridTrace`.
 9. Over `Braking` with `Moving`'s flow `v' = -v`, submit AC-2's point trace
    as a provider's `refuted` entry.
 10. For a process provider's `refuted` entry on the hybrid `Braking` claim,
-    read AC-2's named `hybrid-counterexample` in QSpec FR-193 wire form and
+    read AC-2's named `hybrid-counterexample` in FSpec FR-193 wire form and
     settle it; repeat with a malformed trace and on a non-hybrid claim.
 11. Serialize Step 3's `NotReproduced` hybrid cause and Step 9's `NotExact`
     hybrid cause through the shared `DisagreementCause` codec with the
@@ -92,7 +92,7 @@ Tag the tests `#[trace("TC-1221", "FR-450-AC-n")]`.
   `HybridReplayRefusal::ResourceExhausted{counter: WorkUnits}` and the item
   settles `incomplete`, `LimitReached{limit: work_units, value: 100,
   setting: accounting.work_units}`, with no verdict or counterexample; under
-  `u64::MAX`, QSpec FR-146 admits the `Int[0, 20000]` measure, the call takes
+  `u64::MAX`, FSpec FR-146 admits the `Int[0, 20000]` measure, the call takes
   20,000 recursive edges (20,001 recursive `descend` calls plus the one
   `descending` wrapper call) and completes on the explicit stack,
   static replay returns `Consistent`, and no stack overflow occurs.

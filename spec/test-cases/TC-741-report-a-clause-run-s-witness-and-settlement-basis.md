@@ -3,7 +3,7 @@ id: TC-741
 title: "Clause run reports carry a settlement basis on every disposition and a witness only when decisive"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-266
+  - target: ix://agent-ix/filament-spec-language/FR-266
     type: verifies
 ---
 # TC-741: Clause run reports carry a settlement basis on every disposition and a witness only when decisive
@@ -18,7 +18,7 @@ Scope: FR-266-AC-1 to FR-266-AC-3.
 
 ## Test Procedure
 
-Build `ClauseRunRequest`s through `qsl_replay::spine::run_clause`.
+Build `ClauseRunRequest`s through `fsl_replay::spine::run_clause`.
 
 1. FR-265's `witness` unit: `Clause` `AllBelow` over `high`, `SomeAtLeast`
    over `high`, `AllBelow` over `low`; the `AllBelow` over `high` request a

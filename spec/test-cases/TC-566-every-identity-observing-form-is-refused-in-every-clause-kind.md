@@ -3,7 +3,7 @@ id: TC-566
 title: "Every identity-observing form is refused in every clause kind, and transparent forms check"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-150
+  - target: ix://agent-ix/filament-spec-language/FR-150
     type: verifies
 ---
 # TC-566: Every identity-observing form is refused in every clause kind, and transparent forms check

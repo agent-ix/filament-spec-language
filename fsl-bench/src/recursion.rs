@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! `PackageDeclarations` with N recursive components, for the
+//! termination check's per-component cost. Kept apart from [`crate::check`],
+//! whose generators are MP-002's protected apparatus.
+
+use fsl_forms::{BuiltinType, Expression, FunctionDeclaration, TypeForm};
+use fsl_semantics::check::PackageDeclarations;
+
+use crate::check::{chain_name, source};
+
+/// N self-recursive functions, `fI(x) = fI(x)`, with no `decreases`
+/// measure: N singleton recursive components, each refused
+/// `unproved-decrease` / `missing-measure`, so the check reports N
+/// refusals and builds N refusal cycles.
+pub fn self_recursive(functions: usize) -> PackageDeclarations {
+    let integer = || {
+        TypeForm::builtin(
+            BuiltinType::Integer,
+            fsl_foundation::Span { start: 0, end: 0 },
+        )
+    };
+    let declarations = (0..functions)
+        .map(|index| {
+            FunctionDeclaration::new(
+                chain_name(index),
+                vec![("x".to_owned(), integer())],
+                integer(),
+                None,
+                Expression::call(chain_name(index), vec![Expression::name("x".to_owned())]),
+            )
+        })
+        .collect();
+    {
+        let mut package_declarations = PackageDeclarations::new(
+            source(),
+            "fsl-bench",
+            fsl_foundation::IdentityLimits::default(),
+        );
+        package_declarations.functions = declarations;
+        package_declarations
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::check;
+
+    #[test]
+    fn each_self_recursive_function_is_refused_once() {
+        let refusals = check(self_recursive(3)).expect_err("no function has a measure");
+        assert_eq!(refusals.len(), 3);
+        assert!(refusals
+            .iter()
+            .all(|refusal| refusal.cause.cause() == Some("unproved-decrease")));
+    }
+}

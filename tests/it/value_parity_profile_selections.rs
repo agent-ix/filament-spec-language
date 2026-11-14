@@ -6,16 +6,16 @@
 
 use std::collections::BTreeMap;
 
-use ix_trace_rs::trace;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::{
+use filament_exact::{Integer, ScalarLimits, Value};
+use fsl_foundation::SourceIdentity;
+use fsl_replay::{
     call_site, replay_value_parity, CanonicalAssignment, DependencyInput, EnvelopeSource,
     Identifier, NoPayload, ProfileSelection, QualifiedName, ReplayLimits, ReplayRequest,
     ReplayRequestWire, RequestTargetWire, ScalarOutcome, StateEnvironment, TracePosition,
     ValueClaim, ValueParityResult, WitnessEnvelope, WitnessValue,
 };
-use qsl_replay::{ReplayTargetMembers, WitnessPacket};
-use quire_exact::{Integer, ScalarLimits, Value};
+use fsl_replay::{ReplayTargetMembers, WitnessPacket};
+use ix_trace_rs::trace;
 use serde_json::json;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -38,9 +38,9 @@ fn source_identity() -> SourceIdentity {
 /// TC-1252's unit `UC`.
 fn uc() -> String {
     String::from("language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
-         profile t = \"quire.temporal.infinite-trace/v1\";\n\
-         profile p = \"quire.protocol.finite-global/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         profile p = \"filament.protocol.finite-global/v1\";\n\
          model Config = \"example/config-version\";\n\
          temporal ReachesTwo using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { always eventually holds(c.versionNumber = 2) }\n\
          protocol Flow using p over (input: Config::ConfigVersion) on origin {\n\
@@ -87,8 +87,8 @@ fn a_unit_whose_lock_selects_profiles_replays_with_an_empty_selection_list() {
     assert_eq!(
         rows,
         vec![
-            json!({"definition": {"authority": "agent-ix", "identity": "quire.protocol.finite-global/v1"}, "role": "protocol_profile"}),
-            json!({"definition": {"authority": "agent-ix", "identity": "quire.temporal.infinite-trace/v1"}, "role": "temporal_profile"}),
+            json!({"definition": {"authority": "agent-ix", "identity": "filament.protocol.finite-global/v1"}, "role": "protocol_profile"}),
+            json!({"definition": {"authority": "agent-ix", "identity": "filament.temporal.infinite-trace/v1"}, "role": "temporal_profile"}),
         ]
     );
 
@@ -118,7 +118,7 @@ fn a_unit_whose_lock_selects_profiles_replays_with_an_empty_selection_list() {
 
     let wire = ReplayRequestWire {
         profile_selections: envelope.profile_selections().to_vec(),
-        package: qsl_replay::ReplayPackage::read(
+        package: fsl_replay::ReplayPackage::read(
             &located.package,
             ReplayLimits::default().input_bytes,
         )

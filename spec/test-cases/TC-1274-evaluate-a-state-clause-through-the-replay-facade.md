@@ -3,7 +3,7 @@ id: TC-1274
 title: "The replay facade evaluates a state clause at a kind-correct observation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-491
+  - target: ix://agent-ix/filament-spec-language/FR-491
     type: verifies
 ---
 # TC-1274: The replay facade evaluates a state clause at a kind-correct observation
@@ -12,15 +12,15 @@ relationships:
 
 Verify `evaluate_clause` returns `Completed`, `Undefined`, `Refused` and
 `Incomplete` results at current and pre-call observations, refuses an
-observation of the wrong kind, and is reachable from the `qsl_replay` root.
+observation of the wrong kind, and is reachable from the `fsl_replay` root.
 Scope: FR-491-AC-1 to FR-491-AC-8.
 
 ## Test Procedure
 
-Test layer: integration tests `qsl-replay/tests/clause_evaluation_facade.rs`
-(calls and result types from the `qsl_replay` root; only its model fixture reads
-`qsl_semantics` for the digest the unit's `model` statement names) and
-`qsl-replay/tests/clause_evaluation_root_only.rs` (root items only,
+Test layer: integration tests `fsl-replay/tests/clause_evaluation_facade.rs`
+(calls and result types from the `fsl_replay` root; only its model fixture reads
+`fsl_semantics` for the digest the unit's `model` statement names) and
+`fsl-replay/tests/clause_evaluation_root_only.rs` (root items only,
 FR-491-AC-6), plus unit tests in `src/clause_evaluation.rs`.
 
 1. Evaluate `ParentOrder` at current snapshots that satisfy and violate it.

@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-002, FR-010, FR-256: the `parse` operation called in process, and the
 //! outcome document and FR-285 exit code it serializes to. These are the
-//! library halves of the criteria the retired `quire-spec parse` command was
+//! library halves of the criteria the retired `filament-spec parse` command was
 //! tested through; the frontend's arguments and streams are the driver's
 //! (FR-287-AC-3 to AC-9).
+use filament_exact::Cancel;
+use filament_semantic_value::catalog::Category;
+use fsl_cst::Limits;
+use fsl_foundation::diagnostic::Staged;
+use fsl_foundation::source::SourceReadCause;
+use fsl_foundation::{Source, SourceIdentity};
+use fsl_replay::spine::{parse, FrontEndFailure, ParseRequest, ParsedUnitSource, SpineLimits};
+use fsl_replay::OutcomeDocument;
 use ix_trace_rs::trace;
-use qsl_cst::Limits;
-use qsl_foundation::diagnostic::Staged;
-use qsl_foundation::source::SourceReadCause;
-use qsl_foundation::{Source, SourceIdentity};
-use qsl_replay::spine::{parse, FrontEndFailure, ParseRequest, ParsedUnitSource, SpineLimits};
-use qsl_replay::OutcomeDocument;
-use quire_exact::Cancel;
-use quire_semantic_value::catalog::Category;
 use serde_json::{json, Value};
 
 const FIXTURE: &[u8] = include_bytes!("../fixtures/spine-compile.native");
 const HEADER: &str =
-    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\n";
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
 fn parse_with(
     identity: &SourceIdentity,
@@ -70,7 +70,7 @@ fn the_fixture_parses_to_an_admissible_source_and_a_success_document() {
     assert_eq!(
         document_value(&document),
         json!({
-            "format": "quire-outcome/1", "operation": "parse", "last_stage": "S2",
+            "format": "filament-outcome/1", "operation": "parse", "last_stage": "S2",
             "category": "success", "items": [], "diagnostics": [], "artifacts": [],
             "result": null
         })
@@ -224,14 +224,14 @@ fn parse_and_format_take_the_two_source_labels() {
     assert!(matches!(refusal.cause, SourceReadCause::BlankLabel { .. }));
 
     let value_format = std::fs::read_to_string("tests/fixtures/value-format.native").unwrap();
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity,
         "tests/fixtures/value-format.native",
         value_format.as_bytes(),
         Limits::default(),
     )
     .expect("the format fixture parses");
-    let formatted = qsl_cst::format::format(&parsed).expect("admissible source formats");
+    let formatted = fsl_cst::format::format(&parsed).expect("admissible source formats");
     assert!(formatted.contains("// the larger coordinate"));
 }
 

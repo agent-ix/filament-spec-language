@@ -30,13 +30,13 @@ fn program_source() -> Value {
 #[test]
 #[trace("TC-773", "FR-289-AC-1")]
 fn front_end_package_is_independent_of_provider_registry() {
-    use qsl_foundation::BackendId;
-    use qsl_route::{
+    use fsl_foundation::BackendId;
+    use fsl_route::{
         descriptor_from_manifest, Candidate, ManifestMembers, ProviderOrigin, Registry,
     };
 
     let program = std::fs::read(SEVEN_FIXTURE).unwrap();
-    let source = qsl_foundation::SourceIdentity::new("agent-ix", "test:fr-289-front-end");
+    let source = fsl_foundation::SourceIdentity::new("agent-ix", "test:fr-289-front-end");
     let empty = Registry::new();
     let mut populated = Registry::new();
     for (identity, capability, mode, origin) in [
@@ -87,14 +87,14 @@ fn front_end_package_is_independent_of_provider_registry() {
         "spine-compile.native",
         &program,
         &std::collections::BTreeMap::new(),
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_replay::spine::DependencyInput::default(),
     );
     let populated_result = crate::support::front_end::emitted(
         source,
         "spine-compile.native",
         &program,
         &std::collections::BTreeMap::new(),
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_replay::spine::DependencyInput::default(),
     );
     assert_eq!(empty_result.is_ok(), populated_result.is_ok());
     assert_eq!(
@@ -156,8 +156,8 @@ fn unknown_edition_uses_native_run_result_two_command_error() {
         members,
         ["basis", "code", "details", "format", "message", "stage"]
     );
-    let read = qsl_replay::spine::read_native_run_result(&output.stderr).unwrap();
-    let qsl_replay::spine::NativeRunResult::CommandError(read) = read else {
+    let read = fsl_replay::spine::read_native_run_result(&output.stderr).unwrap();
+    let fsl_replay::spine::NativeRunResult::CommandError(read) = read else {
         panic!("the command error must read as its own typed variant");
     };
     assert_eq!(read.stage(), "profile");
@@ -184,8 +184,8 @@ fn native_result_two_reader_refuses_invalid_command_error_members() {
         "basis": "unavailable"
     });
     assert!(matches!(
-        qsl_replay::spine::read_native_run_result(&serde_json::to_vec(&valid).unwrap()).unwrap(),
-        qsl_replay::spine::NativeRunResult::CommandError(_)
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&valid).unwrap()).unwrap(),
+        fsl_replay::spine::NativeRunResult::CommandError(_)
     ));
     type MemberEdit = (&'static str, fn(&mut Value));
     let edits: &[MemberEdit] = &[
@@ -217,7 +217,7 @@ fn native_result_two_reader_refuses_invalid_command_error_members() {
     for &(member, edit) in edits {
         let mut candidate = valid.clone();
         edit(&mut candidate);
-        let error = match qsl_replay::spine::read_native_run_result(
+        let error = match fsl_replay::spine::read_native_run_result(
             &serde_json::to_vec(&candidate).unwrap(),
         ) {
             Ok(_) => panic!("accepted invalid {member}: {candidate}"),
@@ -229,7 +229,7 @@ fn native_result_two_reader_refuses_invalid_command_error_members() {
 
 /// FR-100-AC-1 (TC-450 step 1): `seven()` completes integer `7`, and the
 /// document's `source` agrees with a
-/// composition of the `qsl_replay::spine` operations.
+/// composition of the `fsl_replay::spine` operations.
 #[test]
 #[trace("TC-450", "FR-100-AC-1")]
 fn tc_450_step_1_seven_completes_through_the_spine() {
@@ -585,7 +585,7 @@ fn tc_451_step_3_argument_binding_names_the_parameter() {
 fn tc_451_step_6_compile_refusals_carry_their_own_stage() {
     let syntax_error = b"language \"ix:native\" edition \"1-draft\";\nfunction (".to_vec();
     let ill_typed = "language \"ix:native\" edition \"1-draft\";\n\
-        profile v = \"quire.value.complete/v1\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
         type Digit = Int[0, 9];\n\
         function inv using v(x: Digit): Boolean pure { 1 / x > 0 }\n"
         .to_owned()
@@ -673,7 +673,7 @@ fn tc_451_step_7_zero_work_units_is_incomplete() {
 }
 
 /// Environment switch that makes the test below act as its own child process.
-const COMMAND_CHILD: &str = "QSL_TC771_COMMAND_CHILD";
+const COMMAND_CHILD: &str = "FSL_TC771_COMMAND_CHILD";
 
 /// FR-287-AC-2 (TC-771 step 2): `command` called in process, with no driver
 /// binary, maps a compile of `spine-compile.native` to FR-285 exit 0 and a
@@ -708,8 +708,8 @@ fn command_library_outcomes_carry_the_exit_function_codes() {
 
         println!("{BEGIN}");
         eprintln!("{BEGIN}");
-        let compiled = qsl_command::command::compile(&directory.path().join("compile.json"));
-        let ran = qsl_command::command::run(&directory.path().join("request.json"));
+        let compiled = fsl_command::command::compile(&directory.path().join("compile.json"));
+        let ran = fsl_command::command::run(&directory.path().join("request.json"));
         println!("{END}");
         eprintln!("{END}");
 
@@ -888,7 +888,7 @@ fn tc_451_step_4_malformed_argument_value_refuses() {
 #[trace("TC-450", "FR-100-AC-3")]
 fn tc_450_step_6_libraries_and_models_both_present_runs() {
     const HEADER: &str =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\n";
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
     const LIBRARY: &str = "function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
     let library = format!("{HEADER}{LIBRARY}").into_bytes();
     let document = std::fs::read("tests/fixtures/spine-model.semantic-ir.json").unwrap();
@@ -935,13 +935,13 @@ fn tc_450_step_6_libraries_and_models_both_present_runs() {
 }
 
 /// FR-100-AC-11 (TC-786 steps 2 and 3): each `run` exit status is FR-285's
-/// exit code of the outcome's category, and `qsl_replay::spine::run` over
+/// exit code of the outcome's category, and `fsl_replay::spine::run` over
 /// the same input reports a category whose exit code equals the command's:
 /// `invalid_runtime_input` 20, a record result 21, `work_units` 0 22.
 #[test]
 #[trace("TC-786", "FR-100-AC-11")]
 fn tc_786_run_exit_statuses_come_from_the_exit_function() {
-    use qsl_replay::spine::{default_accounting, Call, CallArgument, DEFAULT_WORK_UNITS};
+    use fsl_replay::spine::{default_accounting, Call, CallArgument, DEFAULT_WORK_UNITS};
     let program = std::fs::read(RUN_FIXTURE).unwrap();
     for (function, parameter, value, work_units, expected) in [
         ("flag", Some("b"), 2_i64, DEFAULT_WORK_UNITS, 20),
@@ -952,7 +952,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
         let arguments: Vec<CallArgument> = parameter
             .map(|parameter| CallArgument {
                 parameter: parameter.to_owned(),
-                value: quire_exact::Value::Integer(quire_exact::Integer::from(value)),
+                value: filament_exact::Value::Integer(filament_exact::Integer::from(value)),
             })
             .into_iter()
             .collect();
@@ -971,23 +971,23 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
         let output = run(directory.path());
         assert_eq!(output.status.code(), Some(expected), "{function}");
 
-        let direct = qsl_replay::spine::run(
-            qsl_foundation::SourceIdentity::new("agent-ix", "test:spine-run"),
+        let direct = fsl_replay::spine::run(
+            fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-run"),
             crate::TEST_PACKAGE_NAME.to_owned(),
             "program.native",
             &program,
             &std::collections::BTreeMap::new(),
-            &qsl_replay::spine::DependencyInput::default(),
-            qsl_replay::spine::SpineLimits::default(),
+            &fsl_replay::spine::DependencyInput::default(),
+            fsl_replay::spine::SpineLimits::default(),
             &Call {
                 function: function.to_owned(),
                 arguments,
                 accounting: default_accounting(work_units),
                 supplied: Default::default(),
-                backend: quire_eval::ExecutionBackendChoice::Interpreter,
+                backend: filament_eval::ExecutionBackendChoice::Interpreter,
             },
-            &qsl_semantics::model::object_environment::ObjectEnvironment::default(),
-            &quire_exact::Cancel::new(),
+            &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            &filament_exact::Cancel::new(),
         );
         let category = match direct {
             Ok(outcome) => outcome.category(),
@@ -1002,7 +1002,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
 }
 
 /// Environment member naming the request file the child process runs.
-const CWD_CHILD_REQUEST: &str = "QSL_CWD_CHILD_REQUEST";
+const CWD_CHILD_REQUEST: &str = "FSL_CWD_CHILD_REQUEST";
 
 /// Child half of `run_outcome_is_independent_of_working_directory`: when the
 /// parent sets the request path, run it from this process's working

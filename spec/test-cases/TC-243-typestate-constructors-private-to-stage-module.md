@@ -3,7 +3,7 @@ id: TC-243
 title: "Typestate constructors are private to their stage module"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-243: Typestate constructors are private to their stage module

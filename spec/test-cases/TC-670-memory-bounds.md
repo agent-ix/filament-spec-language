@@ -3,7 +3,7 @@ id: TC-670
 title: "Memory bounds limit stores, default to 4 and are stated in every result"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-225
+  - target: ix://agent-ix/filament-spec-language/FR-225
     type: verifies
 ---
 # TC-670: Memory bounds limit stores, default to 4 and are stated in every result

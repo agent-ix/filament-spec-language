@@ -3,9 +3,9 @@ id: TC-1195
 title: "State keys and transition identities encode every FR-181 value family"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: references
 ---
 # TC-1195: State keys and transition identities encode every FR-181 value family
@@ -13,7 +13,7 @@ relationships:
 ## Description
 
 Verify that `ModelSystem` writes decimal, quantity, UUID, Timestamp, enum,
-record, tuple and union values in QSpec FR-181's typed canonical form, in
+record, tuple and union values in FSpec FR-181's typed canonical form, in
 state keys, transition identities and step effects; that set elements take
 FR-181's canonical element encoding; that a population's objects key as a
 set of references independent of insertion order; and that a value of a

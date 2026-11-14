@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Shared TC-235 K2 fixture builder used by FSL semantics and evaluator tests.
+
+use fsl_semantics::model::intake::meaning;
+use serde_json::{json, Value};
+
+pub(crate) const PACKAGE: &str = "test/orders";
+pub(crate) const BUSINESS: &str = "test/business";
+
+pub(crate) fn id(node: &str) -> String {
+    format!("ix://{PACKAGE}/{node}")
+}
+
+pub(crate) fn origin(node: &str) -> Value {
+    let identity = id(node);
+    json!({"generated": {
+        "generatorIdentity": identity,
+        "generatorVersion": "1.0.0",
+        "inputIdentities": [identity],
+    }})
+}
+
+pub(crate) fn construct(name: &str, semantic_meaning: &str) -> Value {
+    let shape = if semantic_meaning == meaning::VALUE_TYPE {
+        "alias"
+    } else {
+        "record"
+    };
+    let members = match semantic_meaning {
+        meaning::OBJECT_TYPE => json!({"identityFields": "required"}),
+        meaning::VALUE_TYPE => json!({"target": "required"}),
+        meaning::RECORD_VALUE_TYPE => json!({"identityFields": "optional"}),
+        meaning::EVENT_TYPE => json!({"identityFields": "optional", "occurrenceField": "required"}),
+        meaning::STATE_MACHINE => json!({"states": "required", "transitions": "required"}),
+        meaning::PROCESS => json!({"identityFields": "required", "steps": "required"}),
+        meaning::PERSISTENCE_INTERFACE => json!({"persists": "required"}),
+        meaning::NAMESPACE => json!({"members": "required", "vocabulary": "required"}),
+        _ => json!({}),
+    };
+    json!({
+        "kind": {"module": BUSINESS, "name": name},
+        "moduleVersion": "1.0.0",
+        "construct": {
+            "identity": "none", "shape": shape, "members": members,
+            "meaning": semantic_meaning,
+        },
+    })
+}
+
+pub(crate) fn declaration(name: &str, kind: &str, members: Value) -> Value {
+    let mut value = json!({
+        "identity": id(name), "displayName": name,
+        "kind": {"module": BUSINESS, "name": kind},
+        "roles": [], "origin": origin(name),
+        "constraints": [], "extensions": [], "unknownPolicy": "reject",
+    });
+    value
+        .as_object_mut()
+        .unwrap()
+        .extend(members.as_object().unwrap().clone());
+    value
+}
+
+pub(crate) fn field(owner: &str, name: &str, type_ref: &str) -> Value {
+    let node = format!("{owner}/{name}");
+    json!({
+        "identity": id(&node), "name": name, "typeRef": type_ref,
+        "presence": "required", "nullable": false, "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": origin(&node),
+    })
+}
+
+pub(crate) fn operation(owner: &str, name: &str) -> Value {
+    let node = format!("{owner}/{name}");
+    json!({
+        "identity": id(&node), "name": name, "params": [], "pre": [], "post": [],
+        "frame": {"modifies": [], "creates": [], "deletes": []},
+        "origin": origin(&node),
+    })
+}
+
+pub(crate) fn clause(owner: &str, name: &str, text: &str) -> Value {
+    let node = format!("{owner}/{name}");
+    json!({
+        "identity": id(&node), "language": "quire", "clauseId": name,
+        "text": text, "origin": origin(&node),
+    })
+}
+
+pub(crate) fn domain_document(types: Vec<Value>, constructs: Vec<Value>) -> Value {
+    json!({
+        "contractVersion": "2.0.0",
+        "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {"identity": id("spec"), "version": "1.0.0", "dialect": "spec-bundle"},
+        "package": {"identity": PACKAGE, "version": "1",
+                    "mappingVersions": [], "profileVersions": []},
+        "constructs": constructs, "types": types, "occurrences": [], "extensions": [],
+    })
+}
+
+pub(crate) fn k2() -> Value {
+    let state = |name: &str| {
+        let node = format!("OrderLifecycle/{name}");
+        json!({"identity": id(&node), "name": name, "origin": origin(&node)})
+    };
+    let transition = |name: &str, from: &str, to: &str, trigger: &str, emits: Vec<String>| {
+        let node = format!("OrderLifecycle/{name}");
+        json!({
+            "identity": id(&node), "from": id(&format!("OrderLifecycle/{from}")),
+            "to": id(&format!("OrderLifecycle/{to}")),
+            "trigger": id(&format!("OrderLifecycle/{trigger}")),
+            "emits": emits, "origin": origin(&node),
+        })
+    };
+    let step = |name: &str, kind: &str, consumes: Vec<String>| {
+        let node = format!("Fulfilment/{name}");
+        json!({
+            "identity": id(&node), "name": name, "stepKind": kind,
+            "consumes": consumes, "emits": [], "origin": origin(&node),
+        })
+    };
+    let mut first = transition(
+        "transition0",
+        "Draft",
+        "Placed",
+        "place",
+        vec![id("OrderPlaced")],
+    );
+    // FCD's transition guard is keyed by the local clauseId, not by the
+    // clause's package identity.
+    first["guard"] = json!("NotYetPlaced");
+
+    let types = vec![
+        declaration(
+            "Order",
+            "thing",
+            json!({
+                "identityFields": [id("Order/order_id")],
+                "fields": [field("Order", "order_id", "ix://filament/native/UUID"),
+                           field("Order", "total", &id("Money"))],
+            }),
+        ),
+        {
+            let mut instant = declaration("Instant", "value", json!({}));
+            instant["target"] = json!("ix://filament/native/Timestamp");
+            instant
+        },
+        declaration(
+            "Money",
+            "money",
+            json!({
+                "fields": [field("Money", "amount_minor", "ix://filament/native/Integer"),
+                           field("Money", "currency", "ix://filament/native/String")],
+            }),
+        ),
+        declaration(
+            "OrderPlaced",
+            "happened",
+            json!({
+                "occurrenceField": id("OrderPlaced/occurred_at"),
+                "fields": [field("OrderPlaced", "occurred_at", &id("Instant")),
+                           field("OrderPlaced", "order_id", "ix://filament/native/UUID")],
+            }),
+        ),
+        declaration(
+            "OrderLifecycle",
+            "lifecycle",
+            json!({
+                "fields": [field("OrderLifecycle", "placed", "ix://filament/native/Boolean")],
+                "operations": [operation("OrderLifecycle", "place"), operation("OrderLifecycle", "cancel")],
+                "clauses": [clause("OrderLifecycle", "NotYetPlaced", "not self.placed")],
+                "states": [state("Draft"), state("Placed"), state("Cancelled")],
+                "transitions": [first,
+                    transition("transition1", "Draft", "Cancelled", "cancel", vec![]),
+                    transition("transition2", "Placed", "Cancelled", "cancel", vec![])],
+            }),
+        ),
+        declaration(
+            "Fulfilment",
+            "saga",
+            json!({
+                "identityFields": [id("Fulfilment/correlation_id")],
+                "fields": [field("Fulfilment", "correlation_id", "ix://filament/native/UUID")],
+                "operations": [],
+                "steps": [step("receive_order", "event", vec![id("OrderPlaced")]),
+                          step("reserve_stock", "command", vec![]),
+                          step("await_shipment", "wait", vec![])],
+            }),
+        ),
+        declaration(
+            "OrderStore",
+            "store",
+            json!({
+                "fields": [],
+                "operations": [operation("OrderStore", "get"), operation("OrderStore", "save")],
+                "persists": [id("Order")],
+            }),
+        ),
+        declaration(
+            "OrderManagement",
+            "context",
+            json!({
+                "members": [id("Order"), id("Money"), id("OrderPlaced")],
+                "vocabulary": [{"term": "Place", "doc": "Commit a draft order",
+                                "origin": origin("OrderManagement")}],
+            }),
+        ),
+    ];
+    let constructs = vec![
+        construct("thing", meaning::OBJECT_TYPE),
+        construct("value", meaning::VALUE_TYPE),
+        construct("money", meaning::RECORD_VALUE_TYPE),
+        construct("happened", meaning::EVENT_TYPE),
+        construct("lifecycle", meaning::STATE_MACHINE),
+        construct("saga", meaning::PROCESS),
+        construct("store", meaning::PERSISTENCE_INTERFACE),
+        construct("context", meaning::NAMESPACE),
+        construct("population", meaning::POPULATION),
+    ];
+    domain_document(types, constructs)
+}
+
+pub(crate) fn mutate_k2(mutate: impl FnOnce(&mut Value)) -> Value {
+    let mut document = k2();
+    mutate(&mut document);
+    document
+}
+
+pub(crate) fn type_named_mut<'a>(document: &'a mut Value, node: &str) -> &'a mut Value {
+    document["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|ty| ty["identity"] == id(node))
+        .expect("K2 type exists")
+}
+
+#[test]
+fn tc235_shared_k2_fixture_preserves_meaning_contract() {
+    let document = k2();
+    assert_eq!(document["types"].as_array().unwrap().len(), 8);
+    assert_eq!(
+        document["types"][1]["kind"],
+        json!({"module": BUSINESS, "name": "value"})
+    );
+    assert_eq!(
+        document["types"][1]["target"],
+        "ix://filament/native/Timestamp"
+    );
+}

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-315-AC-14: a CG-shaped caller whose only QSL dependency is
-//! `qsl-replay` names the hyper query types and calls the identity and the
+//! FR-315-AC-14: a CG-shaped caller whose only FSL dependency is
+//! `fsl-replay` names the hyper query types and calls the identity and the
 //! encoder through it.
 
-use qsl_replay::{
+use filament_exact::Meter;
+use fsl_replay::{
     encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest, SmtEncodingLimits,
     SmtEncodingRefusal, SmtQueryKind, SubjectIdentity,
 };
-use quire_exact::Meter;
 
 /// The request again, with each of its five public members set.
 pub fn reissued<'a>(
@@ -49,13 +49,13 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    /// The encoder half of FR-315-AC-14: this crate, whose only QSL
-    /// dependency is `qsl-replay`, names the identity, the query, the request
+    /// The encoder half of FR-315-AC-14: this crate, whose only FSL
+    /// dependency is `fsl-replay`, names the identity, the query, the request
     /// and the subject identity and calls the identity and the encoder with
     /// their public signatures. The settle half is FR-182's.
     #[trace("TC-1190", "FR-315-AC-14")]
     #[test]
-    fn the_hyper_query_types_and_calls_are_named_from_qsl_replay() {
+    fn the_hyper_query_types_and_calls_are_named_from_fsl_replay() {
         let _identity: fn(
             &HyperQueryRequest<'_>,
         ) -> Result<HyperProductIdentity, SmtEncodingRefusal> = HyperProductIdentity::of;

@@ -3,7 +3,7 @@ id: TC-687
 title: "The request carries one time-lock-freedom item per timed subject, and deadlocks, fairness and vacuity read over time"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-232
+  - target: ix://agent-ix/filament-spec-language/FR-232
     type: verifies
 ---
 # TC-687: The request carries one time-lock-freedom item per timed subject, and deadlocks, fairness and vacuity read over time

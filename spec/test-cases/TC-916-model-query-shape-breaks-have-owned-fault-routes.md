@@ -1,13 +1,13 @@
 ---
 id: TC-916
 org: agent-ix
-title: "Model-query shape breaks have QSL-owned fault routes"
+title: "Model-query shape breaks have FSL-owned fault routes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
-# TC-916: Model-query shape breaks have QSL-owned fault routes
+# TC-916: Model-query shape breaks have FSL-owned fault routes
 
 ## Description
 

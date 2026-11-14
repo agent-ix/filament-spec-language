@@ -3,14 +3,14 @@ id: TC-786
 title: "run's exit statuses come from the exit function, with undefined at 10"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
 ---
 # TC-786: run's exit statuses come from the exit function, with undefined at 10
 
 ## Description
 
-Verify that every exit status QSL `command`'s run returns is FR-285's exit code of the outcome's category.
+Verify that every exit status FSL `command`'s run returns is FR-285's exit code of the outcome's category.
 
 Scope: FR-100-AC-10, FR-100-AC-11.
 

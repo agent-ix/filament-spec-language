@@ -3,11 +3,11 @@ id: TC-475
 title: "S3 routes accepted execution points by authored state clause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-104-AC-15
+  - target: ix://agent-ix/filament-spec-language/FR-104-AC-15
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/TC-049
+  - target: ix://agent-ix/filament-spec-language/TC-049
     type: references
 ---
 # TC-475: S3 routes accepted execution points by authored state clause
@@ -24,7 +24,7 @@ Scope: FR-104-AC-15.
 1. Using TC-459 step 7's `Flow::go` package, add equal-body invariants
    `Init` and `Handle`, a `constraint Guard`, a precondition `Before` and a
    postcondition `After` on `go`. Call
-   `qsl_replay::spine::check_with_execution_points` directly with a
+   `fsl_replay::spine::check_with_execution_points` directly with a
    `StateClauseExecutionPoints` map containing all five entries:
    `Initialization{boot}` for `Init` and `Guard`, `Handler{wake}` for
    `Handle`, `Pre{go}` for `Before`, and `Post{go}` for `After`.

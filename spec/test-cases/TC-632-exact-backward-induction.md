@@ -3,7 +3,7 @@ id: TC-632
 title: "Backward induction decides finite-horizon forms exactly, or over dyadic intervals with precision doubling"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-197
+  - target: ix://agent-ix/filament-spec-language/FR-197
     type: verifies
 ---
 # TC-632: Backward induction decides finite-horizon forms exactly, or over dyadic intervals with precision doubling

@@ -3,15 +3,15 @@ id: FR-133
 title: "Name the strong constraint that would exclude a refuted liveness lasso"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-017
+  - target: ix://agent-ix/filament-spec-language/US-017
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-131
+  - target: ix://agent-ix/filament-spec-language/FR-131
     type: depends_on
 ---
 # FR-133: Name the strong constraint that would exclude a refuted liveness lasso
@@ -35,9 +35,9 @@ enabled, so the operator can tell a missing premise from a real defect.
 
 ## Semantic authority and boundary
 
-QSpec owns when the hint is emitted, how the suggested constraint is
+FSpec owns when the hint is emitted, how the suggested constraint is
 chosen, its diagnostic code and members, and its place outside the
-identities (ADR-019 QS-8; References). This requirement specifies where QSL
+identities (ADR-019 QS-8; References). This requirement specifies where FSL
 computes it and what it writes.
 
 ## Inputs
@@ -85,7 +85,7 @@ computes it and what it writes.
   granularity.
 - The executor SHALL return the hints in the replay result. The writer of
   the item's terminal record SHALL write them on it beside the
-  counterexample: the `qsl-replay` settlement map (FR-127) for an EN-1
+  counterexample: the `fsl-replay` settlement map (FR-127) for an EN-1
   refutation, and the orchestrating driver (ADR-011 T-13) for a refutation
   from the SMT backend settled through CG's map (ADR-018 DS-2).
 - The writer of the terminal record SHALL leave the counterexample, its
@@ -114,5 +114,5 @@ computes it and what it writes.
 
 ## References
 
-- QSpec FR-369 (the strong-fairness hint): the QSpec half of ADR-019 QS-8
+- FSpec FR-369 (the strong-fairness hint): the FSpec half of ADR-019 QS-8
   (Linear STD-132).

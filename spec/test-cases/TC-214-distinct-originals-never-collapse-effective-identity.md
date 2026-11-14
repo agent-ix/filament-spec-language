@@ -3,7 +3,7 @@ id: TC-214
 title: "Structurally identical declarations from distinct originals never collapse to one effective identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-214: Structurally identical declarations from distinct originals never collapse to one effective identity

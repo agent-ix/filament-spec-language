@@ -3,35 +3,35 @@ id: FR-205
 title: "Define the protocol subject and its canonical state key"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-161
+  - target: ix://agent-ix/filament-specification/FR-161
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-425
+  - target: ix://agent-ix/filament-specification/FR-425
     type: depends_on
 ---
 # FR-205: Define the protocol subject and its canonical state key
 
 ## Description
 
-QSL SHALL build a temporal claim's **protocol subject**, a model subject
+FSL SHALL build a temporal claim's **protocol subject**, a model subject
 (FR-125) together with one checked protocol clause of its package and the
-clause's bindings, as QSpec FR-425 defines it, and SHALL key each protocol
-state by QSpec FR-425's state key, so that two states with equal keys are
+clause's bindings, as FSpec FR-425 defines it, and SHALL key each protocol
+state by FSpec FR-425's state key, so that two states with equal keys are
 one state (ADR-027 PS-1 to PS-8, FO-3, AE-2).
 
 ## Use case
@@ -46,7 +46,7 @@ has already seen instead of a new one.
 
 ## Inputs
 
-- `ProtocolSubject` (`qsl_analyze::model_check`, ADR-029): a `ModelSubject` (FR-125);
+- `ProtocolSubject` (`fsl_analyze::model_check`, ADR-029): a `ModelSubject` (FR-125);
   `protocol`, the declared identity of one protocol clause of the subject's
   checked package; `over`, the object reference bound to the clause's `over`
   parameter; `roles`, a binding for each static role on a model type; and the resolved
@@ -58,7 +58,7 @@ has already seen instead of a new one.
 
 ## Outputs
 
-- `ProtocolSubject` and, for a protocol state, its `ProtocolKey`: QSpec
+- `ProtocolSubject` and, for a protocol state, its `ProtocolKey`: FSpec
   FR-425's form of FR-181's `{"type":"simulation-state","semantic":…,"control":…,"queues":…,"roles":…,"observations":…,"bounds":…}`
   with `queues` and `roles` keyed by protocol instance ordinal.
 - The initial protocol states of the subject.
@@ -69,7 +69,7 @@ has already seen instead of a new one.
 
 - The subject builder SHALL build `ProtocolSubject` from the model subject,
   the protocol clause, the `over` binding, the static role bindings, the
-  replicated role universes and the resolved memory models, as QSpec FR-425
+  replicated role universes and the resolved memory models, as FSpec FR-425
   states. The protocol clause's `terminal` member (FR-211) and its
   `scheduling` member (FR-212) are part of the checked package, so the
   subject's obligation identity (ADR-013 O-09) binds them. The identity
@@ -80,9 +80,9 @@ has already seen instead of a new one.
   `invalid-value`, naming the protocol.
 - A static role on a whole model (FR-218, `role w on M`) is bound by
   construction: its binding is the subject's model subject, which holds
-  every model the package selects, each recorded by its `model_root` node (QSpec FR-361, FR-425), and
+  every model the package selects, each recorded by its `model_root` node (FSpec FR-361, FR-425), and
   its `roles` entry is `{"type":"model-binding","selection":"<identity>"}`
-  with the identity of the package `M` selects (QSpec FR-425-AC-13). Two such roles on two
+  with the identity of the package `M` selects (FSpec FR-425-AC-13). Two such roles on two
   aliases are each bound. The request supplies no binding for it.
 - When a static role on a model type has no binding, a binding names a model
   the role does not admit, or the request supplies a binding for a role on a
@@ -94,12 +94,12 @@ has already seen instead of a new one.
 
 ### State and key
 
-- `ProtocolSystem` (FR-215) SHALL hold each protocol state as QSpec FR-425
+- `ProtocolSystem` (FR-215) SHALL hold each protocol state as FSpec FR-425
   states it, with threads, paths and ordinals, parallel instances, binders,
   iteration counters, queues, role instances and the memory component, and
   SHALL remove parallel instances, binders and finished protocol instances
-  in the steps QSpec FR-425 and ADR-027 PS-4, PS-5 and AE-3 name.
-- `ProtocolKey` SHALL be QSpec FR-425's state key, with `queues` and
+  in the steps FSpec FR-425 and ADR-027 PS-4, PS-5 and AE-3 name.
+- `ProtocolKey` SHALL be FSpec FR-425's state key, with `queues` and
   `roles` keyed by protocol instance ordinal, each map sorted by JCS bytes,
   and the memory component as the member the memory model supplies, empty
   under `Sc`. The key SHALL also hold, as FR-425 states: for each
@@ -113,7 +113,7 @@ has already seen instead of a new one.
 - Thread, instance, registration and nesting counts SHALL have no ceiling
   of their own; the run's method bounds and resource limits (FR-209, FR-215) are
   the only bounds.
-- The subject SHALL have QSpec FR-425's initial protocol states: under
+- The subject SHALL have FSpec FR-425's initial protocol states: under
   `on origin`, instance 0 settled from the start of `run` (FR-206); under
   `on each`, no instance (FR-209).
 
@@ -129,7 +129,7 @@ has already seen instead of a new one.
 | FR-205-AC-6 | Two protocol definitions in one package, each declaring `channel Pay`, give two subjects whose state keys hold `queues` entries, and whose `duplicate` and `lose` identities hold channel names, each in its own protocol's qualified name; no key or identity of one names the other's channel. | Test (TC-650) |
 | FR-205-AC-7 | Inside a `repeat` of maximum 2: `parallel P { branch left attempt A1 binding a; branch right attempt B1 } join all`, then `parallel Q { branch u sequence { attempt U1; check Ck { a.ready } }; branch v attempt V1 } join any [u, v] outstanding continue`, where `A1` has two successors, binding `a` with `ready` true or false. After iteration 1's `join(P)` with `ready` true, the forking thread's binder environment holds `a` with `ready` true, and `fork(Q)` copies it into `u` and `v`. In the state where `V1` has been taken, the `join(Q)` step has run and `u` still rests at `U1`, the second fork of `P` takes ordinal 0, because `P`'s first instance is removed, while `Q`'s instance 0 is still live because `u` is `running`. In iteration 2 with `ready` false, `fork(Q)` takes ordinal 1 and gives its `u` an environment holding `a` with `ready` false: iteration 1's `u` still evaluates `Ck` over its own `a` (true) and iteration 2's `u` over its own (false, so it rests at `Ck`), and no state refuses. When `u` of iteration 1 completes, its entry is dropped, and the key's `observations` holds no `a` under its path. | Test (TC-650) |
 | FR-205-AC-8 | Template `Refund` with `attempts 1` and `commit Committed`, whose forward `effect` node is reached twice in a `repeat` of maximum 2, giving registrations `r1` and `r2` that differ in a registration capture `id`, whose activation guard compares `id` with the `id` of the trigger record, and a `parallel Triggers` of two sibling branches each binding a trigger record with one of the two ids, followed by `commit Committed`, each compensation thread taking its `cattempt` and `cend` before the step of `Committed`. The state after `r1`'s trigger and then `r2`'s and the state after `r2`'s and then `r1`'s have different keys, because each compensation thread's entry names its registration: thread `(0, Refund, 0)` names `r1` in the first and `r2` in the second. The state after the step of `Committed` holds that node under its instance and the state before the step does not, so the two have different keys, and the entry is absent once the instance finishes. In a variant with `attempts 2 of M::RefundAttempt`, `RefundAttempt` with one field `ok: Boolean`, a template operation whose precondition is `true`, and the retry relation `not e.ok` over (`e`, `l`): after thread `(0, Refund, 0)`'s first `cattempt` with record `ok` false, `observations` holds that thread's attempt record with `ok` false and a retry `cattempt` is enabled; after its first `cattempt` with `ok` true, `observations` holds the attempt record with `ok` true and only `cend` is enabled, so the two post-states have different keys. The attempt record is absent after the thread's second `cattempt`, whose count reaches 2, after its `cend`, and in the post-state of the step of `Committed` taken while the thread rests at its retry point holding one. With the retry relation `l.ok`, which does not read `e`, no state holds an attempt record, and the two first `cattempt` steps, `ok` true and `ok` false, reach one state. | Test (TC-650) |
-| FR-205-AC-9 | The `Fill` subject's every state holds the `roles` entry `{"type":"model-binding","selection":"<M's identity>"}` for `w`; a `Fill` variant over a package selecting aliases `M` and `N`, with `role w on M` and `role u on N` and `u` owning an attempt on an `N` operation, builds with no binding for either role, and each state's `roles` entries name `M`'s and `N`'s identities (QSpec FR-425-AC-13, TC-375 PK-17 and PK-18). | Test (TC-650) |
+| FR-205-AC-9 | The `Fill` subject's every state holds the `roles` entry `{"type":"model-binding","selection":"<M's identity>"}` for `w`; a `Fill` variant over a package selecting aliases `M` and `N`, with `role w on M` and `role u on N` and `u` owning an attempt on an `N` operation, builds with no binding for either role, and each state's `roles` entries name `M`'s and `N`'s identities (FSpec FR-425-AC-13, TC-375 PK-17 and PK-18). | Test (TC-650) |
 
 ## Dependencies
 
@@ -137,12 +137,12 @@ has already seen instead of a new one.
 - [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md)
   (model subject), [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (`semantic` member and the state-key form),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (state keys and coalescing), FR-218 (the checked protocol clause and
   scopes).
-- QSpec owns the protocol subject and the content of the state key's
-  members (ADR-027 QS-1, QS-3); QSL builds them.
+- FSpec owns the protocol subject and the content of the state key's
+  members (ADR-027 QS-1, QS-3); FSL builds them.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-425 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-425 (Linear STD-140).

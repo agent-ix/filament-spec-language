@@ -3,21 +3,21 @@ id: FR-154
 title: "Scope a modifies entry to the receiver and enforce it in the one frame decision"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-013
+  - target: ix://agent-ix/filament-specification/FR-013
     type: depends_on
 ---
 # FR-154: Scope a modifies entry to the receiver and enforce it in the one frame decision
@@ -27,7 +27,7 @@ relationships:
 A `modifies` entry has a scope: `receiver`, written `modifies self.f`, grants
 writes to field `f` on the operation's receiver only; `every-object`,
 written `modifies f`, grants them on every object whose effective type has
-`f`, QSpec FR-013's meaning (ADR-021 POR-3, RU-1). QSL SHALL read the scope
+`f`, FSpec FR-013's meaning (ADR-021 POR-3, RU-1). FSL SHALL read the scope
 at intake, carry it through the checked package and the S4 frame node, and
 enforce it wherever a frame is decided: `population::decide_frame`, the one
 frame decision that FR-106 check 11 for an invocation (FR-115) and the
@@ -48,8 +48,8 @@ counter's `v` is reported as a frame violation (US-019).
 ## Inputs
 
 - A domain package whose operation frames carry a scope on each `modifies`
-  and `deletes` entry (QSpec FR-013 with the receiver-scope amendment).
-- The model-document form of that scope, which QSL intake reads. The `frame`
+  and `deletes` entry (FSpec FR-013 with the receiver-scope amendment).
+- The model-document form of that scope, which FSL intake reads. The `frame`
   of an operation is a closed object with exactly these optional members; an
   absent member is empty or false:
   - `modifies`, `creates`, `deletes`: required arrays of node identity
@@ -76,7 +76,7 @@ counter's `v` is reported as a frame violation (US-019).
 ## Outputs
 
 ```rust
-// qsl_semantics::model::domain_package
+// fsl_semantics::model::domain_package
 pub struct OperationEffect {
     /// `modifies f`: field members written on every object (every-object).
     pub modifies: Vec<DeclarationKey>,
@@ -92,7 +92,7 @@ pub struct OperationEffect {
     pub deletes_arguments: Vec<String>,
 }
 
-// qsl_semantics::model::population (crate-internal)
+// fsl_semantics::model::population (crate-internal)
 pub(crate) struct FrameDecision<'e> {
     pub(crate) index: &'e ModelIndex,
     pub(crate) ancestor_steps: u64,
@@ -143,7 +143,7 @@ receiver-scoped. A relationship `modifies` entry has no scope and is held in
   or `every-object`, by the `OperationEffect` field it lands in
   (`receiver_modifies` or `modifies`), and each `deletes` entry's scope
   (type-wide in `deletes`, receiver in `deletes_receiver`, argument in
-  `deletes_arguments`), as QSpec FR-013 defines them. It SHALL resolve a `modifies` entry's field as FR-103 does.
+  `deletes_arguments`), as FSpec FR-013 defines them. It SHALL resolve a `modifies` entry's field as FR-103 does.
   It SHALL check the frame's member shapes first, then the receiver rule
   below, then the entries in this order: `modifies`, `modifies_receiver`,
   `creates`, `deletes`, `deletes_parameters`, each in document order,
@@ -155,12 +155,12 @@ receiver-scoped. A relationship `modifies` entry has no scope and is held in
     non-empty `modifies_receiver` and `deletes_receiver: true` with
     `invalid_model_binding`/`malformed-declaration` at that member
     (`modifies_receiver` first when both are present), before any entry is
-    read, so no entry of the member is resolved (QSpec FR-013). A clause that
+    read, so no entry of the member is resolved (FSpec FR-013). A clause that
     names a process operation binds its `self` to the run (FR-104), and the
     frame it takes holds no receiver-scoped entry because intake refused one
     here. An
     empty `modifies_receiver`, `deletes_receiver: false` and
-    `deletes_parameters` read as for an object type. QSpec's Frames row refuses
+    `deletes_parameters` read as for an object type. FSpec's Frames row refuses
     the same forms on a state machine's operation, and that row is its
     contract.
   - A `modifies_receiver` entry SHALL name a field among the fields, own and inherited, of the
@@ -173,17 +173,17 @@ receiver-scoped. A relationship `modifies` entry has no scope and is held in
     no scope.
   - A `deletes_parameters` entry SHALL name a parameter of the operation whose type is
     `Reference<T>`. A name that is no parameter, or a parameter of any other
-    type, refuses `missing_declaration`/`missing-name` at the entry (QSpec
+    type, refuses `missing_declaration`/`missing-name` at the entry (FSpec
     FR-340 states the same refusal for the wire entry). `deletes_receiver: true` is
     always admitted for an operation of an object type.
   - After every entry of the frame resolves, a `modifies` entry and a
     `modifies_receiver` entry for one field SHALL refuse `invalid_model_binding`/
-    `conflicting-binding`, naming both entries and the operation, as QSpec
+    `conflicting-binding`, naming both entries and the operation, as FSpec
     FR-013 states, located at the later of the two in document order; intake
     never merges them. A field written twice with one scope, and a scoped
     `deletes` written twice, are one entry.
 - **Emission.** S4 SHALL emit the `state`/`frame` node's body (FR-105) as
-  QSpec FR-340 states it. Each field entry is `{kind: "field", declaration,
+  FSpec FR-340 states it. Each field entry is `{kind: "field", declaration,
   name, scope}`, `declaration` being the node of the object type that
   declares or inherits the field (the receiver-scoped entry names the same
   node an every-object entry for that field names) and `scope` being
@@ -194,7 +194,7 @@ receiver-scoped. A relationship `modifies` entry has no scope and is held in
   frame has no scoped delete, and it is sorted with the `receiver` entry
   first and then the `parameter` entries by name as UTF-8 bytes. `modifies`
   keeps FR-105's order, (declaring node reference, field name, scope with
-  `every-object` first), as QSpec FR-340 states; intake admits no two
+  `every-object` first), as FSpec FR-340 states; intake admits no two
   entries for one field, so the scope never decides the position of an
   emitted entry. A `deletes_scoped` entry names no node, so it
   adds no `dependencies` entry. Two frames that differ only by an entry's
@@ -263,7 +263,7 @@ receiver-scoped. A relationship `modifies` entry has no scope and is held in
 | FR-154-AC-7 | Frames that differ only by one entry's scope (`modifies self.value` against `modifies value`, vectors W4 and W5), or only by `deletes self` against no entry (vectors W6 and W3), have different frame node ids, and two packages differing only by that one scope have different `package_id`s; the frame node of a frame with only type-wide entries carries `deletes_scoped: []` and every field entry `every-object`. | Test (TC-1043) |
 | FR-154-AC-8 | Over TC-1043's fixture, intake reads the frame members of rows I1 to I23: a `modifies_receiver` entry naming no declaration refuses `missing_declaration`/`missing-name` (I1); one naming a field of `Gauge`, a type `Counter` does not conform to, or a relationship refuses `invalid_model_binding`/`malformed-declaration` (I2, I3); a `deletes_parameters` name that is no parameter, or the name of an `Integer` parameter, refuses `missing_declaration`/`missing-name` (I4, I5); `deletes_parameters` naming a `Reference<Counter>` parameter with `deletes_receiver` true admits (I6), and so does `modifies_receiver` naming `value` on an operation of `Sub`, which inherits it (I7); a frame whose `modifies_receiver` holds a missing field and `value` while `modifies` holds `value` reports only the `missing-name` refusal (I8); `modifies` and `modifies_receiver` both naming `value` refuse `conflicting-binding` (I9); a non-boolean `deletes_receiver`, an unnamed member and a frame omitting `deletes` refuse `malformed-declaration` (I10, I11, I12); over the process `Flow`, a non-empty `modifies_receiver` or `deletes_receiver: true` refuses `invalid_model_binding`/`malformed-declaration` at the member, `modifies_receiver` first when both are present (I13, I14, I17), and an empty `modifies_receiver` with `deletes_receiver: false`, or `deletes_parameters` naming a `Reference<Counter>` parameter, admits (I15, I16); the same holds over the persistence interface `Store`, whose operation has no object receiver: a non-empty `modifies_receiver` or `deletes_receiver: true` refuses `invalid_model_binding`/`malformed-declaration` at the member, `modifies_receiver` first when both are present, before any entry is read (I18, I19, I22), and an empty `modifies_receiver` with `deletes_receiver: false`, or `deletes_parameters` naming a `Reference<Counter>` parameter, admits (I20, I21). | Test (TC-1043) |
 | FR-154-AC-9 | `decide_frame` over a population holding `c1`, `c2` and `c3` of `Counter`, all `value` 0 and `step` 0, with effect `receiver_modifies` `value` and `modifies` `step`, receiver `c1`, returns a `FrameDelta` with empty `created` and `deleted` for a post that changes `c1.value` and `c2.step`, and is refused `frame_violation`/`unauthorized-change` naming `c2` and `value` for a post that changes `c2.value`. With `deletes_receiver` true, `deletes_arguments` `a`, receiver `c1` and `a` bound to `c2`, a post without `c1` and `c2` (declared deleted `c1`, `c2`) returns a `FrameDelta` whose `deleted` is {`c1`, `c2`}, and a post without `c3` is `frame_violation`/`unauthorized-change` naming `c3`; with `deletes_arguments` `a` alone a post without `c1` is `frame_violation`/`unauthorized-change` naming `c1`. | Test (TC-1043) |
-| FR-154-AC-10 | The I2 reader's frame step refuses, as QSpec FR-340 states each: a field entry with no `scope` or a `scope` other than `receiver` or `every-object`, and a frame body with no `deletes_scoped` (schema failures of the frame body, each read after the edited node and its dependents are re-keyed, as TC-1043 step 4 states); a `deletes_scoped` array with the `parameter` entry for `a` before the `receiver` entry, or with `b` before `a` (`invalid_semantic_graph`); and, in the state step rather than the frame step, a `parameter` entry naming a parameter that is not a reference parameter of every operation whose anchor references the frame (`missing_declaration`/`missing-name`, located at the frame node, QSpec FR-342 check 5). A `modifies` array holding both scopes of one field, in either listed order, refuses `invalid_model_binding`/`conflicting-binding` and not `invalid_semantic_graph` (X8, X9). The body of vector W1 is admitted. | Test (TC-1043) |
+| FR-154-AC-10 | The I2 reader's frame step refuses, as FSpec FR-340 states each: a field entry with no `scope` or a `scope` other than `receiver` or `every-object`, and a frame body with no `deletes_scoped` (schema failures of the frame body, each read after the edited node and its dependents are re-keyed, as TC-1043 step 4 states); a `deletes_scoped` array with the `parameter` entry for `a` before the `receiver` entry, or with `b` before `a` (`invalid_semantic_graph`); and, in the state step rather than the frame step, a `parameter` entry naming a parameter that is not a reference parameter of every operation whose anchor references the frame (`missing_declaration`/`missing-name`, located at the frame node, FSpec FR-342 check 5). A `modifies` array holding both scopes of one field, in either listed order, refuses `invalid_model_binding`/`conflicting-binding` and not `invalid_semantic_graph` (X8, X9). The body of vector W1 is admitted. | Test (TC-1043) |
 
 ## Dependencies
 
@@ -274,12 +274,12 @@ receiver-scoped. A relationship `modifies` entry has no scope and is held in
   (check 11), [FR-115](FR-115-run-an-operation-frame-over-an-invocation.md)
   (the `Frame` run), [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (the frame decision, post-states and domains).
-- QSpec FR-013 owns frame semantics; the receiver-scope amendment, its
+- FSpec FR-013 owns frame semantics; the receiver-scope amendment, its
   surface syntax and the scope member of the checked-package v2 frame entry
-  are QSpec's (ADR-021 QS-4). The domain package's operation frame shape is
+  are FSpec's (ADR-021 QS-4). The domain package's operation frame shape is
   the model contract's.
 
 ## References
 
-- QSpec half: QSpec FR-013 and FR-340 (Linear STD-134; ADR-021 §9 QS-4). Owning ticket: Linear
+- FSpec half: FSpec FR-013 and FR-340 (Linear STD-134; ADR-021 §9 QS-4). Owning ticket: Linear
   QSL-368.

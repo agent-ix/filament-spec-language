@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Process-boundary checks with synthetic Cargo output, not QSpec vector evidence.
+//! Process-boundary checks with synthetic Cargo output, not FSpec vector evidence.
 
 use super::{resolve, run_ci_with, run_with, CHECKS, VECTOR};
 use crate::error::Error;
@@ -84,16 +84,16 @@ fn assert_calls(root: &Path, checkout: &Path, count: usize) {
 fn default_and_caller_checkouts_with_spaces_and_dollars_reach_every_child_absolute() {
     let root = crate::test_support::tempdir();
     let workspace = root.path();
-    let checkout_path = workspace.join("main clone parent with spaces/$qspec checkout");
+    let checkout_path = workspace.join("main clone parent with spaces/$fspec checkout");
     checkout(&checkout_path);
     run_case(workspace, checkout_path.as_os_str(), "positive", usize::MAX).unwrap();
     assert_calls(workspace, &checkout_path, CHECKS.len());
     fs::remove_file(workspace.join("calls")).unwrap();
-    let relative = Path::new("main clone parent with spaces/$qspec checkout");
+    let relative = Path::new("main clone parent with spaces/$fspec checkout");
     run_case(workspace, relative.as_os_str(), "positive", usize::MAX).unwrap();
     assert_calls(workspace, &checkout_path, CHECKS.len());
     fs::remove_file(workspace.join("calls")).unwrap();
-    let alias = workspace.join("linked $qspec");
+    let alias = workspace.join("linked $fspec");
     std::os::unix::fs::symlink(&checkout_path, &alias).unwrap();
     run_case(workspace, alias.as_os_str(), "positive", usize::MAX).unwrap();
     assert_calls(workspace, &checkout_path, CHECKS.len());
@@ -124,7 +124,7 @@ fn each_selection_refuses_missing_evidence_or_failure() {
     for (index, _) in CHECKS.iter().enumerate() {
         for mode in ["zero-tests", "ignored", "skip", "no-summary", "nonzero"] {
             let root = crate::test_support::tempdir();
-            let checkout_path = root.path().join("quire-specification");
+            let checkout_path = root.path().join("filament-specification");
             checkout(&checkout_path);
             assert!(matches!(
                 run_case(root.path(), checkout_path.as_os_str(), mode, index),
@@ -138,7 +138,7 @@ fn each_selection_refuses_missing_evidence_or_failure() {
 #[test]
 fn zero_source_map_entries_refuse() {
     let root = crate::test_support::tempdir();
-    let checkout_path = root.path().join("quire-specification");
+    let checkout_path = root.path().join("filament-specification");
     checkout(&checkout_path);
     assert!(matches!(
         run_case(root.path(), checkout_path.as_os_str(), "zero-vectors", 0),
@@ -149,7 +149,7 @@ fn zero_source_map_entries_refuse() {
 #[test]
 fn make_exports_raw_default_and_command_line_override() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    for override_value in [None, Some("caller checkout $qspec with spaces")] {
+    for override_value in [None, Some("caller checkout $fspec with spaces")] {
         let mut command = Command::new("make");
         command
             .current_dir(workspace)
@@ -162,7 +162,7 @@ fn make_exports_raw_default_and_command_line_override() {
                 "-",
                 "export-probe",
             ])
-            .env_remove("QSPEC_DIR")
+            .env_remove("FSPEC_DIR")
             .env_remove("SIBLINGS")
             .env_remove("MAKEFLAGS")
             .env_remove("MFLAGS")
@@ -170,14 +170,14 @@ fn make_exports_raw_default_and_command_line_override() {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped());
         if let Some(value) = override_value {
-            command.arg(format!("QSPEC_DIR={value}"));
+            command.arg(format!("FSPEC_DIR={value}"));
         }
         let mut child = command.spawn().unwrap();
         child
             .stdin
             .take()
             .unwrap()
-            .write_all(b"export-probe:\n\t@printenv QSPEC_DIR\n")
+            .write_all(b"export-probe:\n\t@printenv FSPEC_DIR\n")
             .unwrap();
         let output = child.wait_with_output().unwrap();
         assert!(
@@ -190,7 +190,7 @@ fn make_exports_raw_default_and_command_line_override() {
             assert_eq!(exported.trim_end(), value);
         } else {
             let path = Path::new(exported.trim_end());
-            assert!(path.is_absolute() && path.ends_with("quire-specification"));
+            assert!(path.is_absolute() && path.ends_with("filament-specification"));
         }
     }
 }
@@ -229,7 +229,7 @@ fn make_exports_default_checkout_from_a_main_clone_parent_with_spaces() {
             "-",
             "export-probe",
         ])
-        .env_remove("QSPEC_DIR")
+        .env_remove("FSPEC_DIR")
         .env_remove("SIBLINGS")
         .env_remove("MAKEFLAGS")
         .env_remove("MFLAGS")
@@ -242,7 +242,7 @@ fn make_exports_default_checkout_from_a_main_clone_parent_with_spaces() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"export-probe:\n\t@printenv QSPEC_DIR\n")
+        .write_all(b"export-probe:\n\t@printenv FSPEC_DIR\n")
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(
@@ -252,7 +252,7 @@ fn make_exports_default_checkout_from_a_main_clone_parent_with_spaces() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap().trim_end(),
-        siblings.join("quire-specification").to_str().unwrap()
+        siblings.join("filament-specification").to_str().unwrap()
     );
 }
 
@@ -262,7 +262,7 @@ fn ordinary_ci_cargo_lane_inherits_canonical_checkout() {
     let workspace = root.path();
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     fs::copy(source.join("Makefile"), workspace.join("Makefile")).unwrap();
-    let checkout_path = workspace.join("real checkout $qspec");
+    let checkout_path = workspace.join("real checkout $fspec");
     checkout(&checkout_path);
     let alias = workspace.join("linked checkout");
     std::os::unix::fs::symlink(&checkout_path, &alias).unwrap();
@@ -321,7 +321,7 @@ fn ordinary_ci_cargo_lane_inherits_canonical_checkout() {
         "-o",
         "ci-docs",
         "-o",
-        "arch-lint-api-surface-qsl",
+        "arch-lint-api-surface-fsl",
         "-o",
         "arch-lint-qualified-core",
         "-o",

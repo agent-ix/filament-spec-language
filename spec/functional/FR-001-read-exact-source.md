@@ -3,11 +3,11 @@ id: FR-001
 title: "Read bounded immutable native source"
 type: FR
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/US-001"
+  - target: "ix://agent-ix/filament-spec-language/US-001"
     type: traces_to
-  - target: "ix://agent-ix/quire-spec-language/US-005"
+  - target: "ix://agent-ix/filament-spec-language/US-005"
     type: traces_to
-  - target: "ix://agent-ix/quire-spec-language/ADR-013"
+  - target: "ix://agent-ix/filament-spec-language/ADR-013"
     type: depends_on
 ---
 # FR-001: Read bounded immutable native source
@@ -39,20 +39,20 @@ locations, or a diagnostic.
 
 The input ceiling is the caller's, used as given; it defaults to 1 MiB and may be set above or below that. Invalid UTF-8, BOM and NUL refuse. Byte spans remain original and half open; line/scalar-column coordinates are derived without changing source text.
 
-### The caller names the source it hands QSL
+### The caller names the source it hands FSL
 
 This section governs every source admission, on the spine and in the
 native-v1 lane alike. Both admit source through the one F type
-`qsl_foundation::SourceIdentity` and the one F `Source`, which ADR-011 names
+`fsl_foundation::SourceIdentity` and the one F `Source`, which ADR-011 names
 as S0's input; the native-v1 parser reads through them and through the
 spine's lexer (ADR-013 §6 Spans row).
 
-A source QSL reads itself is named by the caller, never by QSL. The caller
+A source FSL reads itself is named by the caller, never by FSL. The caller
 supplies two labels with the bytes: the **authority** that issues the
 source's identity, and the **identity** within that authority. The source's
-identity is that document identity (authority and identity). QSL does not default either label and does not derive one
+identity is that document identity (authority and identity). FSL does not default either label and does not derive one
 from the path, the bytes or the other label: a path is a locator, not an
-identity (QSpec FR-004).
+identity (FSpec FR-004).
 
 A label is blank when it is empty or consists only of Unicode `White_Space`
 scalars. Admission checks the labels first, in the order `authority`,
@@ -65,8 +65,8 @@ scalars. Admission checks the labels first, in the order `authority`,
 - When every label is non-blank and the path is empty, the source shall
   refuse with `invalid_source_identity`, cause `empty-path`, and no field.
 
-These are the two causes `quire.native.diagnostics/v1`
-(QSpec STD-110) closes `invalid_source_identity` to. Neither names a source
+These are the two causes `filament.native.diagnostics/v1`
+(FSpec STD-110) closes `invalid_source_identity` to. Neither names a source
 region.
 
 ### Edit and binding refusals are not source-identity refusals
@@ -78,12 +78,12 @@ source binding or queried range, and keep its host cause. It SHALL name no
 region: byte 0 cannot stand in for a location (the catalog's common
 structured context). It never uses `invalid_source_identity`, whose causes
 are the two above.
-(QSL team-lead ruling, 2026-09-26, on the review of PR #487.)
+(FSL team-lead ruling, 2026-09-26, on the review of PR #487.)
 
 ### Where an S0 refusal is located
 
 An S0 refusal names its position by a `SourceRegion` when one exists, and by
-no region otherwise (`quire.native.diagnostics/v1` common structured
+no region otherwise (`filament.native.diagnostics/v1` common structured
 context: "Unavailable context is explicitly unavailable; byte zero, an empty
 path or a name-search match cannot masquerade as a located failure"):
 
@@ -107,9 +107,9 @@ neither fixes nor extends it.
 
 ### Public complete-diagnostic projection of a source refusal
 
-When a caller supplies a `qsl_foundation::SourceReadRefusal`, CST shall
+When a caller supplies a `fsl_foundation::SourceReadRefusal`, CST shall
 project it through the public function
-`qsl_cst::diagnostic::source_refusal(refusal: SourceReadRefusal, byte_limit: usize) -> Box<CompleteDiagnostic>`.
+`fsl_cst::diagnostic::source_refusal(refusal: SourceReadRefusal, byte_limit: usize) -> Box<CompleteDiagnostic>`.
 This consumes the existing owned refusal without requiring offered bytes,
 an admitted `Source`, a parser or filesystem access. A caller can therefore
 use `SourceIdentity::first_blank_label` and the public refusal fields to
@@ -148,7 +148,7 @@ members or a replacement for native-v1's retained span requirement above.
 
 When a caller needs both the retained native diagnostic and the complete
 diagnostic above, Foundation shall expose its existing conversion as
-`qsl_foundation::diagnostic::source_refusal(refusal: &SourceReadRefusal, bytes: &[u8], byte_limit: usize) -> Box<Diagnostic>`.
+`fsl_foundation::diagnostic::source_refusal(refusal: &SourceReadRefusal, bytes: &[u8], byte_limit: usize) -> Box<Diagnostic>`.
 The projection borrows the existing typed refusal and offered bytes. It
 shall neither admit a source nor repeat label, encoding or byte-budget
 validation. The caller can project the native diagnostic, then pass the
@@ -185,13 +185,13 @@ longest valid UTF-8 prefix of those bytes, which contains the region.
 ### Admission mints the source reference
 
 On admission the source shall carry its `RawSourceRef` (ADR-013 O-07,
-QSpec FR-322): the two labels exactly as supplied.
+FSpec FR-322): the two labels exactly as supplied.
 The source reference
 is the one value every later stage names this source by:
 
 - A region in this source is a `SourceRegion` under this `RawSourceRef`
   (ADR-013 O-12).
-- The checked package's `sources` list this `RawSourceRef` (QSpec FR-322).
+- The checked package's `sources` list this `RawSourceRef` (FSpec FR-322).
 - A declaration of this source is owned by
   `SourceOwner{authority, identity}`, taken from this `RawSourceRef`
   ([FR-091](FR-091-produce-value-forms-and-assemble-package-declarations.md),
@@ -199,7 +199,7 @@ is the one value every later stage names this source by:
 
 A declaration's node key does not depend on the source content: two contents of one
 source keep the keys of their unchanged declarations
-(QSpec `proposals/checked-package-v2/README.md`). A different authority or
+(FSpec `proposals/checked-package-v2/README.md`). A different authority or
 identity gives every source-owned declaration a different key.
 
 ### Who supplies the labels
@@ -222,14 +222,14 @@ identity gives every source-owned declaration a different key.
   labels give the library's declarations their `SourceOwner`; the library
   package is identified by its package name, which the labels do not enter.
 - The replay executor recompiles each source under the `RawSourceRef` the
-  replay request's package reference names (QSpec FR-323 `package`, ADR-013
+  replay request's package reference names (FSpec FR-323 `package`, ADR-013
   O-26). It passes that reference's two labels as the source identity, the
   reference's identity as the path, and the provided bytes as the source. A
-  reference whose label is only whitespace, which QSpec's `Nonempty` admits,
+  reference whose label is only whitespace, which FSpec's `Nonempty` admits,
   refuses the replay with `invalid_source_identity`/`blank-label`, naming
   that label, at S1, before any form is built. The recompiled package therefore names each source
   exactly as the proving run did, which keeps its declaration keys and its
-  `SourceOwner`s; the package keeps its package name (US-005). The executor is ADR-013 TK-01, `qsl_replay::replay`
+  `SourceOwner`s; the package keeps its package name (US-005). The executor is ADR-013 TK-01, `fsl_replay::replay`
   ([FR-098](FR-098-execute-a-replay-request.md)), and this is the
   replay module's recompilation path, the S8 row of ADR-011 §2. TC-444
   checks the whitespace-only label.
@@ -241,22 +241,22 @@ document identity is two labels. The code lags it, and the following is an
 explicit follow-up that carries no behavior change beyond dropping the two
 labels:
 
-- `qsl_foundation::SourceIdentity` and `SourceLabel` carry four labels
+- `fsl_foundation::SourceIdentity` and `SourceLabel` carry four labels
   (authority, identity, revision namespace, revision) and `SourceIdentity::new`
   takes four; they become the two-label identity of this requirement, and every
   caller that passes a revision label stops passing it.
-- `qsl-replay`'s `object_environment` reader (`LABELS`) and invocation
+- `fsl-replay`'s `object_environment` reader (`LABELS`) and invocation
   `DocumentRef` carry four labels; they become the closed two-member
   `{authority, identity}` of FR-071's `object_environment` and FR-106's
-  `invocation` (QSpec FR-336-AC-10).
-- `qsl-replay`'s `DefinitionSourceRef` and `SourceRefWire` carry four labels;
+  `invocation` (FSpec FR-336-AC-10).
+- `fsl-replay`'s `DefinitionSourceRef` and `SourceRefWire` carry four labels;
   FR-071 "Source integrity" gives the replacement.
 
 ### Runtime artifacts are not sources
 
 A snapshot or an invocation is not a source read under this requirement.
 [FR-106](FR-106-admit-snapshots-and-invocations.md) admits it; its caller
-names it with the same two labels (QSpec FR-004).
+names it with the same two labels (FSpec FR-004).
 
 ## Acceptance Criteria
 
@@ -289,7 +289,7 @@ empty file operand is a file error), a native-state-input artifact has no
 path, and the replay path is the reference's identity, which a non-blank
 label set makes non-empty. `EditPredecessor`
 refuses with `invalid_source_map` and no region
-(`qsl-cst/src/diagnostic.rs` `HostCause::code`, `error_without_region`).
+(`fsl-cst/src/diagnostic.rs` `HostCause::code`, `error_without_region`).
 
 ## Dependencies
 
@@ -299,12 +299,12 @@ refuses with `invalid_source_map` and no region
   boundary, which the replay executor's recompilation needs.
 - ADR-013 O-07 and O-12: `RawSourceRef` and `SourceRegion`. §7 slice S-4b
   builds this requirement's source reference.
-- QSpec FR-004: a path or display label is a locator. QSpec FR-322
+- FSpec FR-004: a path or display label is a locator. FSpec FR-322
   `RawSourceRef`, `SourceOwner` and `PackageLock.sources`.
-- QSpec STD-150 defines `RawSourceRef` with an extra content member; this requirement's
-  `RawSourceRef` is the authority and the identity only (QSpec must follow before the wire matches).
-- `quire.native.diagnostics/v1` (QSpec STD-110,
-  `proposals/quire-v1/definitions/native-diagnostics.md`, cited by
+- FSpec STD-150 defines `RawSourceRef` with an extra content member; this requirement's
+  `RawSourceRef` is the authority and the identity only (FSpec must follow before the wire matches).
+- `filament.native.diagnostics/v1` (FSpec STD-110,
+  `proposals/filament-v1/definitions/native-diagnostics.md`, cited by
   reference): the `invalid_source_identity` row, its causes `blank-label`
-  and `empty-path`, and the `label` payload spelling; QSpec FR-272-AC-12.
-- [Detailed contract or implementation evidence](../../qsl-foundation/src/source.rs) supplies the scoped context.
+  and `empty-path`, and the `label` payload spelling; FSpec FR-272-AC-12.
+- [Detailed contract or implementation evidence](../../fsl-foundation/src/source.rs) supplies the scoped context.

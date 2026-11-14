@@ -3,7 +3,7 @@ id: TC-130
 title: "Evaluate positive-length reachability over finite cycles"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-047, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-047, type: verifies }
 ---
 # TC-130: Evaluate positive-length reachability over finite cycles
 

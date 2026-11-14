@@ -3,14 +3,14 @@ id: TC-706
 title: "Tick-based monitor plans round soundly, size buffers from the event rate and fault on counter errors"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-251
+  - target: ix://agent-ix/filament-spec-language/FR-251
     type: verifies
 ---
 # TC-706: Tick-based monitor plans round soundly, size buffers from the event rate and fault on counter errors
 
 ## Description
 
-Verify the monitor plan's three-valued decisions under sound rounding, buffer capacity from the event rate, overflow settlement and counter faults, against QSL's reference evaluator.
+Verify the monitor plan's three-valued decisions under sound rounding, buffer capacity from the event rate, overflow settlement and counter faults, against FSL's reference evaluator.
 
 Scope: FR-251-AC-1 to FR-251-AC-3, FR-251-AC-13, FR-251-AC-16, FR-251-AC-18, FR-251-AC-20, FR-251-AC-22, FR-251-AC-26, FR-251-AC-31 and FR-251-AC-40. The executable-plan, admission, isolation, equivalence and failure criteria (FR-251-AC-4 to FR-251-AC-8) are TC-1081.
 

@@ -3,21 +3,21 @@ id: FR-328
 title: "Evaluate an infinite-trace clause three-valued over a finite prefix"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-161
+  - target: ix://agent-ix/filament-specification/FR-161
     type: depends_on
 ---
 # FR-328: Evaluate an infinite-trace clause three-valued over a finite prefix
@@ -25,9 +25,9 @@ relationships:
 ## Description
 
 When the TemporalTrace evaluator (FR-327) evaluates a clause under
-`quire.temporal.infinite-trace/v1` over a finite trace, it SHALL read the
+`filament.temporal.infinite-trace/v1` over a finite trace, it SHALL read the
 trace as a prefix of an unknown infinite continuation and return violation
-or pending, never a proof (ADR-014 §5 A-4, QSpec FR-161-AC-2). It SHALL
+or pending, never a proof (ADR-014 §5 A-4, FSpec FR-161-AC-2). It SHALL
 return violation only for a formula in the safety fragment whose prefix is
 a bad prefix: every infinite extension of it makes the formula false. The
 safety fragment admits interval operators (ADR-018 IV-4). This reading is
@@ -61,7 +61,7 @@ never reads as a guarantee.
 - When the clause's fairness set is non-empty, the evaluator SHALL return
   `MissingFairnessPremise{constraint}` naming the first constraint of the
   checked fairness set, and SHALL evaluate no formula: a supplied trace
-  carries no enabledness, so the fairness premise is missing (QSpec FR-362,
+  carries no enabledness, so the fairness premise is missing (FSpec FR-362,
   wire cause `unsupported_projection`/`missing-fairness-premise`). It maps
   to O-16 unsupported.
 - The evaluator SHALL treat every position after the finite trace as
@@ -82,10 +82,10 @@ never reads as a guarantee.
 - In every other case, including a formula outside the fragment whose prefix
   already satisfies it, the evaluator SHALL return `Pending`.
 - A past operator, with or without an interval, SHALL read every atomic
-  predicate as false before position 0 (ADR-018 IV-2, QSpec FR-092's
+  predicate as false before position 0 (ADR-018 IV-2, FSpec FR-092's
   complete-history rule).
 - `Pending` SHALL map to the category pending (FR-285) and `Completed(false)` to
-  violation (QSpec FR-324-AC-2). The evaluator SHALL return neither `proved`
+  violation (FSpec FR-324-AC-2). The evaluator SHALL return neither `proved`
   nor `tested` over a finite prefix.
 - The evaluator SHALL charge and exhaust work as FR-327 states.
 
@@ -106,10 +106,10 @@ never reads as a guarantee.
 - [FR-327](FR-327-evaluate-a-temporal-clause-over-a-finite-trace.md),
   [FR-123](FR-123-check-fairness-and-interval-operators-of-infinite-trace-clauses.md),
   [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md).
-- QSpec FR-161-AC-2, FR-324-AC-2, FR-092, FR-362 (the missing fairness
+- FSpec FR-161-AC-2, FR-324-AC-2, FR-092, FR-362 (the missing fairness
   premise).
 
 ## References
 
 - Linear QSL-384 (spec ticket); QSL-43 (implementation).
-- QSpec FR-367 and FR-362: Linear STD-131 (QS-4, QS-13).
+- FSpec FR-367 and FR-362: Linear STD-131 (QS-4, QS-13).

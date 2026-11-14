@@ -3,27 +3,27 @@ id: FR-577
 title: "Discharge a postcondition's range obligations from its operation's preconditions"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-121
+  - target: ix://agent-ix/filament-spec-language/FR-121
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-122
+  - target: ix://agent-ix/filament-spec-language/FR-122
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-569
+  - target: ix://agent-ix/filament-spec-language/FR-569
     type: references
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-149
+  - target: ix://agent-ix/filament-specification/FR-149
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
 ---
 # FR-577: Discharge a postcondition's range obligations from its operation's preconditions
@@ -31,7 +31,7 @@ relationships:
 ## Description
 
 FR-104 types an arithmetic operand of an equality against an `Int[lo,hi]`
-operand by QSpec FR-149's expected-type rule and records the obligation that
+operand by FSpec FR-149's expected-type rule and records the obligation that
 the arithmetic node's interval, "under the facts that hold where it
 executes", lies inside `[lo,hi]`. The facts that hold where a postcondition
 executes are its own guard facts, two more fact forms this requirement
@@ -49,11 +49,11 @@ precondition `amount <= self.balance`, checks: the precondition's bound
 `amount - self.balance <= 0` at the `pre` observation gives
 `pre(self.balance) - amount` the interval `[0, 100]`.
 
-The transfer rests on QSpec FR-151's effective precondition: an operation
+The transfer rests on FSpec FR-151's effective precondition: an operation
 `m` that redefines nothing and is redefined by nothing has
 `eff(m) = own(m)`, the conjunction of its own precondition clauses, and its
 postcondition is required only where `eff(m)` held in the pre observation.
-For a redefinition family QSpec FR-151 gives `eff(m) = own(m) or eff(r)`
+For a redefinition family FSpec FR-151 gives `eff(m) = own(m) or eff(r)`
 (FR-569), so a unit precondition need not hold where the postcondition is
 required, and no fact transfers. A protocol attempt (FR-206) evaluates the
 postconditions its `contracts` list selects without the preconditions it
@@ -62,7 +62,7 @@ obligation sits on, not by the static proof (see "Evaluation outside the
 precondition").
 
 This requirement does not change FR-103's refinement guard facts
-(`own_postcondition_clauses`), which QSpec FR-151 owns.
+(`own_postcondition_clauses`), which FSpec FR-151 owns.
 
 ## Inputs
 
@@ -86,7 +86,7 @@ This requirement does not change FR-103's refinement guard facts
 
 - When the checker checks a `post` clause `Q` on operation `op` of context
   `M::T`, and `op`'s declaration neither redefines another operation nor is
-  redefined by an operation of the effective view (QSpec FR-151, FR-103
+  redefined by an operation of the effective view (FSpec FR-151, FR-103
   `redefines`), the checker SHALL begin `Q`'s definedness walk with the
   conjunction of the facts on the true outcome of every unit `pre` clause
   whose context resolves to the same declaration `M::T` and whose operation
@@ -204,7 +204,7 @@ the refusal located at the node `D`.
 | FR-577-AC-1 | The bank unit checks, with `pre(self.balance) - amount` typed `Int[0, 100]`. | Test (TC-1416) |
 | FR-577-AC-2 | The bank unit with `CanAfford` declared after `Debited` checks with the same clause node identities as the bank unit. | Test (TC-1416) |
 | FR-577-AC-3 | The bank unit without `CanAfford` refuses at `pre(self.balance) - amount`, with required interval `[0, 100]` and proved interval `[-100, 100]`. | Test (TC-1416) |
-| FR-577-AC-4 | For the AC-3 unit, `qsl_replay::call_site` refuses `CallSiteRefusal::Compile` with code `undefined_expression` and a message containing, in order, `pre(self.balance) - amount`, `[0, 100]` and `[-100, 100]`. | Test (TC-1416) |
+| FR-577-AC-4 | For the AC-3 unit, `fsl_replay::call_site` refuses `CallSiteRefusal::Compile` with code `undefined_expression` and a message containing, in order, `pre(self.balance) - amount`, `[0, 100]` and `[-100, 100]`. | Test (TC-1416) |
 | FR-577-AC-5 | `function g using v(n: Integer, r: Int[0, 100]): Boolean pure { r = n - 1 }` refuses at `n - 1`, and the `call_site` `Compile` message contains `[-inf, +inf]`. | Test (TC-1416) |
 | FR-577-AC-6 | The bank unit with `Debited` replaced by `Debited1` and `CanAfford`'s body `amount < self.balance` checks. | Test (TC-1416) |
 | FR-577-AC-7 | The bank unit with `CanAfford`'s body `self.balance >= amount` checks. | Test (TC-1416) |
@@ -232,7 +232,7 @@ the refusal located at the node `D`.
 | FR-577-AC-29 | The bank unit with `CanAfford`'s body `amount <= self.balance and self.limit <= self.balance` and `invariant Room using v on Bank::Account at current { self.limit = self.balance - self.limit }` added refuses at `self.balance - self.limit`. | Test (TC-1416) |
 | FR-577-AC-30 | Over the bank fixture whose `withdraw` keeps the `quire` `requires` clause `amount <= self.balance`, the AC-3 unit refuses at `pre(self.balance) - amount`. | Test (TC-1416) |
 | FR-577-AC-31 | `function f using v(a: Int[0, 100], b: Int[0, 100], r: Int[0, 100]): Boolean pure { a <= b implies r = b - a }` checks. | Test (TC-1416) |
-| FR-577-AC-32 | `qsl_replay::replay_state_clause` over a `Debited` envelope (FR-122) of the bank unit's package whose invocation has pre `balance = 3`, `amount = 5` and post `balance = 0` refuses `IntegerOutOfDomain` at `pre(self.balance) - amount` and settles `inconclusive` with cause `NoValue`, not a reproduced violation. | Test (TC-1416) |
+| FR-577-AC-32 | `fsl_replay::replay_state_clause` over a `Debited` envelope (FR-122) of the bank unit's package whose invocation has pre `balance = 3`, `amount = 5` and post `balance = 0` refuses `IntegerOutOfDomain` at `pre(self.balance) - amount` and settles `inconclusive` with cause `NoValue`, not a reproduced violation. | Test (TC-1416) |
 | FR-577-AC-33 | A protocol over the bank package whose attempt of `withdraw` lists `contracts` `[Debited]` only, applied at a state with `balance = 3` and `limit = 0` and the argument `amount = 5`, records one `ModelFinding::ContractUndetermined` for `Debited` per candidate post-state of the frame, 101 findings (one per `balance` value in `[0, 100]`), and gives that application no successor. | Test (TC-1416) |
 
 ## Dependencies
@@ -241,9 +241,9 @@ the refusal located at the node `D`.
   (operations, `redefines` and kept clauses), FR-121 (the `Compile` region),
   FR-122 (state-clause replay), FR-120 and FR-206 (application and protocol
   attempts), FR-569 (effective preconditions of source-declared families).
-- QSpec FR-149 (the expected-type range obligation), QSpec FR-151 (the
-  effective precondition `eff(m)`) and QSpec FR-146 ("Accepted proof
+- FSpec FR-149 (the expected-type range obligation), FSpec FR-151 (the
+  effective precondition `eff(m)`) and FSpec FR-146 ("Accepted proof
   forms"). FR-146 admits no relational fact and no fact across clauses, and
   states that a producer admits nothing its rules do not prove. This
-  requirement depends on a matching QSpec FR-146 amendment that admits
+  requirement depends on a matching FSpec FR-146 amendment that admits
   exactly the two fact forms above.

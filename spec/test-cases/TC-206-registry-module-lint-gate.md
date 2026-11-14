@@ -3,7 +3,7 @@ id: TC-206
 title: "The registry module lint gate finds no static, OnceLock or thread_local"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: verifies
 ---
 # TC-206: The registry module lint gate finds no static, OnceLock or thread_local

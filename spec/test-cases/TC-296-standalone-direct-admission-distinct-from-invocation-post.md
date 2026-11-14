@@ -3,7 +3,7 @@ id: TC-296
 title: "A standalone Direct admission and an invocation's Post binding over the same domain package and population_key mint distinct PopulationIds"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-089
+  - target: ix://agent-ix/filament-spec-language/FR-089
     type: verifies
 ---
 # TC-296: A standalone Direct admission and an invocation's Post binding over the same domain package and population_key mint distinct PopulationIds
@@ -21,7 +21,7 @@ preimage: a two-state (`pre`/`post`-only) discriminator names an anchor
 side only for the binding an invocation attaches, so a `Direct` admission
 and a `Post` binding would carry an identical preimage whenever they share
 a domain package and `population_key` -- `admit_binding`
-(`qsl-semantics/src/model/population.rs:624`) cannot see its caller's role, and
+(`fsl-semantics/src/model/population.rs:624`) cannot see its caller's role, and
 `admit_invocation` (`:1105-1124`) calls it twice with identical arguments
 apart from `document`, and standalone callers of `admit_binding` also
 exist. The three-state discriminator (`Direct`, `Pre`, `Post`) closes this
@@ -32,7 +32,7 @@ Implemented: the closed three-state `AdmissionRole` (`Direct`/`Pre`/`Post`)
 discriminator is part of every `PopulationId`'s admission preimage.
 Backed by
 `tc_296_standalone_direct_admission_distinct_from_invocation_post`
-(`qsl-semantics/tests/it/model_population.rs`).
+(`fsl-semantics/tests/it/model_population.rs`).
 
 Catches an implementation that models the admission-role component as a
 two-state `Option<AnchorSide>` (`None` for a standalone admission, `Some(Pre)`/

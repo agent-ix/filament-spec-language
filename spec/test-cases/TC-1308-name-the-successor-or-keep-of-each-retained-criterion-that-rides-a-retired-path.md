@@ -3,7 +3,7 @@ id: TC-1308
 title: "Name the successor or keep of each retained criterion that rides a retired path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-513
+  - target: ix://agent-ix/filament-spec-language/FR-513
     type: verifies
 ---
 # TC-1308: Name the successor or keep of each retained criterion that rides a retired path
@@ -12,7 +12,7 @@ relationships:
 
 Verify the spine successors of FR-513. Scope: FR-513-AC-1 to FR-513-AC-15
 (AC-15 is the matrix test of row 25). Vectors are the source fragments below or are
-referenced by QSpec case ID and never copied.
+referenced by FSpec case ID and never copied.
 
 ## Test Procedure
 
@@ -27,8 +27,8 @@ referenced by QSpec case ID and never copied.
 | 6 | 3 | add a domain package declaring `Positive`; call `Positive(1)` | `ambiguous_declaration`/`ambiguous-name` |
 | 7 | 4 | `predicate R using v(x: Boolean): Boolean { R(x) }`; `A` and `B` calling each other | `missing-measure` for each |
 | 8 | 4 | the cycles of row 7 over `x: Int[0, 9]`, each with `decreases(x)` and recursive calls at `x - 1`; then `R` calling `R(x)` under `decreases(x)` | admitted; then `unproved-decrease` with obligation `decrease` |
-| 9 | 4 | `Positive(1, 2)`; `Positive(true)`; `predicate N using v(x: Int[0, 9]): Integer { x }`; `predicate D using v(x: Rational[-10, 10; 1, 5]): Boolean { rational(10, 1) / x > rational(1, 1) }`; `function F using v(x: Int[-10, 10]): Rational[-10, 10; 1, 10] pure { 10 / x }` called by `predicate DI using v(x: Int[-10, 10]): Boolean { F(x) > rational(1, 1) }` (the integer divisor, promoted exactly under QSpec FR-147-AC-11; the legacy `10 / x > 1` has no expected rational type and is ill-typed) | `ill_typed` at the call; `ill_typed` at the call; assembler refusal at the result form; `undefined_expression`/`unproved-nonzero` at `rational(10, 1) / x`; `undefined_expression`/`unproved-nonzero` at `10 / x`; each caller of a refused predicate refuses too |
-| 10 | 4 | `D` with the guard `x != rational(0, 1) and ...` (QSpec FR-146 rational nonzero fact), and its two callers; `F` as `if x != 0 then 10 / x else rational(0, 1)` (QSpec FR-146 integer nonzero fact), and `DI` | admitted; admitted |
+| 9 | 4 | `Positive(1, 2)`; `Positive(true)`; `predicate N using v(x: Int[0, 9]): Integer { x }`; `predicate D using v(x: Rational[-10, 10; 1, 5]): Boolean { rational(10, 1) / x > rational(1, 1) }`; `function F using v(x: Int[-10, 10]): Rational[-10, 10; 1, 10] pure { 10 / x }` called by `predicate DI using v(x: Int[-10, 10]): Boolean { F(x) > rational(1, 1) }` (the integer divisor, promoted exactly under FSpec FR-147-AC-11; the legacy `10 / x > 1` has no expected rational type and is ill-typed) | `ill_typed` at the call; `ill_typed` at the call; assembler refusal at the result form; `undefined_expression`/`unproved-nonzero` at `rational(10, 1) / x`; `undefined_expression`/`unproved-nonzero` at `10 / x`; each caller of a refused predicate refuses too |
+| 10 | 4 | `D` with the guard `x != rational(0, 1) and ...` (FSpec FR-146 rational nonzero fact), and its two callers; `F` as `if x != 0 then 10 / x else rational(0, 1)` (FSpec FR-146 integer nonzero fact), and `DI` | admitted; admitted |
 | 11 | 5 | queries over `[]` | size 0, contains false, forall true, exists false, filter `[]`, map `[]`, count 0, sum 0 |
 | 12 | 5 | `[1, 1, <unavailable>]`: `contains` 1; `exists` x = 1; `forall` x = 2 | completed (decisive occurrence before the unavailable one), true, true, false |
 | 13 | 5 | `[<unavailable>, 1]`: `contains` 1; `filter`; `map`; `count`; `sum` | incomplete unavailable each; no partial output |
@@ -44,7 +44,7 @@ referenced by QSpec case ID and never copied.
 | 22b | 12 | one protocol with two `rx` binders owned by different roles and the guard `true or rx.ready`; a guard `true or rx.ready` where `rx` is bound only in a second protocol of the unit | the refusals include `ambiguous_declaration`/`ambiguous-name` at the second `rx` binder naming the first; `missing_declaration`/`missing-name` at `rx` in the guard (FR-218 out-of-scope read) |
 | 23 | 13 | emit a protocol unit; read with Contract IR's reader; then swap source identity; swap package identity; swap result identity; non-canonical re-serialisation | admitted; then four refusals |
 | 24 | 14 | two observation occurrences of one observation under distinct occurrence keys; snapshot with a duplicate member, a surplus member, a foreign member, a wrong-type member, a duplicate storage key; deref to an absent target in a complete population; deref in an unavailable closure | the two occurrences admitted; five `invalid_runtime_input` refusals; `undefined`/`absent-key`; incomplete unavailable |
-| 25 | 15 | `quire matrix` over the repository after the compiled-protocol readers are deleted | the nine retained criteria are each tagged by a test under `qsl-package`, `qsl-eval` or `qsl-replay` |
+| 25 | 15 | `quire matrix` over the repository after the compiled-protocol readers are deleted | the nine retained criteria are each tagged by a test under `fsl-package`, `fsl-eval` or `fsl-replay` |
 
 Tag the test `#[trace("FR-513-AC-1", ..., "FR-513-AC-15", "FR-513-AC-15", "TC-1308")]` for the criteria each case covers; the ported tests also keep the legacy tags they succeed (FR-015-AC-1 to AC-4, AC-6, FR-046-AC-1, AC-2, AC-4, AC-7, AC-8, FR-056-AC-8, FR-050-AC-2, AC-3, AC-5, FR-054-AC-1 to AC-4, FR-048-AC-4, AC-9, FR-049-AC-2, AC-5).
 

@@ -3,7 +3,7 @@ id: TC-742
 title: "native-run-result/2 carries basis and witness, and its strict reader refuses malformed and /1 documents"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: verifies
 ---
 # TC-742: native-run-result/2 carries basis and witness, and its strict reader refuses malformed and /1 documents

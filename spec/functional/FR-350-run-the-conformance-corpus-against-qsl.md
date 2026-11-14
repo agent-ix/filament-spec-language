@@ -1,55 +1,55 @@
 ---
 id: FR-350
-title: "Run the complete-V1 conformance corpus against QSL"
+title: "Run the complete-V1 conformance corpus against FSL"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-035
+  - target: ix://agent-ix/filament-spec-language/US-035
     type: implements
-  - target: ix://agent-ix/quire-specification/FR-311
+  - target: ix://agent-ix/filament-specification/FR-311
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-336
+  - target: ix://agent-ix/filament-specification/FR-336
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: depends_on
 ---
-# FR-350: Run the complete-V1 conformance corpus against QSL
+# FR-350: Run the complete-V1 conformance corpus against FSL
 
 ## Description
 
 When a maintainer runs the `qualify` repository gate (FR-353) over a
 conformance corpus,
-the runner SHALL execute every vector whose applicability names a QSL
-subject through the QSL public entry point for that subject, and SHALL
+the runner SHALL execute every vector whose applicability names an FSL
+subject through the FSL public entry point for that subject, and SHALL
 compare the typed result with the vector's expected disposition.
 
-QSpec FR-336 owns the corpus schema, vector vocabulary, applicability,
+FSpec FR-336 owns the corpus schema, vector vocabulary, applicability,
 expected-value encoding and input adapters. This requirement specifies how
-QSL selects its applicable vectors, invokes its public operations and settles
+FSL selects its applicable vectors, invokes its public operations and settles
 their outcomes against the corpus oracle.
 
 ## Inputs
 
-- The corpus, read from the location the caller names (the QSpec
+- The corpus, read from the location the caller names (the FSpec
   repository's published corpus). The runner reads the corpus in place.
 - An optional capability scope (FR-351).
 - Resource limits for each vector: the stage limits (FR-096) and the
@@ -63,33 +63,33 @@ One outcome for each executed vector: `passed`, `failed`, `unsupported`,
 id and, unless `passed`, the expected and actual typed result. A `passed`
 outcome holds the output bytes its entry point returned (Determinism).
 These bytes are a runner output, not part of the FR-352 report. `incomplete`
-and `tool-failure` are QSpec FR-311 `unexecuted` results, kept apart so the
+and `tool-failure` are FSpec FR-311 `unexecuted` results, kept apart so the
 report names why the vector did not run to a result.
 
 ## Behavior
 
 ### Subjects and applicability
 
-The QSL subjects are three QSpec FR-311 consumer types, each reached through
+The FSL subjects are three FSpec FR-311 consumer types, each reached through
 the entry point a caller of that subject uses:
 
-| Consumer type | QSL subject | Entry point |
+| Consumer type | FSL subject | Entry point |
 | --- | --- | --- |
 | `language` | the compiler (S0 to S4 and the checked package) | `compile` |
 | `runtime` | the reference runtime, and the replay facade for a vector whose input is a replay request | `run`, `replay` |
 | `tool` | the formatter | `format` |
 
-QSL reads capability applicability from each
+FSL reads capability applicability from each
 `coverage.primary[*].applicability` and vector applicability from each
 `vectors[*].applicability`. A primary capability is in the default scope
-(FR-351) when its `consumer_types` includes a QSL consumer type and one of
-its `semantic_profiles` is a profile identity supported by QSL under FR-110,
+(FR-351) when its `consumer_types` includes an FSL consumer type and one of
+its `semantic_profiles` is a profile identity supported by FSL under FR-110,
 FR-230, or FR-361. The supported set is resolved from those closed typed
 profile roles; this requirement does not define or compare a second definition
 catalog. A vector SHALL run
 when its `capability_id` selects that primary row, its own
 `applicability.consumer_types` includes its `subject.consumer_type`, and
-that subject maps to a QSL entry point in the table above. Vectors of an
+that subject maps to an FSL entry point in the table above. Vectors of an
 out-of-scope capability SHALL NOT execute. The runner calls no internal
 function a caller cannot reach.
 If applicability filtering leaves the scope empty, then the runner SHALL
@@ -98,11 +98,11 @@ refuse before vector execution under
 
 ### Corpus and limits ownership
 
-The runner SHALL read the selected QSpec corpus and the files named by each
+The runner SHALL read the selected FSpec corpus and the files named by each
 vector's `input.files` without rewriting its vectors, `expected`
 dispositions, `results` or `coverage`. Expected dispositions come from the
 corpus's independent oracle; the runner SHALL NOT replace them with results
-calculated by QSL. Corpus preflight, expected-result comparison, reporting
+calculated by FSL. Corpus preflight, expected-result comparison, reporting
 and release SHALL retain deeply nested oracle values without native stack
 recursion. A schema-valid oracle that differs from the operation result is
 `failed`, including when the oracle has thousands of nested containers;
@@ -119,13 +119,13 @@ subject does not run does not cause that stage to run. Evaluation budgets
 retain the subject's accounting contract, including any override the
 FR-255 settings operation defines.
 
-### QSL public-operation adapters
+### FSL public-operation adapters
 
-The corpus and its adapter encodings are defined by QSpec FR-336 (AC-4 to
-AC-8). QSL SHALL consume the input adapters applicable to its public
-operations under that contract and invoke only the corresponding QSL public
+The corpus and its adapter encodings are defined by FSpec FR-336 (AC-4 to
+AC-8). FSL SHALL consume the input adapters applicable to its public
+operations under that contract and invoke only the corresponding FSL public
 operations: `compile` (FR-027), `format` (FR-003), `run` (FR-100) and
-`replay` (FR-071/FR-098). QSL adds no product request wire or corpus-owned
+`replay` (FR-071/FR-098). FSL adds no product request wire or corpus-owned
 encoding. Textual operation, disposition, argument, domain and witness tags
 are read at the declared shared string-edge intake boundaries. Witness tags
 and record-slot tags are decoded once into transient typed traversal state;
@@ -154,12 +154,12 @@ admission meter.
 ### The replay-request adapter
 
 The runner reads a `replay-request` file with its own decoder in `xtask`,
-because QSL has no byte reader for a replay request (FR-071's wire is an
+because FSL has no byte reader for a replay request (FR-071's wire is an
 in-process shape, and the corpus encoding is corpus-owned, not a product wire).
 The decoder produces a `ReplayRequestWire` and decides
 nothing about the request. A document that does not match the closed schema is
 a defect of the corpus, so it is a per-vector `tool-failure`; a request that
-matches the schema and that QSL refuses is a QSL result and is settled as one.
+matches the schema and that FSL refuses is an FSL result and is settled as one.
 The adapter is needed independently of any one request member: FR-350-AC-10
 requires every in-scope `replay` vector to run, and `xtask` decodes no
 `replay-request` file without it.
@@ -167,7 +167,7 @@ requires every in-scope `replay` vector to run, and `xtask` decodes no
 The published `$defs.ReplayRequest` (the conformance-corpus `schema.json`) has
 14 required properties and is authoritative for the corpus encoding. Its
 `package` is the whole checked-package v2 document (`$ref
-urn:quire:checked-package:v2`), and its `dependencies` is a separate top-level
+urn:filament:checked-package:v2`), and its `dependencies` is a separate top-level
 array of `DependencyEntry` objects with `identity`, `sources` and optional
 `refinement_internals`.
 The adapter reads the request from those members and FR-071 stays unchanged:
@@ -178,7 +178,7 @@ The adapter reads the request from those members and FR-071 stays unchanged:
   items) and its optional internals are `package.lock.refinement_internals`;
 - each `dependencies` entry becomes a dependency entry with its `identity` and
   `sources`;
-- `package.contract_version` must be the constant `quire.checked-package/v2`
+- `package.contract_version` must be the constant `filament.checked-package/v2`
   the checked-package schema fixes; the complete package retains that value.
 
 A `replay-request` file without `package`, whose `package` is not a
@@ -221,7 +221,7 @@ compares that result envelope and separately retains the public operation's
 returned bytes. Native inconclusive results keep their category; only an
 actual limit or cancellation is classified as incomplete.
 
-The decoder refuses, as the consumer of QSpec FR-336-AC-8, a
+The decoder refuses, as the consumer of FSpec FR-336-AC-8, a
 `bytes_path` that is absent, not listed as `kind: bytes` in the vector, absolute
 or parent-traversing, and a `stage_limits` key that names no FR-255 setting,
 each before the request is constructed.
@@ -247,8 +247,8 @@ settle the vector by the first of these, in this order, that holds:
    when the vector names one. This includes an expected limit refusal
    (a boundary or `incomplete`-class vector) and an expected
    `unknown_required_feature` or `unsupported_projection` refusal.
-2. `unsupported`: QSL returned `unsupported_projection` or
-   `unknown_required_feature`, holding the code and cause QSL returned.
+2. `unsupported`: FSL returned `unsupported_projection` or
+   `unknown_required_feature`, holding the code and cause FSL returned.
 3. `incomplete`: the vector reached a resource limit, retaining its kind,
    bound and actual charge/count, and the setting or request field through
    which the subject's public contract raises it.
@@ -267,7 +267,7 @@ limits; a previous vector's consumption cannot reduce its remaining budget.
 ### Determinism
 
 The runner SHALL give the same outcome for each vector on every run over
-the same corpus with the same QSL build and limits. It reads no clock,
+the same corpus with the same FSL build and limits. It reads no clock,
 environment variable or search path to decide an outcome.
 
 The runner SHALL execute the selected vectors one after another on the
@@ -298,39 +298,39 @@ Vector ids are ordered bytewise on their id strings, as FR-075 orders
 `BackendId`s. This is also the ascending vector-id order of the FR-352
 report.
 
-The determinism sample of the published QSpec corpus is chosen by rule,
+The determinism sample of the published FSpec corpus is chosen by rule,
 not by a recorded list. Within each capability of the default scope, for
 each vector class, it takes the smallest id among the vectors of that class
-that the runner executes, that is, those whose own applicability names a QSL
+that the runner executes, that is, those whose own applicability names an FSL
 consumer type. A class with no such vector contributes none.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-350-AC-1 | Over a fixture corpus holding one positive compile vector, one positive `run` vector, one `replay` vector and one `format` vector, each with the expected result QSL returns, each vector is `passed` and each ran through its subject's public entry point. | Test |
-| FR-350-AC-2 | A refusal vector expecting `ill_typed`/`unit-mismatch` is `passed` when QSL returns that pair, and `failed` when QSL returns `ill_typed`/`type-mismatch`, the failure holding the expected and the actual code and cause. A refusal vector over source QSL admits is `failed`, holding the expected refusal and the actual success. | Test |
-| FR-350-AC-3 | A vector that expects a success, which QSL answers with `unknown_required_feature`/`unknown-feature`, is `unsupported`, holding that pair; the same answer to a vector that expects that pair is `passed`. A vector that expects a success, run with an evaluation budget of zero, is `incomplete`, retaining its budget kind, bound, actual count and the subject's setting or request field that raises it, and with the default budget is `passed`. A boundary vector that expects the zero-budget limit refusal, run with a budget of zero, is `passed`. A vector expecting `ill_typed`/`type-mismatch` that QSL answers with `unknown_required_feature` is `unsupported`. A positive compile vector checked under `--limit s3.nodes=0` is `incomplete` naming `s3.nodes`; raising that setting to fit yields `passed`, with actual typed results equal to direct public calls under the same effective limits. | Test |
+| FR-350-AC-1 | Over a fixture corpus holding one positive compile vector, one positive `run` vector, one `replay` vector and one `format` vector, each with the expected result FSL returns, each vector is `passed` and each ran through its subject's public entry point. | Test |
+| FR-350-AC-2 | A refusal vector expecting `ill_typed`/`unit-mismatch` is `passed` when FSL returns that pair, and `failed` when FSL returns `ill_typed`/`type-mismatch`, the failure holding the expected and the actual code and cause. A refusal vector over source FSL admits is `failed`, holding the expected refusal and the actual success. | Test |
+| FR-350-AC-3 | A vector that expects a success, which FSL answers with `unknown_required_feature`/`unknown-feature`, is `unsupported`, holding that pair; the same answer to a vector that expects that pair is `passed`. A vector that expects a success, run with an evaluation budget of zero, is `incomplete`, retaining its budget kind, bound, actual count and the subject's setting or request field that raises it, and with the default budget is `passed`. A boundary vector that expects the zero-budget limit refusal, run with a budget of zero, is `passed`. A vector expecting `ill_typed`/`type-mismatch` that FSL answers with `unknown_required_feature` is `unsupported`. A positive compile vector checked under `--limit s3.nodes=0` is `incomplete` naming `s3.nodes`; raising that setting to fit yields `passed`, with actual typed results equal to direct public calls under the same effective limits. | Test |
 | FR-350-AC-4 | A vector naming a source file absent from the corpus is `tool-failure` holding the I/O error, and the vectors before and after it in the corpus keep the outcomes they have when it is removed. | Test |
 | FR-350-AC-5 | Two runs over the same fixture corpus with the same build and limits give equal per-vector outcomes. Two identical successful vectors, each requiring the full configured budget, both pass in either corpus order. The corpus and its named input bytes are unchanged after execution, including its recorded results and coverage. | Test |
-| FR-350-AC-6 | One test starts four child `cargo test` processes over the determinism sample of the published QSpec corpus. Two run with `RUST_TEST_THREADS=1`. Two run with `RUST_TEST_THREADS=2`, and in each of those a second test runs the runner over the same sample at the same time, both starting at one barrier. Each child writes its FR-352 JSON report, and the output bytes of each `passed` outcome, to its own output directory. The parent finds the four reports byte-equal, and for each vector `passed` in all four children, finds its four output byte strings byte-equal. | Test |
+| FR-350-AC-6 | One test starts four child `cargo test` processes over the determinism sample of the published FSpec corpus. Two run with `RUST_TEST_THREADS=1`. Two run with `RUST_TEST_THREADS=2`, and in each of those a second test runs the runner over the same sample at the same time, both starting at one barrier. Each child writes its FR-352 JSON report, and the output bytes of each `passed` outcome, to its own output directory. The parent finds the four reports byte-equal, and for each vector `passed` in all four children, finds its four output byte strings byte-equal. | Test |
 | FR-350-AC-7 | The runner's source starts no thread, uses no thread pool or async executor, and calls each vector's entry point only after the previous vector has settled. | Inspection |
-| FR-350-AC-8 | For each in-scope `run` vector, QSL adapts the corpus input to the existing FR-100 `Call` and invokes the public runtime with the effective evaluation and supplied-value limits. Arguments retain their authored order and bind to the selected function's declared parameters; a value that cannot be adapted is refused under the corpus adapter or FR-100 admission, never silently dropped. | Test (TC-875) |
-| FR-350-AC-9 | For an in-scope `run` vector with object context, QSL admits the selected model and object environment through FR-084/FR-089/FR-106 and resolves any population argument to the binding established by that admission before S6a. Native-run/1 does not gain a population argument wire from qualification. | Test (TC-875) |
-| FR-350-AC-10 | For each in-scope `replay` vector, QSL adapts the corpus input to the existing FR-071 `ReplayRequestWire`, supplies its bytes to FR-098, and settles the FR-072 typed result. Byte-path resolution follows QSpec FR-336-AC-8; malformed request data retains the owning refusal and an unreadable named file is a per-vector `tool-failure`. | Test (TC-875) |
-| FR-350-AC-11 | The `replay-request` adapter of the runner decodes a vector's `replay-request` file, a closed document of QSpec FR-336 `$defs.ReplayRequest`, into `ReplayRequestWire` member by member as FR-336's mapping states, and gives the result to `qsl_replay::replay`; a corpus whose replay vectors the runner could not decode before this adapter now executes them. | Test (TC-1325) |
+| FR-350-AC-8 | For each in-scope `run` vector, FSL adapts the corpus input to the existing FR-100 `Call` and invokes the public runtime with the effective evaluation and supplied-value limits. Arguments retain their authored order and bind to the selected function's declared parameters; a value that cannot be adapted is refused under the corpus adapter or FR-100 admission, never silently dropped. | Test (TC-875) |
+| FR-350-AC-9 | For an in-scope `run` vector with object context, FSL admits the selected model and object environment through FR-084/FR-089/FR-106 and resolves any population argument to the binding established by that admission before S6a. Native-run/1 does not gain a population argument wire from qualification. | Test (TC-875) |
+| FR-350-AC-10 | For each in-scope `replay` vector, FSL adapts the corpus input to the existing FR-071 `ReplayRequestWire`, supplies its bytes to FR-098, and settles the FR-072 typed result. Byte-path resolution follows FSpec FR-336-AC-8; malformed request data retains the owning refusal and an unreadable named file is a per-vector `tool-failure`. | Test (TC-875) |
+| FR-350-AC-11 | The `replay-request` adapter of the runner decodes a vector's `replay-request` file, a closed document of FSpec FR-336 `$defs.ReplayRequest`, into `ReplayRequestWire` member by member as FR-336's mapping states, and gives the result to `fsl_replay::replay`; a corpus whose replay vectors the runner could not decode before this adapter now executes them. | Test (TC-1325) |
 | FR-350-AC-12 | The adapter maps each `sources` entry, of the package and of each `dependencies` entry, to its authority and identity as the file states them, with no revision label, and maps the `byte_provision` rows by reading each sibling `bytes_path` file as raw bytes. | Test (TC-1325) |
 | FR-350-AC-13 | The adapter maps `object_environment` to the closed `{authority, identity}` identity and refuses a file whose `object_environment` identity carries any other member. | Test (TC-1325) |
-| FR-350-AC-14 | A `replay-request` file that does not match `$defs.ReplayRequest` (an unknown member, a missing required member such as a `sources` entry's `identity`, a wrong JSON kind) is that vector's `tool-failure` with cause `corpus-decode` naming the JSON pointer of the defect, and not a QSL refusal. | Test (TC-1325) |
+| FR-350-AC-14 | A `replay-request` file that does not match `$defs.ReplayRequest` (an unknown member, a missing required member such as a `sources` entry's `identity`, a wrong JSON kind) is that vector's `tool-failure` with cause `corpus-decode` naming the JSON pointer of the defect, and not an FSL refusal. | Test (TC-1325) |
 | FR-350-AC-15 | **RETIRED (source-byte integrity removed).** Withdrawn with no replacement. | Test (TC-1325), retired |
-| FR-350-AC-16 | A `replay-request` file whose `package` is the checked-package document named `orders` with `contract_version` `quire.checked-package/v2`, whose `lock.sources` holds the one `{authority, identity}` entry `("repo", "orders.qsl")`, and whose `dependencies` holds `{identity: "lib/money", sources: [("repo", "money.qsl")]}`, decodes to a request with package name `orders`, that one source and one dependency entry with `identity` `lib/money` and its one source, and no version member; the same file with `package` removed, with `package` set to the string `"orders"`, with `contract_version` set to `quire.checked-package/v1`, and with the dependency entry holding an extra `checked_package` member is each a `tool-failure` with cause `corpus-decode` and pointer `/package`, `/package`, `/package/contract_version` and `/dependencies/0` respectively. | Test (TC-1325) |
+| FR-350-AC-16 | A `replay-request` file whose `package` is the checked-package document named `orders` with `contract_version` `filament.checked-package/v2`, whose `lock.sources` holds the one `{authority, identity}` entry `("repo", "orders.fsl")`, and whose `dependencies` holds `{identity: "lib/money", sources: [("repo", "money.fsl")]}`, decodes to a request with package name `orders`, that one source and one dependency entry with `identity` `lib/money` and its one source, and no version member; the same file with `package` removed, with `package` set to the string `"orders"`, with `contract_version` set to `filament.checked-package/v1`, and with the dependency entry holding an extra `checked_package` member is each a `tool-failure` with cause `corpus-decode` and pointer `/package`, `/package`, `/package/contract_version` and `/dependencies/0` respectively. | Test (TC-1325) |
 | FR-350-AC-17 | A `byte_provision` row whose `bytes_path` is `missing.bin` (absent from the vector directory), `unlisted.bin` (present but not listed as `kind: bytes`), `/etc/hostname` (absolute) or `../x.bin` (parent-traversing) is a `tool-failure` with cause `corpus-decode` and pointer `/byte_provision/0/bytes_path`, and no request is constructed; a listed `kind: bytes` path is read as raw bytes. | Test (TC-1325) |
 | FR-350-AC-18 | A `stage_limits` map holding the key `depth` (no FR-255 setting of that name) is a `tool-failure` with cause `corpus-decode` and pointer `/stage_limits/depth`; the key `s1.input_bytes` with the value `"1024"` decodes to the entry `("s1.input_bytes", 1024)`. | Test (TC-1325) |
 | FR-350-AC-19 | A compile vector whose source selects its supplied `model` document passes and retains the public compiler's exact output bytes; removing that model gives the compiler's typed refusal rather than an adapter success. The runner exposes passed operation bytes separately from the FR-352 JSON report. | Test (TC-875) |
 
 ## Dependencies
 
-- QSpec FR-311 (qualification behaviour), FR-336 and interface_019 (the
+- FSpec FR-311 (qualification behaviour), FR-336 and interface_019 (the
   corpus and its vectors).
 - [FR-096](FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md)
   (stage limits and catalog-coded refusals the comparison reads).

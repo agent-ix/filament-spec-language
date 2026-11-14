@@ -3,7 +3,7 @@ id: TC-810
 title: "Abstraction binding keys are unique across all of a unit's declarations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: verifies
 ---
 # TC-810: Abstraction binding keys are unique across all of a unit's declarations

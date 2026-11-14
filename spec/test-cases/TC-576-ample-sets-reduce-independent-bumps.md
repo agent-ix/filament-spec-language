@@ -3,7 +3,7 @@ id: TC-576
 title: "Ample sets reduce ADR-021 §7.2 to one interleaving and keep the deadlock"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-156
+  - target: ix://agent-ix/filament-spec-language/FR-156
     type: verifies
 ---
 # TC-576: Ample sets reduce ADR-021 §7.2 to one interleaving and keep the deadlock

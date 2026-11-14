@@ -3,7 +3,7 @@ id: TC-179
 title: "A positive proof-result envelope round-trips its backend identity and dispositions exactly"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: verifies
 ---
 # TC-179: A positive proof-result envelope round-trips its backend identity and dispositions exactly

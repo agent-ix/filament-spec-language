@@ -1,26 +1,26 @@
 ---
 id: ADR-011
-title: "QSL stage DAG and crate/module dependency architecture (ARCH-10)"
+title: "FSL stage DAG and crate/module dependency architecture (ARCH-10)"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-010
+  - target: ix://agent-ix/filament-spec-language/ADR-010
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-016
+  - target: ix://agent-ix/filament-specification/AD-016
     type: depends_on
-  - target: ix://agent-ix/quire-integration/IT-010
+  - target: ix://agent-ix/filament-integration/IT-010
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: relates_to
 ---
-# ADR-011: QSL stage DAG and crate/module dependency architecture (ARCH-10)
+# ADR-011: FSL stage DAG and crate/module dependency architecture (ARCH-10)
 
 ## Context
 
-#209 asks for the legal compilation and execution stages of QSL V1, what each
+#209 asks for the legal compilation and execution stages of FSL V1, what each
 stage edge preserves, the refusal and bypass rules, CLI orchestration, and the
 target crate and module dependency graph with extraction criteria.
 
@@ -32,30 +32,30 @@ Inputs, used as given and not reopened:
   also names #209 as a secondary owner of OBS-005, OBS-017 and OBS-034. This
   record cites ADR-010 items as `ADR-010 OBS-nnn` and lanes and stages as
   `ADR-010 A4`, `ADR-010 lane B` and so on.
-- **QSpec AD-016** (accepted, `agent-ix/quire-specification`
+- **FSpec AD-016** (accepted, `agent-ix/filament-specification`
   `spec/assurance/AD-016-semantic-family-extension-path.md`). Its seven arrows,
   crate graph, replay ownership, Shared-type strategy and six owner decisions
-  are binding. This record places the QSL-internal stages
+  are binding. This record places the FSL-internal stages
   and modules around those arrows. Where AD-016 marks a cell `OPEN — decided in
-  WP<n>`, this record leaves it open unless the cell is a QSL-internal module
+  WP<n>`, this record leaves it open unless the cell is an FSL-internal module
   placement, which #209 owns. AD-016 records four types named
   `CheckedPackage`, and its Owner decision 6 defers renaming them.
 - **Sibling Layer 1 tickets.** #210 decides family extension contracts, dispatch
   and capability selection. #211 decides canonical types, identities,
-  conversions and versions. #229 aligns QSL's `Capability` specification with
-  the #134 vocabulary (agent-ix/quire-specification#134 widens FR-290). ADR-012
-  (#210, QSL PR #234) is the family-contract record this one pairs with. #225
+  conversions and versions. #229 aligns FSL's `Capability` specification with
+  the #134 vocabulary (agent-ix/filament-specification#134 widens FR-290). ADR-012
+  (#210, FSL PR #234) is the family-contract record this one pairs with. #225
   decides lifecycle and CLI orchestration. This record names the question it
   hands to each one and decides none of them.
-- **agent-ix/quire-contract-runtime#53.** On RT origin/main
+- **agent-ix/filament-contract-runtime#53.** On RT origin/main
   (2026-09-18) no Kani harness reaches RT `src/exact/`. The RT proof gate
   compiles 11,519 lines of it and discharges zero propositions over them: the
   code compiled under Kani and the obligation count did not move. This is the
   same instrument-honesty defect as ADR-010 OBS-028.
-- **agent-ix/quire-contract-ir#140.** IR FR-031's Behavior sentence and
+- **agent-ix/filament-contract-ir#140.** IR FR-031's Behavior sentence and
   FR-031-AC-3 name native `runtime::execute` as the replay executor, which
   AD-016 arrow 7 rules out. IR PR #138 rewrites FR-031's Status section only.
-  agent-ix/quire-contract-ir#140 amends the Behavior sentence and AC-3 and
+  agent-ix/filament-contract-ir#140 amends the Behavior sentence and AC-3 and
   removes `replay_with_native_runtime`.
 - **Owner ruling, 2026-09-19: skeleton first.** A skeleton build runs in
   parallel with Layers 1 and 2. It carries one Boolean clause from contract to
@@ -70,7 +70,7 @@ decisions. It does not design their content.
 |---|---|
 | #222 | Boundedness design: temporal, trace and unbounded-request architecture on the stage edges |
 | #213 | Implementation of canonical identity, typestate, outcome, provenance, bound and `Capability` value types that the stage outputs carry |
-| #185 | The only capability registry and router: the QSL `route` module (§6.1) |
+| #185 | The only capability registry and router: the FSL `route` module (§6.1) |
 | #231 | Typed proof-result, witness and replay envelopes on E8 and E9 |
 | #214 | As a `Value` family implementation ticket, the widening of the layer-6 `replay` facade for that family (ADR-013 TK-01) |
 | M-3a, M-3b | The S2 forms producer: the `forms` core (M-3a) and each family's parsed-form type (M-3b) |
@@ -87,9 +87,9 @@ decisions. It does not design their content.
 | #122 / #232 | Lifecycle and CLI implementation |
 | #230 | Bounded lifecycle conformance slice |
 | #226 | Architecture-drift gates that enforce §3, §6 and §7 from Layer 5 |
-| agent-ix/quire-contract-runtime#53 | The RT `src/exact/` proof gate under §2.3, until X-1 moves the kernel |
-| agent-ix/quire-contract-ir#140 | Replay executor wording in IR FR-031 and removal of `replay_with_native_runtime` |
-| agent-ix/quire-contract-ir#109 | Frame clauses in the Contract IR (scenario 4 only) |
+| agent-ix/filament-contract-runtime#53 | The RT `src/exact/` proof gate under §2.3, until X-1 moves the kernel |
+| agent-ix/filament-contract-ir#140 | Replay executor wording in IR FR-031 and removal of `replay_with_native_runtime` |
+| agent-ix/filament-contract-ir#109 | Frame clauses in the Contract IR (scenario 4 only) |
 
 Changes this record needs that have no ticket yet are listed under Tickets to
 open at #212.
@@ -108,17 +108,17 @@ Terms used below:
   becomes checked typestate (ADR-013 R-10): the I2 reader yields
   `ImportView`, which is not checked. Nothing else
   constructs a value of a checked type.
-- **Reference semantics**: the QSL evaluator whose result defines what a
-  checked package means. #205 assigns reference semantics to QSL.
+- **Reference semantics**: the FSL evaluator whose result defines what a
+  checked package means. #205 assigns reference semantics to FSL.
 
-Amended by ADR-030 (FR-356): the walker toolkit `quire-walk`, layer
-W, joins the shared `no_std` leaf class (its own repository, `agent-ix/quire-walk`), and the std-only `maybe_grow` crate `qsl-walk-grow`,
+Amended by ADR-030 (FR-356): the walker toolkit `filament-walk`, layer
+W, joins the shared `no_std` leaf class (its own repository, `agent-ix/filament-walk`), and the std-only `maybe_grow` crate `fsl-walk-grow`,
 layer WG, sits outside the qualified core.
 
 ## Decision
 
-1. The stage DAG in §1 is the only legal compilation and execution flow for QSL
-   V1. Every QSL module and every QSL cross-repository dependency maps to one
+1. The stage DAG in §1 is the only legal compilation and execution flow for FSL
+   V1. Every FSL module and every FSL cross-repository dependency maps to one
    stage, to a foundation or tooling layer, or to a seam with a named
    retirement change (§6).
 2. Every edge carries the typed contract in §2: admitted types, owner, what it
@@ -130,11 +130,11 @@ layer WG, sits outside the qualified core.
 5. CLI commands orchestrate stage APIs and return structured outcomes (§5).
 6. The module DAG in §6 and the crate DAG in §7 are the target dependency
    architecture. Each §6.1 layer named in the §6.1 crate map is its own
-   workspace crate (§7.2). The crate extractions this record approves are `quire-exact`, which
+   workspace crate (§7.2). The crate extractions this record approves are `filament-exact`, which
    AD-016 Owner decision 2 already accepted, the §6.1 layer crates
-   (X-2 to X-10), the shared `no_std` leaf `quire-semantic-value` (X-11,
-   layer SV), the shared `no_std` walker toolkit `quire-walk` (layer W,
-   ADR-030 FR-356; its own repository, `agent-ix/quire-walk`, not a workspace crate), and the std-only `maybe_grow` crate `qsl-walk-grow`
+   (X-2 to X-10), the shared `no_std` leaf `filament-semantic-value` (X-11,
+   layer SV), the shared `no_std` walker toolkit `filament-walk` (layer W,
+   ADR-030 FR-356; its own repository, `agent-ix/filament-walk`, not a workspace crate), and the std-only `maybe_grow` crate `fsl-walk-grow`
    (layer WG, outside the qualified core).
 7. The four observed lanes converge or retire as §8 states. Every producer
    path other than the spine is deleted in the PR that lands its spine
@@ -147,9 +147,9 @@ layer WG, sits outside the qualified core.
    fail the proof. The floor on discharged checks counts SUCCESS checks only.
    UNREACHABLE checks, and every status other than SUCCESS, are not counted as
    discharged. Compiling the code under the prover is necessary, not sufficient
-   (agent-ix/quire-contract-runtime#53). Each claimed module also has a mutation
+   (agent-ix/filament-contract-runtime#53). Each claimed module also has a mutation
    control that turns the gate red (§2.3).
-9. Compatibility disposition for every change in this record is **none**. QSL
+9. Compatibility disposition for every change in this record is **none**. FSL
    is prerelease, and each replaced path is removed in the change that lands
    its successor.
 10. The ADR-010 findings routed to #209 are decided as §9 states.
@@ -158,7 +158,7 @@ layer WG, sits outside the qualified core.
 12. The skeleton spine (§1.1) is the first end-to-end run of AD-016 arrows 3 to
     7. Gate #212 cites its result where one exists; that is evidence, not a
        ticket-order edge, and #212 does not wait on
-       agent-ix/quire-contract-codegen#87. #217 widens it.
+       agent-ix/filament-contract-codegen#87. #217 widens it.
 
 ## 1. Stage DAG
 
@@ -188,25 +188,25 @@ flowchart LR
 
 | Stage | Output role | Owner repository and module | AD-016 arrow |
 |---|---|---|---|
-| S0 Source | Source bytes with `SourceIdentity` (authority and identity; FR-001) | QSL `source` | none |
-| S1 Lossless CST | Exact, recovering concrete syntax tree | QSL `cst` (the `qsl-cst` crate: `qsl_cst::cst`, `qsl_cst::grammar`, and its private parser) | none |
-| S2 Parsed semantic forms | Unchecked syntactic forms per family, each with a span. No semantic identity. | QSL `forms` (the `qsl-forms` crate) | arrow 1 input ("Source AST") |
-| S3 Checked semantic graph | Checked nodes with minted node ids and declaration identities, resolved against admitted domain packages and dependency import views | QSL `check` (today `value::expression` check, `check::checked_dispatch`, `value::library`) over `model` | arrow 1 output |
-| S4 Linked checked package | The checked graph linked with the checked packages of its dependencies, each compiled from its supplied source through S1 to S4, with package identity and source map. The closure carries checked dependency nodes, never wire-admitted ones. Two forms: in-process, and `quire.checked-package/v2` wire. | QSL `package` | arrow 2 producer |
-| S5 Contract IR | Target-neutral IR nodes read from the v2 wire | IR `quire-contract-model` (`CheckedPackageV2::read`, `::lower`) | arrow 2 consumer |
-| S6a Reference execution | `Evaluation` of a checked package: a `FamilyOutcome`, which is the kernel `Outcome` (completed, undefined, refused or incomplete) or a family-owned `FamilyResult` (refused or undefined) for an evaluation-time result the kernel does not own, beside the evaluation's location and loss records (ADR-013 O-16). A family that does not evaluate natively (`Relation`) is not an S6a input. Deterministic and free of side effects: the same package, arguments, object environment and meter budget give the same outcome. | QSL `value::expression` evaluate and `CheckedPackage::call` (the AD-016 arrow 7 path), over the `quire-exact` kernel | arrow 7 executor |
+| S0 Source | Source bytes with `SourceIdentity` (authority and identity; FR-001) | FSL `source` | none |
+| S1 Lossless CST | Exact, recovering concrete syntax tree | FSL `cst` (the `fsl-cst` crate: `fsl_cst::cst`, `fsl_cst::grammar`, and its private parser) | none |
+| S2 Parsed semantic forms | Unchecked syntactic forms per family, each with a span. No semantic identity. | FSL `forms` (the `fsl-forms` crate) | arrow 1 input ("Source AST") |
+| S3 Checked semantic graph | Checked nodes with minted node ids and declaration identities, resolved against admitted domain packages and dependency import views | FSL `check` (today `value::expression` check, `check::checked_dispatch`, `value::library`) over `model` | arrow 1 output |
+| S4 Linked checked package | The checked graph linked with the checked packages of its dependencies, each compiled from its supplied source through S1 to S4, with package identity and source map. The closure carries checked dependency nodes, never wire-admitted ones. Two forms: in-process, and `filament.checked-package/v2` wire. | FSL `package` | arrow 2 producer |
+| S5 Contract IR | Target-neutral IR nodes read from the v2 wire | IR `filament-contract-model` (`CheckedPackageV2::read`, `::lower`) | arrow 2 consumer |
+| S6a Reference execution | `Evaluation` of a checked package: a `FamilyOutcome`, which is the kernel `Outcome` (completed, undefined, refused or incomplete) or a family-owned `FamilyResult` (refused or undefined) for an evaluation-time result the kernel does not own, beside the evaluation's location and loss records (ADR-013 O-16). A family that does not evaluate natively (`Relation`) is not an S6a input. Deterministic and free of side effects: the same package, arguments, object environment and meter budget give the same outcome. | FSL `value::expression` evaluate and `CheckedPackage::call` (the AD-016 arrow 7 path), over the `filament-exact` kernel | arrow 7 executor |
 | S6b Bounded proof | Per-item negotiation disposition, then one outcome per supported item from its IR-lowered negotiated backend: an IR `KaniOutcome` for Kani. Amended by ADR-018 §7: the role covers any negotiated IR-lowered backend, including the SMT temporal checks (ADR-018 EN-2, EN-3) | CG (per-item negotiation, oracle, `kani_obligations`), RT ops, host ABI and `negotiate_*` predicates, IR `src/kani` outcome | arrows 3 to 6 |
-| S6c Native model checking | One outcome per item routed to a QSL in-process engine: ADR-018's EN-1 model checker, ADR-024's EN-4 statistical engine, ADR-028's EN-5 exact probabilistic engine, ADR-026's zone search, and each engine later added to layer A. A proof, a completed search horizon, an undecided run or a stopped run settles the item's QSpec FR-331 terminal record at S6c; a proof settles only after its certificate checker in layer 6 accepts it, or settles `proved` labelled `uncertified` when the engine has no core checker. A refutation leaves over E11 as an S7 `WitnessEnvelope`, and its terminal record is settled only after its E9 replay at S8 (ADR-018 SM-7). Added by ADR-018 §7 and ADR-029 OP-2; for EN-1 the outcome is ADR-018's `ModelCheckOutcome` with its `ReplaySource::ModelTrace` refutation. Amended by ADR-020 §9: for a refinement record S6c also reads the abstract subject's checked package, the declaring package itself or a dependency's from the S4 closure (ADR-020 RM-1) | QSL layer A `qsl-analyze` engines (ADR-018 EN-1, LA-1), reached through the `analyze` operation and run in process by the orchestrating driver (T-13); their proof certificate checkers and the native-engine settlement in layer 6 `qsl-replay` (ADR-018 PC-1 to PC-5, LA-3; ADR-029 CB-2) | none |
-| S7 Typed witness | QSL `WitnessEnvelope` with a `ReplaySource` | QSL `qsl-replay` types (`WitnessEnvelope`, `Witness`, `ReplaySource`), built by CG's backend adapter (ADR-013 OQ-H) | arrow 6 output |
-| S8 Native replay | Parity verdict: the S6a result under the reconstructed input, compared with the S6b result | QSL layer-6 `replay` (S1 to S4 recompile, S6a as executor, and the parity settlement in each arm result's `settle`, FR-072), called by the orchestrating driver (T-13); CG replay adapter (request reconstruction, C-12) | arrow 7. Amended by ADR-018 §5: for a model counterexample the verdict compared is the S6c refutation, and the replayed value is the formula's evaluation over the trace re-executed through `ModelSystem` (ADR-018 CX-3) |
+| S6c Native model checking | One outcome per item routed to an FSL in-process engine: ADR-018's EN-1 model checker, ADR-024's EN-4 statistical engine, ADR-028's EN-5 exact probabilistic engine, ADR-026's zone search, and each engine later added to layer A. A proof, a completed search horizon, an undecided run or a stopped run settles the item's FSpec FR-331 terminal record at S6c; a proof settles only after its certificate checker in layer 6 accepts it, or settles `proved` labelled `uncertified` when the engine has no core checker. A refutation leaves over E11 as an S7 `WitnessEnvelope`, and its terminal record is settled only after its E9 replay at S8 (ADR-018 SM-7). Added by ADR-018 §7 and ADR-029 OP-2; for EN-1 the outcome is ADR-018's `ModelCheckOutcome` with its `ReplaySource::ModelTrace` refutation. Amended by ADR-020 §9: for a refinement record S6c also reads the abstract subject's checked package, the declaring package itself or a dependency's from the S4 closure (ADR-020 RM-1) | FSL layer A `fsl-analyze` engines (ADR-018 EN-1, LA-1), reached through the `analyze` operation and run in process by the orchestrating driver (T-13); their proof certificate checkers and the native-engine settlement in layer 6 `fsl-replay` (ADR-018 PC-1 to PC-5, LA-3; ADR-029 CB-2) | none |
+| S7 Typed witness | FSL `WitnessEnvelope` with a `ReplaySource` | FSL `fsl-replay` types (`WitnessEnvelope`, `Witness`, `ReplaySource`), built by CG's backend adapter (ADR-013 OQ-H) | arrow 6 output |
+| S8 Native replay | Parity verdict: the S6a result under the reconstructed input, compared with the S6b result | FSL layer-6 `replay` (S1 to S4 recompile, S6a as executor, and the parity settlement in each arm result's `settle`, FR-072), called by the orchestrating driver (T-13); CG replay adapter (request reconstruction, C-12) | arrow 7. Amended by ADR-018 §5: for a model counterexample the verdict compared is the S6c refutation, and the replayed value is the formula's evaluation over the trace re-executed through `ModelSystem` (ADR-018 CX-3) |
 
 Side inputs:
 
 | Input | Enters | Owner | Rule |
 |---|---|---|---|
-| I1 Domain-package intake | S3 | QSL `model::intake` (QSL PR #200), the only FCD ↔ QSL translation point (AD-016) | Intake admits FCD Semantic IR bytes into an admitted `DomainPackage` before any check reads it. A caller-constructed `DomainPackage` is test-support only. |
-| I2 Dependency packages | S3 | QSL layer-3 `library` defines `ImportView` and its only constructor `ImportView::of(&LibraryPackage)` (ADR-013 T-1). The layer-4 `package` reader reads the v2 bytes into a `LibraryPackage` and calls `library`, a downward edge. | `ImportView` is not checked typestate (ADR-013 R-10). It serves E3 name resolution only. It exposes the package's exported declarations as `(name, NodeKey)` data; I2 re-checks no declaration. A package is identified by its `LibraryName` alone, and a reference into a view is the exported structural `NodeKey`, whose `package` component names the dependency (ADR-013 T-2, T-3). At E4 the dependency's checked package is compiled from source by the same compile that built the view (§4 dependency binding). The view's only constructor is in `library`, so no other module can build one. Orchestration passes the view into E3. No layer-3 module depends on layer 4. |
-| I3 Extracted fence source | S0 | QSL `source` intake adapter over quire-rs extraction (feature `quire-extraction`) | Extraction yields S0 bytes plus a document `SourceMap`. It enters the same S1 parser as any other source. |
+| I1 Domain-package intake | S3 | FSL `model::intake` (FSL PR #200), the only FCD ↔ FSL translation point (AD-016) | Intake admits FCD Semantic IR bytes into an admitted `DomainPackage` before any check reads it. A caller-constructed `DomainPackage` is test-support only. |
+| I2 Dependency packages | S3 | FSL layer-3 `library` defines `ImportView` and its only constructor `ImportView::of(&LibraryPackage)` (ADR-013 T-1). The layer-4 `package` reader reads the v2 bytes into a `LibraryPackage` and calls `library`, a downward edge. | `ImportView` is not checked typestate (ADR-013 R-10). It serves E3 name resolution only. It exposes the package's exported declarations as `(name, NodeKey)` data; I2 re-checks no declaration. A package is identified by its `LibraryName` alone, and a reference into a view is the exported structural `NodeKey`, whose `package` component names the dependency (ADR-013 T-2, T-3). At E4 the dependency's checked package is compiled from source by the same compile that built the view (§4 dependency binding). The view's only constructor is in `library`, so no other module can build one. Orchestration passes the view into E3. No layer-3 module depends on layer 4. |
+| I3 Extracted fence source | S0 | FSL `source` intake adapter over quire-rs extraction (feature `quire-extraction`) | Extraction yields S0 bytes plus a document `SourceMap`. It enters the same S1 parser as any other source. |
 
 Package import graph rules (I2). One check admits a set of import views. The
 set refuses, with no checked graph, when:
@@ -231,7 +231,7 @@ with the same verdict, green in CI. It is built in parallel with Layers 1 and
 
 - Gate #212 cites its result for scenario 6 (§10) where one exists. It is
   evidence, not a ticket-order edge: #212 does not wait on
-  agent-ix/quire-contract-codegen#87.
+  agent-ix/filament-contract-codegen#87.
 - #217's function-application exemplar is the first widening of that spine,
   not the first proof. #218 widens it to frames and scoped clauses.
 - It meets §2.3: its gate discharges at least one proposition over the code it
@@ -255,28 +255,28 @@ distinct nominal type with private constructors in its stage module.
 
 | Edge | From → to | Admitted input | Output | Edge owner |
 |---|---|---|---|---|
-| E1 | S0 → S1 | Source bytes, `SourceIdentity`, limits | Lossless CST | QSL `cst` |
-| E2 | S1 → S2 | A CST with no error or recovery node | Parsed forms | QSL `forms`; family form builders (ADR-012 §2) |
-| E3 | S2 → S3 | Parsed forms, the unit's source owner (ADR-013 O-04), admitted domain packages (I1), layer-3 `library` import views (I2) for name resolution only, each imported dependency's `CheckedGraph`, compiled from source, for typing imported declarations (ADR-015 D-5), and the package's selections (§2.4) | Checked semantic graph | QSL `check`; family `check` and `requirements` hooks (ADR-012 §2) |
-| E4 | S3 → S4 | Checked semantic graph, and each dependency's checked package compiled from its source through S1 to S4 (ADR-015 D-1) (§4 dependency binding) | Linked checked package (in-process) whose closure carries the checked dependency nodes, and v2 bytes on request | QSL `package` |
-| E5 | S4 → S5 | `quire.checked-package/v2` bytes only. IR's reader enforces condition 1 of the §4 verified binding (supported version) under FR-322 (IR TC-048) | IR `CheckedPackageV2`, then IR nodes | IR reader. The wire contract is QSpec's. |
-| E6 | S4 → S6a | In-process linked checked package with its checked dependency closure (E4), typed arguments, object environment, `Meter` | `Evaluation` carrying a `FamilyOutcome` | QSL `value::expression`, behind the layer-E `quire-eval` interface that defines `Evaluation` (FR-401) |
+| E1 | S0 → S1 | Source bytes, `SourceIdentity`, limits | Lossless CST | FSL `cst` |
+| E2 | S1 → S2 | A CST with no error or recovery node | Parsed forms | FSL `forms`; family form builders (ADR-012 §2) |
+| E3 | S2 → S3 | Parsed forms, the unit's source owner (ADR-013 O-04), admitted domain packages (I1), layer-3 `library` import views (I2) for name resolution only, each imported dependency's `CheckedGraph`, compiled from source, for typing imported declarations (ADR-015 D-5), and the package's selections (§2.4) | Checked semantic graph | FSL `check`; family `check` and `requirements` hooks (ADR-012 §2) |
+| E4 | S3 → S4 | Checked semantic graph, and each dependency's checked package compiled from its source through S1 to S4 (ADR-015 D-1) (§4 dependency binding) | Linked checked package (in-process) whose closure carries the checked dependency nodes, and v2 bytes on request | FSL `package` |
+| E5 | S4 → S5 | `filament.checked-package/v2` bytes only. IR's reader enforces condition 1 of the §4 verified binding (supported version) under FR-322 (IR TC-048) | IR `CheckedPackageV2`, then IR nodes | IR reader. The wire contract is FSpec's. |
+| E6 | S4 → S6a | In-process linked checked package with its checked dependency closure (E4), typed arguments, object environment, `Meter` | `Evaluation` carrying a `FamilyOutcome` | FSL `value::expression`, behind the layer-E `filament-eval` interface that defines `Evaluation` (FR-401) |
 | E7 | S5 → S6b | IR nodes; the per-item requirement records (keyed by occurrence key, ADR-012 §13.5; an operation-application record also holds its result bound and path condition, FR-062), which the driver passes from the in-process `CheckedPackage`, with each routed item's occurrence key and result bound (FR-075); bounds, and the `route` candidate sets, passed by the orchestrating driver (T-13) | `ObligationRecord` per requested item. For `supported` items: oracle, harness and one `KaniOutcome`. | CG, with RT ops and IR outcome (AD-016 arrows 3 to 6) |
-| E8 | S6b → S7 | Kani run of a `supported` item | QSL `WitnessEnvelope{source: ReplaySource}`, where `ReplaySource` is `Witness(Witness)` or `Input(values)` (ADR-013 O-25; the AD-016 amendments are ADR-013 QC-20 and QC-29) | CG |
-| E9 | S7 → S8 | The replay request: the packet plus the #231 envelope members (state environment, accounting limits, and the S1 to S4 stage limits copied from the proving run), and the source of the proved package and of its domain and dependency packages, keyed by source labels or package identity (QC-1 byte provision) | Parity verdict | The orchestrating driver (T-13) calls `qsl_replay::replay` with the request CG's replay adapter builds (ADR-013 C-12); CG reaches QSL through layer-6 `replay` only. `replay` settles parity in each arm result's `settle` (FR-072). `replay` recompiles the source through S1 to S4 into a `CheckedPackage` whose closure carries the checked dependency nodes (E4). It builds each dependency's view under the §4 dependency binding, selects the function by `QualifiedName`, then calls the S6a executor. No `CheckedPackage` is built from wire bytes.. Amended by ADR-018 §5: a model counterexample replays through the facade entry `qsl_replay::replay_model_trace`, beside `replay`, which recompiles as above, re-admits the subject and re-executes each step through `ModelSystem` in place of the function call (ADR-018 CX-3) |
-| E10 | S4 → S6c | In-process linked checked package with its checked dependency closure (E4); the claim items by occurrence key; the subject binding (FR-120); each engine's settings and budgets. Added by ADR-029 OP-2; for EN-1, ADR-018 §7 adds the model subject (SM-2), the checked temporal clause and fairness set or the derived deadlock-freedom item (DL-3); amended by ADR-020 §9, for a refinement item, the checked refinement node, the abstract subject's checked package and its initial-state snapshots; amended by ADR-027 PS-1, the subject may be a protocol subject, which adds the checked protocol clause, its `over` and role bindings and the resolved memory model of each outermost `parallel` | One FR-331 terminal record per item; for a refutation, the engine's counterexample over the subject | QSL `analyze` |
-| E11 | S6c → S7 | A refutation and its counterexample over the subject. Added by ADR-029 OP-2; for EN-1 the counterexample is ADR-018's `TemporalCounterexample` (CX-2) | QSL `WitnessEnvelope` with a `ReplaySource` for the subject's trace, binding the subject in its obligation identity | QSL layer A `qsl-analyze` |
+| E8 | S6b → S7 | Kani run of a `supported` item | FSL `WitnessEnvelope{source: ReplaySource}`, where `ReplaySource` is `Witness(Witness)` or `Input(values)` (ADR-013 O-25; the AD-016 amendments are ADR-013 QC-20 and QC-29) | CG |
+| E9 | S7 → S8 | The replay request: the packet plus the #231 envelope members (state environment, accounting limits, and the S1 to S4 stage limits copied from the proving run), and the source of the proved package and of its domain and dependency packages, keyed by source labels or package identity (QC-1 byte provision) | Parity verdict | The orchestrating driver (T-13) calls `fsl_replay::replay` with the request CG's replay adapter builds (ADR-013 C-12); CG reaches FSL through layer-6 `replay` only. `replay` settles parity in each arm result's `settle` (FR-072). `replay` recompiles the source through S1 to S4 into a `CheckedPackage` whose closure carries the checked dependency nodes (E4). It builds each dependency's view under the §4 dependency binding, selects the function by `QualifiedName`, then calls the S6a executor. No `CheckedPackage` is built from wire bytes.. Amended by ADR-018 §5: a model counterexample replays through the facade entry `fsl_replay::replay_model_trace`, beside `replay`, which recompiles as above, re-admits the subject and re-executes each step through `ModelSystem` in place of the function call (ADR-018 CX-3) |
+| E10 | S4 → S6c | In-process linked checked package with its checked dependency closure (E4); the claim items by occurrence key; the subject binding (FR-120); each engine's settings and budgets. Added by ADR-029 OP-2; for EN-1, ADR-018 §7 adds the model subject (SM-2), the checked temporal clause and fairness set or the derived deadlock-freedom item (DL-3); amended by ADR-020 §9, for a refinement item, the checked refinement node, the abstract subject's checked package and its initial-state snapshots; amended by ADR-027 PS-1, the subject may be a protocol subject, which adds the checked protocol clause, its `over` and role bindings and the resolved memory model of each outermost `parallel` | One FR-331 terminal record per item; for a refutation, the engine's counterexample over the subject | FSL `analyze` |
+| E11 | S6c → S7 | A refutation and its counterexample over the subject. Added by ADR-029 OP-2; for EN-1 the counterexample is ADR-018's `TemporalCounterexample` (CX-2) | FSL `WitnessEnvelope` with a `ReplaySource` for the subject's trace, binding the subject in its obligation identity | FSL layer A `fsl-analyze` |
 
 E9 details:
 
 - The replay request is the packet plus the #231 envelope members: the
   state environment, the accounting limits, and the S1 to S4 stage limits
   copied from the proving run (ADR-013 O-26, QC-8). CG does not construct
-  them from anything else. QSpec fixes the outcome→verdict map per ADR-013
+  them from anything else. FSpec fixes the outcome→verdict map per ADR-013
   O-16 category (FR-323, with QC-8), and the request carries the members
   above only. `Undefined` and `FamilyOutcome::FamilyEvaluated` never count
   as agreement. Remaining
-  work: agent-ix/quire-specification#141.
+  work: agent-ix/filament-specification#141.
 - The recompile runs under the stage limits the request carries. A limit
   refusal at E9 carries its `LimitExceeded` cause and yields no parity
   verdict; ADR-013 C-09 gives the item's terminal value.
@@ -309,7 +309,7 @@ E9 details:
   `FamilyOutcome::FamilyEvaluated` result never counts as agreement. It
   settles `inconclusive` with a typed cause.
 
-Capability routing (ADR-012 §6 and §7, #185). Each step has one owner. QSL
+Capability routing (ADR-012 §6 and §7, #185). Each step has one owner. FSL
 `route` (layer R, §6.1) computes each item's candidate set after S4 and
 before E7. CG `negotiate_*` settles every item's disposition at E7 (AD-016
 arrow 4) and writes its one terminal record. After E7, `route` reads the
@@ -323,13 +323,13 @@ FR-331 dispositions as wire and returns the `BackendId` of each item settled
   in as an argument; it is never global state.
 - The orchestrating driver (T-13) passes the checked package's v2 bytes and
   the candidate sets to CG, and after E7 passes each `BackendId` that `route`
-  returns to CG generation. No QSL library module depends on or calls CG.
+  returns to CG generation. No FSL library module depends on or calls CG.
 - The registry-to-CG path crosses as data (ADR-013 T-7): a backend's descriptor
   is its FR-331 provider manifest, which the driver reads and `route` converts
   into its `BackendDescriptor`; candidate sets cross on the candidate-set wire
-  authored in agent-ix/quire-specification#134; a capability crosses in its #229
-  wire spelling. No shared Rust crate holds these types. QSL and CG each convert
-  from the wire, so there is no CG → QSL type edge and FB-05 holds.
+  authored in agent-ix/filament-specification#134; a capability crosses in its #229
+  wire spelling. No shared Rust crate holds these types. FSL and CG each convert
+  from the wire, so there is no CG → FSL type edge and FB-05 holds.
 - Capability kinds are the #134 vocabulary.
 
 ### 2.2 What each edge preserves
@@ -352,11 +352,11 @@ by design, and no later stage may recover it.
 |---|---|---|---|---|---|
 | E1 | Minted, lossless | Minted: spans against `SourceIdentity` and revision; I3 adds the document `SourceMap` | none | Edition read from source | none |
 | E2 | Dropped | Carried: each form holds the span of its CST node | none: forms carry position only | Edition and the unit's profile, import and model selections carried; each form's `using` alias carried as written | Declared bounds and extents carried as syntax |
-| E3 | none | Carried: QSL, the only span minter, keys the source map by occurrence key (node id, role, ordinal; ADR-013 O-07) | **Minted**: checked node id (`quire.checked-semantic-node/v1`, FR-201). A node bound to a domain-package declaration carries that declaration's `DeclarationKey{package, node}`, which the domain package assigns and I1 intake admits; QSL never mints one (ADR-013 O-03, C-02). AD-016 arrow 1 is stale here. Remaining work: agent-ix/quire-specification#141. Node ids are content-addressed over the ADR-013 O-04 preimage. Structurally identical nodes share one id, and each source occurrence is keyed by (node id, role, ordinal) (ADR-013 O-07). The node-identity preimage names the node's owner: `SourceOwner` or `DefinitionOwner` (`{authority, identity}`) for a source- or definition-declared node, and the domain package identity and IR node, with no version, for a `ModelOwner` node (QC-18). Package scope comes only from that owner; a node's FR-322 `declaration` is package-local and contributes its qualified name to the content key (ADR-013 O-04). A declared record, tuple or function carries its owner, so only packages of one owner share its id, and declared nodes of distinct owners never share a `NodeKey`. Builtin and anonymous structural types (`scalar_type`, `bounded_domain` and anonymous composite types) carry no owner and share one id across packages (OQ-7 ruling). The package selections (§2.4) are admitted here, because the FR-322 application-node key includes each operation's law `DefinitionRef`s, each `{authority, identity}`. A reference into an I2 view is the exported structural `NodeKey`, whose `package` component names the dependency (ADR-013 T-3). | Package selections admitted (§2.4); dependency and domain-package identities resolved and recorded | Bounds and extents typed. Each checked item that has `Requirements` gets one requirement record, made without negotiation and keyed by its occurrence key, holding the item's one capability kind (the #134 vocabulary, FR-057), the declared extent and the authored bound. `request_index` is the bytewise order of those keys, so two identical claims stay distinct. The record holds kind, extent and bound only (ADR-012 §13.5). AD-016 arrow 1's `capability_report` wording is stale here: the v2 `capability_report` is FR-322's feature-level report (E4). |
-| E4 | none | Carried: source map by occurrence key, in the package | Carried verbatim | **Minted**: package identity and version, v2 schema version | Carried as v2 `bounded_domain` and `model_population`. The per-item requirement records are carried in the in-process `CheckedPackage`, not in the v2 bytes. The v2 `capability_report` follows FR-322: one `{feature, disposition}` entry per `required_features` entry and per selected model capability. A function-only `Value` package has `required_features = ["quire.value.complete/v1"]` and one entry for it with disposition `available`. |
+| E3 | none | Carried: FSL, the only span minter, keys the source map by occurrence key (node id, role, ordinal; ADR-013 O-07) | **Minted**: checked node id (`filament.checked-semantic-node/v1`, FR-201). A node bound to a domain-package declaration carries that declaration's `DeclarationKey{package, node}`, which the domain package assigns and I1 intake admits; FSL never mints one (ADR-013 O-03, C-02). AD-016 arrow 1 is stale here. Remaining work: agent-ix/filament-specification#141. Node ids are content-addressed over the ADR-013 O-04 preimage. Structurally identical nodes share one id, and each source occurrence is keyed by (node id, role, ordinal) (ADR-013 O-07). The node-identity preimage names the node's owner: `SourceOwner` or `DefinitionOwner` (`{authority, identity}`) for a source- or definition-declared node, and the domain package identity and IR node, with no version, for a `ModelOwner` node (QC-18). Package scope comes only from that owner; a node's FR-322 `declaration` is package-local and contributes its qualified name to the content key (ADR-013 O-04). A declared record, tuple or function carries its owner, so only packages of one owner share its id, and declared nodes of distinct owners never share a `NodeKey`. Builtin and anonymous structural types (`scalar_type`, `bounded_domain` and anonymous composite types) carry no owner and share one id across packages (OQ-7 ruling). The package selections (§2.4) are admitted here, because the FR-322 application-node key includes each operation's law `DefinitionRef`s, each `{authority, identity}`. A reference into an I2 view is the exported structural `NodeKey`, whose `package` component names the dependency (ADR-013 T-3). | Package selections admitted (§2.4); dependency and domain-package identities resolved and recorded | Bounds and extents typed. Each checked item that has `Requirements` gets one requirement record, made without negotiation and keyed by its occurrence key, holding the item's one capability kind (the #134 vocabulary, FR-057), the declared extent and the authored bound. `request_index` is the bytewise order of those keys, so two identical claims stay distinct. The record holds kind, extent and bound only (ADR-012 §13.5). AD-016 arrow 1's `capability_report` wording is stale here: the v2 `capability_report` is FR-322's feature-level report (E4). |
+| E4 | none | Carried: source map by occurrence key, in the package | Carried verbatim | **Minted**: package identity and version, v2 schema version | Carried as v2 `bounded_domain` and `model_population`. The per-item requirement records are carried in the in-process `CheckedPackage`, not in the v2 bytes. The v2 `capability_report` follows FR-322: one `{feature, disposition}` entry per `required_features` entry and per selected model capability. A function-only `Value` package has `required_features = ["filament.value.complete/v1"]` and one entry for it with disposition `available`. |
 | E5 | none | Carried as `CheckedSourceMapEntry`, never re-minted | Carried read-only as `CheckedNodeId` and `CheckedDomainPackageRef` | Checked: an unsupported v2 contract version refuses | Carried; `requires-bound` derived once from the IR table |
 | E6 | none | Carried: `Evaluation.location` from the node id | Carried | Package identity bound to the evaluation | none |
-| E7 | none | CG tags from node ids | Obligation id = the ADR-013 O-09 structural identity: the preimage value itself, compared by equality and hashed by no function, of the subject's node id (a clause, an operation-application node or a function declaration, ADR-013 O-09), its occurrence key, the obligation kind and the ordered arguments (each a parameter node id, its position and its declared domain), the source span excluded (AD-016 arrow 5; QC-14, landed by agent-ix/quire-specification#140). The occurrence key keeps two occurrences of one clause apart. Remaining work: agent-ix/quire-specification#141. | none | **Minted**: disposition per `request_index`, obligation identity with its per-argument bound subset |
+| E7 | none | CG tags from node ids | Obligation id = the ADR-013 O-09 structural identity: the preimage value itself, compared by equality and hashed by no function, of the subject's node id (a clause, an operation-application node or a function declaration, ADR-013 O-09), its occurrence key, the obligation kind and the ordered arguments (each a parameter node id, its position and its declared domain), the source span excluded (AD-016 arrow 5; QC-14, landed by agent-ix/filament-specification#140). The occurrence key keeps two occurrences of one clause apart. Remaining work: agent-ix/filament-specification#141. | none | **Minted**: disposition per `request_index`, obligation identity with its per-argument bound subset |
 | E8 | none | none: resolved at E9 | Obligation id, harness symbol | none | Bound subset carried; `proved` qualifies only over it |
 | E9 | none | Resolved: `WireNodeId` → `NodeKey` by lookup in the recompiled package, then the packet's occurrence key → nested span through the v2 source map of the package that holds the node | Obligation id, node id | Package identity of the replayed package equals the proved package | Same finite domain as the harness |
 
@@ -375,7 +375,7 @@ causes and catalog codes. Stages S1 to S4 and the I2 reader return
 Fault(InternalFault) }`, where `Evaluation` is `Evaluation<Value>`. S6a
 itself returns `Result<Evaluation<T>, InternalFault>`. The layer-E
 `Evaluation<T> { outcome: FamilyOutcome<T>,
-location: Option<quire_semantic_value::location::ExpressionLocation>, losses: Vec<LocatedLoss> }` carries the
+location: Option<filament_semantic_value::location::ExpressionLocation>, losses: Vec<LocatedLoss> }` carries the
 evaluation's one locus and its loss records beside the layer-E
 `FamilyOutcome { Evaluated(kernel::Outcome), FamilyEvaluated(FamilyResult) }`,
 which carries the kernel `Outcome<T>` unchanged in its `Evaluated` arm and a
@@ -417,25 +417,25 @@ and ADR-013 T-4 the limit cause type (`LimitExceeded`).
 input. It settles a distinct outcome kind, carried to the command outcome and
 to its own exit code (§5). It is never reported as success or as a refusal.
 
-**Proof-stage acceptance (S6b; agent-ix/quire-contract-runtime#53, ADR-010
+**Proof-stage acceptance (S6b; agent-ix/filament-contract-runtime#53, ADR-010
 OBS-028).** This rule applies to proof evidence that the #205 gates count: #212,
 #217 and #219, and the skeleton spine (§1.1). A gate discharges at least one
 proposition over the code it claims. Compiling the code under the prover is
 necessary, not sufficient: RT `src/exact/` compiled under Kani and the
-obligation count did not move (agent-ix/quire-contract-runtime#53).
+obligation count did not move (agent-ix/filament-contract-runtime#53).
 
 The proof's expectation SHALL be derived independently of the function under
 proof. Where the expectation and the function under proof share a helper, a
 mutation of that helper moves both sides together and the proposition holds
-vacuously: on the agent-ix/quire-contract-runtime#57 harness over `src/exact/`,
+vacuously: on the agent-ix/filament-contract-runtime#57 harness over `src/exact/`,
 both sides went through `decode`, and a mutated `decode` left the proof
 VERIFICATION SUCCESSFUL (#245).
 
-An expectation that evaluates through a `quire-exact` operation shares that
+An expectation that evaluates through a `filament-exact` operation shares that
 operation with any function under proof that calls it (ADR-013 O-13). For a
-proof of a `quire-exact` operation, or of an RT op that calls one, the
-expectation comes from the QSpec operation vectors or from a checked-in
-specification model that calls no `quire-exact` operation.
+proof of a `filament-exact` operation, or of an RT op that calls one, the
+expectation comes from the FSpec operation vectors or from a checked-in
+specification model that calls no `filament-exact` operation.
 
 For each module a counted gate claims, the gate passes only if all of these
 hold:
@@ -467,11 +467,11 @@ executor, a predetermined verdict or a build-only run is never proof evidence
 
 Proof evidence from other gates counts toward the #205 gates only when those
 gates meet this rule. Kernel proof evidence today is the RT `src/exact/` gate,
-which agent-ix/quire-contract-runtime#53 tracks; after X-1 it is the
-`quire-exact` gate. Whether this rule also binds RT and CG repository process
-outside the #205 gates is a cross-repository rule, proposed to QSpec as an NFR
-(T-11). agent-ix/quire-contract-codegen#58, agent-ix/quire-contract-codegen#59,
-agent-ix/quire-contract-codegen#60 and #73 are defects in CG's generated-harness
+which agent-ix/filament-contract-runtime#53 tracks; after X-1 it is the
+`filament-exact` gate. Whether this rule also binds RT and CG repository process
+outside the #205 gates is a cross-repository rule, proposed to FSpec as an NFR
+(T-11). agent-ix/filament-contract-codegen#58, agent-ix/filament-contract-codegen#59,
+agent-ix/filament-contract-codegen#60 and #73 are defects in CG's generated-harness
 gate, not the gate itself.
 
 ### 2.4 Package selections
@@ -479,36 +479,36 @@ gate, not the gate itself.
 A package's selections are its edition, clause profile selections, model
 selections, sources, required features and dependency selections. They are
 admitted at E3, where node identity is minted, and not at E4. The inputs they
-are derived from are the source bytes, the QSL build, and the domain and
+are derived from are the source bytes, the FSL build, and the domain and
 dependency sources, because E9 recompiles from those alone (ADR-013 O-26).
-The wire members that carry them are QSpec's FR-322 members. `package_id` composition is QSpec FR-322's.
+The wire members that carry them are FSpec's FR-322 members. `package_id` composition is FSpec FR-322's.
 The package holds no definition rows; a law's
-`DefinitionRef` is the QSpec definition prose's `{authority, identity}` for
+`DefinitionRef` is the FSpec definition prose's `{authority, identity}` for
 that role (FR-110's layer table).
 
 | Member | Source |
 |---|---|
-| `edition` | The edition `agent-ix` / `ix:native`, named by its definition identity in QSpec's definition prose (agent-ix/quire-specification). The source header's `language "ix:native" edition "1-draft";` names it, and E3 matches it to the `edition` role. The edition in QSpec's v2 positive fixtures (`quire-edition`) is a placeholder, not an edition. |
-| `profile_selections` | The clause profile rows FR-322 defines (`temporal_profile`, `protocol_profile`), one per header `profile` that selects a clause profile; the clause family owning that role resolves it in its catalog and writes the row (ADR-012 §2; `TemporalTrace`, `ProtocolClause`, #218). A header `profile` the `Value` family resolves selects the layer table's `root` row (`quire.value.complete/v1`) by identity alone, matching QSpec's `profile v = "<id>";` header grammar, or refuses, and writes no row (FR-110, amended 2026-09-26). |
-| each law `DefinitionRef` | The `{authority, identity}` of the QSpec definition prose for that role, from FR-110's layer table: the definition the QSL build implements. |
-| `model` declarations | The source header's `model` declarations, matched to the domain packages admitted at I1, and the model is recorded by its `model_root` node only, with no lock row and no version (QSpec #510). Spine `compile` (§5) runs I1 over the unit's `model` declarations (amended 2026-09-25). |
+| `edition` | The edition `agent-ix` / `ix:native`, named by its definition identity in FSpec's definition prose (agent-ix/filament-specification). The source header's `language "ix:native" edition "1-draft";` names it, and E3 matches it to the `edition` role. The edition in FSpec's v2 positive fixtures (`quire-edition`) is a placeholder, not an edition. |
+| `profile_selections` | The clause profile rows FR-322 defines (`temporal_profile`, `protocol_profile`), one per header `profile` that selects a clause profile; the clause family owning that role resolves it in its catalog and writes the row (ADR-012 §2; `TemporalTrace`, `ProtocolClause`, #218). A header `profile` the `Value` family resolves selects the layer table's `root` row (`filament.value.complete/v1`) by identity alone, matching FSpec's `profile v = "<id>";` header grammar, or refuses, and writes no row (FR-110, amended 2026-09-26). |
+| each law `DefinitionRef` | The `{authority, identity}` of the FSpec definition prose for that role, from FR-110's layer table: the definition the FSL build implements. |
+| `model` declarations | The source header's `model` declarations, matched to the domain packages admitted at I1, and the model is recorded by its `model_root` node only, with no lock row and no version (FSpec #510). Spine `compile` (§5) runs I1 over the unit's `model` declarations (amended 2026-09-25). |
 | `sources` | `RawSourceRef` (authority and identity) of the sources E1 read |
-| `required_features` | §2.2 E4: `["quire.value.complete/v1"]` for a function-only `Value` package |
-| `dependency_selections` | One `{identity, package_id}` entry per directly imported library identity: the identity each import names and the dependency's own `package_id`; a selection binds by identity and carries no version (QSpec FR-322-AC-35) |
+| `required_features` | §2.2 E4: `["filament.value.complete/v1"]` for a function-only `Value` package |
+| `dependency_selections` | One `{identity, package_id}` entry per directly imported library identity: the identity each import names and the dependency's own `package_id`; a selection binds by identity and carries no version (FSpec FR-322-AC-35) |
 
 **Amended (2026-09-24).** The emitter takes the edition and
 each law's `DefinitionRef` from the layer table
-(`qsl-semantics/src/value/definition.rs`), by definition identity. The
-catalog names each definition the QSL build implements and holds no copy of
-a QSpec document. The diagnostics catalog reference is
-QSpec's `native-diagnostics.md` `DefinitionRef`, `{agent-ix,
-quire.native.diagnostics/v1}`. FR-110 resolves a header
+(`fsl-semantics/src/value/definition.rs`), by definition identity. The
+catalog names each definition the FSL build implements and holds no copy of
+an FSpec document. The diagnostics catalog reference is
+FSpec's `native-diagnostics.md` `DefinitionRef`, `{agent-ix,
+filament.native.diagnostics/v1}`. FR-110 resolves a header
 profile by identity alone (amended 2026-09-26).
 
-A `dependency_selections` entry is a QSpec `DependencySelection`
+A `dependency_selections` entry is an FSpec `DependencySelection`
 `{identity, package_id}`: the library identity an
 `import "L"` names, and the dependency's own
-`quire.package.semantic/v2` `package_id` (FR-322, QSpec STD-105). The package holds one entry per directly imported library identity,
+`filament.package.semantic/v2` `package_id` (FR-322, FSpec STD-105). The package holds one entry per directly imported library identity,
 in strictly ascending UTF-8 byte order of `identity`. E4
 (`CheckedPackage::link_with`) builds the closure from the direct imports and
 each dependency's own closure, refusing two selections of one identity whose
@@ -519,8 +519,8 @@ The emitter writes only direct selections.
 The I2 reader derives the closure recursively from those
 entries and each admitted dependency's own direct entries.
 
-**Amended (2026-09-25).** The QSpec schema defect this section
-recorded is fixed (QSpec STD-105; IR-287 types the entry as
+**Amended (2026-09-25).** The FSpec schema defect this section
+recorded is fixed (FSpec STD-105; IR-287 types the entry as
 `CheckedDependencySelection`). Spine `compile` takes a dependency input and
 resolves each `import` against it, and `replay` builds that input from its
 request (ADR-015, FR-099, FR-098).
@@ -536,7 +536,7 @@ required role `root`). A clause-profile header resolves in its clause
 family's catalog (ADR-012 §2, #218). A `model`
 declaration resolves only through I1 (FR-056). This is the header-selection
 successor of `complete::resolve_source_package`, and FR-087-AC-7 retires
-that function once FR-110 is implemented. Its QSpec FR-131 capabilities
+that function once FR-110 is implemented. Its FSpec FR-131 capabilities
 (the closure over a caller-supplied `DefinitionCatalog`, the complete-V1
 bundle, `PackageLimits` and the resolved-graph identity) move to layer-3
 `library::bundle`
@@ -553,19 +553,19 @@ re-walks them against the scenarios.
 | ID | Forbidden | Why | Observed today | Verified by |
 |---|---|---|---|---|
 | FB-01 | Any stage after S1 reads source text, CST, token text or display strings to recover semantics | S3 is the only semantic authority. Later stages carry its identities (§2.2). | none known | #216 "No public downstream consumer reconstructs meaning" evidence, then #226 |
-| FB-02 | Any consumer branches on diagnostic message text, `Display` output or rendered codes instead of the typed cause | Diagnostics are output for people, not a channel between stages | CG decides Kani verdicts by string-matching rendered backend output (agent-ix/quire-contract-codegen#59); it retires with #231's typed proof-result envelope | #216 evidence, #231, then #226 |
+| FB-02 | Any consumer branches on diagnostic message text, `Display` output or rendered codes instead of the typed cause | Diagnostics are output for people, not a channel between stages | CG decides Kani verdicts by string-matching rendered backend output (agent-ix/filament-contract-codegen#59); it retires with #231's typed proof-result envelope | #216 evidence, #231, then #226 |
 | FB-03 | Wire-admitted data reaches an S6a evaluator, the S4 emitter or a backend as if it were checked, without the verified binding in §4 | A wire reader proves shape, not a source compile | `protocol_artifact::read` feeding `state` and `temporal` (ADR-010 OBS-015); checked-predicate and temporal-subject handoffs to IR (OBS-037) | #216 typestate evidence and "incompatible version fails without partial output", then #226 |
 | FB-04 | Lowering, execution or proof from an S2 form or any unchecked object | Checking precedes all executable lowering (§4) | none on the spine | #216 typestate evidence, then #226 |
-| FB-05 | A backend repository (IR, RT, CG) depends on QSL Rust types, except the CG replay adapter's normal dependency on the public API of the QSL layer-6 `replay` module, which includes the #231 envelopes, and nothing else (AD-016 Owner decision 5). The shared `no_std` leaf crates are outside FB-05. The class has five members: the kernel `quire-exact` (K), the semantic-value leaf `quire-semantic-value` (SV, whose dependencies are K, ADR-013 §2's one RFC 8785 encoder `quire-canonical`, `serde` and `thiserror`, and no QSL layer), the walker toolkit `quire-walk` (W, whose dependencies are `core` and `alloc` only; ADR-030 FR-356), the checked-term crate `quire-checked` (C, in the repository `agent-ix/quire-eval`, whose dependencies are SV, K, W, `quire-canonical`, `serde` and `thiserror`, and no QSL layer; FR-400), and the evaluation-core leaf `quire-eval` (E, in the same repository, whose dependencies are drawn from C, SV, K, W and `thiserror`, and no QSL layer; FR-401). A backend may read a checked term from C but SHALL NOT enable C's `construct` feature, so it cannot build one (FB-14). Each is a leaf below every QSL layer it serves (§6.1), so an edge into it closes no cycle, and a backend may take a normal edge to it: RT → `quire-exact`, CG → `quire-exact`, RT → `quire-semantic-value`, CG → `quire-semantic-value`, IR → `quire-walk`, RT → `quire-walk` and CG → `quire-walk`, RT → `quire-checked` and CG → `quire-checked`, and RT → `quire-eval` and CG → `quire-eval` are §7.1 edges. `quire-walk` is the crate IR depends on, from its own repository, `agent-ix/quire-walk`, so IR never depends on the QSL repository. A crate joins the class only by an amendment of this row | IR reads the v2 wire only (AD-016 Decisions) | none from IR: neither IR manifest (the root crate or `quire-contract-model`) declares a QSL dependency (OBS-029) | a direction check over each backend's `cargo tree`, plus the API-surface check, whose part (a) fails any CG call outside the `replay` facade, owner to be named (T-12, a proposed #215 scope amendment) |
-| FB-06 | S3 calls a backend crate to decide a semantic question such as definedness | The backend would become a second language authority | QSL checking, composed proofs and lowering call IR `DeclarationEnvironment::check_expression` (OBS-010) | module-DAG check (§6.1) |
-| FB-07 | Replay through any executor other than S6a, or replay evidence from an injected stub executor | AD-016 arrow 7 | IR `replay_with_native_runtime` → `runtime::execute` (removed by agent-ix/quire-contract-ir#140); stubbed CG and IR replay executors (OBS-028) | #217, #219 |
-| FB-08 | A witness typed by any means other than QSL `qsl-replay` `Witness::parse` and `decode` | AD-016 arrow 7: `decode` is the only typing step | IT-010 splits Kani stdout into an `i64` (OBS-002) | #217, #219 |
+| FB-05 | A backend repository (IR, RT, CG) depends on FSL Rust types, except the CG replay adapter's normal dependency on the public API of the FSL layer-6 `replay` module, which includes the #231 envelopes, and nothing else (AD-016 Owner decision 5). The shared `no_std` leaf crates are outside FB-05. The class has five members: the kernel `filament-exact` (K), the semantic-value leaf `filament-semantic-value` (SV, whose dependencies are K, ADR-013 §2's one RFC 8785 encoder `quire-canonical`, `serde` and `thiserror`, and no FSL layer), the walker toolkit `filament-walk` (W, whose dependencies are `core` and `alloc` only; ADR-030 FR-356), the checked-term crate `filament-checked` (C, in the repository `agent-ix/filament-eval`, whose dependencies are SV, K, W, `quire-canonical`, `serde` and `thiserror`, and no FSL layer; FR-400), and the evaluation-core leaf `filament-eval` (E, in the same repository, whose dependencies are drawn from C, SV, K, W and `thiserror`, and no FSL layer; FR-401). A backend may read a checked term from C but SHALL NOT enable C's `construct` feature, so it cannot build one (FB-14). Each is a leaf below every FSL layer it serves (§6.1), so an edge into it closes no cycle, and a backend may take a normal edge to it: RT → `filament-exact`, CG → `filament-exact`, RT → `filament-semantic-value`, CG → `filament-semantic-value`, IR → `filament-walk`, RT → `filament-walk` and CG → `filament-walk`, RT → `filament-checked` and CG → `filament-checked`, and RT → `filament-eval` and CG → `filament-eval` are §7.1 edges. `filament-walk` is the crate IR depends on, from its own repository, `agent-ix/filament-walk`, so IR never depends on the FSL repository. A crate joins the class only by an amendment of this row | IR reads the v2 wire only (AD-016 Decisions) | none from IR: neither IR manifest (the root crate or `filament-contract-model`) declares an FSL dependency (OBS-029) | a direction check over each backend's `cargo tree`, plus the API-surface check, whose part (a) fails any CG call outside the `replay` facade, owner to be named (T-12, a proposed #215 scope amendment) |
+| FB-06 | S3 calls a backend crate to decide a semantic question such as definedness | The backend would become a second language authority | FSL checking, composed proofs and lowering call IR `DeclarationEnvironment::check_expression` (OBS-010) | module-DAG check (§6.1) |
+| FB-07 | Replay through any executor other than S6a, or replay evidence from an injected stub executor | AD-016 arrow 7 | IR `replay_with_native_runtime` → `runtime::execute` (removed by agent-ix/filament-contract-ir#140); stubbed CG and IR replay executors (OBS-028) | #217, #219 |
+| FB-08 | A witness typed by any means other than FSL `fsl-replay` `Witness::parse` and `decode` | AD-016 arrow 7: `decode` is the only typing step | IT-010 splits Kani stdout into an `i64` (OBS-002) | #217, #219 |
 | FB-09 | A CLI command makes a semantic decision, or reads diagnostic text | §5 | none known | #230, then #226 |
-| FB-10 | A proof gate claims a module over which it discharges no SUCCESS check, or shares a helper between its expectation and the code under proof without a run mutation of that helper that fails the proof | §2.3 | RT `src/exact/` (agent-ix/quire-contract-runtime#53); the agent-ix/quire-contract-runtime#57 harness's shared `decode` (#245) | §2.3 gate owners, #219 |
-| FB-11 | A dependency or test-time edge that closes a cycle between QSL, IR, RT and CG | §7.1 | QSL ⇄ CG and QSL ⇄ RT test-time cycles (OBS-040) | the same direction check over normal and dev edges (T-12) |
-| FB-12 | Capability negotiation in S3 | AD-016: QSL admission negotiates nothing. #210 owns the capability-selection contract, #213 the `Capability` value type, and #185 is the only registry and router. | composed `requests::report` (ADR-010 OBS-003, a #210 item) | #216 "#185 alone owns registry/routing" evidence |
-| FB-13 | A module other than QSL `check` calls the kernel `NodeKey` constructor | §6.1 "Kernel identity constructors have one caller each" (ADR-013 O-04); the T-12 API-surface check enforces it | none in `value::enumeration` or `value::unit` since #213 S-1b: they compute structural keys in `value::semantic_node`, compare a retained key with the computed key, and resolve a preimage's node ids (`WireNodeId`) by lookup among the admitted keys; no shipped code mints their keys (SR-508: no `src/` module constructs an `EnumDeclaration` or a `UnitGraph`) | `arch-lint api-surface` T12-B; its debt list (FR-060, "T12-B and T12-C: shipped code and debt lists") only shrinks, and a new mint outside `check` fails |
-| FB-14 | Code other than the admitting QSL modules constructs a checked term, or the S6a evaluator reaches the checker to evaluate one: a call into `quire-checked`'s construction module from outside `check` (and, for `AdmittedIntegerDivision` only, `value::definition`), a dependency outside `qsl-semantics` that enables `quire-checked`'s `construct` feature, or a shipped `qsl-eval` module that names a `qsl_semantics::check` item other than the family marker types `ValueFunctionFamily` and `ProtocolClauseFamily` | §6.1 "C holds the checked terms" (FR-400): checking authority stays with the checker once its output types leave its crate | `qsl-eval` reads the checked terms from `qsl_semantics::check`, where the checker defines them, until X-13 lands | `arch-lint api-surface` T12-G (FR-060), the import-direction check and the feature check over QSL's and each backend's resolved graph (FR-400-AC-1 to AC-3) |
+| FB-10 | A proof gate claims a module over which it discharges no SUCCESS check, or shares a helper between its expectation and the code under proof without a run mutation of that helper that fails the proof | §2.3 | RT `src/exact/` (agent-ix/filament-contract-runtime#53); the agent-ix/filament-contract-runtime#57 harness's shared `decode` (#245) | §2.3 gate owners, #219 |
+| FB-11 | A dependency or test-time edge that closes a cycle between FSL, IR, RT and CG | §7.1 | FSL ⇄ CG and FSL ⇄ RT test-time cycles (OBS-040) | the same direction check over normal and dev edges (T-12) |
+| FB-12 | Capability negotiation in S3 | AD-016: FSL admission negotiates nothing. #210 owns the capability-selection contract, #213 the `Capability` value type, and #185 is the only registry and router. | composed `requests::report` (ADR-010 OBS-003, a #210 item) | #216 "#185 alone owns registry/routing" evidence |
+| FB-13 | A module other than FSL `check` calls the kernel `NodeKey` constructor | §6.1 "Kernel identity constructors have one caller each" (ADR-013 O-04); the T-12 API-surface check enforces it | none in `value::enumeration` or `value::unit` since #213 S-1b: they compute structural keys in `value::semantic_node`, compare a retained key with the computed key, and resolve a preimage's node ids (`WireNodeId`) by lookup among the admitted keys; no shipped code mints their keys (SR-508: no `src/` module constructs an `EnumDeclaration` or a `UnitGraph`) | `arch-lint api-surface` T12-B; its debt list (FR-060, "T12-B and T12-C: shipped code and debt lists") only shrinks, and a new mint outside `check` fails |
+| FB-14 | Code other than the admitting FSL modules constructs a checked term, or the S6a evaluator reaches the checker to evaluate one: a call into `filament-checked`'s construction module from outside `check` (and, for `AdmittedIntegerDivision` only, `value::definition`), a dependency outside `fsl-semantics` that enables `filament-checked`'s `construct` feature, or a shipped `fsl-eval` module that names a `fsl_semantics::check` item other than the family marker types `ValueFunctionFamily` and `ProtocolClauseFamily` | §6.1 "C holds the checked terms" (FR-400): checking authority stays with the checker once its output types leave its crate | `fsl-eval` reads the checked terms from `fsl_semantics::check`, where the checker defines them, until X-13 lands | `arch-lint api-surface` T12-G (FR-060), the import-direction check and the feature check over FSL's and each backend's resolved graph (FR-400-AC-1 to AC-3) |
 
 ## 4. Checking precedes lowering
 
@@ -588,7 +588,7 @@ re-walks them against the scenarios.
   The reader has one consumer, the S4 source resolution (ADR-015 D-1 step
   6). Spine `compile`, and `replay` when it compiles a dependency (source 2
   of the dependency binding below), reads each library's emitted v2 bytes
-  through `qsl_package::read_import_view` into the `ImportView` E3 resolves
+  through `fsl_package::read_import_view` into the `ImportView` E3 resolves
   against. No other path reads a checked package from its wire: a library
   import, CG and `replay` each compile from source, and the bytes read are
   only the ones that compile just emitted. The reader keeps no refusal-record
@@ -603,22 +603,22 @@ re-walks them against the scenarios.
   2. `replay`: the QC-1 byte provision in the replay request.
      `replay` compiles each dependency's bytes through S1 to S4 and verifies
      the emitted v2 bytes to build its view.
-- Exactly one QSL type carries each QSL stage output. Two QSL public types
+- Exactly one FSL type carries each FSL stage output. Two FSL public types
   named `CheckedPackage` with different meanings (ADR-010 OBS-017, DA-04)
   break this rule. The rule is met by deleting the native-v1 type with SEAM-1
   (M-6). No type is renamed (AD-016 Owner decision 6). The RT and IR types of
   that name stay in their repositories as AD-016 records them.
 - The S4 in-process type is defined in layer-4 `package`, the crate
-  `qsl-package` (X-7, §6.2). `package` keeps its fields and its constructor
+  `fsl-package` (X-7, §6.2). `package` keeps its fields and its constructor
   private and exposes read-only accessors. A `compile_fail` test shows that
-  code outside `qsl-package` cannot construct it. The AD-016 arrow 7
+  code outside `fsl-package` cannot construct it. The AD-016 arrow 7
   executor is `CheckedPackage::call`, over the one type
-  `qsl_package::CheckedPackage`. **Amended (X-7).** This bullet
+  `fsl_package::CheckedPackage`. **Amended (X-7).** This bullet
   used to have `value::expression` name the type through one `pub use`, so
   that `value::CheckedPackage::call` was the path. Once `CheckedPackage` is
-  in `qsl-package`, that line is a root-crate re-export of a moved item,
+  in `fsl-package`, that line is a root-crate re-export of a moved item,
   which §7.2 and X-7's acceptance criteria forbid. Callers name the type
-  at `qsl_package::CheckedPackage`; `CheckedPackage::call` still resolves
+  at `fsl_package::CheckedPackage`; `CheckedPackage::call` still resolves
   through `CheckedPackageEvaluation`, which is the contract the path stood
   for. X-6 resolved FR-068-AC-10 the same way (ruling R3).
 - `CheckedPackage`'s layer-5 operations, `call` and `evaluate`, are the
@@ -627,11 +627,11 @@ re-walks them against the scenarios.
   and implements it for `CheckedPackage` over `package`'s accessors. The
   operations are trait methods because Rust accepts an inherent `impl` only
   in the crate that defines the type (E0116), and under X-7 that crate is
-  `qsl-package`. The trait keeps the method names, so `pkg.call(..)` and
+  `fsl-package`. The trait keeps the method names, so `pkg.call(..)` and
   `CheckedPackage::call(&pkg, ..)` both resolve, as AD-016 Owner decision 6
   requires. A caller brings `CheckedPackageEvaluation` into scope to call
-  them, at `qsl_eval::value::CheckedPackageEvaluation`: layer 5 is the crate
-  `qsl-eval` (X-8), whose `value` module re-exports it.
+  them, at `fsl_eval::value::CheckedPackageEvaluation`: layer 5 is the crate
+  `fsl-eval` (X-8), whose `value` module re-exports it.
 - A value that fails a stage keeps the previous stage's type. It is never
   wrapped as the next stage's type in a failed state.
 
@@ -640,8 +640,8 @@ re-walks them against the scenarios.
 #225 owns the lifecycle and CLI orchestration design. #122 and its bounded
 child #232 implement it, and #230 is the conformance slice. The rules below are
 constraints that design must meet. The field list and the exit-code values are
-#225's. The orchestrating driver crate is T-13, implemented by QSL #248 in
-its own repository, agent-ix/quire-driver.
+#225's. The orchestrating driver crate is T-13, implemented by FSL #248 in
+its own repository, agent-ix/filament-driver.
 
 - `command` calls stage APIs in DAG order and makes no semantic decision. It
   contains no parsing, name resolution, typing, definedness, capability or
@@ -658,7 +658,7 @@ its own repository, agent-ix/quire-driver.
 - A library caller gets the same stage APIs and the same outcome. No behavior
   is reachable only through the CLI.
 - FR-027 and FR-100's request-file handling belongs to the non-core
-  `qsl-command` crate. Its `command` and `formal_source` modules replace
+  `fsl-command` crate. Its `command` and `formal_source` modules replace
   the existing root modules, with every consumer repointed and no root
   compatibility module or re-export. The driver CLI calls this crate for
   bounded file intake and typed preparation, then uses the existing driver
@@ -671,7 +671,7 @@ its own repository, agent-ix/quire-driver.
 - Spine `compile` takes complete-V1 source. CLI `compile` reaches it through
   a native-compile/1 request whose program source declares `1-draft`, with
   no clause bindings and only `semantic-ir/2.0.0` domain package models
-  (FR-027), and returns the `quire.checked-package/v2` bytes as its library
+  (FR-027), and returns the `filament.checked-package/v2` bytes as its library
   artifact. The driver writes the machine outcome document (FR-286), not
   those native artifact bytes. The
   the package selections come from the source header and the definition
@@ -685,7 +685,7 @@ its own repository, agent-ix/quire-driver.
   (ADR-015 D-1). No `native-rule-model/1` model has a spine equivalent.
 - Spine `run` calls a named checked function: a `QualifiedName` resolved by
   name lookup in the compiled package, then `CheckedPackage::call` (E6, and
-  the same shape E9 uses). Its entry is `qsl_replay::spine::run`. CLI `run`
+  the same shape E9 uses). Its entry is `fsl_replay::spine::run`. CLI `run`
   reaches it through a native-run/1 request whose program source declares
   `1-draft`, routed by edition as compile is, carrying a `call` member
   (function name, name-keyed canonical integer arguments) and writing a
@@ -700,37 +700,37 @@ its own repository, agent-ix/quire-driver.
 
 The "Depends on" column is an exhaustive allow-list. A module may depend on a
 listed lower layer, or on a module earlier in its own layer's order. Every
-other edge is forbidden. The column is the exhaustive allow-list of first-party layer edges; an external third-party crate is not a layer edge and this column does not govern it (for example, `quire-driver` uses `serde_json` to read FR-331 manifest bytes as data, ADR-013 T-7), except that a cell that restricts its external crates with "only" or "without `std`" (SV, WG) is exhaustive for that crate; a per-crate exact dependency table in a layering test is a stricter gate that governs where it exists. The result is acyclic. #226 owns the drift gate that
+other edge is forbidden. The column is the exhaustive allow-list of first-party layer edges; an external third-party crate is not a layer edge and this column does not govern it (for example, `filament-driver` uses `serde_json` to read FR-331 manifest bytes as data, ADR-013 T-7), except that a cell that restricts its external crates with "only" or "without `std`" (SV, WG) is exhaustive for that crate; a per-crate exact dependency table in a layering test is a stricter gate that governs where it exists. The result is acyclic. #226 owns the drift gate that
 enforces it; before #226, §3's interim rule applies.
 
 | Layer | Modules, in order | Stage | Depends on |
 |---|---|---|---|
-| K | `quire-exact` crate: the AD-016 Shared-type row as amended by QC-15, QC-21 and QC-22 (TK-10; ADR-013 §8) (`Value`, `ValueType`, `Outcome`, `Refusal`, `Undefined`, `BoundViolation`, `CardinalityBound`, `BoundedInteger`, `NodeKey`, `EffectiveId`, `UniverseId`, `ObjectId`, `UnitId`, `VariantId`, `MemberId`, `PopulationId`, `Origin`/`Location`, `ChargePoint`, `Meter`, `Incomplete`) and the scalar and collection operations over them | foundation | none in the ecosystem |
-| SV | `quire-semantic-value` crate: the shared `no_std` semantic-value leaf. It holds `semantic_node` (the `invalid_semantic_graph` refusal vocabulary, the `check_terms` term check, the node-id preimage member `CanonicalNodeId` and the shared `IDENTITY_LIMITS`), `stop` (the `Stop` early-exit carrier), `quantity` (FR-142 quantities, the `UnitTable`/`UnitScope` over kernel `UnitId`s and the quantity operations) and `unit`'s runtime half (`Dimension`, `Unit`, `UnitEdge`, the checked `DimensionNode`/`UnitNode`, `UnitGraph`'s topology and lookups, `CompoundUnit` and its `compound_unit_id`, `InvalidCompoundUnit`), `enumeration`'s runtime half (the structural `EnumDeclaration`, `EnumValue`, `EnumMemberIndex`, `compare_enum`), `definition` (the `SelectionRefusalCode` and the `invalid_package` `PackageRefusal` vocabulary), `declaration` (the FR-143 registry `TypeEnvironment`/`ObjectTypeDeclaration`, record and tuple construction, and the FR-149 checked equality), `containment` (the FR-143 `ValueGraph`), `checking` (`CheckMode`, `CheckingLimits` and the `DEFAULT_CHECKING_*` defaults), `location` (the expression `ExpressionOwner` and `ExpressionLocation`, FR-273), `call` (the argument-admission `InputRefusal`, with its catalog code string and cause tag, and the `wrong_snapshot` cause `WrongSnapshotCause` that checking and evaluation both raise, X-15), `loss` (`ValueLoss`, `LocatedLoss`), `catalog` (the ADR-013 O-16/O-17 catalog vocabulary every stage's cause maps into: `Category`, `CatalogCode`, `CatalogCoded`, `UndefinedCoded`, `UndefinedRecord`, `UndefinedReason` and `InternalFault`, X-14) and `supplied_stop` (the FR-277 supplied-value stop records `CallFailure` carries, X-14) | runtime semantic values and the call-surface vocabulary that S3 checking, S6a evaluation and a backend share | K; `quire-canonical`, `serde` and `thiserror`, each without `std` |
-| W | `quire-walk` crate (external, `agent-ix/quire-walk`): the shared `no_std` walker toolkit (ADR-030 FR-356): an explicit heap stack of typed frames with enter and exit callbacks, Kani-verified, with no features | walk traversal for every stage | none: `core` and `alloc` only |
-| C | `quire-checked` crate (external, in `agent-ix/quire-eval`): the shared checked-term leaf (FR-400). It holds the checked terms S3 produces and S6a reads: the expression-term arena (`Node`, `NodeId`, `NodeKind`, `CheckedBody`, `CheckedNode` and their operator and literal types), the checked `DispatchTable`, `CheckedExpression`, the evaluation-visible `CheckedGraph` with its scope view (type environment, enum member index, operation table, dispatch operations, imported graphs by `LibraryName`), clause records stripped of spans and forms, the `node_key` terms and the semantic-graph projection, model correspondence and occurrence map, `PackageId`, `AdmittedIntegerDivision`, `Capability`, `DeclarationKey`, `OperationKey` and `DomainPackageRef` as values, and the admitted-operation data. Its `construct` module is the only way to build a checked term (T12-G) | S3 output and S6a input | SV, K, W; `quire-canonical`, `serde` and `thiserror`, each without `std` |
-| WG | `qsl-walk-grow` crate: the one `maybe_grow` wrapper (ADR-030 D-1 item 6, FR-356), which grows the stack on demand and is a plain call under `cfg(kani)`; std-only, outside the qualified core (ADR-029 CB-2) | grow-on-demand recursion outside the core | `stacker` only; depended on only by QSL crates outside the core (A, P, X, tool and the root crate), never by a core crate |
-| E | `quire-eval` crate (external, in `agent-ix/quire-eval`): the shared evaluation-core leaf (FR-262, FR-401). It holds the FR-262 interface (the host-body registry and its admission result, the admitted signature, the session, its step and the body contract) and the evaluation result vocabulary: `Evaluation`, `CallFailure` and the S6a result types `FamilyOutcome`, `FamilyResult` and `EvalOutcome`. It reads a checked closure only through the contract it defines, which `qsl-eval`'s std reference adapter implements. It joins FB-05's shared-leaf class, so RT → `quire-eval` and CG → `quire-eval` are §7.1 edges. | the interface S6a, RT and CG call to evaluate checked code | C, SV, K, W; `thiserror`, without `std`; no QSL layer |
-| EC | `quire-eval-corpus` crate (external, in `agent-ix/quire-eval`): the FR-402 evaluator corpus. It holds the `quire.evaluator-case/v1` case record, the bundle loader and its refusals, the case-admission contract an implementation supplies, and the compared record built from an E `Evaluation` or `CallFailure` and a K meter. It is a `std` crate, not a `no_std` leaf; it evaluates nothing. It is in its own repository, so FR-059 classifies an edge into it as no ecosystem repository, and QSL's differential harness and CG may each take an edge to it. | the evaluator differential corpus | E, SV, K; `quire-canonical`, `serde`, `serde_json`; no QSL layer |
+| K | `filament-exact` crate: the AD-016 Shared-type row as amended by QC-15, QC-21 and QC-22 (TK-10; ADR-013 §8) (`Value`, `ValueType`, `Outcome`, `Refusal`, `Undefined`, `BoundViolation`, `CardinalityBound`, `BoundedInteger`, `NodeKey`, `EffectiveId`, `UniverseId`, `ObjectId`, `UnitId`, `VariantId`, `MemberId`, `PopulationId`, `Origin`/`Location`, `ChargePoint`, `Meter`, `Incomplete`) and the scalar and collection operations over them | foundation | none in the ecosystem |
+| SV | `filament-semantic-value` crate: the shared `no_std` semantic-value leaf. It holds `semantic_node` (the `invalid_semantic_graph` refusal vocabulary, the `check_terms` term check, the node-id preimage member `CanonicalNodeId` and the shared `IDENTITY_LIMITS`), `stop` (the `Stop` early-exit carrier), `quantity` (FR-142 quantities, the `UnitTable`/`UnitScope` over kernel `UnitId`s and the quantity operations) and `unit`'s runtime half (`Dimension`, `Unit`, `UnitEdge`, the checked `DimensionNode`/`UnitNode`, `UnitGraph`'s topology and lookups, `CompoundUnit` and its `compound_unit_id`, `InvalidCompoundUnit`), `enumeration`'s runtime half (the structural `EnumDeclaration`, `EnumValue`, `EnumMemberIndex`, `compare_enum`), `definition` (the `SelectionRefusalCode` and the `invalid_package` `PackageRefusal` vocabulary), `declaration` (the FR-143 registry `TypeEnvironment`/`ObjectTypeDeclaration`, record and tuple construction, and the FR-149 checked equality), `containment` (the FR-143 `ValueGraph`), `checking` (`CheckMode`, `CheckingLimits` and the `DEFAULT_CHECKING_*` defaults), `location` (the expression `ExpressionOwner` and `ExpressionLocation`, FR-273), `call` (the argument-admission `InputRefusal`, with its catalog code string and cause tag, and the `wrong_snapshot` cause `WrongSnapshotCause` that checking and evaluation both raise, X-15), `loss` (`ValueLoss`, `LocatedLoss`), `catalog` (the ADR-013 O-16/O-17 catalog vocabulary every stage's cause maps into: `Category`, `CatalogCode`, `CatalogCoded`, `UndefinedCoded`, `UndefinedRecord`, `UndefinedReason` and `InternalFault`, X-14) and `supplied_stop` (the FR-277 supplied-value stop records `CallFailure` carries, X-14) | runtime semantic values and the call-surface vocabulary that S3 checking, S6a evaluation and a backend share | K; `quire-canonical`, `serde` and `thiserror`, each without `std` |
+| W | `filament-walk` crate (external, `agent-ix/filament-walk`): the shared `no_std` walker toolkit (ADR-030 FR-356): an explicit heap stack of typed frames with enter and exit callbacks, Kani-verified, with no features | walk traversal for every stage | none: `core` and `alloc` only |
+| C | `filament-checked` crate (external, in `agent-ix/filament-eval`): the shared checked-term leaf (FR-400). It holds the checked terms S3 produces and S6a reads: the expression-term arena (`Node`, `NodeId`, `NodeKind`, `CheckedBody`, `CheckedNode` and their operator and literal types), the checked `DispatchTable`, `CheckedExpression`, the evaluation-visible `CheckedGraph` with its scope view (type environment, enum member index, operation table, dispatch operations, imported graphs by `LibraryName`), clause records stripped of spans and forms, the `node_key` terms and the semantic-graph projection, model correspondence and occurrence map, `PackageId`, `AdmittedIntegerDivision`, `Capability`, `DeclarationKey`, `OperationKey` and `DomainPackageRef` as values, and the admitted-operation data. Its `construct` module is the only way to build a checked term (T12-G) | S3 output and S6a input | SV, K, W; `quire-canonical`, `serde` and `thiserror`, each without `std` |
+| WG | `fsl-walk-grow` crate: the one `maybe_grow` wrapper (ADR-030 D-1 item 6, FR-356), which grows the stack on demand and is a plain call under `cfg(kani)`; std-only, outside the qualified core (ADR-029 CB-2) | grow-on-demand recursion outside the core | `stacker` only; depended on only by FSL crates outside the core (A, P, X, tool and the root crate), never by a core crate |
+| E | `filament-eval` crate (external, in `agent-ix/filament-eval`): the shared evaluation-core leaf (FR-262, FR-401). It holds the FR-262 interface (the host-body registry and its admission result, the admitted signature, the session, its step and the body contract) and the evaluation result vocabulary: `Evaluation`, `CallFailure` and the S6a result types `FamilyOutcome`, `FamilyResult` and `EvalOutcome`. It reads a checked closure only through the contract it defines, which `fsl-eval`'s std reference adapter implements. It joins FB-05's shared-leaf class, so RT → `filament-eval` and CG → `filament-eval` are §7.1 edges. | the interface S6a, RT and CG call to evaluate checked code | C, SV, K, W; `thiserror`, without `std`; no FSL layer |
+| EC | `filament-eval-corpus` crate (external, in `agent-ix/filament-eval`): the FR-402 evaluator corpus. It holds the `filament.evaluator-case/v1` case record, the bundle loader and its refusals, the case-admission contract an implementation supplies, and the compared record built from an E `Evaluation` or `CallFailure` and a K meter. It is a `std` crate, not a `no_std` leaf; it evaluates nothing. It is in its own repository, so FR-059 classifies an edge into it as no ecosystem repository, and FSL's differential harness and CG may each take an edge to it. | the evaluator differential corpus | E, SV, K; `quire-canonical`, `serde`, `serde_json`; no FSL layer |
 | F | `absence` < `json_number` < `serde_object` < `wire_format` < `source` (with `source_map`) < `selection` < `diagnostic` | foundation | SV, K |
 | 1 | `token` < `lexer` < `cst` < `format` (moved from the tool layer by ADR-029 OP-1: the `format` library operation) | S1 | F |
-| 2 | `qsl-forms` crate: `forms` core < family form builders | S2 | 1, F, K |
-| I3 | `qsl-source` crate root < `preflight` | S0 intake adapter | F, K; quire-rs only under feature `quire-extraction` |
+| 2 | `fsl-forms` crate: `forms` core < family form builders | S2 | 1, F, K |
+| I3 | `fsl-source` crate root < `preflight` | S0 intake adapter | F, K; quire-rs only under feature `quire-extraction` |
 | 3 | `semantic_value` < `model` (with `model::intake`) < `library` (with `ImportView`) < `check` core (`CheckContext`, family checker trait, the checker-side record that holds a C checked graph with its source-region table; the shared checked types are in C) < family checker modules (amended by ADR-025 §12: the protocol checker classifies accesses in a weak `parallel` and raises its refusals) (amended by ADR-020 §9: the `Relation` checker holds the refinement checker and `CheckedRefinement`) | S3, I1, I2 binding and view | 2, F, C, SV, K; FCD crates from `model::intake` only |
-| 4 | `package` | S4, I2 byte reader (verification calls `library`) | 3, F, C, SV, K; `quire-contract-model` for the v2 wire contract: the typed structs the emitter builds and the IR reader the I2 reader delegates to (X-7) |
+| 4 | `package` | S4, I2 byte reader (verification calls `library`) | 3, F, C, SV, K; `filament-contract-model` for the v2 wire contract: the typed structs the emitter builds and the IR reader the I2 reader delegates to (X-7) |
 | 5 | `value::expression` core (S6a) < family evaluators under `value::expression`, including the state and temporal evaluators < `simulation` (amended by ADR-018 LA-2: with FR-120's `ModelSystem`, the model subject and the property-automaton translation) | S6a | 4, 3, F, C, E, SV, K |
 | R | `route` (#185 registry and router) | candidate sets over S4 before E7; after E7, the `BackendId` of each item settled `supported`, read from the FR-331 dispositions as wire. The backend is chosen only by the `BackendId` argument. | 4, 3, F, C, SV, K |
 | tool | `complete::editor`, `complete::edit` | tooling over S1 | 1, F |
-| 6 | `replay` | the CG-facing replay facade: S1 to S4 recompile, then S6a. Its public API includes the #231 envelopes. Amended by ADR-018 LA-3: also the model-check verdict types, the `replay_model_trace` arm, the proof certificate checkers and the model-check settlement map | layers 1 to 5, F, C, E, SV, K; `quire-contract-model` for `Std001Code`, the STD-001 code type `DeclineCode::Std001` carries (ADR-013 O-16); I3 under feature `quire-extraction` |
-| A | `qsl-analyze` crate: `analyze` (the in-process engines, ADR-018's `model_check` among them) < `monitor`. Added by ADR-029 CB-3, above the qualified core. Its dependents are the root crate and the orchestrating driver; nothing in layers K to 6, R, tool or `qsl-command` depends on it | S6c; offline `monitor` | 6, 5, 4, 3, R, F, C, E, SV, K |
-| P | `qsl-inspect` crate: `inspect` < `render`. Added by ADR-029 §9, above the qualified core. Its dependents are the root crate and the orchestrating driver; nothing in layers K to 6, R, tool, A or `qsl-command` depends on it | typed views and their rendering | A, 6, 5, 4, 3, R, 1, F, C, E, SV, K |
-| X | `qsl-jit` crate: the JIT execution backend behind layer 5's `ExecutionBackend` seam. Added by ADR-029 EB-7, above the qualified core. Its dependents are the root crate and the orchestrating driver, which pass it to `execute`; nothing in layers K to 6, R, tool, A, P or `qsl-command` depends on it | S6a by a non-reference backend | 5, 4, 3, F, C, E, SV, K; the code-generator crate ADR-029 EB-7 selects |
-| command (outside core) | `qsl-command` crate: `formal_source` < `command`, including its one request decoder, bounded filesystem intake and native result projection | FR-027 and FR-100 request-file preparation and orchestration | 6, 3, 1, F, SV, K; `quire-contract-model` for the existing request and source-coordinate contract; neither I3 nor quire-rs directly; never CG, A, P, X or the driver |
-| driver | the orchestrating driver crate that calls both QSL and CG, from S1 through the FR-331 terminal record (T-13, implemented by #248; #225 accepts its design). It is the crate `quire-driver` in its own repository, agent-ix/quire-driver, downstream of QSL and CG. Nothing depends on it, so the QSL and CG gates never build it. | orchestration across repositories | the QSL layer crates and CG; a separate crate downstream of CG, because CG → QSL is a normal edge and Cargo refuses a package cycle |
+| 6 | `replay` | the CG-facing replay facade: S1 to S4 recompile, then S6a. Its public API includes the #231 envelopes. Amended by ADR-018 LA-3: also the model-check verdict types, the `replay_model_trace` arm, the proof certificate checkers and the model-check settlement map | layers 1 to 5, F, C, E, SV, K; `filament-contract-model` for `Std001Code`, the STD-001 code type `DeclineCode::Std001` carries (ADR-013 O-16); I3 under feature `quire-extraction` |
+| A | `fsl-analyze` crate: `analyze` (the in-process engines, ADR-018's `model_check` among them) < `monitor`. Added by ADR-029 CB-3, above the qualified core. Its dependents are the root crate and the orchestrating driver; nothing in layers K to 6, R, tool or `fsl-command` depends on it | S6c; offline `monitor` | 6, 5, 4, 3, R, F, C, E, SV, K |
+| P | `fsl-inspect` crate: `inspect` < `render`. Added by ADR-029 §9, above the qualified core. Its dependents are the root crate and the orchestrating driver; nothing in layers K to 6, R, tool, A or `fsl-command` depends on it | typed views and their rendering | A, 6, 5, 4, 3, R, 1, F, C, E, SV, K |
+| X | `fsl-jit` crate: the JIT execution backend behind layer 5's `ExecutionBackend` seam. Added by ADR-029 EB-7, above the qualified core. Its dependents are the root crate and the orchestrating driver, which pass it to `execute`; nothing in layers K to 6, R, tool, A, P or `fsl-command` depends on it | S6a by a non-reference backend | 5, 4, 3, F, C, E, SV, K; the code-generator crate ADR-029 EB-7 selects |
+| command (outside core) | `fsl-command` crate: `formal_source` < `command`, including its one request decoder, bounded filesystem intake and native result projection | FR-027 and FR-100 request-file preparation and orchestration | 6, 3, 1, F, SV, K; `filament-contract-model` for the existing request and source-coordinate contract; neither I3 nor quire-rs directly; never CG, A, P, X or the driver |
+| driver | the orchestrating driver crate that calls both FSL and CG, from S1 through the FR-331 terminal record (T-13, implemented by #248; #225 accepts its design). It is the crate `filament-driver` in its own repository, agent-ix/filament-driver, downstream of FSL and CG. Nothing depends on it, so the FSL and CG gates never build it. | orchestration across repositories | the FSL layer crates and CG; a separate crate downstream of CG, because CG → FSL is a normal edge and Cargo refuses a package cycle |
 
 Crate map. Layers F, 1, I3, 2, 3, 4, 5, R, A, P, X and the layer-6 `replay` facade are
-each their own workspace crate (§7.2). K is `quire-exact` (X-1), SV is
-`quire-semantic-value` (X-11), W is `quire-walk`, an external crate in its own repository, `agent-ix/quire-walk`, C is `quire-checked`, an external crate in the repository `agent-ix/quire-eval` (X-13), and WG is `qsl-walk-grow`
+each their own workspace crate (§7.2). K is `filament-exact` (X-1), SV is
+`filament-semantic-value` (X-11), W is `filament-walk`, an external crate in its own repository, `agent-ix/filament-walk`, C is `filament-checked`, an external crate in the repository `agent-ix/filament-eval` (X-13), and WG is `fsl-walk-grow`
 (ADR-030 FR-356). A layer
 crate's `[dependencies]` name only the layer crates and the external crates in
 its "Depends on" cell above, plus external third-party crates that §6.1 says are not layer
@@ -738,31 +738,31 @@ edges.
 
 | Crate | Layer |
 |---|---|
-| `quire-semantic-value` | SV |
-| `quire-walk` (external) | W |
-| `quire-checked` (external, `agent-ix/quire-eval`) | C |
-| `qsl-walk-grow` | WG |
-| `quire-eval` (external, `agent-ix/quire-eval`) | E |
-| `quire-eval-corpus` (external, `agent-ix/quire-eval`) | EC |
-| `qsl-foundation` | F |
-| `qsl-cst` | 1 |
-| `qsl-source` | I3 |
-| `qsl-forms` | 2 |
-| `qsl-semantics` | 3 |
-| `qsl-package` | 4 |
-| `qsl-eval` | 5 |
-| `qsl-route` | R |
-| `qsl-replay` | 6 (`replay`) |
-| `qsl-analyze` | A |
-| `qsl-inspect` | P |
-| `qsl-jit` | X |
-| `qsl-command` | command (outside core) |
+| `filament-semantic-value` | SV |
+| `filament-walk` (external) | W |
+| `filament-checked` (external, `agent-ix/filament-eval`) | C |
+| `fsl-walk-grow` | WG |
+| `filament-eval` (external, `agent-ix/filament-eval`) | E |
+| `filament-eval-corpus` (external, `agent-ix/filament-eval`) | EC |
+| `fsl-foundation` | F |
+| `fsl-cst` | 1 |
+| `fsl-source` | I3 |
+| `fsl-forms` | 2 |
+| `fsl-semantics` | 3 |
+| `fsl-package` | 4 |
+| `fsl-eval` | 5 |
+| `fsl-route` | R |
+| `fsl-replay` | 6 (`replay`) |
+| `fsl-analyze` | A |
+| `fsl-inspect` | P |
+| `fsl-jit` | X |
+| `fsl-command` | command (outside core) |
 
-The root crate, `quire-spec-language`, keeps editor tooling and the remaining
+The root crate, `filament-spec-language`, keeps editor tooling and the remaining
 seam modules (§6.2), and builds no user binary (FR-287). `command` and
-`formal_source` live in `qsl-command`; the root defines and re-exports
+`formal_source` live in `fsl-command`; the root defines and re-exports
 neither module. Other seam modules stay in the root crate until their
-owning change deletes them there. No core crate depends on `qsl-command`;
+owning change deletes them there. No core crate depends on `fsl-command`;
 the existing FR-284 direction and ambient-input rules remain unchanged.
 
 Rules that close the ADR-010 OBS-016 cycles:
@@ -780,7 +780,7 @@ Rules that close the ADR-010 OBS-016 cycles:
   `UndefinedCoded`, `UndefinedRecord`, `UndefinedReason`, `InternalFault`)
   is in SV's `catalog` module (X-14), so E names it without F; `Code`,
   `RefusalRecord`, `Locus` and the record builders stay in F.
-- **K is a leaf.** `quire-exact` depends on no QSL module and no ecosystem
+- **K is a leaf.** `filament-exact` depends on no FSL module and no ecosystem
   crate, so K → `model` → K cannot exist. It is `#![no_std]` and uses only
   `core` and `alloc`, so a no_std consumer depends on it directly. Each kernel
   `Value` and `ValueType` payload is a kernel shape (ADR-013 T-6, against the
@@ -790,7 +790,7 @@ Rules that close the ADR-010 OBS-016 cycles:
   rank), `Value::Reference` carries an `ObjectReference`, and
   `Value::Population` carries the opaque `PopulationId` structural-key newtype
   (QC-21). `ValueType::Population` carries its count only. The
-  `PopulationBinding` a `PopulationId` names is QSL `model`'s. The kernel
+  `PopulationBinding` a `PopulationId` names is FSL `model`'s. The kernel
   `Refusal` carries the kernel's own typed causes; F `diagnostic`, which
   maps each one to an SV `CatalogCode` (ADR-013 T-6, O-17).
   Semantic values that are not kernel types live above K. The
@@ -798,44 +798,44 @@ Rules that close the ADR-010 OBS-016 cycles:
   quantities, the unit graph's runtime half, the structural enum declaration
   and the runtime enum values, the definition refusal vocabulary and the
   FR-143 registry (`TypeEnvironment`, `ObjectTypeDeclaration`) with its
-  FR-149 checked equality are in SV (`quire-semantic-value`), and so is
+  FR-149 checked equality are in SV (`filament-semantic-value`), and so is
   the call surface a backend names when it calls checked code: the checking
   mode and limits, the expression location, the argument-admission refusal
   and the loss records.
-- **W is a shared leaf.** `quire-walk`, in its own repository `agent-ix/quire-walk`, depends on no crate: it is
+- **W is a shared leaf.** `filament-walk`, in its own repository `agent-ix/filament-walk`, depends on no crate: it is
   `#![no_std]`, uses only `core` and `alloc`, and has no features, so no
-  feature unification can bring `std` or `stacker` into it. SV, F and every QSL layer
+  feature unification can bring `std` or `stacker` into it. SV, F and every FSL layer
   may depend on it, and so may IR, RT and CG (FB-05's shared-leaf class),
   each as a git dependency at `branch = "main"`. K stays a leaf with no dependency and keeps its
   hand-written iterative traits (ADR-030 D-4.7).
-- **WG is outside the core and not a shared leaf.** `qsl-walk-grow` holds
-  the one `maybe_grow` wrapper and depends only on `stacker`. Only QSL crates
+- **WG is outside the core and not a shared leaf.** `fsl-walk-grow` holds
+  the one `maybe_grow` wrapper and depends only on `stacker`. Only FSL crates
   outside the qualified core may depend on it; no CB-2 crate may (ADR-029
   CB-3), and arch-lint's direction check refuses such an edge. No backend
   depends on it (FB-05).
-- **SV is a shared leaf.** `quire-semantic-value`, in its own repository
-  `agent-ix/quire-semantic-value` (K is `agent-ix/quire-exact`, also its own
+- **SV is a shared leaf.** `filament-semantic-value`, in its own repository
+  `agent-ix/filament-semantic-value` (K is `agent-ix/filament-exact`, also its own
   repository), depends on K and on no
-  QSL layer. It is `#![no_std]` and uses only `core` and `alloc`; its
+  FSL layer. It is `#![no_std]` and uses only `core` and `alloc`; its
   external dependencies are ADR-013 §2's one RFC 8785 encoder
   (`quire-canonical`, built without its `std` feature), `serde` and
   `thiserror`, none with `std`. A no_std backend therefore depends on it
-  directly (FB-05's shared-leaf class). QSL layers F, 3, 4, 5, R and 6 may
-  import its items by their `quire_semantic_value::` path; today
-  `qsl-semantics`, `qsl-package`, `qsl-eval`, `qsl-replay`, `qsl-bench`
-  and the root crate do. No QSL crate
+  directly (FB-05's shared-leaf class). FSL layers F, 3, 4, 5, R and 6 may
+  import its items by their `filament_semantic_value::` path; today
+  `fsl-semantics`, `fsl-package`, `fsl-eval`, `fsl-replay`, `fsl-bench`
+  and the root crate do. No FSL crate
   re-exports them (§7.2). SV mints no `NodeKey`, `EffectiveId` or
   `PopulationId`: it resolves a node id read from a preimage by lookup among
   the admitted keys and never calls a `NodeKey` constructor (T-12 rule
-  (b) scans only the QSL repository, so it no longer reaches this crate;
-  `agent-ix/quire-semantic-value` FR-060-AC-5 replaces it with clippy
+  (b) scans only the FSL repository, so it no longer reaches this crate;
+  `agent-ix/filament-semantic-value` FR-060-AC-5 replaces it with clippy
   `disallowed-methods` on the `NodeKey` constructor that builds a key from its
   structural fields and on `decode_admitted`, and its
   FR-060-AC-6 does the same for the `EffectiveId` and `PopulationId`
   constructors). It retypes an admitted enum member's key as that member's
   `VariantId` (`EnumValue::variant`, through the `VariantId` constructor) and
   computes nothing for it. It computes one kernel identity, a compound unit's
-  `quire.value.compound-unit/v1` `UnitId` (`compound_unit_id`), through
+  `filament.value.compound-unit/v1` `UnitId` (`compound_unit_id`), through
   `quire-canonical`, under the shared `IDENTITY_LIMITS`, which live in SV so
   every layer from SV up names one constant. Its unit graph checks topology
   only: `UnitGraph::from_checked_nodes` takes nodes whose own checks their
@@ -848,29 +848,29 @@ Rules that close the ADR-010 OBS-016 cycles:
   and the admission that raises the refusals. SV takes enum declaration and
   member keys as given: `EnumDeclaration` checks the member list and that a
   case is declared, and verifies no key.
-- **C holds the checked terms.** `quire-checked`, in the repository
-  `agent-ix/quire-eval`, holds the values the checker admits and the
+- **C holds the checked terms.** `filament-checked`, in the repository
+  `agent-ix/filament-eval`, holds the values the checker admits and the
   evaluator reads (FR-400). It depends on SV, K and W, `quire-canonical`,
-  `serde` and `thiserror`, and on no QSL crate, so the repository depends on
+  `serde` and `thiserror`, and on no FSL crate, so the repository depends on
   nothing above it and an edge into it closes no cycle; it joins FB-05's
   shared-leaf class. It is `#![no_std]` with `alloc`, and its `std` feature
   is on by default. Every field of a checked term is private to the crate.
   Its `construct` module, compiled only under its `construct` feature, is
-  the only way to build one: only `qsl-semantics` enables that feature, and
+  the only way to build one: only `fsl-semantics` enables that feature, and
   FR-060 rule T12-G admits calls into it only from `check`, and from
   `library` and `value::definition` for the package identity and the
   admitted division law they mint (FB-14). It mints no kernel identity: a
   moved method that minted one stays in its minting layer, as
   `DeclarationKey`'s `EffectiveId` stays in `model`. A checked term carries
-  the SV `ExpressionLocation`. Every moved record leaves its F spans, `qsl-forms` spans
-  and `qsl-forms` syntax trees in a checker-side table in layer 3 keyed by
+  the SV `ExpressionLocation`. Every moved record leaves its F spans, `fsl-forms` spans
+  and `fsl-forms` syntax trees in a checker-side table in layer 3 keyed by
   the record's identity, and resolving a `Location` to a source region stays
   in layer 3. A plain value a checked term carries that sits in F or layer 2
   moves down into SV; one that sits in layer 3 moves into C.
 - **Layer 2 holds kernel types.** `forms` depends on K and carries kernel
   types directly as parsed-form payloads, for example
-  `quire_exact::Integer` for an integer literal and
-  `quire_exact::CollectionKind` for a collection kind. E3 reads those values
+  `filament_exact::Integer` for an integer literal and
+  `filament_exact::CollectionKind` for a collection kind. E3 reads those values
   and never re-reads token text (FB-01). The edge admits kernel types, not
   kernel operations: `forms` performs no evaluation. A kernel operation is
   one of the K row's scalar and collection operations; constructing or
@@ -885,13 +885,13 @@ Rules that close the ADR-010 OBS-016 cycles:
   `conformance` code that reads `value::expression` facts). Both moves are
   M-2's own — moving `model` code is not M-5's job — but neither can execute
   until M-5 relocates the `value::expression` types they depend on (§7.3).
-  Kernel types move to `quire-exact` (X-1). `model::accounting` is a
+  Kernel types move to `filament-exact` (X-1). `model::accounting` is a
   separate layer-3 `model` rung meter over its own disjoint counters
   (`ModelNormalizationLimits`), not a kernel type, and stays in `model`.
   X-1 added the kernel copy of `value::accounting`'s
-  `Meter`/`Incomplete`/`LimitKind` but left the QSL `value` copies in place,
+  `Meter`/`Incomplete`/`LimitKind` but left the FSL `value` copies in place,
   unchanged; finishing that consolidation for `value::accounting`
-  alone is its own change (§7.3). QSL value modules
+  alone is its own change (§7.3). FSL value modules
   outside the kernel row move to `semantic_value`, a separate
   change. After M-2 and
   M-2c, `model` depends on `semantic_value`, F and K only. This breaks
@@ -899,16 +899,16 @@ Rules that close the ADR-010 OBS-016 cycles:
 - **The temporal evaluator, under `value::expression`, sits below orchestration
   and never imports a wire module.** Wire emission and reading live in S4
   `package`, and temporal evaluation lives in S6a. This breaks SCC S3.
-- **`check` never imports `quire-contract-model`.** This resolves OBS-010.
+- **`check` never imports `filament-contract-model`.** This resolves OBS-010.
 - **`route` is not S3.** The checker never reads the registry (ADR-012 §6).
   `route` reads the S4 capability report and computes candidate sets. It
   negotiates nothing per item. CG's per-item negotiation at E7 stays in CG.
-- **Evaluator-path crates are `no_std`-capable behind `std`.** A QSL crate
+- **Evaluator-path crates are `no_std`-capable behind `std`.** An FSL crate
   that an AD-001 slice converts declares a default-on `std` feature and
   builds with `core` and `alloc` only when it is off (NFR-015). With `std`
   off, F's external crates are `serde` and `thiserror`, each without
   `std`, and the `ix-trace-rs` proc macro; layer 4 names
-  `quire-contract-model` only under `std`, so its v2 emitter and I2 reader
+  `filament-contract-model` only under `std`, so its v2 emitter and I2 reader
   are `std` items while the checked package itself is not. NFR-015's
   per-crate table records each crate's class (closure or crate tier).
   `make build-no-std` runs each row's tier command, one package at a time:
@@ -918,9 +918,9 @@ Rules that close the ADR-010 OBS-016 cycles:
   only when the lower layers it depends on are `no_std`-capable.
 - **Families are modules, not crates.** Every family (ADR-012 §1) is a set of
   modules inside its layers' crates: a form builder under `forms` in
-  `qsl-forms`, a checker under `check` in `qsl-semantics`, an emission arm
-  under `package` in `qsl-package` and an evaluator under `value::expression`
-  in `qsl-eval`. A crate holds one §6.1 layer, and a family spans layers
+  `fsl-forms`, a checker under `check` in `fsl-semantics`, an emission arm
+  under `package` in `fsl-package` and an evaluator under `value::expression`
+  in `fsl-eval`. A crate holds one §6.1 layer, and a family spans layers
   (§7.2).
 - **Family modules never depend on each other.** Inside each layer the order
   is core, then families. `CheckContext` (contents in ADR-012 §2) lives in the
@@ -934,7 +934,7 @@ Rules that close the ADR-010 OBS-016 cycles:
   the executor entry for TK-01 (ADR-013 O-26, C-13). It recompiles the
   supplied source through S1 to S4, takes domain and dependency packages from
   the QC-1 byte provision, selects the function by `QualifiedName` and calls
-  S6a. Its public API, which includes the #231 envelopes, is the only QSL
+  S6a. Its public API, which includes the #231 envelopes, is the only FSL
   surface CG uses (FB-05, T-12). #243 lands it first with the skeleton spine
   (T-2), and each family's implementation ticket widens it for that family
   (ADR-013 TK-01).
@@ -942,11 +942,11 @@ Rules that close the ADR-010 OBS-016 cycles:
   the kernel `NodeKey` constructor (ADR-013 O-04), and only `model` calls the
   kernel `EffectiveId` constructor (ADR-013 O-05) and the kernel `PopulationId`
   constructor (ADR-013 QC-21). The T-12 API-surface check enforces all three.
-- **E holds the evaluation interface.** `quire-eval`, in the repository
-  `agent-ix/quire-eval` beside C, depends on C, SV, K, W and `thiserror`,
-  and on no QSL crate, so an edge into it closes no cycle (FR-401). It is
+- **E holds the evaluation interface.** `filament-eval`, in the repository
+  `agent-ix/filament-eval` beside C, depends on C, SV, K, W and `thiserror`,
+  and on no FSL crate, so an edge into it closes no cycle (FR-401). It is
   `#![no_std]` with `alloc`, has no `std` feature and forbids unsafe code.
-  It may name C's checked terms and names no QSL item (`CheckedPackage`,
+  It may name C's checked terms and names no FSL item (`CheckedPackage`,
   `ObjectEnvironment`, the checker-side record): it identifies a callable by
   its kernel `NodeKey`,
   compares admitted signatures by their parameter and result `ValueType`s,
@@ -954,7 +954,7 @@ Rules that close the ADR-010 OBS-016 cycles:
   implementation supplies. The std reference adapter that implements that
   contract over `CheckedPackage` and `ObjectEnvironment` is layer 5's.
   `ObjectEnvironment` stays in layer-3 `model`, since its populations map
-  holds `PopulationBinding`. QSL layers 5, 6, A, P and X and the root
+  holds `PopulationBinding`. FSL layers 5, 6, A, P and X and the root
   crate may depend on E; layers F to 4 and R do not.
   E also holds the `no_std` evaluator (FR-403, X-16): it reads C's checked
   terms and reads objects and populations through an environment contract
@@ -962,7 +962,7 @@ Rules that close the ADR-010 OBS-016 cycles:
 
 ### 6.2 Current module map
 
-Each current module (`QSL:lib.rs:13-44`, ADR-010 §3.1) maps to a target module
+Each current module (`FSL:lib.rs:13-44`, ADR-010 §3.1) maps to a target module
 or to a seam. A seam carries its retirement change. Retirement means removal
 in one change, with no compatibility disposition.
 
@@ -970,10 +970,10 @@ Seams:
 
 | Seam | Contents | Retires when | Owning change |
 |---|---|---|---|
-| SEAM-1 native-v1 | ADR-010 lane A, defined by its entry points: the `lower` command, the native `run` and `compile` paths, `package::NativePackage`, `runtime::execute`, the native-linked-package/1 format and the `lowering` targets. SEAM-1 holds every module reachable only from those entry points, including the `package` submodules `intake`, `reading`, `wire`, `encoding`, `features` and `view` (native-linked-package/1, FR-019 and FR-020): arena `syntax` and native `parser`, `linking::native`, native `checking`, `native_model`, `model_source`, `mapped`, `runtime`, and the old `command` submodules `compilation`, `projection_error` and `wire`, and the native arms of `extraction` and `output`. The retained spine request decoder and source-coordinate adapter are now `qsl-command` (§6.1), not a second native producer. | Per lane (§7.3 M-6). The checked-package producer lane (M-6a) is deleted before gate #216, except native `compile`, which stays for `0-draft` sources until M-6c (Ruling 2026-09-24): "Old producer/bypass paths are unreachable" and "Do not pass while two authoritative producer paths coexist" (#216). Native `run` clause execution and the modules only it reaches retire with M-6c. | M-6a, M-6c to M-6e |
-| SEAM-2 composed | ADR-010 lane B: `syntax::composed`, `parser::composed`, `linking::composed`, `checking::composed`, and their composed-only shared code | Deleted (owner ruling). Each composed family is deleted in the PR that lands its S3 family checker and S4 emission, so everything reaches IR through the one S4 spine. The retained `formal_source` adapter belongs to `qsl-command` (§6.1). #185 removes the `requests` backend disposition from QSL (FB-12). | M-6e with the family implementation tickets (§7.3); #185 for `requests` |
-| SEAM-3 protocol wires | `protocol_artifact` (compiled-protocol /1 to /3 emit and read; checked-predicate, temporal-subject and native-temporal handoffs) | B8 emission (`protocol_artifact::native`, including `/1` to `/3` producers and `handoff::writer`) is assigned to QSL-840. It remains live until its replacement gates below pass; QSL-840 is not a deletion authorization. B9 readers (`read`, `v2::read`, `v3::read`, `wire`, `validate`) remain with QSL-838 / 498-B6 per QSL-498-B6. State and temporal reads feeding the old evaluators retire under M-6c only with their evaluator replacements. The replacement wire is checked-package v2 `protocol` nodes and no separate protocol document (QSpec FR-464 to FR-466, FR-383); the control-to-temporal activation map is derived from the checked protocol's `activation` and `requirements` only after the G9 contract is specified and implemented. | M-6c, M-6d |
-| SEAM-4 IT-010 | `tests/it/configversion_backends.rs` proof and replay path, QSL dev dependencies on CG and IR, and the RT test fixture crate | Deleted with `lowering` and `lower` in M-6c (owner ruling 2026-09-24), so CI keeps a Kani proof-and-replay check throughout | M-6c |
+| SEAM-1 native-v1 | ADR-010 lane A, defined by its entry points: the `lower` command, the native `run` and `compile` paths, `package::NativePackage`, `runtime::execute`, the native-linked-package/1 format and the `lowering` targets. SEAM-1 holds every module reachable only from those entry points, including the `package` submodules `intake`, `reading`, `wire`, `encoding`, `features` and `view` (native-linked-package/1, FR-019 and FR-020): arena `syntax` and native `parser`, `linking::native`, native `checking`, `native_model`, `model_source`, `mapped`, `runtime`, and the old `command` submodules `compilation`, `projection_error` and `wire`, and the native arms of `extraction` and `output`. The retained spine request decoder and source-coordinate adapter are now `fsl-command` (§6.1), not a second native producer. | Per lane (§7.3 M-6). The checked-package producer lane (M-6a) is deleted before gate #216, except native `compile`, which stays for `0-draft` sources until M-6c (Ruling 2026-09-24): "Old producer/bypass paths are unreachable" and "Do not pass while two authoritative producer paths coexist" (#216). Native `run` clause execution and the modules only it reaches retire with M-6c. | M-6a, M-6c to M-6e |
+| SEAM-2 composed | ADR-010 lane B: `syntax::composed`, `parser::composed`, `linking::composed`, `checking::composed`, and their composed-only shared code | Deleted (owner ruling). Each composed family is deleted in the PR that lands its S3 family checker and S4 emission, so everything reaches IR through the one S4 spine. The retained `formal_source` adapter belongs to `fsl-command` (§6.1). #185 removes the `requests` backend disposition from FSL (FB-12). | M-6e with the family implementation tickets (§7.3); #185 for `requests` |
+| SEAM-3 protocol wires | `protocol_artifact` (compiled-protocol /1 to /3 emit and read; checked-predicate, temporal-subject and native-temporal handoffs) | B8 emission (`protocol_artifact::native`, including `/1` to `/3` producers and `handoff::writer`) is assigned to QSL-840. It remains live until its replacement gates below pass; QSL-840 is not a deletion authorization. B9 readers (`read`, `v2::read`, `v3::read`, `wire`, `validate`) remain with QSL-838 / 498-B6 per QSL-498-B6. State and temporal reads feeding the old evaluators retire under M-6c only with their evaluator replacements. The replacement wire is checked-package v2 `protocol` nodes and no separate protocol document (FSpec FR-464 to FR-466, FR-383); the control-to-temporal activation map is derived from the checked protocol's `activation` and `requirements` only after the G9 contract is specified and implemented. | M-6c, M-6d |
+| SEAM-4 IT-010 | `tests/it/configversion_backends.rs` proof and replay path, FSL dev dependencies on CG and IR, and the RT test fixture crate | Deleted with `lowering` and `lower` in M-6c (owner ruling 2026-09-24), so CI keeps a Kani proof-and-replay check throughout | M-6c |
 | SEAM-5 source graph | `complete::package::lower_source_graph` / `LoweredSourceGraph` (ADR-010 C3) | The S2 `forms` producer lands and replaces it | M-3a |
 
 Module table:
@@ -984,51 +984,51 @@ Module table:
 | `source`, `source_map` | F `source` | S0; `source_map` becomes the occurrence-key-keyed source map (O-07): occurrence key → regions (AD-016; ADR-013 O-12). Its `Diagnostic` import is removed by M-1. |
 | `diagnostic` | F `diagnostic` | loses its linking, runtime and IR fields (§6.1, M-1) |
 | `wire_format`, `json_number`, `serde_object` | F | unchanged role |
-| `located_json` | SEAM-1 | its one importer is `model_source`; it is deleted with `model_source` in the M-6c slice that deletes the native front end, and it does not move to `qsl-foundation` (§7.3 X-2) |
+| `located_json` | SEAM-1 | its one importer is `model_source`; it is deleted with `model_source` in the M-6c slice that deletes the native front end, and it does not move to `fsl-foundation` (§7.3 X-2) |
 | `lexer`, `token` | 1 | shared by S1 |
 | `complete` (`cst`, `parser`, `grammar`, `diagnostic`) | 1 `cst` | S1 |
 | `complete::editor`, `complete::edit` | tool | the only consumers of a recovering CST |
 | `library::bundle` (complete-V1 bundle) | 3 `library` | `library::bundle::link_bundle` closes exact `DefinitionRef` roots over a caller-supplied `DefinitionCatalog` into a `CompleteBundle`, or refuses with a `BundleRefusal` carrying layer 3's own `ResolutionCause` and the index of the root that refused (FR-111). It sees no source: a source's `import` selections resolve in the spine (FR-099), its header profiles at E3 (FR-110) and its `model` selections at I1 (FR-056). `lower_source_graph` is SEAM-5. |
 | `library::profile_closure` | 3 `library` | Resolves a selected profile identity and its exact dependency closure through the shared layer-3 definition-graph walk. It reports closure only, without complete-V1 facet/capability admission or use-site admission. The S3 spine profile-aware check is its sole source-driven caller; S1–S4 do not call `library::bundle::link_bundle` (FR-111-CON-1). |
-| `qsl_cst::cst` selection values (`DefinitionRef`, `InvalidDefinitionComponent`, `ModelRef`, `InvalidModelComponent`, `ProfileSelection`, `ImportSelection`, `ModelSelection`, `SourceSelections`) and `complete::package`'s `ProfileCatalog`, `ProfileStatus` and `StaleProfile` | F `selection` | Plain values that layer 1 produces, layer 3 resolves and the tool modules check profiles against. None of those layers owns them, and none may import another's, so they sit below all three. This keeps the tool row (`1, F`) true: `parse_with_catalog`, `complete::editor` and `complete::edit` use F's `ProfileCatalog`. |
+| `fsl_cst::cst` selection values (`DefinitionRef`, `InvalidDefinitionComponent`, `ModelRef`, `InvalidModelComponent`, `ProfileSelection`, `ImportSelection`, `ModelSelection`, `SourceSelections`) and `complete::package`'s `ProfileCatalog`, `ProfileStatus` and `StaleProfile` | F `selection` | Plain values that layer 1 produces, layer 3 resolves and the tool modules check profiles against. None of those layers owns them, and none may import another's, so they sit below all three. This keeps the tool row (`1, F`) true: `parse_with_catalog`, `complete::editor` and `complete::edit` use F's `ProfileCatalog`. |
 | `format` | tool | retargeted from the arena to the CST in M-6a |
 | `syntax`, `parser` | SEAM-1 (native) and SEAM-2 (`composed`) | S2 `forms` replaces them |
 | `linking` | SEAM-1 (`native`) and SEAM-2 (`composed`) | name binding becomes an S3 phase |
 | `checking` | SEAM-1 and SEAM-2 | |
-| `formal_source` | command (outside core) | the retained FR-027 and FR-100 source-coordinate adapter is `qsl_command::formal_source`; the obsolete root module is removed |
+| `formal_source` | command (outside core) | the retained FR-027 and FR-100 source-coordinate adapter is `fsl_command::formal_source`; the obsolete root module is removed |
 | `native_model`, `model_source`, `mapped`, `runtime` | SEAM-1 | `runtime::execute` is not a replay target (AD-016). Native `run` reaches `model_source`, `mapped` and `runtime`, so they retire with it in M-6c (§7.3, ADR-011-OQ-2). `NativeModelProfile` and its ceiling sites retire with SEAM-1. |
 | `lowering` | SEAM-1 | `lowering` as a whole, including `lowering::target`, its `ProjectionTarget` enum and the `--target` argument, is deleted with the `lower` command in M-6c (owner ruling 2026-09-24). The backend is chosen only by the `BackendId` argument, resolved in `route` (#185). |
-| crate `qsl-source` | I3 | the extraction adapter stops at S0: verified body bytes plus their document `SourceMap`. Its one caller is `qsl-replay` (`run_clause` and the clause-run reader `read_clause_run_request`), under `qsl-replay`'s feature `quire-extraction` (X-4); the native compile join `command::extraction` is SEAM-1 and is deleted with M-6c. `qsl-source` builds the clause-only Quire context (`clause_context`) and re-exports the Quire result and failure types; the root crate names neither quire-rs nor `qsl-source`. |
-| `package` | 4 `package` | `NativePackage` and the native-linked-package/1 submodules (`intake`, `reading`, `wire`, `encoding`, `features`, `view`) are SEAM-1 and stay in the root crate's module `package` until M-6 deletes them; the v2 emitter and the I2 byte reader are new in M-4. Layer-4 `package`'s content — `CheckedPackage`, `EmittedPackage`, the v2 emitter and the I2 byte reader — is the crate `qsl-package` (X-7), whose crate root is layer-4 `package`. Every rule this ADR states for layer-4 `package` applies to `qsl-package`. |
-| `value` kernel submodules: `numeric`, `integer`, `rational`, `decimal`, `ieee` and `division` (operations), `text`, `collection`, `comparison`, `equality`, `outcome`, `accounting`, `composite` | K `quire-exact` | only the types in the AD-016 Shared-type row as amended by QC-15, QC-21 and QC-22 (TK-10; ADR-013 §8), and the operations over them. QSL has no `value::` copy of any of these thirteen: every QSL caller imports the kernel item from `quire_exact`. |
-| `value::stop`, `value::quantity`, `value::declaration`, `value::containment`, the runtime halves of `value::unit` and `value::enumeration`, `value::semantic_node`'s refusal vocabulary (`InvalidSemanticGraph`, `SemanticGraphCause`), `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS`, `value::definition`'s refusal vocabulary (`SelectionRefusalCode`, `PackageRefusal`, `PackageRefusalCode`, `PackageCause`), `check`'s `CheckMode`, `CheckingLimits`, `DEFAULT_CHECKING_*`, `Origin` and `Location` (in SV `ExpressionOwner` and `ExpressionLocation`, FR-273), and `value::expression`'s `InputRefusal`, `ValueLoss` and `LocatedLoss` | SV `quire-semantic-value` | moved out of `qsl-semantics` and `qsl-eval` (X-11). Every caller imports the item from `quire_semantic_value::{semantic_node, stop, quantity, unit, enumeration, definition, declaration, containment, checking, location, call, loss}`; no QSL crate re-exports it. `qsl-eval`'s `input_refusal_code` maps `InputRefusal` to the catalog `Code` enum. `unit`'s compile-side half (preimage reading, node keys, provenance and owner checks) stays in `qsl-semantics`' `value::unit`. |
+| crate `fsl-source` | I3 | the extraction adapter stops at S0: verified body bytes plus their document `SourceMap`. Its one caller is `fsl-replay` (`run_clause` and the clause-run reader `read_clause_run_request`), under `fsl-replay`'s feature `quire-extraction` (X-4); the native compile join `command::extraction` is SEAM-1 and is deleted with M-6c. `fsl-source` builds the clause-only Quire context (`clause_context`) and re-exports the Quire result and failure types; the root crate names neither quire-rs nor `fsl-source`. |
+| `package` | 4 `package` | `NativePackage` and the native-linked-package/1 submodules (`intake`, `reading`, `wire`, `encoding`, `features`, `view`) are SEAM-1 and stay in the root crate's module `package` until M-6 deletes them; the v2 emitter and the I2 byte reader are new in M-4. Layer-4 `package`'s content — `CheckedPackage`, `EmittedPackage`, the v2 emitter and the I2 byte reader — is the crate `fsl-package` (X-7), whose crate root is layer-4 `package`. Every rule this ADR states for layer-4 `package` applies to `fsl-package`. |
+| `value` kernel submodules: `numeric`, `integer`, `rational`, `decimal`, `ieee` and `division` (operations), `text`, `collection`, `comparison`, `equality`, `outcome`, `accounting`, `composite` | K `filament-exact` | only the types in the AD-016 Shared-type row as amended by QC-15, QC-21 and QC-22 (TK-10; ADR-013 §8), and the operations over them. FSL has no `value::` copy of any of these thirteen: every FSL caller imports the kernel item from `filament_exact`. |
+| `value::stop`, `value::quantity`, `value::declaration`, `value::containment`, the runtime halves of `value::unit` and `value::enumeration`, `value::semantic_node`'s refusal vocabulary (`InvalidSemanticGraph`, `SemanticGraphCause`), `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS`, `value::definition`'s refusal vocabulary (`SelectionRefusalCode`, `PackageRefusal`, `PackageRefusalCode`, `PackageCause`), `check`'s `CheckMode`, `CheckingLimits`, `DEFAULT_CHECKING_*`, `Origin` and `Location` (in SV `ExpressionOwner` and `ExpressionLocation`, FR-273), and `value::expression`'s `InputRefusal`, `ValueLoss` and `LocatedLoss` | SV `filament-semantic-value` | moved out of `fsl-semantics` and `fsl-eval` (X-11). Every caller imports the item from `filament_semantic_value::{semantic_node, stop, quantity, unit, enumeration, definition, declaration, containment, checking, location, call, loss}`; no FSL crate re-exports it. `fsl-eval`'s `input_refusal_code` maps `InputRefusal` to the catalog `Code` enum. `unit`'s compile-side half (preimage reading, node keys, provenance and owner checks) stays in `fsl-semantics`' `value::unit`. |
 | `value` non-kernel submodules: `definition`'s layer table and admission, the compile-side halves of `enumeration` and `unit`, `environment_stage`, `member` | 3 `semantic_value` | not in the AD-016 kernel row; used by `model`, `check` and S6a. `environment_stage` maps SV's type-environment `EnvironmentLimit` to the stage limit; it imports only F and SV. `stop`, now in SV, is the early-exit carrier that SV's `declaration`, `enumeration` and `quantity`, and `model_query` and S6a, convert to and from the kernel `Outcome`. `member` is ADR-013 O-06's structured checked member identity; it imports only F and K. |
 | `check::node_key` | 3 `check` | the FR-322 checked application-node key, the FR-092 structural-node key and recursion-group keying. It uses `check`'s checked `Node` and stratified terms, whose preimages have a schema-fixed depth (ADR-030 D-4.3), so it cannot sit below `check` core. The FR-093 lowering of checked expressions to FR-322 nodes sits beside it in `check::lowering`; the `package` v2 emission arm serializes those nodes and lowers nothing. |
-| `value::semantic_node` | 3 `semantic_value` | the compile side of the I04 node identity: the preimage machinery (owner projection, structural key construction, `WireNodeId` reading) shared by `enumeration` and `unit`. Its refusal vocabulary, `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS` are in SV. The module moved out of the deleted K-copy `value::node`, whose only kernel types, `NodeKey` and `NODE_KEY_DOMAIN`, are imported from `quire_exact` |
-| `value::division::negotiate_*`, `value::ieee::negotiate_*` | RT | AD-016 Shared-type row: the `negotiate_*` predicates stay in RT, and CG negotiates (arrow 3). AD-016 WP7 decides the predicate list (OBS-004). #213 S-1 (X-1) moved `division` and `ieee` into K but left the QSL copies of `negotiate_*` in place; #213 S-1b removed them. Both modules are now gone entirely, not merely edited: `value::division` and `value::ieee` are deleted, so there is no file or line left to cite for either — every caller reaches the evaluation functions through `quire_exact` directly. |
+| `value::semantic_node` | 3 `semantic_value` | the compile side of the I04 node identity: the preimage machinery (owner projection, structural key construction, `WireNodeId` reading) shared by `enumeration` and `unit`. Its refusal vocabulary, `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS` are in SV. The module moved out of the deleted K-copy `value::node`, whose only kernel types, `NodeKey` and `NODE_KEY_DOMAIN`, are imported from `filament_exact` |
+| `value::division::negotiate_*`, `value::ieee::negotiate_*` | RT | AD-016 Shared-type row: the `negotiate_*` predicates stay in RT, and CG negotiates (arrow 3). AD-016 WP7 decides the predicate list (OBS-004). #213 S-1 (X-1) moved `division` and `ieee` into K but left the FSL copies of `negotiate_*` in place; #213 S-1b removed them. Both modules are now gone entirely, not merely edited: `value::division` and `value::ieee` are deleted, so there is no file or line left to cite for either — every caller reaches the evaluation functions through `filament_exact` directly. |
 | `value::expression::syntax` | 2 `forms` | M-3a |
-| crate `qsl-forms` | 2 `forms` | the `forms` core: the crate root, `dispatch` (the closed dispatch entry table and the parsed-form contract) and `syntax` (the parsed-form types, including the former `value::expression::syntax`). It depends only on `qsl-cst`, `qsl-foundation` and `quire-exact`; the root crate imports `qsl_forms` directly and re-exports none of its items. |
-| `value::expression::check`, `facts`, `termination`, `ir` | 3 `check`; `ir` to C | `ir` is the checked expression output (M-5); X-13 moves it on to C `quire-checked` |
-| `family` | 3 `check` core | the family contract (`FamilyKind`, `FamilyContract`), and the S1-S4 outcomes; the S6a result types (`FamilyOutcome`, `FamilyResult`, `EvalOutcome`) are E `quire-eval`'s (FR-401). The S6a hook `ReferenceEvaluation` and the S6a family kind (`S6aFamilyKind`, FR-090-AC-4) are 5 `value::expression` (`value::expression::s6a`): ADR-012 §2 has one marker type implement both `FamilyContract` and `ReferenceEvaluation`, and the orphan rule (E0117) needs that impl in the crate of the trait or the type. `ReferenceEvaluation`'s implementation needs the evaluator's environment, so the trait sits with the evaluator and the marker type (`check::ValueFunctionFamily`) stays in layer 3. |
-| `check::ir`, the evaluation-visible `CheckedGraph` and its clause records, `check::node_key`'s terms, the semantic-graph projection, `identity::ModelCorrespondence`, `check::Capability`, `check::DispatchOperation`, `value::definition::AdmittedIntegerDivision`, `model::key::DeclarationKey`, `model::domain_package::DomainPackageRef`, `model::operation::OperationTable` | C `quire-checked` | X-13 (FR-400). The checker-only remainder (each record's spans and forms, the `SourceMap` embedding, the `abstraction` forms, the full `SemanticGraph`, `AdmittedImport`, `AdmittedIeeeProfile`, `qsl-route`'s requirement records) stays in layer 3 in checker-side records keyed by the moved record's identity. `check::footprint` moves to 3 `model`. The F and layer-2 plain values a checked term carries move to SV. |
-| `value::expression::refusal` | split | ten check-cause types (`ProvedInterval`, `Obligation`, `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`, `WrongSnapshotCause`, `CheckCause`, `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `CheckRefusal`) are in `check::refusal`; the expression `ExpressionOwner` and `ExpressionLocation` are in SV `quire_semantic_value::location`; `InputRefusal`, the refusal argument admission makes before S6a, is in SV `quire_semantic_value::call`, and `qsl-eval` maps it to the catalog `Code` |
-| `value::expression::evaluate`, `value::expression` `CheckedPackage::call` | 5 `value::expression` | S6a and the replay executor, at the AD-016 arrow 7 path. Layer-5 `value::expression` is the crate `qsl-eval`'s module `value::expression` (X-8); `CheckedPackage::call` is `qsl_package::CheckedPackage`'s, through `qsl_eval::value::CheckedPackageEvaluation` (§4). |
+| crate `fsl-forms` | 2 `forms` | the `forms` core: the crate root, `dispatch` (the closed dispatch entry table and the parsed-form contract) and `syntax` (the parsed-form types, including the former `value::expression::syntax`). It depends only on `fsl-cst`, `fsl-foundation` and `filament-exact`; the root crate imports `fsl_forms` directly and re-exports none of its items. |
+| `value::expression::check`, `facts`, `termination`, `ir` | 3 `check`; `ir` to C | `ir` is the checked expression output (M-5); X-13 moves it on to C `filament-checked` |
+| `family` | 3 `check` core | the family contract (`FamilyKind`, `FamilyContract`), and the S1-S4 outcomes; the S6a result types (`FamilyOutcome`, `FamilyResult`, `EvalOutcome`) are E `filament-eval`'s (FR-401). The S6a hook `ReferenceEvaluation` and the S6a family kind (`S6aFamilyKind`, FR-090-AC-4) are 5 `value::expression` (`value::expression::s6a`): ADR-012 §2 has one marker type implement both `FamilyContract` and `ReferenceEvaluation`, and the orphan rule (E0117) needs that impl in the crate of the trait or the type. `ReferenceEvaluation`'s implementation needs the evaluator's environment, so the trait sits with the evaluator and the marker type (`check::ValueFunctionFamily`) stays in layer 3. |
+| `check::ir`, the evaluation-visible `CheckedGraph` and its clause records, `check::node_key`'s terms, the semantic-graph projection, `identity::ModelCorrespondence`, `check::Capability`, `check::DispatchOperation`, `value::definition::AdmittedIntegerDivision`, `model::key::DeclarationKey`, `model::domain_package::DomainPackageRef`, `model::operation::OperationTable` | C `filament-checked` | X-13 (FR-400). The checker-only remainder (each record's spans and forms, the `SourceMap` embedding, the `abstraction` forms, the full `SemanticGraph`, `AdmittedImport`, `AdmittedIeeeProfile`, `fsl-route`'s requirement records) stays in layer 3 in checker-side records keyed by the moved record's identity. `check::footprint` moves to 3 `model`. The F and layer-2 plain values a checked term carries move to SV. |
+| `value::expression::refusal` | split | ten check-cause types (`ProvedInterval`, `Obligation`, `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`, `WrongSnapshotCause`, `CheckCause`, `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `CheckRefusal`) are in `check::refusal`; the expression `ExpressionOwner` and `ExpressionLocation` are in SV `filament_semantic_value::location`; `InputRefusal`, the refusal argument admission makes before S6a, is in SV `filament_semantic_value::call`, and `fsl-eval` maps it to the catalog `Code` |
+| `value::expression::evaluate`, `value::expression` `CheckedPackage::call` | 5 `value::expression` | S6a and the replay executor, at the AD-016 arrow 7 path. Layer-5 `value::expression` is the crate `fsl-eval`'s module `value::expression` (X-8); `CheckedPackage::call` is `fsl_package::CheckedPackage`'s, through `fsl_eval::value::CheckedPackageEvaluation` (§4). |
 | `value::library`, `value::package_identity`, `value::model_query` | 3 `library`, 3 `library`, 3 `model` | `package_identity` is a structural preimage reader with no wire I/O; `library` imports it (`value/library.rs:25`) |
 | `model::operation` (`OperationTable`) | 3 `model` | each object type's FR-103 operations keyed by `EffectiveId`, beside SV's type environment and resolved through its conformance. An operation carries `model::domain_package`'s effect frame, so the table is `model`'s; `check` and `model::observation` consume it. |
-| `ObjectEnvironment`'s core object closure: the objects S6a reads and the reference closure between them, keyed by kernel ids | SV `quire-semantic-value` | moved down out of `model` by owner ruling, as `quire_semantic_value::object_closure` (`ObjectClosure`, `ObjectClosureRefusal`, `ObjectClosureCause`). The closure names only kernel ids and SV values, so it imports nothing of `model` and sits in SV beside `containment`. S6a, replay and CG read it there. |
+| `ObjectEnvironment`'s core object closure: the objects S6a reads and the reference closure between them, keyed by kernel ids | SV `filament-semantic-value` | moved down out of `model` by owner ruling, as `filament_semantic_value::object_closure` (`ObjectClosure`, `ObjectClosureRefusal`, `ObjectClosureCause`). The closure names only kernel ids and SV values, so it imports nothing of `model` and sits in SV beside `containment`. S6a, replay and CG read it there. |
 | `model::object_environment`'s populations map: FR-089's `PopulationId` -> `PopulationBinding` correspondence | 3 `model` | Formerly `value::reference`. `PopulationBinding` is `model`'s (§6.1, "K is a leaf"), and §6.1's order `semantic_value < model` forbids the upward import, so the populations map stays in `model` (X-6a). `ObjectEnvironment` holds the SV object closure (`ObjectEnvironment::objects`) beside this map; `model`'s FR-106 admission builds that closure from the bound populations. Its consumers are S6a and tests. |
 | `model` (`dispatch`, `domain_package`, `key`, `normalize`, `population`, `refusal`, `systems`, `conformance` type conformance) | 3 `model` | `model::intake` is I1 |
 | `model::checked_dispatch`, `model::conformance::check_field_refinement_obligation` | 3 `check` | M-2, blocked by M-5 (corrected 2026-09-20: moving `model` code is M-2's job, not M-5's — M-5 only unblocks it by relocating the `value::expression` types both moves depend on; see §7.3) |
-| `model::accounting` | 3 `model` (unchanged) | separate layer-3 `model` rung meter over its own disjoint counters (`ModelNormalizationLimits`); not a kernel type, and not unified with the kernel `Meter`. `value::accounting`'s byte-identical duplicate of the kernel `Meter`/`Incomplete`/`LimitKind` is consolidated onto `quire-exact` separately (§7.3); `model::accounting` is outside that scope. |
+| `model::accounting` | 3 `model` (unchanged) | separate layer-3 `model` rung meter over its own disjoint counters (`ModelNormalizationLimits`); not a kernel type, and not unified with the kernel `Meter`. `value::accounting`'s byte-identical duplicate of the kernel `Meter`/`Incomplete`/`LimitKind` is consolidated onto `filament-exact` separately (§7.3); `model::accounting` is outside that scope. |
 | `state` | replaced by a family evaluator under layer-5 `value::expression` in #120, #121 and #164 (design #220) | It is typed on SEAM-1 and SEAM-3 types (`native_model`, `protocol_artifact::wire`, `ProtocolNumber`, `Locus`) and on IR `ValueType` (`state/evaluation.rs:15`, `:21`). The PR among #120, #121 and #164 that lands the evaluator over checked forms and S3 `model` deletes the old module (M-6c). |
 | `temporal` | replaced by a family evaluator under layer-5 `value::expression` in #188 and #189 (design #222) | typed on `protocol_artifact::wire` and `ProtocolNumber` (`temporal/formula.rs:10`, `temporal/mapping.rs:19`). The PR among #188 and #189 that lands the evaluator over checked forms only (FB-03) deletes the old module (M-6c). |
 | `protocol_artifact` | SEAM-3 | |
-| `simulation` | 5 `simulation` | finite exploration engine for S6a, the crate `qsl-eval`'s module `simulation` (X-8); its implementer arrives through #220. Amended by ADR-027 TS-1: it also holds `ProtocolSystem`, the protocol transition system, and the `MemoryModel` seam with `Sc` (ADR-027 SE-1, SE-2). |
-| none today | A `qsl-analyze` `model_check` (new crate) | the explicit-state temporal model checker for S6c (ADR-018 EN-1, LA-1), over FR-101's engine and FR-120's `ModelSystem`. Added by ADR-018 §7. Amended by ADR-020 §9: it also holds the refinement product with history fields and the hidden-field candidate set, and the `F_A` phase; `check_step`, `map_state` and the history computation sit in layer 6 `qsl-replay` beside the simulation certificate checker, so the engine, replay and the checker share them (ADR-020 CT-1, ADR-029 CB-2). Amended by ADR-027 TS-6: it drives `ProtocolSystem` for a protocol subject as it drives `ModelSystem`. |
-| `command` | command (outside core) | §5; the retained FR-027 and FR-100 request-file operation is `qsl_command::command`; CLI argument parsing and process-stream writes remain in the driver repository |
-| crate `qsl-replay` | 6 `replay` | the CG-facing replay facade (§6.1), widened per family by each family's implementation ticket. Its executor entry is `qsl_replay::replay` (TK-01, FR-098). Its compile entry is `qsl_replay::compile_package` (FR-060), which runs the same `spine` compile and returns the emitted package bytes and `package_id`. Its module `spine` holds the one S1-to-S4 compile, which both the executor and `qsl-command` call: no layer below 6 may depend on S1 and S2 together, and `qsl-replay` may not depend on `qsl-command`. `spine` is public for `qsl-command` and for the orchestrating driver (T-13), which calls `spine::compile` for S1 to S4 and the E4 emit; T-12 rule (a) refuses any CG reference to it -- a `use` of it, a path through it, a crate alias or glob import that reaches it (FR-060 T12-A). |
-| crate `qsl-route` | R `route` | the #185 registry and router, extracted as X-9. Its items are at the crate root (`qsl_route::Registry`). Among the workspace crates it depends only on `qsl-semantics` (for `check::Capability`) and `qsl-foundation`; its other dependencies are `quire-checked` (C, X-9, for the `DeclarationKey` a request's symmetry declaration names, FR-159), `quire-semantic-value`, `thiserror` and `ix-trace-rs`. No shipped root-crate module calls it, so the root crate names it only as a dev dependency. |
-| `xtask` | build tooling | not on the stage DAG; its `refinement` gates call `qsl_replay::spine::run_clause` (FR-340-CON-1), and no stage module depends on it. Its library's `refinement::layering::compare` is FR-345's comparison core: it reads the backend registry through `qsl-route` and takes negotiation as a function parameter, so `xtask` depends on no quire-contract-codegen crate, and quire-integration reaches it as a dev dependency to run the witness negotiation through `negotiate_*` |
+| `simulation` | 5 `simulation` | finite exploration engine for S6a, the crate `fsl-eval`'s module `simulation` (X-8); its implementer arrives through #220. Amended by ADR-027 TS-1: it also holds `ProtocolSystem`, the protocol transition system, and the `MemoryModel` seam with `Sc` (ADR-027 SE-1, SE-2). |
+| none today | A `fsl-analyze` `model_check` (new crate) | the explicit-state temporal model checker for S6c (ADR-018 EN-1, LA-1), over FR-101's engine and FR-120's `ModelSystem`. Added by ADR-018 §7. Amended by ADR-020 §9: it also holds the refinement product with history fields and the hidden-field candidate set, and the `F_A` phase; `check_step`, `map_state` and the history computation sit in layer 6 `fsl-replay` beside the simulation certificate checker, so the engine, replay and the checker share them (ADR-020 CT-1, ADR-029 CB-2). Amended by ADR-027 TS-6: it drives `ProtocolSystem` for a protocol subject as it drives `ModelSystem`. |
+| `command` | command (outside core) | §5; the retained FR-027 and FR-100 request-file operation is `fsl_command::command`; CLI argument parsing and process-stream writes remain in the driver repository |
+| crate `fsl-replay` | 6 `replay` | the CG-facing replay facade (§6.1), widened per family by each family's implementation ticket. Its executor entry is `fsl_replay::replay` (TK-01, FR-098). Its compile entry is `fsl_replay::compile_package` (FR-060), which runs the same `spine` compile and returns the emitted package bytes and `package_id`. Its module `spine` holds the one S1-to-S4 compile, which both the executor and `fsl-command` call: no layer below 6 may depend on S1 and S2 together, and `fsl-replay` may not depend on `fsl-command`. `spine` is public for `fsl-command` and for the orchestrating driver (T-13), which calls `spine::compile` for S1 to S4 and the E4 emit; T-12 rule (a) refuses any CG reference to it -- a `use` of it, a path through it, a crate alias or glob import that reaches it (FR-060 T12-A). |
+| crate `fsl-route` | R `route` | the #185 registry and router, extracted as X-9. Its items are at the crate root (`fsl_route::Registry`). Among the workspace crates it depends only on `fsl-semantics` (for `check::Capability`) and `fsl-foundation`; its other dependencies are `filament-checked` (C, X-9, for the `DeclarationKey` a request's symmetry declaration names, FR-159), `filament-semantic-value`, `thiserror` and `ix-trace-rs`. No shipped root-crate module calls it, so the root crate names it only as a dev dependency. |
+| `xtask` | build tooling | not on the stage DAG; its `refinement` gates call `fsl_replay::spine::run_clause` (FR-340-CON-1), and no stage module depends on it. Its library's `refinement::layering::compare` is FR-345's comparison core: it reads the backend registry through `fsl-route` and takes negotiation as a function parameter, so `xtask` depends on no filament-contract-codegen crate, and filament-integration reaches it as a dev dependency to run the witness negotiation through `negotiate_*` |
 | none today | 3 `check` (`check::capability`, new) | new: the canonical FR-290 capability-kind value type and its total wire conversion (ADR-013 O-19, C-24), implemented. Placed in `check` core, not F: the per-item requirement records are made at E3, whose producer ADR-011 §2.1's E3 row names as `check`; its other two consumers, layer 4 `package` and layer R `route`, each list "3" in their §6.1 "Depends on" column, so both may import `check` directly. This differs from `AbsenceMode`'s F placement above: `AbsenceMode`'s two consumers (layer-2 `forms`, layer-3 `model`) cannot depend on each other, so neither layer may own it, while `Capability`'s three consumers (`check`, `package`, `route`) form one downward chain that already permits importing `check`. |
 
 ## 7. Crate DAG and extraction
@@ -1036,40 +1036,40 @@ Module table:
 ### 7.1 Target crate graph
 
 This extends the AD-016 crate graph. An arrow means "depends on". Only normal
-dependencies are drawn. Dev and test-time edges obey FB-11. The QSL workspace
+dependencies are drawn. Dev and test-time edges obey FB-11. The FSL workspace
 box holds the root crate and the §6.1 layer crates; the edges between them are
 the §6.1 allow-list and are not drawn.
 
 ```mermaid
 flowchart BT
-  QX[quire-exact in QSL repo]
-  SV[quire-semantic-value in QSL repo]
-  QCK[quire-checked in quire-eval repo]
-  subgraph QSLW[QSL workspace]
-    QSL[quire-spec-language root]
-    QFO[qsl-foundation]
-    QCS[qsl-cst]
-    QSO[qsl-source]
-    QFM[qsl-forms]
-    QSE[qsl-semantics]
-    QPK[qsl-package]
-    QEV[qsl-eval]
-    QRO[qsl-route]
-    QRP[qsl-replay]
+  QX[filament-exact in FSL repo]
+  SV[filament-semantic-value in FSL repo]
+  QCK[filament-checked in filament-eval repo]
+  subgraph QSLW[FSL workspace]
+    FSL[filament-spec-language root]
+    QFO[fsl-foundation]
+    QCS[fsl-cst]
+    QSO[fsl-source]
+    QFM[fsl-forms]
+    QSE[fsl-semantics]
+    QPK[fsl-package]
+    QEV[fsl-eval]
+    QRO[fsl-route]
+    QRP[fsl-replay]
   end
-  CM[quire-contract-model in IR repo]
-  IR[quire-contract-ir root]
-  RT[quire-contract-runtime]
-  CG[quire-contract-codegen]
+  CM[filament-contract-model in IR repo]
+  IR[filament-contract-ir root]
+  RT[filament-contract-runtime]
+  CG[filament-contract-codegen]
   FCD[FCD semantic IR and extraction-frontend]
   QRS[quire-rs optional]
-  QEL[quire-eval in quire-eval repo]
-  QFO & QSO & QFM & QSE & QPK & QEV & QRO & QRP & QSL --> QX
+  QEL[filament-eval in filament-eval repo]
+  QFO & QSO & QFM & QSE & QPK & QEV & QRO & QRP & FSL --> QX
   QSE & QPK & QEV --> SV
   SV --> QX
   QCK --> SV & QX
   QFO --> SV
-  QCK --> QW[quire-walk]
+  QCK --> QW[filament-walk]
   QSE & QPK & QEV & QRO & QRP --> QCK
   RT --> QCK
   CG --> QCK
@@ -1092,10 +1092,10 @@ flowchart BT
   CG --> QEL
   TLS[tl-syntax]
   TLM[tl-mltl]
-  QML[quire-mltl]
-  QSL -->|temporal correspondence only| TLS & TLM & QML
+  QML[filament-mltl]
+  FSL -->|temporal correspondence only| TLS & TLM & QML
   TLO[tl-oracle]
-  QOB[quire-observation]
+  QOB[filament-observation]
   TLM --> TLS & TLO
   TLO --> TLS
   QML --> TLM & TLS & QOB
@@ -1105,31 +1105,31 @@ Differences from today (ADR-010 §3.2), each removed in its owning change:
 
 | Edge | Target | Owning change |
 |---|---|---|
-| IR root → QSL (normal and dev) | **Removed.** Neither IR manifest (the root crate or `quire-contract-model`) declares a QSL dependency (FB-05). | IR |
-| QSL → CG (dev), QSL → IR historical (dev) | **Removed** with SEAM-4 | M-6c, with `lower` and `lowering` (owner ruling 2026-09-24) |
-| QSL tests → RT (fixture crate, IT-010 generated crates) | **Removed** with SEAM-4 | M-6c, with `lower` and `lowering` (owner ruling 2026-09-24) |
-| RT `qsl-agreement` → QSL (dev) | **Removed.** The agreement suite is retargeted to `quire-exact` against QSpec vectors (AD-016). | RT, after X-1 (Tickets to open at #212) |
-| CG → QSL (dev) | **Becomes normal** (AD-016 Owner decision 5), on `qsl-replay` | #217 (AD-016 WP9); the repoint from the root crate to `qsl-replay` is T-14, after X-10 |
-| QSL root → layer crates | **New:** one workspace crate per §6.1 layer (§6.1 crate map). X-2 (`qsl-foundation`) is extracted; X-3 (`qsl-cst`) is extracted; X-4 (`qsl-source`) is extracted; X-5 (`qsl-forms`) is extracted; X-6 (`qsl-semantics`) is extracted; X-7 (`qsl-package`) is extracted; X-8 (`qsl-eval`) is extracted; X-9 (`qsl-route`) is extracted; X-10 (`qsl-replay`) is extracted; `located_json` is not extracted: it is deleted with `model_source` in M-6c (§7.3 X-2). | X-2 to X-10 |
-| QSL root → `tl-syntax`, `tl-mltl`, `quire-mltl` | **New**, for the root crate's `temporal` correspondence stage only (FR-045 "Correspondence"): it hands generated TL artifacts to their owners' public readers and joins the TL result with the native one. No other QSL crate or module names these crates. None of them depends on QSL (their manifests name only each other, `tl-oracle` and `quire-observation`; `tl-oracle` depends on `tl-syntax`), so the edges add no cycle. QSL holds the native subject, the `/2` package and the native evaluator, so the stage sits where both owners are reachable. | FR-045 |
-| QSL → FCD | **Admitted** (AD-016). Only `model::intake` imports FCD crates. | QSL PR #200 |
-| QSL → `quire-exact`, RT → `quire-exact`, CG → `quire-exact` | **New**; a git dependency on the repository `agent-ix/quire-exact` at `branch = "main"` | X-1, carried out as #213 S-1 after the AD-016 amendment (TK-10, QC-15) |
-| QSL → `quire-semantic-value`, RT → `quire-semantic-value`, CG → `quire-semantic-value` | **New.** FB-05's shared-leaf class: a permitted normal edge from QSL, RT and CG to the repository `agent-ix/quire-semantic-value`, at `branch = "main"`. | X-11 |
-| QSL → `quire-walk`, IR → `quire-walk`, RT → `quire-walk`, CG → `quire-walk` | **New.** FB-05's shared-leaf class: a permitted normal edge from QSL, IR, RT and CG to the repository `agent-ix/quire-walk`, each at `branch = "main"`. | ADR-030 FR-356 |
-| QSL → `quire-checked`, RT → `quire-checked`, CG → `quire-checked` | **New.** FB-05's shared-leaf class: a permitted normal edge from QSL, RT and CG to the crate `quire-checked` in the repository `agent-ix/quire-eval`, at `branch = "main"`. A backend edge never enables the `construct` feature (FB-14). | X-13 (FR-400) |
-| QSL → `quire-eval`, RT → `quire-eval`, CG → `quire-eval` | **New.** FB-05's shared-leaf class: a permitted normal edge from QSL, RT and CG to the repository `agent-ix/quire-eval`, at `branch = "main"`. | X-14 |
+| IR root → FSL (normal and dev) | **Removed.** Neither IR manifest (the root crate or `filament-contract-model`) declares an FSL dependency (FB-05). | IR |
+| FSL → CG (dev), FSL → IR historical (dev) | **Removed** with SEAM-4 | M-6c, with `lower` and `lowering` (owner ruling 2026-09-24) |
+| FSL tests → RT (fixture crate, IT-010 generated crates) | **Removed** with SEAM-4 | M-6c, with `lower` and `lowering` (owner ruling 2026-09-24) |
+| RT `fsl-agreement` → FSL (dev) | **Removed.** The agreement suite is retargeted to `filament-exact` against FSpec vectors (AD-016). | RT, after X-1 (Tickets to open at #212) |
+| CG → FSL (dev) | **Becomes normal** (AD-016 Owner decision 5), on `fsl-replay` | #217 (AD-016 WP9); the repoint from the root crate to `fsl-replay` is T-14, after X-10 |
+| FSL root → layer crates | **New:** one workspace crate per §6.1 layer (§6.1 crate map). X-2 (`fsl-foundation`) is extracted; X-3 (`fsl-cst`) is extracted; X-4 (`fsl-source`) is extracted; X-5 (`fsl-forms`) is extracted; X-6 (`fsl-semantics`) is extracted; X-7 (`fsl-package`) is extracted; X-8 (`fsl-eval`) is extracted; X-9 (`fsl-route`) is extracted; X-10 (`fsl-replay`) is extracted; `located_json` is not extracted: it is deleted with `model_source` in M-6c (§7.3 X-2). | X-2 to X-10 |
+| FSL root → `tl-syntax`, `tl-mltl`, `filament-mltl` | **New**, for the root crate's `temporal` correspondence stage only (FR-045 "Correspondence"): it hands generated TL artifacts to their owners' public readers and joins the TL result with the native one. No other FSL crate or module names these crates. None of them depends on FSL (their manifests name only each other, `tl-oracle` and `filament-observation`; `tl-oracle` depends on `tl-syntax`), so the edges add no cycle. FSL holds the native subject, the `/2` package and the native evaluator, so the stage sits where both owners are reachable. | FR-045 |
+| FSL → FCD | **Admitted** (AD-016). Only `model::intake` imports FCD crates. | FSL PR #200 |
+| FSL → `filament-exact`, RT → `filament-exact`, CG → `filament-exact` | **New**; a git dependency on the repository `agent-ix/filament-exact` at `branch = "main"` | X-1, carried out as #213 S-1 after the AD-016 amendment (TK-10, QC-15) |
+| FSL → `filament-semantic-value`, RT → `filament-semantic-value`, CG → `filament-semantic-value` | **New.** FB-05's shared-leaf class: a permitted normal edge from FSL, RT and CG to the repository `agent-ix/filament-semantic-value`, at `branch = "main"`. | X-11 |
+| FSL → `filament-walk`, IR → `filament-walk`, RT → `filament-walk`, CG → `filament-walk` | **New.** FB-05's shared-leaf class: a permitted normal edge from FSL, IR, RT and CG to the repository `agent-ix/filament-walk`, each at `branch = "main"`. | ADR-030 FR-356 |
+| FSL → `filament-checked`, RT → `filament-checked`, CG → `filament-checked` | **New.** FB-05's shared-leaf class: a permitted normal edge from FSL, RT and CG to the crate `filament-checked` in the repository `agent-ix/filament-eval`, at `branch = "main"`. A backend edge never enables the `construct` feature (FB-14). | X-13 (FR-400) |
+| FSL → `filament-eval`, RT → `filament-eval`, CG → `filament-eval` | **New.** FB-05's shared-leaf class: a permitted normal edge from FSL, RT and CG to the repository `agent-ix/filament-eval`, at `branch = "main"`. | X-14 |
 
 Rules:
 
-- No cycle exists over normal, dev or test-time edges between QSL, IR, RT and
-  CG. The replay crossing test lives in agent-ix/quire-integration, which
-  depends on QSL, CG and IR, so the test adds no QSL → CG edge. QSL's own tests
+- No cycle exists over normal, dev or test-time edges between FSL, IR, RT and
+  CG. The replay crossing test lives in agent-ix/filament-integration, which
+  depends on FSL, CG and IR, so the test adds no FSL → CG edge. FSL's own tests
   read IR's agreement vectors as raw bytes through one data accessor in
-  `quire-contract-model`, which QSL already depends on; the accessor returns no IR
-  type. It adds no crate edge, and no QSL test reads a path inside a cargo
+  `filament-contract-model`, which FSL already depends on; the accessor returns no IR
+  type. It adds no crate edge, and no FSL test reads a path inside a cargo
   checkout. The parity comparator stays in
-  agent-ix/quire-contract-codegen#50. The end-to-end run of proof and replay is
-  agent-ix/quire-contract-codegen#87.
+  agent-ix/filament-contract-codegen#50. The end-to-end run of proof and replay is
+  agent-ix/filament-contract-codegen#87.
 - A dependency needed only by tests is a dev dependency.
 
 ### 7.2 Extraction criteria
@@ -1154,8 +1154,8 @@ Each layer-crate extraction (X-2 to X-10, §7.3):
   `tests/` directory.
 
 Amended (exemption ended): FR-511's transitional exemption for the root path
-`src/number.rs` ended when quire-protocol stopped importing
-`quire_spec_language::number`; the module is deleted and no root module or item is
+`src/number.rs` ended when filament-protocol stopped importing
+`filament_spec_language::number`; the module is deleted and no root module or item is
 exempt from the rule that the root crate re-exports no moved item.
 
 ### 7.3 Proposed extractions and module moves
@@ -1210,10 +1210,10 @@ is not blocked.
 
 | ID | Change | Direction | Public API | Order | Compatibility disposition |
 |---|---|---|---|---|---|
-| X-1 | Extract crate `quire-exact` (AD-016 Owner decision 2) | Leaf: it depends on no ecosystem crate. QSL, RT and CG depend on it. #213 S-1b made the edge cuts that keep it a leaf (§6.1's "K is a leaf" bullet). | The AD-016 Shared-type row types as amended by QC-15, QC-21 and QC-22, and the scalar and collection operations over them | 1st: #213 S-1, blocked by the AD-016 amendment (TK-10, QC-15), which lands after agent-ix/quire-contract-ir#139 (merged). RT and CG adopt the crate under TK-03 (agent-ix/quire-contract-runtime#56, agent-ix/quire-contract-codegen#89); T-9 (agent-ix/quire-contract-runtime#55) then retargets RT `qsl-agreement` to it | none: the RT `src/exact` kernel parts are replaced in agent-ix/quire-contract-runtime#56. On the QSL side, #213 S-1 builds `quire-exact` and cuts the kernel's own internal edges (T-6) but leaves the QSL `value` kernel copies in place, including the redesigned `ValueType`/`Value` (`negotiate_*` in `division` and `ieee` was removed, PR #290 — `src/value/division.rs:223`, `src/value/ieee.rs:882` no longer define it). X-1a (below) owns the byte-identical subset (`CollectionKind`, `Integer`, `IntegerInterval`) and the `AbsenceMode` move; #213 S-1b owns the rest except the accounting types (`Meter`, `Incomplete`, `LimitKind`), which X-1b (below) owns — `ValueType`/`Value` are #213 S-1b's. |
+| X-1 | Extract crate `filament-exact` (AD-016 Owner decision 2) | Leaf: it depends on no ecosystem crate. FSL, RT and CG depend on it. #213 S-1b made the edge cuts that keep it a leaf (§6.1's "K is a leaf" bullet). | The AD-016 Shared-type row types as amended by QC-15, QC-21 and QC-22, and the scalar and collection operations over them | 1st: #213 S-1, blocked by the AD-016 amendment (TK-10, QC-15), which lands after agent-ix/filament-contract-ir#139 (merged). RT and CG adopt the crate under TK-03 (agent-ix/filament-contract-runtime#56, agent-ix/filament-contract-codegen#89); T-9 (agent-ix/filament-contract-runtime#55) then retargets RT `fsl-agreement` to it | none: the RT `src/exact` kernel parts are replaced in agent-ix/filament-contract-runtime#56. On the FSL side, #213 S-1 builds `filament-exact` and cuts the kernel's own internal edges (T-6) but leaves the FSL `value` kernel copies in place, including the redesigned `ValueType`/`Value` (`negotiate_*` in `division` and `ieee` was removed, PR #290 — `src/value/division.rs:223`, `src/value/ieee.rs:882` no longer define it). X-1a (below) owns the byte-identical subset (`CollectionKind`, `Integer`, `IntegerInterval`) and the `AbsenceMode` move; #213 S-1b owns the rest except the accounting types (`Meter`, `Incomplete`, `LimitKind`), which X-1b (below) owns — `ValueType`/`Value` are #213 S-1b's. |
 | M-1 | Make `diagnostic` a foundation module | F | codes, typed causes, locus | with #213 | none |
-| X-1a | Remove the QSL `value` kernel's byte-identical duplicates of the `quire-exact` types (`CollectionKind`, `Integer`, `IntegerInterval`) and move `AbsenceMode` into F (`absence`) | F (`absence`); the removed types' consumers repoint at `quire-exact` | `quire-exact` widens 17 `Integer`/`IntegerInterval` methods (`add`, `sub`, `mul`, `neg`, `gcd`, `abs`, `pow`, `exact_div`, `div_rem_truncating`, `div_mod_floor`, `power_of_ten`, `power_product_bits`, `spanning`, `from_big`, `as_big`, `split_factor_two`, `shifted_left`) from `pub(crate)` to `pub`, each verified against a real cross-crate call site (§7.2 criterion 2's narrow-API bar), since their QSL callers are now a separate crate; `quire_spec_language::value` narrows, removing 8 `pub use` re-exports (`CollectionKind`, `Integer`, `IntegerInterval`, `BoundedInteger`, `IntegerDomain`, `EmptyInterval`, `NonCanonicalInteger`, `OutOfDomain`) whose one remaining definition is `quire-exact`'s | after X-1 and M-3a | none: X-1a removes exactly the byte-identical copies. `quire-exact`'s `ValueType`/`Value` are not byte-identical to the QSL copy they'd replace -- their `Enum`, `Reference` and `Quantity` payloads are a redesigned target shape (`quire-exact/src/quantity.rs`, `reference.rs` document this as a deliberate, non-verbatim cut), and `quire-exact`'s `Value` has no `Population` variant at all. Consolidating `ValueType`/`Value` is therefore not a mechanical duplicate removal; #213 S-1b owns it. |
-| X-1b | `value::accounting` duplicates eight `quire-exact` items byte-for-byte — `length_amount` (`:18`), `ScalarLimits` (`:26`), `LimitKind` (`:51`), `ChargePoint` (`:143`), `Incomplete` (`:392`), `InjectedDenial` (`:410`), `Charge` (`:419`) and `Meter` (`:465`); consolidate all eight onto the kernel definitions and delete `value::accounting` and its `mod accounting;` declaration (`value/mod.rs:41`), then repoint every consumer at the kernel definitions: the 19 modules that import directly from `accounting::` (this row's Public API cell), plus `model/key.rs`, `model/normalize.rs` and `model/population.rs`, which reach the same types only through the `value` re-export — 22 modules in the repoint scope. `model::accounting` (`Meter`, `Incomplete`, `LimitKind`, `ModelNormalizationLimits`) is a separate layer-3 `model` rung meter over its own disjoint counters, not a kernel type, and is out of this ticket's scope | K `quire-exact` for `value::accounting`'s eight duplicated types; `model::accounting` is untouched and stays in `model` | `Charge` (`quire-exact/src/accounting.rs:424`, `pub(crate)`) and `length_amount` (`:24`, `pub(crate)`) are outside `quire-exact`'s public facade (`lib.rs:127` exports only `ChargePoint`, `Incomplete`, `InjectedDenial`, `LimitKind`, `Meter`, `ScalarLimits`); 15 of the 19 `accounting::`-importers use `Charge` directly and three (`decimal.rs`, `text.rs`, `collection.rs`) use `length_amount` directly. Three more modules reach the same types only through the `value` re-export and are not among the 19: `model/key.rs:17` and `model/normalize.rs:220` each take `length_amount` alone, and `model/population.rs:147-150` takes six symbols in one aliased block — `length_amount`, `Charge as ScalarCharge`, `ChargePoint as ScalarChargePoint`, `Incomplete as ScalarIncomplete`, `LimitKind as ScalarLimitKind` and `Meter as ScalarMeter` — through both `value/mod.rs:67` and `:74`. `Charge`'s true consumer count is 16 (the 15 plus `population.rs`'s alias) and `length_amount`'s is six (the three direct plus `key.rs`, `normalize.rs` and `population.rs`); both widen to `pub`, each verified against a real cross-crate call site (§7.2 criterion 2's narrow-API bar), as X-1a's row above does for its 17 methods. The API narrows too: deleting `value::accounting` removes the six-name `pub use accounting::{ChargePoint, Incomplete, InjectedDenial, LimitKind, Meter, ScalarLimits}` re-export (`value/mod.rs:67`) and the `pub(crate) use accounting::{length_amount, Charge}` re-export (`value/mod.rs:74`) that the widening replaces, taking `population.rs`'s `Scalar*` aliases with it | after X-1; independent of #213 S-1b and X-1a (disjoint scope — none of `value::accounting`'s eight items or `model::accounting`'s `Meter`/`Incomplete`/`LimitKind` collide with X-1a's `CollectionKind`/`Integer`/`IntegerInterval`/`AbsenceMode` or #213 S-1b's `ValueType`/`Value`/`negotiate_*`/K-leaf edges) | none: no shim, no alias module, no re-export |
+| X-1a | Remove the FSL `value` kernel's byte-identical duplicates of the `filament-exact` types (`CollectionKind`, `Integer`, `IntegerInterval`) and move `AbsenceMode` into F (`absence`) | F (`absence`); the removed types' consumers repoint at `filament-exact` | `filament-exact` widens 17 `Integer`/`IntegerInterval` methods (`add`, `sub`, `mul`, `neg`, `gcd`, `abs`, `pow`, `exact_div`, `div_rem_truncating`, `div_mod_floor`, `power_of_ten`, `power_product_bits`, `spanning`, `from_big`, `as_big`, `split_factor_two`, `shifted_left`) from `pub(crate)` to `pub`, each verified against a real cross-crate call site (§7.2 criterion 2's narrow-API bar), since their FSL callers are now a separate crate; `filament_spec_language::value` narrows, removing 8 `pub use` re-exports (`CollectionKind`, `Integer`, `IntegerInterval`, `BoundedInteger`, `IntegerDomain`, `EmptyInterval`, `NonCanonicalInteger`, `OutOfDomain`) whose one remaining definition is `filament-exact`'s | after X-1 and M-3a | none: X-1a removes exactly the byte-identical copies. `filament-exact`'s `ValueType`/`Value` are not byte-identical to the FSL copy they'd replace -- their `Enum`, `Reference` and `Quantity` payloads are a redesigned target shape (`filament-exact/src/quantity.rs`, `reference.rs` document this as a deliberate, non-verbatim cut), and `filament-exact`'s `Value` has no `Population` variant at all. Consolidating `ValueType`/`Value` is therefore not a mechanical duplicate removal; #213 S-1b owns it. |
+| X-1b | `value::accounting` duplicates eight `filament-exact` items byte-for-byte — `length_amount` (`:18`), `ScalarLimits` (`:26`), `LimitKind` (`:51`), `ChargePoint` (`:143`), `Incomplete` (`:392`), `InjectedDenial` (`:410`), `Charge` (`:419`) and `Meter` (`:465`); consolidate all eight onto the kernel definitions and delete `value::accounting` and its `mod accounting;` declaration (`value/mod.rs:41`), then repoint every consumer at the kernel definitions: the 19 modules that import directly from `accounting::` (this row's Public API cell), plus `model/key.rs`, `model/normalize.rs` and `model/population.rs`, which reach the same types only through the `value` re-export — 22 modules in the repoint scope. `model::accounting` (`Meter`, `Incomplete`, `LimitKind`, `ModelNormalizationLimits`) is a separate layer-3 `model` rung meter over its own disjoint counters, not a kernel type, and is out of this ticket's scope | K `filament-exact` for `value::accounting`'s eight duplicated types; `model::accounting` is untouched and stays in `model` | `Charge` (`filament-exact/src/accounting.rs:424`, `pub(crate)`) and `length_amount` (`:24`, `pub(crate)`) are outside `filament-exact`'s public facade (`lib.rs:127` exports only `ChargePoint`, `Incomplete`, `InjectedDenial`, `LimitKind`, `Meter`, `ScalarLimits`); 15 of the 19 `accounting::`-importers use `Charge` directly and three (`decimal.rs`, `text.rs`, `collection.rs`) use `length_amount` directly. Three more modules reach the same types only through the `value` re-export and are not among the 19: `model/key.rs:17` and `model/normalize.rs:220` each take `length_amount` alone, and `model/population.rs:147-150` takes six symbols in one aliased block — `length_amount`, `Charge as ScalarCharge`, `ChargePoint as ScalarChargePoint`, `Incomplete as ScalarIncomplete`, `LimitKind as ScalarLimitKind` and `Meter as ScalarMeter` — through both `value/mod.rs:67` and `:74`. `Charge`'s true consumer count is 16 (the 15 plus `population.rs`'s alias) and `length_amount`'s is six (the three direct plus `key.rs`, `normalize.rs` and `population.rs`); both widen to `pub`, each verified against a real cross-crate call site (§7.2 criterion 2's narrow-API bar), as X-1a's row above does for its 17 methods. The API narrows too: deleting `value::accounting` removes the six-name `pub use accounting::{ChargePoint, Incomplete, InjectedDenial, LimitKind, Meter, ScalarLimits}` re-export (`value/mod.rs:67`) and the `pub(crate) use accounting::{length_amount, Charge}` re-export (`value/mod.rs:74`) that the widening replaces, taking `population.rs`'s `Scalar*` aliases with it | after X-1; independent of #213 S-1b and X-1a (disjoint scope — none of `value::accounting`'s eight items or `model::accounting`'s `Meter`/`Incomplete`/`LimitKind` collide with X-1a's `CollectionKind`/`Integer`/`IntegerInterval`/`AbsenceMode` or #213 S-1b's `ValueType`/`Value`/`negotiate_*`/K-leaf edges) | none: no shim, no alias module, no re-export |
 | M-2 | Move `model` below `check` (§6.1): move `model::checked_dispatch` and `model::conformance::check_field_refinement_obligation` (with its seven exclusive helpers and one exclusive const -- `CLAUSE_SELF_SLOT`, `clause_location`, `self_field_node`, `field_domain_type`, `presence_condition`, `comparison_condition`, `established_facts` and `format_interval`) to `check`, which (sitting above `model`) reads `model::index::ModelIndex` (`pub`, with `pub(crate)` `field`, `operations` and `scalar_bounds` accessors) and calls back into `model::conformance::missing_member` (`pub(crate)`) and `AxisFailure`/`ConformanceOutcome` (`pub`) | 3 | `model`, `model::intake` | after M-5 (corrected 2026-09-20; was "after X-1") | none |
 | M-2c | Create `semantic_value` from `value`'s non-kernel submodules (`definition`, `enumeration`, `unit`, `quantity`, `declaration`, `stop`, `member`); split out of M-2's original scope (2026-09-20) | 3 | `semantic_value` | Not blocked. No K-designated `value` submodule is left to import these back (§6.1's "K is a leaf" bullet). | none |
 | M-3a | Add the `forms` core: the closed dispatch entry table, retire SEAM-5, delete `LoweredSourceGraph`, and move `value::expression::syntax` | 2 | `forms` core dispatch and the parsed-form/leading-token-kind enums (ADR-012 §4.3, §5.1 S2) | after X-1 (corrected 2026-09-20; was "after M-2", which is now circular since M-2 depends on M-5 and M-5 depends on M-3a) | none: `LoweredSourceGraph` is deleted in the same change |
@@ -1221,22 +1221,22 @@ is not blocked.
 | M-4 | Add the S4 v2 emitter and I2 reader in `package` (ADR-010 OBS-001) | 4 | linked package → `EmittedPackage` v2 bytes; v2 bytes → `LibraryPackage` → `ImportView` through the layer-3 `library` | before M-6 | none |
 | M-5 | Split `value::expression`: checking moves to layer-3 `check` (S3), and evaluation stays in layer-5 `value::expression` (S6a) | 3 and 5 | check entry; the S6a `CheckedPackage::call` entry | after M-3a | none |
 | M-6 | Retire SEAM-1 to SEAM-4, split by lane. Each old path is deleted in the PR that lands its spine replacement (owner ruling, 2026-09-19). | none | removed | per lane, below | none: nothing runs side by side |
-| X-2 | Extract crate `qsl-foundation`. **Extracted**: `absence`, `json_number`, `serde_object`, `wire_format`, `source` (with `source_map`) and `diagnostic` moved. `located_json` is not extracted. Its one importer is `model_source` (SEAM-1), so it is deleted together with `model_source` in the M-6c slice that deletes the native front end (the `0-draft` parser), the slice that leaves both unreachable. The composed-only users of `formal_source` retired with SEAM-2; the retained request source-coordinate adapter now belongs to the non-core `qsl-command` crate (§6.1). From X-13 or X-14, whichever lands first, `qsl-foundation` also depends on `quire-semantic-value` (SV), where the F values a checked term carries (FR-400) and the catalog vocabulary (FR-401) live; SV depends on no QSL crate, so the edge closes no cycle. SV takes no hashing dependency and its X-11 dependency set is unchanged. | F | the F modules' public items | once no F module imports a seam module or a higher layer | none: no root-crate re-export (§7.2) |
-| X-3 | Extract crate `qsl-cst`. **Extracted**: `token`, `lexer` and, from `complete`, `cst`, `parser`, `grammar` and `diagnostic` moved, along with the `ParsedSource` type and the plain `parse`/`parse_source` entry points (pure layer-1 concepts, not named as a separate module in the ticket text but owned by the same crate for the same reason `parser::parse` already built them there). `complete::editor`, `complete::edit` and `format` stay in the root crate, and `complete::parse_with_catalog` with them; `complete::package` (layer 3) moved to `qsl-semantics` with X-6. It depended on the layer-3 `ProfileCatalog` until X-6 moved `ProfileCatalog` and the selection values to F `selection`. | 1 | the layer-1 modules' public items | after X-2, on the same condition | none: no root-crate re-export (§7.2) |
-| X-4 | Extract crate `qsl-source`. **Extracted**: the I3 adapter is the crate `qsl-source` (its crate root and `preflight`), which depends only on `qsl-foundation` (F), and on quire-rs under its own feature `quire-extraction`. Only `qsl-replay`'s `quire-extraction` feature enables it, for FR-109's `run_clause` over an I3 extracted source. The root crate has no `quire-extraction` feature and names `qsl-source` in none of its dependency tables. A build of the `quire-spec` command with `--features qsl-replay/quire-extraction` decodes a request's `extraction` member through `qsl-replay`'s clause-run reader and runs FR-031's extraction mode; a build without it refuses the member as unknown (FR-100). The I3 checks of FR-108-AC-5 and FR-109-AC-6 run in `qsl-replay`'s tests built with that feature. | I3 | the adapter (`clause_context`, `extract`, `ExtractedSource`, `Selection`, `Limits`, `Error`, `Cause`, `PreflightFailure`, the Quire contract constants) and the Quire result and failure types, with feature `quire-extraction` | after X-2, on the same condition | none: no root-crate re-export (§7.2) |
-| X-5 | Extract crate `qsl-forms`. **Extracted**: the `forms` core is the crate `qsl-forms` (its crate root, `dispatch` and `syntax`), which depends only on `qsl-cst` (1), `qsl-foundation` (F) and `quire-exact` (K). The root crate depends on `qsl-forms`, so Cargo refuses a normal-dependency edge from `qsl-forms` back to it; TC-398's dependency check also refuses one in `qsl-forms`'s `[dev-dependencies]`, where Cargo accepts a cycle. | 2 | the layer-2 modules' public items: `build_form`, `ParsedForm`, `FormsRefusal`, `FormsCause`, `LeadingTokenKind`, and the parsed-form types (`Expression`, `TypeForm`, `TypeFormHead`, `BuiltinType`, `FunctionDeclaration` with its `clause_kind` and `callable_by_name` accessors, `ClauseKind`, `DeclaredClauseKind`, `BinaryOperator`, `BinderQuery`, `Accumulation`, `FieldInitializer`) | after X-3, on the same condition | none: no root-crate re-export (§7.2) |
-| X-6 | Extract crate `qsl-semantics`. **Extracted** (X-6b): `check` (with its family checkers), `family`, `library`, `model` (with `model::intake` and `model::operation`), `complete::package` (as `qsl_semantics::complete`) and the layer-3 `value` submodules (`definition`'s layer table and admission, the compile-side halves of `enumeration`, `semantic_node` and `unit`, `environment_stage`, `member`, `model_query`) are in the crate `qsl-semantics`; SV's `stop`, `quantity`, `declaration`, `containment`, the runtime halves of `unit` and `enumeration` (including the structural `EnumDeclaration`), `semantic_node`'s refusal vocabulary, `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS`, `definition`'s refusal vocabulary, and `check`'s checking mode and limits (`CheckMode`, `CheckingLimits`, `DEFAULT_CHECKING_*`) and expression location (`Origin`, `Location`) are in `quire-semantic-value` (X-11), as are layer 5's `InputRefusal`, `ValueLoss` and `LocatedLoss`. Its `[dependencies]` name `qsl-forms` (2), `qsl-foundation` (F), `quire-semantic-value` (SV) and `quire-exact` (K) among the workspace crates, `quire-checked` (C) with its `construct` feature from X-13, and the FCD crates, which only `model::intake` names; TC-390's dependency check enforces both. The root crate kept `value::expression` (layer 5) in its own `value` module until X-8 moved it to `qsl-eval`. The tests that exercise only layer 3 are in `qsl-semantics/tests/`. `qsl-semantics`' test-only fixtures are behind its `test-support` feature, which only a `[dev-dependencies]` entry enables. | 3 | the layer-3 modules' public items | after X-5, on the same condition | none: no root-crate re-export (§7.2) |
-| X-7 | Extract crate `qsl-package`. **Extracted**: layer-4 `package` — `CheckedPackage`, `EmittedPackage`, the v2 emitter (`emit`) and the I2 byte reader (`checked_v2`) — is the crate `qsl-package`. Its `[dependencies]` are exactly `qsl-semantics` (3), `qsl-foundation` (F), `quire-semantic-value` (SV: `IDENTITY_LIMITS`, the `ExpressionLocation` the emitter places each occurrence at, and the `CheckingLimits` a checked package records), `quire-exact` (K: the kernel occurrence `Origin` the I2 reader keys the v2 source map by, ADR-013 O-07), `quire-contract-model` (the v2 wire contract: IR's typed structs the emitter builds and IR's reader the I2 reader delegates to), `quire-canonical` (ADR-013 §2's one RFC 8785 encoder, for the `package_id` preimage), `serde` (the emitter's wire envelope), `thiserror` and `ix-trace-rs` (the `#[string_edge]` marker, ADR-012 §9, exempt from the layer order, FR-064). X-13 adds `quire-checked` (C: the checked graph the emitter and the I2 reader read) to this list. Its `[dev-dependencies]` may name layer 2 (`qsl-forms`), for its tests only. TC-390's dependency check asserts the exact `[dependencies]` set and refuses any other workspace crate in the dev and build tables. It has no `test-support` feature. The SEAM-1 `package` submodules stay in the root crate until M-6. The root crate re-exports none of its items, including `CheckedPackage` (§4, amended). | 4 | the layer-4 modules' public items | after X-6, on the same condition | none: no root-crate re-export (§7.2) |
-| X-8 | Extract crate `qsl-eval`. **Extracted**: layer 5 — the S6a evaluator `value::expression` (with `causes`, the `s6a` seam and the `Value` family evaluator) and `simulation` — is the crate `qsl-eval`, at `qsl_eval::value` and `qsl_eval::simulation`. Its `[dependencies]` are exactly `qsl-package` (4), `qsl-semantics` (3), `qsl-foundation` (F), `quire-semantic-value` (SV), `quire-exact` (K), `quire-canonical`, `serde`, `thiserror` and `ix-trace-rs` (the `#[string_edge]` marker, ADR-012 §9, exempt from the layer order, FR-064). X-13 adds `quire-checked` (C) to this list. With X-13, its shipped modules read checked terms from `quire-checked` and name no `qsl_semantics::check` item other than the family marker types (FB-14). `quire-canonical` and `serde` encode FR-101's simulation state key and sampler preimage through ADR-013 §2's one RFC 8785 encoder, which also takes the sampler's SHA-256 draw (QSpec `quire.simulation.sampler/v1`). Its `[dev-dependencies]` may name layer 2 (`qsl-forms`), layer 1 (`qsl-cst`) and `serde_json`, for its tests only. TC-390's dependency check asserts the exact `[dependencies]` set and refuses any other workspace crate in the dev and build tables. It has no `test-support` feature. The old `state` and `temporal` evaluators are SEAM code and stay in the root crate until M-6c; `qsl-eval` imports neither. No shipped root-crate code calls a layer-5 item yet, so the root crate does not depend on `qsl-eval` in any table, which TC-390 asserts. The tests that exercise only layer 5 and below are in `qsl-eval/tests/`. | 5 | the layer-5 modules' public items | after X-7, on the same condition | none: no root-crate re-export (§7.2) |
-| X-9 | Extract crate `qsl-route`. **Extracted:** `route` is the crate `qsl-route`, with its items at the crate root (`qsl_route::Registry`, `BackendDescriptor`, `CandidateOutcome`, ...). Its `[dependencies]` name `qsl-semantics` (3) and `qsl-foundation` (F) among the workspace crates, and `quire-checked` (C) from X-13, for `Capability` and for the `DeclarationKey` a request's symmetry declaration names (FR-159); `route` imports nothing of layer 4 or K, so it did not wait for X-7. TC-390's dependency check enforces the list. No shipped root-crate module calls `route`, so the root crate names `qsl-route` only as a dev dependency (§7.1), and the `xtask seam-probe` S7 build compiles `qsl-route` separately. The tests that exercise only `route` are in `qsl-route/tests/`. | R | `route` | after X-6; X-7 is not a prerequisite, since `route` imports no layer-4 item | none: no root-crate re-export (§7.2) |
-| X-10 | Extract crate `qsl-replay`. **Extracted**: `bounds`, `call_site`, `execute`, `identity`, `proof_result`, `request`, `result`, `spine` and `witness` are in the crate `qsl-replay`. Its `[dependencies]` are exactly `qsl-cst` (1), `qsl-forms` (2), `qsl-semantics` (3), `qsl-package` (4), `qsl-eval` (5), `qsl-foundation` (F), `quire-checked` (C, from X-13), `quire-semantic-value` (SV: the `InputRefusal` and `Location` the spine reports), `quire-exact` (K), the marker crate `ix-trace-rs` (ADR-012 section 9) and `thiserror`, and `qsl-source` (I3) under its feature `quire-extraction`; the facade re-exports items of `qsl-semantics`, `qsl-forms`, `qsl-foundation` and `quire-exact`. | 6 | the `replay` facade, including the #231 envelopes | none | none: no root-crate re-export (§7.2) |
-| X-11 | Extract crate `quire-semantic-value` (SV). **Extracted**: the crate holds `semantic_node` (the refusal vocabulary, `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS`), `definition` (the refusal vocabulary), `stop`, `quantity`, `declaration`, `containment`, the runtime halves of `unit` and `enumeration`, the call-surface vocabulary: `checking`, `location`, `call` and `loss`, and `object_closure`, the `ObjectEnvironment` core object closure (§6.2). Its `[dependencies]` are exactly `quire-exact` (K), `quire-canonical`, `serde` and `thiserror`, each without `std`; it is `#![no_std]`, and `make ci` builds it for `thumbv7em-none-eabi`. TC-390's dependency check asserts the exact table. Two further rules hold for SV. The `ObjectEnvironment` core object closure is in it (§6.2), while the populations map stays in `model`. A type that S3 or `qsl-eval` produces and CG reads lives in SV, so CG takes no edge to a QSL layer crate; this covers `ModelTransition`, `ProtocolTransition`, `PropertyForm`, `FairnessConstraint`, `Permutation` and `StepObligation`. | SV: a shared leaf that QSL layers 3 and up, RT and CG depend on (FB-05) | the moved modules' public items, at `quire_semantic_value::{semantic_node, stop, quantity, unit, enumeration, definition, declaration, containment, checking, location, call, loss, object_closure}` | after X-10 | none: no re-export from `qsl-semantics` or any other crate (§7.2) |
-| X-12 | Create crates `qsl-analyze` (layer A: the in-process engines behind `analyze`, and `monitor`), `qsl-inspect` (layer P: `inspect` and `render`) and `qsl-jit` (layer X: the JIT execution backend), and move `format` into `qsl-cst` (layer 1). Added by ADR-029 CB-3, OP-1, EB-7 and §9 | A, P and X sit above the qualified core and are called by the orchestrating driver; `format` joins layer 1 | `qsl_analyze::{analyze, monitor}` with `AnalyzeOutcome`, `MonitorOutcome` and the canonical `AnalyzeRequest`; `qsl_inspect::{inspect, render}` with `View`; `qsl_jit`'s `ExecutionBackend` implementation; `qsl_cst::format` | `qsl-analyze` after X-10; `qsl-inspect` after `qsl-analyze`; `qsl-jit` after layer 5's `ExecutionBackend` seam; `format` with the root crate's `format` deletion | none: root `src/format.rs` is deleted in the change that adds `qsl_cst::format`, with no re-export (§7.2) |
-| X-13 | Create crate `quire-checked` (layer C) in the repository `agent-ix/quire-eval` and move the checked terms into it (FR-400): the `check::ir` arena, `CheckedExpression`, the evaluation-visible `CheckedGraph` and the clause records the evaluator and simulation read, the identities (`node_key` terms, the semantic-graph projection, `ModelCorrespondence`, `CheckedTypeNode`, the occurrence map, `OperationKey`, `DeclarationKey`) and the admitted-operation data; the full `SemanticGraph` stays with the checker. When S1 has not moved `WrongSnapshotCause`, X-13 moves it to SV `call`, and the S1 slice then moves nothing for it. Its `[dependencies]` are SV, K and W, `quire-canonical`, `serde` and `thiserror`, each without `std`; it is `#![no_std]` with `alloc` and a default-on `std` feature, and forbids unsafe code. Each moved record leaves its spans and `qsl-forms` values in a checker-side table keyed by its identity; the F and layer-2 plain values it carries move to SV in the same change, with no copy or re-export left in F or layer 2; the layer-3 values it carries move to C. QSL takes it as a git dependency at `branch = "main"`; `qsl-semantics` (with feature `construct`), `qsl-package`, `qsl-eval`, `qsl-route` and `qsl-replay` add it to their `[dependencies]` (X-6, X-7, X-8, X-9, X-10 tables), each named in that row's dependency list, and TC-390 asserts those tables (its `qsl-package` and `qsl-eval` sets gain `quire-checked`) and that no other QSL crate enables `construct`. Its test-only fixtures are behind its `test-support` feature. `check::footprint` moves to layer-3 `model`. | C: a shared leaf above SV, K and W and below layer 3, RT and CG (FB-05) | the moved types at `quire_checked::` paths, and the `construct` module whose QSL callers are `check`, plus `value::definition` for `AdmittedIntegerDivision` (T12-G) | after X-11. The moves may land as three changes, in the order expression terms, clause records, `CheckedGraph`, each repointing every caller; the repository's licence, CLA and content-rights checks precede making it public | none: no re-export at a `qsl_semantics::` path (§7.2); TC-244 row 1's `compile_fail` checks move with their types |
-| X-14 | Create crate `quire-eval` (layer E) in the repository `agent-ix/quire-eval` and move the evaluation interface vocabulary (FR-401, slice S0, IR-583). First, in `agent-ix/quire-semantic-value`, `qsl-foundation`'s catalog vocabulary (`Category`, `CatalogCode`, `CatalogCoded`, `UndefinedCoded`, `UndefinedRecord`, `UndefinedReason`, `InternalFault`) moves to SV `catalog`, and `qsl-semantics`' supplied-value stop records (`SuppliedFailure`, `SuppliedStop` and the records they carry, and `UnsupportedHelperStop`) move to SV `supplied_stop`; `CatalogCoded`'s provided `refusal_record` becomes a `qsl-foundation` function, and `qsl-foundation` names the moved items through its SV dependency, which X-14 adds when X-13 has not already added it (amending X-2); X-14 does not wait for X-13. Then `quire-eval` holds the FR-262 interface, `Evaluation` and `CallFailure` from `qsl-eval`, and `FamilyOutcome`, `FamilyResult` and `EvalOutcome` from `qsl-semantics`' `family`; `Evaluation::refusal_record` becomes a `qsl-eval` free function over the evaluation and a region resolver (FR-400). Its `[dependencies]` are drawn from C, SV, K, W and `thiserror`, each without `std`, and name each only when its source names an item of it; it is `#![no_std]` with `alloc`, has no `std` feature, forbids unsafe code and builds for `thumbv7em-none-eabi` in its own gate. QSL takes it as a git dependency at `branch = "main"`: `qsl-eval`, `qsl-replay` and `qsl-bench` add it to their `[dependencies]` (amending X-8 and X-10), and TC-390 asserts those tables and that no layer F to 4 or R crate names it. `qsl-eval` holds the std reference adapter over `CheckedPackage` and `ObjectEnvironment`. | E: a shared leaf above C, SV, K and W and below layers 5, 6 and A, RT and CG (FB-05) | `quire_eval::{Evaluation, CallFailure, FamilyOutcome, FamilyResult, EvalOutcome}` and the interface items; `quire_semantic_value::{catalog, supplied_stop}` | after X-11; the repository's licence, CLA and content-rights checks precede making it public. The SV change lands before the QSL change that repoints callers at it | none: no re-export at a `qsl_foundation::`, `qsl_semantics::` or `qsl_eval::` path, including `qsl_eval::value::{Evaluation, CallFailure}` (§7.2) |
-| X-15 | Move `WrongSnapshotCause` from `qsl-semantics`' `check::refusal` to SV `call` (FR-401, slice S1, IR-585), where the checker's `CheckCause` and `qsl-eval`'s runtime snapshot cause both name it. This is S1's complete item set: `ObjectEnvironment` already holds SV's `ObjectClosure` and stays in `model`. When X-13 has already moved it to the same place (FR-400), X-15 moves nothing | SV | `quire_semantic_value::call::WrongSnapshotCause` | after X-14 | none: no re-export at a `qsl_semantics::` path (§7.2) |
-| X-16 | Implement the `no_std` evaluator in `quire-eval` for the `Value` family (FR-403, slices S4 and S6, IR-588 and IR-590). `qsl-semantics`' `value::definition::divide` and `modulo` and `qsl-eval`'s `Value`-family runtime causes (`PreconditionFailure`, `StateModelUndefined`, `NavigationRefusal`, `ReferenceUnresolved`, `ProtocolReferenceUnsupported`) move to E, and argument admission is E's; both evaluators use them there. `model::refusal::render_identity` and the `StateModel` catalog prefix move to SV `catalog`, and `value::supplied`'s `SuppliedRun` and `SuppliedLimits` move to SV `supplied_stop`. `quire-eval` evaluates C's checked terms and reads objects and populations only through the environment contract it defines; it ships a contract implementation over SV's `ObjectClosure` alone, and `qsl-eval` implements the contract over `ObjectEnvironment`, which stays in layer-3 `model` with `model::population` and `value::model_query`. The witness and stop-report vocabulary (`qsl_foundation::witness`, `model::observation::DocumentRef`) stays: until X-17, clause evaluation stays in layer 5, and E evaluates every node kind except `Pre`, `NamedPopulation`, `PopulationObjects` and `History`, which only postcondition, clause and refinement checking build. `quire-eval`'s dependency set is X-14's; it takes C without `construct`. `qsl-eval` stays `std` and keeps the std reference evaluator as its default until IR-593 | E, SV | the evaluator entry points, argument admission and the environment contract at `quire_eval::` paths; `divide`, `modulo` and the moved causes; `quire_semantic_value::catalog::render_identity`, the prefix constant, and `SuppliedRun` and `SuppliedLimits` at `quire_semantic_value::supplied_stop` | after X-13, X-14 and X-15; the SV change lands before the QSL change that repoints callers at it | none: no re-export at a `qsl_semantics::` or `qsl_eval::` path (§7.2) |
-| X-17 | Retire the std reference evaluator (FR-405, slice S9, IR-593), amending X-16. In one change, every evaluation in layers 5, 6 and A, clause families included, drives E's session, and `qsl-eval`'s `Machine`, its `value::expression::evaluate` module, the std reference adapter and the separate `quire-eval` entry are deleted. E evaluates `Pre`, `NamedPopulation`, `PopulationObjects` and `History` through a clause entry whose environment contract layer 5 implements, as the clause-evaluation requirement (STD-318) defines it; the `Value`-family entry keeps its fault for them. The witness and stop-report vocabulary stays in QSL, built by layer 5 from what E reports. The FR-402 harness becomes `evaluator-regression`, comparing E's records with recorded expectations | E, 5 | the clause entry and its environment contract at `quire_eval::` paths | after X-16, on FR-405's switch criterion | none: no item at a deleted `qsl_eval::` path, no forwarding to E, and no feature, fallback or test oracle that keeps the deleted evaluator (§7.2) |
+| X-2 | Extract crate `fsl-foundation`. **Extracted**: `absence`, `json_number`, `serde_object`, `wire_format`, `source` (with `source_map`) and `diagnostic` moved. `located_json` is not extracted. Its one importer is `model_source` (SEAM-1), so it is deleted together with `model_source` in the M-6c slice that deletes the native front end (the `0-draft` parser), the slice that leaves both unreachable. The composed-only users of `formal_source` retired with SEAM-2; the retained request source-coordinate adapter now belongs to the non-core `fsl-command` crate (§6.1). From X-13 or X-14, whichever lands first, `fsl-foundation` also depends on `filament-semantic-value` (SV), where the F values a checked term carries (FR-400) and the catalog vocabulary (FR-401) live; SV depends on no FSL crate, so the edge closes no cycle. SV takes no hashing dependency and its X-11 dependency set is unchanged. | F | the F modules' public items | once no F module imports a seam module or a higher layer | none: no root-crate re-export (§7.2) |
+| X-3 | Extract crate `fsl-cst`. **Extracted**: `token`, `lexer` and, from `complete`, `cst`, `parser`, `grammar` and `diagnostic` moved, along with the `ParsedSource` type and the plain `parse`/`parse_source` entry points (pure layer-1 concepts, not named as a separate module in the ticket text but owned by the same crate for the same reason `parser::parse` already built them there). `complete::editor`, `complete::edit` and `format` stay in the root crate, and `complete::parse_with_catalog` with them; `complete::package` (layer 3) moved to `fsl-semantics` with X-6. It depended on the layer-3 `ProfileCatalog` until X-6 moved `ProfileCatalog` and the selection values to F `selection`. | 1 | the layer-1 modules' public items | after X-2, on the same condition | none: no root-crate re-export (§7.2) |
+| X-4 | Extract crate `fsl-source`. **Extracted**: the I3 adapter is the crate `fsl-source` (its crate root and `preflight`), which depends only on `fsl-foundation` (F), and on quire-rs under its own feature `quire-extraction`. Only `fsl-replay`'s `quire-extraction` feature enables it, for FR-109's `run_clause` over an I3 extracted source. The root crate has no `quire-extraction` feature and names `fsl-source` in none of its dependency tables. A build of the `filament-spec` command with `--features fsl-replay/quire-extraction` decodes a request's `extraction` member through `fsl-replay`'s clause-run reader and runs FR-031's extraction mode; a build without it refuses the member as unknown (FR-100). The I3 checks of FR-108-AC-5 and FR-109-AC-6 run in `fsl-replay`'s tests built with that feature. | I3 | the adapter (`clause_context`, `extract`, `ExtractedSource`, `Selection`, `Limits`, `Error`, `Cause`, `PreflightFailure`, the Quire contract constants) and the Quire result and failure types, with feature `quire-extraction` | after X-2, on the same condition | none: no root-crate re-export (§7.2) |
+| X-5 | Extract crate `fsl-forms`. **Extracted**: the `forms` core is the crate `fsl-forms` (its crate root, `dispatch` and `syntax`), which depends only on `fsl-cst` (1), `fsl-foundation` (F) and `filament-exact` (K). The root crate depends on `fsl-forms`, so Cargo refuses a normal-dependency edge from `fsl-forms` back to it; TC-398's dependency check also refuses one in `fsl-forms`'s `[dev-dependencies]`, where Cargo accepts a cycle. | 2 | the layer-2 modules' public items: `build_form`, `ParsedForm`, `FormsRefusal`, `FormsCause`, `LeadingTokenKind`, and the parsed-form types (`Expression`, `TypeForm`, `TypeFormHead`, `BuiltinType`, `FunctionDeclaration` with its `clause_kind` and `callable_by_name` accessors, `ClauseKind`, `DeclaredClauseKind`, `BinaryOperator`, `BinderQuery`, `Accumulation`, `FieldInitializer`) | after X-3, on the same condition | none: no root-crate re-export (§7.2) |
+| X-6 | Extract crate `fsl-semantics`. **Extracted** (X-6b): `check` (with its family checkers), `family`, `library`, `model` (with `model::intake` and `model::operation`), `complete::package` (as `fsl_semantics::complete`) and the layer-3 `value` submodules (`definition`'s layer table and admission, the compile-side halves of `enumeration`, `semantic_node` and `unit`, `environment_stage`, `member`, `model_query`) are in the crate `fsl-semantics`; SV's `stop`, `quantity`, `declaration`, `containment`, the runtime halves of `unit` and `enumeration` (including the structural `EnumDeclaration`), `semantic_node`'s refusal vocabulary, `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS`, `definition`'s refusal vocabulary, and `check`'s checking mode and limits (`CheckMode`, `CheckingLimits`, `DEFAULT_CHECKING_*`) and expression location (`Origin`, `Location`) are in `filament-semantic-value` (X-11), as are layer 5's `InputRefusal`, `ValueLoss` and `LocatedLoss`. Its `[dependencies]` name `fsl-forms` (2), `fsl-foundation` (F), `filament-semantic-value` (SV) and `filament-exact` (K) among the workspace crates, `filament-checked` (C) with its `construct` feature from X-13, and the FCD crates, which only `model::intake` names; TC-390's dependency check enforces both. The root crate kept `value::expression` (layer 5) in its own `value` module until X-8 moved it to `fsl-eval`. The tests that exercise only layer 3 are in `fsl-semantics/tests/`. `fsl-semantics`' test-only fixtures are behind its `test-support` feature, which only a `[dev-dependencies]` entry enables. | 3 | the layer-3 modules' public items | after X-5, on the same condition | none: no root-crate re-export (§7.2) |
+| X-7 | Extract crate `fsl-package`. **Extracted**: layer-4 `package` — `CheckedPackage`, `EmittedPackage`, the v2 emitter (`emit`) and the I2 byte reader (`checked_v2`) — is the crate `fsl-package`. Its `[dependencies]` are exactly `fsl-semantics` (3), `fsl-foundation` (F), `filament-semantic-value` (SV: `IDENTITY_LIMITS`, the `ExpressionLocation` the emitter places each occurrence at, and the `CheckingLimits` a checked package records), `filament-exact` (K: the kernel occurrence `Origin` the I2 reader keys the v2 source map by, ADR-013 O-07), `filament-contract-model` (the v2 wire contract: IR's typed structs the emitter builds and IR's reader the I2 reader delegates to), `quire-canonical` (ADR-013 §2's one RFC 8785 encoder, for the `package_id` preimage), `serde` (the emitter's wire envelope), `thiserror` and `ix-trace-rs` (the `#[string_edge]` marker, ADR-012 §9, exempt from the layer order, FR-064). X-13 adds `filament-checked` (C: the checked graph the emitter and the I2 reader read) to this list. Its `[dev-dependencies]` may name layer 2 (`fsl-forms`), for its tests only. TC-390's dependency check asserts the exact `[dependencies]` set and refuses any other workspace crate in the dev and build tables. It has no `test-support` feature. The SEAM-1 `package` submodules stay in the root crate until M-6. The root crate re-exports none of its items, including `CheckedPackage` (§4, amended). | 4 | the layer-4 modules' public items | after X-6, on the same condition | none: no root-crate re-export (§7.2) |
+| X-8 | Extract crate `fsl-eval`. **Extracted**: layer 5 — the S6a evaluator `value::expression` (with `causes`, the `s6a` seam and the `Value` family evaluator) and `simulation` — is the crate `fsl-eval`, at `fsl_eval::value` and `fsl_eval::simulation`. Its `[dependencies]` are exactly `fsl-package` (4), `fsl-semantics` (3), `fsl-foundation` (F), `filament-semantic-value` (SV), `filament-exact` (K), `quire-canonical`, `serde`, `thiserror` and `ix-trace-rs` (the `#[string_edge]` marker, ADR-012 §9, exempt from the layer order, FR-064). X-13 adds `filament-checked` (C) to this list. With X-13, its shipped modules read checked terms from `filament-checked` and name no `fsl_semantics::check` item other than the family marker types (FB-14). `quire-canonical` and `serde` encode FR-101's simulation state key and sampler preimage through ADR-013 §2's one RFC 8785 encoder, which also takes the sampler's SHA-256 draw (FSpec `filament.simulation.sampler/v1`). Its `[dev-dependencies]` may name layer 2 (`fsl-forms`), layer 1 (`fsl-cst`) and `serde_json`, for its tests only. TC-390's dependency check asserts the exact `[dependencies]` set and refuses any other workspace crate in the dev and build tables. It has no `test-support` feature. The old `state` and `temporal` evaluators are SEAM code and stay in the root crate until M-6c; `fsl-eval` imports neither. No shipped root-crate code calls a layer-5 item yet, so the root crate does not depend on `fsl-eval` in any table, which TC-390 asserts. The tests that exercise only layer 5 and below are in `fsl-eval/tests/`. | 5 | the layer-5 modules' public items | after X-7, on the same condition | none: no root-crate re-export (§7.2) |
+| X-9 | Extract crate `fsl-route`. **Extracted:** `route` is the crate `fsl-route`, with its items at the crate root (`fsl_route::Registry`, `BackendDescriptor`, `CandidateOutcome`, ...). Its `[dependencies]` name `fsl-semantics` (3) and `fsl-foundation` (F) among the workspace crates, and `filament-checked` (C) from X-13, for `Capability` and for the `DeclarationKey` a request's symmetry declaration names (FR-159); `route` imports nothing of layer 4 or K, so it did not wait for X-7. TC-390's dependency check enforces the list. No shipped root-crate module calls `route`, so the root crate names `fsl-route` only as a dev dependency (§7.1), and the `xtask seam-probe` S7 build compiles `fsl-route` separately. The tests that exercise only `route` are in `fsl-route/tests/`. | R | `route` | after X-6; X-7 is not a prerequisite, since `route` imports no layer-4 item | none: no root-crate re-export (§7.2) |
+| X-10 | Extract crate `fsl-replay`. **Extracted**: `bounds`, `call_site`, `execute`, `identity`, `proof_result`, `request`, `result`, `spine` and `witness` are in the crate `fsl-replay`. Its `[dependencies]` are exactly `fsl-cst` (1), `fsl-forms` (2), `fsl-semantics` (3), `fsl-package` (4), `fsl-eval` (5), `fsl-foundation` (F), `filament-checked` (C, from X-13), `filament-semantic-value` (SV: the `InputRefusal` and `Location` the spine reports), `filament-exact` (K), the marker crate `ix-trace-rs` (ADR-012 section 9) and `thiserror`, and `fsl-source` (I3) under its feature `quire-extraction`; the facade re-exports items of `fsl-semantics`, `fsl-forms`, `fsl-foundation` and `filament-exact`. | 6 | the `replay` facade, including the #231 envelopes | none | none: no root-crate re-export (§7.2) |
+| X-11 | Extract crate `filament-semantic-value` (SV). **Extracted**: the crate holds `semantic_node` (the refusal vocabulary, `check_terms`, `CanonicalNodeId` and `IDENTITY_LIMITS`), `definition` (the refusal vocabulary), `stop`, `quantity`, `declaration`, `containment`, the runtime halves of `unit` and `enumeration`, the call-surface vocabulary: `checking`, `location`, `call` and `loss`, and `object_closure`, the `ObjectEnvironment` core object closure (§6.2). Its `[dependencies]` are exactly `filament-exact` (K), `quire-canonical`, `serde` and `thiserror`, each without `std`; it is `#![no_std]`, and `make ci` builds it for `thumbv7em-none-eabi`. TC-390's dependency check asserts the exact table. Two further rules hold for SV. The `ObjectEnvironment` core object closure is in it (§6.2), while the populations map stays in `model`. A type that S3 or `fsl-eval` produces and CG reads lives in SV, so CG takes no edge to an FSL layer crate; this covers `ModelTransition`, `ProtocolTransition`, `PropertyForm`, `FairnessConstraint`, `Permutation` and `StepObligation`. | SV: a shared leaf that FSL layers 3 and up, RT and CG depend on (FB-05) | the moved modules' public items, at `filament_semantic_value::{semantic_node, stop, quantity, unit, enumeration, definition, declaration, containment, checking, location, call, loss, object_closure}` | after X-10 | none: no re-export from `fsl-semantics` or any other crate (§7.2) |
+| X-12 | Create crates `fsl-analyze` (layer A: the in-process engines behind `analyze`, and `monitor`), `fsl-inspect` (layer P: `inspect` and `render`) and `fsl-jit` (layer X: the JIT execution backend), and move `format` into `fsl-cst` (layer 1). Added by ADR-029 CB-3, OP-1, EB-7 and §9 | A, P and X sit above the qualified core and are called by the orchestrating driver; `format` joins layer 1 | `fsl_analyze::{analyze, monitor}` with `AnalyzeOutcome`, `MonitorOutcome` and the canonical `AnalyzeRequest`; `fsl_inspect::{inspect, render}` with `View`; `fsl_jit`'s `ExecutionBackend` implementation; `fsl_cst::format` | `fsl-analyze` after X-10; `fsl-inspect` after `fsl-analyze`; `fsl-jit` after layer 5's `ExecutionBackend` seam; `format` with the root crate's `format` deletion | none: root `src/format.rs` is deleted in the change that adds `fsl_cst::format`, with no re-export (§7.2) |
+| X-13 | Create crate `filament-checked` (layer C) in the repository `agent-ix/filament-eval` and move the checked terms into it (FR-400): the `check::ir` arena, `CheckedExpression`, the evaluation-visible `CheckedGraph` and the clause records the evaluator and simulation read, the identities (`node_key` terms, the semantic-graph projection, `ModelCorrespondence`, `CheckedTypeNode`, the occurrence map, `OperationKey`, `DeclarationKey`) and the admitted-operation data; the full `SemanticGraph` stays with the checker. When S1 has not moved `WrongSnapshotCause`, X-13 moves it to SV `call`, and the S1 slice then moves nothing for it. Its `[dependencies]` are SV, K and W, `quire-canonical`, `serde` and `thiserror`, each without `std`; it is `#![no_std]` with `alloc` and a default-on `std` feature, and forbids unsafe code. Each moved record leaves its spans and `fsl-forms` values in a checker-side table keyed by its identity; the F and layer-2 plain values it carries move to SV in the same change, with no copy or re-export left in F or layer 2; the layer-3 values it carries move to C. FSL takes it as a git dependency at `branch = "main"`; `fsl-semantics` (with feature `construct`), `fsl-package`, `fsl-eval`, `fsl-route` and `fsl-replay` add it to their `[dependencies]` (X-6, X-7, X-8, X-9, X-10 tables), each named in that row's dependency list, and TC-390 asserts those tables (its `fsl-package` and `fsl-eval` sets gain `filament-checked`) and that no other FSL crate enables `construct`. Its test-only fixtures are behind its `test-support` feature. `check::footprint` moves to layer-3 `model`. | C: a shared leaf above SV, K and W and below layer 3, RT and CG (FB-05) | the moved types at `filament_checked::` paths, and the `construct` module whose FSL callers are `check`, plus `value::definition` for `AdmittedIntegerDivision` (T12-G) | after X-11. The moves may land as three changes, in the order expression terms, clause records, `CheckedGraph`, each repointing every caller; the repository's licence, CLA and content-rights checks precede making it public | none: no re-export at a `fsl_semantics::` path (§7.2); TC-244 row 1's `compile_fail` checks move with their types |
+| X-14 | Create crate `filament-eval` (layer E) in the repository `agent-ix/filament-eval` and move the evaluation interface vocabulary (FR-401, slice S0, IR-583). First, in `agent-ix/filament-semantic-value`, `fsl-foundation`'s catalog vocabulary (`Category`, `CatalogCode`, `CatalogCoded`, `UndefinedCoded`, `UndefinedRecord`, `UndefinedReason`, `InternalFault`) moves to SV `catalog`, and `fsl-semantics`' supplied-value stop records (`SuppliedFailure`, `SuppliedStop` and the records they carry, and `UnsupportedHelperStop`) move to SV `supplied_stop`; `CatalogCoded`'s provided `refusal_record` becomes a `fsl-foundation` function, and `fsl-foundation` names the moved items through its SV dependency, which X-14 adds when X-13 has not already added it (amending X-2); X-14 does not wait for X-13. Then `filament-eval` holds the FR-262 interface, `Evaluation` and `CallFailure` from `fsl-eval`, and `FamilyOutcome`, `FamilyResult` and `EvalOutcome` from `fsl-semantics`' `family`; `Evaluation::refusal_record` becomes a `fsl-eval` free function over the evaluation and a region resolver (FR-400). Its `[dependencies]` are drawn from C, SV, K, W and `thiserror`, each without `std`, and name each only when its source names an item of it; it is `#![no_std]` with `alloc`, has no `std` feature, forbids unsafe code and builds for `thumbv7em-none-eabi` in its own gate. FSL takes it as a git dependency at `branch = "main"`: `fsl-eval`, `fsl-replay` and `fsl-bench` add it to their `[dependencies]` (amending X-8 and X-10), and TC-390 asserts those tables and that no layer F to 4 or R crate names it. `fsl-eval` holds the std reference adapter over `CheckedPackage` and `ObjectEnvironment`. | E: a shared leaf above C, SV, K and W and below layers 5, 6 and A, RT and CG (FB-05) | `filament_eval::{Evaluation, CallFailure, FamilyOutcome, FamilyResult, EvalOutcome}` and the interface items; `filament_semantic_value::{catalog, supplied_stop}` | after X-11; the repository's licence, CLA and content-rights checks precede making it public. The SV change lands before the FSL change that repoints callers at it | none: no re-export at a `fsl_foundation::`, `fsl_semantics::` or `fsl_eval::` path, including `fsl_eval::value::{Evaluation, CallFailure}` (§7.2) |
+| X-15 | Move `WrongSnapshotCause` from `fsl-semantics`' `check::refusal` to SV `call` (FR-401, slice S1, IR-585), where the checker's `CheckCause` and `fsl-eval`'s runtime snapshot cause both name it. This is S1's complete item set: `ObjectEnvironment` already holds SV's `ObjectClosure` and stays in `model`. When X-13 has already moved it to the same place (FR-400), X-15 moves nothing | SV | `filament_semantic_value::call::WrongSnapshotCause` | after X-14 | none: no re-export at a `fsl_semantics::` path (§7.2) |
+| X-16 | Implement the `no_std` evaluator in `filament-eval` for the `Value` family (FR-403, slices S4 and S6, IR-588 and IR-590). `fsl-semantics`' `value::definition::divide` and `modulo` and `fsl-eval`'s `Value`-family runtime causes (`PreconditionFailure`, `StateModelUndefined`, `NavigationRefusal`, `ReferenceUnresolved`, `ProtocolReferenceUnsupported`) move to E, and argument admission is E's; both evaluators use them there. `model::refusal::render_identity` and the `StateModel` catalog prefix move to SV `catalog`, and `value::supplied`'s `SuppliedRun` and `SuppliedLimits` move to SV `supplied_stop`. `filament-eval` evaluates C's checked terms and reads objects and populations only through the environment contract it defines; it ships a contract implementation over SV's `ObjectClosure` alone, and `fsl-eval` implements the contract over `ObjectEnvironment`, which stays in layer-3 `model` with `model::population` and `value::model_query`. The witness and stop-report vocabulary (`fsl_foundation::witness`, `model::observation::DocumentRef`) stays: until X-17, clause evaluation stays in layer 5, and E evaluates every node kind except `Pre`, `NamedPopulation`, `PopulationObjects` and `History`, which only postcondition, clause and refinement checking build. `filament-eval`'s dependency set is X-14's; it takes C without `construct`. `fsl-eval` stays `std` and keeps the std reference evaluator as its default until IR-593 | E, SV | the evaluator entry points, argument admission and the environment contract at `filament_eval::` paths; `divide`, `modulo` and the moved causes; `filament_semantic_value::catalog::render_identity`, the prefix constant, and `SuppliedRun` and `SuppliedLimits` at `filament_semantic_value::supplied_stop` | after X-13, X-14 and X-15; the SV change lands before the FSL change that repoints callers at it | none: no re-export at a `fsl_semantics::` or `fsl_eval::` path (§7.2) |
+| X-17 | Retire the std reference evaluator (FR-405, slice S9, IR-593), amending X-16. In one change, every evaluation in layers 5, 6 and A, clause families included, drives E's session, and `fsl-eval`'s `Machine`, its `value::expression::evaluate` module, the std reference adapter and the separate `filament-eval` entry are deleted. E evaluates `Pre`, `NamedPopulation`, `PopulationObjects` and `History` through a clause entry whose environment contract layer 5 implements, as the clause-evaluation requirement (STD-318) defines it; the `Value`-family entry keeps its fault for them. The witness and stop-report vocabulary stays in FSL, built by layer 5 from what E reports. The FR-402 harness becomes `evaluator-regression`, comparing E's records with recorded expectations | E, 5 | the clause entry and its environment contract at `filament_eval::` paths | after X-16, on FR-405's switch criterion | none: no item at a deleted `fsl_eval::` path, no forwarding to E, and no feature, fallback or test oracle that keeps the deleted evaluator (§7.2) |
 
 #### QSL-840 B8 behavior coverage and disposition
 
@@ -1251,11 +1251,11 @@ to QSL-838 / QSL-498-B6.
 | Affected behavior | Current requirement and test | Disposition and replacement gate |
 |---|---|---|
 | Source-owned compilation and emission, exact selectors and identities, canonical wire bytes, typed values, partial/incomplete refusal and bounded work | FR-042-AC-1–6, AC-8–9, AC-11–14 emission halves; TC-121 steps 1–6, 8–9, 12–14 | Retain the B8 emitter and these FR-042 obligations until QSL-851 provides checked protocol-node emission/read-back and QSL-853 supplies the replacement conformance corpus. |
-| Strict versioned reading, selected metadata reconstruction and consumer admission | FR-042-AC-7, AC-10–14 reader/consumer halves; FR-050-AC-4 and AC-6; TC-121 steps 7, 10, 12–14 and quire-protocol IT-001 | B9 readers remain in QSL-838 / QSL-498-B6 and are outside this B8 deletion. Keep these contracts and reader tests assigned there; B8 retirement does not remove them. |
+| Strict versioned reading, selected metadata reconstruction and consumer admission | FR-042-AC-7, AC-10–14 reader/consumer halves; FR-050-AC-4 and AC-6; TC-121 steps 7, 10, 12–14 and filament-protocol IT-001 | B9 readers remain in QSL-838 / QSL-498-B6 and are outside this B8 deletion. Keep these contracts and reader tests assigned there; B8 retirement does not remove them. |
 | Protocol controls, causal relations, choices, repeats, channels, attempts, effects, compensation, commit and recovery relations | FR-042-AC-5–6; TC-121 steps 5–6 and the choreography fixture | Retain. QSL-558 supplies the missing S3 control constructs; QSL-851 supplies S4 protocol emission; QSL-852 supplies protocol-node evaluation; QSL-853 replaces the corpus. |
-| Consumer handoff and cross-repository consumption | FR-042-AC-10 and AC-15; TC-121 steps 10–11, 15–16 and quire-protocol IT-001 | Retain the writer and consumer contract until QSL-839 integrates the replacement and QSL-853 proves conformance. The quire-protocol revision pin is not itself a QSL deletion gate. |
-| Bounded temporal truth, profile and clock selection, closure/completeness, support, settlement and strict authenticated temporal bindings | FR-043 and FR-050; TC-122 and TC-138 | Retain. QSL-839's checked-package route must preserve these contracts; unresolved selection or activation mapping remains a blocker, including QSL-846 / QSpec PR #59 (G9). |
-| Trigger activation, guards, immutable captures, instance identity, unsupported mapping and progress/closure dispositions | FR-044–045; TC-123 and TC-125 | Retain. Preserve these semantics in the spine contract; do not infer an activation map from a declaration table or wire order. G9 remains open under QSL-846 / QSpec PR #59. |
+| Consumer handoff and cross-repository consumption | FR-042-AC-10 and AC-15; TC-121 steps 10–11, 15–16 and filament-protocol IT-001 | Retain the writer and consumer contract until QSL-839 integrates the replacement and QSL-853 proves conformance. The filament-protocol revision pin is not itself an FSL deletion gate. |
+| Bounded temporal truth, profile and clock selection, closure/completeness, support, settlement and strict authenticated temporal bindings | FR-043 and FR-050; TC-122 and TC-138 | Retain. QSL-839's checked-package route must preserve these contracts; unresolved selection or activation mapping remains a blocker, including QSL-846 / FSpec PR #59 (G9). |
+| Trigger activation, guards, immutable captures, instance identity, unsupported mapping and progress/closure dispositions | FR-044–045; TC-123 and TC-125 | Retain. Preserve these semantics in the spine contract; do not infer an activation map from a declaration table or wire order. G9 remains open under QSL-846 / FSpec PR #59. |
 | Reusable predicates, ordered queries, finite object/reference graphs and their accounting | FR-046–047; TC-126–128 and TC-130–131 | Retain. These evaluated behaviors continue under their own FRs. Where protocol-node expressions or checked protocol inputs are required, QSL-852 remains a gate. |
 | Choreography identity, source ownership, control flow, retries, compensation and recovery | FR-048; TC-132–135 | Retain the complete contract. The existing frame subset is not a replacement for the unsupported control/channel/recovery forms; QSL-558, QSL-851, QSL-852 and QSL-853 gate B8 retirement. |
 | Composed evaluation-input admission and protocol-node expression selection | FR-049; TC-136–137 | Retain. QSL-852 owns protocol-node evaluation and shared accounting, including the re-homed TC-142 / TC-134 evaluation behavior. |
@@ -1264,7 +1264,7 @@ to QSL-838 / QSL-498-B6.
 The known live relation graph also includes STD-294 / QSL-855 (proof bound),
 QSL-839 (replacement integration), and QSL-851, QSL-852 and QSL-853. QSL-840
 may remove B8 only after these gates and QSL-558 are satisfied. The G9 gap
-remains explicit through QSL-846 / QSpec PR #59. The QSL-840 specification
+remains explicit through QSL-846 / FSpec PR #59. The QSL-840 specification
 pass alone does not establish deletion readiness.
 
 
@@ -1274,10 +1274,10 @@ old path and its replacement both run:
 
 | Lane | Deleted | In the PR that lands |
 |---|---|---|
-| M-6a checked-package producer | CLI `compile` routes by source edition: `1-draft` → spine (S1–S4), `0-draft` → native until M-6c; native compile/lower are deleted with M-6c (owner ruling 2026-09-24). `format` is retargeted to the CST, and native-edition `format` retires with no replacement. That retirement is a scoped exception, by owner decision on 2026-09-22, to the 2026-09-19 ruling that nothing working is removed early: `format` is tooling with no downstream artifact, the native lane is retiring, and native `run` does not need formatted input (Rulings 2026-09-22, native-edition `format`). `lowering` (`ProjectionTarget` and `--target` included) and the IT-010 path (SEAM-4) are not in M-6a: the `lower` command moved to M-6c (owner ruling 2026-09-24), and IT-010 imports `lowering` (`tests/it/configversion_backends.rs:17`), so both are deleted with `lower` in M-6c. The QSL dev dependencies on CG, IR and the RT fixture crate are deleted with `lower` in M-6c, together with `lowering` and IT-010 | the spine for those commands: #240 with M-4, before #216. Spine `compile` and spine `run` (§5) are the replacements. The skeleton spine is QSL #243 with agent-ix/quire-contract-codegen#87. |
-| M-6b proof and replay | nothing: its former contents, SEAM-4 and `lowering`, are deleted in M-6c | #217 widens the skeleton spine to the function-application exemplar and deletes nothing. The skeleton moves CG's dev dependency on QSL to a QSL revision that has M-4 and the S6a entry. |
-| M-6c state and temporal evaluators | `state`, `temporal`, and the SEAM-3 reads and `native_model` and IR imports that feed them; native `run` (native-run/1 clause execution over snapshots and invocations); the native `compile` and `lower` commands, with TK-01 (owner ruling 2026-09-24); `lowering`, IT-010 (SEAM-4) and the QSL dev dependencies on CG, IR and the RT fixture crate, which `lower` and IT-010 still use; and the SEAM-1 modules only they reach, including `package::NativePackage`, the native-linked-package/1 reader, `runtime`, `mapped`, `model_source` and `located_json` (ADR-011-OQ-2). The lane is deleted in slices: each path is deleted in the slice that makes it unreachable, and no two paths run side by side | #120, #121 and #164 (state; design #220) and #188 and #189 (temporal; design #222). The PR that lands spine clause execution deletes native `run`. Amended by ADR-017 G-6: for the state half, spine clause execution (FR-109) has landed and native `run` stays for `0-draft` sources, so its trigger is ADR-012 §15.8 step 2; `native_model` goes in the PR that removes its last importer (ADR-017 §9). |
-| M-6d protocol handoffs | B8 compiled-protocol emission and its handoff writer (QSL-840); B9 readers remain assigned to QSL-838 / 498-B6. The replacement contract is checked-package v2 `protocol` nodes (QSpec FR-464 to FR-466, FR-383), with no separate document. Keep every FR-042 and FR-043–FR-053 behavior in force until its mapped replacement is implemented and verified; retired API-specific criteria do not retire their user-visible semantics. | QSL-840 only after QSL-851 (S4 emission/read-back), QSL-852 (protocol-node evaluation/shared accounting), QSL-853 (replacement conformance corpus), QSL-558 (S3 control constructs), and QSL-839 replacement integration are complete. STD-294 / QSL-855 remains an explicit proof-bound gate. G9 remains open through QSL-846 / QSpec PR #59. This spec update establishes no readiness to delete B8. |
+| M-6a checked-package producer | CLI `compile` routes by source edition: `1-draft` → spine (S1–S4), `0-draft` → native until M-6c; native compile/lower are deleted with M-6c (owner ruling 2026-09-24). `format` is retargeted to the CST, and native-edition `format` retires with no replacement. That retirement is a scoped exception, by owner decision on 2026-09-22, to the 2026-09-19 ruling that nothing working is removed early: `format` is tooling with no downstream artifact, the native lane is retiring, and native `run` does not need formatted input (Rulings 2026-09-22, native-edition `format`). `lowering` (`ProjectionTarget` and `--target` included) and the IT-010 path (SEAM-4) are not in M-6a: the `lower` command moved to M-6c (owner ruling 2026-09-24), and IT-010 imports `lowering` (`tests/it/configversion_backends.rs:17`), so both are deleted with `lower` in M-6c. The FSL dev dependencies on CG, IR and the RT fixture crate are deleted with `lower` in M-6c, together with `lowering` and IT-010 | the spine for those commands: #240 with M-4, before #216. Spine `compile` and spine `run` (§5) are the replacements. The skeleton spine is FSL #243 with agent-ix/filament-contract-codegen#87. |
+| M-6b proof and replay | nothing: its former contents, SEAM-4 and `lowering`, are deleted in M-6c | #217 widens the skeleton spine to the function-application exemplar and deletes nothing. The skeleton moves CG's dev dependency on FSL to an FSL revision that has M-4 and the S6a entry. |
+| M-6c state and temporal evaluators | `state`, `temporal`, and the SEAM-3 reads and `native_model` and IR imports that feed them; native `run` (native-run/1 clause execution over snapshots and invocations); the native `compile` and `lower` commands, with TK-01 (owner ruling 2026-09-24); `lowering`, IT-010 (SEAM-4) and the FSL dev dependencies on CG, IR and the RT fixture crate, which `lower` and IT-010 still use; and the SEAM-1 modules only they reach, including `package::NativePackage`, the native-linked-package/1 reader, `runtime`, `mapped`, `model_source` and `located_json` (ADR-011-OQ-2). The lane is deleted in slices: each path is deleted in the slice that makes it unreachable, and no two paths run side by side | #120, #121 and #164 (state; design #220) and #188 and #189 (temporal; design #222). The PR that lands spine clause execution deletes native `run`. Amended by ADR-017 G-6: for the state half, spine clause execution (FR-109) has landed and native `run` stays for `0-draft` sources, so its trigger is ADR-012 §15.8 step 2; `native_model` goes in the PR that removes its last importer (ADR-017 §9). |
+| M-6d protocol handoffs | B8 compiled-protocol emission and its handoff writer (QSL-840); B9 readers remain assigned to QSL-838 / 498-B6. The replacement contract is checked-package v2 `protocol` nodes (FSpec FR-464 to FR-466, FR-383), with no separate document. Keep every FR-042 and FR-043–FR-053 behavior in force until its mapped replacement is implemented and verified; retired API-specific criteria do not retire their user-visible semantics. | QSL-840 only after QSL-851 (S4 emission/read-back), QSL-852 (protocol-node evaluation/shared accounting), QSL-853 (replacement conformance corpus), QSL-558 (S3 control constructs), and QSL-839 replacement integration are complete. STD-294 / QSL-855 remains an explicit proof-bound gate. G9 remains open through QSL-846 / FSpec PR #59. This spec update establishes no readiness to delete B8. |
 | M-6e composed checker | SEAM-2: each composed family is deleted in the PR that lands its S3 family checker and S4 emission. The composed checker is deleted, not kept (owner ruling). | Each family implementation ticket as its family lands: #214, #120, #164, #170 and #175 (`Value`), #120, #121 and #164 (`StateModel`), #187 (`SumCase`), #188 and #189 (`TemporalTrace`), #218 (`ProtocolClause`), #191, #192 and #198 (`Relation`); the last one deletes the remainder |
 
 A SEAM-1 module (arena `syntax` and native `parser`, `linking::native`, native
@@ -1304,7 +1304,7 @@ replacement (#219 for M-6b, #224 for M-6c to M-6e). This per-lane reading of
 #### Deletion order of the remaining old-architecture units
 
 FR-499 owns the dispositions and the per-unit tables; FR-521 owns the
-quire-protocol gate. The evidence that a behavior is carried is its tagged,
+filament-protocol gate. The evidence that a behavior is carried is its tagged,
 passing successor test as `quire matrix` computes it, never a maintained list.
 This section fixes the order in which the units delete and what each step
 waits for. A unit deletes only when every behavior FR-499 lists for it is
@@ -1315,12 +1315,12 @@ ticket or a sunset ruling.
 
 | Step | Unit (ticket) | Deletes after | Gate that must be closed |
 |---|---|---|---|
-| 0 | Gates, no deletion | none | Open at this writing: QSL-1549 (owns the quire-protocol repoint code; Backlog, only spec PR quire-protocol#127 merged) so that FR-521-AC-3 holds and QSL-1501 closes; QSL-1495 (TC-144 owner tests, In Progress, landing in PR #2317); QSL-1599 (FR-527-AC-24 un-ignore, spec merged in #2314, code pending); QSL-1446, QSL-1595, QSL-1596, QSL-1582 (Backlog); QSL-1380 (close its FR-043 to FR-053 items). Closed: QSL-1502, QSL-1414, QSL-852, QSL-1384, QSL-1496. |
+| 0 | Gates, no deletion | none | Open at this writing: QSL-1549 (owns the filament-protocol repoint code; Backlog, only spec PR filament-protocol#127 merged) so that FR-521-AC-3 holds and QSL-1501 closes; QSL-1495 (TC-144 owner tests, In Progress, landing in PR #2317); QSL-1599 (FR-527-AC-24 un-ignore, spec merged in #2314, code pending); QSL-1446, QSL-1595, QSL-1596, QSL-1582 (Backlog); QSL-1380 (close its FR-043 to FR-053 items). Closed: QSL-1502, QSL-1414, QSL-852, QSL-1384, QSL-1496. |
 | 1 | `protocol_artifact` B8 sink, handoff writer, examples, `handoff-writer` feature (QSL-840) | step 0 | FR-521 row 2 green; every `protocol_artifact` row in the table that names QSL-840 is green, kept or retired. |
-| 2 | `protocol_artifact` B9 readers (QSL-838) and `src/temporal` (QSL-858), in one change | step 1, or in the same change | FR-499 order item 2: the three profile-identity constants leave `crate::temporal` first. The `temporal` public surface (`mapping_support_v2`, `Classification`, `AuthenticatedSelection`, `Trace`, `Report`, `evaluate_v2`, `Closure`, `Completeness`, `Execution`, `Evidence`, `Position`, `OrderKey`) stays until the quire-protocol repoint and IR-1005 are merged (FR-521 row 5). The codec moved to `qsl_package::number`; the transitional root module `number` is since deleted (FR-511). |
+| 2 | `protocol_artifact` B9 readers (QSL-838) and `src/temporal` (QSL-858), in one change | step 1, or in the same change | FR-499 order item 2: the three profile-identity constants leave `crate::temporal` first. The `temporal` public surface (`mapping_support_v2`, `Classification`, `AuthenticatedSelection`, `Trace`, `Report`, `evaluate_v2`, `Closure`, `Completeness`, `Execution`, `Evidence`, `Position`, `OrderKey`) stays until the filament-protocol repoint and IR-1005 are merged (FR-521 row 5). The codec moved to `fsl_package::number`; the transitional root module `number` is since deleted (FR-511). |
 | 3 | The composed `Protocol` family (QSL-841, QSL-316 S2) | step 1 | Six `protocol_artifact/native` files match `DeclarationKind::Protocol` and go with step 1; FR-499-AC-2 holds after the change. |
-| 4 | The composed-lane remainder (QSL-868, QSL-830) | step 3 and QSL-837 | `formal_source` is kept and `qsl_inventory` has moved (QSL-1509, QSL-1512); the multi-unit namespace (QSL-1508) is green; CLI `parse` runs on the spine parser over `qsl_cst` limits (met: `src/main.rs`, QSL-837 stays Done; FR-499-AC-5 keeps the flags, output and exits under test). FR-110 is red until its failing tests pass (the 14 `layers::equality` tests tagged FR-110-AC-10/11/13); the workspace must be green. QSL-830 shows Done in Linear while the lane is on main: reopen it or move its scope to QSL-868. |
-| 5 | `src/native_model` (QSL-499) | steps 1 to 4 | The change that removes the last importer of `native_model` removes it (ADR-016 section 9); FR-499-AC-4. quire-protocol holds a `NativeModel` (`AdmittedModel::schema_model`), a live consumer, and FR-499 forbids RETIRE with a live consumer: the deletion also waits for the QSL-1549 repoint. |
+| 4 | The composed-lane remainder (QSL-868, QSL-830) | step 3 and QSL-837 | `formal_source` is kept and `fsl_inventory` has moved (QSL-1509, QSL-1512); the multi-unit namespace (QSL-1508) is green; CLI `parse` runs on the spine parser over `fsl_cst` limits (met: `src/main.rs`, QSL-837 stays Done; FR-499-AC-5 keeps the flags, output and exits under test). FR-110 is red until its failing tests pass (the 14 `layers::equality` tests tagged FR-110-AC-10/11/13); the workspace must be green. QSL-830 shows Done in Linear while the lane is on main: reopen it or move its scope to QSL-868. |
+| 5 | `src/native_model` (QSL-499) | steps 1 to 4 | The change that removes the last importer of `native_model` removes it (ADR-016 section 9); FR-499-AC-4. filament-protocol holds a `NativeModel` (`AdmittedModel::schema_model`), a live consumer, and FR-499 forbids RETIRE with a live consumer: the deletion also waits for the QSL-1549 repoint. |
 | 6 | Close QSL-316 and the epic QSL-67 | step 5 | Their last child has landed. |
 | 7 | Gate evaluation: QSL-15, then QSL-462 | step 6 | The architecture evaluation checklist in [docs/deletion-gate-evaluation-checklist.md](../../docs/deletion-gate-evaluation-checklist.md) passes. Known QSL-462 inputs: FR-327-AC-6 to AC-13 and FR-329-AC-4, AC-8 to AC-10 are untagged; QSL-1639 (decisive position, FR-283/FR-330 against FR-327/FR-328) is resolved: the violation position is the activation's and `decisive.position` names the deciding atom's. |
 
@@ -1337,7 +1337,7 @@ The approved crate extractions are X-1 to X-11.
 | Lane (ADR-010) | Disposition |
 |---|---|
 | A native-v1 | **Retires** as SEAM-1, lane by lane (M-6). It admits no new families (AD-016 arrow 1). |
-| B composed | **Converges.** B1 → S1 and S2. B2 to B4 → S3 binding phase. B5 → leaves QSL (FB-12, #210). B6 and B7 → S3 family checkers. B8 and B9 → S4 emission (#223, #218); the SEAM-3 emission is deleted in the same PRs (M-6d). B10 → S6a family evaluators. |
+| B composed | **Converges.** B1 → S1 and S2. B2 to B4 → S3 binding phase. B5 → leaves FSL (FB-12, #210). B6 and B7 → S3 family checkers. B8 and B9 → S4 emission (#223, #218); the SEAM-3 emission is deleted in the same PRs (M-6d). B10 → S6a family evaluators. |
 | C complete-V1 | **The spine.** C1 → S1. C2 → I2 and `library`. C3 → replaced by S2 (M-3a). C4 → S3. C5 → S6a. C6 → S3 `model`. C7 → `library`. |
 | D simulation | **Converges** into S6a as the finite exploration engine. It gains an implementer only through a family evaluator (#220): FR-120's `ModelSystem`, which evaluates through the `ProtocolClause` evaluator (ADR-017 FP-4). |
 
@@ -1345,29 +1345,29 @@ The approved crate extractions are X-1 to X-11.
 
 | Item | Decision |
 |---|---|
-| OBS-001 | S4 `package` owns the checked-package/v2 emitter (M-4). It is the only QSL → IR path. |
+| OBS-001 | S4 `package` owns the checked-package/v2 emitter (M-4). It is the only FSL → IR path. |
 | OBS-002 | IT-010's proof path is SEAM-4, deleted with `lower` and `lowering` in M-6c. The skeleton spine is then the proof-and-replay evidence (FB-07, FB-08), and #217 widens it. |
 | OBS-007 | S2 `forms` is the only producer of check-stage input from source (SEAM-5, M-3a). `model::checked_dispatch` moves to `check` (M-2). |
 | OBS-008 | One spine (lane C). Lane A retires, lane B converges, lane D joins S6a (§8). The other checked-package producer paths are deleted before #216 (M-6a); each other lane is deleted with its replacement (M-6). |
 | OBS-009 | Name and model binding is a phase of S3. "Linked" means S4 closure over package identities (§1). |
-| OBS-010 | S3 decides definedness itself. `check` never imports `quire-contract-model` (FB-06, §6.1). |
+| OBS-010 | S3 decides definedness itself. `check` never imports `filament-contract-model` (FB-06, §6.1). |
 | OBS-011 | The composed lane gets no lowering of its own. Its families reach IR through S4 v2 (§8). |
 | OBS-015 | Forbidden bypass FB-03. The `protocol_artifact` reads that feed `state` and `temporal` are deleted in the PRs that land the replacement evaluators over checked forms (#220, #222; M-6c). |
 | OBS-016 | The §6.1 layers are an exhaustive, ordered allow-list. `diagnostic` is foundation, `model` is below `check` (M-2), `temporal` imports no wire module, and the remaining S1 two-cycles leave with SEAM-1. |
-| OBS-028 | QSL `qsl-replay` owns the packet (`WitnessEnvelope`) and witness types, and CG builds the packet (ADR-013 OQ-H). CG reconstructs. QSL S6a executes. A stubbed executor is not evidence (FB-07, §2.3). |
-| OBS-029 | The IR root → QSL edge is removed: neither IR manifest (the root crate or `quire-contract-model`) declares a QSL dependency (§7.1, FB-05). |
-| OBS-030 | `CheckedPackage::call` on `qsl_package::CheckedPackage`, through the layer-5 `CheckedPackageEvaluation` trait (§4, as amended), is the S6a entry. The CG replay adapter wires it, first in the skeleton spine and then in #217. |
+| OBS-028 | FSL `fsl-replay` owns the packet (`WitnessEnvelope`) and witness types, and CG builds the packet (ADR-013 OQ-H). CG reconstructs. FSL S6a executes. A stubbed executor is not evidence (FB-07, §2.3). |
+| OBS-029 | The IR root → FSL edge is removed: neither IR manifest (the root crate or `filament-contract-model`) declares an FSL dependency (§7.1, FB-05). |
+| OBS-030 | `CheckedPackage::call` on `fsl_package::CheckedPackage`, through the layer-5 `CheckedPackageEvaluation` trait (§4, as amended), is the S6a entry. The CG replay adapter wires it, first in the skeleton spine and then in #217. |
 | OBS-031 | #215 runs the backend direction and API-surface checks (§7.1, T-12). |
-| OBS-036 | The replay executor is QSL S6a (`CheckedPackage::call` on `qsl_package::CheckedPackage` through `CheckedPackageEvaluation`, §4 as amended; AD-016 arrow 7). agent-ix/quire-contract-ir#140 amends FR-031 Behavior and AC-3 and removes `replay_with_native_runtime`. IR PR #138 rewrites only FR-031's Status section and does not settle this. FR-031-AC-3 gets its own coverage row, discharged by the replay crossing test in agent-ix/quire-integration (§7.1). |
+| OBS-036 | The replay executor is FSL S6a (`CheckedPackage::call` on `fsl_package::CheckedPackage` through `CheckedPackageEvaluation`, §4 as amended; AD-016 arrow 7). agent-ix/filament-contract-ir#140 amends FR-031 Behavior and AC-3 and removes `replay_with_native_runtime`. IR PR #138 rewrites only FR-031's Status section and does not settle this. FR-031-AC-3 gets its own coverage row, discharged by the replay crossing test in agent-ix/filament-integration (§7.1). |
 | OBS-037 | Forbidden bypass FB-03. The handoffs to IR are deleted in the PRs that land S4 emission over the checked graph (#218, #223; M-6d). |
-| OBS-038 | Closed against #205 as amended (2026-09-19): "Runtime owns executable operations, exact numeric predicates and the host ABI. QSL owns reference semantics and the native replay executor (`CheckedPackage::call`, AD-016 arrow 7); Codegen reconstructs the replay request and Contract IR holds the counterexample packet." ADR-013 OQ-H and QC-29 amend its last clause: QSL `qsl-replay` owns the counterexample packet (`WitnessEnvelope`) and CG builds it. No native replay surface belongs in IR (agent-ix/quire-contract-ir#140). |
+| OBS-038 | Closed against #205 as amended (2026-09-19): "Runtime owns executable operations, exact numeric predicates and the host ABI. FSL owns reference semantics and the native replay executor (`CheckedPackage::call`, AD-016 arrow 7); Codegen reconstructs the replay request and Contract IR holds the counterexample packet." ADR-013 OQ-H and QC-29 amend its last clause: FSL `fsl-replay` owns the counterexample packet (`WitnessEnvelope`) and CG builds it. No native replay surface belongs in IR (agent-ix/filament-contract-ir#140). |
 | OBS-039 | Closed against the same #205 text. #205 and AD-016 agree. |
-| OBS-040 | FB-11. QSL tests depend on QSpec vectors, QSL crates and the raw-byte IR agreement-vector accessor in `quire-contract-model`, already a dependency. The replay crossing test lives in agent-ix/quire-integration, which depends on QSL, CG and IR, so the test adds no QSL → CG edge; the parity comparator is agent-ix/quire-contract-codegen#50 and the end-to-end run is agent-ix/quire-contract-codegen#87 (§7.1). The direction check is a proposed #215 scope amendment (Tickets to open at #212). |
-| OBS-041 | The QSL → FCD edge is admitted, confined to `model::intake`. A test-only crate stays a dev dependency. PR #200 meets these before merge. |
-| OBS-005 (secondary) | `quire-exact` exists as a leaf crate in the QSL repo (X-1, #213 S-1). The primary decision is #211's. |
-| OBS-017 (secondary) | One QSL type per QSL stage output, met by deleting the native-v1 type with no rename (§4). Stage type names are ADR-013 T-1's. |
+| OBS-040 | FB-11. FSL tests depend on FSpec vectors, FSL crates and the raw-byte IR agreement-vector accessor in `filament-contract-model`, already a dependency. The replay crossing test lives in agent-ix/filament-integration, which depends on FSL, CG and IR, so the test adds no FSL → CG edge; the parity comparator is agent-ix/filament-contract-codegen#50 and the end-to-end run is agent-ix/filament-contract-codegen#87 (§7.1). The direction check is a proposed #215 scope amendment (Tickets to open at #212). |
+| OBS-041 | The FSL → FCD edge is admitted, confined to `model::intake`. A test-only crate stays a dev dependency. PR #200 meets these before merge. |
+| OBS-005 (secondary) | `filament-exact` exists as a leaf crate in the FSL repo (X-1, #213 S-1). The primary decision is #211's. |
+| OBS-017 (secondary) | One FSL type per FSL stage output, met by deleting the native-v1 type with no rename (§4). Stage type names are ADR-013 T-1's. |
 | OBS-034 (secondary) | Direction per §7.1. |
-| agent-ix/quire-contract-runtime#53 | Proof-stage acceptance (§2.3): a gate discharges at least one proposition over the code it claims, counting SUCCESS checks only; its expectation is derived independently of the function under proof, and a run mutation of each shared helper fails the proof (#245). agent-ix/quire-contract-runtime#53 owns the RT `src/exact/` gate until X-1. |
+| agent-ix/filament-contract-runtime#53 | Proof-stage acceptance (§2.3): a gate discharges at least one proposition over the code it claims, counting SUCCESS checks only; its expectation is derived independently of the function under proof, and a run mutation of each shared helper fails the proof (#245). agent-ix/filament-contract-runtime#53 owns the RT `src/exact/` gate until X-1. |
 
 ## 10. Change scenarios
 
@@ -1376,32 +1376,32 @@ an implementation plan. Rows 1 to 7 are #209's scenarios. Rows 8 and 9 add
 the #212 scenarios that #209 does not list. #212 re-walks its seven scenarios
 against the combined Layer 1 architecture.
 
-| # | #212 | Change | Stages and edges | QSL modules | Other repositories | Must not |
+| # | #212 | Change | Stages and edges | FSL modules | Other repositories | Must not |
 |---|---|---|---|---|---|---|
-| 1 | 1 | Exact scalar operator | S2 form, S3 check, S4 v2 arm, S6a kernel operation, E7 CG render arm | `forms`, `check`, `package`, `quire-exact` | IR `Operator` row, CG render arm, QSpec vector (AD-016 scenario 1) | evaluate in `command`; add a `negotiate_*` in QSL |
-| 2 | 2 | New semantic form (for example sum type and exhaustive case, #221) | S2 builder, S3 family checker, S4 v2 node, S6a evaluator, E7 when a backend supports it | `forms`, `check`, `package`, `value::expression` | QSpec wire (v2 node), IR reader row, CG arm when supported | edit unrelated families; dispatch on strings; add a `_` arm at a dispatch seam. Family hooks per ADR-012 §2 and §8. |
+| 1 | 1 | Exact scalar operator | S2 form, S3 check, S4 v2 arm, S6a kernel operation, E7 CG render arm | `forms`, `check`, `package`, `filament-exact` | IR `Operator` row, CG render arm, FSpec vector (AD-016 scenario 1) | evaluate in `command`; add a `negotiate_*` in FSL |
+| 2 | 2 | New semantic form (for example sum type and exhaustive case, #221) | S2 builder, S3 family checker, S4 v2 node, S6a evaluator, E7 when a backend supports it | `forms`, `check`, `package`, `value::expression` | FSpec wire (v2 node), IR reader row, CG arm when supported | edit unrelated families; dispatch on strings; add a `_` arm at a dispatch seam. Family hooks per ADR-012 §2 and §8. |
 | 3 | none | Model-bound construct | I1 intake, S3 `model`, S4 `model_population` | `model::intake`, `model` | FCD emitter (AD-016 scenario 5) | read FCD types outside `model::intake`; re-derive the bound after S4; extend `NativeModelProfile`, which retires with SEAM-1 |
-| 4 | 3 | Scoped protocol clause (frame or scoped anchor) | S2, S3 clause checker, S4 v2 clause and frame node, E7 frame obligation (`unsupported` until agent-ix/quire-contract-ir#109) | `forms`, `check`, `package` | IR `ClauseKind` and frame lowering, RT observation kind, CG harness (AD-016 scenarios 2 and 7) | emit through `protocol_artifact` (FB-03) |
-| 5 | none | Temporal operator | S2, S3 temporal checker, S4 v2 temporal form, S6a temporal evaluator | `forms`, `check`, `package`, `value::expression` (temporal evaluator) | IR temporal admission from v2 (not QSL types, FB-05) | import a wire module from the temporal evaluator. #222 decides boundedness. |
+| 4 | 3 | Scoped protocol clause (frame or scoped anchor) | S2, S3 clause checker, S4 v2 clause and frame node, E7 frame obligation (`unsupported` until agent-ix/filament-contract-ir#109) | `forms`, `check`, `package` | IR `ClauseKind` and frame lowering, RT observation kind, CG harness (AD-016 scenarios 2 and 7) | emit through `protocol_artifact` (FB-03) |
+| 5 | none | Temporal operator | S2, S3 temporal checker, S4 v2 temporal form, S6a temporal evaluator | `forms`, `check`, `package`, `value::expression` (temporal evaluator) | IR temporal admission from v2 (not FSL types, FB-05) | import a wire module from the temporal evaluator. #222 decides boundedness. |
 | 6 | 5 | Unbounded request | S3 records the extent. S4 carries it. The item settles `requires-bound` or `unsupported` with no oracle or harness, settled by CG `negotiate_*` over the `route` candidate set (§2.1, ADR-012 §7.2). #185's own rule (an unadvertised claim settles `unsupported` with a warning) is an input to that answer. | `check`, `package` | IR `requires-bound` row (AD-016 scenario 4) | narrow the domain silently; report `proved` for an unbounded claim |
-| 7 | 7 | New backend | Declares its provider manifest in its own repository (ADR-012 §12.3), which the driver (T-13) adds to the registry value. At E7, CG consumes S5 IR and the `route` candidate sets and settles every disposition in its `negotiate_*` arm for the backend's kind. After E7, `route` returns the backend's `BackendId` for each item settled `supported`, and the driver passes it to CG generation. The backend emits artifacts and returns typed outcomes in #231 envelopes. If it replays, it replays through the QSL `replay` facade via E9. | none | the backend repository; CG (backend kind, `negotiate_*` arm and generation arm, seam S9); QSpec for any new wire | parse QSL; depend on any QSL API other than the `replay` facade; mint spans or identities (FB-01, FB-05) |
+| 7 | 7 | New backend | Declares its provider manifest in its own repository (ADR-012 §12.3), which the driver (T-13) adds to the registry value. At E7, CG consumes S5 IR and the `route` candidate sets and settles every disposition in its `negotiate_*` arm for the backend's kind. After E7, `route` returns the backend's `BackendId` for each item settled `supported`, and the driver passes it to CG generation. The backend emits artifacts and returns typed outcomes in #231 envelopes. If it replays, it replays through the FSL `replay` facade via E9. | none | the backend repository; CG (backend kind, `negotiate_*` arm and generation arm, seam S9); FSpec for any new wire | parse FSL; depend on any FSL API other than the `replay` facade; mint spans or identities (FB-01, FB-05) |
 | 8 | 4 | Model-bound identity change that preserves provenance | I1 intake re-admits the domain package with its new identity and the `DeclarationKey`s that the domain package assigns (ADR-013 O-03). S3 re-resolves and mints new node ids for nodes bound to changed declarations, and for the nodes that reference them (ADR-013 C-02); source spans stay keyed by occurrence key (ADR-013 O-07). S4 mints a new package identity. Consumers of the old identity see the new `package_id` at the I2 binding (§4). | `model::intake`, `model`, `check`, `package`, `library` | FCD emitter; IR reads the new identity from v2 | re-key spans by anything other than the occurrence key; accept the old identity for the new package |
-| 9 | 6 | Nested counterexample and native replay | S6b yields a counterexample. E8 builds the packet with its `ReplaySource`. E9 calls `replay`, which recompiles the supplied source through S1 to S4 and runs S6a on the decoded witness or the stored input. The node id is looked up as a `NodeKey` in the recompiled package, and the failing node's occurrence key resolves to its nested span through the v2 source map of the package that holds it. The skeleton spine (§1.1) is the first run. | `replay`, over S1 to S4 and `value::expression` | CG backend adapter and replay adapter, over the `qsl-replay` packet and witness; #231 envelope | type the witness outside `Witness::decode`; replay through a stub; repair a disagreement |
+| 9 | 6 | Nested counterexample and native replay | S6b yields a counterexample. E8 builds the packet with its `ReplaySource`. E9 calls `replay`, which recompiles the supplied source through S1 to S4 and runs S6a on the decoded witness or the stored input. The node id is looked up as a `NodeKey` in the recompiled package, and the failing node's occurrence key resolves to its nested span through the v2 source map of the package that holds it. The skeleton spine (§1.1) is the first run. | `replay`, over S1 to S4 and `value::expression` | CG backend adapter and replay adapter, over the `fsl-replay` packet and witness; #231 envelope | type the witness outside `Witness::decode`; replay through a stub; repair a disagreement |
 
 ## Answers to ADR-012 (#210) §13.1
 
-1. **Where the #185 candidate and routing steps run.** In crate `qsl-route`
+1. **Where the #185 candidate and routing steps run.** In crate `fsl-route`
    (layer R), with the `route` items at the crate root. The candidate step runs after S4 and before
    E7. The routing step runs after E7: it reads the FR-331 dispositions as wire
    and returns a `BackendId` per `supported` item. The orchestrating driver
    (T-13) builds the registry value and passes it in. CG `negotiate_*` settles
    every per-item disposition at E7 (§2.1).
-2. **No QSL library crate calls CG.** Confirmed. No QSL library module depends
+2. **No FSL library crate calls CG.** Confirmed. No FSL library module depends
    on or calls CG (§6.1 layer 6: "never CG"). Only the orchestrating
-   driver (T-13) calls both. Because CG → QSL is a normal edge (AD-016
+   driver (T-13) calls both. Because CG → FSL is a normal edge (AD-016
    Owner decision 5), the driver is a separate crate downstream of CG; it
-   cannot be the QSL package's own `main`. QSL #248 implements it as the
-   crate `quire-driver` in the repository agent-ix/quire-driver, and #225
+   cannot be the FSL package's own `main`. FSL #248 implements it as the
+   crate `filament-driver` in the repository agent-ix/filament-driver, and #225
    accepts its design.
 3. **Families map to modules in their layers' crates.** Every family is a set
    of modules inside the §6.1 layer crates. A crate holds one layer, and a
@@ -1426,7 +1426,7 @@ ticket that L1-D1 relaxes. Stage placement matches the relaxed edges:
 
 ## Questions handed to sibling tickets
 
-Answered by ADR-012 (#210, QSL PR #234) §13.5 and applied above:
+Answered by ADR-012 (#210, FSL PR #234) §13.5 and applied above:
 
 - **Family hooks.** ADR-011 S2 form builder, ADR-011 S3 `check` and
   `requirements`, ADR-011 S6a `evaluate`; S4 has no family hook, because the
@@ -1448,9 +1448,9 @@ Answered by ADR-012 (#210, QSL PR #234) §13.5 and applied above:
   feature-level report (§2.2 E4), not these records.
 - **IR admission.** IR's predicate admission reads the v2 value and expression
   nodes, and its temporal admission reads the v2 temporal nodes, decoded at v2
-  intake (agent-ix/quire-contract-ir#141; §7.1).
+  intake (agent-ix/filament-contract-ir#141; §7.1).
 
-Answered by ADR-013 (#211, QSL PR #236) §3.1 and applied above: stage type
+Answered by ADR-013 (#211, FSL PR #236) §3.1 and applied above: stage type
 names (T-1), package identification form and I2 re-checking (T-2), the cross-package node key (T-3),
 stage outcome, limit and fault types (T-4), `Locus` (T-5), kernel edge cuts
 (T-6) and capability types crossing as data (T-7). The
@@ -1460,21 +1460,21 @@ To #225:
 
 - The command outcome field list, the outcome-kind vocabulary it renders, and
   the exit-code values (§5).
-- Acceptance of the T-13 driver crate design that QSL #248 implements, which
-  sits downstream of CG and QSL (§6.1).
+- Acceptance of the T-13 driver crate design that FSL #248 implements, which
+  sits downstream of CG and FSL (§6.1).
 
-To QSpec (wire owner):
+To FSpec (wire owner):
 
 - A preimage arm of `node-identity-preimage.schema.json`, with vectors, for
-  every node whose body holds no application: QSL's proposed
-  `quire.structural-node/v1` (FR-092). Builtin `scalar_type`,
+  every node whose body holds no application: FSL's proposed
+  `filament.structural-node/v1` (FR-092). Builtin `scalar_type`,
   `bounded_domain` and anonymous `composite_type` nodes get a content key
   with no owner, and declared records, tuples and functions carry their owner
   (ADR-013 O-04, QC-18). The parameter node form and the function node body
   shape go with it (ADR-013 QC-24).
 - The `dependency_selections` item type in
   `proposals/checked-package-v2/schema.json`: the dependency's `package_id`,
-  not a `Selection` (§2.4). Resolved: QSpec STD-105 types it as
+  not a `Selection` (§2.4). Resolved: FSpec STD-105 types it as
   `DependencySelection {identity, package_id}`, and IR-287 reads it
   as `CheckedDependencySelection`.
 - An AD-016 amendment: arrow 1 and the Shared-type rows name
@@ -1484,8 +1484,8 @@ To QSpec (wire owner):
 - The v2 positive fixtures' placeholders: the `quire-edition` edition, the
   diagnostics `catalog` reference and every type-node key. Until they are
   replaced, a conformant producer cannot emit the fixtures byte for byte, so
-  QSL's fixture test compares only what the fixtures state: IR admits QSL's
-  emission of equivalent source, and QSL's I2 reader admits the fixtures.
+  FSL's fixture test compares only what the fixtures state: IR admits FSL's
+  emission of equivalent source, and FSL's I2 reader admits the fixtures.
 
 ## Ruling (2026-09-23): ADR-011-OQ-2
 
@@ -1513,8 +1513,8 @@ The owner ruled this on QSL-8.
 
 - CLI `compile` reads the native-compile/1 program source's declared
   edition once, from its header, before either compiler runs. A `1-draft`
-  source compiles through the spine (S1 to S4, `qsl_replay::spine::compile`)
-  and writes `quire.checked-package/v2` bytes. A `0-draft` source compiles
+  source compiles through the spine (S1 to S4, `fsl_replay::spine::compile`)
+  and writes `filament.checked-package/v2` bytes. A `0-draft` source compiles
   through native compile and writes native-linked-package/1 bytes. Each
   source takes exactly one path. A declared edition neither compiler reads
   refuses with `unknown_edition` (FR-027).
@@ -1541,17 +1541,17 @@ owner answer; Peter may veto).
 
 | Retired | What it specified | Held for a `1-draft` program by |
 | --- | --- | --- |
-| FR-011, IT-003 | the native parser consuming an extracted clause | FR-030 (the `qsl-source` consumer yields the verified body and its source map) and FR-109, whose `run_clause` takes that body as its I3 source and parses it at S1 (FR-108-AC-5) |
-| FR-019 | native package construction | FR-278's `package` and the S4 emitters writing `quire.checked-package/v2` (FR-264) |
-| FR-020 | the verified native package reader | the I2 reader of `quire.checked-package/v2` (FR-264, FR-096) |
+| FR-011, IT-003 | the native parser consuming an extracted clause | FR-030 (the `fsl-source` consumer yields the verified body and its source map) and FR-109, whose `run_clause` takes that body as its I3 source and parses it at S1 (FR-108-AC-5) |
+| FR-019 | native package construction | FR-278's `package` and the S4 emitters writing `filament.checked-package/v2` (FR-264) |
+| FR-020 | the verified native package reader | the I2 reader of `filament.checked-package/v2` (FR-264, FR-096) |
 | FR-021 | the native static package identity | the checked package's `package_id` (FR-278, ADR-013) |
 | NFR-007, IT-007 | native package limits and reconstruction | the checking and stage limits of NFR-011 and FR-096; FR-098's recompile |
 | FR-022 | the mapped native compiler | FR-030 and FR-109's I3 source |
 | FR-023 | native execution of a package over runtime artifacts | FR-109's `run_clause` over FR-106 observations, and FR-100's `CheckedPackage::call` |
 | FR-028 | running a selected native package verified against its source | FR-098, which recompiles the package's source before it calls |
-| FR-031's native-run/1 `extraction` route; FR-031 itself stays | running a Markdown clause through native run | FR-031 as STD-344 rewrites it: FR-109's library `run_clause` over FR-030's extracted body, built with `qsl-replay`'s `quire-extraction` (FR-108-AC-5). Its report names the body identity and the original document identity; an original byte or line limit ends a run incomplete and a fresh retry succeeds; the command refuses an `extraction` member (FR-100) |
+| FR-031's native-run/1 `extraction` route; FR-031 itself stays | running a Markdown clause through native run | FR-031 as STD-344 rewrites it: FR-109's library `run_clause` over FR-030's extracted body, built with `fsl-replay`'s `quire-extraction` (FR-108-AC-5). Its report names the body identity and the original document identity; an original byte or line limit ends a run incomplete and a fresh retry succeeds; the command refuses an `extraction` member (FR-100) |
 | FR-026-AC-1, FR-026-AC-2 | native clause execution from files | FR-312's clause run over FR-106 snapshots and invocations |
-| FR-027-AC-1, FR-027-AC-4, FR-027-AC-6 | native-linked-package/1 export and its labels | FR-027-AC-3 (labels) and FR-027-AC-5, AC-9 to AC-12 (`quire.checked-package/v2`) |
+| FR-027-AC-1, FR-027-AC-4, FR-027-AC-6 | native-linked-package/1 export and its labels | FR-027-AC-3 (labels) and FR-027-AC-5, AC-9 to AC-12 (`filament.checked-package/v2`) |
 
 ## Owner rulings (2026-09-19)
 
@@ -1574,7 +1574,7 @@ The owner delegated these to the #205 coordinator.
 
 ## Rulings (2026-09-22): M-6a owner questions
 
-The QSL lead ruled these for the QSL-8 and QSL-6 lane. Each is applied in the
+The FSL lead ruled these for the QSL-8 and QSL-6 lane. Each is applied in the
 sections it names.
 
 - **OQ-1: spine `run`.** Spine `run` calls a named checked function: a
@@ -1591,8 +1591,8 @@ sections it names.
   with the source header as the selections (§5, §2.4). Amended 2026-09-26.
 - **OQ-3: `NativePackage`, `lowering`, `runtime` and IT-010.** `lowering`
   and IT-010 are deleted in the last M-6a change, which runs only once the
-  skeleton spine is green: QSL #243 with
-  agent-ix/quire-contract-codegen#87 (§6.2, §7.3). Amended 2026-09-24: `lower` moved to M-6c and IT-010 imports `lowering`, so `lowering`, IT-010 and the dev dependencies are deleted in M-6c, not M-6a. `NativePackage`,
+  skeleton spine is green: FSL #243 with
+  agent-ix/filament-contract-codegen#87 (§6.2, §7.3). Amended 2026-09-24: `lower` moved to M-6c and IT-010 imports `lowering`, so `lowering`, IT-010 and the dev dependencies are deleted in M-6c, not M-6a. `NativePackage`,
   `runtime`, `mapped`, `model_source` and the native-linked-package/1 reader
   stay until native `run` retires in M-6c. Reason: the owner ruling that
   nothing working is removed early. IT-010 is the only Kani
@@ -1615,7 +1615,7 @@ sections it names.
   only; native `run` stays until M-6c (OQ-1).
 - **OQ-5: `dependency_selections`.** Each entry is
   `{identity, package_id}`, one per directly imported library identity
-  (QSpec STD-105, IR-287). E4 fills it and the emitter writes it (§2.4). Spine
+  (FSpec STD-105, IR-287). E4 fills it and the emitter writes it (§2.4). Spine
   `compile` and `replay` derive the closure recursively from admitted
   dependencies' direct entries and resolve imports against a dependency input
   (ADR-015). It is not a prerequisite of the package-selections work.
@@ -1632,19 +1632,19 @@ sections it names.
   id. Builtin and anonymous structural types (builtin `scalar_type`,
   `bounded_domain`, anonymous `composite_type`) carry no owner and share
   one id across all packages. A structural `NodeKey` carries cross-package
-  references through its `package` component (ADR-013 T-3). QSpec publishes no preimage arm for builtin and
-  anonymous type nodes, so QSL implements a proposed one. Reason: declared
+  references through its `package` component (ADR-013 T-3). FSpec publishes no preimage arm for builtin and
+  anonymous type nodes, so FSL implements a proposed one. Reason: declared
   records and tuples are nominal, like the enum, dimension and unit nodes
-  QSpec already scopes by owner; without the owner, two unrelated packages
+  FSpec already scopes by owner; without the owner, two unrelated packages
   declaring `geo.Point` with the same fields would get equal `NodeKey`s in
   one check; builtin and anonymous types have no owner and stay shared
-  (ADR-013 OQ-G). Reopen if QSpec rejects the QC-18 request for an owner-bearing
-  preimage of declared nodes (FR-092's `quire.structural-node/v1`);
-  QSL then conforms to QSpec and adds explicit collision handling.
+  (ADR-013 OQ-G). Reopen if FSpec rejects the QC-18 request for an owner-bearing
+  preimage of declared nodes (FR-092's `filament.structural-node/v1`);
+  FSL then conforms to FSpec and adds explicit collision handling.
 - **SG-2: `capability_report`.** It follows FR-322 and the fixtures: one
-  `available` entry for `quire.value.complete/v1` (§2.2 E4).
+  `available` entry for `filament.value.complete/v1` (§2.2 E4).
 - **SG-3 (the FR-030 split), SG-4 (the FR-003 input) and SG-5 (`Value` S2
-  production and its assembler, FR-091)** are settled by the merged QSL PRs
+  production and its assembler, FR-091)** are settled by the merged FSL PRs
   #341 and #336. **SG-6 (the ADR-013 T-4 stage types)** is implementation, not
   an owner question.
 
@@ -1652,19 +1652,19 @@ sections it names.
 
 | # | Proposed change | Proposed owner and repository |
 |---|---|---|
-| T-1 | M-6a: spine `compile` and spine `run` (§5) and the `format` retarget, before #216 (a Layer 2 move that amends #205's layer plan). Native `compile`, `lower`, `lowering`, SEAM-4 and native `run` are deleted in M-6c (owner ruling 2026-09-24). | QSL, Layer 2, with #240 |
-| T-2 | The skeleton spine (§1.1) as a tracked ticket. QSL #243 lands the layer-6 `replay` facade (ADR-013 TK-01), and agent-ix/quire-contract-codegen#87 lands the replay adapter. Each family's implementation ticket then widens `replay` for that family. | QSL #243 and agent-ix/quire-contract-codegen#87, with QSL M-4 |
-| T-3 | Add the lane deletions M-6c to M-6e, native `run` included, to the exit criteria of the implementation tickets that land each replacement: #217, #120, #121, #164, #170, #175, #187, #188, #189, #191, #192, #198, #214 and #218 | QSL (issue text for those tickets) |
-| T-4 | Ruled 2026-09-19: #216 is evaluated per lane, the producer lane at #216 and the other lanes at #219 and #224 (§7.3). Remaining: amend the issue text. | #205 coordinator, at the #212 consolidation: QSL #216, #219, #224 |
-| T-6 | Record X-1 `quire-exact` extraction as #213 S-1, with its kernel gate under §2.3 and the blocking edge from the AD-016 amendment (TK-10, QC-15) | QSL #213 and RT |
-| T-7 | M-2 (`model` below `check`) and M-2c (`semantic_value`) with the #205 edge M-2 → #214 | QSL |
-| T-8 | M-4 (S4 v2 emitter and I2 reader) | QSL, before #216 |
-| T-9 | RT `qsl-agreement` retarget to `quire-exact` against QSpec vectors | agent-ix/quire-contract-runtime#55, after X-1 and TK-03 (agent-ix/quire-contract-runtime#56) |
+| T-1 | M-6a: spine `compile` and spine `run` (§5) and the `format` retarget, before #216 (a Layer 2 move that amends #205's layer plan). Native `compile`, `lower`, `lowering`, SEAM-4 and native `run` are deleted in M-6c (owner ruling 2026-09-24). | FSL, Layer 2, with #240 |
+| T-2 | The skeleton spine (§1.1) as a tracked ticket. FSL #243 lands the layer-6 `replay` facade (ADR-013 TK-01), and agent-ix/filament-contract-codegen#87 lands the replay adapter. Each family's implementation ticket then widens `replay` for that family. | FSL #243 and agent-ix/filament-contract-codegen#87, with FSL M-4 |
+| T-3 | Add the lane deletions M-6c to M-6e, native `run` included, to the exit criteria of the implementation tickets that land each replacement: #217, #120, #121, #164, #170, #175, #187, #188, #189, #191, #192, #198, #214 and #218 | FSL (issue text for those tickets) |
+| T-4 | Ruled 2026-09-19: #216 is evaluated per lane, the producer lane at #216 and the other lanes at #219 and #224 (§7.3). Remaining: amend the issue text. | #205 coordinator, at the #212 consolidation: FSL #216, #219, #224 |
+| T-6 | Record X-1 `filament-exact` extraction as #213 S-1, with its kernel gate under §2.3 and the blocking edge from the AD-016 amendment (TK-10, QC-15) | FSL #213 and RT |
+| T-7 | M-2 (`model` below `check`) and M-2c (`semantic_value`) with the #205 edge M-2 → #214 | FSL |
+| T-8 | M-4 (S4 v2 emitter and I2 reader) | FSL, before #216 |
+| T-9 | RT `fsl-agreement` retarget to `filament-exact` against FSpec vectors | agent-ix/filament-contract-runtime#55, after X-1 and TK-03 (agent-ix/filament-contract-runtime#56) |
 | T-10 | CG generated-harness gate under §2.3: `unreached` failure, SUCCESS-only discharge floor, mutation control, and a run mutation of each shared helper that fails the proof (#245) | CG |
-| T-11 | Proof-stage acceptance (§2.3) as a proposed QSpec NFR binding RT and CG proof gates | QSpec |
-| T-12 | Proposed #215 scope amendment: backend direction check (FB-05, FB-11); the single API-surface check, which fails any caller outside these rules: (a) CG calls only the layer-6 `replay` facade (FB-05), (b) only QSL `check` calls the kernel `NodeKey` constructor that builds a key from its structural fields (ADR-013 O-04), (c) only QSL `model` calls the kernel `EffectiveId` constructor (ADR-013 O-05), (d) only QSL `model` calls the kernel `PopulationId` constructor (ADR-013 QC-21). The direction check exempts FB-05's named shared-leaf set, `quire-exact` and `quire-semantic-value`, from its edge graph, so a backend edge into either is no finding. The QSL-role rules scan the QSL workspace crates and fail a `NodeKey`, `EffectiveId` or `PopulationId` constructor call outside QSL `check` and `model`; the CG-role rule (T12-A) scans the CG checkout's `src/`; `quire-exact` and `quire-semantic-value` are scanned by neither (`quire-semantic-value` enforces its side with clippy `disallowed-methods`). **Decoding an admitted key (T12-B carve-out; arch-lint T12-F).** RT may hold shared kernel `NodeKey`s inside `quire_exact::Value`, has no key type of its own and constructs none; CG holds none. Rule (b) reserves the kernel's structural-field `NodeKey` constructor for `check`, and the one other constructor under these rules is the decoder below. (1) `NodeKey::decode_admitted` in `quire-exact` takes no preimage; it re-reads a key `check` minted and an admitted package carries. Rule (b)'s pattern stays the structural-field `NodeKey` constructor, so `check` remains the only minter. (2) An API-surface rule (FR-060 T12-F) allow-lists the reader modules that may call `decode_admitted`: T12-F is a QSL-role rule with an empty allow-list (`allowed_callers: &[]`). QSL has no decode site and no allowed caller: a wire-read node id becomes a `NodeKey` in QSL only by lookup (FR-087-AC-6, AC-11), so any QSL call fails the gate. A backend has no allowed caller; one would need a backend gate with its own ticket. Generated or emitted code (CG's emitter output, emitted oracles and the CG-generated harness code RT runs) is not an admitted-package reader: it never constructs a `NodeKey` from a literal. A key literal in emitted source is a `WireNodeId`, which that code resolves by lookup in the admitted node table and not by constructing a key (ADR-013 O-04; FR-087-AC-6, AC-11). (3) The reader calls it only on the bytes of a package that already passed the admitted-package identity check, ADR-011 §4's verified binding: `quire_contract_model::read_checked_package` admits the v2 wire only after validating its whole I04 contract, including the complete semantic graph, and checking its declared `package_id` member against the package's identity and version (condition 2 of the verified binding). Those checks bind the key bytes before any key is decoded, so a forged package is refused before any of its keys is decoded; the node table and every key looked up in it come from that one bound package. (4) A decoded key carries that package check's provenance, not a fresh `check` mint. It never feeds a constructor that asserts `check` produced the key or recomputes a node key from it. SV's `UnitGraph::from_checked_nodes` checks topology only and states key provenance as its caller's, and `declared_unit_id` guarantees only that the key names a unit in that graph, so a graph built from decoded keys claims no more than the package check gave. Like the structural-field `NodeKey` constructor, `decode_admitted` accepts any key value; the guarantee is the call-site allow-list plus the verified binding, not the type. `quire-semantic-value` decodes no key: it resolves preimage node ids by lookup among admitted keys. #215 ships the QSL-side rules; agent-ix/quire-contract-runtime#56 and agent-ix/quire-contract-codegen#89 adopt `quire-exact` and are not API-surface gates. Until a backend gate exists, #216 and #219 check all four by inspection. | QSL #215 (issue text) |
-| T-13 | The orchestrating driver crate (§6.1 driver row; ADR-012 §7): S1 to S4 compile, E4 emit, the `route` candidate step, the pre-negotiation `BackendId` conversion (ADR-012 §7.2), E7 CG `negotiate_*`, the `route` routing step after E7, CG generation with the returned `BackendId`s, then for each generated harness: the S6b Kani run of its obligation, which CG's backend adapter parses into IR's `KaniOutcome` (ADR-013 O-24); for a `Counterexample`, the E8 packet, which CG builds as the O-25 `WitnessEnvelope` with a `ReplaySource::Witness` source (ADR-013 C-10), and the E9 replay of it through the `qsl-replay` facade (`qsl_replay::replay`); and the item's QSpec FR-331 terminal record, which CG's C-09 map settles from the Kani outcome and the replay's result (ADR-013 O-16) and the driver writes. A replay whose verdict disagrees, or that completes no value, settles the item `inconclusive` with cause `replay_parity`; a replay that refuses (a `ReplayRefusal` other than a fault: an identity mismatch, a decode refusal, a limit reached) settles it `inconclusive` with cause `replay_refused`, carrying the refusal's catalog code; a replay that faults (an `InternalFault`) settles it `failed`. Every Kani counterexample therefore settles exactly one terminal record, and only a reproduced one settles `refuted`. The driver orchestrates these steps and holds no outcome map, packet type or replay type of its own: CG owns the C-09 map and the O-25 packet, and `qsl-replay` owns the replay request, the replay result and the terminal record (ADR-013 O-26, O-27, O-24). #225 accepts its design. The crate is `quire-driver`, in the repository agent-ix/quire-driver, downstream of QSL and CG. | QSL #248, in agent-ix/quire-driver Amended by ADR-018 §7: for an item routed to the explicit-state model checker, the driver runs S6c in process through `qsl-analyze`; it writes the terminal record that `qsl-replay`'s settlement map gives the `ModelCheckOutcome` for a proof (after the proof's certificate check, ADR-018 PC-1), a completed search horizon, an undecided run or a stopped run, and for a refutation runs E11 and the E9 replay through `qsl_replay::replay_model_trace` and writes the record from the replay result (ADR-018 §1, FR-127). |
-| T-14 | Repoint CG's normal dependency on QSL from the root crate `quire-spec-language` to `qsl-replay` (§7.1), after X-10 | agent-ix/quire-contract-codegen |
+| T-11 | Proof-stage acceptance (§2.3) as a proposed FSpec NFR binding RT and CG proof gates | FSpec |
+| T-12 | Proposed #215 scope amendment: backend direction check (FB-05, FB-11); the single API-surface check, which fails any caller outside these rules: (a) CG calls only the layer-6 `replay` facade (FB-05), (b) only FSL `check` calls the kernel `NodeKey` constructor that builds a key from its structural fields (ADR-013 O-04), (c) only FSL `model` calls the kernel `EffectiveId` constructor (ADR-013 O-05), (d) only FSL `model` calls the kernel `PopulationId` constructor (ADR-013 QC-21). The direction check exempts FB-05's named shared-leaf set, `filament-exact` and `filament-semantic-value`, from its edge graph, so a backend edge into either is no finding. The FSL-role rules scan the FSL workspace crates and fail a `NodeKey`, `EffectiveId` or `PopulationId` constructor call outside FSL `check` and `model`; the CG-role rule (T12-A) scans the CG checkout's `src/`; `filament-exact` and `filament-semantic-value` are scanned by neither (`filament-semantic-value` enforces its side with clippy `disallowed-methods`). **Decoding an admitted key (T12-B carve-out; arch-lint T12-F).** RT may hold shared kernel `NodeKey`s inside `filament_exact::Value`, has no key type of its own and constructs none; CG holds none. Rule (b) reserves the kernel's structural-field `NodeKey` constructor for `check`, and the one other constructor under these rules is the decoder below. (1) `NodeKey::decode_admitted` in `filament-exact` takes no preimage; it re-reads a key `check` minted and an admitted package carries. Rule (b)'s pattern stays the structural-field `NodeKey` constructor, so `check` remains the only minter. (2) An API-surface rule (FR-060 T12-F) allow-lists the reader modules that may call `decode_admitted`: T12-F is an FSL-role rule with an empty allow-list (`allowed_callers: &[]`). FSL has no decode site and no allowed caller: a wire-read node id becomes a `NodeKey` in FSL only by lookup (FR-087-AC-6, AC-11), so any FSL call fails the gate. A backend has no allowed caller; one would need a backend gate with its own ticket. Generated or emitted code (CG's emitter output, emitted oracles and the CG-generated harness code RT runs) is not an admitted-package reader: it never constructs a `NodeKey` from a literal. A key literal in emitted source is a `WireNodeId`, which that code resolves by lookup in the admitted node table and not by constructing a key (ADR-013 O-04; FR-087-AC-6, AC-11). (3) The reader calls it only on the bytes of a package that already passed the admitted-package identity check, ADR-011 §4's verified binding: `filament_contract_model::read_checked_package` admits the v2 wire only after validating its whole I04 contract, including the complete semantic graph, and checking its declared `package_id` member against the package's identity and version (condition 2 of the verified binding). Those checks bind the key bytes before any key is decoded, so a forged package is refused before any of its keys is decoded; the node table and every key looked up in it come from that one bound package. (4) A decoded key carries that package check's provenance, not a fresh `check` mint. It never feeds a constructor that asserts `check` produced the key or recomputes a node key from it. SV's `UnitGraph::from_checked_nodes` checks topology only and states key provenance as its caller's, and `declared_unit_id` guarantees only that the key names a unit in that graph, so a graph built from decoded keys claims no more than the package check gave. Like the structural-field `NodeKey` constructor, `decode_admitted` accepts any key value; the guarantee is the call-site allow-list plus the verified binding, not the type. `filament-semantic-value` decodes no key: it resolves preimage node ids by lookup among admitted keys. #215 ships the FSL-side rules; agent-ix/filament-contract-runtime#56 and agent-ix/filament-contract-codegen#89 adopt `filament-exact` and are not API-surface gates. Until a backend gate exists, #216 and #219 check all four by inspection. | FSL #215 (issue text) |
+| T-13 | The orchestrating driver crate (§6.1 driver row; ADR-012 §7): S1 to S4 compile, E4 emit, the `route` candidate step, the pre-negotiation `BackendId` conversion (ADR-012 §7.2), E7 CG `negotiate_*`, the `route` routing step after E7, CG generation with the returned `BackendId`s, then for each generated harness: the S6b Kani run of its obligation, which CG's backend adapter parses into IR's `KaniOutcome` (ADR-013 O-24); for a `Counterexample`, the E8 packet, which CG builds as the O-25 `WitnessEnvelope` with a `ReplaySource::Witness` source (ADR-013 C-10), and the E9 replay of it through the `fsl-replay` facade (`fsl_replay::replay`); and the item's FSpec FR-331 terminal record, which CG's C-09 map settles from the Kani outcome and the replay's result (ADR-013 O-16) and the driver writes. A replay whose verdict disagrees, or that completes no value, settles the item `inconclusive` with cause `replay_parity`; a replay that refuses (a `ReplayRefusal` other than a fault: an identity mismatch, a decode refusal, a limit reached) settles it `inconclusive` with cause `replay_refused`, carrying the refusal's catalog code; a replay that faults (an `InternalFault`) settles it `failed`. Every Kani counterexample therefore settles exactly one terminal record, and only a reproduced one settles `refuted`. The driver orchestrates these steps and holds no outcome map, packet type or replay type of its own: CG owns the C-09 map and the O-25 packet, and `fsl-replay` owns the replay request, the replay result and the terminal record (ADR-013 O-26, O-27, O-24). #225 accepts its design. The crate is `filament-driver`, in the repository agent-ix/filament-driver, downstream of FSL and CG. | FSL #248, in agent-ix/filament-driver Amended by ADR-018 §7: for an item routed to the explicit-state model checker, the driver runs S6c in process through `fsl-analyze`; it writes the terminal record that `fsl-replay`'s settlement map gives the `ModelCheckOutcome` for a proof (after the proof's certificate check, ADR-018 PC-1), a completed search horizon, an undecided run or a stopped run, and for a refutation runs E11 and the E9 replay through `fsl_replay::replay_model_trace` and writes the record from the replay result (ADR-018 §1, FR-127). |
+| T-14 | Repoint CG's normal dependency on FSL from the root crate `filament-spec-language` to `fsl-replay` (§7.1), after X-10 | agent-ix/filament-contract-codegen |
 
 ## Consequences
 
@@ -1674,14 +1674,14 @@ sections it names.
 - Gate #216 cannot pass while any old checked-package producer path is
   reachable. The CLI therefore moves to the spine within Layer 2 (M-6a, T-1),
   not in Layer 5. The other old lanes are deleted with their replacements.
-- IR loses its typed access to QSL. CG keeps one: the public API of the layer-6
+- IR loses its typed access to FSL. CG keeps one: the public API of the layer-6
   `replay` facade. IR's predicate and temporal projections return over v2 value,
   expression and temporal nodes decoded at IR v2 intake
-  (agent-ix/quire-contract-ir#141).
+  (agent-ix/filament-contract-ir#141).
 - Proof gates counted by #205 gain an `unreached` failure, a SUCCESS-only
   discharge count, a mutation control per claimed module and a run mutation of
   each helper shared between oracle and code under proof (§2.3). Kernel proof
-  evidence does not count until agent-ix/quire-contract-runtime#53 adds a
+  evidence does not count until agent-ix/filament-contract-runtime#53 adds a
   harness whose expectation is derived independently of the function under proof
   in `src/exact/`, with a run mutation of each shared helper that fails the
   proof, and a mutation control there.
@@ -1696,11 +1696,11 @@ sections it names.
   resolution from the checker that relies on it.
 - **Reference execution consumes Contract IR (S5) instead of the linked
   package.** Rejected. The executor would then depend on a backend
-  representation to define QSL semantics, and AD-016 arrow 7 names the QSL
+  representation to define FSL semantics, and AD-016 arrow 7 names the FSL
   complete-V1 entry.
 - **Give RT the replay executor.** Rejected. RT holds
   no reference semantics, and AD-016 arrow 7 and Owner decision 3 place the
-  executor in QSL.
+  executor in FSL.
 - **Put the I2 reader in `check`, or let `check` call `package`.** Rejected.
   Either one closes a layer 3 ↔ layer 4 cycle.
 - **Define `ImportView` in layer-4 `package`.**
@@ -1708,7 +1708,7 @@ sections it names.
   layer 3. Defining it in `library` keeps the only edge downward: `package`
   calls `library`.
 - **Let CG call the S1 to S4 compile entry and `CheckedPackage::call`
-  directly.** Rejected. CG would reach several QSL stage APIs, and FB-05
+  directly.** Rejected. CG would reach several FSL stage APIs, and FB-05
   could not be checked against one named surface. The `replay` facade is
   that surface.
 - **Place the #185 registry in S3.** Rejected. S3 negotiates nothing (FB-12,
@@ -1723,7 +1723,7 @@ sections it names.
 ## References
 
 - QSL-34: the owner ruling that moves `ObjectEnvironment`'s core object
-  closure to `quire-semantic-value` and keeps the populations map in
+  closure to `filament-semantic-value` and keeps the populations map in
   `model` (§6.2, X-11). QSL-358 slice 4 is the implementing change; QSL-464
   is the amendment ticket.
 - ADR-029 (QSL-390): the S6c stage, layers A, P and X, `format` in layer 1,

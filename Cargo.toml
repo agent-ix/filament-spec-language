@@ -1,34 +1,34 @@
 [workspace]
-members = [".", "xtask", "tools/arch-lint", "tools/qsl-probability-check", "qsl-walk-grow", "qsl-foundation", "qsl-cst", "qsl-command", "qsl-conformance", "qsl-replay", "qsl-source", "qsl-forms", "qsl-semantics", "qsl-package", "qsl-route", "qsl-eval", "qsl-analyze", "qsl-inspect", "qsl-bench", "qsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer"]
+members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-inspect", "fsl-bench", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer"]
 resolver = "2"
 # A cargo-fuzz crate with its own workspace; fuzz/Cargo.toml says why.
 exclude = ["fuzz"]
 
 [workspace.dependencies]
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
-# layer-SV leaf `quire-semantic-value` can mint the compound-unit id
+# layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
 quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", branch = "main", default-features = false }
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
-# each its own repository so IR, RT and CG depend on them without the QSL repo.
-quire-exact = { git = "https://github.com/agent-ix/quire-exact", branch = "main" }
-quire-semantic-value = { git = "https://github.com/agent-ix/quire-semantic-value", branch = "main" }
+# each its own repository so IR, RT and CG depend on them without the FSL repo.
+filament-exact = { git = "https://github.com/agent-ix/filament-exact", branch = "main" }
+filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", branch = "main" }
 # ADR-011 §6.1 layer W: the shared no_std walker toolkit (ADR-030 D-1 item 2),
-# its own repository so IR, RT and CG depend on it without the QSL repo.
-quire-walk = { git = "https://github.com/agent-ix/quire-walk", branch = "main" }
+# its own repository so IR, RT and CG depend on it without the FSL repo.
+filament-walk = { git = "https://github.com/agent-ix/filament-walk", branch = "main" }
 # ADR-011 §6.1 layer C: the checked terms the evaluator reads (FR-400), its own
-# repository so IR, RT and CG depend on it without the QSL repo. Only
-# `qsl-semantics` requests `construct` in its manifest; Cargo unifies the
+# repository so IR, RT and CG depend on it without the FSL repo. Only
+# `fsl-semantics` requests `construct` in its manifest; Cargo unifies the
 # feature across the workspace build.
-quire-checked = { git = "https://github.com/agent-ix/quire-eval", branch = "main" }
+filament-checked = { git = "https://github.com/agent-ix/filament-eval", branch = "main" }
 # ADR-011 §6.1 layer E: the shared evaluation-core interface (FR-262, FR-401),
-# its own repository so RT and CG depend on it without the QSL repo.
-quire-eval = { git = "https://github.com/agent-ix/quire-eval", branch = "main" }
+# its own repository so RT and CG depend on it without the FSL repo.
+filament-eval = { git = "https://github.com/agent-ix/filament-eval", branch = "main" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-quire-contract-model = { git = "https://github.com/agent-ix/quire-contract-ir", branch = "main" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", branch = "main" }
 
 [package]
-name = "quire-spec-language"
+name = "filament-spec-language"
 version = "0.2.0"
 publish = false
 edition = "2021"
@@ -52,38 +52,38 @@ population-fixtures = []
 # ADR-013 O-05: only `model` calls the kernel `EffectiveId` constructor,
 # enforced by the ADR-011 T-12 arch-lint `api-surface` check (`tools/arch-lint`),
 # not by this dependency edge itself -- every crate that depends on
-# `quire-exact` is in that check's scope, this one included as of this edit.
-quire-exact = { workspace = true }
+# `filament-exact` is in that check's scope, this one included as of this edit.
+filament-exact = { workspace = true }
 # ADR-011 §6.1 layer C: the checked terms (FR-400) `DeclarationKey` and
 # `AdmittedIntegerDivision` live in.
-quire-checked = { workspace = true }
+filament-checked = { workspace = true }
 # ADR-011 §6.1 layer SV: the expression `Origin` the run output renders; the
 # tests also assert its refusal vocabulary and runtime enum values.
-quire-semantic-value = { workspace = true }
+filament-semantic-value = { workspace = true }
 # ADR-013 §2 (ADR-013:113): the FR-051/FR-052 checked-handoff and
 # native-temporal document identities encode through the one RFC 8785
 # implementation.
 quire-canonical = { workspace = true }
 # ADR-011 §7.3 X-2: layer F, extracted out of this crate.
-qsl-foundation = { path = "qsl-foundation" }
+fsl-foundation = { path = "fsl-foundation" }
 # ADR-011 §7.3 X-3: layer 1, extracted out of this crate.
-qsl-cst = { path = "qsl-cst" }
+fsl-cst = { path = "fsl-cst" }
 # ADR-011 §7.3 X-5: layer 2, extracted out of this crate.
-qsl-forms = { path = "qsl-forms" }
+fsl-forms = { path = "fsl-forms" }
 # ADR-011 §7.3 X-6: layer 3, extracted out of this crate. This crate
 # re-exports none of its items (ADR-011 §7.2); callers name them at
-# `qsl_semantics::...`.
-qsl-semantics = { path = "qsl-semantics" }
+# `fsl_semantics::...`.
+fsl-semantics = { path = "fsl-semantics" }
 # ADR-011 §7.3 X-7: layer 4, extracted out of this crate. This crate
 # re-exports none of its items (ADR-011 §7.2); callers name them at
-# `qsl_package::...`.
-qsl-package = { path = "qsl-package" }
+# `fsl_package::...`.
+fsl-package = { path = "fsl-package" }
 # ADR-011 §6.1 layer 6 `replay`: `command`'s CLI `compile` calls
-# its spine compile (`qsl_replay::spine`), the one S1-to-S4 chain `replay`
+# its spine compile (`fsl_replay::spine`), the one S1-to-S4 chain `replay`
 # and `command` share. This crate re-exports none of its items.
-qsl-replay = { path = "qsl-replay" }
+fsl-replay = { path = "fsl-replay" }
 # The root package directly uses the admitted model projection API.
-quire-contract-model = { workspace = true }
+filament-contract-model = { workspace = true }
 logos = "0.16.1"
 num-bigint = "0.4.8"
 num-integer = "0.1.47"
@@ -96,33 +96,33 @@ ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main"
 
 [dev-dependencies]
 # Non-core request-file intake exercised by the root acceptance tests.
-qsl-command = { path = "qsl-command" }
+fsl-command = { path = "fsl-command" }
 # The integration tests drive the checked-package temporal evidence call. No
 # shipped module of this crate uses it.
-qsl-eval = { path = "qsl-eval" }
+fsl-eval = { path = "fsl-eval" }
 serde_json_canonicalizer = "0.3.2"
 # FR-515-AC-20, FR-516-AC-32: `Emission::with_package_bytes` presents the twin
 # package no emitter produces. Only this dev-dependency enables it.
-qsl-package = { path = "qsl-package", features = ["test-support"] }
-quire-eval = { workspace = true }
-# `qsl-semantics`' test-only fixtures and views (`ReaderAuthority::fixture`,
+fsl-package = { path = "fsl-package", features = ["test-support"] }
+filament-eval = { workspace = true }
+# `fsl-semantics`' test-only fixtures and views (`ReaderAuthority::fixture`,
 # `DeclarationKey::fixture`, `check::family::fixtures`, ...) for this crate's
 # unit and integration tests. Only this dev-dependency may enable
 # `test-support`: `tests/it/family_outcome_layering.rs`
 # (`no_shipped_dependency_enables_test_support`) refuses a normal or build
 # dependency that does. Resolver 2 turns it on only when a test target is
 # built, so it never reaches the production lib.
-qsl-semantics = { path = "qsl-semantics", features = ["test-support"] }
-# FR-400-AC-9: `quire-checked`'s `test-support` (`DeclarationKey::fixture`, ...). Only this
+fsl-semantics = { path = "fsl-semantics", features = ["test-support"] }
+# FR-400-AC-9: `filament-checked`'s `test-support` (`DeclarationKey::fixture`, ...). Only this
 # dev-dependency enables it; `no_shipped_dependency_enables_test_support`
 # refuses a normal or build dependency that does.
-quire-checked = { workspace = true, features = ["test-support"] }
+filament-checked = { workspace = true, features = ["test-support"] }
 # ADR-011 §7.3 X-9: layer R, extracted out of this crate. No
 # shipped module of this crate calls it, so it is a dev dependency only
 # (ADR-011 §7.1: "A dependency needed only by tests is a dev dependency"):
 # `tests/it/layer_crate_reexports.rs` checks that this crate re-exports none
 # of its items (ADR-011 §7.2).
-qsl-route = { path = "qsl-route" }
+fsl-route = { path = "fsl-route" }
 tempfile = "3.27.0"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
@@ -134,7 +134,7 @@ xtask = { path = "xtask" }
 # The ordered charge log (`Meter::admitted_charges`) the
 # charge-sequence tests assert. A production meter keeps a count only; only
 # this dev-dependency enables `test-support`.
-quire-exact = { workspace = true, features = ["test-support"] }
+filament-exact = { workspace = true, features = ["test-support"] }
 # TC-251's signature scanner (`tests/it/name_resolution_confinement.rs`)
 # walks a parameter/return type's own AST directly (an exact path-segment
 # match, `syn::visit::Visit`) rather than text-matching a `Debug`-formatted
@@ -150,7 +150,7 @@ test = false
 
 # Every former `tests/*.rs` integration-test target is now a
 # `mod` of this one `tests/it/main.rs` binary (see that file's own doc for
-# the full rationale). It needs no `required-features`: the `qsl-semantics`
+# the full rationale). It needs no `required-features`: the `fsl-semantics`
 # fixtures its modules call are enabled by that crate's dev-dependency above.
 [[test]]
 name = "it"
@@ -180,33 +180,33 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.quire-canonical]
 opt-level = 3
-[profile.dev.package.quire-contract-model]
+[profile.dev.package.filament-contract-model]
 opt-level = 3
-[profile.dev.package.quire-semantic-value]
+[profile.dev.package.filament-semantic-value]
 opt-level = 3
 [profile.dev.package.num-bigint]
 opt-level = 3
-[profile.dev.package.quire-exact]
+[profile.dev.package.filament-exact]
 opt-level = 3
 
-# quire-observation depends on this repository's `qsl-foundation` through a
+# filament-observation depends on this repository's `fsl-foundation` through a
 # git dependency on `main`. Patching that source to the workspace member keeps
-# one `qsl-foundation` in the graph, so its canonical types are defined once.
-[patch."https://github.com/agent-ix/quire-spec-language"]
-qsl-foundation = { path = "qsl-foundation" }
+# one `fsl-foundation` in the graph, so its canonical types are defined once.
+[patch."https://github.com/agent-ix/filament-spec-language"]
+fsl-foundation = { path = "fsl-foundation" }
 
 # Protocol exploration (QSL-1438: the LT-16 litmus test) spends its time in
-# qsl-eval, which compiles at opt-level 3. Its protocol system is generic over
+# fsl-eval, which compiles at opt-level 3. Its protocol system is generic over
 # the memory model, and a generic function compiles in the crate that
-# instantiates it, so qsl-eval's own `ProtocolSystem::reachable` instantiates
-# the search for its Sc, Tso and Ra models and qsl-analyze and its tests
+# instantiates it, so fsl-eval's own `ProtocolSystem::reachable` instantiates
+# the search for its Sc, Tso and Ra models and fsl-analyze and its tests
 # (QSL-1564) stay at opt-level 0. Below opt-level 2 a crate reuses the
 # unoptimized generic instances of the opt-level 0 crates it depends on
-# (QSL-1472 measured qsl-eval at opt-level 1 at 1.8x LT-16's instructions).
-# qsl-semantics compiles at opt-level 1; qsl-foundation and the dependencies
+# (QSL-1472 measured fsl-eval at opt-level 1 at 1.8x LT-16's instructions).
+# fsl-semantics compiles at opt-level 1; fsl-foundation and the dependencies
 # without an explicit level above stay at opt-level 0. Debug assertions stay
 # on.
-[profile.dev.package.qsl-semantics]
+[profile.dev.package.fsl-semantics]
 opt-level = 1
-[profile.dev.package.qsl-eval]
+[profile.dev.package.fsl-eval]
 opt-level = 3

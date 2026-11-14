@@ -3,7 +3,7 @@ id: TC-1019
 title: "A family is called by the call that reaches it, and a body does not dispatch"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: verifies
 ---
 # TC-1019: A family is called by the call that reaches it, and a body does not dispatch

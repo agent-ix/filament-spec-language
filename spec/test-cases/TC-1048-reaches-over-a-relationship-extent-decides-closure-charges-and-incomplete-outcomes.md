@@ -3,7 +3,7 @@ id: TC-1048
 title: "reaches over a relationship extent decides one-or-more-edge closure, its charges and its incomplete and dangling outcomes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-365
+  - target: ix://agent-ix/filament-spec-language/FR-365
     type: verifies
 ---
 # TC-1048: reaches over a relationship extent decides one-or-more-edge closure, its charges and its incomplete and dangling outcomes

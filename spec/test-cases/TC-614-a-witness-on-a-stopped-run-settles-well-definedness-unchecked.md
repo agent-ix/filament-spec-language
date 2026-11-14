@@ -3,11 +3,11 @@ id: TC-614
 title: "A witness on a stopped run settles inconclusive with well-definedness unchecked"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-168
+  - target: ix://agent-ix/filament-spec-language/FR-168
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
 ---
 # TC-614: A witness on a stopped run settles inconclusive with well-definedness unchecked

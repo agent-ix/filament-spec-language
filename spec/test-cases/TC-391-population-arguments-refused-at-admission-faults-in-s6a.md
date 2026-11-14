@@ -3,7 +3,7 @@ id: TC-391
 title: "An unresolved or mismatched population argument is refused at admission, and is an InternalFault inside S6a"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-391: An unresolved or mismatched population argument is refused at admission, and is an InternalFault inside S6a
@@ -19,7 +19,7 @@ or family refusal. Scope: FR-090-AC-10.
 Today the admission half is FR-089-AC-4 and AC-5 (`validate`, TC-294 and
 TC-295), which refuse with `InputRefusal::WrongValueKind`. The evaluator
 half is today's `Refusal::UnresolvedPopulation` and
-`Refusal::PopulationMaximumMismatch`, neither of which is a `quire_exact`
+`Refusal::PopulationMaximumMismatch`, neither of which is a `filament_exact`
 variant.
 
 This catches two faults: an S6a path that reports an unresolvable

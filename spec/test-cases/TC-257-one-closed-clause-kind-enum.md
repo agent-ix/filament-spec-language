@@ -3,7 +3,7 @@ id: TC-257
 title: "Exactly one closed checked clause-kind enum exists, and syntax::ClauseKind gains no variant"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-257: Exactly one closed checked clause-kind enum exists, and syntax::ClauseKind gains no variant

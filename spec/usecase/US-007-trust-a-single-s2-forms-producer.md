@@ -3,16 +3,16 @@ id: US-007
 title: "Trust a single S2 forms producer between the CST and family checking"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-007: Trust a single S2 forms producer between the CST and family checking
 
 ## Story
 
-**As a** QSL contributor implementing or reviewing a semantic family
+**As a** FSL contributor implementing or reviewing a semantic family
 **I want** exactly one stage-boundary producer of parsed, span-only semantic
 input between the lossless CST and family checking, with no other code path
 able to hand checking a form built from source text

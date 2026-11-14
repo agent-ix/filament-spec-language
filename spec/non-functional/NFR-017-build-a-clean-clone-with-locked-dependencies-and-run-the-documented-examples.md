@@ -5,9 +5,9 @@ title: "Build a clean clone with locked dependencies and run the documented exam
 type: NFR
 quality_attribute: portability
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-037
+  - target: ix://agent-ix/filament-spec-language/US-037
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/NFR-013
+  - target: ix://agent-ix/filament-spec-language/NFR-013
     type: references
 ---
 # NFR-017: Build a clean clone with locked dependencies and run the documented examples
@@ -54,7 +54,7 @@ under one new directory it creates in `TMPDIR`, and:
    writes `run.json` and `compile.json` there;
    `cargo run --locked --example emit_checked_v2 -- --package-name switch --model examples/switch-transition/switch.semantic-ir.json examples/switch-transition/switch.native`
    exits 0 and its stdout, saved to `<tmp>/package.json`, reads back through
-   QSL's I2 reader with the switch model; and
+   FSL's I2 reader with the switch model; and
    `cargo test --locked --test it walkthrough_requests_reproduce_the_documented_exit_codes`
    passes;
 6. writes a report naming each step and its result, and the first failing
@@ -64,7 +64,7 @@ under one new directory it creates in `TMPDIR`, and:
 ### Out of scope
 
 `make ci`'s conformance and qualification targets, which read a sibling
-QSpec checkout, are maintainer gates, not part of an outside user's build.
+FSpec checkout, are maintainer gates, not part of an outside user's build.
 
 ## Measurement and Evaluation
 
@@ -79,7 +79,7 @@ QSpec checkout, are maintainer gates, not part of an outside user's build.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | NFR-017-AC-1 | `make clean-clone-check` passes at the head of `main`, and its report shows steps 1 to 5 passed: the locked build exits 0, and every package source is the clone, crates.io, or an anonymously readable `https://github.com/agent-ix/` git repository. | Test (TC-1397) |
-| NFR-017-AC-2 | In the gate's step 5, `config_version_fixtures` writes the case directories `healthy-parent`, `violating-parent`, `dangling-parent`, `incomplete-population` and `cycle`; `requests.sh` writes `run.json` and `compile.json` in `healthy-parent`; `emit_checked_v2` exits 0 and writes package bytes that QSL's I2 reader reads back with the switch model; and the walkthrough test passes with the README's exit codes 0, 10, 20, 22 and 10. | Test (TC-1398) |
+| NFR-017-AC-2 | In the gate's step 5, `config_version_fixtures` writes the case directories `healthy-parent`, `violating-parent`, `dangling-parent`, `incomplete-population` and `cycle`; `requests.sh` writes `run.json` and `compile.json` in `healthy-parent`; `emit_checked_v2` exits 0 and writes package bytes that FSL's I2 reader reads back with the switch model; and the walkthrough test passes with the README's exit codes 0, 10, 20, 22 and 10. | Test (TC-1398) |
 | NFR-017-AC-3 | With `REPO` a scratch repository: a commit whose `Cargo.lock` lacks a dependency `Cargo.toml` declares fails at step 3 with Cargo's `--locked` refusal; a commit whose `Cargo.toml` adds a path dependency outside the repository fails, naming it; a commit that removes `examples/config-version/requests.sh` fails at step 5; and a run whose `TMPDIR` has a `.cargo/config.toml` in an ancestor of the clone refuses at step 1. Each report names the failing step. | Test (TC-1397) |
 | NFR-017-AC-4 | Run with `TMPDIR` set to a new empty directory, after a passing run and after each AC-3 failing run that directory is empty again. | Test (TC-1397) |
 

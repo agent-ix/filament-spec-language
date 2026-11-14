@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Source-map layout and byte/segment lookup over parsed source text.
+use fsl_foundation::source::MAX_SOURCE_BYTES;
+use fsl_foundation::source_map::{Layout, Segment, SourceMap};
+use fsl_foundation::{Code, Source, SourceIdentity, Span};
 use ix_trace_rs::trace;
-use qsl_foundation::source::MAX_SOURCE_BYTES;
-use qsl_foundation::source_map::{Layout, Segment, SourceMap};
-use qsl_foundation::{Code, Source, SourceIdentity, Span};
 
 fn source(id: &str, text: &str) -> Source {
     Source::read(
@@ -36,7 +36,7 @@ fn layout() -> Layout {
         drop_final_newline: true,
     }
 }
-fn bytes(source: &Source, locations: &[qsl_foundation::LocatedSpan]) -> String {
+fn bytes(source: &Source, locations: &[fsl_foundation::LocatedSpan]) -> String {
     locations
         .iter()
         .map(|s| {
@@ -100,7 +100,7 @@ fn a_caller_raised_byte_limit_is_enforced_as_given() {
     );
 }
 
-#[trace("TC-014", "QSpec-TC-184", "FR-004-AC-1", "QSpec-FR-134-AC-1")]
+#[trace("TC-014", "FSpec-TC-184", "FR-004-AC-1", "FSpec-FR-134-AC-1")]
 #[test]
 fn verbatim_mapping_retains_original_utf8_crlf_locations() {
     let original = source("original", "header😀\r\nα + β\r\nfooter");
@@ -135,10 +135,10 @@ fn verbatim_mapping_retains_original_utf8_crlf_locations() {
 
 #[trace(
     "TC-014",
-    "QSpec-TC-184",
+    "FSpec-TC-184",
     "FR-004-AC-1",
     "FR-004-AC-4",
-    "QSpec-FR-134-AC-2"
+    "FSpec-FR-134-AC-2"
 )]
 #[test]
 fn layout_mapping_returns_discontiguous_exact_regions() {
@@ -243,7 +243,7 @@ fn embedded_body_spans_map_to_regions_under_the_document_reference() {
     assert!(map.map_regions(&original, whole).is_none());
 }
 
-#[trace("TC-014", "QSpec-TC-184", "FR-004-AC-2", "QSpec-FR-134-AC-3")]
+#[trace("TC-014", "FSpec-TC-184", "FR-004-AC-2", "FSpec-FR-134-AC-3")]
 #[test]
 fn omitted_keywords_internal_whitespace_and_newlines_refuse() {
     for (original, body, segments) in [
@@ -276,7 +276,7 @@ fn omitted_keywords_internal_whitespace_and_newlines_refuse() {
     }
 }
 
-#[trace("TC-014", "QSpec-TC-184", "FR-004-AC-3", "QSpec-FR-134-AC-3")]
+#[trace("TC-014", "FSpec-TC-184", "FR-004-AC-3", "FSpec-FR-134-AC-3")]
 #[test]
 fn original_and_body_identity_and_bytes_must_match() {
     let body = source("body", "abc");
@@ -430,7 +430,7 @@ fn malformed_segment_and_query_ranges_never_panic_or_partially_succeed() {
 #[trace("TC-014")]
 #[test]
 fn a_parse_refusal_maps_back_through_a_real_indented_body() {
-    let text = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\nfunction f using v(a: Integer, b: Integer, c: Integer): Boolean pure { a < b < c }\n";
+    let text = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(a: Integer, b: Integer, c: Integer): Boolean pure { a < b < c }\n";
     let body_text = text.trim_end_matches('\n');
     let body = source("body", body_text);
     let mut document = String::from("# Original café\r\n```native\r\n");
@@ -468,11 +468,11 @@ fn a_parse_refusal_maps_back_through_a_real_indented_body() {
         100,
     )
     .unwrap();
-    let refusal = qsl_cst::parse(
+    let refusal = fsl_cst::parse(
         body.identity().clone(),
         "body.native",
         body.text().as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("valid UTF-8 within the ceiling");
     let region = refusal.diagnostics()[0]

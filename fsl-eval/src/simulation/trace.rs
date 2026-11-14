@@ -1,0 +1,259 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Executable, replayable traces of one sampled path, and replaying one
+//! against a `TransitionSystem` (FR-101, ADR-014 TR-1, TR-6, TR-7).
+
+use filament_semantic_value::catalog::CatalogCode;
+use fsl_foundation::selection::DefinitionRef;
+
+use crate::simulation::expansion::StateFindings;
+use crate::simulation::explore::TransitionSystem;
+use crate::simulation::key::{EncodingRefusal, StateKey};
+use crate::simulation::order::{expand, sorted_initial, Expanded};
+use fsl_foundation::IdentityLimits;
+
+/// One executed transition and the ordinal of the chosen matching successor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Step<T> {
+    /// The transition taken.
+    pub transition: T,
+    /// The zero-based position of the chosen successor among the current
+    /// state's successors that share `transition`, in canonical order.
+    pub ordinal: usize,
+    /// The complete canonical key of the successor.
+    pub key: StateKey,
+}
+
+/// Why a sampled run stopped.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StopReason {
+    /// `max_steps` was reached. The current state may or may not have had
+    /// further successors; the run never asked.
+    StepLimit,
+    /// The current state had no successors to draw from.
+    NoSuccessors,
+    /// The system returned an `ExpansionStop` with this cause at the
+    /// trace's last state (FR-101-AC-14).
+    Stopped(CatalogCode),
+    /// The caller's end condition held at the trace's last state, which the
+    /// run did not expand (`sample_request_until`, FR-166).
+    Reached,
+}
+
+/// How a sampled trace was drawn (FR-101, ADR-014 TR-1: replaces
+/// `sampler_version: String`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SampleProvenance {
+    /// The run's `u64` seed.
+    pub seed: u64,
+    /// The trace's 0-based index within the run.
+    pub trace: u64,
+    /// The sampler's `DefinitionRef`, as supplied to `sample_request`.
+    pub sampler: DefinitionRef,
+    /// Why the run stopped.
+    pub stopped: StopReason,
+}
+
+/// One executable path: the starting state's complete canonical key, the
+/// ordered transitions taken from it and the findings of the states it expanded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Trace<T, F> {
+    /// The complete canonical key of the state the path starts from.
+    pub initial: StateKey,
+    /// The transitions taken, each with its matching-successor ordinal, in
+    /// order.
+    pub steps: Vec<Step<T>>,
+    /// One entry per state on the trace with at least one finding, in step
+    /// order; each entry's `depth` is the state's step index, 0 for the
+    /// initial state.
+    pub findings: Vec<StateFindings<F>>,
+    /// Set for a trace `sample` drew; `None` for a trace built by hand, such
+    /// as a fixture a test constructs directly.
+    pub provenance: Option<SampleProvenance>,
+}
+
+/// Why a trace refused to replay.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ReplayError<T: std::fmt::Debug> {
+    /// No state returned by `TransitionSystem::initial` has this key.
+    #[error("no initial state has key {expected:?}")]
+    UnknownInitial {
+        /// The trace.s recorded starting key.
+        expected: StateKey,
+    },
+    /// At `step`, the current state offers no successor with this
+    /// transition identity at the step's ordinal.
+    #[error("step {step}: no successor offers transition {transition:?}")]
+    MissingTransition {
+        /// The zero-based index into `Trace::steps`.
+        step: usize,
+        /// The transition the trace expected to be available.
+        transition: T,
+    },
+    /// The state at step index `step` (0 for the initial state) expanded to
+    /// findings other than the recorded ones.
+    #[error("step {step}: recomputed findings differ from the recorded ones")]
+    FindingMismatch {
+        /// The state's step index.
+        step: usize,
+    },
+    /// The state at step index `step` stopped when the trace did not stop
+    /// there, did not stop when the trace did, or stopped with a different
+    /// cause.
+    #[error("step {step}: trace recorded stop {recorded:?}, replay stopped with {replayed:?}")]
+    Stopped {
+        /// The state's step index.
+        step: usize,
+        /// The stop cause the trace recorded at this state, if any.
+        recorded: Option<CatalogCode>,
+        /// The stop cause the recomputed expansion returned, if any.
+        replayed: Option<CatalogCode>,
+    },
+    /// A state or transition identity reached during replay has no RFC
+    /// 8785 encoding.
+    #[error(transparent)]
+    KeyEncoding(#[from] EncodingRefusal),
+}
+
+/// Re-run `trace` against `system`, refusing at the first state whose
+/// expansion or successor differs from what the trace recorded.
+///
+/// A trace that replays to completion is executable by `system` exactly as
+/// recorded; nothing in the replay path depends on the simulator. Replay
+/// expands every state on the trace again, the last included, and requires
+/// the same findings and the same stop: a stop with the recorded cause at
+/// the last state exactly when the trace ended `StopReason::Stopped`, and no
+/// stop anywhere else (FR-101-AC-14). It recomputes each candidate initial
+/// state's key to find the recorded initial state (FR-101-AC-5).
+///
+/// A step matches by transition identity, then by ordinal: replay takes the
+/// successor at the step's `ordinal` among the current state's successors
+/// whose transition equals the step's, in canonical order (the same order
+/// `explore` and `sample` themselves walk). An ordinal past the last such
+/// successor refuses `MissingTransition`. It compares no recorded step key.
+///
+/// # Errors
+///
+/// The first [`ReplayError`] reached, in step order.
+pub fn replay<S: TransitionSystem>(
+    system: &S,
+    trace: &Trace<S::TransitionId, S::Finding>,
+    identity: IdentityLimits,
+) -> Result<(), ReplayError<S::TransitionId>> {
+    let mut current = sorted_initial(system, identity)?
+        .into_iter()
+        .find(|item| item.key == trace.initial)
+        .map(|item| item.state)
+        .ok_or(ReplayError::UnknownInitial {
+            expected: trace.initial.clone(),
+        })?;
+    let recorded_stop = match trace.provenance.as_ref().map(|p| p.stopped) {
+        Some(StopReason::Stopped(cause)) => Some(cause),
+        Some(StopReason::StepLimit | StopReason::NoSuccessors | StopReason::Reached) | None => None,
+    };
+    let reached = trace
+        .provenance
+        .as_ref()
+        .is_some_and(|provenance| provenance.stopped == StopReason::Reached);
+    let last = trace.steps.len();
+    let mut check = FindingsCheck::new(&trace.findings);
+
+    for index in 0..=last {
+        // A trace its end condition ended never expanded its last state.
+        if reached && index == last {
+            break;
+        }
+        let recorded = if index == last { recorded_stop } else { None };
+        let (successors, findings) = match expand(system, &current, identity)? {
+            Expanded::Successors {
+                successors,
+                findings,
+            } => (successors, findings),
+            Expanded::Stopped(stop) if recorded == Some(stop.cause) => break,
+            Expanded::Stopped(stop) => {
+                return Err(ReplayError::Stopped {
+                    step: index,
+                    recorded,
+                    replayed: Some(stop.cause),
+                });
+            }
+        };
+        if recorded.is_some() {
+            return Err(ReplayError::Stopped {
+                step: index,
+                recorded,
+                replayed: None,
+            });
+        }
+        check.expanded(index, findings)?;
+        let Some(step) = trace.steps.get(index) else {
+            break;
+        };
+        current = successors
+            .into_iter()
+            .filter(|successor| successor.transition == step.transition)
+            .nth(step.ordinal)
+            .map(|successor| successor.state)
+            .ok_or_else(|| ReplayError::MissingTransition {
+                step: index,
+                transition: step.transition.clone(),
+            })?;
+    }
+    check.finish()
+}
+
+/// Compares the findings replay recomputes with the trace's recorded
+/// `findings`, entry by entry in step order: depth and findings must match
+/// (the recorded state key is not compared), and the recorded list must hold no other entry.
+struct FindingsCheck<'a, F> {
+    recorded: &'a [StateFindings<F>],
+    /// How many recorded entries have matched a recomputed one.
+    matched: usize,
+}
+
+impl<'a, F: PartialEq> FindingsCheck<'a, F> {
+    fn new(recorded: &'a [StateFindings<F>]) -> Self {
+        Self {
+            recorded,
+            matched: 0,
+        }
+    }
+
+    /// The state at step index `depth` expanded to `findings`. Refuses at the first recorded entry, at or before
+    /// `depth`, that differs from the recomputed entries.
+    fn expanded<T: std::fmt::Debug>(
+        &mut self,
+        depth: usize,
+        findings: Vec<F>,
+    ) -> Result<(), ReplayError<T>> {
+        let next = self.recorded.get(self.matched);
+        if !findings.is_empty() {
+            return match next {
+                Some(entry) if entry.depth == depth && entry.findings == findings => {
+                    self.matched += 1;
+                    Ok(())
+                }
+                Some(entry) => Err(ReplayError::FindingMismatch {
+                    step: entry.depth.min(depth),
+                }),
+                None => Err(ReplayError::FindingMismatch { step: depth }),
+            };
+        }
+        match next {
+            // A recorded entry at or before this state that matches no
+            // recomputed one: extra, duplicate or out of order.
+            Some(entry) if entry.depth <= depth => {
+                Err(ReplayError::FindingMismatch { step: entry.depth })
+            }
+            Some(_) | None => Ok(()),
+        }
+    }
+
+    /// Replay reached the trace's end: any recorded entry left over matches
+    /// no expanded state.
+    fn finish<T: std::fmt::Debug>(self) -> Result<(), ReplayError<T>> {
+        match self.recorded.get(self.matched) {
+            Some(entry) => Err(ReplayError::FindingMismatch { step: entry.depth }),
+            None => Ok(()),
+        }
+    }
+}

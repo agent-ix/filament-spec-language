@@ -3,7 +3,7 @@ id: TC-806
 title: "The export refuses each item with an unbound element and returns the others"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-307
+  - target: ix://agent-ix/filament-spec-language/FR-307
     type: verifies
 ---
 # TC-806: The export refuses each item with an unbound element and returns the others

@@ -3,23 +3,23 @@ id: FR-307
 title: "Export the bindings each requested item references, refusing unbound elements per item"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-031
+  - target: ix://agent-ix/filament-spec-language/US-031
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-305
+  - target: ix://agent-ix/filament-spec-language/FR-305
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-306
+  - target: ix://agent-ix/filament-spec-language/FR-306
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-353
+  - target: ix://agent-ix/filament-specification/FR-353
     type: depends_on
 ---
 # FR-307: Export the bindings each requested item references, refusing unbound elements per item
@@ -50,8 +50,8 @@ a `missing_declaration`/`missing-name` refusal.
 
 The export SHALL be callable after S4 and before `route` and E7, and SHALL
 name no `BackendId` (ADR-012 §11). The orchestrating driver (ADR-011 T-13)
-builds the QSpec FR-331 request from the bound items; the end-to-end run
-lives in quire-integration.
+builds the FSpec FR-331 request from the bound items; the end-to-end run
+lives in filament-integration.
 
 ### Referenced elements
 
@@ -72,7 +72,7 @@ An item references:
 - An item that references an element with no binding SHALL refuse
   `missing_declaration`/`missing-name`. The refusal SHALL name every unbound
   element of the item, in ascending key order (ordered by element kind: object type, population, operation frame; then by key), each with its owning
-  `DomainPackageRef` identity (QSpec FR-353-AC-3). A refused item returns no
+  `DomainPackageRef` identity (FSpec FR-353-AC-3). A refused item returns no
   bindings.
 - A bound item SHALL return every binding it references.
 - Each item's result depends only on the checked package and that item.
@@ -95,13 +95,13 @@ An item references:
 
 ## Dependencies
 
-- **Upstream:** QSpec FR-353 owns the per-item unbound refusal; QSpec FR-331
+- **Upstream:** FSpec FR-353 owns the per-item unbound refusal; FSpec FR-331
   owns the CG request; ADR-017 AR-4 and AR-6 fix the export, its referenced
   elements and what CG receives; ADR-011 T-13 names the driver.
 - **Downstream:** CG's Kani and Verus generators receive only bound items and
   keep their own unbound guard (ADR-017 AR-4). The orchestrating driver
-  (ADR-011 T-13, in agent-ix/quire-driver) puts only the bound items
-  in the QSpec FR-331 request (ADR-017 AR-6); this FR owns the
+  (ADR-011 T-13, in agent-ix/filament-driver) puts only the bound items
+  in the FSpec FR-331 request (ADR-017 AR-6); this FR owns the
   bound-or-refused result kinds the driver reads (AC-6), not the driver's request building.
 
 ## References

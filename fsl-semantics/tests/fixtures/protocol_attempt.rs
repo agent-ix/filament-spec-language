@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Original private FR114 model view and source generator, owned by its tests.
+/// The original two protocols sharing an ordinary binder name.
+pub fn shared_binder_protocols() -> String {
+    let first =
+        attempt_flow("First", "").replacen("as (tried: Boolean)", "as (shared: Boolean)", 1);
+    let second =
+        attempt_flow("Second", "").replacen("as (tried: Boolean)", "as (shared: Boolean)", 1);
+    // Both protocols are made only of fully checked parts, so
+    // the whole package checks: neither refuses `Shadow`.
+    format!("{first}\n{second}")
+}
+
+use semantics::model::accounting::ModelNormalizationLimits;
+use semantics::model::domain_package::{
+    DomainPackage, DomainPackageRecord, DomainPackageRef, FieldMemberRecord, Multiplicity,
+    NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord,
+    RecordValueTypeRecord, ValueTypeRef,
+};
+use semantics::model::intake::SelectedModel;
+use filament_checked::key::DeclarationKey;
+use semantics::model::normalize::{normalize, NormalizeOutcome};
+
+/// The owning protocol test's original native header.
+pub const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
+    profile t = \"filament.temporal.infinite-trace/v1\";\n\
+    profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+    profile pp = \"filament.protocol.finite-global/v1\";\n\
+    model M = \"example/protocol-fixture\";\n";
+
+/// `M::Actor` and its `ready: Boolean` field, `op` and `other` operations
+/// (no parameters, no result, an empty frame), normalized to a [`SelectedModel`] aliased `M` --
+/// the FR-114 fixture, so every `attempt ... on M::Actor::op` this
+/// module's fixtures already write (FR-114's own assembler resolution,
+/// which now runs for every protocol) resolves rather than refusing at
+/// assembly. This module's FR-113 tests still exercise anchor
+/// resolution and binder shadowing only; FR-114 touches neither.
+pub fn m_actor_model() -> SelectedModel {
+    let key = |name: &str| DeclarationKey {
+        package: "example/protocol-fixture".to_owned(),
+        node: format!("ix://example/protocol-fixture/{name}"),
+    };
+    let package = DomainPackage::new(
+        DomainPackageRef {
+            identity: "example/protocol-fixture".to_owned(),
+        },
+        vec![
+            DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                key: key("Actor"),
+                interface_features: None,
+                abstract_type: false,
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::FieldMember(FieldMemberRecord {
+                key: key("Actor/ready"),
+                owner: key("Actor"),
+                value_type: ValueTypeRef::Native(NativeValueType::Boolean),
+                multiplicity: Multiplicity {
+                    lower: 1,
+                    upper: Some(1),
+                    ordered: false,
+                    unique: true,
+                },
+                presence: filament_exact::Presence::Required,
+                subsets: Vec::new(),
+                redefines: None,
+                position: 0,
+            }),
+            DomainPackageRecord::OperationMember(OperationMemberRecord {
+                key: key("Actor/op"),
+                owner: key("Actor"),
+                parameters: Vec::new(),
+                result: None,
+                effect: OperationEffect::default(),
+                requires: Vec::new(),
+                ensures: Vec::new(),
+                has_body: false,
+                redefines: None,
+            }),
+            // The record value type `Try { done: Boolean }`, the attempt
+            // type of a `compensate` template (FR-381).
+            DomainPackageRecord::RecordValueType(RecordValueTypeRecord {
+                key: key("Try"),
+                identity_fields: Vec::new(),
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::FieldMember(FieldMemberRecord {
+                key: key("Try/done"),
+                owner: key("Try"),
+                value_type: ValueTypeRef::Native(NativeValueType::Boolean),
+                multiplicity: Multiplicity {
+                    lower: 1,
+                    upper: Some(1),
+                    ordered: false,
+                    unique: true,
+                },
+                presence: filament_exact::Presence::Required,
+                subsets: Vec::new(),
+                redefines: None, position: 0, }),
+            // A second operation, so FR-114-AC-3's "a `pre` clause of a
+            // different operation" case has one to anchor at.
+            DomainPackageRecord::OperationMember(OperationMemberRecord {
+                key: key("Actor/other"),
+                owner: key("Actor"),
+                parameters: Vec::new(),
+                result: None,
+                effect: OperationEffect::default(),
+                requires: Vec::new(),
+                ensures: Vec::new(),
+                has_body: false,
+                redefines: None,
+            }),
+        ],
+    );
+    let NormalizeOutcome::Completed(view) =
+        normalize(&package, ModelNormalizationLimits::UNLIMITED)
+    else {
+        panic!("the M::Actor fixture normalizes");
+    };
+    SelectedModel {
+        alias: "M".to_owned(),
+        span: fsl_foundation::Span { start: 0, end: 0 },
+        view,
+        operation_clauses: Vec::new(),
+        type_invariants: Vec::new(),
+    }
+}
+
+/// A protocol `name` made only of parts the checker covers in
+/// full (`super::content`): one role, a `run sequence` holding one
+/// `attempt` of `M::Actor::op` with `contracts [contracts]`, and a
+/// `finish`, every body the bare literal `true`.
+pub fn attempt_flow(name: &str, contracts: &str) -> String {
+    format!(
+        "protocol {name} using pp over (input: M::Actor) on origin {{\n\
+         role R on M::Actor;\n\
+         run sequence Main {{\n\
+         attempt Tried by R on M::Actor::op contracts [{contracts}] \
+         as (tried: Boolean) {{ true }};\n\
+         }}\n\
+         finish End as (outcome: Boolean) {{ true }};\n\
+         }}"
+    )
+}

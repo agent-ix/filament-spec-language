@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-1088 (FR-394-AC-5): a consumer reaches `compile_admitted`, the lookups
+//! and both refusal enums through the `fsl_replay` root alone. This file names
+//! no `fsl_replay::spine` or `fsl_semantics` item, so it stops compiling if
+//! the facade needs one.
+
+use fsl_foundation::Setting;
+use fsl_replay::{
+    compile_admitted, AdmittedLookupRefusal, AdmittedRefusal, AdmittedResource, DependencyInput,
+    Identifier, NodeKey, ReplayLimits, SourceIdentity, StageLimits,
+};
+use ix_trace_rs::trace;
+
+const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     enum Color { BLUE, RED }\n";
+
+fn limits(source_bytes: u64) -> StageLimits {
+    [(Setting::S1InputBytes, source_bytes)]
+        .into_iter()
+        .collect()
+}
+
+fn admit(
+    bytes: &[u8],
+    stages: StageLimits,
+) -> Result<fsl_replay::AdmittedCompilation, AdmittedRefusal> {
+    compile_admitted(
+        fsl_replay::CompileUnit {
+            source: SourceIdentity::new("a", "u"),
+            package_name: "fixture".to_owned(),
+            path: "unit.native",
+            bytes,
+        },
+        [],
+        &DependencyInput::default(),
+        stages,
+        ReplayLimits::default(),
+    )
+}
+
+/// The whole consumer path: compile, take the parts, look a declaration and a
+/// case up by wire id, and read both refusal enums.
+fn fixture_node(fill: u8) -> NodeKey {
+    NodeKey::new(
+        "fixture",
+        vec![filament_exact::PathSegment::Text(fill.to_string())],
+        0,
+    )
+    .expect("fixture node")
+}
+
+#[trace("TC-1088", "FR-394-AC-5")]
+#[test]
+fn a_consumer_looks_keys_up_through_the_crate_root() {
+    let admitted = admit(SOURCE.as_bytes(), limits(1 << 20)).expect("the unit compiles");
+    let (package, context) = admitted.into_parts();
+    assert!(!package.bytes().is_empty());
+
+    let color = context.enums().next().expect("an enum");
+    let declaration = color.key().clone();
+    // The checked shape is exposed with the case variants in its order.
+    assert!(!color.shape().is_ordered());
+    let shaped: Vec<_> = color.shape().variants().collect();
+    let cased: Vec<_> = color.cases().iter().map(|case| case.variant()).collect();
+    assert_eq!(shaped, cased);
+    assert_eq!(shaped.len(), 2);
+    let blue = Identifier::new("BLUE").expect("an identifier");
+    assert_eq!(
+        context.enum_declaration(&declaration).map(|e| e.key()),
+        Ok(color.key())
+    );
+    assert_eq!(
+        context.enum_case(&declaration, &blue).map(|c| c.key()),
+        Ok(color.case(&blue).expect("BLUE").key())
+    );
+
+    let purple = Identifier::new("PURPLE").expect("an identifier");
+    assert!(matches!(
+        context.enum_case(&declaration, &purple),
+        Err(AdmittedLookupRefusal::Unknown { case: Some(_), .. })
+    ));
+    assert!(matches!(
+        context.enum_declaration(&fixture_node(7)),
+        Err(AdmittedLookupRefusal::Unknown { case: None, .. })
+    ));
+
+    assert!(matches!(
+        admit(SOURCE.as_bytes(), limits(4)),
+        Err(AdmittedRefusal::Resource(AdmittedResource::StageLimit(_)))
+    ));
+}

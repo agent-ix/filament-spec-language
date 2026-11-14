@@ -1,0 +1,1236 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The S2 `forms` core: the closed, family-keyed dispatch entry table over
+//! the closed leading-token-kind enum (ADR-012 §3, §4.3, §5.1 row S2), and
+//! the shared parsed-form contract (ADR-011 §2.1 E2, §2.2 E2 row).
+//!
+//! S2 visits a unit's `Declaration` nodes in source order, and each
+//! declaration's first significant token selects its dispatch entry
+//! (FR-091, refining FR-067's "root construct's leading token"). The `Value`
+//! family owns the `function`, `type`, `record`, `tuple`, `enum`, `ordered`,
+//! `predicate`, `dimension` and `unit` entries; `SumCase` owns `union`
+//! (FR-313), and `ProtocolClause` owns its state and protocol entries.
+//! A token with no entry refuses with [`FormsCause::NoDispatchEntry`]. The families' own productions are in
+//! their own modules (`value` for `Value`); this module holds no grammar.
+//!
+//! The mechanism itself — refusal on a recovering CST, span-only/no-identity
+//! output, edition and declared-bound/extent carried unchanged, and a
+//! single-call thin dispatch entry — is also exercised through a
+//! `#[cfg(test)]`-only leading-token-kind variant and stub production
+//! function (TC-167), whose fixture CSTs carry shapes the real grammar
+//! cannot produce.
+
+use fsl_cst::{CstElement, CstNode, LosslessCst, ParsedSource, Production, Recovery, TokenClass};
+use fsl_foundation::selection::SourceSelections;
+use fsl_foundation::{Code, Span};
+use std::collections::BTreeMap;
+
+use super::abstraction_declaration;
+use super::composition_declaration;
+use super::extension_declaration;
+use super::guarantee_declaration;
+use super::hybrid_declaration;
+use super::hyper_clause;
+use super::object_declaration;
+use super::probabilistic;
+use super::protocol_clause;
+use super::refinement;
+use super::state_graph;
+use super::state_model;
+use super::sum_case;
+use super::syntax::DeclarationForm;
+use super::task_set;
+use super::temporal_clause;
+use super::terminal_declaration;
+use super::time_model;
+use super::value;
+
+/// A parsed form built from one declaration of a lossless CST with no
+/// error or recovery node (ADR-011 §2.1 E2). It carries only the span of
+/// its originating `Declaration` CST node (ADR-011 §2.2 E2 row, identity:
+/// "none: forms carry position only"), its CST's edition unchanged
+/// (version: "Edition carried"), and, when the originating construct
+/// declared one, its bound or extent carried as syntax (proof metadata:
+/// "Declared bounds and extents carried as syntax"). It exposes no accessor
+/// whose return type is `NodeKey`, `DeclarationKey`, or any other ADR-013
+/// O-03/O-04/O-07 check-time-minted identity type (FR-067-AC-2): identity
+/// is minted only at check (S3), and this type has no field, and so no
+/// accessor, that could return one.
+///
+/// No accessor here returns a `NodeKey` or a `DeclarationKey` (FR-067-AC-2,
+/// TC-167 step 3); this fails to compile because neither method exists:
+///
+/// ```compile_fail
+/// use fsl_forms::ParsedForm;
+/// fn read_identity(form: &ParsedForm) {
+///     let _ = form.node_key();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use fsl_forms::ParsedForm;
+/// fn read_declaration(form: &ParsedForm) {
+///     let _ = form.declaration_key();
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub struct ParsedForm {
+    span: Span,
+    edition: Option<String>,
+    declared_extent: Option<Box<str>>,
+    form: DeclarationForm,
+}
+
+impl ParsedForm {
+    /// The span of the originating `Declaration` CST node.
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    /// The edition the originating CST recorded, unchanged; `None` when the
+    /// CST's header declared none (absence is never defaulted to a
+    /// particular edition string).
+    pub fn edition(&self) -> Option<&str> {
+        self.edition.as_deref()
+    }
+
+    /// The originating construct's declared bound or extent, carried as
+    /// syntax, unchanged from the CST; `None` when the construct declared
+    /// none.
+    pub fn declared_extent(&self) -> Option<&str> {
+        self.declared_extent.as_deref()
+    }
+
+    /// The form's top-level syntactic declaration name, when it declares one.
+    /// This is source spelling only; it is not a check-time key. Forms whose
+    /// grammar has no single top-level name return `None`.
+    pub fn declared_name(&self) -> Option<&str> {
+        use DeclarationForm as F;
+        match &self.form {
+            F::Extension(form) => Some(&form.name.name),
+            F::Union(form) => Some(&form.name.name),
+            F::Abstraction(form) => Some(&form.name.name),
+            F::Guarantee(form) => Some(&form.name.name),
+            F::Composition(form) => Some(&form.name.name),
+            F::Function(form) => Some(form.name.as_str()),
+            F::Alias(form) => Some(&form.name.name),
+            F::Record(form) => Some(&form.name.name),
+            F::Object(form) => Some(&form.name.name),
+            F::Tuple(form) => Some(&form.name.name),
+            F::Enum(form) => Some(&form.name.name),
+            F::Dimension(form) => Some(&form.name.name),
+            F::DimensionEquivalence(_) => None,
+            F::Unit(form) => Some(&form.name.name),
+            F::StateClause(form) => Some(&form.name.name),
+            F::OperationBody(form) => Some(&form.label.name),
+            F::PopulationBound(form) => Some(&form.label.name),
+            F::Protocol(form) => Some(&form.name.name),
+            F::Temporal(form) => Some(&form.name.name),
+            F::Terminal(form) => Some(&form.name.name),
+            F::Refinement(form) => Some(&form.name.name),
+            F::HyperBehaviours(form) => Some(&form.name.name),
+            F::HyperFinite(form) => Some(&form.name.name),
+            F::ModelRelation(form) => Some(&form.name.name),
+            F::Random(_) => None,
+            F::Reward(form) => Some(&form.name.name),
+            F::Delay(_) => None,
+            F::Workload(form) => Some(&form.name.name),
+            F::Probabilistic(form) => Some(&form.name.name),
+            F::StateGraphClaim(form) => Some(&form.name.name),
+            F::TimeSource(_) => None,
+            F::TimeInvariant(form) => Some(&form.name.name),
+            F::Urgent(form) => Some(&form.name.name),
+            F::Taskset(form) => Some(&form.name.name),
+            F::Schedulable(form) => Some(&form.name.name),
+            F::Response(form) => Some(&form.name.name),
+            F::Release(_) => None,
+            F::Hybrid(form) => Some(&form.name.name),
+        }
+    }
+
+    /// The family-produced declaration form.
+    pub fn form(&self) -> &DeclarationForm {
+        &self.form
+    }
+
+    /// The family-produced declaration form, by value.
+    pub fn into_form(self) -> DeclarationForm {
+        self.form
+    }
+}
+
+/// S2's output for one source unit (FR-091 "Outputs"): the header's edition,
+/// the unit's profile, import and model selections as spelled, and one
+/// parsed form per declaration in source order.
+#[derive(Clone, Debug)]
+pub struct ParsedUnit {
+    edition: Option<String>,
+    selections: SourceSelections,
+    /// The source-unit index for each model selection after `combine`.
+    /// Single parsed units carry zeroes; aggregate assembly uses this to
+    /// retain unit-local model aliases while checking aggregate conflicts.
+    model_selection_units: Vec<usize>,
+    /// Each model selection `combine` dropped as a repeat of a kept one:
+    /// the kept selection's index in `selections.models` and the
+    /// source-unit index that repeated it. Both units bind the alias.
+    repeated_model_selection_units: Vec<(usize, usize)>,
+    /// The source-unit index for each import selection after `combine`.
+    import_selection_units: Vec<usize>,
+    forms: Vec<ParsedForm>,
+}
+
+/// One protocol declaration refused while the recovery-aware S2 entry point
+/// continued building its clean siblings.
+#[derive(Clone, Debug)]
+pub struct ProtocolFormsRefusal {
+    /// The authored protocol name.
+    pub declaration: String,
+    /// The enclosing declaration's source span.
+    pub declaration_span: Span,
+    /// The typed forms refusal.
+    pub refusal: FormsRefusal,
+}
+
+impl ParsedUnit {
+    /// Combine source units for package-level assembly. The caller is
+    /// responsible for admitting each source owner and for retaining the
+    /// originating owner of every form; this operation retains the shared
+    /// profile selection once while preserving per-unit imports and forms in
+    /// the supplied canonical order. A model alias repeated by two units for
+    /// the same model identity is one package selection; repetitions within
+    /// one unit remain present for the assembler's duplicate-alias refusal.
+    pub fn combine(units: impl IntoIterator<Item = Self>) -> Self {
+        let mut combined = Self {
+            edition: None,
+            selections: SourceSelections::default(),
+            model_selection_units: Vec::new(),
+            repeated_model_selection_units: Vec::new(),
+            import_selection_units: Vec::new(),
+            forms: Vec::new(),
+        };
+        let mut first = true;
+        let mut combined_models = BTreeMap::new();
+        for (source_unit_index, unit) in units.into_iter().enumerate() {
+            if first {
+                combined.edition = unit.edition;
+                first = false;
+            }
+            for profile in unit.selections.profiles {
+                if !combined.selections.profiles.iter().any(|existing| {
+                    existing.alias == profile.alias && existing.identity == profile.identity
+                }) {
+                    combined.selections.profiles.push(profile);
+                }
+            }
+            combined.selections.imports.extend(unit.selections.imports);
+            combined.import_selection_units.extend(std::iter::repeat_n(
+                source_unit_index,
+                unit.import_selection_units.len(),
+            ));
+            let mut unit_model_alias_counts = BTreeMap::new();
+            for model in &unit.selections.models {
+                *unit_model_alias_counts
+                    .entry(model.alias.clone())
+                    .or_insert(0usize) += 1;
+            }
+            for model in unit.selections.models {
+                let key = (model.alias.clone(), model.identity.clone());
+                let unique_alias_in_unit = unit_model_alias_counts
+                    .get(&model.alias)
+                    .is_some_and(|count| *count == 1);
+                if let Some(kept) = combined_models.get(&key).filter(|_| unique_alias_in_unit) {
+                    combined
+                        .repeated_model_selection_units
+                        .push((*kept, source_unit_index));
+                    continue;
+                }
+                combined_models
+                    .entry(key)
+                    .or_insert(combined.selections.models.len());
+                combined.selections.models.push(model);
+                combined.model_selection_units.push(source_unit_index);
+            }
+            combined.forms.extend(unit.forms);
+        }
+        combined
+    }
+
+    /// The header's edition, as written.
+    pub fn edition(&self) -> Option<&str> {
+        self.edition.as_deref()
+    }
+
+    /// The unit's profile, import and model selections in source order, each
+    /// with its alias, its definition reference and its span. S2 resolves
+    /// none of them.
+    pub fn selections(&self) -> &SourceSelections {
+        &self.selections
+    }
+
+    /// The source-unit index for each model selection, in the same order as
+    /// [`Self::selections`]`().models` after aggregate combination.
+    pub fn model_selection_units(&self) -> &[usize] {
+        &self.model_selection_units
+    }
+
+    /// Each model selection a later unit repeated with the same alias and
+    /// identity: the kept selection's index in [`Self::selections`]`().models`
+    /// and the repeating source-unit index. Empty outside aggregate
+    /// combination.
+    pub fn repeated_model_selection_units(&self) -> &[(usize, usize)] {
+        &self.repeated_model_selection_units
+    }
+
+    /// The source-unit index for each import selection, in the same order as
+    /// [`Self::selections`]`().imports` after aggregate combination.
+    pub fn import_selection_units(&self) -> &[usize] {
+        &self.import_selection_units
+    }
+
+    /// The parsed forms in source order.
+    pub fn forms(&self) -> &[ParsedForm] {
+        &self.forms
+    }
+
+    /// The selections and the parsed forms, by value.
+    pub fn into_parts(self) -> (SourceSelections, Vec<ParsedForm>) {
+        (self.selections, self.forms)
+    }
+}
+
+/// The closed leading-token-kind enum a declaration's first significant
+/// token selects (ADR-012 §3, §5.1 row S2). Each family's own migration
+/// ticket adds its variants; `Value` owns the entries below (FR-091). The
+/// `#[cfg(test)]` variant exists only to exercise the dispatch mechanism
+/// (TC-167) over CSTs the real grammar cannot produce.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LeadingTokenKind {
+    /// `union`: the `SumCase` declaration form (FR-313).
+    Union,
+    /// `abstraction`: the abstraction relation declaration form (FR-304,
+    /// FSpec FR-450).
+    Abstraction,
+    /// `guarantee`: the implementation guarantee declaration form (FSpec
+    /// FR-490).
+    Guarantee,
+    /// `compose`: the component composition declaration form (FSpec
+    /// FR-491).
+    Composition,
+    /// `function`: the `Value` function form.
+    Function,
+    /// `type`: the `Value` alias form.
+    Type,
+    /// `record`: the `Value` record form.
+    Record,
+    /// `object` or `abstract`: the source object declaration form (FR-569).
+    Object,
+    /// `tuple`: the `Value` tuple form.
+    Tuple,
+    /// `enum`: the `Value` enum form, not ordered.
+    Enum,
+    /// `ordered`: the `Value` enum form, ordered.
+    Ordered,
+    /// `predicate`: the `forms` `FunctionDeclaration` of kind `Predicate`.
+    Predicate,
+    /// `dimension`: the `Value` dimension form.
+    Dimension,
+    /// `unit`: the `Value` unit form.
+    Unit,
+    /// `invariant`: the `ProtocolClause` state clause form (FR-102, ADR-012
+    /// §15.3).
+    Invariant,
+    /// `constraint`: a state constraint clause (FR-102, FR-158).
+    Constraint,
+    /// `pre`: the `ProtocolClause` state clause form, kind `Precondition`
+    /// (FR-102). `pre(e)` in an expression stays `Expression::Pre`: this
+    /// variant selects only the declaration-head spelling.
+    Pre,
+    /// `post`: the `ProtocolClause` state clause form, kind
+    /// `Postcondition` (FR-102).
+    Post,
+    /// `body`: the `ProtocolClause` operation-body form (FR-102).
+    Body,
+    /// `bound`: the `StateModel` population-bound form (FR-380). `bound` is a
+    /// declaration-head spelling only; in an expression it stays an
+    /// identifier.
+    Bound,
+    /// `protocol`: the `ProtocolClause` protocol declaration form, holding
+    /// its scoped anchors (FR-112, ADR-012 §12.2).
+    Protocol,
+    /// `temporal`: the `TemporalTrace` temporal clause form, holding its
+    /// formula with each operator's optional interval (FR-325, ADR-011
+    /// M-3b).
+    Temporal,
+    /// `terminal`: the `TemporalTrace` terminal declaration form, holding
+    /// its `when` predicate or `any` (FR-382).
+    Terminal,
+    /// `refinement`: the refinement declaration form, holding its rows in
+    /// source order (FR-310).
+    Refinement,
+    /// `time`: a model's time source (`time M ...`) or a time invariant
+    /// (`time invariant ...`), the one production the CST holds (FR-393).
+    /// `time` is a declaration-head spelling only; elsewhere it stays an
+    /// identifier.
+    Time,
+    /// `urgent`: an urgency declaration (FR-393), a declaration-head
+    /// spelling only.
+    Urgent,
+    /// `taskset`: a task set for one preemptive uniprocessor (FSpec FR-419),
+    /// a declaration-head spelling only.
+    Taskset,
+    /// `schedulable`: a schedulability claim over a task set (FSpec FR-419),
+    /// a declaration-head spelling only.
+    Schedulable,
+    /// `response`: a response-time claim over a task (FSpec FR-419), a
+    /// declaration-head spelling only.
+    Response,
+    /// `release`: a task release on an operation (FSpec FR-419). The word is
+    /// the reserved temporal operator, which is infix, so at a declaration
+    /// head it leads this form only.
+    Release,
+    /// `hyper`: the `TemporalTrace` hyper clause form, over `behaviours` or
+    /// over a finite trace domain (FR-171).
+    Hyper,
+    /// `relation`: the `TemporalTrace` relation clause form (FR-171).
+    Relation,
+    /// `random`: the `Probabilistic` random-parameter form (FR-311).
+    Random,
+    /// `reward`: the `Probabilistic` reward form (FR-311).
+    Reward,
+    /// `delay`: the `Probabilistic` delay-distribution form (FR-253).
+    Delay,
+    /// `workload`: the `Probabilistic` workload form (FR-311).
+    Workload,
+    /// `probabilistic`: the `Probabilistic` claim form (FR-392).
+    Probabilistic,
+    /// `possible`, `always` or `unique`: the `StateGraph` claim form, whose
+    /// head is `possible`, `always possible` or `unique path` (FR-165,
+    /// ADR-022 SG-1 to SG-3). `always` leads no other declaration.
+    StateGraph,
+    /// `hybrid`: the hybrid declaration form, holding its optional initial
+    /// clause, modes, equations and transitions (FR-447).
+    Hybrid,
+    /// A selected extension's leading keyword (FR-354): every selected
+    /// extension's declaration forms are this one entry (ADR-012 §5.1 row
+    /// S2), the production's own keyword and clauses being data.
+    Extension,
+    /// Test-only: never constructed outside this crate's own tests, and
+    /// absent from every non-test build.
+    #[cfg(test)]
+    TestProbe,
+    /// FR-063/S2: exists only so `--cfg seam_probe_forms` makes
+    /// `dispatch` non-exhaustive. `fsl-forms` is built alone under that cfg
+    /// (a separate cfg from `seam_probe`, so this crate's own seam does not
+    /// hide the seams in the crates above it). Never constructed.
+    #[cfg(seam_probe_forms)]
+    __SeamProbe,
+}
+
+/// Why the forms stage refused to build a parsed unit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FormsCause {
+    /// The CST carries an error or recovery node; no partial form is built
+    /// (ADR-011 §2.3 E2: "No. A form is built from a complete CST or not at
+    /// all.").
+    RecoveringCst,
+    /// The source carries a diagnostic and no recovery (for example a
+    /// profile refusal added by `ParsedSource::prepend_diagnostic`). Holds
+    /// the first diagnostic's code.
+    DiagnosedSource(Code),
+    /// A declaration's leading token has no entry in the dispatch table.
+    NoDispatchEntry {
+        /// The leading token's spelling.
+        spelling: String,
+    },
+    /// A construct no family's `Expression` variant represents (FR-091
+    /// "Expression mapping").
+    UnrepresentedConstruct {
+        /// The construct's CST production.
+        production: Production,
+    },
+    /// The CST does not have the shape its production's grammar rule
+    /// gives it: a broken invariant between `fsl-cst` and this stage, never
+    /// a property of the source.
+    UnexpectedShape {
+        /// The production whose node had the unexpected shape.
+        production: Production,
+    },
+}
+
+impl FormsCause {
+    /// The catalog code of this cause (FR-091 "Catalog codes").
+    pub fn catalog_code(&self) -> Code {
+        match self {
+            Self::RecoveringCst => Code::InvalidSyntax,
+            Self::DiagnosedSource(code) => *code,
+            Self::NoDispatchEntry { .. } | Self::UnrepresentedConstruct { .. } => {
+                Code::UnsupportedConstruct
+            }
+            Self::UnexpectedShape { .. } => Code::RuntimeInvariant,
+        }
+    }
+}
+
+/// Why S2 returned no parsed unit (ADR-013 T-4): its cause, the byte span
+/// it concerns, and the CST's own recovery evidence when the cause is
+/// [`FormsCause::RecoveringCst`] (empty otherwise).
+///
+/// S2 takes no limit set: it builds at most one form node per CST node, so
+/// S1's node limit bounds it (FR-257), and a unit S1 admits builds or is
+/// refused by its content.
+#[derive(Clone, Debug)]
+pub struct FormsRefusal {
+    /// The typed cause.
+    pub cause: FormsCause,
+    /// The span the refusal concerns, when it concerns one.
+    pub span: Option<Span>,
+    /// The CST's own proposed recovery edits, when any caused the refusal.
+    pub recoveries: Vec<Recovery>,
+}
+
+impl FormsRefusal {
+    /// The catalog code: the cause's.
+    pub fn catalog_code(&self) -> Code {
+        self.cause.catalog_code()
+    }
+
+    pub(crate) fn at(cause: FormsCause, span: Span) -> Self {
+        Self {
+            cause,
+            span: Some(span),
+            recoveries: Vec::new(),
+        }
+    }
+}
+
+/// One declaration a family production reads: the CST and the
+/// declaration's own `Declaration` node.
+#[derive(Clone, Copy)]
+pub(crate) struct Construct<'c> {
+    /// The unit's CST.
+    pub(crate) cst: &'c LosslessCst,
+    /// The declaration's `Declaration` node.
+    pub(crate) node: &'c CstNode,
+}
+
+/// Build the parsed unit of an admissible S1 output (ADR-011 §2.1 E2
+/// admitted input), or refuse with its cause (ADR-011 §2.3 E2: "No. A form
+/// is built from a complete CST or not at all."). S2 takes no limit set
+/// (FR-257): S1's limits bound what it builds.
+pub fn build_unit(parsed: &ParsedSource) -> Result<ParsedUnit, FormsRefusal> {
+    if !parsed.cst().recoveries().is_empty() {
+        return Err(recovering(parsed.cst()));
+    }
+    if let Some(diagnostic) = parsed.diagnostics().first() {
+        let span = diagnostic.region.as_ref().and_then(|region| {
+            Some(Span {
+                start: usize::try_from(region.start()).ok()?,
+                end: usize::try_from(region.end()).ok()?,
+            })
+        });
+        return Err(FormsRefusal {
+            cause: FormsCause::DiagnosedSource(diagnostic.code),
+            span,
+            recoveries: Vec::new(),
+        });
+    }
+    let forms = build_forms(parsed.cst())?;
+    Ok(ParsedUnit {
+        edition: declared_edition(parsed.cst()),
+        selections: parsed.selections().clone(),
+        model_selection_units: vec![0; parsed.selections().models.len()],
+        repeated_model_selection_units: Vec::new(),
+        import_selection_units: vec![0; parsed.selections().imports.len()],
+        forms,
+    })
+}
+
+/// Build every clean declaration while retaining refusals of individual
+/// protocol declarations. A diagnostic/recovery outside one delimited
+/// protocol remains a unit-level S2 refusal.
+pub fn build_unit_with_protocol_results(
+    parsed: &ParsedSource,
+) -> Result<(ParsedUnit, Vec<ProtocolFormsRefusal>), FormsRefusal> {
+    let cst = parsed.cst();
+    let protocol_nodes: Vec<_> = cst
+        .nodes()
+        .iter()
+        .filter(|node| node.production() == Production::ProtocolClause)
+        .collect();
+    let mut rejected = Vec::new();
+    for diagnostic in parsed.diagnostics() {
+        let Some(diagnostic_span) = diagnostic.byte_span() else {
+            return Err(FormsRefusal {
+                cause: FormsCause::DiagnosedSource(diagnostic.code),
+                span: None,
+                recoveries: Vec::new(),
+            });
+        };
+        let Some(protocol) = protocol_nodes.iter().find(|node| {
+            let span = node.span();
+            span.start < diagnostic_span.start && diagnostic_span.start <= span.end
+        }) else {
+            return Err(FormsRefusal {
+                cause: FormsCause::DiagnosedSource(diagnostic.code),
+                span: Some(diagnostic_span),
+                recoveries: Vec::new(),
+            });
+        };
+        let Some(owner) = declarations(cst).find(|declaration| {
+            declaration.span().start <= protocol.span().start
+                && protocol.span().end <= declaration.span().end
+        }) else {
+            return Err(FormsRefusal {
+                cause: FormsCause::UnexpectedShape {
+                    production: Production::ProtocolClause,
+                },
+                span: Some(protocol.span()),
+                recoveries: Vec::new(),
+            });
+        };
+        rejected.push(ProtocolFormsRefusal {
+            declaration: protocol_name(cst, protocol.span()),
+            declaration_span: owner.span(),
+            refusal: FormsRefusal {
+                cause: FormsCause::DiagnosedSource(diagnostic.code),
+                span: Some(diagnostic_span),
+                recoveries: cst.recoveries().to_vec(),
+            },
+        });
+    }
+    for recovery in cst.recoveries() {
+        let Some(protocol) = protocol_nodes.iter().find(|node| {
+            node.span().start < recovery.span.start && recovery.span.start <= node.span().end
+        }) else {
+            return Err(recovering(cst));
+        };
+        let Some(owner) = declarations(cst).find(|declaration| {
+            declaration.span().start <= protocol.span().start
+                && protocol.span().end <= declaration.span().end
+        }) else {
+            return Err(recovering(cst));
+        };
+        if !rejected
+            .iter()
+            .any(|entry| entry.declaration_span == owner.span())
+        {
+            rejected.push(ProtocolFormsRefusal {
+                declaration: protocol_name(cst, protocol.span()),
+                declaration_span: owner.span(),
+                refusal: recovering(cst),
+            });
+        }
+    }
+    let rejected_spans: Vec<_> = rejected
+        .iter()
+        .map(|entry| entry.declaration_span)
+        .collect();
+    let mut forms = Vec::new();
+    let edition = declared_edition(cst);
+    let mut protocol_spans: Vec<Span> = protocol_nodes.iter().map(|node| node.span()).collect();
+    protocol_spans.sort_by_key(|span| span.start);
+    for node in declarations(cst) {
+        let is_protocol = contains_protocol(&protocol_spans, node.span());
+        if rejected_spans.contains(&node.span()) {
+            continue;
+        }
+        let spelling = leading_token_spelling(cst, node).unwrap_or_default();
+        let Some(kind) = leading_token_kind(cst, node, spelling) else {
+            let refusal = FormsRefusal::at(
+                FormsCause::NoDispatchEntry {
+                    spelling: String::from_utf8_lossy(spelling).into_owned(),
+                },
+                node.span(),
+            );
+            if is_protocol {
+                rejected.push(ProtocolFormsRefusal {
+                    declaration: protocol_name(cst, node.span()),
+                    declaration_span: node.span(),
+                    refusal,
+                });
+                continue;
+            }
+            return Err(refusal);
+        };
+        match dispatch(kind, Construct { cst, node }) {
+            Ok(form) => forms.push(ParsedForm {
+                span: node.span(),
+                edition: edition.clone(),
+                declared_extent: declared_extent(cst, node),
+                form,
+            }),
+            Err(refusal) if is_protocol => {
+                rejected.push(ProtocolFormsRefusal {
+                    declaration: protocol_name(cst, node.span()),
+                    declaration_span: node.span(),
+                    refusal,
+                });
+            }
+            Err(refusal) => return Err(refusal),
+        }
+    }
+    rejected.sort_by_key(|entry| entry.declaration_span.start);
+    Ok((
+        ParsedUnit {
+            edition: declared_edition(cst),
+            selections: parsed.selections().clone(),
+            model_selection_units: vec![0; parsed.selections().models.len()],
+            repeated_model_selection_units: Vec::new(),
+            import_selection_units: vec![0; parsed.selections().imports.len()],
+            forms,
+        },
+        rejected,
+    ))
+}
+
+/// Whether a protocol clause lies inside `span`; `protocol_spans` is sorted by
+/// start, so only the clauses starting inside `span` are visited.
+fn contains_protocol(protocol_spans: &[Span], span: Span) -> bool {
+    let first = protocol_spans.partition_point(|clause| clause.start < span.start);
+    protocol_spans[first..]
+        .iter()
+        .take_while(|clause| clause.start <= span.end)
+        .any(|clause| clause.end <= span.end)
+}
+
+fn protocol_name(cst: &LosslessCst, span: Span) -> String {
+    cst.source()
+        .text()
+        .get(span.start..span.end)
+        .and_then(|text| text.find("protocol").map(|index| &text[index + 8..]))
+        .map(str::trim_start)
+        .and_then(|rest| {
+            rest.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .next()
+        })
+        .unwrap_or("<protocol>")
+        .to_owned()
+}
+
+fn recovering(cst: &LosslessCst) -> FormsRefusal {
+    FormsRefusal {
+        cause: FormsCause::RecoveringCst,
+        span: cst.recoveries().first().map(|recovery| recovery.span),
+        recoveries: cst.recoveries().to_vec(),
+    }
+}
+
+/// One parsed form per `Declaration` node under the CST root, in source
+/// order; the first declaration with no dispatch entry, or the first
+/// refusal a production gives, refuses the whole unit.
+fn build_forms(cst: &LosslessCst) -> Result<Vec<ParsedForm>, FormsRefusal> {
+    if !cst.recoveries().is_empty() {
+        return Err(recovering(cst));
+    }
+    let edition = declared_edition(cst);
+    let mut forms = Vec::new();
+    for node in declarations(cst) {
+        let spelling = leading_token_spelling(cst, node).unwrap_or_default();
+        let Some(kind) = leading_token_kind(cst, node, spelling) else {
+            return Err(FormsRefusal::at(
+                FormsCause::NoDispatchEntry {
+                    spelling: String::from_utf8_lossy(spelling).into_owned(),
+                },
+                node.span(),
+            ));
+        };
+        let construct = Construct { cst, node };
+        let form = dispatch(kind, construct)?;
+        forms.push(ParsedForm {
+            span: node.span(),
+            edition: edition.clone(),
+            declared_extent: declared_extent(cst, node),
+            form,
+        });
+    }
+    Ok(forms)
+}
+
+/// The root's `Declaration` child nodes, in source order.
+fn declarations(cst: &LosslessCst) -> impl Iterator<Item = &CstNode> {
+    cst.root()
+        .children()
+        .iter()
+        .filter_map(|child| match child {
+            CstElement::Node(index) => cst.nodes().get(*index),
+            CstElement::Token(_) => None,
+        })
+        .filter(|node| node.production() == Production::Declaration)
+}
+
+/// The closed, family-keyed dispatch entry table (ADR-012 §3). Each entry
+/// makes exactly one call into its family's own production function and
+/// holds no other conditional, lookup or loop (ADR-012 §4.3 thin-dispatch
+/// rule; FR-067-CON-4).
+#[deny(clippy::wildcard_enum_match_arm)]
+fn dispatch(
+    kind: LeadingTokenKind,
+    construct: Construct<'_>,
+) -> Result<DeclarationForm, FormsRefusal> {
+    match kind {
+        LeadingTokenKind::Union => sum_case::union_declaration(construct),
+        LeadingTokenKind::Abstraction => abstraction_declaration::declaration(construct),
+        LeadingTokenKind::Guarantee => guarantee_declaration::declaration(construct),
+        LeadingTokenKind::Composition => composition_declaration::declaration(construct),
+        LeadingTokenKind::Function => value::function(construct),
+        LeadingTokenKind::Type => value::alias(construct),
+        LeadingTokenKind::Record => value::record(construct),
+        LeadingTokenKind::Object => object_declaration::object_declaration(construct),
+        LeadingTokenKind::Tuple => value::tuple(construct),
+        LeadingTokenKind::Enum | LeadingTokenKind::Ordered => value::enumeration(construct),
+        LeadingTokenKind::Predicate => value::predicate(construct),
+        LeadingTokenKind::Dimension => value::dimension(construct),
+        LeadingTokenKind::Unit => value::unit(construct),
+        LeadingTokenKind::Invariant => protocol_clause::state_clause(construct),
+        LeadingTokenKind::Constraint => protocol_clause::state_clause(construct),
+        LeadingTokenKind::Pre => protocol_clause::state_clause(construct),
+        LeadingTokenKind::Post => protocol_clause::state_clause(construct),
+        LeadingTokenKind::Body => protocol_clause::operation_body(construct),
+        LeadingTokenKind::Bound => state_model::population_bound(construct),
+        LeadingTokenKind::Protocol => protocol_clause::protocol_declaration(construct),
+        LeadingTokenKind::Temporal => temporal_clause::temporal_clause(construct),
+        LeadingTokenKind::Terminal => terminal_declaration::terminal_declaration(construct),
+        LeadingTokenKind::Refinement => refinement::refinement_declaration(construct),
+        LeadingTokenKind::Time => time_model::time_member(construct),
+        LeadingTokenKind::Urgent => time_model::urgent_declaration(construct),
+        LeadingTokenKind::Taskset => task_set::taskset_declaration(construct),
+        LeadingTokenKind::Schedulable => task_set::schedulable_declaration(construct),
+        LeadingTokenKind::Response => task_set::response_declaration(construct),
+        LeadingTokenKind::Release => task_set::release_declaration(construct),
+        LeadingTokenKind::Hyper => hyper_clause::hyper_clause(construct),
+        LeadingTokenKind::Relation => hyper_clause::relation_clause(construct),
+        LeadingTokenKind::Random => probabilistic::random_declaration(construct),
+        LeadingTokenKind::Reward => probabilistic::reward_declaration(construct),
+        LeadingTokenKind::Delay => probabilistic::delay_declaration(construct),
+        LeadingTokenKind::Workload => probabilistic::workload_declaration(construct),
+        LeadingTokenKind::Probabilistic => probabilistic::probabilistic_clause(construct),
+        LeadingTokenKind::StateGraph => state_graph::state_graph_claim(construct),
+        LeadingTokenKind::Hybrid => hybrid_declaration::hybrid_declaration(construct),
+        LeadingTokenKind::Extension => extension_declaration::extension_declaration(construct),
+        #[cfg(test)]
+        LeadingTokenKind::TestProbe => test_support::stub_production(construct),
+    }
+}
+
+/// The first significant (non-whitespace, non-comment) token wholly inside
+/// `node`'s own span, so a declaration never reads past its own end into
+/// the next construct's leading token.
+fn leading_token_spelling<'c>(cst: &'c LosslessCst, node: &CstNode) -> Option<&'c [u8]> {
+    value::significant_tokens(cst, node)
+        .first()
+        .map(|token| token.spelling())
+}
+
+/// The dispatch-table entry the declaration `node` selects: the extension
+/// entry when S1 read the declaration as a selected extension's form (its
+/// keyword is data of the selection, not a spelling of this table), else the
+/// entry `spelling` selects.
+fn leading_token_kind(
+    cst: &LosslessCst,
+    node: &CstNode,
+    spelling: &[u8],
+) -> Option<LeadingTokenKind> {
+    let extension = node.children().iter().any(|child| match child {
+        CstElement::Node(index) => cst
+            .nodes()
+            .get(*index)
+            .is_some_and(|child| child.production() == Production::ExtensionDeclaration),
+        CstElement::Token(_) => false,
+    });
+    if extension {
+        return Some(LeadingTokenKind::Extension);
+    }
+    from_spelling(spelling)
+}
+
+/// Every leading-token spelling that selects a dispatch-table entry: the
+/// one list `from_spelling` reads and [`leading_keywords`] reports.
+const LEADING_SPELLINGS: &[(&str, LeadingTokenKind)] = &[
+    ("union", LeadingTokenKind::Union),
+    ("abstraction", LeadingTokenKind::Abstraction),
+    ("guarantee", LeadingTokenKind::Guarantee),
+    ("compose", LeadingTokenKind::Composition),
+    ("function", LeadingTokenKind::Function),
+    ("type", LeadingTokenKind::Type),
+    ("record", LeadingTokenKind::Record),
+    ("object", LeadingTokenKind::Object),
+    ("abstract", LeadingTokenKind::Object),
+    ("tuple", LeadingTokenKind::Tuple),
+    ("enum", LeadingTokenKind::Enum),
+    ("ordered", LeadingTokenKind::Ordered),
+    ("predicate", LeadingTokenKind::Predicate),
+    ("dimension", LeadingTokenKind::Dimension),
+    ("unit", LeadingTokenKind::Unit),
+    ("invariant", LeadingTokenKind::Invariant),
+    ("constraint", LeadingTokenKind::Constraint),
+    ("pre", LeadingTokenKind::Pre),
+    ("post", LeadingTokenKind::Post),
+    ("body", LeadingTokenKind::Body),
+    ("bound", LeadingTokenKind::Bound),
+    ("protocol", LeadingTokenKind::Protocol),
+    ("temporal", LeadingTokenKind::Temporal),
+    ("terminal", LeadingTokenKind::Terminal),
+    ("refinement", LeadingTokenKind::Refinement),
+    ("time", LeadingTokenKind::Time),
+    ("urgent", LeadingTokenKind::Urgent),
+    ("taskset", LeadingTokenKind::Taskset),
+    ("schedulable", LeadingTokenKind::Schedulable),
+    ("response", LeadingTokenKind::Response),
+    ("release", LeadingTokenKind::Release),
+    ("hyper", LeadingTokenKind::Hyper),
+    ("relation", LeadingTokenKind::Relation),
+    ("random", LeadingTokenKind::Random),
+    ("reward", LeadingTokenKind::Reward),
+    ("delay", LeadingTokenKind::Delay),
+    ("workload", LeadingTokenKind::Workload),
+    ("probabilistic", LeadingTokenKind::Probabilistic),
+    ("possible", LeadingTokenKind::StateGraph),
+    ("always", LeadingTokenKind::StateGraph),
+    ("unique", LeadingTokenKind::StateGraph),
+    ("hybrid", LeadingTokenKind::Hybrid),
+];
+
+/// Maps a leading-token spelling to its dispatch-table entry, or `None`
+/// when it selects no entry.
+fn from_spelling(spelling: &[u8]) -> Option<LeadingTokenKind> {
+    #[cfg(test)]
+    if spelling == test_support::PROBE_SPELLING.as_bytes() {
+        return Some(LeadingTokenKind::TestProbe);
+    }
+    LEADING_SPELLINGS
+        .iter()
+        .find(|(word, _)| word.as_bytes() == spelling)
+        .map(|(_, kind)| *kind)
+}
+
+/// The spellings that begin a core declaration form, which an extension's
+/// leading keyword must not equal (FSpec FR-467 rule 2).
+pub fn leading_keywords() -> impl Iterator<Item = &'static str> {
+    LEADING_SPELLINGS.iter().map(|(word, _)| *word)
+}
+
+/// The header's declared edition literal, decoded, from the CST's own
+/// token stream: `language <name> edition <text>`. `None` when the header
+/// has no edition clause, or when its literal is not valid UTF-8 (ADR-011
+/// §2.2 E2 row, version: "Edition carried" — this reads the value E1
+/// minted, unchanged; a missing value stays absent rather than becoming a
+/// default string, since a default would itself be a recomputation FR-067
+/// forbids).
+fn declared_edition(cst: &LosslessCst) -> Option<String> {
+    let significant: Vec<_> = cst
+        .tokens()
+        .iter()
+        .filter(|token| token.class() == TokenClass::Token)
+        .collect();
+    for (index, token) in significant.iter().enumerate() {
+        if token.spelling() == b"language"
+            && significant
+                .get(index + 2)
+                .is_some_and(|edition| edition.spelling() == b"edition")
+        {
+            let literal = significant.get(index + 3)?;
+            return unquote(literal.spelling());
+        }
+    }
+    None
+}
+
+/// The declaration's declared bound or extent, carried as syntax
+/// (unparsed, unchanged) from the tokens inside its own span: the literal
+/// token following a `bound` keyword token (the one declared-bound
+/// construct in the current grammar, `grammar.rs`'s `VerificationStep`).
+/// `None` when the declaration declares no such clause (ADR-011 §2.2 E2
+/// row, proof metadata: "Declared bounds and extents carried as syntax").
+fn declared_extent(cst: &LosslessCst, node: &CstNode) -> Option<Box<str>> {
+    let significant = value::significant_tokens(cst, node);
+    for (index, token) in significant.iter().enumerate() {
+        // A `bound <label> on ...` population-bound declaration (FR-380) has
+        // an identifier after `bound`: only an integer literal is an extent.
+        if token.spelling() == b"bound" {
+            if let Some(literal) = significant
+                .get(index + 1)
+                .filter(|literal| literal.spelling().first().is_some_and(u8::is_ascii_digit))
+            {
+                return String::from_utf8(literal.spelling().to_vec())
+                    .ok()
+                    .map(String::into_boxed_str);
+            }
+        }
+    }
+    None
+}
+
+/// Strips one matching pair of leading/trailing double quotes, if present.
+/// `None` when `spelling` is not valid UTF-8 — the same explicit disposition
+/// [`declared_extent`] already gives non-UTF-8 syntax, rather than the
+/// lossy substitution a `from_utf8_lossy` decode would silently apply. The
+/// complete-V1 text-literal token pattern admits no raw control character
+/// (`grammar.rs`), and this fixture-facing decode does not need to unescape
+/// a JSON escape sequence beyond stripping the surrounding quotes.
+fn unquote(spelling: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(spelling).ok()?;
+    Some(
+        text.strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .unwrap_or(text)
+            .to_owned(),
+    )
+}
+
+#[cfg(test)]
+mod test_support {
+    use super::{Construct, FormsRefusal};
+    use crate::syntax::{AliasForm, BuiltinType, DeclarationForm, DeclaredName, TypeForm};
+
+    /// The test-only leading token spelling `from_spelling` maps to
+    /// [`super::LeadingTokenKind::TestProbe`].
+    pub(super) const PROBE_SPELLING: &str = "__forms_test_probe__";
+
+    /// A stub family production function (FR-067-AC-1, TC-167): the only
+    /// producer `LeadingTokenKind::TestProbe` dispatches to. It ignores the
+    /// CST's content and returns a fixed alias form, so it demonstrates the
+    /// dispatch call itself, not any family's grammar.
+    pub(super) fn stub_production(
+        construct: Construct<'_>,
+    ) -> Result<DeclarationForm, FormsRefusal> {
+        let span = construct.node.span();
+        Ok(DeclarationForm::Alias(AliasForm {
+            name: DeclaredName {
+                name: "Probe".to_owned(),
+                span,
+            },
+            target: TypeForm::builtin(BuiltinType::Boolean, span),
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::PROBE_SPELLING;
+    use super::*;
+    use ix_trace_rs::trace;
+
+    const HEADER: [&str; 4] = ["language", "\"ix:native\"", "edition", "\"1-draft\""];
+
+    fn build(cst: &LosslessCst) -> Result<Vec<ParsedForm>, FormsRefusal> {
+        build_forms(cst)
+    }
+
+    fn cause(refusal: FormsRefusal) -> FormsCause {
+        refusal.cause
+    }
+
+    fn probe_cst(recoveries: Vec<Recovery>) -> LosslessCst {
+        LosslessCst::fixture(&HEADER, &[PROBE_SPELLING], recoveries)
+    }
+
+    #[trace("TC-167", "FR-067-AC-1")]
+    #[test]
+    fn happy_path_builds_a_form_and_recovery_refuses_the_same_entry() {
+        let clean = probe_cst(Vec::new());
+        let built = build(&clean).expect("a clean CST with a dispatch entry builds a form");
+        assert!(matches!(
+            built.as_slice(),
+            [form] if matches!(form.form(), DeclarationForm::Alias(_))
+        ));
+
+        let recovering = probe_cst(vec![Recovery {
+            kind: fsl_cst::RecoveryKind::Insert,
+            span: Span { start: 0, end: 0 },
+            expected: "test recovery".into(),
+        }]);
+        let refusal = build(&recovering)
+            .expect_err("a recovering CST refuses even though the same entry exists");
+        assert_eq!(refusal.cause, FormsCause::RecoveringCst);
+        assert_eq!(refusal.recoveries.len(), 1);
+    }
+
+    #[trace("TC-167", "FR-067-AC-2")]
+    #[test]
+    fn parsed_form_exposes_span_and_no_identity_accessor() {
+        let cst = probe_cst(Vec::new());
+        let built = build(&cst).unwrap();
+        let declaration = declarations(&cst).next().expect("one declaration");
+        assert_eq!(built[0].span(), declaration.span());
+        // `ParsedForm` has no accessor returning `NodeKey`, `DeclarationKey`
+        // or any other check-time-minted identity type: see the
+        // `compile_fail` doctest on `ParsedForm` itself.
+    }
+
+    #[trace("TC-457", "FR-102-AC-4")]
+    #[test]
+    fn dispatch_entry_is_a_single_thin_call() {
+        let source = include_str!("dispatch.rs");
+        let file = syn::parse_file(source).expect("dispatch.rs parses as a Rust file");
+        let dispatch_fn = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == "dispatch" => Some(function),
+                _ => None,
+            })
+            .expect("fn dispatch exists");
+        let match_expr = dispatch_fn
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match statement {
+                syn::Stmt::Expr(syn::Expr::Match(match_expr), _) => Some(match_expr),
+                _ => None,
+            })
+            .expect("dispatch's body is one match expression");
+        assert!(
+            match_expr.arms.len() >= 5,
+            "the four Value arms and the test-only arm are present"
+        );
+        for arm in &match_expr.arms {
+            assert!(
+                !matches!(arm.pat, syn::Pat::Wild(_)),
+                "a dispatch entry arm must not be a catch-all `_` arm"
+            );
+            let shape = match &*arm.body {
+                syn::Expr::Call(_) => "Call",
+                syn::Expr::MethodCall(_) => "MethodCall",
+                syn::Expr::Path(_) => "Path",
+                syn::Expr::If(_) => "If",
+                syn::Expr::Match(_) => "Match",
+                syn::Expr::ForLoop(_) => "ForLoop",
+                syn::Expr::While(_) => "While",
+                syn::Expr::Loop(_) => "Loop",
+                _ => "other",
+            };
+            assert!(
+                matches!(shape, "Call" | "MethodCall" | "Path"),
+                "a dispatch entry must make exactly one call and hold no other \
+                 conditional, lookup or loop; arm body shape was {shape}"
+            );
+        }
+    }
+
+    /// The call `dispatch`'s arm for `kind` makes, as `path::function`.
+    fn dispatch_call(kind: &str) -> String {
+        let source = include_str!("dispatch.rs");
+        let file = syn::parse_file(source).expect("dispatch.rs parses as a Rust file");
+        let dispatch_fn = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == "dispatch" => Some(function),
+                _ => None,
+            })
+            .expect("fn dispatch exists");
+        let match_expr = dispatch_fn
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match statement {
+                syn::Stmt::Expr(syn::Expr::Match(match_expr), _) => Some(match_expr),
+                _ => None,
+            })
+            .expect("dispatch's body is one match expression");
+        let arms: Vec<_> = match_expr
+            .arms
+            .iter()
+            .filter(|arm| match &arm.pat {
+                syn::Pat::Path(path) => path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == kind),
+                _ => false,
+            })
+            .collect();
+        let [arm] = arms[..] else {
+            panic!("exactly one arm for {kind}: {}", arms.len());
+        };
+        let syn::Expr::Call(call) = &*arm.body else {
+            panic!("the {kind} arm is one call");
+        };
+        let syn::Expr::Path(callee) = &*call.func else {
+            panic!("the {kind} arm calls a path");
+        };
+        callee
+            .path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
+    /// FR-311-AC-2 and FR-392-AC-2 (the dispatch half): each probabilistic
+    /// leading word has one arm, one call, to its own production and to no
+    /// other.
+    #[trace("TC-890", "FR-311-AC-2")]
+    #[trace("TC-1077", "FR-392-AC-2")]
+    #[test]
+    fn each_probabilistic_word_dispatches_to_its_one_production() {
+        for (kind, production) in [
+            ("Random", "probabilistic::random_declaration"),
+            ("Reward", "probabilistic::reward_declaration"),
+            ("Delay", "probabilistic::delay_declaration"),
+            ("Workload", "probabilistic::workload_declaration"),
+            ("Probabilistic", "probabilistic::probabilistic_clause"),
+        ] {
+            assert_eq!(dispatch_call(kind), production, "{kind}");
+        }
+        assert_eq!(from_spelling(b"random"), Some(LeadingTokenKind::Random));
+        assert_eq!(from_spelling(b"reward"), Some(LeadingTokenKind::Reward));
+        assert_eq!(from_spelling(b"delay"), Some(LeadingTokenKind::Delay));
+        assert_eq!(from_spelling(b"workload"), Some(LeadingTokenKind::Workload));
+        assert_eq!(
+            from_spelling(b"probabilistic"),
+            Some(LeadingTokenKind::Probabilistic)
+        );
+    }
+
+    #[trace("TC-167", "FR-067-AC-7")]
+    #[test]
+    fn edition_is_carried_from_the_cst_unchanged() {
+        let draft0 = LosslessCst::fixture(
+            &["language", "\"ix:native\"", "edition", "\"0-draft\""],
+            &[PROBE_SPELLING],
+            Vec::new(),
+        );
+        let draft1 = probe_cst(Vec::new());
+        let form0 = build(&draft0).unwrap();
+        let form1 = build(&draft1).unwrap();
+        assert_eq!(form0[0].edition(), Some("0-draft"));
+        assert_eq!(form1[0].edition(), Some("1-draft"));
+    }
+
+    #[trace("TC-167")]
+    #[test]
+    fn edition_is_absent_rather_than_defaulted_when_the_cst_declares_none() {
+        let no_header = LosslessCst::fixture(&[], &[PROBE_SPELLING], Vec::new());
+        let form = build(&no_header).unwrap();
+        assert_eq!(form[0].edition(), None);
+    }
+
+    #[trace("TC-167", "FR-067-AC-8")]
+    #[test]
+    fn declared_extent_is_carried_from_the_cst_unchanged() {
+        let bound10 = LosslessCst::fixture(&HEADER, &[PROBE_SPELLING, "bound", "10"], Vec::new());
+        let bound20 = LosslessCst::fixture(&HEADER, &[PROBE_SPELLING, "bound", "20"], Vec::new());
+        let form10 = build(&bound10).unwrap();
+        let form20 = build(&bound20).unwrap();
+        assert_eq!(form10[0].declared_extent(), Some("10"));
+        assert_eq!(form20[0].declared_extent(), Some("20"));
+    }
+
+    /// FR-091: the `record` entry replaced the M-3a no-entry fixture token;
+    /// FR-102 (TC-457) claims `invariant`, so FR-067-AC-3's
+    /// no-entry case moves to `verify`, a spelling no family claims.
+    #[trace("TC-167", "FR-067-AC-3")]
+    #[trace("TC-457", "FR-102-AC-4")]
+    #[test]
+    fn no_dispatch_entry_refuses_a_clean_cst_with_no_matching_leading_token() {
+        let cst = LosslessCst::fixture(&HEADER, &["verify"], Vec::new());
+        let failure = build(&cst).expect_err("no entry matches \"verify\"");
+        assert_eq!(
+            cause(failure),
+            FormsCause::NoDispatchEntry {
+                spelling: "verify".into()
+            }
+        );
+    }
+}

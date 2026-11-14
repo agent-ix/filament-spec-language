@@ -3,7 +3,7 @@ id: TC-645
 title: "The product-closure certificate checker accepts the certificates of true hyper proofs"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-163
+  - target: ix://agent-ix/filament-spec-language/FR-163
     type: verifies
 ---
 # TC-645: The product-closure certificate checker accepts the certificates of true hyper proofs
@@ -24,7 +24,7 @@ FR-181-AC-1's HP-5 claim over the secure vault.
 
 1. Run each item through EN-1 and take the certificate from its `Holds`.
 2. Check each certificate with `check_product_closure` from the recompiled
-   package, with the `qsl-analyze` crate not linked.
+   package, with the `fsl-analyze` crate not linked.
 
 Tag the tests `#[trace("TC-645", "FR-163-AC-1")]`.
 

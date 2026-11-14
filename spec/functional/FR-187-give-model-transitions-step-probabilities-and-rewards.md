@@ -3,17 +3,17 @@ id: FR-187
 title: "Give model transitions step probabilities and rewards"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-185
+  - target: ix://agent-ix/filament-spec-language/FR-185
     type: depends_on
 ---
 # FR-187: Give model transitions step probabilities and rewards
@@ -145,7 +145,7 @@ rewards or measures.
 
 ## References
 
-- QSpec half, which owns the step probability, the Markov condition and the
-  support graph in QSpec FR-181's successor relation: QSpec FR-406 (Linear
+- FSpec half, which owns the step probability, the Markov condition and the
+  support graph in FSpec FR-181's successor relation: FSpec FR-406 (Linear
   STD-137).
 - Owning ticket: Linear QSL-371.

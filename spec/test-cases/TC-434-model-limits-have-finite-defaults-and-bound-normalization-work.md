@@ -3,7 +3,7 @@ id: TC-434
 title: "Model limits have finite defaults, and normalization work stops at the limit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-012
+  - target: ix://agent-ix/filament-spec-language/NFR-012
     type: verifies
 ---
 # TC-434: Model limits have finite defaults, and normalization work stops at the limit
@@ -26,7 +26,7 @@ Verify NFR-012:
    `PopulationAdmissionLimits::default()` with NFR-012's table. Normalize a
    small package at the defaults and at a raised work ceiling, and read
    `EffectiveView::effective_limits`.
-2. Normalize every fixture in `qsl-semantics/tests/it/model_normalization.rs`
+2. Normalize every fixture in `fsl-semantics/tests/it/model_normalization.rs`
    at the defaults and without a limit, and compare the outcomes.
 3. Normalize type `A` with `n` fields and type `B` generalizing `A`, for
    `n` = 100 and 1000:

@@ -3,7 +3,7 @@ id: TC-668
 title: "The SC event graph orders seq_cst events and prunes cyclic choices"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-223
+  - target: ix://agent-ix/filament-spec-language/FR-223
     type: verifies
 ---
 # TC-668: The SC event graph orders seq_cst events and prunes cyclic choices

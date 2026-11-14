@@ -3,7 +3,7 @@ id: TC-694
 title: "The zone engine decides timed claims by symbolic search, with finite abstraction, budgets and determinism"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: verifies
 ---
 # TC-694: The zone engine decides timed claims by symbolic search, with finite abstraction, budgets and determinism

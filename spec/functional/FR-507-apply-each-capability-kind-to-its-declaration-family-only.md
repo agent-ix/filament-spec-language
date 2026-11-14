@@ -3,21 +3,21 @@ id: FR-507
 title: "Apply each capability kind to its declaration family only"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-281
+  - target: ix://agent-ix/filament-spec-language/FR-281
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-063
+  - target: ix://agent-ix/filament-spec-language/FR-063
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-272
+  - target: ix://agent-ix/filament-specification/FR-272
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-271
+  - target: ix://agent-ix/filament-specification/FR-271
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
 ---
 # FR-507: Apply each capability kind to its declaration family only
@@ -25,13 +25,13 @@ relationships:
 ## Description
 
 A request item's kind applies only to the declaration family that holds its
-claim. QSpec FR-290 fixes the closed vocabulary of seven declaration families,
+claim. FSpec FR-290 fixes the closed vocabulary of seven declaration families,
 the kinds that apply to each, and the cause `invalid_capability`/
-`inapplicable-kind` (QSpec FR-271, FR-272) for an item whose kind does not
+`inapplicable-kind` (FSpec FR-271, FR-272) for an item whose kind does not
 apply. A family may admit more than one kind, and a kind may apply to more
 than one family: one declaration may hold claims of two kinds, as a `relation`
-clause with an implementation binding does. QSpec FR-290 names this
-requirement as QSL's producer mapping from its declarations and claim forms to
+clause with an implementation binding does. FSpec FR-290 names this
+requirement as FSL's producer mapping from its declarations and claim forms to
 those labels.
 
 The composed linker did this for the seven protocol kinds in
@@ -39,7 +39,7 @@ The composed linker did this for the seven protocol kinds in
 TC-115. The spine has the closed family catalogue `FamilyKind` (ADR-012) and
 the `Capability` type with its FR-290 kind-group projection (FR-057-AC-13),
 but no request is checked against the family of the claim it names, and
-`qsl-route` only registers advertisements. This requirement is the spine
+`fsl-route` only registers advertisements. This requirement is the spine
 successor.
 
 ## Inputs
@@ -62,7 +62,7 @@ successor.
 
 ### Families and their kinds
 
-The declaration families are QSpec FR-290's seven labels, and each admits
+The declaration families are FSpec FR-290's seven labels, and each admits
 exactly these kinds:
 
 | Declaration family | Kinds that apply |
@@ -76,17 +76,17 @@ exactly these kinds:
 | `real-time` | `schedulability` |
 
 Each family's kinds are exactly the kinds the claim forms of that family's
-rows in "QSL claim forms and their families" below require. `finite-replay`
+rows in "FSL claim forms and their families" below require. `finite-replay`
 applies to `protocol` only, because only a choreography is replayed;
 `state-model` admits `operation-contract` only.
 
-### QSL claim forms and their families
+### FSL claim forms and their families
 
-The family is a property of the claim, not of its kind. This table is QSL's
+The family is a property of the claim, not of its kind. This table is FSL's
 producer mapping. Each row gives the kind its claim form requires, which is
 the kind FR-057's claim-form table gives where that table has the form:
 
-| QSL claim form | Required kind | Declaration family |
+| FSL claim form | Required kind | Declaration family |
 | --- | --- | --- |
 | Boolean clause over pure expressions, including one holding a `case` expression | `value-validity` | `value` |
 | Scalar operation application in a `Value` function body (FR-062), one claim per occurrence | `value-validity` | `value` |
@@ -105,20 +105,20 @@ the kind FR-057's claim-form table gives where that table has the form:
 | Other protocol analysis claim | its `protocol`-family kind | `protocol` |
 | Probabilistic claim (FR-186) | `probabilistic-satisfaction` | `probabilistic` |
 | `schedulable` or `response` claim over a task set (FR-246) | `schedulability` | `real-time` |
-| `case` exhaustiveness obligation over a `SumCase`, abstraction relation (QSpec FR-353) | none | none: no request item |
+| `case` exhaustiveness obligation over a `SumCase`, abstraction relation (FSpec FR-353) | none | none: no request item |
 
 A refinement declaration is a model refinement whatever its abstract side:
 its items are `temporal-satisfaction` and `operation-contract` on
 `relation-claim`, never `refinement`. The `refinement` kind applies only to a
 refinement between two protocols, which a protocol declaration holds.
 
-A claim transferred through a refinement (QSpec FR-380) is planner-local and
+A claim transferred through a refinement (FSpec FR-380) is planner-local and
 is not a request item, so it takes no family and is never checked.
 
 ### Where the family is read
 
 `analyze` SHALL read an item's family from the request and the checked
-package, by the rule QSpec FR-290 gives `negotiate_*`:
+package, by the rule FSpec FR-290 gives `negotiate_*`:
 
 - An item whose `item_kind` is not `formula` takes its family from the
   `item_kind`: `deadlock-freedom`, `time-lock-freedom` and `race-freedom` are
@@ -126,14 +126,14 @@ package, by the rule QSpec FR-290 gives `negotiate_*`:
   item is anchored on. A derived item anchored on a protocol clause node is
   therefore `temporal-trace`.
 - Every other item takes the family of the checked-package node its `claim`
-  names, by that node's tag, `semantic_form` and occurrence role, through QSpec
+  names, by that node's tag, `semantic_form` and occurrence role, through FSpec
   FR-290's node-to-family table.
 - A claim that names a node of no row of that table, or a node absent from the
   package, has no family. Every kind is inapplicable to it, and the refusal's
   payload has no `family` member.
 
 `analyze` SHALL NOT read the family from the item's kind, from the kind's
-FR-290 kind group (FR-057-AC-13), or from QSL's `FamilyKind`.
+FR-290 kind group (FR-057-AC-13), or from FSL's `FamilyKind`.
 
 ### The refusal
 
@@ -149,10 +149,10 @@ No engine SHALL run an inapplicable item, and no other kind SHALL be
 substituted for its kind.
 
 `analyze` SHALL NOT refuse `inapplicable-kind` an item whose kind is the
-required kind of its claim form's row in "QSL claim forms and their
+required kind of its claim form's row in "FSL claim forms and their
 families".
 
-- **Order.** QSpec FR-290 makes this check `negotiate_*`'s first item rule
+- **Order.** FSpec FR-290 makes this check `negotiate_*`'s first item rule
   after kind admission: it comes before the evidence-kind, `not-statistical`,
   `absent-extent` and candidate-table rules. `analyze` receives items the
   caller has already settled (FR-281), so it SHALL apply the check before it
@@ -166,7 +166,7 @@ families".
   diagnostic, so the record is the same either way.
 - **Record.** An inapplicable item SHALL keep its `request_index` and its
   place among the records (FR-281). Its terminal record is its
-  `invalid-request` disposition (`settled_by` `disposition`, QSpec FR-331),
+  `invalid-request` disposition (`settled_by` `disposition`, FSpec FR-331),
   with no result entry, artifact or counterexample.
 - **Scope.** The refusal settles only its own item. It SHALL NOT withhold,
   alter or re-check the declaration body, which has already reached its
@@ -192,24 +192,24 @@ families".
 | FR-507-AC-6 | A `Capability` variant with no applicable-family entry does not compile under `--cfg seam_probe`. | Test (TC-1302) |
 | FR-507-AC-7 | Over a package holding one `relation` clause whose every operation has an implementation binding, which is one `claim`/`step_relation` node, an item of kind `temporal-satisfaction` (the model claim) and an item of kind `operation-contract` (the code claim) that name that node's claim occurrence give two records at their request indices, in caller order; neither settles `inapplicable-kind`, each is read as family `relation-claim`, and each is settled by an engine, so each names that engine's `BackendId` and its `settled_by` is the engine's result, not `disposition`. A `global-conformance` item on the same claim occurrence settles `invalid-request`, `settled_by` `disposition`, with `invalid_capability`/`inapplicable-kind` and payload `request_index`, `capability` `global-conformance` and `family` `relation-claim`, no result and no engine run. Over a package holding one proof-eligible model refinement (a `relation`/`refinement` node with no hidden field, history field or `any` row, FR-322-AC-91; a refinement that is not proof-eligible has only its `declaration` occurrence) with step rows `R0` and `R1`, four items give four records in caller order and none settles `inapplicable-kind`: the whole-refinement item, kind `temporal-satisfaction`, names the node's `declaration` occurrence; the initial-state obligation, kind `operation-contract`, names its `generated` occurrence at ordinal 0; the obligations of `R0` and `R1`, kind `operation-contract`, name its `generated` occurrences at ordinals 1 and 2. The four refinement claims are distinct occurrences of one node, and each reads `relation-claim`. A `schedulability` item on the relation's claim occurrence (shared by its model and code claims) and on each of the refinement's four occurrences, five occurrences in all, settles `inapplicable-kind` with `family` `relation-claim`. | Test (TC-1302) |
 | FR-507-AC-8 | The derived deadlock-freedom item over a model subject, the time-lock-freedom item over a timed subject, and the deadlock-freedom and race-freedom items anchored on a `protocol`/`protocol_clause` node, each a `temporal-satisfaction` item carrying its `item_kind`, give four records, none settling `inapplicable-kind`, each read as family `temporal-trace` from its `item_kind`. The two items anchored on the protocol clause node run on a `temporal-trace` engine although `temporal-satisfaction` applies to the `protocol` family nowhere, so a reader that took the family from the anchor node would settle them `inapplicable-kind` with `family` `protocol`. A `global-conformance` item on the protocol clause node's own claim (its `item_kind` `formula`) is read as family `protocol` and runs. | Test (TC-1302) |
-| FR-507-AC-9 | An item whose claim names a node absent from the package, or a node of no row of QSpec FR-290's node-to-family table, settles `inapplicable-kind` for each of the twelve kinds, and its payload has `request_index` and `capability` and no `family` member. | Test (TC-1302) |
+| FR-507-AC-9 | An item whose claim names a node absent from the package, or a node of no row of FSpec FR-290's node-to-family table, settles `inapplicable-kind` for each of the twelve kinds, and its payload has `request_index` and `capability` and no `family` member. | Test (TC-1302) |
 | FR-507-AC-10 | An item whose kind does not apply, handed to `analyze` settled `Supported` on a held engine advertising its (kind, mode), `Supported` on a candidate `engines` does not hold, `Supported` on a held engine that does not advertise its (kind, mode), `RequiresBound`, `Unsupported`, `invalid-request` with `absent-extent`, or `invalid-request` with `ambiguous-backend`, settles `invalid-request` with `inapplicable-kind` in every case, never `unknown-backend`, `inconsistent-candidates` or the handed disposition, and no engine runs (FR-281's order). | Test (TC-1302) |
-| FR-507-AC-11 | For each row of "QSL claim forms and their families" that requires a kind, an item of that row's kind on a claim of that form gives a record that does not settle `inapplicable-kind` and is settled by an engine, and an item of kind `schedulability` on the same claim settles `inapplicable-kind` with `family` the row's family, which shows the family read. The claims are: a Boolean value clause, an `expression` node, once at occurrence role `claim` and once at role `declaration` (`value`); a scalar operation application in a `Value` function body, an `expression` node at role `expression` (`value`); a frame obligation, a `state`/`operation_anchor` node at role `anchor` (`state-model`); a state-graph claim, a `claim`/`state_graph` node (`temporal-trace`); a `hyper` clause, a `claim`/`hyperproperty` node (FR-488) (`temporal-trace`); a temporal claim over a timed subject and one over a hybrid subject, each a `temporal`/`temporal_clause` node (`temporal-trace`); a refinement whose abstract side is a protocol, a `relation`/`refinement` node (`relation-claim`). | Test (TC-1302) |
+| FR-507-AC-11 | For each row of "FSL claim forms and their families" that requires a kind, an item of that row's kind on a claim of that form gives a record that does not settle `inapplicable-kind` and is settled by an engine, and an item of kind `schedulability` on the same claim settles `inapplicable-kind` with `family` the row's family, which shows the family read. The claims are: a Boolean value clause, an `expression` node, once at occurrence role `claim` and once at role `declaration` (`value`); a scalar operation application in a `Value` function body, an `expression` node at role `expression` (`value`); a frame obligation, a `state`/`operation_anchor` node at role `anchor` (`state-model`); a state-graph claim, a `claim`/`state_graph` node (`temporal-trace`); a `hyper` clause, a `claim`/`hyperproperty` node (FR-488) (`temporal-trace`); a temporal claim over a timed subject and one over a hybrid subject, each a `temporal`/`temporal_clause` node (`temporal-trace`); a refinement whose abstract side is a protocol, a `relation`/`refinement` node (`relation-claim`). | Test (TC-1302) |
 
 ## Dependencies
 
 - **Upstream:** FR-057 (kinds, claim-form table, FR-057-AC-13 kind-group
-  projection), FR-281 (items and records), QSpec FR-290 (the seven
+  projection), FR-281 (items and records), FSpec FR-290 (the seven
   declaration families, their kinds, the node-to-family and `item_kind`
-  tables, and the check's order), QSpec FR-271 and FR-272 (the
-  `invalid_capability`/`inapplicable-kind` cause and its payload keys), QSpec
+  tables, and the check's order), FSpec FR-271 and FR-272 (the
+  `invalid_capability`/`inapplicable-kind` cause and its payload keys), FSpec
   FR-331 (request position and disposition record).
-- The QSpec contract change this requirement needed, the cause
-  `inapplicable-kind` under `invalid_capability`, is in QSpec
-  (quire-specification#608).
+- The FSpec contract change this requirement needed, the cause
+  `inapplicable-kind` under `invalid_capability`, is in FSpec
+  (filament-specification#608).
 - The node-to-family reader that AC-7, AC-8 and AC-11 require, which reads an
   item's family from the claim node's tag, `semantic_form` and occurrence role
-  through QSpec FR-290's table, is `qsl-analyze`'s `claim_family`.
+  through FSpec FR-290's table, is `fsl-analyze`'s `claim_family`.
   Remaining work: QSL-1702 (the adapters that still hardcode a family),
   QSL-1714 (the Boolean clause on an `expression` node) and QSL-1715 (the
   relation's one shared `claim` occurrence).

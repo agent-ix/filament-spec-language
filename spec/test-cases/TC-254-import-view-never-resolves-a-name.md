@@ -3,7 +3,7 @@ id: TC-254
 title: "ImportView::of builds an import view without resolving any name"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-254: ImportView::of builds an import view without resolving any name

@@ -11,12 +11,12 @@ use std::process::Command;
 const FIXTURE: &str = "tests/fixtures/spine-compile.native";
 
 /// Whether `package` is a developer-tool package FR-287-AC-1 admits a `bin`
-/// target in: `xtask`, `qsl-string-edge`, `qsl-bench`, or a package whose
+/// target in: `xtask`, `fsl-string-edge`, `fsl-bench`, or a package whose
 /// manifest directory is under the workspace's `tools/`.
 fn is_developer_tool(package: &Value, root: &Path) -> bool {
     let name = package["name"].as_str().expect("name");
     let manifest = Path::new(package["manifest_path"].as_str().expect("manifest"));
-    matches!(name, "xtask" | "qsl-string-edge" | "qsl-bench")
+    matches!(name, "xtask" | "fsl-string-edge" | "fsl-bench")
         || manifest
             .strip_prefix(root)
             .is_ok_and(|relative| relative.starts_with("tools"))
@@ -57,7 +57,7 @@ fn only_developer_tool_packages_list_a_bin_target() {
             });
         let tool = is_developer_tool(package, root);
         assert!(tool || !has_bin, "{name} must not list a bin target");
-        if name == "quire-spec-language" {
+        if name == "filament-spec-language" {
             assert!(!has_bin);
             assert!(package["default_run"].is_null(), "{name} sets default_run");
         }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-340: `cargo xtask refinement versioning <corpus>`. For every pair of
 //! revisions of one specification in a corpus, runs each case through
-//! `qsl_replay::spine::run_clause` against the prior and the superseding
+//! `fsl_replay::spine::run_clause` against the prior and the superseding
 //! revision, classifies each run (FR-342), compares the two classes (FR-343)
 //! and returns the report (FR-344).
 //!
@@ -25,16 +25,16 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use qsl_foundation::source::provenance::RawSourceRef;
-use qsl_foundation::{AccountingSetting, Setting, SettingLimits, Source, SourceIdentity};
-use qsl_replay::spine::{
+use fsl_foundation::source::provenance::RawSourceRef;
+use fsl_foundation::{AccountingSetting, Setting, SettingLimits, Source, SourceIdentity};
+use fsl_replay::spine::{
     classify_clause_run, read_clause_run_request, AnchorWire, Classification, ClauseRequestParts,
     ClauseRunRefusal, ClauseRunRequest, ClauseRunSelectionWire, ClauseRunSource, ClauseRunStage,
     DependencyInput, ObservationLimitsWire, RefinementClass, SpineLimits, SuppliedLibrary,
     SuppliedObservation,
 };
-use qsl_replay::AccountingLimits;
-use qsl_semantics::model::observation::ObservationLimits;
+use fsl_replay::AccountingLimits;
+use fsl_semantics::model::observation::ObservationLimits;
 use serde::Deserialize;
 
 use super::compare::{compare, CaseResult, SelectionKind, Side};
@@ -281,7 +281,7 @@ fn run_pair(pair: Pair) -> Vec<CaseEntry> {
 /// Run one request and classify it. A request that cannot be formed is a
 /// tool failure of the case.
 fn observe(request: ClauseRunRequest) -> Observed {
-    match qsl_replay::spine::run_clause(request) {
+    match fsl_replay::spine::run_clause(request) {
         Ok(report) => {
             let run = classify_clause_run(&report);
             Observed {
@@ -333,7 +333,7 @@ fn load_pair(directory: &Path, repository: &Path) -> Result<Pair, PairDefect> {
         .map(|path| read_in(&roots, path))
         .collect::<Result<Vec<_>, _>>()?;
     let packages =
-        qsl_semantics::model::intake::package_input(package_files.iter().map(Vec::as_slice))
+        fsl_semantics::model::intake::package_input(package_files.iter().map(Vec::as_slice))
             .map_err(|refusal| PairDefect::Packages(format!("{refusal:?}")))?;
     let dependencies = dependencies(&roots, &file.dependencies)?;
     let mut documents = Documents::new(&roots);
@@ -365,7 +365,7 @@ fn load_pair(directory: &Path, repository: &Path) -> Result<Pair, PairDefect> {
 fn case_requests(
     index: usize,
     case: &CaseFile,
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     documents: &mut Documents<'_>,
     revisions: [&Revision; 2],
@@ -532,7 +532,7 @@ impl Limits {
         })
     }
 
-    fn accounting(&self) -> qsl_replay::ScalarLimits {
+    fn accounting(&self) -> fsl_replay::ScalarLimits {
         let mut limits = AccountingLimits::default();
         for (setting, bound) in &self.accounting {
             limits.set_bound(*setting, *bound);

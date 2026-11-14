@@ -3,19 +3,19 @@ id: FR-309
 title: "Build the memory clause, access ordering and fence forms at S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-219
+  - target: ix://agent-ix/filament-spec-language/FR-219
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-434
+  - target: ix://agent-ix/filament-specification/FR-434
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-435
+  - target: ix://agent-ix/filament-specification/FR-435
     type: depends_on
 ---
 # FR-309: Build the memory clause, access ordering and fence forms at S2
@@ -23,10 +23,10 @@ relationships:
 ## Description
 
 When S2 builds the form of a protocol declaration, it SHALL accept the memory surface forms of
-QSpec's shared grammar, the `memory-clause` of a `parallel`, the optional
+FSpec's shared grammar, the `memory-clause` of a `parallel`, the optional
 `ordering` of an `attempt` with its `memory-order`, and the `fence` control
 with its `fence-order`, and SHALL record each in the protocol forms with
-its span (ADR-025 MM-1, MM-6; QSpec FR-434, FR-435). S2 records what was
+its span (ADR-025 MM-1, MM-6; FSpec FR-434, FR-435). S2 records what was
 written; S3 checks it (FR-219, FR-220).
 
 ## Use case
@@ -38,13 +38,13 @@ ordering is refused at the word the operator wrote.
 
 ## Inputs
 
-- The CST of one protocol declaration, parsed by QSpec's shared-grammar
+- The CST of one protocol declaration, parsed by FSpec's shared-grammar
   productions `parallel` with `memory-clause`, the `attempt` alternative of
   `event-node` with `memory-order`, and `fence` with `fence-order`.
 
 ## Outputs
 
-In `forms::protocol_clause` (crate `qsl-forms`), beside FR-308's forms:
+In `forms::protocol_clause` (crate `fsl-forms`), beside FR-308's forms:
 
 - `ParallelForm.memory: Option<Spanned<MemoryModelName>>`, with
   `MemoryModelName::{Sc, Tso, Ra}`.
@@ -81,11 +81,11 @@ In `forms::protocol_clause` (crate `qsl-forms`), beside FR-308's forms:
 
 - ADR-012 §1, §3 (forms); ADR-025 §1 MM-1, MM-6.
 - FR-308 (the protocol forms), FR-219 and FR-220 (the S3 checks).
-- QSpec owns the grammar: the shared grammar's `memory-clause`,
-  `memory-order`, `fence` and `fence-order` productions (QSpec FR-434,
+- FSpec owns the grammar: the shared grammar's `memory-clause`,
+  `memory-order`, `fence` and `fence-order` productions (FSpec FR-434,
   FR-435).
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-434, FR-435 (Linear
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-434, FR-435 (Linear
   STD-138).

@@ -3,9 +3,9 @@ id: TC-830
 title: "Union values round-trip through v2 union_value nodes at any depth"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-321
+  - target: ix://agent-ix/filament-spec-language/FR-321
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: verifies
 ---
 # TC-830: Union values round-trip through v2 union_value nodes at any depth
@@ -28,7 +28,7 @@ FR-277-AC-5.
    replace its leaf/member/child shape with a newly invented Tree.
    Use public supplied-value APIs, with no shrunken or private substitute.
    Admit at occurrence bounds 29,998 and 29,999 with other bounds permitting
-   progress. Independently enumerate the reviewed QSV event sequence under
+   progress. Independently enumerate the reviewed FSV event sequence under
    its trusted-admitted-value boundary; call its successful total A. Set
    `supplied.admission_work_units` to A-1 and A, keeping evaluation limits
    identical and sufficient. For the unchanged Tree A is 79,996: 9,999
@@ -41,7 +41,7 @@ FR-277-AC-5.
    checked counter overflow, wrong-kind input and failed storage/capacity
    reservation. Compare the next event and successful spend against an
    independent enumerator; verify a cache-hit lookup still has its owning
-   logical event. Preserve QSV's admitted nested-value trust boundary;
+   logical event. Preserve FSV's admitted nested-value trust boundary;
    do not revalidate trusted descendants just to increase the event count.
 
 Tag each test `#[trace("TC-830", "<AC id>")]`.

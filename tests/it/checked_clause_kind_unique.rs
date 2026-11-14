@@ -31,8 +31,8 @@ fn exactly_one_checked_clause_kind_enum_is_defined_under_check() {
         "CheckedClauseKind must be defined exactly once: {locations:?}"
     );
     assert!(
-        locations[0].file.starts_with("qsl-semantics/src/check/"),
-        "CheckedClauseKind's one definition must live under qsl-semantics/src/check/, found {:?}",
+        locations[0].file.starts_with("fsl-semantics/src/check/"),
+        "CheckedClauseKind's one definition must live under fsl-semantics/src/check/, found {:?}",
         locations[0].file
     );
 }

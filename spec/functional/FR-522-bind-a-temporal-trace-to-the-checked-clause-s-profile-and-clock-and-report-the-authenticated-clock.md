@@ -3,33 +3,33 @@ id: FR-522
 title: "Bind a temporal trace to the checked clause's profile and clock before any position, report the authenticated clock, and give each result one identity"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-050
+  - target: ix://agent-ix/filament-spec-language/FR-050
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-504
+  - target: ix://agent-ix/filament-spec-language/FR-504
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-526
+  - target: ix://agent-ix/filament-spec-language/FR-526
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
 ---
 # FR-522: Bind a temporal trace to the checked clause's profile and clock before any position, report the authenticated clock, and give each result one identity
@@ -63,7 +63,7 @@ depends on.
 
 ## Semantic authority and boundary
 
-QSpec FR-090 owns profile and clock selection and FR-043 states the legacy
+FSpec FR-090 owns profile and clock selection and FR-043 states the legacy
 evaluation of it. The checked package is the authentication: the profile comes
 from the lock's `profile_selections` row of the clause (FR-515 `profile()`), and
 the clock from the `temporal_bindings` row keyed by the declaration and the

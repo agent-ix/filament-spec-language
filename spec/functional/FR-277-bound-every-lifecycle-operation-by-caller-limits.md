@@ -3,30 +3,30 @@ id: FR-277
 title: "Bound every lifecycle operation by caller-configurable limits"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-260
+  - target: ix://agent-ix/filament-spec-language/FR-260
     type: references
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
 ---
 # FR-277: Bound every lifecycle operation by caller-configurable limits
 
 ## Description
 
-Every bound a QSL lifecycle operation (FR-275) enforces SHALL be a field of
+Every bound an FSL lifecycle operation (FR-275) enforces SHALL be a field of
 the limits value the caller passes, with a published default the caller can
 replace (ADR-029 LC-4). Reaching a bound SHALL return the operation's specified
 limit outcome naming the limit, its configured value and the limits field that
@@ -48,7 +48,7 @@ their limits from the caller.
 
 The operation's limits value. Each field has a published default, available
 as the limits type's `Default` value, except a field whose type has no
-`Default`: `quire_exact::ScalarLimits` (every member required),
+`Default`: `filament_exact::ScalarLimits` (every member required),
 `V2ReadLimits.storage`, `EmitLimits.output_bytes` (FR-255) and
 `AnalyzeLimits.deadline` (FR-281's `DeadlineSupply`). A limits type holding
 such a field has no `Default`, and the caller supplies that field explicitly,
@@ -98,13 +98,13 @@ counts; helper traversal events SHALL NOT redefine converted nodes.
 
 | Phase or counter | Unit and owner | Caller-visible bound | Aggregation |
 | --- | --- | --- | --- |
-| Admission helper work | QSV supplied-membership events, including runtime value visits and iterative type comparison, under the reviewed QSV FR-109 event contract | `supplied.admission_work_units` | One caller-owned cumulative traversal budget across all supplied arguments and admission helpers |
-| Conversion helper work | QSL witness preflight, descriptor inspection, runtime type resolution and witness materialization events defined by FR-098 | `supplied.conversion_work_units` | One caller-owned cumulative budget across all supplied arguments and conversion helpers |
+| Admission helper work | FSV supplied-membership events, including runtime value visits and iterative type comparison, under the reviewed FSV FR-109 event contract | `supplied.admission_work_units` | One caller-owned cumulative traversal budget across all supplied arguments and admission helpers |
+| Conversion helper work | FSL witness preflight, descriptor inspection, runtime type resolution and witness materialization events defined by FR-098 | `supplied.conversion_work_units` | One caller-owned cumulative budget across all supplied arguments and conversion helpers |
 | Converted semantic nodes | FR-098 nodes converted, one unit per node | `work_units` | Each argument separately; neither helper traversal nor evaluation spend seeds this count |
-| Semantic value occurrences | `quire.value.accounting/v1` `occ` | `value_occurrences` | Each supplied argument separately |
+| Semantic value occurrences | `filament.value.accounting/v1` `occ` | `value_occurrences` | Each supplied argument separately |
 | Evaluation | Actual semantic charges at their existing charge points | `work_units` and other existing accounting fields | The existing evaluation Meter; pre-call counters contribute zero |
 
-- QSL SHALL expose a typed supplied-value limits value with independent
+- FSL SHALL expose a typed supplied-value limits value with independent
   `admission_work_units` (A) and `conversion_work_units` (H) fields, and the
   magnitude bound `numeric_magnitude_bits` (B), on its public
   checked-call and replay limits where the phase applies. Their setting
@@ -121,15 +121,15 @@ counts; helper traversal events SHALL NOT redefine converted nodes.
   measured count, and no one of the three is ever unbounded. At its default each
   ceiling SHALL permit the unchanged full TC-830/831/906 Tree to complete.
   A replay request carries these three fields in the typed `limits.supplied`
-  member of the shared replay request (QSpec FR-323), not in `stage_limits`:
-  that closed member carries only recompile stage settings under QSpec
-  FR-460/461. QSL SHALL NOT add a private member to the shared request. It
+  member of the shared replay request (FSpec FR-323), not in `stage_limits`:
+  that closed member carries only recompile stage settings under FSpec
+  FR-460/461. FSL SHALL NOT add a private member to the shared request. It
   SHALL NOT derive any of them from the evaluation allowance, multiply that
   allowance, reset helper spend between arguments, or bypass a phase.
 - `supplied.numeric_magnitude_bits` (B) is the caller-owned finite magnitude
   bound for Integer and Rational supplied-value admission, the finite operand
-  bound that FR-277-AC-6 requires. Its envelope semantics are QSpec FR-323's
-  and its kernel operation is quire-exact FR-380's; QSL SHALL apply them
+  bound that FR-277-AC-6 requires. Its envelope semantics are FSpec FR-323's
+  and its kernel operation is filament-exact FR-380's; FSL SHALL apply them
   unchanged. An omitted B in the caller API resolves to the published default
   4096, so an omitted and a stated 4096 are the same request; a different
   stated B is a different request. A malformed, above-u64, null or
@@ -140,14 +140,14 @@ counts; helper traversal events SHALL NOT redefine converted nodes.
   operands (3 for Integer, 6 for Rational) are covered; covering type-link
   operands is a norm that no implementation is yet qualified to meet.
 - Every helper event SHALL have exactly one initiating-phase budget owner.
-  QSL conversion invoking QSV membership SHALL pass its conversion budget;
+  FSL conversion invoking FSV membership SHALL pass its conversion budget;
   direct or final checked-call admission SHALL pass its admission budget.
   A physical operation is charged once to that initiating phase, not both.
   Descriptor inspection, runtime type resolution and materialization
   initiated by conversion SHALL use the conversion budget.
-  A bounded reusable QSV helper for these tasks SHALL receive that explicit
+  A bounded reusable FSV helper for these tasks SHALL receive that explicit
   owner budget; it SHALL NOT also spend admission work for the same event.
-- Admission SHALL preserve the reviewed released QSV trust boundary for
+- Admission SHALL preserve the reviewed released FSV trust boundary for
   already admitted nested Option/Composite/Collection values. A runtime
   occurrence visit is counted only when that membership contract actually
   inspects the occurrence; semantic `occ` counting remains a separate
@@ -157,10 +157,10 @@ counts; helper traversal events SHALL NOT redefine converted nodes.
 - Each event SHALL be checked before its work. A denied event SHALL remain
   unspent. Limits of zero SHALL be enforced as zero, and checked counter
   overflow SHALL deny the event without wrapping or performing its work.
-- QSL SHALL pass the original caller Cancel to every phase and helper,
+- FSL SHALL pass the original caller Cancel to every phase and helper,
   including later arguments. It SHALL NOT replace it with a fresh token,
   reinterpret cancellation as limit exhaustion, or reset cumulative spend.
-- Public pre-call failure SHALL be a typed QSL phase outcome, identifying
+- Public pre-call failure SHALL be a typed FSL phase outcome, identifying
   `admission` or `conversion` and the parameter position where known, with
   distinct causes for invalid input, limit, cancellation, measured storage
   failure and capacity failure. A limit SHALL carry its typed counter/event,
@@ -174,11 +174,11 @@ counts; helper traversal events SHALL NOT redefine converted nodes.
   an evaluator `ChargePoint::FunctionCall`, or an evaluation Meter debit.
   Invalid kind/domain input SHALL retain `WrongValueKind` and its existing
   refusal boundary. Replay SHALL project a pre-call limit as
-  `inconclusive`/`NoValue` with phase-marked QSL `Incomplete`, preserving the
+  `inconclusive`/`NoValue` with phase-marked FSL `Incomplete`, preserving the
   full limit payload; other failures SHALL retain their distinct typed
   phase cause. Every pre-call failure SHALL report zero evaluation spend,
   no evaluated call and no fabricated semantic charge.
-- QSL's union-specific membership integration SHALL require a reviewed QSV
+- FSL's union-specific membership integration SHALL require a reviewed FSV
   declaration/member/type-comparison contract supporting unions. Released
   bool-only `TypeEnvironment::admits` and private declaration work budgets
   SHALL NOT substitute for that public contract. No union descriptor or
@@ -187,12 +187,12 @@ counts; helper traversal events SHALL NOT redefine converted nodes.
 ### Applicability of existing validation accounting
 
 NFR-009 governs checked-term evaluation under the caller's
-`quire.value.accounting/v1` meter. The applicable counters, units, defaults and
+`filament.value.accounting/v1` meter. The applicable counters, units, defaults and
 settings are FR-255's shared accounting table; FR-046/047/107/390 own their
 charge points. Snapshot/invocation document bytes, objects and values remain
 FR-106 admission limits, and model normalization remains FR-056's limits; these
-are not evaluation-meter charges. The retired `quire.state.evaluation-work/1` identity is not
-reinterpreted as `quire.value.accounting/v1` or as QSV membership.
+are not evaluation-meter charges. The retired `filament.state.evaluation-work/1` identity is not
+reinterpreted as `filament.value.accounting/v1` or as FSV membership.
 
 The present settlement governs supplied-value admission to the S6a Value
 checked-call seam and replay witness conversion (FR-090/098/321/322). It
@@ -200,7 +200,7 @@ does not exempt a composed/native API from its applicable validation rules.
 If an operation invokes one of those APIs, that API SHALL still perform
 its prescribed charges against its own caller-configured limits; those
 counters SHALL NOT be merged into S6a evaluation or conversion-node units.
-QSV's trusted admitted nested-value boundary governs membership only; it
+FSV's trusted admitted nested-value boundary governs membership only; it
 SHALL NOT suppress a node/entry inspection that NFR-009 requires
 at their own public boundaries.
 
@@ -225,9 +225,9 @@ by a multiplier, reset or bypass. The evaluator's 39,996/39,997 boundary
 stays governed by TC-831's trace, and neither helper default is justified
 by it.
 
-### Projection into existing QSL carriers
+### Projection into existing FSL carriers
 
-This is an explicit amendment to the QSL pre-call carrier contract, not a
+This is an explicit amendment to the FSL pre-call carrier contract, not a
 new kernel cause. FR-090's `CallFailure` seam SHALL retain its existing
 `Input`, `Fault` and FR-276 `Cancelled` arms and gain a typed supplied-phase
 failure arm for helper limits and storage/capacity failures. Invalid input
@@ -235,9 +235,9 @@ SHALL remain `Input(InputRefusal)` with the original kind/parameter or
 reference refusal; cancellation SHALL remain `Cancelled(CancelCause)`
 (`Requested` or `Deadline`), category incomplete, never a limit. Phase
 context and successful helper counts SHALL accompany these existing causes
-as QSL diagnostic context without changing their catalog fields.
+as FSL diagnostic context without changing their catalog fields.
 
-The QSL pre-call limit record SHALL preserve the numerical meanings of
+The FSL pre-call limit record SHALL preserve the numerical meanings of
 existing `Incomplete`: `limit_kind`, `limit` (configured ceiling),
 `consumed` (successful spend) and `next_charge` (denied amount).
 `counter` SHALL be the checked attempted count, with typed overflow rather
@@ -245,13 +245,13 @@ than a wrapped count; `field` SHALL name the caller field. It SHALL add
 typed `phase`, `parameter` when known, and `event` for the actual next
 helper/node/occurrence step. It SHALL contain no `charge_point`. An
 evaluation limit SHALL keep its existing kernel record and actual
-`charge_point`. QSL's limit projection SHALL distinguish these two origins;
+`charge_point`. FSL's limit projection SHALL distinguish these two origins;
 it SHALL NOT fill a mandatory kernel charge point with FunctionCall or
 create a kernel `Outcome::Incomplete` for work that never evaluated.
 
 FR-098's existing no-call settlement SHALL retain FR-072's arm, category
 incomplete, `inconclusive`, `NoValue`, absent value/witness and zero replay
-charges, carrying the QSL pre-call limit record instead of a fabricated
+charges, carrying the FSL pre-call limit record instead of a fabricated
 kernel limit. Wrong-kind input SHALL remain the existing typed replay
 admission refusal, not a settled evaluator refusal. Cancellation SHALL
 return the existing cancelled operation failure with its original cause
@@ -260,29 +260,29 @@ failures SHALL carry their original shared typed cause in the supplied-phase
 failure arm, not a limit or an InternalFault.
 
 FR-096's `RefusalRecord` code/category/locus/catalog-field rule and FR-072's
-shared result-envelope authority SHALL remain in force. A QSL phase limit
+shared result-envelope authority SHALL remain in force. An FSL phase limit
 is not a kernel refusal record. The public wire projection of the
 discriminated limit origin requires the reviewed shared result contract;
 until that contract supports phase/event and the numerical fields above,
-consumer projection qualification SHALL remain blocked; QSL SHALL NOT
+consumer projection qualification SHALL remain blocked; FSL SHALL NOT
 serialize a fake charge point, drop phase information, manufacture an
-unavailable-mapping runtime error or privately extend QSpec's envelope.
+unavailable-mapping runtime error or privately extend FSpec's envelope.
 
 ### Logical events and bounded subordinate work
 
 Helper traversal is counted as logical events plus independently bounded
 helper inputs. Each following actual logical step SHALL cost one unit in the owning
 helper budget; it is not a measurement of internal limb/key comparisons.
-This table assigns QSL integration ownership; QSV's supplied-membership
+This table assigns FSL integration ownership; FSV's supplied-membership
 event ordering, trusted-value boundary and union baseline remain its
 reviewed FR-109 contract. It SHALL NOT prescribe a nonexistent union API.
 
 | Actual step | Owner and count boundary | Cache/delegation rule |
 | --- | --- | --- |
-| Logical value visit | Initiating phase: one per runtime occurrence actually inspected by QSV supplied membership | Existing trusted nested-value boundary and invalid-stop order; unvisited descendants cost no visit |
-| Logical type comparison | Initiating phase: exactly one per compared PAIR OF type-chain LINKS under QSV FR-109, including the initial expected/actual pair | No extra expected-type-entry charge; neither an individual link nor an entire chain replaces this unit; cache preserves logical count and first denied event |
-| Logical child schedule | Initiating phase: one per actual child scheduling operation prescribed by QSV FR-109 | Count before fallible worklist reservation/mutation; do not also hide it inside a value visit |
-| Logical descriptor query | Initiating phase: one per descriptor query prescribed by QSV FR-109 | Cache hits preserve logical query count; QSL/QSV delegation does not count the same query twice |
+| Logical value visit | Initiating phase: one per runtime occurrence actually inspected by FSV supplied membership | Existing trusted nested-value boundary and invalid-stop order; unvisited descendants cost no visit |
+| Logical type comparison | Initiating phase: exactly one per compared PAIR OF type-chain LINKS under FSV FR-109, including the initial expected/actual pair | No extra expected-type-entry charge; neither an individual link nor an entire chain replaces this unit; cache preserves logical count and first denied event |
+| Logical child schedule | Initiating phase: one per actual child scheduling operation prescribed by FSV FR-109 | Count before fallible worklist reservation/mutation; do not also hide it inside a value visit |
+| Logical descriptor query | Initiating phase: one per descriptor query prescribed by FSV FR-109 | Cache hits preserve logical query count; FSL/FSV delegation does not count the same query twice |
 
 Unhooked numeric/enum/registry subordinate work is a helper-cost premise,
 not a fifth logical event or helper-entry debit. Its cost is included in
@@ -291,9 +291,9 @@ inputs plus source proof of finite work, temporary storage and cancellation
 behavior. No invented per-limb/key-comparison charge is permitted.
 
 These are descriptive event labels, not invented public enum/API spellings.
-QSL SHALL use QSV FR-109's actual published event definitions and ordering.
-QSL's separate witness preflight/materialization work remains FR-098-owned;
-its delegated QSV events use that same conversion phase budget. A later
+FSL SHALL use FSV FR-109's actual published event definitions and ordering.
+FSL's separate witness preflight/materialization work remains FR-098-owned;
+its delegated FSV events use that same conversion phase budget. A later
 final-admission invocation is new actual work owned by admission, not a
 transfer of conversion spend or a reset within either phase.
 
@@ -321,20 +321,20 @@ same result as a fresh attempt, with no retained partial admission.
 ### Selected independently bounded helper-input contract
 
 Released kernel Boolean
-numeric membership and QSV declaration-map/ancestor search expose no
+numeric membership and FSV declaration-map/ancestor search expose no
 per-limb/per-comparison WorkBudget or original-Cancel hooks. Their logical
 event limits bound invocation counts only. The separate helper-input contract
 must establish a finite bound on each invocation's internal work before the
-logical schedule can claim bounded traversal. QSL SHALL NOT copy their algorithms or extend private
+logical schedule can claim bounded traversal. FSL SHALL NOT copy their algorithms or extend private
 declaration budgets to manufacture those hooks.
 
 | Helper input | Required independent bound and source proof | Owner boundary |
 | --- | --- | --- |
-| Numeric membership | Finite stored numeric size for every value and domain endpoint, and finite scale/exponent inputs; prove the released operation terminates with work bounded by those sizes | QSV identifies the actual kernel operation and public/admitted size access; kernel owns semantics, QSL supplies the invoking phase context |
-| Decimal membership temporary storage and cancellation | Establish a separate temporary-storage bound, actual fallible reservation/failure path and original-Cancel observation boundary; numeric input sizes alone do not establish these guarantees | IR-718 SPEC and IR-719 implementation own the enabling capability; reviewed typed integration is a qualification prerequisite, not a new QSL runtime error |
-| Enum / registry / ancestor search | Finite admitted member/declaration/ancestor entry counts and key-content sizes; connect actual immutable environment sizes to its effective caller-configured admission/byte limits | QSV registry and membership contract, after IR-713; no guessed descriptor/signature |
-| Type resolution / structural comparison | Finite reachable type-node/link counts and bounded scalar/key content, with source-proven cycle/termination behavior; no type nesting-depth ceiling | QSV's existing admitted-type boundary; QSL conversion owns its actual descriptor/materialization invocations |
-| Witness helper inputs | Finite replay encoded bytes and complete semantic occurrence/node counts; subordinate numeric/type/registry helpers additionally satisfy the rows above | QSL FR-098/263 and QSV's helper-input contract; occurrence/node limits alone do not bound an arbitrarily large numeric leaf |
+| Numeric membership | Finite stored numeric size for every value and domain endpoint, and finite scale/exponent inputs; prove the released operation terminates with work bounded by those sizes | FSV identifies the actual kernel operation and public/admitted size access; kernel owns semantics, FSL supplies the invoking phase context |
+| Decimal membership temporary storage and cancellation | Establish a separate temporary-storage bound, actual fallible reservation/failure path and original-Cancel observation boundary; numeric input sizes alone do not establish these guarantees | IR-718 SPEC and IR-719 implementation own the enabling capability; reviewed typed integration is a qualification prerequisite, not a new FSL runtime error |
+| Enum / registry / ancestor search | Finite admitted member/declaration/ancestor entry counts and key-content sizes; connect actual immutable environment sizes to its effective caller-configured admission/byte limits | FSV registry and membership contract, after IR-713; no guessed descriptor/signature |
+| Type resolution / structural comparison | Finite reachable type-node/link counts and bounded scalar/key content, with source-proven cycle/termination behavior; no type nesting-depth ceiling | FSV's existing admitted-type boundary; FSL conversion owns its actual descriptor/materialization invocations |
+| Witness helper inputs | Finite replay encoded bytes and complete semantic occurrence/node counts; subordinate numeric/type/registry helpers additionally satisfy the rows above | FSL FR-098/263 and FSV's helper-input contract; occurrence/node limits alone do not bound an arbitrarily large numeric leaf |
 
 These bounds must identify the actual existing published limits fields or
 an explicitly owned helper-input amendment, their effective finite values,
@@ -349,7 +349,7 @@ formatting and shifted multiplication (`abs * 10^shift`) with no helper
 budget, original-Cancel hook or demonstrated fallible temporary reservation.
 The input-size reasoning above does not prove bounded temporary storage or
 the required cancellation/storage-failure behavior for that operation.
-QSV FR-109's Integer interval premise is at most TWO INTEGER COMPARISONS;
+FSV FR-109's Integer interval premise is at most TWO INTEGER COMPARISONS;
 its Rational membership premise is at most FOUR INTEGER COMPARISONS,
 without cross multiplication. Each comparison uses sign/length and at most
 the larger operand's limb count, bounded conservatively by admitted
@@ -367,7 +367,7 @@ mapping SHALL be reviewed. Missing proof or mapping is an implementation
 qualification BLOCKER, not a runtime invalid/limit/storage/unsupported
 result or an unavailable-mapping error code. In particular, Decimal
 qualification remains blocked until IR-718's reviewed capability is
-implemented through IR-719 and the typed QSV/QSL mapping is approved.
+implemented through IR-719 and the typed FSV/FSL mapping is approved.
 No successful bounded-admission claim, default bypass or invocation of an
 unqualified substitute discharges this prerequisite. Actual observed
 storage/capacity failure or cancellation SHALL retain its original typed
@@ -376,11 +376,11 @@ Once the owning reviewed capability is enabled, Decimal positive replay
 and its original invalid-domain controls remain mandatory under FR-098
 AC-10 and TC-906; Decimal is not removed or made an optional feature.
 
-QSV must establish a finite work function for each bounded helper input.
+FSV must establish a finite work function for each bounded helper input.
 Then a finite number of admitted logical invocations, each on independently
 bounded inputs, bounds total helper work without pretending to count its
 internal comparisons. This reasoning is not an established released-source proof and is not a
-request for a new kernel API. If QSV's source
+request for a new kernel API. If FSV's source
 proof cannot establish it, main SHALL route the precise bounded-helper API
 gap to the existing owning IR plan (Decimal: IR-718/IR-719) and preserve the QSL-503 blocking edge. It SHALL NOT
 implement a copied helper or silently change event units.
@@ -399,10 +399,10 @@ implement a copied helper or silently change event units.
 
 ## Dependencies
 
-- [IR-718 SPEC](https://linear.app/agent-ix/issue/IR-718/spec-quire-exact-bounded-fallible-decimal-membership-for-supplied)
-  and [IR-719 implementation](https://linear.app/agent-ix/issue/IR-719/quire-exactqsv-implement-bounded-decimal-membership-and-supplied):
+- [IR-718 SPEC](https://linear.app/agent-ix/issue/IR-718/spec-filament-exact-bounded-fallible-decimal-membership-for-supplied)
+  and [IR-719 implementation](https://linear.app/agent-ix/issue/IR-719/quire-exactfsv-implement-bounded-decimal-membership-and-supplied):
   reviewed and implemented bounded Decimal membership plus actual typed
-  QSV/QSL integration; missing qualification is a blocker, not a new outcome.
+  FSV/FSL integration; missing qualification is a blocker, not a new outcome.
 - [FR-255](FR-255-name-the-setting-that-raises-a-reached-limit.md): the
   the setting registry and cross-entry-point mapping; the supplied-value
   ceilings are not registry rows, and its Behavior 1 carrying-type table
@@ -414,7 +414,7 @@ implement a copied helper or silently change event units.
 - [FR-090](FR-090-return-a-family-outcome-or-a-typed-family-refusal.md) and
   [FR-096](FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md):
   the carrier and context mapping the supplied-phase failure arm extends.
-- [QSpec FR-323](ix://agent-ix/quire-specification/FR-323): the shared
+- [FSpec FR-323](ix://agent-ix/filament-specification/FR-323): the shared
   envelope authority for the replay request's `limits.supplied` member and
   the phase-aware limit projection.
 - ADR-029 LC-4: caller limits.
@@ -424,10 +424,10 @@ implement a copied helper or silently change event units.
 - [FR-003](FR-003-format-native-source.md): the format operation and its
   output-byte refusal.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md): the operations.
-- QSpec FR-300: explicit limits on every request.
+- FSpec FR-300: explicit limits on every request.
 
 ## References
 
 - QSL-390 (ARCH-50), QSL-393 (V1-A06).
 - QSL-381: the depth ruling ADR-030 records.
-- QSpec FR-300, FR-460, FR-461 (STD-141, STD-143): the QSpec half.
+- FSpec FR-300, FR-460, FR-461 (STD-141, STD-143): the FSpec half.

@@ -4,20 +4,20 @@
 
 use std::collections::BTreeMap;
 
-use ix_trace_rs::trace;
-use qsl_cst::Limits as SourceLimits;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::{self, ParseRequest};
-use qsl_replay::{
+use filament_exact::{Cancel, PathSegment, ScalarLimits};
+use fsl_cst::Limits as SourceLimits;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{self, ParseRequest};
+use fsl_replay::{
     call_site, replay, replay_state_clause, DependencyEntryWire, DependencyInput, EnvelopeSource,
     ObligationIdentity, QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire,
     ReplaySource, ReplayTargetMembers, RequestTargetWire, StateClauseCounterexample,
     StateEnvironment, SuppliedLibrary, WitnessEnvelope, WitnessPacket,
 };
-use qsl_semantics::model::accounting::ModelNormalizationLimits;
-use qsl_semantics::model::intake::package_input;
-use qsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};
-use quire_exact::{Cancel, PathSegment, ScalarLimits};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::package_input;
+use fsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -34,14 +34,14 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 const FIRST: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     function p using v(): Boolean pure { h() }\n";
 const CALL_SITE_SEED: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     function p using v(): Boolean pure { h() }\n\
     function h using v(): Boolean pure { true }\n";
 const SECOND: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     function h using v(): Boolean pure { true }\n";
 const AUTHORITY: &str = "agent-ix";
 const FIRST_ID: &str = "test:replay-first";
@@ -49,25 +49,25 @@ const SECOND_ID: &str = "test:replay-second";
 const PACKAGE: &str = "example/config-version";
 const HISTORY: &str = "ix://example/config-version/config_history";
 const LIBRARY_FIRST: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     function f using v(x: Boolean): Boolean pure { g(x) }\n";
 const LIBRARY_SECOND: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     function g using v(x: Boolean): Boolean pure { x }\n";
 const LIBRARY_CALLER: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     import \"test/library\" as l;\n\
     function p using v(): Boolean pure { l::f(true) }\n";
 
 fn selected() -> QualifiedName {
-    QualifiedName::new(vec![quire_exact::Identifier::new("p").unwrap()]).unwrap()
+    QualifiedName::new(vec![filament_exact::Identifier::new("p").unwrap()]).unwrap()
 }
 
 fn reference(identity: &str) -> (String, String) {
     (AUTHORITY.to_owned(), identity.to_owned())
 }
 
-fn with_sources(bytes: &[u8], sources: Vec<(String, String)>) -> qsl_replay::ReplayPackage {
+fn with_sources(bytes: &[u8], sources: Vec<(String, String)>) -> fsl_replay::ReplayPackage {
     let mut package: Value = serde_json::from_slice(bytes).unwrap();
     package["lock"]["sources"] = Value::Array(
         sources
@@ -82,7 +82,7 @@ fn with_sources(bytes: &[u8], sources: Vec<(String, String)>) -> qsl_replay::Rep
         quire_canonical::Limits::new(ReplayLimits::default().input_bytes),
     )
     .unwrap();
-    qsl_replay::ReplayPackage::read(&bytes, ReplayLimits::default().input_bytes).unwrap()
+    fsl_replay::ReplayPackage::read(&bytes, ReplayLimits::default().input_bytes).unwrap()
 }
 
 fn positive_multi_unit_package() -> Vec<u8> {
@@ -98,7 +98,7 @@ fn positive_multi_unit_package() -> Vec<u8> {
             spine::parse(
                 &ParseRequest {
                     source,
-                    path: source.label(qsl_foundation::SourceLabel::Identity),
+                    path: source.label(fsl_foundation::SourceLabel::Identity),
                     bytes,
                 },
                 SourceLimits::default(),
@@ -193,12 +193,12 @@ fn d10_model_document() -> Vec<u8> {
             "name": name,
             "params": [],
             "returns": {
-                "typeRef": "ix://quire/native/Integer",
+                "typeRef": "ix://filament/native/Integer",
                 "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
                 "nullable": false,
             },
             "pre": [], "post": [],
-            "origin": {"source": {"sourceIdentity": format!("ix://{PACKAGE}/spec"), "path": "spec.qspec", "startLine": 1, "startColumn": 1}},
+            "origin": {"source": {"sourceIdentity": format!("ix://{PACKAGE}/spec"), "path": "spec.fspec", "startLine": 1, "startColumn": 1}},
             "frame": {"modifies": [], "creates": [], "deletes": []},
         })
     }
@@ -242,8 +242,8 @@ fn d10_model_document() -> Vec<u8> {
 struct D10Units {
     sources: Vec<(&'static str, String)>,
     model_document: Vec<u8>,
-    occurrence_key: qsl_foundation::source::provenance::OccurrenceKey,
-    clause_node: quire_exact::NodeKey,
+    occurrence_key: fsl_foundation::source::provenance::OccurrenceKey,
+    clause_node: filament_exact::NodeKey,
     package_bytes: Vec<u8>,
 }
 
@@ -251,8 +251,8 @@ fn d10_units(reverse: bool) -> D10Units {
     let lookup = "(lookup<M::ConfigVersion>(M::config_history, self) absent undefined) = self";
     let first = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
-         profile m = \"quire.model.complete/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile m = \"filament.model.complete/v1\";\n\
          model M = {PACKAGE:?};\n\
          body sizeA using m on M::ConfigVersion::size() {{ 1 }}\n\
          body sizeB using m on M::Sub::size() {{ 2 }}\n\
@@ -262,8 +262,8 @@ fn d10_units(reverse: bool) -> D10Units {
     );
     let second = String::from(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
-         profile m = \"quire.model.complete/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile m = \"filament.model.complete/v1\";\n\
          model M = \"example/config-version\";\n\
          pre PB2 using m on M::Sub::size { false }\n",
     );
@@ -318,12 +318,12 @@ fn d10_units(reverse: bool) -> D10Units {
         .state_clause("I")
         .expect("D10 precondition exists");
     let clause_node = clause.identity().clone();
-    let occurrence_key = qsl_foundation::source::provenance::OccurrenceKey::new(
+    let occurrence_key = fsl_foundation::source::provenance::OccurrenceKey::new(
         clause_node.clone(),
         clause.claim().clone(),
     );
     let package_bytes =
-        qsl_package::emit_checked(checked[0].package(), qsl_package::EmitLimits::fixture())
+        fsl_package::emit_checked(checked[0].package(), fsl_package::EmitLimits::fixture())
             .expect("D10 package emits")
             .package()
             .bytes()
@@ -346,7 +346,7 @@ fn d10_units(reverse: bool) -> D10Units {
     }
 }
 
-fn d10_replay(reverse: bool) -> (qsl_replay::StateClauseReplayResult, Vec<u8>) {
+fn d10_replay(reverse: bool) -> (fsl_replay::StateClauseReplayResult, Vec<u8>) {
     let D10Units {
         sources: units,
         model_document: model,
@@ -354,13 +354,13 @@ fn d10_replay(reverse: bool) -> (qsl_replay::StateClauseReplayResult, Vec<u8>) {
         clause_node,
         package_bytes,
     } = d10_units(reverse);
-    let target = QualifiedName::new(vec![quire_exact::Identifier::new("I").unwrap()]).unwrap();
+    let target = QualifiedName::new(vec![filament_exact::Identifier::new("I").unwrap()]).unwrap();
     let snapshot_ref = DocumentRef {
         authority: "test".to_owned(),
         identity: "d10:observation".to_owned(),
     };
     let snapshot = json!({
-        "format": "quire.state.snapshot/v1",
+        "format": "filament.state.snapshot/v1",
         "identity": {
             "authority": snapshot_ref.authority,
             "identity": snapshot_ref.identity,
@@ -392,7 +392,7 @@ fn d10_replay(reverse: bool) -> (qsl_replay::StateClauseReplayResult, Vec<u8>) {
     };
     let packet = WitnessPacket {
         obligation_identity: Some(ObligationIdentity::new(
-            quire_exact::NodeKey::new("d10", vec![PathSegment::Text("I".into())], 0)
+            filament_exact::NodeKey::new("d10", vec![PathSegment::Text("I".into())], 0)
                 .expect("obligation node"),
             None,
             0,
@@ -519,7 +519,7 @@ fn multi_source_dependency_request(
         byte_provision.push(source);
     }
     let wire = ReplayRequestWire {
-        package: qsl_replay::ReplayPackage::read(&package, ReplayLimits::default().input_bytes)
+        package: fsl_replay::ReplayPackage::read(&package, ReplayLimits::default().input_bytes)
             .unwrap(),
         profile_selections: Vec::new(),
         dependencies: vec![dependency],
@@ -539,7 +539,7 @@ fn multi_source_dependency_request(
     (wire, package)
 }
 
-fn multi_source_dependency_replay(reverse: bool) -> (qsl_replay::ReplayResult, Vec<u8>) {
+fn multi_source_dependency_replay(reverse: bool) -> (fsl_replay::ReplayResult, Vec<u8>) {
     let sources = if reverse {
         vec![
             dependency_reference("library-u2"),
@@ -564,24 +564,24 @@ fn replay_accepts_canonical_and_reversed_dependency_unit_sources() {
     let (reversed, reversed_package) = multi_source_dependency_replay(true);
     assert_eq!(canonical_package, reversed_package);
     assert_eq!(canonical, reversed);
-    let qsl_replay::ReplayResult::Input(result) = canonical else {
+    let fsl_replay::ReplayResult::Input(result) = canonical else {
         panic!("input replay result expected");
     };
     assert_eq!(
         result.value(),
-        Some(qsl_replay::EvaluatedValue::Boolean(true))
+        Some(fsl_replay::EvaluatedValue::Boolean(true))
     );
 }
 
 fn assert_dependency_source_list_refusal(mut wire: ReplayRequestWire) {
-    wire.byte_provision[0].2 = b"not valid QSL".to_vec();
+    wire.byte_provision[0].2 = b"not valid FSL".to_vec();
     let refusal = replay(wire, ReplayLimits::default())
         .expect_err("invalid dependency source lists refuse before source parsing");
     assert!(matches!(
         &refusal,
         ReplayRefusal::DependencySources { index: 0, .. }
     ));
-    assert_eq!(refusal.code(), qsl_foundation::Code::InvalidPackage);
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidPackage);
     assert_eq!(refusal.cause(), Some("invalid-value"));
     assert_eq!(
         refusal.pointer().as_deref(),
@@ -616,7 +616,7 @@ fn definition_document_dependency_source_refuses_at_its_sources_pointer() {
         Some((
             AUTHORITY.to_owned(),
             identity.to_owned(),
-            b"not valid QSL".to_vec(),
+            b"not valid FSL".to_vec(),
         )),
     );
     assert_dependency_source_list_refusal(wire);
@@ -638,11 +638,11 @@ fn replay_accepts_canonical_and_reversed_unit_sources() {
 #[test]
 fn duplicate_unit_source_refuses_before_recompile() {
     let mut wire = request(vec![FIRST_ID, FIRST_ID], Vec::new());
-    wire.byte_provision[0].2 = b"not valid QSL".to_vec();
+    wire.byte_provision[0].2 = b"not valid FSL".to_vec();
     let refusal =
         replay(wire, ReplayLimits::default()).expect_err("a repeated unit owner is refused");
     assert!(matches!(refusal, ReplayRefusal::PackageSources(_)));
-    assert_eq!(refusal.code(), qsl_foundation::Code::InvalidPackage);
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidPackage);
     assert_eq!(refusal.cause(), Some("invalid-value"));
     assert_eq!(refusal.pointer().as_deref(), Some("/package/lock/sources"));
 }
@@ -658,12 +658,12 @@ fn definition_document_source_refuses_before_recompile() {
     wire.byte_provision.push((
         AUTHORITY.to_owned(),
         "example/config-version".to_owned(),
-        b"not valid QSL".to_vec(),
+        b"not valid FSL".to_vec(),
     ));
     let refusal = replay(wire, ReplayLimits::default())
         .expect_err("a definition document cannot be a source unit");
     assert!(matches!(refusal, ReplayRefusal::PackageSources(_)));
-    assert_eq!(refusal.code(), qsl_foundation::Code::InvalidPackage);
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidPackage);
     assert_eq!(refusal.cause(), Some("invalid-value"));
     assert_eq!(refusal.pointer().as_deref(), Some("/package/lock/sources"));
 }
@@ -695,7 +695,7 @@ fn shared_unit_owner_is_found_in_any_other_library() {
     assert!(
         matches!(
             refused,
-            qsl_replay::spine::DependencyInputRefusal::SharedOwner { .. }
+            fsl_replay::spine::DependencyInputRefusal::SharedOwner { .. }
         ),
         "{refused:?}"
     );
@@ -722,15 +722,15 @@ fn temporal_selection_on_a_library_source_reaches_its_emission() {
     )
     .expect("the library unit parses")
     .into_value();
-    let selection = qsl_package::TemporalClockSelection::new(
+    let selection = fsl_package::TemporalClockSelection::new(
         library.source().reference().clone(),
-        qsl_foundation::source::Span { start: 0, end: 1 },
-        qsl_package::ClockConfiguration::EventPosition {
+        fsl_foundation::source::Span { start: 0, end: 1 },
+        fsl_package::ClockConfiguration::EventPosition {
             sequence_authority: "none".into(),
         },
     );
     let refused =
-        qsl_replay::replay_with_temporal_selections(wire, &[selection], ReplayLimits::default())
+        fsl_replay::replay_with_temporal_selections(wire, &[selection], ReplayLimits::default())
             .expect_err("a selection naming no temporal declaration is surplus");
     assert!(
         matches!(refused, ReplayRefusal::Recompile(_)),

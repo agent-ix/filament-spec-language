@@ -3,13 +3,13 @@ id: FR-035
 title: "Parse composed native units under an explicit edition"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-001
+  - target: ix://agent-ix/filament-spec-language/US-001
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-002
+  - target: ix://agent-ix/filament-spec-language/FR-002
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-032
+  - target: ix://agent-ix/filament-specification/FR-032
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-033
+  - target: ix://agent-ix/filament-specification/FR-033
     type: depends_on
 ---
 # FR-035: Parse composed native units under an explicit edition
@@ -22,8 +22,8 @@ When a source selects an admitted composed edition, the compiler SHALL construct
 
 Exact source bytes and identity, the source header and existing caller-configured
 source/token/node limits. The `ix:native` / `1-draft` grammar is the
-[shared grammar](https://github.com/agent-ix/quire-specification/blob/main/proposals/quire-v1/shared-grammar.md)
-landed in [standard PR #15](https://github.com/agent-ix/quire-specification/pull/15).
+[shared grammar](https://github.com/agent-ix/filament-specification/blob/main/proposals/filament-v1/shared-grammar.md)
+landed in [standard PR #15](https://github.com/agent-ix/filament-specification/pull/15).
 
 ## Outputs
 
@@ -45,7 +45,7 @@ If source is malformed or remains after the last complete declaration, then the 
 
 If a selected edition is unavailable, then the parser SHALL return the typed unknown-edition diagnostic at the header selection.
 
-If a syntax budget is exhausted, then the parser SHALL return `stage_limit_exceeded` with the budget's `<kind>-exceeded` cause (`quire.native.diagnostics/v1`; the token budget is `token-count-exceeded`) without an admitted unit.
+If a syntax budget is exhausted, then the parser SHALL return `stage_limit_exceeded` with the budget's `<kind>-exceeded` cause (`filament.native.diagnostics/v1`; the token budget is `token-count-exceeded`) without an admitted unit.
 
 Qualified model/member positions accept edition-reserved ASCII words under the
 shared grammar; native binder positions do not. The parser does not scan a second
@@ -70,12 +70,12 @@ downcasting opaque strings or inferring kinds from diagnostic messages.
 | FR-035-AC-4 | **RETIRED in QSL-499; historical only.** CRLF, comments and escaped multibyte text retain exact original bytes and correct byte spans; an escaped string's decoded offset cannot replace its source location. | Test (TC-113) |
 | FR-035-AC-5 | **RETIRED in QSL-499; historical only.** Exact syntax limits admit the otherwise valid unit; the next required token/node/source-byte step above a lowered limit returns `stage_limit_exceeded`/`<kind>-exceeded` (a token is `token-count-exceeded`), with no recovery path bypass. | Test (TC-113) |
 | FR-035-AC-6 | **RETIRED in QSL-1809; historical only.** Historical source, formatted output, refusal codes and package identities retain their unchanged historical expectations; a composed selector is never silently replaced with the historical profile. Ruling: the composed and `0-draft` editions it names are gone (ADR-011, FR-499; FR-513 retired-path rules), so there is no historical profile to preserve or to be replaced; identity of `1-draft` source and formatted output is FR-003-AC-9. | Test (TC-113) |
-| FR-035-AC-7 | Under `1-draft`, the exact spellings `helper`, `rec`, `cast` and `Tuple` are ordinary identifiers in every native declaration and binder name position and in every reference to such a name (QSpec FR-339-AC-5; the QSpec shared grammar does not reserve them, [QSL-1649](https://linear.app/agent-ix/issue/QSL-1649)): for each spelling `w`, `function w using v(x: Integer): Integer pure { x }` parses and checks, and `function c using v(): Integer pure { w(1) }` evaluates `c()` to `1`; `w` as the `using` profile alias, a parameter, a `let` binder, a record name and its field, an enum member, a type-alias name and a model selection alias (in a unit that also declares a function) each parses and checks with no `invalid_syntax` and no `unsupported_construct`; and with `profile w = "quire.value.complete/v1";`, `function f using w(x: Integer): Integer pure { x }` is admitted with its profile alias resolved to the profile `w` selects. The recognizer's unsupported-spelling class does not apply to them under `1-draft`. Lowercase `tuple`, a complete-V1 reserved word, still refuses `invalid_syntax`/`unexpected-token` as a record name. | Test (TC-113) |
+| FR-035-AC-7 | Under `1-draft`, the exact spellings `helper`, `rec`, `cast` and `Tuple` are ordinary identifiers in every native declaration and binder name position and in every reference to such a name (FSpec FR-339-AC-5; the FSpec shared grammar does not reserve them, [QSL-1649](https://linear.app/agent-ix/issue/QSL-1649)): for each spelling `w`, `function w using v(x: Integer): Integer pure { x }` parses and checks, and `function c using v(): Integer pure { w(1) }` evaluates `c()` to `1`; `w` as the `using` profile alias, a parameter, a `let` binder, a record name and its field, an enum member, a type-alias name and a model selection alias (in a unit that also declares a function) each parses and checks with no `invalid_syntax` and no `unsupported_construct`; and with `profile w = "filament.value.complete/v1";`, `function f using w(x: Integer): Integer pure { x }` is admitted with its profile alias resolved to the profile `w` selects. The recognizer's unsupported-spelling class does not apply to them under `1-draft`. Lowercase `tuple`, a complete-V1 reserved word, still refuses `invalid_syntax`/`unexpected-token` as a record name. | Test (TC-113) |
 
 ## Dependencies
 
 [FR-002](FR-002-parse-native-units.md) owns the existing syntax path;
 [FR-001](FR-001-read-exact-source.md) owns exact source intake.
-[Compiler #35](https://github.com/agent-ix/quire-spec-language/issues/35) owns this
+[Compiler #35](https://github.com/agent-ix/filament-spec-language/issues/35) owns this
 L2 implementation slice. Predicate evaluation and family execution remain their
 existing roadmap tickets; this requirement does not claim them from parsing.

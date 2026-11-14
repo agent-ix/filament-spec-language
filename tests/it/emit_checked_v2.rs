@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `emit_checked_v2` runnable producer: it emits the bytes the spine's
 //! producer emits for a source, those bytes read back through Contract IR's
-//! strict checked-package v2 reader (the reader QSL's I2 read delegates to),
+//! strict checked-package v2 reader (the reader FSL's I2 read delegates to),
 //! and a source the producer refuses exits nonzero with a diagnostic. Every
 //! expectation is derived from the producer or the reader; no digest or byte
 //! is frozen.
@@ -9,15 +9,15 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use ix_trace_rs::trace;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::DependencyInput;
-use quire_contract_model::{
+use filament_contract_model::{
     ApplicationOperator, CheckedNodeId, CheckedOccurrenceRole, CheckedPackageEvidence,
     CheckedPackageReadLimits, CheckedPackageSidecarsRef, CheckedPackageV2,
     CheckedPackageV2ReadResult, CheckedSemanticNodeV2, CheckedTerm,
 };
-use quire_spec_language::emit_checked_v2::{emit, run, Error, Request};
+use filament_spec_language::emit_checked_v2::{emit, run, Error, Request};
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::DependencyInput;
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 fn args(items: &[&Path]) -> Vec<OsString> {
@@ -53,13 +53,13 @@ fn spine_model_source(directory: &Path) -> PathBuf {
 /// IR's strict read of `bytes`, supplied `documents` as domain evidence.
 pub(crate) fn read_back(bytes: &[u8], documents: &[&[u8]]) -> CheckedPackageV2 {
     let wire: Value = serde_json::from_slice(bytes).expect("the output is JSON");
-    assert_eq!(wire["contract_version"], "quire.checked-package/v2");
+    assert_eq!(wire["contract_version"], "filament.checked-package/v2");
     let mut evidence = CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"].as_array().unwrap() {
         evidence.support_feature(feature.as_str().unwrap());
     }
     for (identity, document) in
-        qsl_semantics::model::intake::package_input(documents.iter().copied()).unwrap()
+        fsl_semantics::model::intake::package_input(documents.iter().copied()).unwrap()
     {
         evidence
             .insert_domain_package_document(identity.as_str(), document)
@@ -86,7 +86,7 @@ pub(crate) fn producer_bytes(path: &Path, source: &str, documents: &[&[u8]]) -> 
         SourceIdentity::new("local", format!("source:{}", path.display())),
         &path.display().to_string(),
         source.as_bytes(),
-        &qsl_semantics::model::intake::package_input(documents.iter().copied()).unwrap(),
+        &fsl_semantics::model::intake::package_input(documents.iter().copied()).unwrap(),
         &DependencyInput::default(),
     )
     .expect("the producer emits")
@@ -135,7 +135,7 @@ fn switch_source() -> String {
     std::fs::read_to_string("examples/switch-transition/switch.native").unwrap()
 }
 
-/// The QSL-owned Boolean Switch pair (`examples/switch-transition/`): the
+/// The FSL-owned Boolean Switch pair (`examples/switch-transition/`): the
 /// derived Boolean model-field transition (FR-105-AC-13) is emitted from the
 /// checked-in source and domain model, and the package reads back admitted
 /// through IR's strict reader. The producer's `state_transition` node is found
@@ -196,14 +196,14 @@ fn parameter_name(node: &CheckedSemanticNodeV2) -> String {
         .expect("a parameter names itself")
 }
 
-/// IR FR-067-AC-7, QSL-authored half, composed from the QSL side: the emitted
+/// IR FR-067-AC-7, FSL-authored half, composed from the FSL side: the emitted
 /// Switch package is read through IR's public strict reader and its typed
 /// `state_transition` application is asserted, never the wire JSON. The
 /// expectations come from the model file (the `Switch` type, its Boolean `on`
 /// field and Boolean `set(flag)` operation) and from the rendered source (the
 /// `post` clause body `self.on` and its byte region); no node id, digest or
-/// count is frozen. QSL reads IR only through `quire-contract-model`'s public
-/// reader, so there is no IR to QSL dependency.
+/// count is frozen. FSL reads IR only through `filament-contract-model`'s public
+/// reader, so there is no IR to FSL dependency.
 #[trace("TC-1271", "FR-105-AC-13")]
 #[test]
 fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() {
@@ -226,12 +226,12 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
         .iter()
         .find(|field| field["name"] == "on")
         .expect("the Switch has an `on` field");
-    assert_eq!(field["typeRef"], "ix://quire/native/Boolean");
+    assert_eq!(field["typeRef"], "ix://filament/native/Boolean");
     let operation = &switch["operations"][0];
     assert_eq!(operation["name"], "set");
     let params = operation["params"].as_array().unwrap();
     assert_eq!(params.len(), 1, "one ordered Boolean input");
-    assert_eq!(params[0]["typeRef"], "ix://quire/native/Boolean");
+    assert_eq!(params[0]["typeRef"], "ix://filament/native/Boolean");
 
     let transitions: Vec<_> = package
         .resolved_graph()
@@ -311,7 +311,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     assert!(
         matches!(
             &owner.owner,
-            Some(quire_contract_model::CheckedNodeOwner::Model { node, .. })
+            Some(filament_contract_model::CheckedNodeOwner::Model { node, .. })
                 if Some(&**node) == switch["identity"].as_str()
         ),
         "the subject's field belongs to the Switch: {:?}",
@@ -361,7 +361,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     };
     assert_eq!(
         operation.state_clause_kind().expect("admitted views"),
-        Some(quire_contract_model::StateClauseKind::Postcondition)
+        Some(filament_contract_model::StateClauseKind::Postcondition)
     );
 
     // The claim occurrence, and the source region it points at.
@@ -420,7 +420,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
 /// The package re-encoded by IR's public typed writer.
 fn encode(read: &CheckedPackageV2) -> Vec<u8> {
     let operation_effects = read.operation_effects().map(|rows| {
-        rows.map(|row| quire_contract_model::CheckedOperationEffectRow {
+        rows.map(|row| filament_contract_model::CheckedOperationEffectRow {
             document: row.document().into(),
             declaring: row.declaring().clone(),
             operation: row.operation().into(),
@@ -432,17 +432,17 @@ fn encode(read: &CheckedPackageV2) -> Vec<u8> {
     let schedulability_claims = read
         .schedulability_claims()
         .map(
-            |claim| quire_contract_model::CheckedSchedulabilityClaimRow {
+            |claim| filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: claim.declaration().clone(),
                 occurrence: claim.occurrence().ordinal,
             },
         )
         .collect::<Vec<_>>();
-    quire_contract_model::encode_checked_package_v2(
+    filament_contract_model::encode_checked_package_v2(
         read.name(),
         read.lock(),
         read.graph(),
-        quire_contract_model::CheckedPackageSourceCorrespondenceRef {
+        filament_contract_model::CheckedPackageSourceCorrespondenceRef {
             source_map: read.source_map(),
             refinement_step_rows: read.refinement_step_rows(),
         },
@@ -451,6 +451,7 @@ fn encode(read: &CheckedPackageV2) -> Vec<u8> {
             temporal_bindings: None,
             temporal_clause_names: None,
             operation_effects: operation_effects.as_deref(),
+            operation_bodies: None,
             schedulability_claims: (!schedulability_claims.is_empty())
                 .then_some(schedulability_claims.as_slice()),
         },
@@ -542,7 +543,7 @@ fn a_malformed_switch_transition_is_refused_not_read_as_a_generic_term() {
             evidence.support_feature(feature.as_str().unwrap());
         }
         for (identity, document) in
-            qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap()
+            fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap()
         {
             evidence
                 .insert_domain_package_document(identity.as_str(), document)
@@ -627,7 +628,7 @@ fn a_refused_source_writes_nothing_and_exits_nonzero() {
 /// the file, exit 20, never truncated.
 #[test]
 fn the_size_ceiling_is_exact_and_over_cap_inputs_refuse_explicitly() {
-    use qsl_foundation::source::MAX_SOURCE_BYTES;
+    use fsl_foundation::source::MAX_SOURCE_BYTES;
     let directory = tempfile::tempdir().unwrap();
     let mut text = std::fs::read_to_string("tests/fixtures/spine-compile.native").unwrap();
     assert!(text.len() < MAX_SOURCE_BYTES);
@@ -808,7 +809,7 @@ fn several_accepted_execution_points_each_reach_their_clause() {
 /// (exit 20), never truncated.
 #[test]
 fn an_over_cap_points_file_is_refused_explicitly() {
-    use qsl_foundation::source::MAX_SOURCE_BYTES;
+    use fsl_foundation::source::MAX_SOURCE_BYTES;
     let directory = tempfile::tempdir().unwrap();
     let points = directory.path().join("big-points.json");
     std::fs::write(&points, vec![b' '; MAX_SOURCE_BYTES + 1]).unwrap();
@@ -829,7 +830,7 @@ fn an_over_cap_points_file_is_refused_explicitly() {
     assert!(stdout.is_empty());
 }
 
-/// FR-058-AC-1: the QSL-owned `adjust` operation of the switch example
+/// FR-058-AC-1: the FSL-owned `adjust` operation of the switch example
 /// carries a precondition `P1` and a postcondition `Q2`; accepted execution
 /// points bind each to `adjust`, the emitted package reads back, and the
 /// state clause nodes carry exactly those two points.
@@ -958,8 +959,8 @@ fn a_clock_selection_by_clause_name_converts_a_duration_window_to_the_clock_unit
     std::fs::write(
         &source,
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
-         profile t = \"quire.temporal.timestamped-event.finite-window/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          model M = \"acme/orders\";\n\
          record Sample { v: Int[0, 9]; }\n\
          temporal Window using t over (e: Sample) clock \"ms\" on origin \
@@ -984,7 +985,7 @@ fn a_clock_selection_by_clause_name_converts_a_duration_window_to_the_clock_unit
     let nodes = wire["semantic_graph"]["nodes"].as_array().expect("nodes");
     let [aggregate] = nodes
         .iter()
-        .filter(|node| node["body"]["operation"]["identity"] == "quire.op.temporal.aggregate")
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.temporal.aggregate")
         .collect::<Vec<_>>()[..]
     else {
         panic!("one aggregate node");

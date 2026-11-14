@@ -4,13 +4,13 @@ title: "Bound value checking work"
 type: NFR
 quality_attribute: performance_efficiency
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: constrains
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: constrains
-  - target: ix://agent-ix/quire-spec-language/NFR-001
+  - target: ix://agent-ix/filament-spec-language/NFR-001
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
 ---
 # NFR-011: Bound value checking work
@@ -21,7 +21,7 @@ If the next checking charge would exceed a selected checking ceiling, then the
 checker shall stop with a stage limit, reported as `stage_limit_exceeded`
 with the ceiling's kind and its selected bound, without performing that
 charge. The ceilings are stage limits, not a caller work budget
-(`quire.native.diagnostics/v1` `stage_limit_exceeded` row; [FR-096](../functional/FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md)).
+(`filament.native.diagnostics/v1` `stage_limit_exceeded` row; [FR-096](../functional/FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md)).
 
 ## Scope
 
@@ -129,7 +129,7 @@ The enforced bound is on counts: at most 100000 leaves, and at most
 16777216 key bytes across all of them. These limits do not assert a peak-memory
 or wall-time value. A performance characterization compares a current-main
 run with a candidate in one interleaved session as specified by
-`qsl-bench/BENCHMARKING.md`; no recorded measurement is a threshold or input
+`fsl-bench/BENCHMARKING.md`; no recorded measurement is a threshold or input
 to this requirement.
 
 ## Verification

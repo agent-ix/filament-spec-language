@@ -3,9 +3,9 @@ id: TC-1166
 title: "Every exact product build result settles by FR-203's table"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-203
+  - target: ix://agent-ix/filament-spec-language/FR-203
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-192
+  - target: ix://agent-ix/filament-spec-language/FR-192
     type: verifies
 ---
 # TC-1166: Every exact product build result settles by FR-203's table

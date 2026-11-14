@@ -3,43 +3,43 @@ id: FR-331
 title: "Replay a temporal counterexample over an observed trace"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: depends_on
 ---
 # FR-331: Replay a temporal counterexample over an observed trace
 
 ## Description
 
-The layer-6 replay facade `qsl_replay::replay` (FR-098) SHALL dispatch an
+The layer-6 replay facade `fsl_replay::replay` (FR-098) SHALL dispatch an
 observed `WitnessEnvelope<TemporalCounterexample>` and its already-recompiled
 checked package to this replay path: it resolves the clause, reconstructs the
 trace, and re-evaluates the formula at
 the packet's `trace_position` with the TemporalTrace evaluator (ADR-014 §10
 scenario 5). It settles an FR-072 replay result. A counterexample over a
 model subject replays through `replay_model_trace` (FR-128); both share the
-payload type and its evaluation. The payload is QSpec FR-364's
+payload type and its evaluation. The payload is FSpec FR-364's
 counterexample; this requirement replays its observed arm, for a refutation
 found over a supplied trace (FR-327 to FR-329).
 
@@ -59,7 +59,7 @@ formula is false on it.
   `{"reference":{"population":P,"key":K}}` that binds the recompiled
   clause's `over` parameter in the first observed document.
 - A `WitnessEnvelope<TemporalCounterexample>` (FR-070) whose payload is
-  QSpec FR-364's counterexample on its observed arm, read by FR-364's
+  FSpec FR-364's counterexample on its observed arm, read by FR-364's
   member names: `trace: "observed"`, `kind` (formula or the
   undefined-evaluation envelope), `initial_state: null`, `prefix` and
   `loop` (steps `{document}`, each an observed document's
@@ -85,14 +85,14 @@ formula is false on it.
   refuse an absent object as `invalid_runtime_input`/`wrong-role-mapping`.
 - A payload whose `trace` is `"model"` SHALL refuse
   `invalid_runtime_input`/`invalid-value`; it replays through FR-128.
-- When the clause is a liveness clause, which only a lasso refutes (QSpec
+- When the clause is a liveness clause, which only a lasso refutes (FSpec
   FR-364's Liveness shape), and the packet's `loop` is empty, the facade SHALL
   refuse `invalid_runtime_input`/`invalid-value`.
 - When the decoded `trace_position` lies outside the represented trace, the
   facade SHALL refuse `invalid_runtime_input`/`invalid-value`.
 - A packet whose clause is refuted by a finite prefix (a safety or bounded
   clause, or an undefined-evaluation envelope) spells it with an empty `loop`,
-  as FR-330 and QSpec FR-364 do, and the facade SHALL admit it.
+  as FR-330 and FSpec FR-364 do, and the facade SHALL admit it.
 - The facade SHALL admit each observed document by FR-106 and re-evaluate
   the formula over the reconstructed trace: by FR-327 under a bounded
   profile, by FR-328 for an infinite-trace prefix with an empty loop, and by
@@ -101,7 +101,7 @@ formula is false on it.
   `ReplayRefusal::MissingFairnessPremise{constraint}`, naming the first
   constraint of the checked fairness set, with catalog code
   `unsupported_projection`/`missing-fairness-premise`, O-16 unsupported,
-  and no result: an observed trace carries no enabledness (QSpec FR-362;
+  and no result: an observed trace carries no enabledness (FSpec FR-362;
   FR-328, FR-329).
 - When the evaluation is `Completed(false)` at the packet's
   `trace_position`, the facade SHALL settle
@@ -118,7 +118,7 @@ formula is false on it.
   actual position, locus and cause, including when only the locus or only the
   cause differs at the same position.
 - An observed temporal `UndefinedEvaluation` packet names a `holds` atom as its
-  locus (QSpec FR-364). If replay of a guarded `on each` clause is undefined
+  locus (FSpec FR-364). If replay of a guarded `on each` clause is undefined
   while evaluating its activation guard, that result names the activation
   (FR-125), not a `holds` atom. Such a packet SHALL settle `inconclusive`,
   `ReplayParity`, retaining the typed undefined evaluation. The packet cannot
@@ -155,7 +155,7 @@ formula is false on it.
 ## References
 
 - Linear QSL-384 (spec ticket); QSL-43 (implementation).
-- QSpec FR-364 (counterexample replay and wire): Linear STD-131 (QS-8).
-- QSpec FR-364's observed arm (the wire form for a counterexample over a
+- FSpec FR-364 (counterexample replay and wire): Linear STD-131 (QS-8).
+- FSpec FR-364's observed arm (the wire form for a counterexample over a
   supplied trace; Linear STD-147).
-- QSpec FR-362 (the missing fairness premise).
+- FSpec FR-362 (the missing fairness premise).

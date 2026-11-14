@@ -3,30 +3,30 @@ id: FR-135
 title: "Check a refinement declaration's subjects and state mapping at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-015
+  - target: ix://agent-ix/filament-spec-language/ADR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
 ---
 # FR-135: Check a refinement declaration's subjects and state mapping at S3
 
 ## Description
 
-QSL's layer-3 `check` module SHALL check a refinement declaration as a
+FSL's layer-3 `check` module SHALL check a refinement declaration as a
 `Relation` family declaration (ADR-012 §3, ADR-017 AR-1) and produce a
 `CheckedRefinement` (ADR-020 RM-1 to RM-4). This requirement covers the
 header, the population map and the object map. Step rows are FR-136,
@@ -37,7 +37,7 @@ FR-139. The declaration's surface spelling is the shared grammar's
 ## Use case
 
 A specification author writes a refinement between an abstract model and a
-concrete model. QSL tells them, at compile time and at the source span,
+concrete model. FSL tells them, at compile time and at the source span,
 which abstract population or field has no mapping, which has two, and
 which mapping expression has the wrong type, before any model check runs.
 
@@ -99,7 +99,7 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
   `missing_declaration`/`missing-name` at the alias's span.
 - The checker SHALL refuse a refinement whose unit does not select the
   infinite-trace profile with `unknown_profile`/`wrong-selection-role` at
-  the alias, as QSpec FR-375 states.
+  the alias, as FSpec FR-375 states.
 - The abstract subject's contract clauses SHALL be read from the declaring
   package when the abstract alias is local, and from the dependency's
   checked package otherwise.
@@ -110,7 +110,7 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
   version for each side in the checked refinement binding. It SHALL NOT choose
   an object type or state machine as a representative and SHALL NOT require a
   new FCD declaration or model-selection field.
-- The header's abstract side is QSpec FR-375's `abstract-subject` production,
+- The header's abstract side is FSpec FR-375's `abstract-subject` production,
   `ident [ '::' member-name ]`: an alias alone selects a model subject and
   `abstract <A>::<protocol>` a protocol subject, which FR-147 resolves. The
   header's concrete side is one model alias and never names a protocol: the
@@ -182,21 +182,21 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
   relationship with `unsupported_construct`/`declaration-form` at the
   abstract alias of the declaration header, once per refinement, naming the
   form, the refinement and the exact selected profile identity, whatever the
-  support set holds, and SHALL produce no `CheckedRefinement` (QSpec
+  support set holds, and SHALL produce no `CheckedRefinement` (FSpec
   FR-375). No row maps a relationship (ADR-020 RM-2 to RM-4), so its links
   could never hold in a mapped state; this is a gap in the language, not a
   feature this build has left unbuilt.
 - The checker SHALL admit each field row, step-row argument and history update
   under the layers the governing infinite-trace profile requires for a
-  refinement's rows (`quire.value.complete/v1` and `quire.model.complete/v1`
+  refinement's rows (`filament.value.complete/v1` and `filament.model.complete/v1`
   with their `requires` closure), whatever the unit's other declarations
-  select, and under no other layer (QSpec FR-375 "Row layers"). A form outside
+  select, and under no other layer (FSpec FR-375 "Row layers"). A form outside
   those layers SHALL refuse `unsupported_construct`/`expression-form` at its
   first token, naming the layer that admits it.
 - The checker SHALL type `Some(e)` as `Option<E>` for `e` of type `E`, and
   `none` by the abstract field's type or the other arm of an enclosing `if`;
   a field declared `?` takes a row of type `Option<T>` and a field declared
-  `Option<T>` takes its option value unchanged (QSpec FR-375 "Option rows").
+  `Option<T>` takes its option value unchanged (FSpec FR-375 "Option rows").
 - The checker SHALL check `e`'s type against the abstract field's declared
   type, after reference lifting, with `TypeEnvironment::conforms` (ADR-016
   SC-2), and SHALL refuse `ill_typed`/`type-mismatch` at `e`'s span when it
@@ -206,11 +206,11 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
 
 ### Refinement features the build does not check
 
-QSpec FR-375 and the FR-136 to FR-149 family specify more refinement forms
-than a build may yet check. QSpec FR-375 owns the closed set of feature names
+FSpec FR-375 and the FR-136 to FR-149 family specify more refinement forms
+than a build may yet check. FSpec FR-375 owns the closed set of feature names
 and the not-yet-built refusal; this section states how S3 applies them. The
 build holds a closed **support set** of refinement feature names,
-a build capability constant and not a request or test parameter. QSpec
+a build capability constant and not a request or test parameter. FSpec
 FR-375's closed set holds four feature names, which it names: `history-row` (FR-138), spelled by a `history` row; `protocol-abstract-side` (FR-147), spelled by `abstract <A>::<protocol>`;
 `refinement-internal-list` (FR-147), spelled by a non-empty resolved internal
 list for the refinement, which is located at the first token of the name after
@@ -219,7 +219,7 @@ field row whose type nests a reference (below), at the row's expression. The lis
 non-empty resolved list reaches this refusal (FR-147).
 
 The internal list is the compilation's optional `refinement_internals`
-input, which QSpec FR-375 names and QSL's compile input carries (FR-099): one
+input, which FSpec FR-375 names and FSL's compile input carries (FR-099): one
 JSON value for the unit and one for each supplied library, each naming only
 refinements declared in its own source. Its feature is
 `refinement-internal-list`. The input is handed to S3 as supplied, and S3
@@ -233,10 +233,10 @@ subject once the feature is built.
 - A declaration that uses a feature outside the support set SHALL refuse
   `unsupported_construct`/`not-yet-implemented`, once for each row or refinement that uses
   the feature, and SHALL produce no `CheckedRefinement`. This is the refusal
-  FR-341-AC-5 classifies `unsupported` (a QSL implementation gap).
+  FR-341-AC-5 classifies `unsupported` (an FSL implementation gap).
 - The refusal's span is the span of the `<protocol>` name for a protocol
   abstract side. It names the feature, the refinement's name and the exact
-  selected profile identity (QSpec FR-272's payload for the code), and a
+  selected profile identity (FSpec FR-272's payload for the code), and a
   `subject` member when the feature is refused for one kind of type
   (`history-row`, below). The payload of `protocol-abstract-side`,
   `refinement-internal-list` and `nested-reference-row` has no `subject`
@@ -255,7 +255,7 @@ subject once the feature is built.
   `unsupported_construct`/`not-yet-implemented` naming `history-row`, at the
   span of the declared type and once for the row, with `subject` `enum` or
   `decimal` for the kind of type. The build's history key cannot yet encode such
-  a value. The values are legal history literals (QSpec FR-375-AC-9), so the
+  a value. The values are legal history literals (FSpec FR-375-AC-9), so the
   refusal marks a build limit and not an error in the source. FR-138-AC-9
   states the case.
 - A feature in the support set is checked by its own requirement.
@@ -265,14 +265,14 @@ classifies `refused`, would tell the author the unit is wrong when the build
 is incomplete. `unimplemented_capability` is not used: FR-271 defines it as
 valid complete-V1 meaning the selected producer does not implement, which
 fits, but FR-272 lists no cause for it. `not-yet-implemented` under
-`unsupported_construct` is the pair QSpec FR-375 and FR-272 name for this
+`unsupported_construct` is the pair FSpec FR-375 and FR-272 name for this
 standing.
 
 ### Package and identity
 
 - The `CheckedRefinement` SHALL enter the checked package as a node, so its
   identity enters the `package_id` and the obligation identity of every
-  item that cites it (ADR-013 O-02, O-09). Its v2 wire node is QSpec's
+  item that cites it (ADR-013 O-02, O-09). Its v2 wire node is FSpec's
   (ADR-020 QS-4).
 - Two refinement declarations that differ in any row SHALL have different
   node identities.
@@ -288,9 +288,9 @@ standing.
 | FR-135-AC-5 | A declaration whose abstract side is a protocol (`CasTwice`, FR-147), in a build whose support set omits `protocol-abstract-side`, refuses `unsupported_construct`/`not-yet-implemented` at the span of `Twice`, naming `protocol-abstract-side`, `CasTwice` and the profile identity, with a payload that has no `subject` member, no other diagnostic about the abstract side and no `CheckedRefinement`. It classifies `unsupported` (FR-341-AC-5). `CasRefinesCounter`, which uses none of the features, checks as FR-135-AC-1 states. The vector refuses a row that uses a feature the build has not built; it does not select a support set. | Test (TC-540) |
 | FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` refuses `unsupported_construct`/`not-yet-implemented` naming `nested-reference-row` at the row's expression; a population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. | Test (TC-540) |
 | FR-135-AC-7 | `RingIsQueue` with the abstract `Queue` declaring a relationship refuses `unsupported_construct`/`declaration-form` at the abstract alias `Q` of the declaration header, once, whatever the support set holds, and no `CheckedRefinement`. | Test (TC-540) |
-| FR-135-AC-8 | In a unit whose own declarations select no layer, `RingIsQueue`'s rows `s.ring = self` and `(self.head + i) mod 2` check, because they are admitted under the layers the governing infinite-trace profile requires; a Boolean field row naming a protocol declared in the unit refuses `unsupported_construct`/`expression-form` at the `protocol` token, naming the layer that admits it (`quire.protocol.complete/v1`). | Test (TC-540) |
+| FR-135-AC-8 | In a unit whose own declarations select no layer, `RingIsQueue`'s rows `s.ring = self` and `(self.head + i) mod 2` check, because they are admitted under the layers the governing infinite-trace profile requires; a Boolean field row naming a protocol declared in the unit refuses `unsupported_construct`/`expression-form` at the `protocol` token, naming the layer that admits it (`filament.protocol.complete/v1`). | Test (TC-540) |
 | FR-135-AC-9 | A refinement given a non-empty resolved internal list refuses `unsupported_construct`/`not-yet-implemented` naming `refinement-internal-list` at the first token of the name after `abstract`, once for the refinement, with no `subject` member, no `CheckedRefinement` and the classification `unsupported` (FR-341-AC-5); a list with a resolution defect reports the defect and not this pair (FR-147-AC-7, AC-11). | Test (TC-540) |
-| FR-135-AC-10 | The header `abstract Spec::Twice concrete Impl` is read as QSpec FR-375's `abstract-subject` (model alias `Spec`, protocol `Twice`), and `abstract Spec concrete Impl` as a model subject; the concrete side never names a protocol, and a refinement whose step rows name one protocol clause of `Impl` records it as `concrete_protocol`, one whose rows name none records `None` (FR-136-AC-6). | Test (TC-540) |
+| FR-135-AC-10 | The header `abstract Spec::Twice concrete Impl` is read as FSpec FR-375's `abstract-subject` (model alias `Spec`, protocol `Twice`), and `abstract Spec concrete Impl` as a model subject; the concrete side never names a protocol, and a refinement whose step rows name one protocol clause of `Impl` records it as `concrete_protocol`, one whose rows name none records `None` (FR-136-AC-6). | Test (TC-540) |
 | FR-135-AC-11 | A mapped `state_machine` declaration has one `object` row whose target and source are both state-machine declarations; its declared fields check through that row without a population row. Omitting the row refuses `missing_declaration`/`missing-name`; duplicating it refuses `invalid_model_binding`/`conflicting-binding`; pairing it with an object type refuses `invalid_model_binding`/`malformed-declaration`. `CasRefinesCounter` over the object-type-only `Spec` and `Impl` models checks with its existing population and object rows, with no `state_machine` declaration or synthetic subject. | Test (TC-540) |
 | FR-135-AC-12 | For each selected abstract and concrete model package, the checked refinement binding retains that selection's canonical identity and version; it does not use the source alias or a declaration as a representative. A model-only header binds to the whole-model identity; protocol refinement retains the same abstract model identity plus its exact protocol-clause key. Zero, one and multiple object types or state machines are all valid cardinalities for the same binding rule. The binding is derived from existing model selection state and adds no FCD field. | Test (TC-540) |
 
@@ -308,11 +308,11 @@ standing.
 
 ## References
 
-- The QSpec half (grammar, semantics, wire node): QSpec FR-375 (Linear STD-133).
-  The `history-row` refusal departs from QSpec in three ways, which QSpec's
+- The FSpec half (grammar, semantics, wire node): FSpec FR-375 (Linear STD-133).
+  The `history-row` refusal departs from FSpec in three ways, which FSpec's
   wording should be aligned to: FR-375 places it at the `history` keyword and
   here it is at the declared type; FR-375 holds `history-row` for every history
   row and FR-375-AC-9 admits enum-member literals, while this build holds it
-  for the types its history key encodes; and QSpec FR-272's `not-yet-implemented`
+  for the types its history key encodes; and FSpec FR-272's `not-yet-implemented`
   payload names the feature, the declaration and the profile only, where this
   build adds the `subject` member.

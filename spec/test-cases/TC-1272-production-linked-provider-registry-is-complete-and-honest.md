@@ -3,7 +3,7 @@ id: TC-1272
 title: "The production provider snapshot exposes only registered linked engines"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-489
+  - target: ix://agent-ix/filament-spec-language/FR-489
     type: verifies
 ---
 # TC-1272: The production provider snapshot exposes only registered linked engines
@@ -42,7 +42,7 @@ assertion verifies.
   EN-1 and EN-6 `temporal-satisfaction` descriptors, the EN-4 and EN-5
   `probabilistic-satisfaction` descriptors, the `value-checker` descriptor,
   the `contract-checker` descriptor and the `protocol-analysis` descriptor
-  owned by `Engines::qsl()`. For each
+  owned by `Engines::fsl()`. For each
   descriptor, the snapshot retains its exact `BackendId`, origin and
   capability set. Candidate queries yield EN-1 and EN-6 only for
   `temporal-satisfaction` and EN-4 only for `probabilistic-satisfaction` when

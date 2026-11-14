@@ -3,23 +3,23 @@ id: FR-096
 title: "S-5b: stage limits, refusal records and the I2 reader name their locus"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-exact/FR-369
+  - target: ix://agent-ix/filament-exact/FR-369
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/US-001
+  - target: ix://agent-ix/filament-spec-language/US-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/US-013
+  - target: ix://agent-ix/filament-spec-language/US-013
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-001
+  - target: ix://agent-ix/filament-spec-language/FR-001
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-095
+  - target: ix://agent-ix/filament-spec-language/FR-095
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: traces_to
 ---
 # FR-096: S-5b: stage limits, refusal records and the I2 reader name their locus
@@ -28,24 +28,24 @@ relationships:
 
 ADR-013 §7 slice **S-5b** has no owning FR before this one.
 It carries T-4's `LimitExceeded` and its limit-kind enum, O-17's
-`RefusalRecord`, and O-22's QSL readers, each naming its position by T-5's
+`RefusalRecord`, and O-22's FSL readers, each naming its position by T-5's
 `Locus`. This requirement states where each producer's locus comes from,
 which producers cannot know one and why, and how a refusal record gets the
 structured fields the catalog requires.
 
-The types are layer F's, in `qsl_foundation::diagnostic` (ADR-011 §6.1).
+The types are layer F's, in `fsl_foundation::diagnostic` (ADR-011 §6.1).
 
 The key table has no row for the other `ModelQueryRefusal` causes
 (including `type-mismatch`; the walk ceilings and the intake byte limit have
-the rows below) or for `qsl-route`'s `BoundRefusal`; they build
+the rows below) or for `fsl-route`'s `BoundRefusal`; they build
 no record.
 
 ## Inputs
 
 - ADR-013 T-4, T-5, O-12, O-16, O-17, O-18 and O-22.
-- `quire.native.diagnostics/v1`
-  (`ix://agent-ix/quire-specification`,
-  `proposals/quire-v1/definitions/native-diagnostics.md`, cited by
+- `filament.native.diagnostics/v1`
+  (`ix://agent-ix/filament-specification`,
+  `proposals/filament-v1/definitions/native-diagnostics.md`, cited by
   reference): the common structured context ("original source region and
   typed input location where known"; "Unavailable context is explicitly
   unavailable; byte zero, an empty path or a name-search match cannot
@@ -57,10 +57,10 @@ no record.
   `integer_out_of_domain`, `rational_out_of_domain`, `ieee_not_exact`,
   `ieee_nan_payload_not_representable`, `ieee_rational_out_of_domain`); and
   its payload value spellings.
-- QSpec FR-044 (a bounded integer or `Rational[..]` arithmetic result's
+- FSpec FR-044 (a bounded integer or `Rational[..]` arithmetic result's
   membership at evaluation), FR-140, FR-141, FR-142 (an integer-target unit
   conversion), FR-145 (`sum` as a fold whose every running total lies in
-  `N`'s domain), FR-147, FR-148 and `quire.value.accounting/v1`.
+  `N`'s domain), FR-147, FR-148 and `filament.value.accounting/v1`.
 - [FR-001](FR-001-read-exact-source.md): the unit's `RawSourceRef`.
 - [FR-091](FR-091-produce-value-forms-and-assemble-package-declarations.md)
   AC-1 and AC-10: every `Value` parsed form carries its declaration's span,
@@ -73,10 +73,10 @@ no record.
 - `LimitKind` and `LimitExceeded` in F `diagnostic`.
 - `RefusalRecord` in F `diagnostic`, and a second `CatalogCoded` method,
   `catalog_fields`.
-- The resolution of a check-stage `quire_semantic_value::location::ExpressionLocation` to a `SourceRegion`.
+- The resolution of a check-stage `filament_semantic_value::location::ExpressionLocation` to a `SourceRegion`.
 - The I2 reader's refusals and limits, each with its locus.
 - The kernel value refusals' target domains and widths, carried in their
-  `quire-exact` variants, and the kernel undefined reason
+  `filament-exact` variants, and the kernel undefined reason
   `Undefined::SumOutOfDomain`.
 
 ## Behavior
@@ -89,7 +89,7 @@ unit's `RawSourceRef` (FR-001), its source owner is that reference's
 `SourceOwner{authority, identity}`, and every location and span it gives
 names that unit's source.
 
-A `quire_semantic_value::location::ExpressionLocation` names a declaration origin and a child-index path. The
+A `filament_semantic_value::location::ExpressionLocation` names a declaration origin and a child-index path. The
 path SHALL be a parent chain shared with the location it was taken from, so
 taking a child costs the same at any depth and a location at depth `d` holds
 no copy of the `d` steps above it (ADR-030 D-1, FR-258). The index sequence is
@@ -144,7 +144,7 @@ embedded in:
    spans more than one document region (a layout deletion the C-21 map
    admits splits it). No single region of the document names it.
 
-The checked package SHALL resolve a `quire_semantic_value::location::ExpressionLocation` of its own
+The checked package SHALL resolve a `filament_semantic_value::location::ExpressionLocation` of its own
 declarations by the same rule, so a consumer holding an S6a `Evaluation`
 resolves `Evaluation.location` without the forms.
 
@@ -180,10 +180,10 @@ by the same rule, but is reported directly as a `CheckRefusal` with code
 `stage_limit_exceeded`, carrying the locus this FR gives its row; it is
 never `resource_exhausted`. A ceiling of an
 accounting-contract limits type (`ModelNormalizationLimitsV1`,
-`PopulationAdmissionLimitsV1`, quire-specification FR-150) is the caller's
+`PopulationAdmissionLimitsV1`, filament-specification FR-150) is the caller's
 meter wherever it is read and keeps `resource_exhausted`
 ([ADR-014](../decisions/ADR-014-temporal-trace-and-boundedness-architecture.md)
-§1). The `quire.native.diagnostics/v1`
+§1). The `filament.native.diagnostics/v1`
 `stage_limit_exceeded` row names these surfaces,
 together with S1, `replay` and `route`, and the catalog keeps `resource_exhausted` for the caller's
 work-budget meter, adding that a maximum fixed by the language is not a caller work
@@ -206,10 +206,10 @@ Each producer's locus is the position at which its charge failed:
 | Producer | Limits | Locus |
 | --- | --- | --- |
 | S3, a family `check`, for a declaration as a whole | the declaration's preimage input bytes and work charge | `Locus::Region` over that declaration's span |
-| S3, `Typer` and lowering, under `CheckingLimits` | the package-wide node count (NFR-011) | `Locus::Region` over the node whose entry failed the charge, resolved from its `quire_semantic_value::location::ExpressionLocation`. For the package-wide node count this is the node of whichever declaration was being checked when the running count passed the bound |
-| S3, `Typer`, under the assembly limits' decimal literal limits carried onto the package declarations | the written scale of one `decimal(c, s)` literal (`s3.decimal_literal_scale`) and the running total over the checked package's literals (`s3.decimal_literal_scale_total`), both limit kind work budget (FR-093 "Decimal constructors") | `Locus::Region` over the literal whose scale failed the charge, resolved from its `quire_semantic_value::location::ExpressionLocation` |
+| S3, `Typer` and lowering, under `CheckingLimits` | the package-wide node count (NFR-011) | `Locus::Region` over the node whose entry failed the charge, resolved from its `filament_semantic_value::location::ExpressionLocation`. For the package-wide node count this is the node of whichever declaration was being checked when the running count passed the bound |
+| S3, `Typer`, under the assembly limits' decimal literal limits carried onto the package declarations | the written scale of one `decimal(c, s)` literal (`s3.decimal_literal_scale`) and the running total over the checked package's literals (`s3.decimal_literal_scale_total`), both limit kind work budget (FR-093 "Decimal constructors") | `Locus::Region` over the literal whose scale failed the charge, resolved from its `filament_semantic_value::location::ExpressionLocation` |
 | S3, a `choice`'s partition proof (FR-218), under `CheckingLimits` | the shared work meter, one unit per valuation, charged after the declaration's precheck and before its lowering | `Locus::Region` over the `choice`'s span |
-| S3, lowering's own work charge, under `CheckingLimits` (NFR-011) | the shared work meter lowering charges per node past a declaration's own precheck | `Locus::Region` over the node whose lowering charge crossed the bound, resolved from its `quire_semantic_value::location::ExpressionLocation` |
+| S3, lowering's own work charge, under `CheckingLimits` (NFR-011) | the shared work meter lowering charges per node past a declaration's own precheck | `Locus::Region` over the node whose lowering charge crossed the bound, resolved from its `filament_semantic_value::location::ExpressionLocation` |
 | I2 reader, IR's reported limits | IR's `Bytes`, `Nodes`, `Edges`, `Occurrences`, `Diagnostics` and `Work` as input bytes, node count, edge count, occurrence count, diagnostic count and work budget | `Locus::Artifact` with the RFC 6901 pointer IR reports for the value at which the charge failed |
 
 `LimitExceeded`'s locus SHALL be absent in exactly these cases:
@@ -241,7 +241,7 @@ its causes in the cause's own variant. `catalog_fields` reads them from the
 variant and never from a message.
 
 The keys of the family and kernel causes S6a raises are these. Each key
-names the catalog payload item beside it (`quire.native.diagnostics/v1`):
+names the catalog payload item beside it (`filament.native.diagnostics/v1`):
 
 | Cause type | Code / cause | Key: catalog payload item |
 | --- | --- | --- |
@@ -263,7 +263,7 @@ names the catalog payload item beside it (`quire.native.diagnostics/v1`):
 | kernel `Refusal::TextLengthOutOfDomain` | `text_length_out_of_domain` / `outside-domain` | `expected`: the declared `Text[min, max; profile]` bounds and profile |
 | kernel `Refusal::IntegerOutOfDomain` | `integer_out_of_domain` / `outside-domain` | `expected`: the target `Int[lo, hi]` domain |
 | kernel `Refusal::RationalOutOfDomain` | `rational_out_of_domain` / `outside-domain` | `expected`: the `Rational[lo, hi; dmin, dmax]` result domain |
-| kernel `Refusal::IeeeNotExact` | `ieee_not_exact` / `rounding-required` | `expected`: the target IEEE width; `flags`: the would-be flag set, the flags the same operation returns under `nearest-even` (QSpec FR-148) |
+| kernel `Refusal::IeeeNotExact` | `ieee_not_exact` / `rounding-required` | `expected`: the target IEEE width; `flags`: the would-be flag set, the flags the same operation returns under `nearest-even` (FSpec FR-148) |
 | kernel `Refusal::IeeeNanPayloadNotRepresentable` | `ieee_nan_payload_not_representable` / `payload-exceeds-target` | `expected`: the explicit width conversion's target IEEE width; `actual`: its source IEEE width |
 | kernel `Refusal::IeeeRationalOutOfDomain` | `ieee_rational_out_of_domain` / `outside-domain` | `expected`: the grammar-named `Rational[lo, hi; dmin, dmax]` conversion target |
 
@@ -281,7 +281,7 @@ one exact ASCII string, spelled as the catalog spells it:
 
 - A domain is its type name and bounds: `Int[lo, hi]`,
   `Decimal[lo, hi; smin, smax]`, `Rational[lo, hi; dmin, dmax]` or
-  `Text[min, max; profile]`. Each bound is written as QSpec FR-038 writes an
+  `Text[min, max; profile]`. Each bound is written as FSpec FR-038 writes an
   integer: a leading `-` when negative, and no other sign, leading zero or
   exponent. Bounds within a group are separated by `, ` and groups by `; `.
   The text profile is its grammar spelling. No rounding mode is written.
@@ -290,7 +290,7 @@ one exact ASCII string, spelled as the catalog spells it:
   `divide_by_zero`, `overflow`, `underflow`, `inexact`, joined by `,` with
   no space.
 
-Each of these ten `quire-exact` `Refusal` variants SHALL carry, in the
+Each of these ten `filament-exact` `Refusal` variants SHALL carry, in the
 variant, the target domain or IEEE width its `expected` field renders from,
 as `ForeignReference` carries its two universes. `IeeeNotExact`
 SHALL also carry the would-be flags, and `IeeeNanPayloadNotRepresentable`
@@ -310,10 +310,10 @@ it, and `kernel_refusal_record` builds its record with them.
 ### A `sum` running total outside its domain is undefined, not refused
 
 A `sum<N>` seed or running total outside `N`'s domain is none of the ten
-refusals. QSpec FR-145 defines `sum` as a fold whose every running total
+refusals. FSpec FR-145 defines `sum` as a fold whose every running total
 lies in `N`'s domain, so a running total outside it leaves the fold with no
 value in `N`, even when a later summand would bring the total back inside
-(QSpec FR-044, FR-140, FR-145 and `quire.value.accounting/v1`).
+(FSpec FR-044, FR-140, FR-145 and `filament.value.accounting/v1`).
 
 When S6a evaluates a `sum<N>` whose seed or running total is not a member
 of `N`'s domain, it SHALL return `Outcome::Undefined` with the kernel reason
@@ -327,17 +327,17 @@ This holds whatever `N`'s numeric family is. The final total is a running
 total, so S6a makes no separate `integer_out_of_domain` decision on it.
 
 `Undefined::SumOutOfDomain` names no catalog undefined reason: the
-`quire.native.diagnostics/v1` "Undefined reasons" table admits only the
+`filament.native.diagnostics/v1` "Undefined reasons" table admits only the
 family reasons `absent-key` and `precondition-false`, so it builds no
 `UndefinedRecord`. Like the other kernel undefined reasons, it reaches the
 consumer as `FamilyOutcome::Evaluated(Outcome::Undefined(_))` with
-`Evaluation.location`. QSL's kernel reason spelling for it is
+`Evaluation.location`. FSL's kernel reason spelling for it is
 `sum-out-of-domain`, the row in
 [FR-100](FR-100-run-a-named-function-through-the-spine.md)'s kernel
 undefined-reason table, which owns the spelling (FR-100-AC-10).
 
 A linked `sum` whose prefixes are not all proved members is refused at
-checking (QSpec FR-145, `undefined_expression`/`unproved-range`), so only a
+checking (FSpec FR-145, `undefined_expression`/`unproved-range`), so only a
 `sum` checked under `CheckMode::Kernel` meets this outcome.
 
 `RefusalRecord` SHALL carry the `CatalogCode`, the O-16 category, an
@@ -350,7 +350,7 @@ At S6a, a consumer SHALL build a record as follows:
 - From `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause))`, it
   builds the record from the family cause.
 - From `FamilyOutcome::Evaluated(Outcome::Refused(refusal))`, it builds the
-  record from the kernel `Refusal` through QSL F's map of the kernel cause
+  record from the kernel `Refusal` through FSL F's map of the kernel cause
   (O-17), `kernel_refusal_record`. The map gives a record for each of the
   thirteen kernel causes in the key table, and for no other.
   A received kernel `CheckedInvariant { cause }` SHALL become an
@@ -359,24 +359,24 @@ At S6a, a consumer SHALL build a record as follows:
   category refusal. The fault SHALL retain the original typed
   `CheckedInvariantCause`, including any carried typed payload, as accessible
   fault provenance beside its stage and invariant identifier. This applies to
-  every cause admitted by the kernel type, not only causes QSL currently
+  every cause admitted by the kernel type, not only causes FSL currently
   expects to receive. The typed cause SHALL survive public-call and replay
   fault propagation unchanged; a display string, default cause or legacy unit
   variant is not a substitute. Kernel `Refusal::code()` and `Refusal::cause()`
   remain absent for this variant.
 
-  QSL's own producers instead follow [FR-090](FR-090-return-a-family-outcome-or-a-typed-family-refusal.md)'s
+  FSL's own producers instead follow [FR-090](FR-090-return-a-family-outcome-or-a-typed-family-refusal.md)'s
   classification table and carry no invented kernel provenance. The kernel's
-  [FR-369](ix://agent-ix/quire-exact/FR-369) owns its closed typed cause set;
-  these QSL producers do not extend that set.
+  [FR-369](ix://agent-ix/filament-exact/FR-369) owns its closed typed cause set;
+  these FSL producers do not extend that set.
 
   `CheckedInvariantCause::NativeIntegerCapacityBreach` is the kernel's report
   that an admitted native integer operation (Add, Subtract, Multiply or
   Negate through `evaluate_native_integer_arithmetic`) whose exact result is
   not inside the capacity interval its `NativeIntegerPlan` derived when the
-  plan was built ([FR-384](ix://agent-ix/quire-exact/FR-384)). Admission already checks the
+  plan was built ([FR-384](ix://agent-ix/filament-exact/FR-384)). Admission already checks the
   operand domains and the whole result image, so the cause names a broken
-  kernel carrier invariant, not a property of the program or its inputs. QSL
+  kernel carrier invariant, not a property of the program or its inputs. FSL
   SHALL receive it on the same route as every other cause: an `InternalFault`
   with stage `S6a`, invariant `checked-program-invariant`, catalog code
   `runtime_invariant`, cause `established-invariant-broken`, category
@@ -385,9 +385,9 @@ At S6a, a consumer SHALL build a record as follows:
   `integer_out_of_domain`: a value outside the plan's separate semantic result
   domain is the kernel's ordinary `IntegerOutOfDomain` refusal, and a
   capacity failure at plan construction or operand admission is a typed
-  `NativeIntegerAdmissionError` that never reaches S6a as a `Refusal`. QSL's
+  `NativeIntegerAdmissionError` that never reaches S6a as a `Refusal`. FSL's
   S6a evaluator evaluates integer arithmetic on the general exact route and
-  calls no native integer evaluator, so no QSL program or runtime input
+  calls no native integer evaluator, so no FSL program or runtime input
   reaches this cause.
 
 In both cases the locus is `Evaluation.location`, resolved by the checked
@@ -399,7 +399,7 @@ IR's `read_checked_package` decides the version (ADR-013 O-22 Package
 schema). When IR refuses the version, the I2 reader SHALL return
 `StageFailure::Refused` with code `unknown_wire`/`unsupported-wire`. Its
 fields are `actual`, the contract version IR read, and `expected`,
-`quire.checked-package/v2`. Its locus is `Locus::Artifact` with the pointer
+`filament.checked-package/v2`. Its locus is `Locus::Artifact` with the pointer
 `/contract_version`.
 
 When IR refuses the bytes as not the RFC 8785 bytes of the document they
@@ -424,13 +424,13 @@ name.
 | FR-096-AC-6 | A family refusal of `lookup<T>(p, r) absent refused` with no member for `r` builds a `RefusalRecord` with code `invalid_runtime_input`/`absent-key`, category refusal, fields `binding` and `key` naming the population binding and the requested key, and `Locus::Region` over the span of the `lookup` expression. An `Evaluation` whose `location` is `None` builds a record with no locus. | Test |
 | FR-096-AC-7 | For each `CatalogCoded` cause in the key table (every row but the thirteen kernel `Refusal` rows, which `kernel_refusal_record` maps and AC-8 checks), `catalog_fields()` holds exactly the keys the table lists for it. | Test |
 | FR-096-AC-8 | For each of the thirteen kernel causes in the key table, a `RefusalRecord` built from an S6a `Evaluation` whose outcome is that kernel `Refused` carries the table's code and cause, category refusal, exactly the table's field keys and the evaluation's resolved locus, and `Refusal::code()` and `Refusal::cause()` return the same code and cause. The fields are spelled exactly: `IntegerOutOfDomain` for target `Int[-5, 9]` gives `expected` `Int[-5, 9]`; `DecimalOutOfDomain` for `Decimal[-100, 100; 0, 2]` gives `expected` `Decimal[-100, 100; 0, 2]`; `RationalOutOfDomain` for `Rational[-9, 9; 1, 9]` gives `expected` `Rational[-9, 9; 1, 9]`; `TextLengthOutOfDomain` for `Text[1, 8; nfc]` gives `expected` `Text[1, 8; nfc]`; `InexactDecimal` for an integer target `Int[0, 9]` gives `expected` `Int[0, 9]`; `IeeeNotExact` for a `binary32` result whose `nearest-even` flags are inexact and overflow gives `expected` `binary32` and `flags` `overflow,inexact`; `IeeeNanPayloadNotRepresentable` for a `binary64` to `binary32` conversion gives `expected` `binary32` and `actual` `binary64`. A kernel `CheckedInvariant` builds no record. | Test |
-| FR-096-AC-9 | The I2 reader, given bytes whose `contract_version` is `quire.checked-package/v3`, returns `StageFailure::Refused` with code `unknown_wire`/`unsupported-wire`, `actual` `quire.checked-package/v3`, `expected` `quire.checked-package/v2`, and `Locus::Artifact` whose pointer is `/contract_version`. Given bytes that are not JSON, it refuses with no locus. A refusal IR reports at a value, such as a `package_id` of the wrong domain, is located at `Locus::Artifact` with the pointer of that value. | Test |
+| FR-096-AC-9 | The I2 reader, given bytes whose `contract_version` is `filament.checked-package/v3`, returns `StageFailure::Refused` with code `unknown_wire`/`unsupported-wire`, `actual` `filament.checked-package/v3`, `expected` `filament.checked-package/v2`, and `Locus::Artifact` whose pointer is `/contract_version`. Given bytes that are not JSON, it refuses with no locus. A refusal IR reports at a value, such as a `package_id` of the wrong domain, is located at `Locus::Artifact` with the pointer of that value. | Test |
 | FR-096-AC-10 | The I2 reader, given a v2 wire whose graph has more nodes than its node bound `B`, returns `StageFailure::Limit` with kind node count, bound `B`, IR's consumed counter as actual, and `Locus::Artifact` with the pointer IR reports. The same holds for IR's edge, occurrence, diagnostic and work limits, each with its own kind. Given bytes longer than its artifact byte ceiling, it returns kind input bytes with no locus. | Test |
 | FR-096-AC-11 | A function whose body is the source text `not not not true` (four expression nodes), parsed under a unit reference so its forms carry spans and checked through `ValueFunctionFamily::check` with `CheckingLimits` node limit 3, returns `StageFailure::Limit` with kind node count, bound 3, actual 4, setting `s3.nodes`, and `Locus::Region` over the span of the node whose entry failed, reported as `stage_limit_exceeded`/`node-count-exceeded`. With node limit 4 and nothing else changed, it returns no limit. The same stop inside an FR-151 synthesized function carries no locus. | Test |
 | FR-096-AC-12 | `Code::RuntimeInvariant`, the code of `InternalFault` (T-4, O-16 internal-failure category), resolves to FR-301 exit status 30 (tool failure) through its category's FR-285 exit code, and every other `Code` resolves to 20, 21 or 22. A native `run` whose evaluation refuses with `runtime_invariant` exits 30. A report holding a `runtime_invariant` diagnostic beside invalid, unsupported or incomplete ones exits 30. | Test |
 | FR-096-AC-13 | A kernel `DivisionOutOfDomain` for consumer domain `Int[0, 9]` builds a record with `expected` `Int[0, 9]` and cause `quotient-outside-domain` when the exposed member is the quotient and `remainder-outside-domain` when it is the remainder. | Test |
 | FR-096-AC-14 | With `type Small = Int[0, 3]` checked under `CheckMode::Kernel`, S6a evaluation of `sum<Small>(x in q: x)` for `q` of `Sequence<Int[0, 3]>[0, 2]` holding `2, 2` returns `FamilyOutcome::Evaluated(Outcome::Undefined(Undefined::SumOutOfDomain))`, located at the `sum` node, with no refusal record and no charge after `integer-arithmetic.arithmetic`; it is not `Outcome::Refused(Refusal::IntegerOutOfDomain)`. The same `sum` for `q` holding `1, 2` completes with `3`. `sum<Small>(x in q: x)` for `q` of `Sequence<Int[0, 9]>[0, 2]` holding `5, 0` returns the same undefined outcome, located at the summand node, with no addition. | Test |
-| FR-096-AC-15 | An S6a evaluation of `not x` for `x: Boolean`, called through `qsl_semantics::check::ValueFunctionFamily::evaluate` with an Integer argument that admission would have refused, returns `Err(InternalFault)` naming stage `S6a` and invariant `boolean-value-expected` (category internal failure, code `runtime_invariant`), with no synthetic kernel cause, Evaluation or refusal record. | Test |
+| FR-096-AC-15 | An S6a evaluation of `not x` for `x: Boolean`, called through `fsl_semantics::check::ValueFunctionFamily::evaluate` with an Integer argument that admission would have refused, returns `Err(InternalFault)` naming stage `S6a` and invariant `boolean-value-expected` (category internal failure, code `runtime_invariant`), with no synthetic kernel cause, Evaluation or refusal record. | Test |
 | FR-096-AC-16 | A lowering work-budget stop -- the shared work meter denying a per-node charge past a declaration's own precheck -- is a `CheckRefusal`/`stage_limit_exceeded` with kind work budget, `region: None` on its `StageLimitCause`, and `DeclarationRegions::refusal_region` resolving to the specific node whose lowering charge crossed the bound, not the declaration span. | Test |
 | FR-096-AC-17 | Two declarations `g1`, `g2`, each with an individually-under-bound node count, checked together under a package-wide node bound one past `g1`'s own count: `g1` types fully, and `Typer`'s package-wide counter, seeded from `g1`'s final count, crosses the bound partway through `g2`'s own body walk -- a `CheckRefusal`/`stage_limit_exceeded` with kind node count located at the specific node of `g2` where the running count passed the bound, never at either declaration's span. | Test |
 | FR-096-AC-18 | The I2 reader, given a v2 wire whose bytes are valid JSON for a valid envelope but carry one space after the opening brace, refuses with the native code `noncanonical_wire`, not `invalid_package`. | Test |
@@ -443,8 +443,8 @@ The fourth
 no-region case (a span the map splits) is backed directly against the
 resolver; no production caller builds a multi-segment C-21 map today, so
 that path is untested by any end-to-end flow. No production caller sets
-`embedding` yet either: `qsl-source`'s own document map
-(`qsl-source/src/lib.rs` ~304-344) does not reach the FR-091 assembler, so
+`embedding` yet either: `fsl-source`'s own document map
+(`fsl-source/src/lib.rs` ~304-344) does not reach the FR-091 assembler, so
 a real Markdown-embedded unit still resolves under its own body reference
 until that wiring lands.
 
@@ -452,7 +452,7 @@ until that wiring lands.
 
 - [ADR-013](../decisions/ADR-013-canonical-type-package-conversion-ownership.md)
   T-4, T-5, O-12, O-16, O-17 and O-22 (whose Implementing ticket row names
-  the I2 reader as S-5b's one QSL reader); C-21; §7 slices S-4b and S-5b;
+  the I2 reader as S-5b's one FSL reader); C-21; §7 slices S-4b and S-5b;
   §8 QC-28.
 - [FR-001](FR-001-read-exact-source.md) AC-5 to AC-7 (slice S-4b): the
   unit's `RawSourceRef`.
@@ -463,14 +463,14 @@ until that wiring lands.
   per-declaration limits and the package node budget.
 - [FR-090](FR-090-return-a-family-outcome-or-a-typed-family-refusal.md):
   `CatalogCoded`, `UndefinedCoded`, `Evaluation` and `FamilyResult`.
-- The QSpec diagnostics catalog (QSpec STD-95, STD-110): its
+- The FSpec diagnostics catalog (FSpec STD-95, STD-110): its
   `token-count-exceeded`, `edge-count-exceeded`, `occurrence-count-exceeded`
   and `diagnostic-count-exceeded` causes, the ten kernel value-refusal codes
   and the `invalid_source_identity` causes `blank-label` and `empty-path`
   ([FR-001](FR-001-read-exact-source.md)).
 - [NFR-011](../non-functional/NFR-011-bound-value-checking-work.md): the
   `CheckingLimits` ceilings.
-- IR (`agent-ix/quire-contract-ir`, `quire-contract-model`'s
+- IR (`agent-ix/filament-contract-ir`, `filament-contract-model`'s
   `checked_package`, IR-281): `CheckedPackageRefusal.path` is the RFC 6901
   pointer of the value the refusal concerns, absent for a refusal at no
   value; the `UnknownContractVersion` refusal carries the contract version
@@ -481,13 +481,13 @@ until that wiring lands.
 
 - **FR-096-OQ-1 (answered):** IR's `Edges`, `Occurrences` and `Diagnostics`
   limits carry `edge-count-exceeded`, `occurrence-count-exceeded` and
-  `diagnostic-count-exceeded`, which `quire.native.diagnostics/v1` carries (ADR-013 QC-28, STD-95).
+  `diagnostic-count-exceeded`, which `filament.native.diagnostics/v1` carries (ADR-013 QC-28, STD-95).
 - **FR-096-OQ-2 (open):** `inexact_decimal`'s `expected` is the target's
   declared domain. The catalog spells a domain only with both
   bounds, so it gives no spelling for an unbounded `Integer` target of a
-  unit conversion under strict `exact`. QSpec owns the ruling. QSL cannot
+  unit conversion under strict `exact`. FSpec owns the ruling. FSL cannot
   reach that case today: `QuantityTarget::Integer` always carries a
-  two-bounded `IntegerInterval` (`qsl-semantics/src/value/quantity.rs`,
+  two-bounded `IntegerInterval` (`fsl-semantics/src/value/quantity.rs`,
   `convert_quantity`), and the kernel's `InexactDecimal` raise sites place
   into a `DecimalType` target, which has both bounds. An integer target is
   placed as a temporary `DecimalType` `Decimal[lo, hi; 0, 0]`; its record

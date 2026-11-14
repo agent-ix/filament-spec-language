@@ -3,66 +3,66 @@ id: ADR-025
 title: "Weak memory models for parallel"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: relates_to
-  - target: ix://agent-ix/quire-specification/FR-013
+  - target: ix://agent-ix/filament-specification/FR-013
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-052
+  - target: ix://agent-ix/filament-specification/FR-052
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-161
+  - target: ix://agent-ix/filament-specification/FR-161
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-353
+  - target: ix://agent-ix/filament-specification/FR-353
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-431
+  - target: ix://agent-ix/filament-specification/FR-431
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-432
+  - target: ix://agent-ix/filament-specification/FR-432
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-434
+  - target: ix://agent-ix/filament-specification/FR-434
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-435
+  - target: ix://agent-ix/filament-specification/FR-435
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-436
+  - target: ix://agent-ix/filament-specification/FR-436
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-437
+  - target: ix://agent-ix/filament-specification/FR-437
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-438
+  - target: ix://agent-ix/filament-specification/FR-438
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-439
+  - target: ix://agent-ix/filament-specification/FR-439
     type: depends_on
 ---
 # ADR-025: Weak memory models for parallel
 
 ## Context
 
-**What `parallel` means today.** QSpec FR-052 states that "Parallel branches
+**What `parallel` means today.** FSpec FR-052 states that "Parallel branches
 SHALL admit every interleaving that preserves each branch's causal edges", and
-QSpec FR-228 lists `parallel-branch` and `join` among the admitted control
+FSpec FR-228 lists `parallel-branch` and `join` among the admitted control
 constructs. The compiled protocol form is `{kind:"parallel", branches,
-join}` (the retired `quire.compiled-protocol/1` wire), with the structural edges in → each
+join}` (the retired `filament.compiled-protocol/1` wire), with the structural edges in → each
 branch and every branch → out. A branch holds protocol events. An `attempt`
 event invokes an operation of a role's model; its effect on model state is
 FR-120's successor rule: an operation applied to an argument vector, enabled
@@ -72,7 +72,7 @@ interleaving. This is sequential consistency (Lamport) at the granularity of a
 whole operation: every step sees every earlier step's writes, in one total
 order.
 
-**What explores it.** FR-120's `ModelSystem` is QSL's only production
+**What explores it.** FR-120's `ModelSystem` is FSL's only production
 `TransitionSystem` (ADR-016 FP-4), and a protocol system waits on protocol
 nodes at S4 (ADR-017 PF-7). ADR-027 specifies that system once,
 `ProtocolSystem<M: MemoryModel>`, as the one foundation ADR-020, ADR-021
@@ -82,7 +82,7 @@ through ADR-027's memory-model seam (ADR-027 SE-1). Amended by ADR-027.
 
 **Why it matters.** TLA+ and PlusCal assume sequential consistency, so an
 author who models x86 or C11 code writes the store buffer by hand. The link to
-code is the larger issue. QSpec FR-353 and ADR-017 AR-2 bind each model
+code is the larger issue. FSpec FR-353 and ADR-017 AR-2 bind each model
 object's fields to Rust fields and each operation frame to one Rust function.
 Kani and Verus then prove each function against its operation's contract,
 one function at a time. A model proof under interleaving semantics, together
@@ -125,7 +125,7 @@ behaviours no interleaving of whole operations produces.
   explicit-state engine therefore takes a bound on buffers or message sets
   as a method bound.
 
-**What QSL has that bears on this.** ADR-018 gives EN-1, the explicit-state
+**What FSL has that bears on this.** ADR-018 gives EN-1, the explicit-state
 product over FR-101's canonical breadth-first engine, with weak fairness
 (FA-1 to FA-6), the greedy canonical loop (CX-5), deadlocks (DL-1 to DL-7),
 the V-1 to V-8 verdicts, and `ModelCheckLimits`, EN-1's limits and method
@@ -133,7 +133,7 @@ bounds (IV-6). ADR-021 gives static read and write footprints per transition
 identity (POR-1), receiver-scoped frame entries (POR-3) and the preservation
 table PT-2. ADR-017 AR-2 gives the code binding.
 
-"QSpec FR-nnn" names a quire-specification requirement; a bare FR id is a QSL
+"FSpec FR-nnn" names a filament-specification requirement; a bare FR id is an FSL
 requirement. Item ids `MM-`, `MA-`, `SC-`, `TSO-`,
 `RA-`, `MS-`, `MF-`, `MB-`, `MR-`, `MX-`, `MV-`, `MK-`, `DS-`, `RU-`, `DR-`
 and `PSC-` are local to this record. Other artifacts cite them as
@@ -145,12 +145,12 @@ and `PSC-` are local to this record. Other artifacts cite them as
 
 | ID | Rule |
 | --- | --- |
-| MM-1 | **Source default.** A `parallel` control declares its default memory model after its name: `parallel Name memory M { branch … } join all [ … ];`, with `M` one of `sc`, `tso` and `ra`. A `parallel` with no `memory` clause has default `sc`, which is QSpec FR-052's interleaving meaning. `tso` and `ra` are the **weak** models. The spelling is illustrative; QSpec's shared grammar owns it. |
-| MM-2 | **Request selection.** A request may select the model of an outermost `parallel`, one nested in no other `parallel`, with a member `memory: [{parallel, model}]` naming the control by its scoped path (FR-112) and the model. The selection replaces the model of that `parallel` and of every `parallel` nested in it. A `parallel` the request names no model for keeps its source default. A selection that names a nested `parallel` or a control that is not a `parallel`, or two entries that name the same `parallel`, refuses the request, `invalid_runtime_input`/`invalid-value`, naming the entry. The **resolved model** of an outermost `parallel` is the request's selection when present, else its source default. The member's spelling is QSpec's (QSpec FR-331). |
+| MM-1 | **Source default.** A `parallel` control declares its default memory model after its name: `parallel Name memory M { branch … } join all [ … ];`, with `M` one of `sc`, `tso` and `ra`. A `parallel` with no `memory` clause has default `sc`, which is FSpec FR-052's interleaving meaning. `tso` and `ra` are the **weak** models. The spelling is illustrative; FSpec's shared grammar owns it. |
+| MM-2 | **Request selection.** A request may select the model of an outermost `parallel`, one nested in no other `parallel`, with a member `memory: [{parallel, model}]` naming the control by its scoped path (FR-112) and the model. The selection replaces the model of that `parallel` and of every `parallel` nested in it. A `parallel` the request names no model for keeps its source default. A selection that names a nested `parallel` or a control that is not a `parallel`, or two entries that name the same `parallel`, refuses the request, `invalid_runtime_input`/`invalid-value`, naming the entry. The **resolved model** of an outermost `parallel` is the request's selection when present, else its source default. The member's spelling is FSpec's (FSpec FR-331). |
 | MM-3 | **Scope and nesting.** The resolved model governs its `parallel`'s branches and every control nested in them. Weak `parallel` controls nest to any depth; each nested `parallel`'s branches are threads forked from the enclosing branch. In source, a nested `parallel` declares the same default as its outermost `parallel` or none; another default refuses at S3, `invalid_model_binding`/`conflicting-binding`, naming both controls. A `parallel` whose resolved model is weak joins `all` with no `outstanding` clause; S3 refuses another join policy on a `parallel` that declares a weak default, `unsupported_construct`/`declaration-form` at the join, naming the policy and the weak default, and EN-1's pre-check settles a request that selects a weak model for such a `parallel` V-8, `WeakAccessShape` (MA-4). Sequential `parallel` controls in one protocol may resolve to different models: each `join all` returns memory to one value per location (TSO-7, RA-7). |
-| MM-4 | **Threads.** Each branch of a weak `parallel` is one thread. Its program order is its causal order (QSpec FR-052). A control outside every weak `parallel` belongs to the enclosing thread, and its accesses apply in place, as under `sc`. |
-| MM-5 | **Identity.** The effective model of every outermost `parallel`, the request's selection or else the source default, is written into the request and enters its obligation identity (ADR-013 O-09) beside the subject (ADR-018 §1 "Scope"), a defaulted model as explicitly as a selected one (QSpec FR-434). The source `memory` clause enters the checked package's identity as source content, and the obligation identity only through the effective model. The state key's `memory` member (QSpec FR-181) holds the component under it. Two requests that resolve every `parallel` to the same models carry the same identity whether the models came from source or from the request. The same protocol checked under `sc` and under `tso` is two obligations, and a verdict on one never joins the other's request (ADR-014 §8). |
-| MM-6 | **Orderings.** An `attempt` inside a `parallel` may carry `ordering o`, with `o` one of `relaxed`, `acquire`, `release`, `acq_rel` and `seq_cst`, the C11 and Rust orderings. An access with no `ordering` is **non-atomic** (§14). A new control `fence Name ordering o;` with `o` one of `acquire`, `release`, `acq_rel` and `seq_cst` issues a fence in its thread. The spellings are illustrative (QSpec's shared grammar). |
+| MM-4 | **Threads.** Each branch of a weak `parallel` is one thread. Its program order is its causal order (FSpec FR-052). A control outside every weak `parallel` belongs to the enclosing thread, and its accesses apply in place, as under `sc`. |
+| MM-5 | **Identity.** The effective model of every outermost `parallel`, the request's selection or else the source default, is written into the request and enters its obligation identity (ADR-013 O-09) beside the subject (ADR-018 §1 "Scope"), a defaulted model as explicitly as a selected one (FSpec FR-434). The source `memory` clause enters the checked package's identity as source content, and the obligation identity only through the effective model. The state key's `memory` member (FSpec FR-181) holds the component under it. Two requests that resolve every `parallel` to the same models carry the same identity whether the models came from source or from the request. The same protocol checked under `sc` and under `tso` is two obligations, and a verdict on one never joins the other's request (ADR-014 §8). |
+| MM-6 | **Orderings.** An `attempt` inside a `parallel` may carry `ordering o`, with `o` one of `relaxed`, `acquire`, `release`, `acq_rel` and `seq_cst`, the C11 and Rust orderings. An access with no `ordering` is **non-atomic** (§14). A new control `fence Name ordering o;` with `o` one of `acquire`, `release`, `acq_rel` and `seq_cst` issues a fence in its thread. The spellings are illustrative (FSpec's shared grammar). |
 
 ```text
 run parallel Both memory sc {                                // source default
@@ -171,12 +171,12 @@ memory: [{ parallel: "SB::Both", model: "tso" }]             // request selectio
 
 | ID | Rule |
 | --- | --- |
-| MA-1 | **Locations and sharing.** A location is ADR-021 POR-1's: (object, field), (object type, field, any object), or (population, membership). EN-1 derives each attempt's **potential footprint** over the subject's universes and argument domains without evaluating its selected effective precondition or attempt constraint. A location touched by potential footprints in conflicting branches, including a protocol reader in one branch and a potential writer in another, is **potentially memory-backed** and reserves only the memory-model backing needed for operations that may become enabled. Potentially memory-backed locations do not make a location shared for access classification and do not cause a V-8 refusal. For each reachable protocol state, EN-1 derives **enabled footprints** per transition identity and thread observation, retaining only applications whose selected effective precondition evaluates `Completed(true)` over that observation and whose attempt constraint admits the application record (ADR-027 ST-1). A false, undefined, refused or incomplete precondition, or an application record rejected by the attempt constraint, contributes no enabled footprint in that state. A location is **shared** for access classification in a weak `parallel` when the enabled footprints of attempts in two or more of its branches contain it and at least one of them writes it. Every other location an enabled attempt touches is **branch-local**: a register of its thread. An `event`, `effect`, `commit`, `send` or `receive` node inside a branch of a weak `parallel` whose constraint reads a model location (QSpec FR-464 lets an event constraint read `over`) is a **reader** of that location: the location counts toward sharing as an attempt's read does, so a location is also shared when a reader in one branch and an enabled attempt that writes it in another branch contain it. A reader is no attempt and has no access class or ordering, because MA-2 classifies only attempts. Before generating any outgoing transition of a reachable state, EN-1's pre-check uses enabled footprints and enabled shared locations, not potential footprints, to collect every failing enabled attempt and protocol node at that state into the item's one V-8 `unsupported` cause, `WeakAccessShape{failures}` (MA-4): each entry is `{site, transition, shape}`, where `site` names the failing attempt or node, `transition` is the attempt's transition identity or `None` for a node-based failure, and `shape` is that entry's `MultiLocation{locations}`, `JoinPolicy` or `OrderingMismatch{access, ordering}`. Entries are ordered together by ascending JCS bytes of their typed protocol transition identity (ADR-027 TS-2); a node-based failure uses the applicable node transition identity for ordering even though its entry's `transition` is `None`. The first entry supplies the headline reason; the list contains every failure at that state, with no category precedence. The pre-check settles the item at the first reachable state with a failure list and generates no outgoing transitions from that state. A reader entry's `MultiLocation` names the reader and the enabled shared locations it reads. A `finish` and a node outside every weak `parallel` read the joined memory, which has no buffer (FR-221-AC-4) and one message per location (FR-222-AC-3), and are not readers. A `check` that reads a model location is refused at S3 (MA-6) before it can be a reader. |
+| MA-1 | **Locations and sharing.** A location is ADR-021 POR-1's: (object, field), (object type, field, any object), or (population, membership). EN-1 derives each attempt's **potential footprint** over the subject's universes and argument domains without evaluating its selected effective precondition or attempt constraint. A location touched by potential footprints in conflicting branches, including a protocol reader in one branch and a potential writer in another, is **potentially memory-backed** and reserves only the memory-model backing needed for operations that may become enabled. Potentially memory-backed locations do not make a location shared for access classification and do not cause a V-8 refusal. For each reachable protocol state, EN-1 derives **enabled footprints** per transition identity and thread observation, retaining only applications whose selected effective precondition evaluates `Completed(true)` over that observation and whose attempt constraint admits the application record (ADR-027 ST-1). A false, undefined, refused or incomplete precondition, or an application record rejected by the attempt constraint, contributes no enabled footprint in that state. A location is **shared** for access classification in a weak `parallel` when the enabled footprints of attempts in two or more of its branches contain it and at least one of them writes it. Every other location an enabled attempt touches is **branch-local**: a register of its thread. An `event`, `effect`, `commit`, `send` or `receive` node inside a branch of a weak `parallel` whose constraint reads a model location (FSpec FR-464 lets an event constraint read `over`) is a **reader** of that location: the location counts toward sharing as an attempt's read does, so a location is also shared when a reader in one branch and an enabled attempt that writes it in another branch contain it. A reader is no attempt and has no access class or ordering, because MA-2 classifies only attempts. Before generating any outgoing transition of a reachable state, EN-1's pre-check uses enabled footprints and enabled shared locations, not potential footprints, to collect every failing enabled attempt and protocol node at that state into the item's one V-8 `unsupported` cause, `WeakAccessShape{failures}` (MA-4): each entry is `{site, transition, shape}`, where `site` names the failing attempt or node, `transition` is the attempt's transition identity or `None` for a node-based failure, and `shape` is that entry's `MultiLocation{locations}`, `JoinPolicy` or `OrderingMismatch{access, ordering}`. Entries are ordered together by ascending JCS bytes of their typed protocol transition identity (ADR-027 TS-2); a node-based failure uses the applicable node transition identity for ordering even though its entry's `transition` is `None`. The first entry supplies the headline reason; the list contains every failure at that state, with no category precedence. The pre-check settles the item at the first reachable state with a failure list and generates no outgoing transitions from that state. A reader entry's `MultiLocation` names the reader and the enabled shared locations it reads. A `finish` and a node outside every weak `parallel` read the joined memory, which has no buffer (FR-221-AC-4) and one message per location (FR-222-AC-3), and are not readers. A `check` that reads a model location is refused at S3 (MA-6) before it can be a reader. |
 | MA-2 | **Classification.** Each instantiated attempt in a weak `parallel` is one of: a **load** of `ℓ` (its shared footprint is `{ℓ}`, read only); a **store** to `ℓ` (`{ℓ}`, written only, with no pre-state read of `ℓ`); a **read-modify-write** (RMW) of `ℓ` (`{ℓ}`, read in the pre-state and written); or **local** (empty shared footprint). A load or store with an ordering is **atomic**; one without is **non-atomic**. A `fence` control is a **fence**. Branch-local reads and writes of an attempt are part of the same step. EN-1 classifies each instantiated attempt, because the class depends on which locations are shared (MA-1). S3 records `Local` for an attempt whose footprint touches no data place and no class for any other, whatever its source default, so that a request selection (MM-2) finds the ordering in place; an ordering on an attempt outside every `parallel` is refused at S3, `ill_typed`/`operator-ineligible`. |
 | MA-3 | **Admitted orderings.** A load takes `relaxed`, `acquire`, `seq_cst` or none; a store takes `relaxed`, `release`, `seq_cst` or none; an RMW takes one of the five and always has one; a local attempt takes none. S3 refuses, `ill_typed`/`operator-ineligible`, naming the attempt, an ordering that no kind the operation's footprint leaves possible takes: any ordering on an attempt that touches no data place, `release` or `acq_rel` on one that writes nothing, `acquire` or `acq_rel` on one that reads nothing. An ordering the instantiated kind does not take, and an RMW with none, are settled by EN-1's pre-check under a weak model (FR-220 EN-1 ordering rule). Under `sc`, orderings change no behaviour and are recorded for the code link (MX-4). |
 | MA-4 | **One location per access.** Under a weak model, an enabled attempt instance whose enabled shared footprint holds two or more locations, an any-object location, or a population membership is not one hardware or C11 access. S3 refuses it when the `parallel` declares a weak default and the attempt writes an any-object field or a population membership, which is one access whatever is shared, `unsupported_construct`/`declaration-form`, naming the attempt and the location. EN-1's pre-check, which reads the resolved model, collects every such enabled attempt, every mismatched ordering (MA-3), every node reader of an enabled shared location (MA-1), and every `JoinPolicy` failure (MM-3) at the current state in one `WeakAccessShape{failures}` entry list. Potential footprints reserve memory backing only; they do not add entries or locations to this list. Under `sc` every attempt and reader is admitted: a whole operation is one step. |
 | MA-5 | **Applying an operation under a weak model.** An access applies its operation by FR-120's successor rule over the **thread observation**: the model state with `ℓ` holding the value the memory model gives the reading thread (TSO-3, RA-2), and with branch-local locations as they are. The precondition reads that value, so a load whose precondition constrains `ℓ` is enabled only for values that satisfy it. The postcondition's delta at `ℓ` goes to the memory model (TSO-2, RA-3); branch-local writes apply in place. The thread observation is ADR-027 SE-1 (b), and the delta goes through SE-1 (c). An RMW application whose post-state leaves `ℓ` unchanged is a load with the read part of its ordering, as C11 reads a failed compare-and-exchange. Amended by ADR-027. |
-| MA-6 | **Guards and checks.** Under every model, a choice guard, repeat guard or `check` reads binders and constants only (ADR-027 FO-2; QSpec FR-435). One that reads a model location refuses at S3, `ill_typed`/`operator-ineligible` at the read (FR-218). So no guard reads a shared location, and a weak model changes no guard's value. An author who needs a shared value in a guard writes a load attempt and guards on its binder. Amended by ADR-027. |
+| MA-6 | **Guards and checks.** Under every model, a choice guard, repeat guard or `check` reads binders and constants only (ADR-027 FO-2; FSpec FR-435). One that reads a model location refuses at S3, `ill_typed`/`operator-ineligible` at the read (FR-218). So no guard reads a shared location, and a weak model changes no guard's value. An author who needs a shared value in a guard writes a load attempt and guards on its binder. Amended by ADR-027. |
 
 ### 3. Operational semantics
 
@@ -188,7 +188,7 @@ they do. EN-1 explores it like any other successor relation.
 
 | ID | Rule |
 | --- | --- |
-| SC-1 | **Interleaving.** The memory component is empty. Each attempt is one step that applies its operation by FR-120's rule to the model state. This is QSpec FR-052's meaning and today's. `sc` is ADR-027 SE-2, the memory-model seam's identity. Amended by ADR-027. |
+| SC-1 | **Interleaving.** The memory component is empty. Each attempt is one step that applies its operation by FR-120's rule to the model state. This is FSpec FR-052's meaning and today's. `sc` is ADR-027 SE-2, the memory-model seam's identity. Amended by ADR-027. |
 
 #### 3.2 x86-TSO
 
@@ -240,8 +240,8 @@ omits.
 
 | ID | Rule |
 | --- | --- |
-| MS-1 | **Subject.** A subject with a weak `parallel` is a protocol subject (ADR-027 PS-1) whose state is (model state, control positions, memory component). The memory component is ADR-027 SE-1 (a), the member of the state key ADR-027 PS-8 names, in the typed canonical form of QSpec FR-181: buffers as sequences, message sequences in mo, views as maps from location to message position, the SC event graph and the race summary. It exists only while a weak `parallel` is active. Amended by ADR-027. |
-| MS-2 | **Positions and observations.** Every step is a position (ADR-018 SM-3, ADR-027 PB-2), including `flush(b)`, which is observed with a `memory` anchor naming the step. Memory steps and fence steps are uncounted for interval operators (ADR-027 PB-3, SE-3; QSpec FR-431, FR-435-AC-6). A `holds` atom reads the model state, in which each shared location holds its **memory value**: under `tso`, memory; under `ra`, the value of its mo-last message. Branch-local locations hold their thread's value. Buffers, views, the SC event graph and the race summary are read by replay and counterexample rendering (MK-1), and atoms read values through ADR-027 SE-1 (g). Amended by ADR-027. |
+| MS-1 | **Subject.** A subject with a weak `parallel` is a protocol subject (ADR-027 PS-1) whose state is (model state, control positions, memory component). The memory component is ADR-027 SE-1 (a), the member of the state key ADR-027 PS-8 names, in the typed canonical form of FSpec FR-181: buffers as sequences, message sequences in mo, views as maps from location to message position, the SC event graph and the race summary. It exists only while a weak `parallel` is active. Amended by ADR-027. |
+| MS-2 | **Positions and observations.** Every step is a position (ADR-018 SM-3, ADR-027 PB-2), including `flush(b)`, which is observed with a `memory` anchor naming the step. Memory steps and fence steps are uncounted for interval operators (ADR-027 PB-3, SE-3; FSpec FR-431, FR-435-AC-6). A `holds` atom reads the model state, in which each shared location holds its **memory value**: under `tso`, memory; under `ra`, the value of its mo-last message. Branch-local locations hold their thread's value. Buffers, views, the SC event graph and the race summary are read by replay and counterexample rendering (MK-1), and atoms read values through ADR-027 SE-1 (g). Amended by ADR-027. |
 | MS-3 | **Behaviours.** A behaviour is a maximal path of the protocol system (ADR-018 SM-3). Under `tso` it interleaves attempts with flushes; under `ra` each load and store step also names its message or slot (RA-2, RA-3), so the authored nondeterminism of reading and of mo placement is part of the successor relation (ADR-016 ND-1). |
 | MS-4 | **Terminal states and deadlocks.** Under `tso`, `flush(b)` is enabled whenever a buffer is non-empty, so every terminal state has every buffer empty, and a fence, locked access, `send` or `join` waiting on a buffer is never a deadlock. A state whose only transitions are stores disabled by a memory bound is a boundary state (MB-3), never terminal. An SC access whose every message or slot choice would make the SC event graph cyclic (PSC-3) is disabled at that state, as RC11 excludes that execution. Otherwise terminal states and deadlocks read by ADR-018 SM-4 and DL-1 to DL-7 over the protocol system. |
 | MS-5 | **State-space cost.** Under `tso`, a thread `b` that may store to `s_b` shared locations over value domains of size at most `d` has at most `Σ_{k=0}^{B} (s_b · d)^k` buffer contents with bound `B` (MB-2). Under `ra`, a location has at most `M` live messages (MB-2), each with a value and a message view of at most `M^L` choices over `L` shared locations, and a thread holds three views; the SC event graph has at most one live access per live message and thread, and at most one live fence per thread and view (PSC-6), and the race summary adds, for `N` shared locations with a non-atomic access and `T` threads, a last-write thread and `T` last-read Booleans per location and a race map of `N(1 + T)` Booleans to every carrier of DR-3 (each view, message view, buffered store, memory value, thread summary and in-flight `send`), so it multiplies the count by up to `2^(N(1+T))` per carrier. Both multiply the SC state count by a factor exponential in the bound, the shared locations and the threads. §10 counts 16 states under `sc`, 38 under `tso` and 18 under `ra` for store buffering. |
@@ -251,16 +251,16 @@ omits.
 | ID | Rule |
 | --- | --- |
 | MF-1 | **Flush fairness under `tso`.** Every infinite-trace clause over a subject with a `tso` `parallel` carries, for each thread `b`, the constraint `fair weak each flush(b)` (ADR-018 FA-1, FA-3): no buffer stays non-empty forever while unflushed. The constraint belongs to the model, so it is not authored, it enters the clause's fairness set with a `memory` origin, and it is part of every counterexample and of replay (MK-2). On a lasso, every thread whose buffer is non-empty somewhere in the loop flushes in the loop. ADR-018 CX-5's walk takes it as a weak obligation. The memory constraints sit beside ADR-027 PA-3's scheduler constraints in every fairness set; they are ADR-027 SE-1 (h). Amended by ADR-027. |
-| MF-2 | **Visibility fairness under `ra`.** Every infinite-trace clause over a subject with an `ra` `parallel` carries **visibility fairness**, after the memory fairness of Lahav et al.: no thread keeps reading a stale message of a location forever. On an SCC it is an edge Streett condition. For each thread `b` and location `ℓ`, `R` is the set of edges on which `b` loads `ℓ` and `G ⊆ R` the set of edges on which `b` loads `ℓ` from `ℓ`'s mo-last message; a **loop** (a closed walk, which may repeat states; a lasso's loop is one) is visibility-fair when, for every pair, it contains no edge of `R` or an edge of `G`. The filter decomposes an SCC `C`: if every pair has no edge of `R` in `C` or an edge of `G` in `C`, `C` holds a visibility-fair loop (a closed walk through one `G` edge of each pair that needs it, which exists because `C` is strongly connected) and passes; otherwise, for a pair with an edge of `R` in `C` and no edge of `G` in `C`, every loop of `C` that loads `ℓ` by `b` is unfair, so the filter removes the edges of `R`, decomposes what remains into SCCs, and applies the rule to each, together with every other constraint; the removals of every failing strong constraint's states (ADR-019 FS-2) and every failing pair's edges happen in one refinement step, so the first passing component does not depend on an order (QSpec FR-365). Each removal drops an edge, so the decomposition ends, and a load-free sub-loop of an SCC that holds a stale load edge is fair. The component that passes is its states together with the edges the decomposition kept: ADR-018 CX-5's walk, its closing path and ADR-019 FS-6's ordering use only those edges, so the loop takes no removed edge, and CX-5 takes each pair the component still loads as a weak obligation discharged only by a `G` edge. On a lasso, the loop contains a load of `ℓ` by `b` from `ℓ`'s mo-last message for every pair (`b`, `ℓ`) it loads. The certificate witness for a removal is `UnfairVisibility{constraints, sub}` (ADR-018 PC-4): the listed pairs each have an `R` edge inside the component and a `G` edge in none of its edges, and `sub` partitions the component's states over the subgraph without those `R` edges; an edge so removed is in no rule below that witness, including `BackwardEdge`. The constraint sits beside ADR-027 PA-3's scheduler constraints. Amended by ADR-027. |
+| MF-2 | **Visibility fairness under `ra`.** Every infinite-trace clause over a subject with an `ra` `parallel` carries **visibility fairness**, after the memory fairness of Lahav et al.: no thread keeps reading a stale message of a location forever. On an SCC it is an edge Streett condition. For each thread `b` and location `ℓ`, `R` is the set of edges on which `b` loads `ℓ` and `G ⊆ R` the set of edges on which `b` loads `ℓ` from `ℓ`'s mo-last message; a **loop** (a closed walk, which may repeat states; a lasso's loop is one) is visibility-fair when, for every pair, it contains no edge of `R` or an edge of `G`. The filter decomposes an SCC `C`: if every pair has no edge of `R` in `C` or an edge of `G` in `C`, `C` holds a visibility-fair loop (a closed walk through one `G` edge of each pair that needs it, which exists because `C` is strongly connected) and passes; otherwise, for a pair with an edge of `R` in `C` and no edge of `G` in `C`, every loop of `C` that loads `ℓ` by `b` is unfair, so the filter removes the edges of `R`, decomposes what remains into SCCs, and applies the rule to each, together with every other constraint; the removals of every failing strong constraint's states (ADR-019 FS-2) and every failing pair's edges happen in one refinement step, so the first passing component does not depend on an order (FSpec FR-365). Each removal drops an edge, so the decomposition ends, and a load-free sub-loop of an SCC that holds a stale load edge is fair. The component that passes is its states together with the edges the decomposition kept: ADR-018 CX-5's walk, its closing path and ADR-019 FS-6's ordering use only those edges, so the loop takes no removed edge, and CX-5 takes each pair the component still loads as a weak obligation discharged only by a `G` edge. On a lasso, the loop contains a load of `ℓ` by `b` from `ℓ`'s mo-last message for every pair (`b`, `ℓ`) it loads. The certificate witness for a removal is `UnfairVisibility{constraints, sub}` (ADR-018 PC-4): the listed pairs each have an `R` edge inside the component and a `G` edge in none of its edges, and `sub` partitions the component's states over the subgraph without those `R` edges; an edge so removed is in no rule below that witness, including `BackwardEdge`. The constraint sits beside ADR-027 PA-3's scheduler constraints. Amended by ADR-027. |
 | MF-3 | **Machine closure.** Both constraints are machine-closed: every finite prefix extends to a behaviour that flushes every buffer, or reads every location's mo-last message, in turn. So, as ADR-018 §4 states for weak fairness, flush fairness never makes a proof vacuous; visibility fairness never does either, since wherever `b` can load `ℓ` it can load `ℓ`'s mo-last message (RA-2) and an SC read of that message never closes a cycle in the SC event graph, so a `G` choice is never pruned. Neither changes a safety verdict (TP-1, TP-2, TP-3). |
 | MF-4 | **Authored fairness.** An authored constraint names one of ADR-027 PA-1's targets, and memory steps are in none of its classes (ADR-027 PA-2), so authored constraints never require a memory step. Enabledness (ADR-018 FA-2) of a store disabled only by a memory bound reads it as enabled (MB-3), so a bound never makes an unfair lasso fair. Amended by ADR-027. |
-| MF-5 | **Strong fairness.** The flush constraints are weak. Visibility fairness is of kind `strong`: a pair's "infinitely often `R` implies infinitely often `G`" is the strong-fairness form, so routing by fairness kind (ADR-019, QSpec FR-368) sends an `ra` item only to a backend that decides strong fairness, never to a weak-only backend. One visibility member per item carries the target `{"type":"visibility","model":"ra"}`, and its (thread, location) pairs are derived from the resolved program. ADR-019's filter treats the flush constraints as weak rows and decomposes the visibility pairs as MF-2 states, beside any authored strong constraint |
+| MF-5 | **Strong fairness.** The flush constraints are weak. Visibility fairness is of kind `strong`: a pair's "infinitely often `R` implies infinitely often `G`" is the strong-fairness form, so routing by fairness kind (ADR-019, FSpec FR-368) sends an `ra` item only to a backend that decides strong fairness, never to a weak-only backend. One visibility member per item carries the target `{"type":"visibility","model":"ra"}`, and its (thread, location) pairs are derived from the resolved program. ADR-019's filter treats the flush constraints as weak rows and decomposes the visibility pairs as MF-2 states, beside any authored strong constraint |
 
 ### 6. Exploration in EN-1
 
 | ID | Rule |
 | --- | --- |
-| MB-1 | **The protocol system.** EN-1 explores the protocol system's successor relation on FR-101's canonical breadth-first engine (QSpec FR-181): ADR-027 ST-1 to ST-15, the fence step of a `fence` control, and the memory steps of §3, each with a typed canonical transition identity (ADR-027 TS-2). ADR-018's product, SCC phase, fairness filter, `ModelCheckLimits` and counterexample choice (ADR-018 §3, CX-5) apply unchanged. Amended by ADR-027. |
+| MB-1 | **The protocol system.** EN-1 explores the protocol system's successor relation on FR-101's canonical breadth-first engine (FSpec FR-181): ADR-027 ST-1 to ST-15, the fence step of a `fence` control, and the memory steps of §3, each with a typed canonical transition identity (ADR-027 TS-2). ADR-018's product, SCC phase, fairness filter, `ModelCheckLimits` and counterexample choice (ADR-018 §3, CX-5) apply unchanged. Amended by ADR-027. |
 | MB-2 | **Memory bounds.** Two method bounds bound the memory component: `max_store_buffer`, the entries per thread's buffer under `tso`, and `max_messages`, the live messages per location after garbage collection under `ra`. Both join `ModelCheckRequest` beside `max_depth` as method bounds, like `max_depth`'s search horizon (ADR-018 §1): bounds on the explored state space that every result states, not resource limits. The request sets them, with no ceiling; a request that leaves one unset gets 4. They are not part of the model, the subject or the obligation identity. Every terminal record of an item over a subject with a weak `parallel` states, in its method, the bound used and whether the run reached it. |
 | MB-3 | **Bound semantics.** A store that would exceed a bound is not expanded at that state; every other enabled step is. The run records the state as **bound-limited**. FA-2 enabledness reads the store as enabled. A state whose only enabled steps are bound-limited stores is a boundary state as ADR-021 SC-2 reads one: discovered, keyed, read by the monitor, never expanded, never stutter-extended, never a deadlock. |
 | MB-4 | **Verdicts under a bound.** Bounded behaviours are behaviours of the unbounded model, so a counterexample found is real and settles V-4. A run that completes with no counterexample and no bound-limited state explored every behaviour of the unbounded model, by induction on the explored states, and settles V-1, with the bound stated as not reached. A run that completes with no counterexample and at least one bound-limited state settles V-6, `inconclusive`, cause `MemoryBoundReached{bound, states}`, with `bound` naming the request member that raises it (`max_store_buffer` or `max_messages`) and its value, and `states` the count of bound-limited states. The precedence among the under-approximation causes is ADR-021 RV-4's `ConstraintReached`, then `MemoryBoundReached`, then ADR-027 AE-4's `InstanceBoundReached`, then `BoundReached` (the completed `max_depth` search horizon). |
@@ -296,8 +296,8 @@ recent messages.
 A proof under model `M` says: every behaviour of the subject under `M`, fair
 under the clause's fairness set with `M`'s own constraints, satisfies the
 claim. Code inherits the claim when every execution of the code, read through
-the abstraction relation (QSpec FR-353, ADR-017 AR-2), is a behaviour of the
-subject under `M`. That inclusion rests on the preconditions below. QSL states
+the abstraction relation (FSpec FR-353, ADR-017 AR-2), is a behaviour of the
+subject under `M`. That inclusion rests on the preconditions below. FSL states
 them as preconditions, as ADR-021 TX-1 and TX-2 do; it never resolves a
 `RustPath` (ADR-017 AR-2), so it checks none of them against Rust code. `M` is
 the resolved model the verdict's obligation identity names (MM-5).
@@ -310,7 +310,7 @@ the resolved model the verdict's obligation identity names (MM-5).
 | MX-4 | **Per model.** *`sc`*: every attempted operation that touches a shared location runs atomically with respect to every other branch: one `SeqCst` access for a single-location operation (RC11 gives data-race-free programs whose atomics are all `SeqCst` only sequentially consistent behaviours), or a critical section under one lock that guards every shared location the operation touches. *`tso`*: the target is x86-64 with TSO-8's mapping, and every atomic shared load is at least `acquire` and every atomic shared store at least `release`, so that the compiler reorders only what TSO itself reorders (a store with a later load); non-atomic shared accesses are covered by the race-freedom item below. *`ra`*: the target has a compilation scheme sound for RC11 (x86-64, ARMv8, POWER). When a branch has a **load-buffering shape**, a `relaxed` or non-atomic load followed in program order by a store to another shared location with no `acquire` or `seq_cst` load or `acquire` fence between, the inclusion also needs a target whose compiled code excludes load buffering, such as x86-64. EN-1's pre-check reports each load-buffering shape as a warning, `memory.load-buffering-shape`, naming the load and the store. *Non-atomic accesses, under either weak model*: the subject's race-freedom item (§14) is proved. A race is undefined behaviour in Rust and C11, so a subject whose race-freedom item is refuted or unsettled transfers no claim to code. |
 | MX-5 | **Per-function proofs.** Kani and Verus prove each bound function against its operation's contract sequentially (ADR-017 AR-5); the contract is memory-model-independent. With MX-3, each function's concurrent effect is the one access the model step stands for, and its contract fixes the values. The three together, the model proof under `M`, the per-function proofs and MX-1 to MX-4, give the code claim. |
 | MX-6 | **Refutation strength.** A counterexample is a behaviour of the subject under `M`. Code whose orderings are stronger than declared (MX-3) may exclude it. |
-| MX-7 | **Lowered-code checking.** A checker of lowered code advertises in its QSpec FR-290 provider manifest the memory models it decides, by the names of MM-1. Negotiation routes an item over a subject with a weak `parallel` only to a candidate advertising its resolved model, and never weakens the model to fit a candidate. The design of such checkers is later research (References). |
+| MX-7 | **Lowered-code checking.** A checker of lowered code advertises in its FSpec FR-290 provider manifest the memory models it decides, by the names of MM-1. Negotiation routes an item over a subject with a weak `parallel` only to a candidate advertising its resolved model, and never weakens the model to fit a candidate. The design of such checkers is later research (References). |
 
 **Which back end checks which model.**
 
@@ -335,7 +335,7 @@ axiomatic encoding is an alternative engine for that path.
 
 ### 10. Worked example: store buffering
 
-All state counts below are hand enumeration; no QSL engine produced them.
+All state counts below are hand enumeration; no FSL engine produced them.
 
 **Model.** Object type `Cell` with `v: Int[0, 1]`, population `cells`,
 universe `{x, y}`, both at 0. Operation `set()` with a receiver-scoped frame on
@@ -495,7 +495,7 @@ counterexample on `data` (§14).
   abstract model, which states that the concrete code behaves as the atomic
   specification. A memory step has no operation, so the step map has an
   explicit memory-step row for each memory step kind of the resolved model,
-  `step memory <kind>` (ADR-027 PR-1, QSpec FR-432), and a concrete
+  `step memory <kind>` (ADR-027 PR-1, FSpec FR-432), and a concrete
   protocol with no row for a kind refuses `missing_declaration`/
   `missing-name`, naming the kind. A row's right side is written out:
   `-> any` where the intent is to pass when the mapped state is unchanged or
@@ -529,32 +529,32 @@ counterexample on `data` (§14).
 `memory` clause, orderings and the `fence` control, the MM-3 and MA-3 to MA-6
 refusals and the access classification in every `parallel`; EN-1's
 pre-check reports the load-buffering warning (MX-4). The request writer adds the race-freedom item
-(DR-4). The protocol system in `qsl-eval`'s `simulation` carries the memory
-component. The `model_check` engine in `qsl-analyze` (ADR-029) gains the request selection (MM-2), the
+(DR-4). The protocol system in `fsl-eval`'s `simulation` carries the memory
+component. The `model_check` engine in `fsl-analyze` (ADR-029) gains the request selection (MM-2), the
 memory bounds, the memory constraints in the fairness filter and the new
 causes.
 
 | ID | Repository | Change |
 | --- | --- | --- |
-| DS-1 | QSL | S3: MM-1, MM-3, MM-6, MA-2 to MA-4 (symbolic part). EN-1's pre-check: the load-buffering warning (MX-4). The request writer: the race-freedom item (DR-4). `qsl-eval`'s `simulation`: the memory component in the protocol system's state and key (MS-1), §3's rules, the SC event graph (§15), the race summary (§14), MA-5's thread observation, the depth-named transition identities. `model_check` (`qsl-analyze`, ADR-029): MM-2's resolution, the pre-check part of MA-4, MB-2 to MB-4 with the bound stated in the method, MF-1 and MF-2 in the filter and CX-5's walk, MR-1 footprints. `qsl-replay`: MK-1, MK-2, DR-5, DR-6, `MemoryBoundReached`, `WeakAccessShape`. The EN-1 manifest's memory models. |
+| DS-1 | FSL | S3: MM-1, MM-3, MM-6, MA-2 to MA-4 (symbolic part). EN-1's pre-check: the load-buffering warning (MX-4). The request writer: the race-freedom item (DR-4). `fsl-eval`'s `simulation`: the memory component in the protocol system's state and key (MS-1), §3's rules, the SC event graph (§15), the race summary (§14), MA-5's thread observation, the depth-named transition identities. `model_check` (`fsl-analyze`, ADR-029): MM-2's resolution, the pre-check part of MA-4, MB-2 to MB-4 with the bound stated in the method, MF-1 and MF-2 in the filter and CX-5's walk, MR-1 footprints. `fsl-replay`: MK-1, MK-2, DR-5, DR-6, `MemoryBoundReached`, `WeakAccessShape`. The EN-1 manifest's memory models. |
 | DS-2 | CG | The negotiation arm routes by resolved model and never weakens it (MX-7); obligation identity binds the resolved models (MM-5). |
 | DS-3 | IR | With ADR-018's SMT path: the memory component in the transition-relation form. |
 | DS-4 | Driver | None beyond ADR-018 DS-4. |
 
-**Design notes for QSpec.** QSpec's shared grammar owns the `memory`
-clause, the `ordering` member and the `fence` control; QSpec FR-331's request
+**Design notes for FSpec.** FSpec's shared grammar owns the `memory`
+clause, the `ordering` member and the `fence` control; FSpec FR-331's request
 owns the `memory` selection member and the resolved models in the obligation
-identity. QSpec FR-052 and FR-228 state the interleaving meaning that `memory
-sc` keeps; the weak models are amendments beside them. QSpec FR-181's state
+identity. FSpec FR-052 and FR-228 state the interleaving meaning that `memory
+sc` keeps; the weak models are amendments beside them. FSpec FR-181's state
 key gains the memory member, and its transition identity the memory-step and
-depth forms. QSpec FR-290's provider manifest carries the memory models a
+depth forms. FSpec FR-290's provider manifest carries the memory models a
 candidate decides. The race-freedom item and its `Race` counterexample kind
 sit beside the deadlock-freedom item (ADR-018 QS-12). The litmus table of §3
 and §10's counts are the conformance vectors.
 
 **Sequencing.**
 
-1. **Specification.** This record, QSpec's half and the QSL compiler
+1. **Specification.** This record, FSpec's half and the FSL compiler
    requirements FR-219 to FR-229.
 2. **Prerequisites.** ADR-018 EN-1; ADR-027 and its `ProtocolSystem`, which explores `parallel` under `sc` with attempts through
    `ModelSystem`; ADR-021 POR-1 footprints and POR-3 receiver-scoped frame
@@ -586,7 +586,7 @@ The owner ruled on the six questions the draft left open, on 2026-10-01.
 | --- | --- |
 | DR-1 | **Non-atomic accesses.** Under a weak model, a load or store with no ordering is non-atomic (MA-2). It explores as a `relaxed` access under `ra` (RA-2, RA-3) and as `MOV` under `tso` (TSO-8). |
 | DR-2 | **Data race.** A data race is two accesses to one shared location by different threads, at least one a store or RMW and at least one non-atomic, where neither happens before the other. Happens-before is program order together with synchronisation: an `acquire` or `seq_cst` load, RMW or later `acquire` fence reading from a `release` or `seq_cst` store or its release sequence, as RA-2 to RA-5 join views; fork and `join` (RA-6, TSO-7); `send` and `receive`. This is RC11's definition. Under `tso` the same synchronisation is read over the store a load reads from, buffered or in memory. |
-| DR-3 | **Race summary.** For each shared location `ℓ` with a non-atomic access, the memory component records the thread of `ℓ`'s last write and whether it was atomic, and for each thread whether its last read of `ℓ` was atomic. Each happens-before carrier holds Booleans: whether `ℓ`'s last write happens before it, and, for each thread `c`, whether `c`'s last read of `ℓ` happens before it. Under `ra` the carriers are every view of RA-1 and the view a `send` carries; under `tso` they are each thread's current, acquire and per-location release summaries, which play the part of RA-1's views of the same names and follow RA-2 to RA-6's assignments and joins over the store a load reads from, each buffered store and memory value, which carries the summary its store was given, and each summary a `send` carries; `tso` has no counterpart of `S`. A write to `ℓ` sets the write Boolean true for its own thread's carriers and false for every other carrier; a read of `ℓ` by `c` does the same for `c`'s read Boolean. A synchronisation joins carriers by Boolean or, where §3 joins views, and a view that §3 assigns from another view (a message view or `rel_b(ℓ)` from `cur_b`, a branch's views from its parent's, the view a `send` carries) copies that view's Booleans. Under `ra` each carrier's Booleans are held in its view; under `tso` in per-thread summary entries, the buffered elements, per-location memory entries and queue entries. Under both, the writer's or reader's own carriers are its `cur_b` and `acq_b`. A step decides `raced` from its pre-state, then updates the Booleans, then applies §3's rule; an RMW whose read part is `acquire` or `seq_cst` decides its write part only after joining the race map it reads into `cur_b`, since what happens before the store it reads happens before its write; QSpec FR-438 gives the typed form and the update order. Following FastTrack, comparing with the last write and each thread's last read decides every race. |
+| DR-3 | **Race summary.** For each shared location `ℓ` with a non-atomic access, the memory component records the thread of `ℓ`'s last write and whether it was atomic, and for each thread whether its last read of `ℓ` was atomic. Each happens-before carrier holds Booleans: whether `ℓ`'s last write happens before it, and, for each thread `c`, whether `c`'s last read of `ℓ` happens before it. Under `ra` the carriers are every view of RA-1 and the view a `send` carries; under `tso` they are each thread's current, acquire and per-location release summaries, which play the part of RA-1's views of the same names and follow RA-2 to RA-6's assignments and joins over the store a load reads from, each buffered store and memory value, which carries the summary its store was given, and each summary a `send` carries; `tso` has no counterpart of `S`. A write to `ℓ` sets the write Boolean true for its own thread's carriers and false for every other carrier; a read of `ℓ` by `c` does the same for `c`'s read Boolean. A synchronisation joins carriers by Boolean or, where §3 joins views, and a view that §3 assigns from another view (a message view or `rel_b(ℓ)` from `cur_b`, a branch's views from its parent's, the view a `send` carries) copies that view's Booleans. Under `ra` each carrier's Booleans are held in its view; under `tso` in per-thread summary entries, the buffered elements, per-location memory entries and queue entries. Under both, the writer's or reader's own carriers are its `cur_b` and `acq_b`. A step decides `raced` from its pre-state, then updates the Booleans, then applies §3's rule; an RMW whose read part is `acquire` or `seq_cst` decides its write part only after joining the race map it reads into `cur_b`, since what happens before the store it reads happens before its write; FSpec FR-438 gives the typed form and the update order. Following FastTrack, comparing with the last write and each thread's last read decides every race. |
 | DR-4 | **Derived item.** For each distinct subject among a request's items whose resolved model is weak and that has a non-atomic shared access, the request writer (ADR-013 O-20) adds one **race-freedom item**: a TP-1 invariant `always holds(not raced)`, where `raced` is derived and not authored. It is true at the post-state of a step that completes a data race: by DR-3, the step accesses `ℓ` non-atomically, or `ℓ`'s last write or a conflicting last read was non-atomic, and the conflicting last access is by another thread and does not happen before the step. Its obligation identity is the subject, the resolved models and the fixed item kind `race-freedom` (ADR-013 O-09). It has no opt-out. It settles as a TP-1 item: V-1 with no race, V-4 with a race counterexample, and V-5, V-6 (including `MemoryBoundReached`) and V-7 as for any TP-1 item. |
 | DR-5 | **Counterexample.** A race counterexample is a CX-1 finite prefix from an initial state to the step that completes the race. `TemporalCounterexample`'s `kind` member (ADR-018 DL-4) gains `Race{location, earlier, later}`, naming the position of the earlier conflicting access and the position of the completing step. EN-1's canonical race counterexample is the canonical path to the first such step in FR-181 canonical breadth-first order, with `earlier` the last conflicting access the summary names. |
 | DR-6 | **Replay.** MK-2 replays the prefix unchanged. Replay then computes happens-before over the replayed prefix from scratch, with vector clocks over the synchronisation of DR-2, independent of the race summary, and checks that the accesses at `earlier` and `later` are by different threads, touch `location`, include a write and a non-atomic access, and are unordered by happens-before. Agreement settles `reproduced-with-evaluated-witness` and the item `refuted`; disagreement settles `inconclusive`, `ReplayParity`. |
@@ -668,8 +668,8 @@ Each amended cell or paragraph carries an "Amended by ADR-025" note.
   `ModelCheckRequest` beside `max_depth`, and the result states the bound
   used.
 - ADR-011 §6.1: layer 3 `check` gains the access classification and weak
-  memory refusals; `qsl-eval`'s `simulation` and the `model_check` engine in
-  `qsl-analyze` (ADR-029) gain the memory
+  memory refusals; `fsl-eval`'s `simulation` and the `model_check` engine in
+  `fsl-analyze` (ADR-029) gain the memory
   component, bounds and fairness.
 - ADR-017 AR-2: the bindings carry the MX-2 and MX-3 preconditions for a
   subject with a weak `parallel`.
@@ -681,7 +681,7 @@ Each amended cell or paragraph carries an "Amended by ADR-025" note.
   footprints. POR-9: the protocol system offers POR with MR-1's footprints.
 - **ADR-019** §3: the flush constraints are weak rows and visibility fairness is MF-2's edge refinement (MF-5); FS-4's depth bound counts visibility pairs, and FS-6 and FS-7 cover an edge refinement. **ADR-018** PC-4 and **FR-339**: the fifth witness `UnfairVisibility{constraints, sub}` (MF-2).
 - **ADR-020** §2: each memory step kind has an explicit memory-step row,
-  with `-> any` written out where that is the intent (ADR-027 PR-1, QSpec
+  with `-> any` written out where that is the intent (ADR-027 PR-1, FSpec
   FR-432).
 - **ADR-022** §6: the memory bound reads as a boundary state.
 - **ADR-024** §1: a workload over a subject with a weak `parallel` weights
@@ -736,8 +736,8 @@ Each amended cell or paragraph carries an "Amended by ADR-025" note.
 ## References
 
 - Owning ticket: Linear QSL-372; the owner's rulings in §13 are recorded on
-  it. QSpec half: QSpec FR-434 to FR-439, with fence and memory steps
-  uncounted in QSpec FR-431 and memory-step rows in QSpec FR-432 (Linear
+  it. FSpec half: FSpec FR-434 to FR-439, with fence and memory steps
+  uncounted in FSpec FR-431 and memory-step rows in FSpec FR-432 (Linear
   STD-138). Built on ADR-018 (Linear QSL-366). Interacts with ADR-019 (Linear
   QSL-365), ADR-020 (Linear QSL-367), ADR-021 (Linear QSL-368), ADR-022
   (Linear QSL-369), ADR-023 (Linear QSL-370) and ADR-024 (Linear QSL-371).

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-535: the bounded `native-run-result/2` boundary, through crate-root names only.
 
-use ix_trace_rs::trace;
-use qsl_replay::{
+use fsl_replay::{
     read_native_run_result_bounded, write_clause_run_result, ClauseDisposition, ClauseRunReport,
     NativeRunLimits, NativeRunReadError, NativeRunResult, SettlementBasis,
 };
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 fn report() -> ClauseRunReport {
@@ -74,7 +74,7 @@ fn refusal(value: &Value) -> NativeRunReadError {
     }
 }
 
-/// FR-535-AC-2: the QSpec TC-255 NR-05/06/07 mutations over a decisive-witness
+/// FR-535-AC-2: the FSpec TC-255 NR-05/06/07 mutations over a decisive-witness
 /// record keep their FR-267 refusals; no fallback or normalized success.
 #[test]
 #[trace("TC-1340", "FR-535-AC-2")]

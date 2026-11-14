@@ -3,7 +3,7 @@ id: TC-175
 title: "The move stays inside M-5: no early M-2 work, no edge widening"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-068
+  - target: ix://agent-ix/filament-spec-language/FR-068
     type: verifies
 ---
 # TC-175: The move stays inside M-5: no early M-2 work, no edge widening
@@ -33,25 +33,25 @@ reasons in full.
 
 Verify that `check`'s shipped (non-`#[cfg(test)]`) imports stay inside
 FR-068-AC-6's module-level layer rule. `check` may import any item of a
-permitted module: `quire_exact`, `quire_semantic_value`, `qsl_foundation`, `forms`, `check` and
+permitted module: `filament_exact`, `filament_semantic_value`, `fsl_foundation`, `forms`, `check` and
 `family`, `model` and `value::model_query`, `library`, the §6.2
 `semantic_value` modules (`value::definition`, `value::enumeration`,
 `value::unit`, `value::semantic_node`, `value::environment_stage`,
 `value::member`). There
 is no `value` K-copy module; `check` reaches every kernel item through
-`quire_exact`. Every `value` import names its submodule. The later-layer
-modules (`qsl-package`, `package`, `value::expression`, `route`,
-`replay`, `lowering`) are in crates that depend on `qsl-semantics`, so Cargo
+`filament_exact`. Every `value` import names its submodule. The later-layer
+modules (`fsl-package`, `package`, `value::expression`, `route`,
+`replay`, `lowering`) are in crates that depend on `fsl-semantics`, so Cargo
 refuses an import of any of them; this test checks the module order inside
-`qsl-semantics`, which Cargo does not see.
+`fsl-semantics`, which Cargo does not see.
 
-The failure this catches is an import from a module of `qsl-semantics` that
+The failure this catches is an import from a module of `fsl-semantics` that
 `check` may not use, or through `value`'s flat aggregate. An extra item from
 an already-permitted module is not a failure. Scope: FR-068-AC-6, FR-068-AC-7 (retired).
 
 ## Test Procedure
 
-1. Enumerate every shipped (non-`#[cfg(test)]`) import under `qsl-semantics/src/check/`:
+1. Enumerate every shipped (non-`#[cfg(test)]`) import under `fsl-semantics/src/check/`:
    every `use` line, and every `crate::`-rooted path written inline in code.
    Resolve each to the module it names, resolving `super::` and `self::`
    paths relative to their file. Imports from `std` and third-party crates
@@ -59,7 +59,7 @@ an already-permitted module is not a failure. Scope: FR-068-AC-6, FR-068-AC-7 (r
    through `value/mod.rs`'s re-export table only to report which module it
    reaches; the flat form itself fails in step 2.
 2. Classify each import as permitted (its module is on FR-068-AC-6's
-   permitted list) or unlisted (any other module of `qsl-semantics`).
+   permitted list) or unlisted (any other module of `fsl-semantics`).
    Confirm there are no unlisted imports, and that every `value` import is written
    `crate::value::<submodule>::Name`.
 3. *(Retired with FR-068-AC-7; see the header.)* Search `check` for any
@@ -76,7 +76,7 @@ an already-permitted module is not a failure. Scope: FR-068-AC-6, FR-068-AC-7 (r
 6. Adverse checks, each run against a fixture tree rather than the real
    crate:
    - a shipped `use crate::complete::ReaderAuthority;` under
-     `qsl-semantics/src/check/` fails step 2 and names the file, line and module;
+     `fsl-semantics/src/check/` fails step 2 and names the file, line and module;
    - a shipped inline path `crate::value::member::Member` with no `use` line
      fails step 2;
    - a shipped `use crate::value::Rational;` (flat aggregate) fails step 2;
@@ -86,14 +86,14 @@ an already-permitted module is not a failure. Scope: FR-068-AC-6, FR-068-AC-7 (r
      `crate::value::member`) fails step 2;
    - the same unlisted import inside a `#[cfg(test)]` item does not fail
      step 2;
-   - a path rooted at `qsl_semantics` is classified the same as one rooted
+   - a path rooted at `fsl_semantics` is classified the same as one rooted
      at `crate`;
    - an additional item from a permitted module (for example a new name from
      `crate::value::unit`) does not fail step 2.
 
 ## Expected Results
 
-- Steps 1-2: every shipped import under `qsl-semantics/src/check/` is permitted and
+- Steps 1-2: every shipped import under `fsl-semantics/src/check/` is permitted and
   submodule-qualified. An unlisted import, or a flat `value`
   import, fails this step and names the file, line and resolved module. The
   number of items imported from a permitted module is not checked.

@@ -3,47 +3,47 @@ id: FR-128
 title: "Replay a model counterexample through ModelSystem"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-249
+  - target: ix://agent-ix/filament-spec-language/FR-249
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: references
-  - target: ix://agent-ix/quire-specification/FR-364
+  - target: ix://agent-ix/filament-specification/FR-364
     type: depends_on
 ---
 # FR-128: Replay a model counterexample through ModelSystem
 
 ## Description
 
-QSL SHALL replay a model counterexample (FR-126) through the layer-6 replay
-facade (FR-098) at ADR-011 E9: `qsl_replay::replay_model_trace` takes
+FSL SHALL replay a model counterexample (FR-126) through the layer-6 replay
+facade (FR-098) at ADR-011 E9: `fsl_replay::replay_model_trace` takes
 FR-098's request with the subject's inputs and a
 `WitnessEnvelope<TemporalCounterexample>` whose source is
 `ReplaySource::ModelTrace`. It recompiles the package, re-admits the subject,
@@ -58,11 +58,11 @@ re-execution, fairness and evaluation steps to that subject, recompiles
 nothing.
 
 For a timed task automaton (FR-249), the same `ReplaySource::ModelTrace`
-entry SHALL rebuild the QSL task-derived timed subject, then replay source
-operations and QSpec FR-364's derived scheduler steps through the timed
+entry SHALL rebuild the FSL task-derived timed subject, then replay source
+operations and FSpec FR-364's derived scheduler steps through the timed
 replay contract (FR-237). It SHALL keep FR-072's existing ModelTrace result
 arm and value; it defines no new replay-result sum arm or task trace wire.
-QSL owns product construction and replay execution, while QSpec FR-364 owns
+FSL owns product construction and replay execution, while FSpec FR-364 owns
 the derived-step wire identities and continuation witnesses.
 
 ## Use case
@@ -76,9 +76,9 @@ count as a refutation.
 
 ## Semantic authority and boundary
 
-QSpec FR-364 owns the counterexample wire and the replay rules for a model
-counterexample, and QSpec owns the request's subject members (ADR-018 QS-8,
-QS-9, QS-12; References). This requirement specifies QSL's replay entry,
+FSpec FR-364 owns the counterexample wire and the replay rules for a model
+counterexample, and FSpec owns the request's subject members (ADR-018 QS-8,
+QS-9, QS-12; References). This requirement specifies FSL's replay entry,
 its obligations, its refusal order and its results; it defines no wire
 member of its own.
 
@@ -88,7 +88,7 @@ member of its own.
   provision holds the subject's initial-state snapshots by
   document identity; the request names the subject's universes.
 - A `WitnessEnvelope<TemporalCounterexample>` (FR-070). Its payload is
-  QSpec FR-364's counterexample, read by FR-364's member names: `trace`
+  FSpec FR-364's counterexample, read by FR-364's member names: `trace`
   (`"model"` here; this entry refuses the `"observed"` arm), `kind`
   (formula, deadlock or the undefined-evaluation envelope), `initial_state`,
   `prefix`, `loop` (whose steps are transition identities with post-state
@@ -106,7 +106,7 @@ member of its own.
   but the clause node, the occurrence key and the fairness set.
 - `TemporalCounterexample` implements `FamilyPayload` (FR-070-AC-5).
 - For a task-derived `model` trace, the recompiled task-set inputs and release
-  declarations; the derived-step identity shape remains QSpec FR-364's.
+  declarations; the derived-step identity shape remains FSpec FR-364's.
 
 ## Outputs
 
@@ -115,7 +115,7 @@ member of its own.
   partial result. Where this requirement settles a replay `inconclusive`,
   `ReplayParity`, the FR-072 result carries its `Verdicts` or `NoValue`
   cause and the item settles cause `ReplayParity`, written
-  `replay-parity` (FR-127, QSpec FR-364). The arm's value is `ModelTraceValue::{Truth(bool),
+  `replay-parity` (FR-127, FSpec FR-364). The arm's value is `ModelTraceValue::{Truth(bool),
   Undefined(UndefinedEvaluation)}`: `Truth` for a `Formula` or `Deadlock`
   counterexample, `Undefined` for an `UndefinedEvaluation` one. FR-072's
   no-value rule reads this arm so: an undefined letter reproduced at
@@ -133,7 +133,7 @@ member of its own.
 - The executor SHALL read the fairness set from the recompiled clause.
 - A payload whose `trace` is `"observed"` SHALL refuse
   `invalid_runtime_input`/`invalid-value` before recompiling. Its replay,
-  which QSpec FR-364-AC-9 settles, is the observed-trace replay entry of
+  which FSpec FR-364-AC-9 settles, is the observed-trace replay entry of
   the infinite-trace profile requirements (References: Linear QSL-384).
 - The executor SHALL build the subject's `ModelSystem` by FR-120 from the
   byte provision and the request's universes, and refuse with FR-106's
@@ -150,7 +150,7 @@ member of its own.
     executor SHALL refuse `invalid_runtime_input`/`invalid-value`, naming
     the step;
   - the executor SHALL take as a step's post-state the successor of its
-    transition identity whose `quire.simulation.state-key/v1` state key equals
+    transition identity whose `filament.simulation.state-key/v1` state key equals
     the step's recorded state key, since one transition identity can have
     several post-states (FR-120, FR-101-AC-5);
   - if the loop does not end at its entry state, then the executor SHALL
@@ -218,7 +218,7 @@ member of its own.
 - When the payload's `kind` is `UndefinedEvaluation{where, cause}` and
   `where.locus` names a state constraint (in process
   `UndefinedLocus::Constraint`, by the constraint clause's declared name; on
-  the wire QSpec FR-364's `where.locus`, naming that clause's
+  the wire FSpec FR-364's `where.locus`, naming that clause's
   `state`/`state_clause` node of clause `constraint` and its `claim`
   occurrence), the executor SHALL read the constraint from the locus and
   never from the request, so the replay request selects no reduction:
@@ -270,7 +270,7 @@ member of its own.
 | FR-128-AC-6 | FR-126-AC-9's deadlock-freedom counterexample under `terminal when 6 mod (3 - c.value) = 0`, the prefix to value 3 with `kind: UndefinedEvaluation{where: position 3, cause: division-by-zero}`, replays to `reproduced-with-evaluated-witness` with `trace_position` 3: the letter at the terminal state 3 holds the undefined `P`. The same prefix with `kind: Deadlock` also settles `reproduced-with-evaluated-witness` with value `Undefined(UndefinedEvaluation{where: position 3, cause: division-by-zero})`, and the item settles `refuted`. Over the `Counter` subject with `pre CanInc { 6 mod (2 - self.value) >= 0 }` from value 2, FR-126-AC-6's empty-prefix counterexample of the authored clause `always holds(true)` at value 2, with `kind: UndefinedEvaluation{where: position 0, locus: CanInc with the inc transition, cause: division-by-zero}`, replays to `reproduced-with-evaluated-witness` with `trace_position` 0: the letter is defined, and the undefined `pre CanInc` of the expansion is the position's first undefined evaluation. The same payload with `where.locus` naming the clause's atom settles `inconclusive`, `ReplayParity`. | Test (TC-539) |
 | FR-128-AC-7 | Over FR-128-AC-6's deadlock-freedom subject under `terminal when 6 mod (3 - c.value) = 0` with the added `pre CanInc { 6 mod (3 - self.value) >= 0 }` on `inc`, which has no value at value 3, the prefix to value 3 with `kind: UndefinedEvaluation{where: position 3, locus: CanInc with the inc transition, cause: division-by-zero}` replays to `reproduced-with-evaluated-witness` with `trace_position` 3. The same prefix with `where.locus` naming the `terminal when` predicate settles `inconclusive`, `ReplayParity`: the contract conjunction is read first, and its undefined value leaves the expansion undetermined, so value 3 is not shown terminal and `P` is not read. | Test (TC-539) |
 | FR-128-AC-8 | Over ADR-021 §7.3's subject (FR-158) with `constraint Odd using v on M::Counter at current { 6 mod (2 - self.v) >= 0 }` selected and the claim `always holds(x.v <= 3)`, the run's `Violated` counterexample with cause `UndefinedEvaluation`, ending at the first reached state with a counter at 2, replays through a request that selects no reduction to `reproduced-with-evaluated-witness` with the `UndefinedEvaluation{where, cause: division-by-zero}` value, `where.locus` naming `Odd`. The same payload with its last step removed, and with `cause` changed to another reason, each settle `inconclusive`, `ReplayParity`. | Test (TC-539) |
-| FR-128-AC-9 | A task-automaton counterexample with QSpec FR-364 derived scheduler steps uses the same `ReplaySource::ModelTrace` request and settles on FR-072's existing ModelTrace result arm. The replay rebuilds the FR-249 task product; an accepted QSpec FR-364 witness settles reproduced, and a rejected witness does not reproduce. No new replay-result arm or QSL task-trace wire is constructed. | Test (TC-704) |
+| FR-128-AC-9 | A task-automaton counterexample with FSpec FR-364 derived scheduler steps uses the same `ReplaySource::ModelTrace` request and settles on FR-072's existing ModelTrace result arm. The replay rebuilds the FR-249 task product; an accepted FSpec FR-364 witness settles reproduced, and a rejected witness does not reproduce. No new replay-result arm or FSL task-trace wire is constructed. | Test (TC-704) |
 
 ## Dependencies
 
@@ -279,7 +279,7 @@ member of its own.
 - [FR-098](FR-098-execute-a-replay-request.md) (facade and refusal order),
   [FR-070](FR-070-implement-typed-counterexample-witness-envelope.md),
   [FR-072](FR-072-implement-typed-replay-result.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (`replay`), [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (`ModelSystem`), [FR-124](FR-124-declare-intended-terminal-states-and-derive-deadlock-freedom.md),
   [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md).
@@ -288,6 +288,6 @@ member of its own.
 
 - Linear QSL-384: the infinite-trace profile requirements, which specify
   the observed-arm replay entry.
-- QSpec FR-364 (temporal counterexample replay), FR-368 (negotiating
-  temporal model-check items) and FR-366 (deadlock freedom): the QSpec half
+- FSpec FR-364 (temporal counterexample replay), FR-368 (negotiating
+  temporal model-check items) and FR-366 (deadlock freedom): the FSpec half
   of ADR-018 QS-8, QS-9 and QS-12 (Linear STD-131).

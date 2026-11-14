@@ -3,21 +3,21 @@ id: TC-1380
 title: "The JIT publishes its coverage floor and translates every covered entry"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-560
+  - target: ix://agent-ix/filament-spec-language/FR-560
     type: verifies
 ---
 # TC-1380: The JIT publishes its coverage floor and translates every covered entry
 
 ## Description
 
-Verify that `qsl_jit::coverage()` holds the coverage floor and that the JIT
+Verify that `fsl_jit::coverage()` holds the coverage floor and that the JIT
 lists no covered entry unsupported.
 
 Scope: FR-560-AC-1 and FR-560-AC-2.
 
 ## Test Procedure
 
-1. Read `qsl_jit::coverage()` and compare its forms, value types and
+1. Read `fsl_jit::coverage()` and compare its forms, value types and
    operations with the floor: the eight `Value` forms (`literal`, `name`, `operator`, `let`, `if`, `call`, `record`, `collection`), `Boolean`, bounded and
    unbounded `Integer`, `Rational`, `Decimal`, `Text`, records and
    collections of them, and every `Value` operator over them.

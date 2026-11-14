@@ -1,0 +1,6687 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The FR-091 forms assembler, the entry of E3 (ADR-011 §2.1 E3 owner: FSL
+//! `check`): it turns the S2 parsed unit of one source into the
+//! [`PackageDeclarations`] value [`PackageDeclarations::check`] consumes.
+//!
+//! It reads the parsed unit only: no `fsl_cst` type, no source text and no
+//! token text (ADR-011 §3 FB-01, FR-091-AC-20). It resolves every type form
+//! of the unit to a kernel `ValueType` (the E3 name-binding phase, ADR-011
+//! §1; ADR-013 O-11), each `using` alias to one of the unit's profile
+//! selections, and gives each declared record and tuple the handle its
+//! `ValueType::Composite` names, minted here over the unit's
+//! `SourceOwner` (FB-13: only `check` mints). A refusal carries every
+//! error found, each with its typed cause and the span it concerns, and no
+//! partial output (ADR-011 §2.3 E3).
+//!
+//! Each `model M = "<identity>"` declaration names a domain
+//! package I1 admitted (`model::intake::admit_unit`, FR-056): its object
+//! types are named `M::T`, `T` the type's artifact id, and resolve to
+//! `ValueType::Reference` of their effective identity. The package's
+//! `TypeEnvironment` declares them with their supertypes, and its `models`
+//! carries each admitted domain package for `check` to key model nodes
+//! against (FR-094).
+//!
+//! An enum declaration is admitted here as an [`EnumBinding`]: `check` mints
+//! its declaration key and each member's key under the package's structural
+//! path (FB-13) and admits them with
+//! `AdmittedEnumDeclaration::admit` and `admit_member` (FR-091 "Enum declarations").
+//! A predicate is a function of kind `Predicate` and assembles as a function.
+
+use filament_checked::node::AuthoredBound;
+use std::collections::{BTreeMap, BTreeSet};
+
+use filament_exact::{
+    Cancel, CardinalityBound, CarriedQuantityType, CollectionKind, CollectionType, EffectiveId,
+    EnumShape, Identifier, IeeeWidth, Integer, IntegerInterval, InvalidNodeKey, NodeKey, Presence,
+    QuantityCarrier, RoundingMode, ValueType,
+};
+use filament_semantic_value::catalog::CatalogCode;
+use fsl_forms::{
+    AliasForm, BuiltinType, DeclarationForm, DeclaredName, DimensionEquivalenceForm, DimensionForm,
+    EnumForm, ExprNode, Expression, FunctionDeclaration, OperationBodyForm, ParsedUnit,
+    PopulationBoundForm, RecordFieldForm, StateClauseForm, TerminalDeclarationForm,
+    TerminalDeclarationKind, TimeInvariantForm, TimeSourceForm, TypeForm, TypeFormHead, UnitForm,
+    UrgentForm,
+};
+use fsl_foundation::diagnostic::LimitExceeded;
+use fsl_foundation::source::provenance::RawSourceRef;
+use fsl_foundation::{Code, IdentityLimits, Setting, SettingLimits, Span};
+
+use super::check::{
+    EnumBinding, ModelRecords, PackageDeclarations, ResolvedSignature, VariantTypeDeclaration,
+};
+use super::check::{UntypedKind, UntypedMember};
+use super::layer::LayerAdmission;
+use super::lowering::{model_declaration_key, strongly_connected, AdmittedModel};
+use super::model_gate::{self, ModelGateRefusal};
+use super::model_spelling::{package_names, ModelName, ModelSpellings, PackageNames, Spelled};
+use super::node_key::{NodeKeyRefusal, NodeTag, SourceOwner};
+use super::operation_body::OperationBodyDeclaration;
+use super::operation_clause::OperationClauseDeclaration;
+use super::refusal::{AliasKind, TimedConstruct};
+use super::state_clause::{
+    population_of, AttemptDeclaration, ClauseOperation, StateClauseDeclaration,
+};
+use super::state_graph_claim::StateGraphDeclaration;
+use super::terminal::{TerminalClauseDeclaration, TerminalClauseKind};
+use super::type_form::{
+    native_scalar_named, parse_rounding_mode, resolve_form, TypeFormError, TypeFormFault, TypeNames,
+};
+use super::type_invariant::{TypeInvariantDeclaration, TypeSlot};
+use crate::library::{ImportView, LibraryName};
+use std::sync::Arc;
+
+mod equivalence;
+mod units;
+
+pub(crate) use units::{package_dimension, package_unit_key};
+
+pub use equivalence::{
+    DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
+};
+
+use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
+use super::CheckedGraph;
+use crate::model::domain_package::{
+    unaliased, AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord,
+    MapTypeRecord, Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord,
+    RelationshipEnd, ScalarValueDomain, SequenceTypeRecord, ValueTypeRef,
+};
+use crate::model::intake::{
+    member_identity_name, type_identity_segment, SelectedModel, SelectedModels,
+};
+use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
+use crate::value::enumeration::{
+    AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,
+};
+use crate::value::environment_stage::stage_limit;
+use crate::value::layer::{HeaderLayer, LayerForm};
+use crate::value::semantic_node::{identity_limit, NominalRefusal, OwnerSelection};
+use filament_checked::key::DeclarationKey;
+use filament_semantic_value::declaration::{
+    CompositeDeclaration, CompositeShape, DeclarationCause, EnvironmentFailure, FieldDeclaration,
+    FieldRef, InvalidDeclaration, ObjectTypeDeclaration, StorageUnit, TypeEnvironment,
+    TypeEnvironmentLimits, UnionMemberDeclaration,
+};
+use filament_semantic_value::semantic_node::{
+    IdentityRefusal, InvalidSemanticGraph, SemanticGraphCause,
+};
+
+/// What one assembly run carries besides its inputs: the caller's [`Cancel`]
+/// handle and the accepted execution points keyed by exact authored
+/// state-clause name (FR-104-AC-15).
+pub struct AssemblyRun<'a> {
+    /// The caller's cancel handle, polled at every type-environment charge.
+    pub cancel: &'a Cancel,
+    /// Accepted execution points by state-clause name.
+    pub execution_points: BTreeMap<String, filament_contract_model::ExecutionPoint>,
+}
+
+/// The sources an assembly reads: the primary source that owns the package,
+/// every admitted source, and the source that owns each declaration when
+/// several units were combined.
+struct SourceUnits {
+    primary: RawSourceRef,
+    sources: Vec<RawSourceRef>,
+    source_owners: BTreeMap<String, RawSourceRef>,
+}
+
+/// The explicit limits the assembler takes (ADR-011 §2.3 Limits).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AssemblyLimits {
+    /// The largest scale `s` of a `decimal(c, s)` exact number the
+    /// assembler forms `10^s` for (FR-091 "Dimension and unit
+    /// declarations").
+    pub decimal_scale: u64,
+    /// The written-scale limits on `decimal(c, s)` literals the checker
+    /// applies (`s3.decimal_literal_scale`, `s3.decimal_literal_scale_total`;
+    /// FR-093 "Decimal constructors"). They travel with the assembly limits
+    /// because the assembled `PackageDeclarations` carries them to `check`.
+    pub decimal_literal: super::DecimalLiteralLimits,
+    /// The type-environment ceilings the unit's records, tuples and object
+    /// types are admitted under (FR-082).
+    pub environment: TypeEnvironmentLimits,
+    /// The byte limit every node identity of the unit encodes under, from
+    /// assembly through checking (`identity.input_bytes`, FR-259).
+    pub identity: IdentityLimits,
+}
+
+/// FR-255: the assembler's own `s3.decimal_scale` and the type-environment
+/// settings of its `environment`.
+impl SettingLimits for AssemblyLimits {
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        let mut bounds = vec![
+            (Setting::S3DecimalScale, self.decimal_scale),
+            (Setting::S3DecimalLiteralScale, self.decimal_literal.scale),
+            (
+                Setting::S3DecimalLiteralScaleTotal,
+                self.decimal_literal.total,
+            ),
+        ];
+        bounds.extend(super::environment_bounds(&self.environment));
+        bounds.extend(self.identity.bounds());
+        bounds
+    }
+
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        match setting {
+            Setting::S3DecimalScale => {
+                self.decimal_scale = bound;
+                true
+            }
+            Setting::S3DecimalLiteralScale => {
+                self.decimal_literal.scale = bound;
+                true
+            }
+            Setting::S3DecimalLiteralScaleTotal => {
+                self.decimal_literal.total = bound;
+                true
+            }
+            _ => {
+                self.identity.set_bound(setting, bound)
+                    || super::set_environment_bound(&mut self.environment, setting, bound)
+            }
+        }
+    }
+}
+
+/// The default of `environment.ancestor_steps` and `environment.work_units` (FR-255).
+const DEFAULT_ENVIRONMENT_STEPS: u64 = 16_777_216;
+
+/// The default decimal-scale bound (FR-091).
+pub const DEFAULT_DECIMAL_SCALE: u64 = 4096;
+
+impl Default for AssemblyLimits {
+    fn default() -> Self {
+        Self {
+            decimal_scale: DEFAULT_DECIMAL_SCALE,
+            decimal_literal: super::DecimalLiteralLimits::default(),
+            // FR-255's published default, 16777216 edges and units.
+            environment: TypeEnvironmentLimits {
+                ancestor_steps: DEFAULT_ENVIRONMENT_STEPS,
+                work_units: DEFAULT_ENVIRONMENT_STEPS,
+            },
+            identity: IdentityLimits::default(),
+        }
+    }
+}
+
+/// Which unit-graph topology check refused (FR-091 "Dimension and unit
+/// declarations").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TopologyFault {
+    /// A unit target names no local or imported unit (row 2).
+    UnknownTarget,
+    /// A unit whose scale is zero.
+    ZeroScale,
+    /// A targetless unit whose scale is not one or whose offset is not
+    /// zero.
+    NonIdentityRoot,
+    /// A unit whose target has a different dimension.
+    CrossDimensionTarget,
+    /// A dimension whose units have two targetless roots.
+    TwoRoots,
+    /// A unit target chain is cyclic (row 6).
+    TargetCycle,
+}
+
+/// One typed value retained by a unit-graph refusal (FR-091 "Topology error
+/// fields").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TopologyRetained {
+    /// A declared unit, with its nominal node key when it is already fixed.
+    Unit {
+        /// The unit's declared name or fixed model identity.
+        name: String,
+        /// Its structural node key when the node is already fixed.
+        key: Option<NodeKey>,
+    },
+    /// A declared dimension, with its nominal node key when it is already fixed.
+    Dimension {
+        /// The dimension's declared name or fixed model identity.
+        name: String,
+        /// Its structural node key when the node is already fixed.
+        key: Option<NodeKey>,
+    },
+    /// A target name exactly as written.
+    TargetName(String),
+    /// A unit's reduced scale.
+    Scale(filament_exact::Rational),
+    /// A unit's reduced offset.
+    Offset(filament_exact::Rational),
+    /// A retained cycle edge, in the order required by FR-142.
+    Edge {
+        /// The declaring unit.
+        from: String,
+        /// The target unit.
+        to: String,
+    },
+}
+
+/// Why a source `object` declaration is refused beyond a missing or ambiguous
+/// name (FR-569 "Declaration checks").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceObjectFault {
+    /// An `extends` entry names a model type, or a source declaration that is
+    /// no object type.
+    NotAnObjectType {
+        /// The entry as written.
+        name: String,
+    },
+    /// `deletes p` names a parameter that is no `Reference`.
+    NotAReference {
+        /// The parameter as written.
+        name: String,
+    },
+    /// A field, parameter or result type the source object model does not
+    /// represent.
+    UnsupportedType,
+    /// A field or operation that the object type neither declares nor
+    /// inherits: an `identity` name, a `modifies` field or a `redefines`
+    /// member.
+    MissingMember {
+        /// The member as written.
+        name: String,
+    },
+    /// `extends` entries that lead back to the type: each edge as
+    /// `(subtype, supertype)`.
+    SupertypeCycle {
+        /// The edges of the cycle, sorted.
+        edges: Vec<(String, String)>,
+    },
+    /// A context written `Alias::name` whose first segment is a model alias:
+    /// a context names `Alias::Type` or a source `Type`.
+    ModelAliasAsType {
+        /// The model alias as written.
+        alias: String,
+    },
+    /// Normalizing the source objects as a domain package refused.
+    Normalization(Box<crate::model::normalize::ModelRefusal>),
+    /// Normalizing the source objects as a domain package reached a limit.
+    Limit(crate::model::accounting::NormalizationIncomplete),
+}
+
+/// Why the assembler refused one part of a unit (FR-091 "The assembler
+/// refuses in these cases").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AssemblyCause {
+    /// The aggregate assembler was given no admitted source units.
+    EmptyUnitList,
+    /// A source object declaration the assembler refuses (FR-569).
+    SourceObject(SourceObjectFault),
+    /// A qualified type name names no declaration of the unit and nothing
+    /// in an admitted domain package.
+    UnresolvedTypeName {
+        /// The name as written.
+        name: String,
+    },
+    /// A bare unit name that the compiling unit does not declare (FR-505-AC-12).
+    /// It never resolves to a unit of a selected package, even when exactly
+    /// one declares it.
+    UnresolvedUnitName {
+        /// The name as written.
+        name: String,
+        /// The identities of every selected package that declares a unit of
+        /// that name, in the order the unit's `model` declarations select
+        /// them; empty when none does.
+        packages: Vec<String>,
+    },
+    /// A qualified type name names more than one declaration of the unit
+    /// (ADR-013 O-11).
+    AmbiguousTypeName {
+        /// The name as written.
+        name: String,
+        /// The span of each candidate declaration's name.
+        candidates: Vec<Span>,
+        /// Whether the native type of this spelling is also a candidate: it
+        /// has no declaration span, so it is not among `candidates`
+        /// (FR-091 "Ambiguous type name").
+        native: bool,
+    },
+    /// A built-in constructor's declared bounds are rejected by its value
+    /// type, with that value type's own cause.
+    IllFormedBounds(TypeFormFault),
+    /// A domain package's native `Float32`/`Float64` model field, which the
+    /// assembler still refuses (QSL-285 owns admitting it). Function
+    /// parameter, result and body floating types are admitted (FR-091-OQ-4).
+    FloatingType {
+        /// The width.
+        width: IeeeWidth,
+        /// The rounding mode, `exact` when none is written.
+        rounding: RoundingMode,
+        /// The profile selection the declaration's `using` alias names,
+        /// when the type is in a function's signature.
+        profile: Option<String>,
+    },
+    /// An alias's resolution reaches that alias again.
+    AliasCycle {
+        /// The cycle's dependency edges, `(alias, alias it names)`.
+        edges: Vec<(String, String)>,
+    },
+    /// A `using` alias names no profile selection of the unit.
+    UndeclaredAlias {
+        /// The alias as written.
+        alias: String,
+    },
+    /// The unit declares one selection alias more than once.
+    DuplicateAlias {
+        /// The alias.
+        alias: String,
+        /// The span of each selection declaring it.
+        spans: Vec<Span>,
+    },
+    /// The unit's records and tuples are not an admitted declaration set
+    /// (FR-143): a duplicate field name, an ill-typed member, or a
+    /// recursion the rule refuses.
+    InvalidTypeDeclaration(InvalidDeclaration),
+    /// Admitting the unit's records and tuples reached a
+    /// `TypeEnvironmentLimits` ceiling (FR-082, ADR-014 B-3).
+    TypeLimit(LimitExceeded),
+    /// A nominal preimage's identity encoding reached the
+    /// `identity.input_bytes` limit (FR-259 Behavior 4).
+    IdentityLimit(LimitExceeded),
+    /// A heap reservation for a nominal preimage's canonical bytes failed
+    /// (FR-259 Behavior 6): `resource_exhausted`/`allocation-failed`.
+    IdentityAllocation {
+        /// The size in bytes of the reservation that failed.
+        requested: usize,
+    },
+    /// A shared type-environment storage reservation failed. Preserve the
+    /// kernel's native unit: an element count is not a byte measurement.
+    StorageAllocation {
+        /// The amount passed to the kernel's reservation boundary.
+        requested: usize,
+        /// The unit passed to that boundary.
+        unit: StorageUnit,
+    },
+    /// The type registry could not compute or represent the requested
+    /// reservation size. Preserve the kernel's native unit and amount.
+    StorageCapacity {
+        /// The amount passed to the kernel's reservation boundary.
+        requested: usize,
+        /// The unit passed to that boundary.
+        unit: StorageUnit,
+    },
+    /// A declared type's handle could not be encoded: a broken invariant,
+    /// never a property of the source.
+    Handle(NodeKeyRefusal),
+    /// A name is declared by more than one dimension form, or by more than
+    /// one unit form.
+    DuplicateQuantityName {
+        /// The name.
+        name: String,
+        /// The span of each declaration.
+        spans: Vec<Span>,
+    },
+    /// A dimension term or a unit's `:` name names no dimension form, or a
+    /// unit's target names no unit form.
+    UnresolvedQuantityName {
+        /// The name as written.
+        name: String,
+    },
+    /// A dimension term names no local or imported dimension.
+    UnresolvedDimensionTerm {
+        /// The dimension that owns the term.
+        dimension: String,
+        /// The term name as written.
+        term: String,
+    },
+    /// A model member's `typeRef` names no unit in the compiling unit.
+    UnresolvedModelQuantityType {
+        /// The unit name as written.
+        name: String,
+        /// The field, parameter or operation identity carrying the type.
+        member_identity: String,
+        /// The typed member path, such as `Operation.params[0].typeRef`.
+        member_path: String,
+    },
+    /// A dimension reaches itself through derived dimensions.
+    QuantityCycle {
+        /// The cycle's dependency edges, `(declaration, declaration it
+        /// names)`.
+        edges: Vec<(String, String)>,
+    },
+    /// An exact number `rational(n, 0)`.
+    ZeroDenominator,
+    /// A `decimal(c, s)` whose scale `s` is above the assembler's bound.
+    /// A `decimal(c, s)` whose scale `s` is above
+    /// [`AssemblyLimits::decimal_scale`] (`s3.decimal_scale`); `actual` is
+    /// `u128::MAX` when the scale does not fit a `u64`.
+    DecimalScaleLimit(LimitExceeded),
+    /// A dimension equivalence refused past name resolution (FSpec FR-142
+    /// "Dimension equivalence" steps 3 to 7), naming what it retains.
+    DimensionEquivalence {
+        /// Which step refused.
+        fault: EquivalenceFault,
+        /// The declarations, units, dimensions or values the step retains.
+        retained: Vec<EquivalenceRetained>,
+    },
+    /// FR-142's base-dimension rule: a base dimension with no unit, here or
+    /// in the package that declares it, that a local unit's dimension
+    /// carries in its normalized map.
+    UnanchoredBaseDimension {
+        /// The base dimension: a source dimension's name, or a package
+        /// dimension's FCD identity.
+        dimension: String,
+        /// The first local unit, in source order, whose dimension carries
+        /// it.
+        unit: String,
+    },
+    /// A unit-graph topology error, retaining the typed values it concerns.
+    UnitGraphTopology {
+        /// Which check refused.
+        fault: TopologyFault,
+        /// The typed values retained by this refusal.
+        retained: Vec<TopologyRetained>,
+    },
+    /// An enum names one case more than once.
+    DuplicateEnumMember {
+        /// The enum's declared name.
+        enumeration: String,
+        /// The case.
+        case: String,
+        /// The span of each member declaring the case.
+        spans: Vec<Span>,
+    },
+    /// A preimage constructor, `AdmittedEnumDeclaration::admit` or `admit_member`
+    /// refused a form the checks above admitted: a broken invariant of
+    /// `check`, never a property of the source.
+    NominalAdmission(InvalidSemanticGraph),
+    /// A type position names a declaration of an imported library
+    /// (`a::R` for an import qualifier `a`): an imported name stands only
+    /// as a callee (ADR-015 D-5; `ill_typed`/`operator-ineligible`).
+    ImportedTypeName {
+        /// The qualified name as written.
+        name: String,
+    },
+    /// An `import` declaration has no admitted import: the S4 source
+    /// resolution admitted no library for its identity, so E3 refuses it
+    /// rather than drop it from the package (ADR-011 §2.4, ADR-015 D-1,
+    /// FR-307 `missing-selection`).
+    UnsuppliedImport {
+        /// The library identity the import names.
+        identity: String,
+    },
+    /// A `model` declaration names no domain package admitted at I1.
+    UnadmittedModel {
+        /// The declaration's alias.
+        alias: String,
+    },
+    /// An admitted domain package's object type has no artifact id or no
+    /// effective identity in its view: a broken invariant of I1, never a
+    /// property of the source.
+    ModelType {
+        /// The declaration's alias.
+        alias: String,
+        /// The object type's IR node identity.
+        node: String,
+    },
+    /// An admitted domain package's record has no type environment form
+    /// yet: a record value type, a systems part, port or allocation, or a
+    /// field whose value type or multiplicity no kernel type represents.
+    /// (FR-103: an operation is no longer refused here -- see
+    /// `model_operation`.)
+    UnsupportedModelMember {
+        /// The declaration's alias.
+        alias: String,
+        /// The record's IR node identity.
+        node: String,
+    },
+    /// A `pre` or `post` state clause's operation names no operation of its
+    /// context type's effective view (FR-104, FR-103).
+    UnresolvedOperation {
+        /// The context type as written, `M::T`.
+        context: String,
+        /// The operation name as written.
+        operation: String,
+    },
+    /// A `pre` or `post` state clause's operation names operations of
+    /// several of its context type's ancestors, none more derived than the
+    /// others (FR-103's effective view).
+    AmbiguousOperation {
+        /// The context type as written, `M::T`.
+        context: String,
+        /// The operation name as written.
+        operation: String,
+    },
+    /// Two unit `operation-body` declarations resolve to one operation's
+    /// `DeclarationKey` (FR-302: exactly one executable body per key).
+    DuplicateOperationBody {
+        /// The operation both bodies resolve to.
+        operation: DeclarationKey,
+        /// The span of each body's declaration, in source order.
+        bodies: Vec<Span>,
+    },
+    /// Two state-graph claims of the unit share a name (FR-165). Located at
+    /// the second.
+    DuplicateStateGraphClaim {
+        /// The claim name.
+        name: String,
+        /// The span of the first claim's name.
+        first: Span,
+    },
+    /// A state-graph claim's `over` type is not an object type of an admitted
+    /// domain package (a builtin, collection or population type). Located at
+    /// the type.
+    OverNotObjectType {
+        /// The claim name.
+        claim: String,
+    },
+    /// A `bound` declaration names a model alias that is no `model`
+    /// declaration of the unit, or a population its domain package does not
+    /// declare (FR-380 "The declaration").
+    UnresolvedPopulationBound {
+        /// The alias or population name as written.
+        name: String,
+    },
+    /// A `bound` declaration's label is another bound's, a clause's or a
+    /// function's, or two `bound` declarations name one population (FR-380
+    /// "The declaration"). `name` is the shared label or the population
+    /// as `M::p`.
+    AmbiguousPopulationBound {
+        /// The shared label, or the population as `M::p`.
+        name: String,
+        /// The span of each declaration's name, in source order.
+        spans: Vec<Span>,
+    },
+    /// A state clause's context type (or the type declaring its operation)
+    /// is a member type of two or more populations, so its extent cannot
+    /// name exactly one (FR-104 "Requirements").
+    AmbiguousPopulation {
+        /// The context type as written, `M::T`.
+        context: String,
+        /// The populations, in ascending `DeclarationKey` order.
+        populations: Vec<DeclarationKey>,
+    },
+    /// A `terminal` declaration's `on` alias is no `model` declaration of
+    /// the unit (FR-124).
+    UnresolvedTerminalModel {
+        /// The alias as written.
+        alias: String,
+    },
+    /// A `terminal when` declaration's model has no population, so its state
+    /// has no object for the predicate's `self` to range over (FR-124).
+    UnresolvedTerminalState {
+        /// The model alias.
+        model: String,
+    },
+    /// A `terminal when` declaration's model has populations of several
+    /// object types, so the predicate's `self` is not one type (FR-124).
+    AmbiguousTerminalState {
+        /// The model alias.
+        model: String,
+    },
+    /// A second `terminal` declaration for one model alias (FR-124).
+    AmbiguousTerminal {
+        /// The model alias.
+        model: String,
+        /// The span of each declaration for the alias, in source order.
+        spans: Vec<Span>,
+    },
+    /// A declaration whose `using` alias names a header profile resolved to
+    /// `layer` writes a form outside the admitted-form set of that layer's
+    /// `requires` closure (FR-110 "Layer selection"):
+    /// `unsupported_construct`/`declaration-form` or `expression-form`.
+    UnsupportedLayerForm {
+        /// The selected layer.
+        layer: HeaderLayer,
+        /// The form outside its admitted-form set.
+        form: LayerForm,
+    },
+    /// A model construct in a unit whose header does not select
+    /// `filament.model.complete/v1` (FR-361): `unsupported_construct`/
+    /// `declaration-form` or `expression-form`.
+    UnselectedModelConstruct(ModelGateRefusal),
+    /// A timed declaration or the `Clock` type, which S2 builds (FR-393)
+    /// and no S3 check reads yet (FR-230): `unsupported_construct`/
+    /// `not-yet-implemented`, never compiled unchecked.
+    TimedNotChecked(super::refusal::TimedConstruct),
+}
+
+impl AssemblyCause {
+    /// This cause's catalog code (FR-091 "Catalog codes").
+    pub fn code(&self) -> Code {
+        match self {
+            Self::EmptyUnitList => Code::InvalidPackage,
+            Self::SourceObject(fault) => match fault {
+                SourceObjectFault::UnsupportedType => Code::UnknownRequiredFeature,
+                SourceObjectFault::MissingMember { .. }
+                | SourceObjectFault::ModelAliasAsType { .. } => Code::MissingDeclaration,
+                SourceObjectFault::SupertypeCycle { .. } => Code::InvalidPackage,
+                SourceObjectFault::Normalization(refusal) => refusal.code,
+                SourceObjectFault::Limit(_) => Code::ResourceExhausted,
+                SourceObjectFault::NotAnObjectType { .. }
+                | SourceObjectFault::NotAReference { .. } => Code::InvalidModelBinding,
+            },
+            Self::UnresolvedTypeName { .. }
+            | Self::UnresolvedUnitName { .. }
+            | Self::UndeclaredAlias { .. }
+            | Self::UnresolvedOperation { .. }
+            | Self::UnresolvedTerminalModel { .. }
+            | Self::UnresolvedTerminalState { .. }
+            | Self::UnresolvedPopulationBound { .. } => Code::MissingDeclaration,
+            Self::UnadmittedModel { .. } | Self::UnsuppliedImport { .. } => Code::MissingImport,
+            Self::ModelType { .. } => Code::RuntimeInvariant,
+            Self::AmbiguousTypeName { .. }
+            | Self::DuplicateAlias { .. }
+            | Self::DuplicateEnumMember { .. }
+            | Self::DuplicateQuantityName { .. }
+            | Self::AmbiguousOperation { .. }
+            | Self::AmbiguousPopulationBound { .. }
+            | Self::AmbiguousTerminal { .. }
+            | Self::AmbiguousTerminalState { .. }
+            | Self::AmbiguousPopulation { .. } => Code::AmbiguousDeclaration,
+            Self::UnresolvedQuantityName { .. }
+            | Self::UnresolvedDimensionTerm { .. }
+            | Self::UnanchoredBaseDimension { .. } => Code::MissingDeclaration,
+            Self::UnresolvedModelQuantityType { .. } => Code::MissingDeclaration,
+            Self::DuplicateOperationBody { .. } | Self::DuplicateStateGraphClaim { .. } => {
+                Code::ConflictingDeclaration
+            }
+            Self::QuantityCycle { .. } | Self::DimensionEquivalence { .. } => Code::InvalidPackage,
+            Self::ZeroDenominator => Code::UndefinedExpression,
+            Self::DecimalScaleLimit(_) => Code::StageLimitExceeded,
+            Self::UnitGraphTopology { fault, .. } => match fault {
+                TopologyFault::UnknownTarget => Code::MissingDeclaration,
+                _ => Code::InvalidPackage,
+            },
+            Self::IllFormedBounds(_)
+            | Self::ImportedTypeName { .. }
+            | Self::OverNotObjectType { .. } => Code::IllTyped,
+            Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
+                Code::UnknownRequiredFeature
+            }
+            Self::AliasCycle { .. } => Code::InvalidPackage,
+            Self::InvalidTypeDeclaration(invalid) => match &invalid.cause {
+                DeclarationCause::DuplicateMember(_) => Code::AmbiguousDeclaration,
+                DeclarationCause::Type(_)
+                | DeclarationCause::Recursion { .. }
+                | DeclarationCause::GeneralizationCycle { .. }
+                | DeclarationCause::CompositeGeneralizationCycle { .. }
+                | DeclarationCause::RedefinitionTarget(_)
+                | DeclarationCause::RedefinitionConflict(_)
+                | DeclarationCause::RedefinitionWidens(_) => Code::IllTyped,
+                // Keys and object-type references come from the unit's own
+                // handles and the admitted view's identities: one that does
+                // not resolve is a broken invariant.
+                DeclarationCause::DuplicateKey
+                | DeclarationCause::UnknownDeclaration(_)
+                | DeclarationCause::UnknownObjectType(_) => Code::RuntimeInvariant,
+            },
+            Self::TypeLimit(_) | Self::IdentityLimit(_) => Code::StageLimitExceeded,
+            Self::IdentityAllocation { .. }
+            | Self::StorageAllocation { .. }
+            | Self::StorageCapacity { .. } => Code::ResourceExhausted,
+            Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
+            Self::UnsupportedLayerForm { .. }
+            | Self::UnselectedModelConstruct(_)
+            | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
+        }
+    }
+
+    /// The cause of a declared type handle that could not be encoded: a
+    /// reached identity byte limit or a failed reservation as such, and
+    /// anything else a broken invariant.
+    pub(crate) fn handle(refusal: NodeKeyRefusal) -> Self {
+        match refusal {
+            NodeKeyRefusal::Identity(IdentityRefusal::InputBytes { bound, required }) => {
+                Self::IdentityLimit(identity_limit(bound, required))
+            }
+            NodeKeyRefusal::Identity(IdentityRefusal::Allocation { requested }) => {
+                Self::IdentityAllocation { requested }
+            }
+            other => Self::Handle(other),
+        }
+    }
+
+    /// The cause of a refused nominal admission: a reached identity byte
+    /// limit, or a broken invariant of `check`.
+    pub(crate) fn nominal(refusal: NominalRefusal) -> Self {
+        match refusal {
+            NominalRefusal::Graph(invalid) => Self::NominalAdmission(invalid),
+            NominalRefusal::Limit(limit) => Self::IdentityLimit(limit),
+            NominalRefusal::Allocation { requested } => Self::IdentityAllocation { requested },
+        }
+    }
+
+    /// This cause's catalog code and cause (FR-091 "Catalog codes",
+    /// ADR-013 O-17).
+    pub fn catalog_code(&self) -> CatalogCode {
+        let cause = match self {
+            Self::EmptyUnitList => "established-invariant-broken",
+            Self::SourceObject(fault) => match fault {
+                SourceObjectFault::UnsupportedType => "unsupported-feature",
+                SourceObjectFault::MissingMember { .. }
+                | SourceObjectFault::ModelAliasAsType { .. } => "missing-name",
+                SourceObjectFault::SupertypeCycle { .. } => "definition-cycle",
+                SourceObjectFault::Normalization(refusal) => refusal.cause.as_str(),
+                SourceObjectFault::Limit(_) => "insufficient-next-charge",
+                SourceObjectFault::NotAnObjectType { .. }
+                | SourceObjectFault::NotAReference { .. } => "malformed-declaration",
+            },
+            Self::UnresolvedTypeName { .. }
+            | Self::UnresolvedUnitName { .. }
+            | Self::UnresolvedOperation { .. }
+            | Self::UnresolvedTerminalModel { .. }
+            | Self::UnresolvedTerminalState { .. }
+            | Self::UnresolvedPopulationBound { .. } => "missing-name",
+            Self::AmbiguousTypeName { .. }
+            | Self::DuplicateAlias { .. }
+            | Self::DuplicateEnumMember { .. }
+            | Self::DuplicateQuantityName { .. }
+            | Self::AmbiguousOperation { .. }
+            | Self::AmbiguousPopulationBound { .. }
+            | Self::AmbiguousTerminal { .. }
+            | Self::AmbiguousTerminalState { .. }
+            | Self::AmbiguousPopulation { .. } => "ambiguous-name",
+            Self::UnresolvedQuantityName { .. }
+            | Self::UnresolvedDimensionTerm { .. }
+            | Self::UnanchoredBaseDimension { .. } => "missing-name",
+            Self::UnresolvedModelQuantityType { .. } => "missing-name",
+            Self::DuplicateOperationBody { .. } | Self::DuplicateStateGraphClaim { .. } => {
+                "duplicate-declaration"
+            }
+            Self::QuantityCycle { .. } => "definition-cycle",
+            Self::DimensionEquivalence { fault, .. } => match fault {
+                EquivalenceFault::Conflicting => "conflicting-definition",
+                EquivalenceFault::Incompatible => "incompatible-definition",
+                EquivalenceFault::InvalidValue => "invalid-value",
+            },
+            Self::ZeroDenominator => "unproved-nonzero",
+            Self::DecimalScaleLimit(limit) => limit.kind().catalog_cause(),
+            // FSpec FR-142 rows 1, 5, 3 and 4.
+            Self::UnitGraphTopology { fault, .. } => match fault {
+                TopologyFault::UnknownTarget => "missing-name",
+                TopologyFault::ZeroScale | TopologyFault::NonIdentityRoot => "invalid-value",
+                TopologyFault::CrossDimensionTarget => "incompatible-definition",
+                TopologyFault::TwoRoots => "conflicting-definition",
+                TopologyFault::TargetCycle => "definition-cycle",
+            },
+            Self::IllFormedBounds(TypeFormFault::UnitArithmetic(_)) => "operator-ineligible",
+            Self::IllFormedBounds(_) | Self::OverNotObjectType { .. } => "type-mismatch",
+            Self::ImportedTypeName { .. } => "operator-ineligible",
+            Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
+                "unsupported-feature"
+            }
+            Self::AliasCycle { .. } => "definition-cycle",
+            Self::UndeclaredAlias { .. }
+            | Self::UnadmittedModel { .. }
+            | Self::UnsuppliedImport { .. } => "missing-selection",
+            Self::ModelType { .. } => "established-invariant-broken",
+            Self::InvalidTypeDeclaration(invalid) => match &invalid.cause {
+                DeclarationCause::DuplicateMember(_) => "ambiguous-name",
+                DeclarationCause::Type(cause) => cause.tag().unwrap_or("type-mismatch"),
+                DeclarationCause::Recursion { .. }
+                | DeclarationCause::GeneralizationCycle { .. }
+                | DeclarationCause::CompositeGeneralizationCycle { .. }
+                | DeclarationCause::RedefinitionTarget(_)
+                | DeclarationCause::RedefinitionConflict(_)
+                | DeclarationCause::RedefinitionWidens(_) => "type-mismatch",
+                DeclarationCause::DuplicateKey
+                | DeclarationCause::UnknownDeclaration(_)
+                | DeclarationCause::UnknownObjectType(_) => "established-invariant-broken",
+            },
+            Self::TypeLimit(limit) | Self::IdentityLimit(limit) => limit.kind().catalog_cause(),
+            Self::IdentityAllocation { .. } | Self::StorageAllocation { .. } => "allocation-failed",
+            Self::StorageCapacity { .. } => "reservation-size-overflow",
+            Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
+            Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
+            Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
+            Self::TimedNotChecked(_) => "not-yet-implemented",
+        };
+        CatalogCode::new(self.code().as_str(), cause)
+    }
+
+    /// The exact native storage request for a type-environment storage cause.
+    pub fn storage_request(&self) -> Option<(usize, StorageUnit)> {
+        match self {
+            Self::StorageAllocation { requested, unit }
+            | Self::StorageCapacity { requested, unit } => Some((*requested, *unit)),
+            _ => None,
+        }
+    }
+
+    /// The typed catalog payload for a registry storage refusal. Capacity
+    /// overflow uses FSpec's `upstream` field with the exact request object.
+    pub fn catalog_fields(&self) -> Option<BTreeMap<&'static str, String>> {
+        match self {
+            Self::StorageAllocation { requested, unit } => Some(BTreeMap::from([(
+                "requested",
+                format!("{}:{requested}", storage_unit_name(*unit)),
+            )])),
+            Self::StorageCapacity { requested, unit } => Some(BTreeMap::from([(
+                "upstream",
+                format!("{}:{requested}", storage_unit_name(*unit)),
+            )])),
+            _ => None,
+        }
+    }
+}
+
+fn storage_unit_name(unit: StorageUnit) -> &'static str {
+    match unit {
+        StorageUnit::Bytes => "bytes",
+        StorageUnit::AdditionalElements => "additional-elements",
+    }
+}
+
+/// One assembler error: its cause and the span it concerns, a
+/// `Locus::Region` over the unit (ADR-013 T-5): the assembler runs before
+/// check mints any occurrence key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssemblyError {
+    /// The typed cause.
+    pub cause: AssemblyCause,
+    /// The span of the type form, `using` field, selection or declared
+    /// name it concerns.
+    pub span: Span,
+}
+
+/// The assembler's refusal: every error found in the unit, in the order
+/// found (ADR-011 §2.3 E3).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssemblyRefusal {
+    /// Every error, never empty.
+    pub errors: Vec<AssemblyError>,
+}
+
+/// A declared record's, tuple's or union's members, as written.
+enum Members {
+    Record(Vec<RecordFieldForm>),
+    Tuple(Vec<TypeForm>),
+    Union(Vec<fsl_forms::UnionMemberForm>),
+}
+
+/// A declared record, tuple or union.
+struct Composite {
+    name: DeclaredName,
+    members: Members,
+}
+
+/// Which declaration a declared type name binds.
+#[derive(Clone, Copy)]
+enum Declared {
+    Alias(usize),
+    Composite,
+    Enum,
+}
+
+mod clock_forms;
+
+pub use clock_forms::{ClockReadingDeclaration, ClockSite, ClockSlot, ClockTypePosition, ClockUse};
+
+/// A timed declaration with the complete S2 form and source span that S3
+/// needs to check it (FR-230).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TimedDeclaration {
+    /// `time Model dense/tick ...`.
+    TimeSource {
+        /// The S2 form.
+        form: TimeSourceForm,
+        /// The key of its source unit among the package's source owners
+        /// (`time_source_owner`), which reads its model alias (FR-480
+        /// "Selections and imports").
+        owner: String,
+    },
+    /// `time invariant ...`.
+    TimeInvariant(TimeInvariantForm),
+    /// `urgent ...`.
+    Urgent(UrgentForm),
+    /// A `Clock` the unit's own source writes in a type position.
+    ClockType(ClockTypePosition),
+}
+
+impl TimedDeclaration {
+    pub(super) const fn construct(&self) -> TimedConstruct {
+        match self {
+            Self::TimeSource { .. } => TimedConstruct::TimeSource,
+            Self::TimeInvariant(_) => TimedConstruct::TimeInvariant,
+            Self::Urgent(_) => TimedConstruct::Urgent,
+            Self::ClockType(_) => TimedConstruct::Clock,
+        }
+    }
+
+    pub(super) const fn span(&self) -> Span {
+        match self {
+            Self::TimeSource { form, .. } => form.span,
+            Self::TimeInvariant(form) => form.span,
+            Self::Urgent(form) => form.span,
+            Self::ClockType(position) => position.span,
+        }
+    }
+
+    /// The declaration FR-230's facet gate names as the construct's owner:
+    /// the model for a `time` member, `time invariant` or `urgent`
+    /// declaration, and the declaration whose type form writes a `Clock`.
+    /// A `time invariant` or `urgent` declaration names no model: its owner
+    /// is `model`, the unit's timed model, and its own name only when the
+    /// unit has no one model it can belong to.
+    pub(super) fn owner<'a>(&'a self, model: Option<&'a str>) -> &'a str {
+        match self {
+            Self::TimeSource { form, .. } => &form.model.name,
+            Self::TimeInvariant(invariant) => model.unwrap_or(&invariant.name.name),
+            Self::Urgent(urgent) => model.unwrap_or(&urgent.name.name),
+            Self::ClockType(position) => &position.owner,
+        }
+    }
+}
+
+/// The source-owner key of the package's `index`th time source, in source
+/// unit order: a time source declares no name of its own.
+pub(super) fn time_source_owner(index: usize) -> String {
+    format!("time_source:{index}")
+}
+
+/// The unit's declarations, split by kind, and the names they bind.
+struct Unit {
+    aliases: Vec<AliasForm>,
+    dimensions: Vec<DimensionForm>,
+    equivalences: Vec<DimensionEquivalenceForm>,
+    units: Vec<UnitForm>,
+    composites: Vec<Composite>,
+    enums: Vec<EnumForm>,
+    functions: Vec<FunctionDeclaration>,
+    /// Each declared type name's declarations, with the span of each name.
+    declared: BTreeMap<String, Vec<(Declared, Span)>>,
+    /// Each source `object` declaration, in source order (FR-569).
+    objects: Vec<fsl_forms::ObjectForm>,
+    /// State clause declarations in declaration order (FR-102), resolved
+    /// by the caller into `StateClauseDeclaration`s (FR-104).
+    state_clauses: Vec<StateClauseForm>,
+    /// Operation body declarations in declaration order (FR-102), resolved
+    /// by the caller into `OperationBodyDeclaration`s (FR-104).
+    operation_bodies: Vec<OperationBodyForm>,
+    /// `bound` declarations in declaration order (FR-380), resolved by the
+    /// caller into the admitted models' authored population bounds.
+    population_bounds: Vec<PopulationBoundForm>,
+    /// Each `protocol` declaration's form, in source order, for FR-113's
+    /// `check::protocol_clause` checker to resolve at S3.
+    protocols: Vec<fsl_forms::ProtocolDeclarationForm>,
+    /// Each `temporal` clause's form, in source order, for FR-326's
+    /// `check::temporal_clause` checker to resolve at S3.
+    temporal_clauses: Vec<super::temporal_clause::TemporalDeclaration>,
+    /// Each `abstraction` declaration (FR-304), in source order, for
+    /// `CheckedGraph::abstraction` to check at S3.
+    abstractions: Vec<fsl_forms::AbstractionDeclarationForm>,
+    /// Each `guarantee` declaration (FSpec FR-490), in source order.
+    guarantees: Vec<fsl_forms::GuaranteeDeclarationForm>,
+    /// Each `compose` declaration (FSpec FR-491), in source order.
+    compositions: Vec<fsl_forms::CompositionDeclarationForm>,
+    /// Each `hyper` clause and `relation`, in source order, for
+    /// `check::hyper_clause` to resolve at S3.
+    hyper_clauses: Vec<super::hyper_clause::HyperDeclaration>,
+    probabilistic: Vec<super::ProbabilisticDeclaration>,
+    /// Each `terminal` declaration's form, in source order, resolved by the
+    /// caller into the model's `TerminalClauseDeclaration`s (FR-124).
+    terminals: Vec<TerminalDeclarationForm>,
+    /// Each `refinement` declaration's form, in source order, resolved by the
+    /// caller into the unit's `RefinementDeclaration`s (FR-135).
+    refinements: Vec<fsl_forms::RefinementForm>,
+    /// Each `hybrid` declaration's form, in source order, resolved by the
+    /// caller into the unit's `HybridDeclaration`s (FR-447).
+    hybrids: Vec<fsl_forms::HybridForm>,
+    /// Each selected extension's declaration form, in source order, for
+    /// `check::extension` to check against its typed-node schema (FR-354).
+    extensions: Vec<fsl_forms::ExtensionForm>,
+    /// The timed declarations in source order, with their complete S2 forms.
+    timed: Vec<TimedDeclaration>,
+    /// The unit's clock-reading declarations in source order (FR-230
+    /// "Clock-reading declarations"), held out of the value world.
+    clock_reading: Vec<ClockReadingDeclaration>,
+    /// The task sets and the claims over them in source order (FSL FR-246).
+    task_sets: Vec<super::task_set::TaskSetDeclaration>,
+    /// Each state-graph claim's form, in source order, resolved by the
+    /// caller into `StateGraphDeclaration`s (FR-165).
+    state_graph_claims: Vec<fsl_forms::StateGraphClaimForm>,
+}
+
+impl Unit {
+    fn new(forms: Vec<fsl_forms::ParsedForm>, package_bearing: BTreeSet<String>) -> Self {
+        let mut clock_forms = clock_forms::classify(&forms, package_bearing);
+        let mut unit = Self {
+            aliases: Vec::new(),
+            dimensions: Vec::new(),
+            equivalences: Vec::new(),
+            units: Vec::new(),
+            composites: Vec::new(),
+            enums: Vec::new(),
+            functions: Vec::new(),
+            declared: BTreeMap::new(),
+            objects: Vec::new(),
+            state_clauses: Vec::new(),
+            operation_bodies: Vec::new(),
+            population_bounds: Vec::new(),
+            protocols: Vec::new(),
+            temporal_clauses: Vec::new(),
+            abstractions: Vec::new(),
+            guarantees: Vec::new(),
+            compositions: Vec::new(),
+            hyper_clauses: Vec::new(),
+            probabilistic: Vec::new(),
+            terminals: Vec::new(),
+            refinements: Vec::new(),
+            hybrids: Vec::new(),
+            extensions: Vec::new(),
+            timed: Vec::new(),
+            clock_reading: Vec::new(),
+            task_sets: Vec::new(),
+            state_graph_claims: Vec::new(),
+        };
+        unit.timed.extend(
+            std::mem::take(&mut clock_forms.positions)
+                .into_iter()
+                .map(TimedDeclaration::ClockType),
+        );
+        // Each time source's position among the unit's time sources, the key
+        // of its source unit (`time_source_owner`).
+        let mut time_sources = 0usize;
+        for (index, form) in forms.into_iter().enumerate() {
+            let span = form.span();
+            let time_source = time_sources;
+            if matches!(form.form(), DeclarationForm::TimeSource(_)) {
+                time_sources += 1;
+            }
+            let form = match clock_forms.dispositions.remove(&index) {
+                None => form.into_form(),
+                Some(clock_forms::Disposition::Drop) => continue,
+                Some(clock_forms::Disposition::Reading) => {
+                    if let DeclarationForm::Function(function) = form.into_form() {
+                        unit.clock_reading
+                            .push(clock_forms::reading(&clock_forms, *function));
+                    }
+                    continue;
+                }
+                Some(clock_forms::Disposition::DataPart) => {
+                    clock_forms::data_part(&clock_forms, form.into_form())
+                }
+            };
+            match form {
+                DeclarationForm::Function(function) => unit.functions.push(*function),
+                DeclarationForm::Object(object) => unit.objects.push(*object),
+                DeclarationForm::Abstraction(abstraction) => unit.abstractions.push(*abstraction),
+                DeclarationForm::Guarantee(guarantee) => unit.guarantees.push(*guarantee),
+                DeclarationForm::Composition(composition) => {
+                    unit.compositions.push(*composition);
+                }
+                DeclarationForm::Alias(alias) => {
+                    unit.declare(&alias.name, Declared::Alias(unit.aliases.len()));
+                    unit.aliases.push(alias);
+                }
+                DeclarationForm::Record(record) => {
+                    unit.declare(&record.name, Declared::Composite);
+                    unit.composites.push(Composite {
+                        name: record.name,
+                        members: Members::Record(record.fields),
+                    });
+                }
+                DeclarationForm::Tuple(tuple) => {
+                    unit.declare(&tuple.name, Declared::Composite);
+                    unit.composites.push(Composite {
+                        name: tuple.name,
+                        members: Members::Tuple(tuple.elements),
+                    });
+                }
+                DeclarationForm::Dimension(dimension) => unit.dimensions.push(dimension),
+                DeclarationForm::DimensionEquivalence(equivalence) => {
+                    unit.equivalences.push(*equivalence)
+                }
+                DeclarationForm::Unit(quantity) => unit.units.push(*quantity),
+                DeclarationForm::Enum(enumeration) => {
+                    unit.declare(&enumeration.name, Declared::Enum);
+                    unit.enums.push(enumeration);
+                }
+                DeclarationForm::StateClause(clause) => unit.state_clauses.push(*clause),
+                DeclarationForm::OperationBody(body) => unit.operation_bodies.push(*body),
+                DeclarationForm::PopulationBound(bound) => unit.population_bounds.push(bound),
+                DeclarationForm::Protocol(protocol) => unit.protocols.push(*protocol),
+                DeclarationForm::Union(union) => {
+                    unit.declare(&union.name, Declared::Composite);
+                    unit.composites.push(Composite {
+                        name: union.name,
+                        members: Members::Union(union.members),
+                    });
+                }
+                DeclarationForm::Terminal(terminal) => unit.terminals.push(*terminal),
+                DeclarationForm::Refinement(refinement) => unit.refinements.push(*refinement),
+                DeclarationForm::Hybrid(hybrid) => unit.hybrids.push(*hybrid),
+                DeclarationForm::Extension(extension) => unit.extensions.push(*extension),
+                DeclarationForm::TimeSource(time) => {
+                    unit.timed.push(TimedDeclaration::TimeSource {
+                        form: *time,
+                        owner: time_source_owner(time_source),
+                    })
+                }
+                DeclarationForm::TimeInvariant(invariant) => {
+                    unit.timed.push(TimedDeclaration::TimeInvariant(*invariant))
+                }
+                DeclarationForm::Urgent(urgent) => {
+                    unit.timed.push(TimedDeclaration::Urgent(*urgent))
+                }
+                DeclarationForm::Taskset(set) => unit
+                    .task_sets
+                    .push(super::task_set::TaskSetDeclaration::Taskset(set)),
+                DeclarationForm::Schedulable(claim) => unit
+                    .task_sets
+                    .push(super::task_set::TaskSetDeclaration::Schedulable(claim)),
+                DeclarationForm::Response(claim) => unit
+                    .task_sets
+                    .push(super::task_set::TaskSetDeclaration::Response(claim)),
+                DeclarationForm::Release(release) => unit
+                    .task_sets
+                    .push(super::task_set::TaskSetDeclaration::Release(release)),
+                DeclarationForm::HyperBehaviours(clause) => unit
+                    .hyper_clauses
+                    .push(super::hyper_clause::HyperDeclaration::Behaviours(*clause)),
+                DeclarationForm::HyperFinite(clause) => unit
+                    .hyper_clauses
+                    .push(super::hyper_clause::HyperDeclaration::Finite(*clause)),
+                DeclarationForm::ModelRelation(clause) => unit
+                    .hyper_clauses
+                    .push(super::hyper_clause::HyperDeclaration::Relation(*clause)),
+                DeclarationForm::Random(random) => unit
+                    .probabilistic
+                    .push(super::ProbabilisticDeclaration::Random(random)),
+                DeclarationForm::Reward(reward) => unit
+                    .probabilistic
+                    .push(super::ProbabilisticDeclaration::Reward(reward)),
+                DeclarationForm::Delay(delay) => unit
+                    .probabilistic
+                    .push(super::ProbabilisticDeclaration::Delay(delay)),
+                DeclarationForm::Workload(workload) => unit
+                    .probabilistic
+                    .push(super::ProbabilisticDeclaration::Workload(workload)),
+                DeclarationForm::Probabilistic(claim) => unit
+                    .probabilistic
+                    .push(super::ProbabilisticDeclaration::Claim(claim)),
+                DeclarationForm::StateGraphClaim(claim) => unit.state_graph_claims.push(*claim),
+                DeclarationForm::Temporal(clause) => {
+                    unit.temporal_clauses
+                        .push(super::temporal_clause::TemporalDeclaration {
+                            form: *clause,
+                            span,
+                        });
+                }
+            }
+        }
+        // The `Clock` type positions were listed first; FR-230's gate reads
+        // every timed construct in source order.
+        unit.timed.sort_by_key(|form| form.span().start);
+        unit
+    }
+
+    fn declare(&mut self, name: &DeclaredName, declared: Declared) {
+        self.declared
+            .entry(name.name.clone())
+            .or_default()
+            .push((declared, name.span));
+    }
+
+    /// The spans of every declaration `name` binds.
+    fn candidates(&self, name: &str) -> Vec<Span> {
+        self.declared
+            .get(name)
+            .map(|declared| declared.iter().map(|(_, span)| *span).collect())
+            .unwrap_or_default()
+    }
+}
+
+/// The names the assembler resolves type forms against while it builds the
+/// package: each declared record's and tuple's `ValueType::Composite`, each
+/// enum and each alias once resolved (the order `check`'s scope binds them
+/// in). A package-owned type `M::T` resolves through the writing unit's
+/// model alias instead ([`ModelSpellings`]).
+#[derive(Default)]
+struct Names {
+    unit_table: std::cell::RefCell<filament_semantic_value::quantity::UnitTable>,
+    types: BTreeMap<String, Vec<ValueType>>,
+    /// The unit's declared units by name, for `Quantity<u>`.
+    units: BTreeMap<String, filament_exact::UnitId>,
+}
+
+impl Names {
+    /// These names as the unit `unit` reads them (the primary unit when
+    /// `None`), its model aliases spelled through `spellings`.
+    fn in_unit<'a>(
+        &'a self,
+        spellings: &'a ModelSpellings,
+        unit: Option<&'a RawSourceRef>,
+    ) -> UnitNames<'a> {
+        UnitNames {
+            names: self,
+            spellings,
+            unit,
+        }
+    }
+}
+
+/// The package's names as one source unit reads them.
+struct UnitNames<'a> {
+    names: &'a Names,
+    spellings: &'a ModelSpellings,
+    unit: Option<&'a RawSourceRef>,
+}
+
+impl TypeNames for UnitNames<'_> {
+    fn named_types(&self, name: &str) -> &[ValueType] {
+        self.spellings.types(self.unit, name, &self.names.types)
+    }
+
+    fn object_type_named(&self, name: &str) -> Option<EffectiveId> {
+        self.spellings.object_type(self.unit, name)
+    }
+
+    fn unit_value(
+        &self,
+        id: filament_exact::UnitId,
+    ) -> Option<filament_semantic_value::quantity::QuantityUnit> {
+        self.names.unit_table.borrow().get(id).cloned()
+    }
+
+    fn retain_unit(
+        &self,
+        unit: filament_semantic_value::quantity::QuantityUnit,
+    ) -> Result<filament_exact::UnitId, filament_semantic_value::semantic_node::IdentityRefusal>
+    {
+        self.names.unit_table.borrow_mut().insert(unit)
+    }
+
+    fn unit_named(&self, name: &str) -> Option<filament_exact::UnitId> {
+        match self.spellings.spelled(self.unit, name) {
+            Spelled::Model(_) => self.spellings.unit(self.unit, name),
+            Spelled::Other => self.names.units.get(name).cloned(),
+        }
+    }
+
+    fn unit_packages(&self, name: &str) -> Vec<String> {
+        self.spellings.declaring_packages(self.unit, name)
+    }
+}
+
+/// Why a variant type of a selected model could not be declared.
+pub(crate) enum VariantTypeFault {
+    /// A key the admitted view does not resolve: a broken invariant of I1,
+    /// carrying the node.
+    Broken(String),
+    /// The type's checked node key has no preimage.
+    Handle(InvalidNodeKey),
+}
+
+/// Each payload-free variant type of `view`'s package, declared by its
+/// effective identity and checked node key together, with the effective
+/// identity of every case (FR-056 "Effective identity of a variant type",
+/// FR-360 item 11), each with the declaration key it was read from. Payload
+/// variants are instead assembled as union composites. The one builder of
+/// the type environment and replay admission, so both agree on every key and
+/// rank. `alias` names the type `alias::<artifact id>`.
+pub(crate) fn variant_type_declarations(
+    view: &crate::model::normalize::EffectiveView,
+    alias: &str,
+) -> Result<Vec<(DeclarationKey, VariantTypeDeclaration)>, VariantTypeFault> {
+    let package = view.domain_package();
+    let identities = view.type_identities();
+    let by_key: BTreeMap<&DeclarationKey, &DomainPackageRecord> = package
+        .records
+        .iter()
+        .map(|record| (record.key(), record))
+        .collect();
+    let mut declared = Vec::new();
+    for record in &package.records {
+        let DomainPackageRecord::Enum(variant_type) = record else {
+            continue;
+        };
+        if package.records.iter().any(|record| {
+            matches!(record, DomainPackageRecord::Variant(case)
+                if case.owner == variant_type.key && case.payload_type.is_some())
+        }) {
+            // A payload-bearing model variant is a union composite, not an
+            // enum. Its type is added to `composites` below.
+            continue;
+        }
+        let broken = |node: &str| VariantTypeFault::Broken(node.to_owned());
+        let identity = identities
+            .get(&variant_type.key)
+            .ok_or_else(|| broken(&variant_type.key.node))?;
+        let node = model_declaration_key(
+            &variant_type.key.package,
+            NodeTag::Model,
+            "variant_type",
+            &variant_type.key.node,
+        )
+        .map_err(VariantTypeFault::Handle)?;
+        let mut cases = Vec::with_capacity(variant_type.members.len());
+        for entry in view.declarations().iter().filter(|entry| {
+            entry.visible && entry.preimage.owner_effective_type == Some(identity.clone())
+        }) {
+            match by_key.get(&entry.preimage.original).copied() {
+                Some(DomainPackageRecord::Variant(case)) => {
+                    cases.push((entry.effective_id.clone(), case.case.clone()))
+                }
+                Some(_) | None => return Err(broken(&entry.preimage.original.node)),
+            }
+        }
+        if cases.len() != variant_type.members.len() {
+            return Err(broken(&variant_type.key.node));
+        }
+        let Some(type_declaration) = VariantTypeDeclaration::new(
+            identity.clone(),
+            super::source_model::qualified(alias, &variant_type.name),
+            variant_type.key.clone(),
+            node,
+            cases,
+        ) else {
+            return Err(broken(&variant_type.key.node));
+        };
+        declared.push((variant_type.key.clone(), type_declaration));
+    }
+    Ok(declared)
+}
+
+/// What a selected model declares in the type environment: its object types,
+/// its record value types and event types as composites, and where those keep
+/// the fields their ancestors name.
+struct ModelTypes {
+    objects: Vec<ObjectTypeDeclaration>,
+    composites: Vec<CompositeDeclaration>,
+    variant_types: Vec<VariantTypeDeclaration>,
+    /// Each scalar or alias type's `alias::T` name and its admitted kernel type.
+    scalars: Vec<(String, ValueType)>,
+    model_records: ModelRecords,
+    relationships: Vec<RelationshipDeclaration>,
+    /// The members declared with no checked type (FR-056-AC-43).
+    untyped_members: Vec<UntypedMember>,
+    /// Each record value type's and event type's composite declaration node.
+    handles: BTreeMap<DeclarationKey, NodeKey>,
+}
+
+impl ModelTypes {
+    /// Every type name these declarations bind, each `first::T`, by member
+    /// `T`: composites, object types, variant types, scalar types and aliases,
+    /// in the order the package's names bind them.
+    fn package_names(&self, first: &str) -> PackageNames {
+        let composites = self.composites.iter().map(|declaration| {
+            (
+                declaration.name(),
+                ModelName {
+                    types: vec![ValueType::Composite(declaration.key())],
+                    ..ModelName::default()
+                },
+            )
+        });
+        let objects = self.objects.iter().map(|declaration| {
+            (
+                declaration.name(),
+                ModelName {
+                    types: vec![ValueType::Reference(declaration.key())],
+                    object: Some(declaration.key()),
+                    variant: None,
+                },
+            )
+        });
+        let variant_types = self.variant_types.iter().map(|declared| {
+            (
+                declared.name(),
+                ModelName {
+                    types: vec![ValueType::Enum(declared.shape())],
+                    object: None,
+                    variant: Some(declared.key()),
+                },
+            )
+        });
+        let scalars = self.scalars.iter().map(|(name, value_type)| {
+            (
+                name.as_str(),
+                ModelName {
+                    types: vec![value_type.clone()],
+                    ..ModelName::default()
+                },
+            )
+        });
+        package_names(
+            first,
+            composites
+                .chain(objects)
+                .chain(variant_types)
+                .chain(scalars),
+        )
+    }
+}
+
+/// The names the unit's `object` declarations share with its other
+/// declarations (FR-569 "Name resolution and collisions"): an object type or
+/// population whose name equals another declaration's, a model alias, a
+/// profile alias or an import alias is refused at every declaration of the
+/// name.
+fn source_name_collisions(
+    unit: &Unit,
+    selections: &fsl_foundation::selection::SourceSelections,
+    errors: &mut Vec<AssemblyError>,
+) {
+    let mut owners: BTreeMap<&str, Vec<Span>> = BTreeMap::new();
+    let mut source: BTreeSet<&str> = BTreeSet::new();
+    for object in &unit.objects {
+        owners
+            .entry(object.name.name.as_str())
+            .or_default()
+            .push(object.name.span);
+        source.insert(object.name.name.as_str());
+        for member in &object.members {
+            if let fsl_forms::ObjectMemberForm::Population(population) = member {
+                owners
+                    .entry(population.name.name.as_str())
+                    .or_default()
+                    .push(population.name.span);
+                source.insert(population.name.name.as_str());
+            }
+        }
+    }
+    for (name, declarations) in &unit.declared {
+        if let Some(spans) = owners.get_mut(name.as_str()) {
+            spans.extend(declarations.iter().map(|(_, span)| *span));
+        }
+    }
+    for function in &unit.functions {
+        if let Some(spans) = owners.get_mut(function.name.as_str()) {
+            // A function not read from a source unit has no span: the empty
+            // span stands for it.
+            spans.push(
+                function
+                    .spans()
+                    .map_or(Span { start: 0, end: 0 }, |s| s.declaration),
+            );
+        }
+    }
+    for clause in &unit.state_clauses {
+        if let Some(spans) = owners.get_mut(clause.name.name.as_str()) {
+            spans.push(clause.name.span);
+        }
+    }
+    let aliases = selections
+        .models
+        .iter()
+        .map(|selection| (selection.alias.as_str(), selection.span))
+        .chain(
+            selections
+                .profiles
+                .iter()
+                .map(|selection| (selection.alias.as_str(), selection.span)),
+        )
+        .chain(
+            selections
+                .imports
+                .iter()
+                .filter_map(|selection| Some((selection.alias.as_deref()?, selection.span))),
+        );
+    for (alias, span) in aliases {
+        if let Some(spans) = owners.get_mut(alias) {
+            spans.push(span);
+        }
+    }
+    for (name, mut spans) in owners {
+        if spans.len() < 2 || !source.contains(name) {
+            continue;
+        }
+        spans.sort_by_key(|span| span.start);
+        for span in &spans {
+            errors.push(AssemblyError {
+                cause: AssemblyCause::AmbiguousTypeName {
+                    name: name.to_owned(),
+                    candidates: spans.clone(),
+                    native: false,
+                },
+                span: *span,
+            });
+        }
+    }
+}
+
+/// The first `count` model selections that `unit` itself makes: the ones it
+/// declares and the ones it repeats from an earlier unit. `units` gives each
+/// selection's declaring unit and `repeated` each repeat's kept selection and
+/// repeating unit.
+fn unit_model_selections<'a>(
+    selections: &'a [fsl_foundation::selection::ModelSelection],
+    count: usize,
+    units: &[usize],
+    repeated: &[(usize, usize)],
+    unit: usize,
+) -> Vec<&'a fsl_foundation::selection::ModelSelection> {
+    let declared = units
+        .iter()
+        .take(count)
+        .enumerate()
+        .filter(|(_, declaring)| **declaring == unit)
+        .map(|(index, _)| index);
+    let repeats = repeated
+        .iter()
+        .filter(|(kept, repeating)| *repeating == unit && *kept < count)
+        .map(|(kept, _)| *kept);
+    let mut indices: Vec<usize> = declared.chain(repeats).collect();
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+        .into_iter()
+        .filter_map(|index| selections.get(index))
+        .collect()
+}
+
+/// One unit's `object` declarations as the model selected under the empty
+/// alias (FR-569 "The source model"), with the selection that names it.
+/// `identity` is the model's package identity.
+fn source_model(
+    objects: &[fsl_forms::ObjectForm],
+    declared_types: &BTreeSet<String>,
+    foreign: &[(&str, &DomainPackage)],
+    identity: String,
+    meter: &mut crate::model::accounting::Meter,
+    errors: &mut Vec<AssemblyError>,
+) -> Option<(fsl_foundation::selection::ModelSelection, SelectedModel)> {
+    let first = objects.first()?;
+    let package = match super::source_model::build(
+        objects,
+        &super::source_model::Context {
+            identity: &identity,
+            declared_types,
+            foreign,
+        },
+    ) {
+        Ok(package) => package,
+        Err(found) => {
+            errors.extend(found);
+            return None;
+        }
+    };
+    let view = match crate::model::normalize::normalize_on(&package, meter) {
+        crate::model::normalize::NormalizeOutcome::Completed(view) => view,
+        crate::model::normalize::NormalizeOutcome::Refused(refusals) => {
+            errors.push(AssemblyError {
+                cause: AssemblyCause::SourceObject(SourceObjectFault::Normalization(Box::new(
+                    refusals.into_first(),
+                ))),
+                span: first.name.span,
+            });
+            return None;
+        }
+        crate::model::normalize::NormalizeOutcome::Incomplete(incomplete) => {
+            errors.push(AssemblyError {
+                cause: AssemblyCause::SourceObject(SourceObjectFault::Limit(incomplete)),
+                span: first.name.span,
+            });
+            return None;
+        }
+    };
+    let selection = fsl_foundation::selection::ModelSelection {
+        alias: super::source_model::ALIAS.to_owned(),
+        identity,
+        span: first.span,
+        identity_span: first.name.span,
+    };
+    Some((
+        selection.clone(),
+        SelectedModel {
+            alias: selection.alias,
+            span: selection.span,
+            view,
+            operation_clauses: Vec::new(),
+            type_invariants: Vec::new(),
+        },
+    ))
+}
+
+/// The object types of the domain package admitted for the `model`
+/// declaration `alias`, each named `alias::T` with `T` its artifact id, and
+/// declaring its supertypes by their effective identities and its fields
+/// with their value types, presences and redefinitions, and its operations
+/// (FR-103). Record and event value types are emitted as composites with
+/// their effective fields. Systems parts, ports, allocations, relationships
+/// and populations name no value-type entry; they stay in the admitted model
+/// view used for model-reference binding. Each
+/// object type's operations go into `table`, keyed by its effective
+/// identity, beside the type environment rather than in it.
+fn model_object_types(
+    alias: &str,
+    model: &SelectedModel,
+    span: Span,
+    table: &mut OperationTable,
+    units: &BTreeMap<String, filament_exact::UnitId>,
+    foreign: &[&SelectedModel],
+) -> Result<ModelTypes, Vec<AssemblyError>> {
+    let package = model.view.domain_package();
+    let identities = model.view.type_identities();
+    let error = |cause| AssemblyError { cause, span };
+    let broken = |node: &str| {
+        error(AssemblyCause::ModelType {
+            alias: alias.to_owned(),
+            node: node.to_owned(),
+        })
+    };
+    let unsupported = |node: &str| {
+        error(AssemblyCause::UnsupportedModelMember {
+            alias: alias.to_owned(),
+            node: node.to_owned(),
+        })
+    };
+    let mut records: BTreeMap<&DeclarationKey, &DomainPackageRecord> = package
+        .records
+        .iter()
+        .map(|record| (record.key(), record))
+        .collect();
+    let mut errors = Vec::new();
+    let mut variant_types = Vec::new();
+    let mut variant_shapes = BTreeMap::<&DeclarationKey, EnumShape>::new();
+    match variant_type_declarations(&model.view, alias) {
+        Ok(declared) => {
+            for (key, declaration) in declared {
+                if let Some((owned, _)) = records.get_key_value(&key) {
+                    variant_shapes.insert(owned, declaration.shape());
+                }
+                variant_types.push(declaration);
+            }
+        }
+        Err(VariantTypeFault::Broken(node)) => errors.push(broken(&node)),
+        Err(VariantTypeFault::Handle(refusal)) => {
+            errors.push(error(AssemblyCause::nominal(nominal_key_refusal(refusal))));
+        }
+    }
+    let mut fields: BTreeMap<&DeclarationKey, Vec<FieldDeclaration>> = BTreeMap::new();
+    let mut operations: BTreeMap<&DeclarationKey, Vec<OperationDeclaration>> = BTreeMap::new();
+    let mut untyped: BTreeMap<&DeclarationKey, Vec<UntypedEntry>> = BTreeMap::new();
+    let mut untyped_members = Vec::new();
+    let mut meaning_handles = BTreeMap::<DeclarationKey, NodeKey>::new();
+    for record in &package.records {
+        if matches!(
+            record,
+            DomainPackageRecord::RecordValueType(_)
+                | DomainPackageRecord::TupleValueType(_)
+                | DomainPackageRecord::EventType(_)
+        ) || matches!(record, DomainPackageRecord::Enum(variant_type)
+            if package.records.iter().any(|record| matches!(record,
+                DomainPackageRecord::Variant(case)
+                    if case.owner == variant_type.key && case.payload_type.is_some())))
+        {
+            let key = record.key();
+            if type_identity_segment(&key.package, &key.node).is_none() {
+                errors.push(broken(&key.node));
+                continue;
+            }
+            // FR-359 item 9: the declaration key of a model record is its
+            // model node's key, a function of the declaring package and the
+            // node alone, so no alias or source owner enters it.
+            let form = match record {
+                DomainPackageRecord::RecordValueType(_) => "record_value_type",
+                DomainPackageRecord::TupleValueType(_) => "tuple_value_type",
+                DomainPackageRecord::EventType(_) => "event_type",
+                DomainPackageRecord::Enum(_) => "variant_type",
+                _ => unreachable!("the record-kind filter is exhaustive"),
+            };
+            match model_declaration_key(&key.package, NodeTag::Model, form, &key.node) {
+                Ok(handle) => {
+                    meaning_handles.insert(key.clone(), handle);
+                }
+                Err(refusal) => {
+                    errors.push(error(AssemblyCause::nominal(nominal_key_refusal(refusal))))
+                }
+            }
+        }
+    }
+    // The record handles of this model's own declarations, which its record
+    // renames and events read.
+    let own_handles = meaning_handles.clone();
+    // A member of the unit's source model may name a type of a selected
+    // domain package: those types resolve here as that package resolves them.
+    let foreign_identities;
+    let identities = if foreign.is_empty() {
+        identities
+    } else {
+        let mut merged = identities.clone();
+        for other in foreign {
+            let other_package = other.view.domain_package();
+            records.extend(
+                other_package
+                    .records
+                    .iter()
+                    .map(|record| (record.key(), record)),
+            );
+            merged.extend(
+                other
+                    .view
+                    .type_identities()
+                    .iter()
+                    .map(|(key, id)| (key.clone(), id.clone())),
+            );
+            for record in &other_package.records {
+                let form = match record {
+                    DomainPackageRecord::RecordValueType(_) => "record_value_type",
+                    DomainPackageRecord::TupleValueType(_) => "tuple_value_type",
+                    DomainPackageRecord::EventType(_) => "event_type",
+                    _ => continue,
+                };
+                let key = record.key();
+                if let Ok(handle) =
+                    model_declaration_key(&key.package, NodeTag::Model, form, &key.node)
+                {
+                    meaning_handles.insert(key.clone(), handle);
+                }
+            }
+        }
+        foreign_identities = merged;
+        &foreign_identities
+    };
+    for record in &package.records {
+        match record {
+            DomainPackageRecord::FieldMember(field) => {
+                if matches!(
+                    records.get(&field.owner),
+                    Some(
+                        DomainPackageRecord::RecordValueType(_)
+                            | DomainPackageRecord::TupleValueType(_)
+                            | DomainPackageRecord::EventType(_)
+                    )
+                ) {
+                    continue;
+                }
+                // Clock is retained in the admitted domain package as a
+                // model place; it is not an FSL data field in the kernel's
+                // TypeEnvironment.
+                if matches!(
+                    sequence_items(&field.value_type, &records),
+                    ValueTypeRef::Clock
+                ) {
+                    continue;
+                }
+                match model_field(
+                    field,
+                    &records,
+                    identities,
+                    &meaning_handles,
+                    &variant_shapes,
+                    units,
+                ) {
+                    Ok(declaration) => fields.entry(&field.owner).or_default().push(declaration),
+                    Err(Unmapped::Untyped(locus)) => {
+                        if let Some(name) = member_identity_name(&field.owner.node, &field.key.node)
+                        {
+                            untyped.entry(&field.owner).or_default().push((
+                                name.to_owned(),
+                                UntypedKind::Field,
+                                locus,
+                                Vec::new(),
+                            ));
+                        }
+                    }
+                    Err(Unmapped::Unsupported) => errors.push(unsupported(&field.key.node)),
+                    Err(Unmapped::Broken) => errors.push(broken(&field.key.node)),
+                    Err(Unmapped::Float(width)) => {
+                        errors.push(error(AssemblyCause::FloatingType {
+                            width,
+                            rounding: RoundingMode::Exact,
+                            profile: None,
+                        }))
+                    }
+                    Err(Unmapped::QuantityType {
+                        name,
+                        member_identity,
+                        member_path,
+                    }) => errors.push(AssemblyError {
+                        cause: AssemblyCause::UnresolvedModelQuantityType {
+                            name,
+                            member_identity,
+                            member_path,
+                        },
+                        span,
+                    }),
+                    Err(Unmapped::QuantityName(name)) => errors.push(AssemblyError {
+                        cause: AssemblyCause::UnresolvedQuantityName { name },
+                        span,
+                    }),
+                    Err(Unmapped::InDefinition) => {}
+                }
+            }
+            DomainPackageRecord::OperationMember(operation) => {
+                match model_operation(
+                    operation,
+                    &records,
+                    identities,
+                    &meaning_handles,
+                    &variant_shapes,
+                    units,
+                ) {
+                    Ok((declaration, untyped_at)) => {
+                        if let (Some((locus, parameters)), Some(name)) = (
+                            untyped_at,
+                            member_identity_name(&operation.owner.node, &operation.key.node),
+                        ) {
+                            untyped.entry(&operation.owner).or_default().push((
+                                name.to_owned(),
+                                UntypedKind::Operation,
+                                locus,
+                                parameters,
+                            ));
+                        }
+                        operations
+                            .entry(&operation.owner)
+                            .or_default()
+                            .push(declaration)
+                    }
+                    Err(Unmapped::Unsupported | Unmapped::Untyped(_)) => {
+                        errors.push(unsupported(&operation.key.node))
+                    }
+                    Err(Unmapped::Broken) => errors.push(broken(&operation.key.node)),
+                    Err(Unmapped::Float(width)) => {
+                        errors.push(error(AssemblyCause::FloatingType {
+                            width,
+                            rounding: RoundingMode::Exact,
+                            profile: None,
+                        }))
+                    }
+                    Err(Unmapped::QuantityType {
+                        name,
+                        member_identity,
+                        member_path,
+                    }) => errors.push(AssemblyError {
+                        cause: AssemblyCause::UnresolvedModelQuantityType {
+                            name,
+                            member_identity,
+                            member_path,
+                        },
+                        span,
+                    }),
+                    Err(Unmapped::QuantityName(name)) => errors.push(AssemblyError {
+                        cause: AssemblyCause::UnresolvedQuantityName { name },
+                        span,
+                    }),
+                    Err(Unmapped::InDefinition) => {}
+                }
+            }
+            // State-machine clauses and context namespaces remain admitted
+            // model records. They do not contribute a kernel type-environment
+            // entry, but their owners/members are part of the source model
+            // that this assembly arm must accept.
+            DomainPackageRecord::Clause(_) | DomainPackageRecord::Namespace(_) => {}
+            // These declarations are retained by the selected model view for
+            // typed model-reference binding, but are not value types and do
+            // not contribute a TypeEnvironment declaration.
+            DomainPackageRecord::Component(_)
+            | DomainPackageRecord::Endpoint(_)
+            | DomainPackageRecord::Allocation(_) => {}
+            // Record and event declarations are emitted as composites below;
+            // their effective fields are collected from the normalized view.
+            // A variant type and its cases are collected from the normalized
+            // view below (FR-056 "Effective identity of a variant type").
+            DomainPackageRecord::Enum(_)
+            | DomainPackageRecord::Variant(_)
+            | DomainPackageRecord::RecordValueType(_)
+            | DomainPackageRecord::TupleValueType(_)
+            | DomainPackageRecord::TuplePosition(_)
+            | DomainPackageRecord::EventType(_)
+            | DomainPackageRecord::ObjectType(_)
+            | DomainPackageRecord::StateMachine(_)
+            | DomainPackageRecord::Process(_)
+            | DomainPackageRecord::PersistenceInterface(_)
+            | DomainPackageRecord::ScalarType(_)
+            | DomainPackageRecord::ValueBound(_)
+            | DomainPackageRecord::Relationship(_)
+            | DomainPackageRecord::Population(_) => {}
+            // FR-230 "Units": an alias `target` or sequence `items` naming
+            // no unit refuses at the type definition, used or not.
+            DomainPackageRecord::SequenceType(SequenceTypeRecord {
+                key,
+                items: ValueTypeRef::Unit(name),
+            })
+            | DomainPackageRecord::OptionType(OptionTypeRecord {
+                key,
+                inner: ValueTypeRef::Unit(name),
+            })
+            | DomainPackageRecord::MapType(MapTypeRecord {
+                key,
+                values: ValueTypeRef::Unit(name),
+                ..
+            })
+            | DomainPackageRecord::AliasType(AliasTypeRecord {
+                key,
+                target: ValueTypeRef::Unit(name),
+            }) if !units.contains_key(name) => errors.push(AssemblyError {
+                cause: AssemblyCause::UnresolvedModelQuantityType {
+                    name: name.clone(),
+                    member_identity: key.node.clone(),
+                    member_path: match record {
+                        DomainPackageRecord::SequenceType(_) => "TypeDefinition.items",
+                        DomainPackageRecord::OptionType(_) => "TypeDefinition.inner",
+                        DomainPackageRecord::MapType(_) => "TypeDefinition.values",
+                        _ => "TypeDefinition.target",
+                    }
+                    .to_owned(),
+                },
+                span,
+            }),
+            DomainPackageRecord::SequenceType(_)
+            | DomainPackageRecord::OptionType(_)
+            | DomainPackageRecord::MapType(_)
+            | DomainPackageRecord::AliasType(_) => {}
+        }
+    }
+    let mut declarations = Vec::new();
+    for record in &package.records {
+        // FR-208 state-machine meanings bind through the same checked object
+        // type surface as ordinary object types. Their states and transitions
+        // remain source records; only their declared type and owner-linked
+        // fields/operations participate in this assembly seam.
+        let (key, supertypes): (&DeclarationKey, &[DeclarationKey]) = match record {
+            DomainPackageRecord::ObjectType(object) => (&object.key, &object.supertypes[..]),
+            DomainPackageRecord::StateMachine(machine) => (&machine.key, &machine.supertypes[..]),
+            DomainPackageRecord::Process(process) => (&process.key, &process.supertypes[..]),
+            DomainPackageRecord::PersistenceInterface(interface) => (&interface.key, &[]),
+            _ => continue,
+        };
+        let (Some(artifact), Some(identity)) = (
+            type_identity_segment(&key.package, &key.node),
+            identities.get(key),
+        ) else {
+            errors.push(broken(&key.node));
+            continue;
+        };
+        let mut effective_supertypes = Vec::with_capacity(supertypes.len());
+        for supertype in supertypes {
+            match identities.get(supertype) {
+                Some(id) => effective_supertypes.push(id.clone()),
+                None => errors.push(broken(&supertype.node)),
+            }
+        }
+        if let Some(declared) = operations.remove(key) {
+            table.declare(identity.clone(), declared);
+        }
+        for (name, kind, locus, parameters) in untyped.remove(key).unwrap_or_default() {
+            untyped_members.push(UntypedMember {
+                owner: identity.clone(),
+                owner_name: artifact.to_owned(),
+                name,
+                kind,
+                locus,
+                parameters,
+            });
+        }
+        declarations.push(
+            ObjectTypeDeclaration::new(
+                identity.clone(),
+                super::source_model::qualified(alias, artifact),
+                fields.remove(key).unwrap_or_default(),
+            )
+            .with_supertypes(effective_supertypes),
+        );
+    }
+    // An operation whose owner is no object type: a broken record (every
+    // operation record is read from inside an object type's own
+    // `operations[]`, so its owner always resolves here unless I1 is
+    // broken).
+    for (owner, _) in operations {
+        errors.push(broken(&owner.node));
+    }
+    // A field whose owner is no object type: its owner is a record value
+    // type, already refused above, or a broken record.
+    for (owner, _) in fields {
+        if !matches!(
+            records.get(owner),
+            Some(DomainPackageRecord::RecordValueType(_) | DomainPackageRecord::EventType(_))
+        ) {
+            errors.push(broken(&owner.node));
+        }
+    }
+    let mut composites = Vec::new();
+    for record in &package.records {
+        if !matches!(
+            record,
+            DomainPackageRecord::RecordValueType(_) | DomainPackageRecord::EventType(_)
+        ) {
+            continue;
+        }
+        let key = record.key();
+        let Some(handle) = meaning_handles.get(key) else {
+            continue;
+        };
+        let Some(artifact) = type_identity_segment(&key.package, &key.node) else {
+            continue;
+        };
+        let Some(effective_type) = identities.get(key) else {
+            errors.push(broken(&key.node));
+            continue;
+        };
+        let mut declared_fields = Vec::new();
+        let mut effective_fields: Vec<_> = model
+            .view
+            .declarations()
+            .iter()
+            .filter(|entry| {
+                entry.visible && entry.preimage.owner_effective_type == Some(effective_type.clone())
+            })
+            .filter_map(|entry| match records.get(&entry.preimage.original) {
+                Some(DomainPackageRecord::FieldMember(field)) => Some(field),
+                Some(_) | None => None,
+            })
+            .collect();
+        effective_fields.sort_by(|left, right| left.key.cmp(&right.key));
+        // A record's clock fields are places, not data (FR-230 "Records,
+        // tuples and unions"): its declaration lists the data fields only.
+        effective_fields.retain(|field| {
+            !matches!(
+                sequence_items(&field.value_type, &records),
+                ValueTypeRef::Clock
+            )
+        });
+        for field in effective_fields {
+            match model_field(
+                field,
+                &records,
+                identities,
+                &meaning_handles,
+                &variant_shapes,
+                units,
+            ) {
+                // A record's declaration holds its effective fields; the
+                // field a redefinition replaces is hidden in the view, so the
+                // declaration carries no `redefines` link of its own (the
+                // kernel admits one only on an object type's field).
+                Ok(field) => declared_fields.push(FieldDeclaration::new(
+                    field.name(),
+                    field.value_type().clone(),
+                    field.presence(),
+                )),
+                Err(Unmapped::Unsupported | Unmapped::Untyped(_)) => {
+                    errors.push(unsupported(&field.key.node))
+                }
+                Err(Unmapped::Broken) => errors.push(broken(&field.key.node)),
+                Err(Unmapped::Float(width)) => errors.push(error(AssemblyCause::FloatingType {
+                    width,
+                    rounding: RoundingMode::Exact,
+                    profile: None,
+                })),
+                Err(Unmapped::QuantityType {
+                    name,
+                    member_identity,
+                    member_path,
+                }) => errors.push(AssemblyError {
+                    cause: AssemblyCause::UnresolvedModelQuantityType {
+                        name,
+                        member_identity,
+                        member_path,
+                    },
+                    span,
+                }),
+                Err(Unmapped::QuantityName(name)) => errors.push(AssemblyError {
+                    cause: AssemblyCause::UnresolvedQuantityName { name },
+                    span,
+                }),
+                Err(Unmapped::InDefinition) => {}
+            }
+        }
+        let declared_supertypes: &[DeclarationKey] = match record {
+            DomainPackageRecord::RecordValueType(record) => &record.supertypes,
+            DomainPackageRecord::EventType(event) => &event.supertypes,
+            _ => &[],
+        };
+        let mut composite_supertypes = Vec::with_capacity(declared_supertypes.len());
+        for supertype in declared_supertypes {
+            match meaning_handles.get(supertype) {
+                Some(general) => composite_supertypes.push(general.clone()),
+                None => errors.push(broken(&supertype.node)),
+            }
+        }
+        composites.push(
+            CompositeDeclaration::new(
+                handle.clone(),
+                super::source_model::qualified(alias, artifact),
+                CompositeShape::Record(declared_fields),
+            )
+            .with_supertypes(composite_supertypes),
+        );
+    }
+    for record in &package.records {
+        let DomainPackageRecord::TupleValueType(tuple) = record else {
+            continue;
+        };
+        let Some(handle) = meaning_handles.get(&tuple.key).cloned() else {
+            errors.push(broken(&tuple.key.node));
+            continue;
+        };
+        let Some(artifact) = type_identity_segment(&tuple.key.package, &tuple.key.node) else {
+            errors.push(broken(&tuple.key.node));
+            continue;
+        };
+        let mut positions: Vec<_> = package
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                DomainPackageRecord::TuplePosition(position) if position.owner == tuple.key => {
+                    Some(position)
+                }
+                _ => None,
+            })
+            .collect();
+        positions.sort_by_key(|position| position.ordinal);
+        let mut elements = Vec::with_capacity(positions.len());
+        for position in positions {
+            match model_value_type(
+                &position.value_type,
+                Multiplicity {
+                    lower: 1,
+                    upper: Some(1),
+                    ordered: false,
+                    unique: true,
+                },
+                &records,
+                identities,
+                &meaning_handles,
+                &variant_shapes,
+                units,
+            ) {
+                Ok(value_type) => elements.push(value_type),
+                Err(Unmapped::Unsupported | Unmapped::Untyped(_) | Unmapped::InDefinition) => {
+                    errors.push(unsupported(&position.key.node))
+                }
+                Err(Unmapped::Broken) => errors.push(broken(&position.key.node)),
+                Err(Unmapped::Float(width)) => errors.push(error(AssemblyCause::FloatingType {
+                    width,
+                    rounding: RoundingMode::Exact,
+                    profile: None,
+                })),
+                Err(Unmapped::QuantityType {
+                    name,
+                    member_identity,
+                    member_path,
+                }) => errors.push(AssemblyError {
+                    cause: AssemblyCause::UnresolvedModelQuantityType {
+                        name,
+                        member_identity,
+                        member_path,
+                    },
+                    span,
+                }),
+                Err(Unmapped::QuantityName(name)) => errors.push(AssemblyError {
+                    cause: AssemblyCause::UnresolvedQuantityName { name },
+                    span,
+                }),
+            }
+        }
+        composites.push(CompositeDeclaration::new(
+            handle,
+            super::source_model::qualified(alias, artifact),
+            CompositeShape::Tuple(elements),
+        ));
+    }
+    for record in &package.records {
+        let DomainPackageRecord::Enum(variant_type) = record else {
+            continue;
+        };
+        let mut cases: Vec<_> = package
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                DomainPackageRecord::Variant(case) if case.owner == variant_type.key => Some(case),
+                _ => None,
+            })
+            .collect();
+        cases.sort_by(|left, right| left.case.as_bytes().cmp(right.case.as_bytes()));
+        if !cases.iter().any(|case| case.payload_type.is_some()) {
+            continue;
+        }
+        let Some(handle) = meaning_handles.get(&variant_type.key).cloned() else {
+            errors.push(broken(&variant_type.key.node));
+            continue;
+        };
+        let mut members = Vec::with_capacity(cases.len());
+        for case in cases {
+            let mut payload = Vec::new();
+            if let Some(payload_type) = &case.payload_type {
+                match model_value_type(
+                    payload_type,
+                    Multiplicity {
+                        lower: 1,
+                        upper: Some(1),
+                        ordered: false,
+                        unique: true,
+                    },
+                    &records,
+                    identities,
+                    &meaning_handles,
+                    &variant_shapes,
+                    units,
+                ) {
+                    Ok(value_type) => payload.push(value_type),
+                    Err(Unmapped::Unsupported | Unmapped::Untyped(_)) => {
+                        errors.push(unsupported(&case.key.node))
+                    }
+                    Err(Unmapped::Broken) => errors.push(broken(&case.key.node)),
+                    Err(Unmapped::Float(width)) => {
+                        errors.push(error(AssemblyCause::FloatingType {
+                            width,
+                            rounding: RoundingMode::Exact,
+                            profile: None,
+                        }))
+                    }
+                    Err(Unmapped::QuantityType {
+                        name,
+                        member_identity,
+                        member_path,
+                    }) => errors.push(AssemblyError {
+                        cause: AssemblyCause::UnresolvedModelQuantityType {
+                            name,
+                            member_identity,
+                            member_path,
+                        },
+                        span,
+                    }),
+                    Err(Unmapped::QuantityName(name)) => errors.push(AssemblyError {
+                        cause: AssemblyCause::UnresolvedQuantityName { name },
+                        span,
+                    }),
+                    Err(Unmapped::InDefinition) => {}
+                }
+            }
+            match Identifier::new(case.case.clone()) {
+                Ok(identifier) => {
+                    members.push(UnionMemberDeclaration::resolved(identifier, payload))
+                }
+                Err(_) => errors.push(error(AssemblyCause::handle(
+                    NodeKeyRefusal::InvalidQualifiedNameSegment {
+                        segment: case.case.clone(),
+                    },
+                ))),
+            }
+        }
+        composites.push(CompositeDeclaration::new(
+            handle,
+            super::source_model::qualified(alias, &variant_type.name),
+            CompositeShape::Union(members),
+        ));
+    }
+    let mut model_records = record_renames(model, &records, &own_handles);
+    for (key, handle) in &own_handles {
+        if matches!(records.get(key), Some(DomainPackageRecord::EventType(_))) {
+            model_records.declare_event(handle.clone());
+        }
+    }
+    let relationships = relationship_declarations(package, identities, &declarations);
+    // Scalar and alias types are declared type names too. Resolve an alias
+    // through its admitted target, just as a member typed by it is resolved;
+    // model constraints retain their separate member-bound authority.
+    let one_one = Multiplicity {
+        lower: 1,
+        upper: Some(1),
+        ordered: false,
+        unique: true,
+    };
+    let scalars: Vec<(String, ValueType)> = package
+        .records
+        .iter()
+        .filter(|record| {
+            matches!(
+                record,
+                DomainPackageRecord::ScalarType(_) | DomainPackageRecord::AliasType(_)
+            )
+        })
+        .filter_map(|record| {
+            let key = record.key();
+            let artifact = type_identity_segment(&key.package, &key.node)?;
+            let value_type = model_value_type(
+                &ValueTypeRef::Package(key.clone()),
+                one_one,
+                &records,
+                identities,
+                &meaning_handles,
+                &variant_shapes,
+                units,
+            )
+            .ok()?;
+            Some((super::source_model::qualified(alias, artifact), value_type))
+        })
+        .collect();
+    if errors.is_empty() {
+        Ok(ModelTypes {
+            objects: declarations,
+            composites,
+            variant_types,
+            scalars,
+            model_records,
+            relationships,
+            untyped_members,
+            handles: meaning_handles,
+        })
+    } else {
+        Err(errors)
+    }
+}
+
+/// The relationships of `package` between two of its object types (FR-363),
+/// each end by the effective identity of the object type it names. A
+/// relationship an end of which names no object type of the type environment
+/// (a systems connection between endpoints) is no navigation of an object
+/// reference, so it is not collected.
+fn relationship_declarations(
+    package: &DomainPackage,
+    identities: &BTreeMap<DeclarationKey, EffectiveId>,
+    objects: &[ObjectTypeDeclaration],
+) -> Vec<RelationshipDeclaration> {
+    let object = |key: &DeclarationKey| {
+        let identity = identities.get(key)?.clone();
+        objects
+            .iter()
+            .any(|declared| declared.key() == identity)
+            .then_some(identity)
+    };
+    package
+        .records
+        .iter()
+        .filter_map(|record| {
+            let DomainPackageRecord::Relationship(relationship) = record else {
+                return None;
+            };
+            let end = |end: &RelationshipEnd, object: EffectiveId| EndDeclaration {
+                object,
+                role: end.role.clone(),
+                multiplicity: end.multiplicity,
+            };
+            let source = object(&relationship.source.type_identity)?;
+            let target = object(&relationship.target.type_identity)?;
+            Some(RelationshipDeclaration {
+                key: relationship.key.clone(),
+                direction: relationship.direction,
+                source: end(&relationship.source, source),
+                target: end(&relationship.target, target),
+            })
+        })
+        .collect()
+}
+
+/// Where each record keeps the fields its ancestors name (FR-359 item 2).
+///
+/// A record's declaration holds its effective fields. The one that redefines
+/// an inherited field (FR-082) takes its slot, possibly under another name,
+/// and the redefined field is hidden. A read typed at an ancestor names the
+/// ancestor's field, so each record lists, for every ancestor field one of
+/// its own fields redefines (transitively) under a different name, that own
+/// name. An unrenamed field needs no entry: it is found by its name.
+fn record_renames(
+    model: &SelectedModel,
+    records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
+    handles: &BTreeMap<DeclarationKey, NodeKey>,
+) -> ModelRecords {
+    let identities = model.view.type_identities();
+    let effective_fields = |declaration: &DeclarationKey| -> Vec<&FieldMemberRecord> {
+        let Some(effective_type) = identities.get(declaration) else {
+            return Vec::new();
+        };
+        model
+            .view
+            .declarations()
+            .iter()
+            .filter(|entry| {
+                entry.visible && entry.preimage.owner_effective_type == Some(effective_type.clone())
+            })
+            .filter_map(|entry| match records.get(&entry.preimage.original) {
+                Some(DomainPackageRecord::FieldMember(field)) => Some(field),
+                Some(_) | None => None,
+            })
+            .collect()
+    };
+    let supertypes = |declaration: &DeclarationKey| -> &[DeclarationKey] {
+        match records.get(declaration) {
+            Some(DomainPackageRecord::RecordValueType(record)) => &record.supertypes,
+            Some(DomainPackageRecord::EventType(event)) => &event.supertypes,
+            _ => &[],
+        }
+    };
+    fn name_of(field: &FieldMemberRecord) -> Option<&str> {
+        member_identity_name(&field.owner.node, &field.key.node)
+    }
+    let mut slots = ModelRecords::default();
+    for (declaration, handle) in handles {
+        let own: Vec<&FieldMemberRecord> = effective_fields(declaration)
+            .into_iter()
+            .filter(|field| field.redefines.is_some())
+            .collect();
+        if own.is_empty() {
+            continue;
+        }
+        let mut ancestors = Vec::new();
+        let mut pending: Vec<&DeclarationKey> = supertypes(declaration).iter().collect();
+        while let Some(ancestor) = pending.pop() {
+            if !ancestors.contains(&ancestor) {
+                ancestors.push(ancestor);
+                pending.extend(supertypes(ancestor));
+            }
+        }
+        for field in own {
+            let Some(own_name) = name_of(field) else {
+                continue;
+            };
+            let mut chain = vec![&field.key];
+            let mut next = field.redefines.as_ref();
+            while let Some(target) = next {
+                if chain.contains(&target) {
+                    break;
+                }
+                chain.push(target);
+                next = match records.get(target) {
+                    Some(DomainPackageRecord::FieldMember(redefined)) => {
+                        redefined.redefines.as_ref()
+                    }
+                    _ => None,
+                };
+            }
+            for ancestor in &ancestors {
+                let Some(read_at) = handles.get(*ancestor) else {
+                    continue;
+                };
+                for inherited in effective_fields(ancestor) {
+                    let Some(name) = name_of(inherited) else {
+                        continue;
+                    };
+                    if chain.contains(&&inherited.key) && name != own_name {
+                        slots.rename(handle.clone(), read_at.clone(), name, own_name);
+                    }
+                }
+            }
+        }
+    }
+    slots
+}
+
+/// Why a domain package field has no type environment field.
+#[derive(Debug)]
+enum Unmapped {
+    /// No kernel type or presence represents it.
+    Unsupported,
+    /// A floating type, refused as the assembler refuses every float.
+    Float(IeeeWidth),
+    /// A `ix://filament/unit/<name>` reference has no unit in the compiling unit.
+    QuantityName(String),
+    /// An unresolved unit in a model typeRef with its source contract path.
+    QuantityType {
+        name: String,
+        member_identity: String,
+        member_path: String,
+    },
+    /// A bare native `Text`, `Rational` or `Decimal`, which has no checked
+    /// type (FR-056-AC-43); the callers name where it was written.
+    Untyped(String),
+    /// A key the admitted view does not resolve: a broken invariant of I1.
+    Broken,
+    /// A unit reference of an alias or sequence the member is typed by
+    /// names no unit: refused once, at that type definition.
+    InDefinition,
+}
+
+/// `field` as an object type's field: named by its member name, typed by
+/// its value type and multiplicity, and made `Optional` exactly when the
+/// domain package's own `presence` is `optional` -- never by a lower bound
+/// of `0` (FSpec's `model-complete.md` Presence row: "a lower bound of `0`
+/// makes an empty collection legal and never makes a field optional").
+/// `[1, 1]` gives the element type `E`; any other multiplicity gives the
+/// collection its `ordered`/`unique` flags name (`Set`, `Bag`, `Sequence`
+/// or `OrderedSet`), bounded when the upper bound is finite, and unbounded
+/// only when the lower bound is `0` -- an unbounded multiplicity with a
+/// lower bound above `0` has no kernel type (FSpec FR-322's "Model-owned
+/// members" step 4). The returned declaration's own `value_type` is always the
+/// unwrapped element or collection type; `check`'s `attribute`/`field`
+/// readers wrap it in `Option` from `presence()` alone, as they already do
+/// for every other `FieldDeclaration`.
+/// A domain package's `value_type`/`multiplicity` pair as a kernel
+/// [`ValueType`] (FR-056's field rule, reused by [`model_field`] and
+/// [`model_operation`] for a parameter's or a result's own value type,
+/// FR-103): a native `Boolean`/`Integer`, a scalar type as its `Int[lower,
+/// upper]`, an object type as `Reference<M::T>`. `[1, 1]` gives the
+/// element type `E`; any other multiplicity gives the collection its
+/// `ordered`/`unique` flags name (`Set`, `Bag`, `Sequence` or
+/// `OrderedSet`), bounded when the upper bound is finite, and unbounded
+/// only when the lower bound is `0` -- an unbounded multiplicity with a
+/// lower bound above `0` has no kernel type (FSpec FR-322's "Model-owned
+/// members" step 4).
+fn model_value_type(
+    value_type: &ValueTypeRef,
+    multiplicity: Multiplicity,
+    records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
+    identities: &BTreeMap<DeclarationKey, EffectiveId>,
+    meaning_handles: &BTreeMap<DeclarationKey, NodeKey>,
+    variant_shapes: &BTreeMap<&DeclarationKey, EnumShape>,
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> Result<ValueType, Unmapped> {
+    // A package sequence type is the sequence of its items (FSpec FR-154),
+    // a chain of them nested sequences, and a package alias the type it
+    // aliases; one that returns to a type it passed is broken.
+    let (items, sequences) =
+        unaliased(value_type, |key| records.get(key).copied()).ok_or(Unmapped::Broken)?;
+    if !std::ptr::eq(items, value_type) {
+        let single = Multiplicity {
+            lower: 1,
+            upper: Some(1),
+            ordered: false,
+            unique: true,
+        };
+        let mut element = model_value_type(
+            items,
+            single,
+            records,
+            identities,
+            meaning_handles,
+            variant_shapes,
+            units,
+        )?;
+        for _ in 0..sequences {
+            element =
+                ValueType::collection(CollectionType::new(CollectionKind::Sequence, element, None));
+        }
+        return with_multiplicity(element, multiplicity);
+    }
+    let element = match value_type {
+        ValueTypeRef::Clock => return Err(Unmapped::Unsupported),
+        ValueTypeRef::Native(native) => match native {
+            NativeValueType::Boolean => ValueType::Boolean,
+            NativeValueType::Integer => ValueType::Integer,
+            NativeValueType::Uuid => ValueType::Uuid,
+            NativeValueType::Timestamp => ValueType::Timestamp,
+            NativeValueType::Float32 => return Err(Unmapped::Float(IeeeWidth::Binary32)),
+            NativeValueType::Float64 => return Err(Unmapped::Float(IeeeWidth::Binary64)),
+            // FR-056 admits these native names at the domain-package boundary,
+            // but the current checked-model value algebra has no corresponding
+            // element types. Preserve them in intake; do not coerce either to
+            // text or an integer during assembly.
+            NativeValueType::String => ValueType::String,
+            // Bare, these have no checked type: the member is admitted and
+            // refused where used (FR-056-AC-43).
+            NativeValueType::Rational | NativeValueType::Decimal | NativeValueType::Text => {
+                return Err(Unmapped::Untyped(String::new()))
+            }
+        },
+        ValueTypeRef::Unit(name) => ValueType::Quantity(
+            units
+                .get(name)
+                .ok_or_else(|| Unmapped::QuantityName(name.clone()))?
+                .clone(),
+        ),
+        ValueTypeRef::Package(key) => match records.get(key) {
+            Some(DomainPackageRecord::ObjectType(_)) => {
+                ValueType::Reference(identities.get(key).ok_or(Unmapped::Broken)?.clone())
+            }
+            Some(
+                DomainPackageRecord::RecordValueType(_)
+                | DomainPackageRecord::TupleValueType(_)
+                | DomainPackageRecord::EventType(_),
+            ) => ValueType::Composite(meaning_handles.get(key).ok_or(Unmapped::Broken)?.clone()),
+            Some(DomainPackageRecord::ScalarType(scalar)) => match &scalar.domain {
+                ScalarValueDomain::Integer { lower, upper } => ValueType::Int(
+                    IntegerInterval::new(Integer::from(*lower), Integer::from(*upper))
+                        .map_err(|_| Unmapped::Unsupported)?,
+                ),
+                ScalarValueDomain::Text(text) => ValueType::Text(*text),
+                ScalarValueDomain::Rational {
+                    domain: Some(domain),
+                    unit: None,
+                } => ValueType::Rational(domain.clone()),
+                ScalarValueDomain::Rational {
+                    domain: Some(domain),
+                    unit: Some(name),
+                } => {
+                    let unit = units
+                        .get(name)
+                        .ok_or_else(|| Unmapped::QuantityName(name.clone()))?
+                        .clone();
+                    ValueType::carried_quantity(CarriedQuantityType::new(
+                        unit,
+                        QuantityCarrier::Rational(domain.clone()),
+                    ))
+                }
+                // FR-505-AC-6: a Rational value type with no constraints
+                // has no checked type, as a bare native Rational has none.
+                ScalarValueDomain::Rational { domain: None, .. } => {
+                    return Err(Unmapped::Untyped(String::new()))
+                }
+                ScalarValueDomain::Native(NativeValueType::Uuid) => ValueType::Uuid,
+                ScalarValueDomain::Native(NativeValueType::Timestamp) => ValueType::Timestamp,
+                ScalarValueDomain::Native(_) => return Err(Unmapped::Unsupported),
+            },
+            Some(DomainPackageRecord::OptionType(option)) => {
+                let (inner, sequences) = unaliased(&option.inner, |key| records.get(key).copied())
+                    .ok_or(Unmapped::Unsupported)?;
+                // Option cannot directly wrap another option or a clock
+                // place, including through aliases. A sequence boundary is
+                // a real value type boundary, so Sequence<Option<T>> remains
+                // valid as the payload of a different option.
+                if sequences == 0
+                    && (matches!(inner, ValueTypeRef::Clock)
+                        || matches!(inner, ValueTypeRef::Package(key)
+                            if matches!(records.get(key), Some(DomainPackageRecord::OptionType(_)))))
+                {
+                    return Err(Unmapped::Unsupported);
+                }
+                ValueType::option(model_value_type(
+                    &option.inner,
+                    Multiplicity {
+                        lower: 1,
+                        upper: Some(1),
+                        ordered: false,
+                        unique: true,
+                    },
+                    records,
+                    identities,
+                    meaning_handles,
+                    variant_shapes,
+                    units,
+                )?)
+            }
+            Some(DomainPackageRecord::MapType(map)) => {
+                // A package map type declares its key type, value type and
+                // entry-count bound (FSpec FR-154 "Map types").
+                let element = |value_type: &ValueTypeRef| {
+                    model_value_type(
+                        value_type,
+                        Multiplicity {
+                            lower: 1,
+                            upper: Some(1),
+                            ordered: false,
+                            unique: true,
+                        },
+                        records,
+                        identities,
+                        meaning_handles,
+                        variant_shapes,
+                        units,
+                    )
+                };
+                // A native `Text` key (no bounds, no profile) is keyed by its
+                // exact Unicode scalar sequence as a `String` key is (FSpec
+                // FR-154 "Map types", FR-144): it is the key type only, a
+                // member typed bare `Text` still has no type. A `Float32` or
+                // `Float64` key draws the typed refusal a floating member
+                // does.
+                let mut named = &map.keys;
+                for _ in 0..=records.len() {
+                    match named {
+                        ValueTypeRef::Package(alias) => match records.get(alias) {
+                            Some(DomainPackageRecord::AliasType(alias)) => named = &alias.target,
+                            _ => break,
+                        },
+                        _ => break,
+                    }
+                }
+                let key_type = if matches!(named, ValueTypeRef::Native(NativeValueType::Text)) {
+                    ValueType::String
+                } else {
+                    element(&map.keys)?
+                };
+                let bound = match map.upper {
+                    Some(upper) => Some(
+                        filament_exact::CardinalityBound::new(map.lower, upper)
+                            .map_err(|_| Unmapped::Broken)?,
+                    ),
+                    None => None,
+                };
+                ValueType::Map(std::sync::Arc::new(
+                    filament_exact::MapType::new(key_type, element(&map.values)?, bound)
+                        .map_err(|_| Unmapped::Unsupported)?,
+                ))
+            }
+            // FR-360 item 3: a payload-free variant type is its enum type,
+            // never a `Reference`. Payload-bearing variants use their union
+            // composite handle instead.
+            Some(DomainPackageRecord::Enum(_)) => match variant_shapes.get(key) {
+                Some(shape) => ValueType::Enum(shape.clone()),
+                None => ValueType::Composite(
+                    meaning_handles
+                        .get(key)
+                        .ok_or(Unmapped::Unsupported)?
+                        .clone(),
+                ),
+            },
+            Some(_) => return Err(Unmapped::Unsupported),
+            None => return Err(Unmapped::Broken),
+        },
+    };
+    with_multiplicity(element, multiplicity)
+}
+
+/// The type `value_type` ends at through the package's sequence types and
+/// aliases: `value_type` itself when it names neither, or when the chain
+/// returns to a type it passed.
+fn sequence_items<'r>(
+    value_type: &'r ValueTypeRef,
+    records: &BTreeMap<&DeclarationKey, &'r DomainPackageRecord>,
+) -> &'r ValueTypeRef {
+    unaliased(value_type, |key| records.get(key).copied()).map_or(value_type, |(items, _)| items)
+}
+
+/// `element` held by a member of `multiplicity`: itself for `[1, 1]`, else
+/// the collection the multiplicity's order and uniqueness name.
+fn with_multiplicity(
+    element: ValueType,
+    multiplicity: Multiplicity,
+) -> Result<ValueType, Unmapped> {
+    Ok(match (multiplicity.lower, multiplicity.upper) {
+        (1, Some(1)) => element,
+        (lower, upper) => {
+            let kind = match (multiplicity.ordered, multiplicity.unique) {
+                (true, true) => CollectionKind::OrderedSet,
+                (true, false) => CollectionKind::Sequence,
+                (false, true) => CollectionKind::Set,
+                (false, false) => CollectionKind::Bag,
+            };
+            let bound = match upper {
+                Some(upper) => {
+                    Some(CardinalityBound::new(lower, upper).map_err(|_| Unmapped::Unsupported)?)
+                }
+                None if lower == 0 => None,
+                None => return Err(Unmapped::Unsupported),
+            };
+            ValueType::collection(CollectionType::new(kind, element, bound))
+        }
+    })
+}
+
+/// `field` as an object type's field: named by its member name, typed by
+/// [`model_value_type`], and made `Optional` exactly when the domain
+/// package's own `presence` is `optional` -- never by a lower bound of `0`
+/// (FSpec's `model-complete.md` Presence row: "a lower bound of `0` makes
+/// an empty collection legal and never makes a field optional"). The
+/// returned declaration's own `value_type` is always the unwrapped element
+/// or collection type; `check`'s `attribute`/`field` readers wrap it in
+/// `Option` from `presence()` alone, as they already do for every other
+/// `FieldDeclaration`.
+fn model_field(
+    field: &FieldMemberRecord,
+    records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
+    identities: &BTreeMap<DeclarationKey, EffectiveId>,
+    meaning_handles: &BTreeMap<DeclarationKey, NodeKey>,
+    variant_shapes: &BTreeMap<&DeclarationKey, EnumShape>,
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> Result<FieldDeclaration, Unmapped> {
+    let name = member_identity_name(&field.owner.node, &field.key.node).ok_or(Unmapped::Broken)?;
+    let value_type = model_value_type(
+        &field.value_type,
+        field.multiplicity,
+        records,
+        identities,
+        meaning_handles,
+        variant_shapes,
+        units,
+    )
+    .map_err(|error| match error {
+        Unmapped::QuantityName(_) if matches!(field.value_type, ValueTypeRef::Package(_)) => {
+            Unmapped::InDefinition
+        }
+        Unmapped::QuantityName(name) => Unmapped::QuantityType {
+            name,
+            member_identity: field.key.node.clone(),
+            member_path: "Field.typeRef".to_owned(),
+        },
+        Unmapped::Untyped(_) => Unmapped::Untyped("Field.typeRef".to_owned()),
+        error => error,
+    })?;
+    let declaration = FieldDeclaration::new(name, value_type, field.presence);
+    let Some(target) = &field.redefines else {
+        return Ok(declaration);
+    };
+    let Some(DomainPackageRecord::FieldMember(redefined)) = records.get(target) else {
+        return Err(Unmapped::Unsupported);
+    };
+    let owner = identities.get(&redefined.owner).ok_or(Unmapped::Broken)?;
+    let redefined_name =
+        member_identity_name(&redefined.owner.node, &redefined.key.node).ok_or(Unmapped::Broken)?;
+    Ok(declaration.with_redefines(FieldRef::new(owner.clone(), redefined_name)))
+}
+
+/// `operation` as an object type's operation (FR-103): named by its member
+/// name, its parameters and result typed by [`model_value_type`] (FR-056's
+/// field rule), and its effect frame carried unchanged -- I1 already
+/// resolved every key it names against the whole domain package
+/// (`resolve_effect`), so the assembler does no further resolution over it.
+/// One member of no checked type: its name, kind, the locus of its type
+/// reference and, for an operation, each untyped parameter with its locus.
+type UntypedEntry = (String, UntypedKind, String, Vec<(String, String)>);
+
+/// An operation's first untyped locus and its untyped parameters.
+type UntypedOperation = (String, Vec<(String, String)>);
+
+fn model_operation(
+    operation: &OperationMemberRecord,
+    records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
+    identities: &BTreeMap<DeclarationKey, EffectiveId>,
+    meaning_handles: &BTreeMap<DeclarationKey, NodeKey>,
+    variant_shapes: &BTreeMap<&DeclarationKey, EnumShape>,
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> Result<(OperationDeclaration, Option<UntypedOperation>), Unmapped> {
+    let name =
+        member_identity_name(&operation.owner.node, &operation.key.node).ok_or(Unmapped::Broken)?;
+    // The first parameter or result of no checked type (FR-056-AC-43): the
+    // operation is declared without it and refused where it is used.
+    let mut untyped_locus: Option<String> = None;
+    let mut untyped_parameters: Vec<(String, String)> = Vec::new();
+    // A single `Clock`, directly or through aliases, is a place.
+    let clock = |value_type: &ValueTypeRef, multiplicity: Multiplicity| {
+        multiplicity.upper == Some(1)
+            && multiplicity.lower == 1
+            && matches!(
+                crate::model::domain_package::unaliased(value_type, |key| records
+                    .get(key)
+                    .copied()),
+                Some((ValueTypeRef::Clock, 0))
+            )
+    };
+    let mut parameters = Vec::with_capacity(operation.parameters.len());
+    let mut clock_parameters = Vec::new();
+    for (index, parameter) in operation.parameters.iter().enumerate() {
+        let parameter_name = member_identity_name(&operation.key.node, &parameter.key.node)
+            .ok_or(Unmapped::Broken)?;
+        if clock(&parameter.value_type, parameter.multiplicity) {
+            clock_parameters.push((index, parameter_name.to_owned()));
+            continue;
+        }
+        let value_type = model_value_type(
+            &parameter.value_type,
+            parameter.multiplicity,
+            records,
+            identities,
+            meaning_handles,
+            variant_shapes,
+            units,
+        )
+        .map_err(|error| match error {
+            Unmapped::QuantityName(_)
+                if matches!(parameter.value_type, ValueTypeRef::Package(_)) =>
+            {
+                Unmapped::InDefinition
+            }
+            Unmapped::QuantityName(name) => Unmapped::QuantityType {
+                name,
+                member_identity: parameter.key.node.clone(),
+                member_path: format!("Operation.params[{index}].typeRef"),
+            },
+            Unmapped::Untyped(_) => Unmapped::Untyped(format!("Operation.params[{index}].typeRef")),
+            error => error,
+        });
+        let value_type = match value_type {
+            Ok(value_type) => value_type,
+            Err(Unmapped::Untyped(locus)) => {
+                untyped_parameters.push((parameter_name.to_owned(), locus.clone()));
+                untyped_locus.get_or_insert(locus);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        parameters.push((parameter_name.to_owned(), value_type));
+    }
+    let clock_result = operation
+        .result
+        .as_ref()
+        .is_some_and(|result| clock(&result.value_type, result.multiplicity));
+    let result = operation
+        .result
+        .as_ref()
+        .filter(|_| !clock_result)
+        .map(|result| {
+            model_value_type(
+                &result.value_type,
+                result.multiplicity,
+                records,
+                identities,
+                meaning_handles,
+                variant_shapes,
+                units,
+            )
+            .map_err(|error| match error {
+                Unmapped::QuantityName(_)
+                    if matches!(result.value_type, ValueTypeRef::Package(_)) =>
+                {
+                    Unmapped::InDefinition
+                }
+                Unmapped::QuantityName(name) => Unmapped::QuantityType {
+                    name,
+                    member_identity: operation.key.node.clone(),
+                    member_path: "Operation.returns.typeRef".to_owned(),
+                },
+                Unmapped::Untyped(_) => Unmapped::Untyped("Operation.returns.typeRef".to_owned()),
+                error => error,
+            })
+        })
+        .transpose();
+    let result = match result {
+        Ok(result) => result,
+        Err(Unmapped::Untyped(locus)) => {
+            untyped_locus.get_or_insert(locus);
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    Ok((
+        OperationDeclaration::new(name, parameters, result, operation.effect.clone())
+            .with_clocks(clock_parameters, clock_result),
+        untyped_locus.map(|locus| (locus, untyped_parameters)),
+    ))
+}
+
+/// FR-103: each kept `requires`/`ensures` clause the driver parsed for
+/// `model`'s operations, with its operation resolved in its owner's own
+/// declarations. A clause naming no operation of the package, or one whose
+/// owner is no object type, is a broken invariant of the driver's input.
+fn operation_clause_declarations(
+    alias: &str,
+    model: &SelectedModel,
+    table: &OperationTable,
+) -> Result<Vec<OperationClauseDeclaration>, AssemblyCause> {
+    let package = model.view.domain_package();
+    let identities = model.view.type_identities();
+    model
+        .operation_clauses
+        .iter()
+        .map(|clause| {
+            let broken = || AssemblyCause::ModelType {
+                alias: alias.to_owned(),
+                node: clause.operation.node.clone(),
+            };
+            let operation = package
+                .records
+                .iter()
+                .find_map(|record| match record {
+                    DomainPackageRecord::OperationMember(operation)
+                        if operation.key == clause.operation =>
+                    {
+                        Some(operation)
+                    }
+                    _ => None,
+                })
+                .ok_or_else(broken)?;
+            let owner = identities.get(&operation.owner).ok_or_else(broken)?.clone();
+            let name = member_identity_name(&operation.owner.node, &operation.key.node)
+                .ok_or_else(broken)?;
+            let declaration = table
+                .declared_by(owner.clone())
+                .iter()
+                .find(|declared| declared.name() == name)
+                .ok_or_else(broken)?;
+            Ok(OperationClauseDeclaration {
+                clause: clause.clone(),
+                context: owner.clone(),
+                operation: ClauseOperation {
+                    declaring: owner,
+                    declaration: declaration.clone(),
+                },
+            })
+        })
+        .collect()
+}
+
+/// FR-366: each type-level `Invariant` clause the driver parsed for `model`,
+/// with its owner resolved: `self` is a composite value of a record value
+/// type or an event type, and a reference to an object type, a state machine
+/// or a process. A clause whose owner is none of these is a broken invariant
+/// of the driver's input.
+fn type_invariant_declarations(
+    alias: &str,
+    model: &SelectedModel,
+    handles: &BTreeMap<DeclarationKey, NodeKey>,
+) -> Result<Vec<TypeInvariantDeclaration>, AssemblyCause> {
+    let package = model.view.domain_package();
+    let identities = model.view.type_identities();
+    let roles = model.view.type_clause_roles();
+    let slot = |key: &DeclarationKey| match (handles.get(key), identities.get(key)) {
+        (Some(handle), _) => Some(TypeSlot::Composite(handle.clone())),
+        (None, Some(identity)) => Some(TypeSlot::Object(identity.clone())),
+        (None, None) => None,
+    };
+    model
+        .type_invariants
+        .iter()
+        .map(|invariant| {
+            let broken = || AssemblyCause::ModelType {
+                alias: alias.to_owned(),
+                node: invariant.clause.node.clone(),
+            };
+            let owner_is_typed = package.records.iter().any(|record| {
+                record.key() == &invariant.owner
+                    && matches!(
+                        record,
+                        DomainPackageRecord::RecordValueType(_)
+                            | DomainPackageRecord::EventType(_)
+                            | DomainPackageRecord::ObjectType(_)
+                            | DomainPackageRecord::StateMachine(_)
+                            | DomainPackageRecord::Process(_)
+                            | DomainPackageRecord::PersistenceInterface(_)
+                    )
+            });
+            let context = identities.get(&invariant.owner).ok_or_else(broken)?.clone();
+            if !owner_is_typed {
+                return Err(broken());
+            }
+            let self_type = match slot(&invariant.owner).ok_or_else(broken)? {
+                TypeSlot::Composite(handle) => ValueType::Composite(handle),
+                TypeSlot::Object(identity) => ValueType::Reference(identity),
+            };
+            let applies_to = roles
+                .types()
+                .filter(|(_, invariants)| invariants.contains(&invariant.clause))
+                .filter_map(|(ty, _)| slot(ty))
+                .collect();
+            Ok(TypeInvariantDeclaration {
+                invariant: invariant.clone(),
+                self_type,
+                context,
+                applies_to,
+            })
+        })
+        .collect()
+}
+
+/// A function signature's type forms: its parameters' and its result's,
+/// in source order.
+fn signature_type_forms(function: &FunctionDeclaration) -> Vec<&TypeForm> {
+    function
+        .parameters
+        .iter()
+        .map(|(_, form)| form)
+        .chain(std::iter::once(&function.result))
+        .collect()
+}
+
+/// The type forms inside a function's `decreases` measure and body, in
+/// source order: `convert<T>` and `allInstances<T>` targets, and the named
+/// types of `fold<A>`, `reduce<A>`, `count<N>` and `sum<N>` as name forms
+/// over the name's own span.
+fn body_type_forms(function: &FunctionDeclaration) -> Vec<TypeForm> {
+    expression_type_forms(
+        [function.measure.as_ref(), Some(&function.body)]
+            .into_iter()
+            .flatten(),
+    )
+}
+
+/// Every type form written inside `roots`, in source order.
+fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) -> Vec<TypeForm> {
+    let mut forms = Vec::new();
+    for root in roots {
+        let mut stack = vec![root.root()];
+        while let Some(expression) = stack.pop() {
+            match expression.node() {
+                ExprNode::Convert { target, .. } | ExprNode::AllInstances { target, .. } => {
+                    forms.push(target.clone());
+                }
+                ExprNode::Accumulate {
+                    accumulator_type: name,
+                    accumulator_type_span: span,
+                    ..
+                }
+                | ExprNode::Count {
+                    result_type: name,
+                    result_type_span: span,
+                    ..
+                }
+                | ExprNode::Sum {
+                    result_type: name,
+                    result_type_span: span,
+                    ..
+                } => forms.push(TypeForm::name(name.clone(), *span)),
+                ExprNode::Boolean(_)
+                | ExprNode::Absent
+                | ExprNode::Integer(_)
+                | ExprNode::Float32(_)
+                | ExprNode::Float64(_)
+                | ExprNode::Rational(..)
+                | ExprNode::DecimalValue { .. }
+                | ExprNode::Quantity(_)
+                | ExprNode::String(_)
+                | ExprNode::Name(_)
+                | ExprNode::Let { .. }
+                | ExprNode::Case(_)
+                | ExprNode::If { .. }
+                | ExprNode::Binary { .. }
+                | ExprNode::Negate(_)
+                | ExprNode::Not(_)
+                | ExprNode::Field { .. }
+                | ExprNode::Present(_)
+                | ExprNode::Value(_)
+                | ExprNode::Deref(_)
+                | ExprNode::Ref(_)
+                | ExprNode::Select { .. }
+                | ExprNode::Call { .. }
+                | ExprNode::Record { .. }
+                | ExprNode::Collection { .. }
+                | ExprNode::Query { .. }
+                | ExprNode::Population { .. }
+                | ExprNode::Seq { .. }
+                | ExprNode::Power { .. }
+                | ExprNode::Flatten(_)
+                | ExprNode::Size(_)
+                | ExprNode::Contains { .. }
+                | ExprNode::DropFirst(_)
+                | ExprNode::RemoveOne { .. }
+                | ExprNode::Lookup { .. }
+                | ExprNode::Dispatch { .. }
+                | ExprNode::Pre(_)
+                | ExprNode::SelfRef
+                | ExprNode::Result
+                | ExprNode::Reaches { .. }
+                | ExprNode::Indexed { .. }
+                | ExprNode::StepLabel { .. }
+                | ExprNode::Stutter
+                | ExprNode::ProtocolReference { .. } => {}
+                // Not the S2 seam (`Typer::infer_form`'s own doc,
+                // `fsl-semantics/src/check/check/typing.rs`): an
+                // unconditional probe arm so this match keeps compiling
+                // under `--cfg seam_probe`.
+                #[cfg(seam_probe)]
+                ExprNode::__SeamProbe => {}
+            }
+            // Children last-first, so the first child is visited next and
+            // forms come out in source order.
+            stack.extend(expression.children().into_iter().rev());
+        }
+    }
+    forms
+}
+
+/// The declared-name check of one type form tree (FR-091 "The assembler
+/// refuses"): every name must bind exactly one declaration of the unit or
+/// one object, record or event type of an admitted domain package. A
+/// `Reference<Q>` target must name an object type, and a floating type's
+/// rounding mode must be spellable (FR-091-OQ-4: floating types are admitted).
+fn check_names(
+    unit: &Unit,
+    names: &Names,
+    spellings: &ModelSpellings,
+    source: Option<&RawSourceRef>,
+    imports: &BTreeMap<String, AdmittedImport>,
+    form: &TypeForm,
+    errors: &mut Vec<AssemblyError>,
+) {
+    let mut stack = vec![form];
+    while let Some(form) = stack.pop() {
+        match &form.head {
+            // FR-091-OQ-4: a floating type carries its rounding mode and is
+            // admitted; only an unspellable mode is refused.
+            TypeFormHead::Builtin(BuiltinType::Float32 | BuiltinType::Float64) => {
+                if let Some(spelled) = form.bounds.first() {
+                    if parse_rounding_mode(spelled).is_none() {
+                        errors.push(AssemblyError {
+                            cause: AssemblyCause::IllFormedBounds(TypeFormFault::Malformed),
+                            span: form.span,
+                        });
+                    }
+                }
+            }
+            TypeFormHead::Builtin(BuiltinType::Clock) => errors.push(AssemblyError {
+                cause: AssemblyCause::TimedNotChecked(TimedConstruct::Clock),
+                span: form.span,
+            }),
+            TypeFormHead::Builtin(BuiltinType::Quantity) => {
+                if let Some(target) = form.arguments.first() {
+                    let scope = names.in_unit(spellings, source);
+                    if let Err(error) = super::type_form::quantity_unit(&scope, target) {
+                        errors.push(resolution_error(unit, error));
+                    }
+                }
+            }
+            TypeFormHead::Builtin(BuiltinType::Reference) => {
+                for target in &form.arguments {
+                    let name = match &target.head {
+                        TypeFormHead::Name(name) => name,
+                        TypeFormHead::Builtin(_)
+                        | TypeFormHead::Collection(_)
+                        | TypeFormHead::Population
+                        | TypeFormHead::UnitExpression(_) => continue,
+                    };
+                    if spellings.object_type(source, &name.name).is_none() {
+                        errors.push(AssemblyError {
+                            cause: AssemblyCause::UnresolvedTypeName {
+                                name: name.name.clone(),
+                            },
+                            span: target.span,
+                        });
+                    }
+                }
+            }
+            TypeFormHead::Name(name) => match unit.declared.get(&name.name).map(Vec::len) {
+                // FR-091: a native spelling is a candidate beside the unit's
+                // own forms, so it resolves only when the unit declares none.
+                None | Some(0) if native_scalar_named(&name.name).is_some() => {}
+                None | Some(0) if spellings.declares(source, &name.name) => {}
+                None | Some(0)
+                    if name
+                        .segments
+                        .first()
+                        .is_some_and(|qualifier| imports.contains_key(qualifier)) =>
+                {
+                    errors.push(AssemblyError {
+                        cause: AssemblyCause::ImportedTypeName {
+                            name: name.name.clone(),
+                        },
+                        span: form.span,
+                    });
+                }
+                None | Some(0) => errors.push(AssemblyError {
+                    cause: AssemblyCause::UnresolvedTypeName {
+                        name: name.name.clone(),
+                    },
+                    span: form.span,
+                }),
+                Some(1) if native_scalar_named(&name.name).is_none() => {}
+                Some(_) => errors.push(AssemblyError {
+                    cause: AssemblyCause::AmbiguousTypeName {
+                        name: name.name.clone(),
+                        candidates: unit.candidates(&name.name),
+                        native: native_scalar_named(&name.name).is_some(),
+                    },
+                    span: form.span,
+                }),
+            },
+            TypeFormHead::Builtin(
+                BuiltinType::Boolean
+                | BuiltinType::Integer
+                | BuiltinType::Int
+                | BuiltinType::Rational
+                | BuiltinType::Decimal
+                | BuiltinType::Text
+                | BuiltinType::Option,
+            )
+            | TypeFormHead::Collection(_)
+            | TypeFormHead::Population
+            | TypeFormHead::UnitExpression(_) => stack.extend(&form.arguments),
+        }
+    }
+}
+
+/// The aliases one type form names, by index into the unit's aliases.
+fn named_aliases(unit: &Unit, form: &TypeForm) -> Vec<usize> {
+    let mut named = Vec::new();
+    let mut stack = vec![form];
+    while let Some(form) = stack.pop() {
+        if let TypeFormHead::Name(name) = &form.head {
+            if let Some([(Declared::Alias(index), _)]) =
+                unit.declared.get(&name.name).map(Vec::as_slice)
+            {
+                named.push(*index);
+            }
+        }
+        stack.extend(&form.arguments);
+    }
+    named
+}
+
+/// A resolution error as an assembler error.
+fn resolution_error(unit: &Unit, error: TypeFormError) -> AssemblyError {
+    let cause = match error.fault {
+        TypeFormFault::MissingName(name) => AssemblyCause::UnresolvedTypeName { name },
+        TypeFormFault::MissingQualifiedName(name) => {
+            AssemblyCause::UnresolvedTypeName { name: name.name }
+        }
+        TypeFormFault::UnresolvedUnitName { name, packages } => {
+            AssemblyCause::UnresolvedUnitName { name, packages }
+        }
+        TypeFormFault::AmbiguousName(name) => AssemblyCause::AmbiguousTypeName {
+            candidates: unit.candidates(&name),
+            native: native_scalar_named(&name).is_some(),
+            name,
+        },
+        fault @ (TypeFormFault::Malformed
+        | TypeFormFault::EmptyInterval
+        | TypeFormFault::IntegerOutsideI128(_)
+        | TypeFormFault::DenominatorBelowOne
+        | TypeFormFault::MalformedDecimal
+        | TypeFormFault::EmptyTextBounds
+        | TypeFormFault::EmptyCardinality
+        | TypeFormFault::UnitArithmetic(_)) => AssemblyCause::IllFormedBounds(fault),
+        TypeFormFault::UnitIdentity(cause) => {
+            AssemblyCause::handle(NodeKeyRefusal::Identity(cause))
+        }
+        TypeFormFault::ClockNotChecked => AssemblyCause::TimedNotChecked(TimedConstruct::Clock),
+    };
+    AssemblyError {
+        cause,
+        span: error.span,
+    }
+}
+
+/// The admitted enum of `form` under `owners` (FR-091 "Enum declarations"
+/// steps 2 to 5). The cases are sorted by byte order unless the form is
+/// `ordered`. A refusal here is a nominal-admission fault: the caller has
+/// already refused a repeated case.
+fn admit_enum(
+    form: &EnumForm,
+    owner: &SourceOwner,
+    package_name: &str,
+    owners: &OwnerSelection,
+) -> Result<EnumBinding, NominalRefusal> {
+    let mut cases: Vec<String> = form
+        .members
+        .iter()
+        .map(|member| member.case.name.clone())
+        .collect();
+    if !form.ordered {
+        cases.sort();
+    }
+    let preimage = EnumDeclarationPreimage::new(
+        owner.node_owner(package_name),
+        vec![form.name.name.clone()],
+        form.ordered,
+        cases.clone(),
+    )?;
+    let key = preimage.key().map_err(nominal_key_refusal)?;
+    let declaration = AdmittedEnumDeclaration::admit(preimage, key, owners)?;
+    let mut members = Vec::with_capacity(cases.len());
+    for case in cases {
+        let member = EnumMemberPreimage::new(declaration.key(), case)?;
+        let member_key = member.key().map_err(nominal_key_refusal)?;
+        members.push(declaration.admit_member(&member, member_key)?);
+    }
+    Ok(EnumBinding {
+        name: form.name.name.clone(),
+        declaration,
+        members,
+    })
+}
+
+fn nominal_key_refusal(refusal: InvalidNodeKey) -> NominalRefusal {
+    match refusal {
+        InvalidNodeKey::Allocation { requested } => NominalRefusal::Allocation { requested },
+        InvalidNodeKey::EmptyPackage
+        | InvalidNodeKey::EmptyPath
+        | InvalidNodeKey::OrdinalOutOfRange => NominalRefusal::Graph(InvalidSemanticGraph {
+            cause: SemanticGraphCause::NonCanonicalPreimage,
+        }),
+    }
+}
+
+fn refuse<T>(errors: Vec<AssemblyError>) -> Result<T, AssemblyRefusal> {
+    Err(AssemblyRefusal { errors })
+}
+
+/// The unit's records and tuples as one admitted declaration set (FR-143),
+/// or every refusal: each refused declaration is set aside and the rest
+/// admitted again, so one declaration's refusal does not hide another's.
+/// A declaration refused only because it names one set aside
+/// (`UnknownDeclaration`) is a consequence, not an error of its own, and is
+/// not reported. Each round sets aside at least one declaration, so this
+/// ends.
+fn admit_types(
+    declarations: Vec<CompositeDeclaration>,
+    object_types: &[ObjectTypeDeclaration],
+    spans: &BTreeMap<String, Span>,
+    environment: TypeEnvironmentLimits,
+    cancel: &Cancel,
+) -> Result<AdmittedTypes, AssemblyRefusal> {
+    admit_types_with(
+        declarations,
+        object_types,
+        spans,
+        environment,
+        cancel,
+        |declarations, object_types, environment, cancel| {
+            // The environment the clause typer reads. A redefinition the
+            // model's conformance stage must judge (a widened type) is not
+            // this admission's refusal, so the widening field is typed as the
+            // declaration it is and the staged admission below keeps the
+            // redefinition for the stage and for `complete`.
+            let mut typed = object_types.to_vec();
+            declare_cardinality_narrowing(&mut typed);
+            let mut rounds = typed.iter().map(|ty| ty.attributes().len()).sum::<usize>() + 1;
+            let types = loop {
+                match TypeEnvironment::bounded_with_cancel(
+                    declarations.iter().cloned(),
+                    typed.iter().cloned(),
+                    environment,
+                    cancel,
+                ) {
+                    Err(EnvironmentFailure::Refused(invalid)) => {
+                        let DeclarationCause::RedefinitionWidens(widened) = &invalid.cause else {
+                            return Err(EnvironmentFailure::Refused(invalid));
+                        };
+                        rounds -= 1;
+                        if rounds == 0 || !relax_widening(&mut typed, &invalid.declaration, widened)
+                        {
+                            return Err(EnvironmentFailure::Refused(invalid));
+                        }
+                    }
+                    other => break other?,
+                }
+            };
+            let mut staged = object_types.to_vec();
+            declare_cardinality_narrowing(&mut staged);
+            let pending = if object_types.is_empty() {
+                None
+            } else {
+                Some(TypeEnvironment::stage_model_with_cancel(
+                    declarations.iter().cloned(),
+                    staged,
+                    environment,
+                    cancel,
+                )?)
+            };
+            Ok(AdmittedTypes { types, pending })
+        },
+    )
+}
+
+/// The environment unit assembly admits for the one `model` declaration
+/// `alias` over `view`: the same object-type declarations and admission as
+/// [`AssemblyRun`]'s, under the default environment limits.
+#[cfg(any(test, feature = "test-support"))]
+pub fn model_type_environment(
+    alias: &str,
+    view: &crate::model::normalize::EffectiveView,
+) -> Result<TypeEnvironment, AssemblyRefusal> {
+    let span = Span { start: 0, end: 0 };
+    let model = crate::model::intake::SelectedModel {
+        alias: alias.to_owned(),
+        span,
+        view: view.clone(),
+        operation_clauses: Vec::new(),
+        type_invariants: Vec::new(),
+    };
+    let types = model_object_types(
+        alias,
+        &model,
+        span,
+        &mut OperationTable::default(),
+        &BTreeMap::new(),
+        &[],
+    )
+    .map_err(|errors| AssemblyRefusal { errors })?;
+    let spans = types
+        .objects
+        .iter()
+        .map(|declaration| (declaration.name().to_owned(), span))
+        .collect();
+    admit_types(
+        types.composites,
+        &types.objects,
+        &spans,
+        TypeEnvironmentLimits::default(),
+        &Cancel::new(),
+    )
+    .map(|admitted| admitted.types)
+}
+
+/// The type environment the unit's clauses are typed against, with the staged
+/// model admission whose completion waits for the conformance stage.
+pub(crate) struct AdmittedTypes {
+    pub(crate) types: TypeEnvironment,
+    pub(crate) pending: Option<filament_semantic_value::declaration::PendingTypeEnvironment>,
+}
+
+/// `failure` as the assembly cause a refused or exhausted type admission
+/// reports.
+pub(crate) fn environment_cause(failure: EnvironmentFailure) -> AssemblyCause {
+    match failure {
+        EnvironmentFailure::Refused(invalid) => AssemblyCause::InvalidTypeDeclaration(invalid),
+        EnvironmentFailure::Limit(limit) => AssemblyCause::TypeLimit(stage_limit(limit)),
+        EnvironmentFailure::Allocation(request) => AssemblyCause::StorageAllocation {
+            requested: request.amount(),
+            unit: request.unit(),
+        },
+        EnvironmentFailure::Capacity(request) => AssemblyCause::StorageCapacity {
+            requested: request.amount(),
+            unit: request.unit(),
+        },
+    }
+}
+
+/// Gives the fields of the object type `declaration` that redefine `widened`,
+/// or a member `widened` itself redefines, the type and presence of
+/// `widened`, so the clause typer reads an environment the redefinition does
+/// not widen. A field is matched by the key of the member it redefines, so a
+/// sibling field that redefines something else is untouched. The
+/// staged admission keeps the declared types; the conformance stage judges
+/// them. Returns whether any field changed.
+fn relax_widening(
+    object_types: &mut [ObjectTypeDeclaration],
+    declaration: &str,
+    widened: &FieldRef,
+) -> bool {
+    let Some((value_type, presence)) = object_types
+        .iter()
+        .find(|ty| ty.key() == widened.owner)
+        .and_then(|ty| {
+            ty.attributes()
+                .iter()
+                .find(|field| field.name() == widened.name)
+        })
+        .map(|field| (field.value_type().clone(), field.presence()))
+    else {
+        return false;
+    };
+    let mut chain = vec![widened.clone()];
+    while let Some(next) = chain
+        .last()
+        .and_then(|link| {
+            object_types
+                .iter()
+                .find(|ty| ty.key() == link.owner)
+                .and_then(|ty| ty.attributes().iter().find(|f| f.name() == link.name))
+        })
+        .and_then(|field| field.redefines().cloned())
+        .filter(|next| !chain.contains(next))
+    {
+        chain.push(next);
+    }
+    let mut changed = false;
+    for object_type in object_types
+        .iter_mut()
+        .filter(|ty| ty.name() == declaration)
+    {
+        let attributes = object_type
+            .attributes()
+            .iter()
+            .map(|field| {
+                if let Some(link) = field.redefines().filter(|link| {
+                    chain.contains(link)
+                        && (field.value_type() != &value_type || field.presence() != presence)
+                }) {
+                    changed = true;
+                    FieldDeclaration::new(field.name(), value_type.clone(), presence)
+                        .with_redefines(link.clone())
+                } else {
+                    field.clone()
+                }
+            })
+            .collect();
+        *object_type =
+            ObjectTypeDeclaration::new(object_type.key(), object_type.name(), attributes)
+                .with_supertypes(object_type.supertypes().to_vec());
+    }
+    changed
+}
+
+/// Whether `child` differs from `target` only in collection cardinality: the
+/// same element type and, when both are collections, the same collection kind.
+fn differs_only_in_cardinality(child: &ValueType, target: &ValueType) -> bool {
+    if child == target {
+        return false;
+    }
+    let (child_element, child_kind) = match child {
+        ValueType::Collection(collection) => (collection.element(), Some(collection.kind())),
+        other => (other, None),
+    };
+    let (target_element, target_kind) = match target {
+        ValueType::Collection(collection) => (collection.element(), Some(collection.kind())),
+        other => (other, None),
+    };
+    child_element == target_element
+        && (child_kind.is_none() || target_kind.is_none() || child_kind == target_kind)
+}
+
+/// Declares each field whose redefinition only narrows collection
+/// cardinality with its target's collection type, for the type admission
+/// alone. A bounded collection type has exactly one cardinality, and the
+/// kernel's narrowing check accepts only equal collections, so the
+/// narrowing itself is judged by the conformance stage from the child's own
+/// declared multiplicity, which the domain package keeps. An element,
+/// presence or reference widening stays declared and still refuses. The
+/// target is matched by the key of the redefined member.
+fn declare_cardinality_narrowing(object_types: &mut [ObjectTypeDeclaration]) {
+    for _ in 0..=object_types.len() {
+        let mut changed = false;
+        for index in 0..object_types.len() {
+            let mut attributes = Vec::with_capacity(object_types[index].attributes().len());
+            let mut touched = false;
+            for field in object_types[index].attributes() {
+                let target = field.redefines().and_then(|target| {
+                    object_types
+                        .iter()
+                        .find(|ty| ty.key() == target.owner)
+                        .and_then(|ty| ty.attributes().iter().find(|f| f.name() == target.name))
+                });
+                match target {
+                    Some(target)
+                        if differs_only_in_cardinality(field.value_type(), target.value_type()) =>
+                    {
+                        touched = true;
+                        let mut retargeted = FieldDeclaration::new(
+                            field.name(),
+                            target.value_type().clone(),
+                            field.presence(),
+                        );
+                        if let Some(link) = field.redefines() {
+                            retargeted = retargeted.with_redefines(link.clone());
+                        }
+                        attributes.push(retargeted);
+                    }
+                    _ => attributes.push(field.clone()),
+                }
+            }
+            if touched {
+                changed = true;
+                let ty = &object_types[index];
+                object_types[index] = ObjectTypeDeclaration::new(ty.key(), ty.name(), attributes)
+                    .with_supertypes(ty.supertypes().to_vec());
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// The admission loop with its registry constructor injected. Production
+/// supplies the shared kernel constructor above; tests inject exact upstream
+/// failures so the complete production failure mapping stays exercised.
+fn admit_types_with<T>(
+    mut declarations: Vec<CompositeDeclaration>,
+    object_types: &[ObjectTypeDeclaration],
+    spans: &BTreeMap<String, Span>,
+    environment: TypeEnvironmentLimits,
+    cancel: &Cancel,
+    mut construct: impl FnMut(
+        &[CompositeDeclaration],
+        &[ObjectTypeDeclaration],
+        TypeEnvironmentLimits,
+        &Cancel,
+    ) -> Result<T, EnvironmentFailure>,
+) -> Result<T, AssemblyRefusal> {
+    let mut errors = Vec::new();
+    let mut set_aside_keys = Vec::new();
+    loop {
+        match construct(&declarations, object_types, environment, cancel) {
+            Ok(types) if errors.is_empty() => return Ok(types),
+            Ok(_) => return refuse(errors),
+            Err(EnvironmentFailure::Limit(limit)) => {
+                // A ceiling, or the caller's cancellation, which the caller
+                // that owns the handle reads from it. A ceiling names no
+                // declaration and has no locus (FR-082, FR-096): the span is empty and
+                // names no region, and the compile reports none.
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::TypeLimit(stage_limit(limit)),
+                    span: Span { start: 0, end: 0 },
+                });
+                return refuse(errors);
+            }
+            Err(EnvironmentFailure::Refused(invalid)) => {
+                // The recursion rule refuses every declaration on the cycle,
+                // once each, in the order the cycle names them (FR-316);
+                // any other cause is its one declaration's.
+                let mut named: Vec<&str> = Vec::new();
+                match &invalid.cause {
+                    DeclarationCause::Recursion { cycle, .. } => {
+                        for name in cycle {
+                            if !named.contains(&name.as_str()) {
+                                named.push(name);
+                            }
+                        }
+                    }
+                    _ => named.push(&invalid.declaration),
+                }
+                let mut progressed = false;
+                for name in named {
+                    let before = declarations.len();
+                    set_aside_keys.extend(
+                        declarations
+                            .iter()
+                            .filter(|declaration| declaration.name() == name)
+                            .map(CompositeDeclaration::key),
+                    );
+                    declarations.retain(|declaration| declaration.name() != name);
+                    let set_aside = declarations.len() < before;
+                    progressed |= set_aside;
+                    // Only a name that an earlier round set aside is a
+                    // consequence; a key no declaration ever held (a dangling
+                    // field type or composite supertype) is its own refusal.
+                    let consequence = set_aside
+                        && matches!(
+                            &invalid.cause,
+                            DeclarationCause::UnknownDeclaration(missing)
+                                if set_aside_keys.contains(missing)
+                        );
+                    if !consequence {
+                        let span = spans
+                            .get(name)
+                            .copied()
+                            .unwrap_or(Span { start: 0, end: 0 });
+                        errors.push(AssemblyError {
+                            cause: AssemblyCause::InvalidTypeDeclaration(InvalidDeclaration {
+                                declaration: name.to_owned(),
+                                cause: invalid.cause.clone(),
+                            }),
+                            span,
+                        });
+                    }
+                }
+                if !progressed {
+                    return refuse(errors);
+                }
+            }
+            Err(EnvironmentFailure::Allocation(request)) => {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::StorageAllocation {
+                        requested: request.amount(),
+                        unit: request.unit(),
+                    },
+                    span: Span { start: 0, end: 0 },
+                });
+                return refuse(errors);
+            }
+            Err(EnvironmentFailure::Capacity(request)) => {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::StorageCapacity {
+                        requested: request.amount(),
+                        unit: request.unit(),
+                    },
+                    span: Span { start: 0, end: 0 },
+                });
+                return refuse(errors);
+            }
+        }
+    }
+}
+
+/// One `import` the S4 source resolution admitted (ADR-015 D-1): the
+/// library identity it names, the library's verified import view (ADR-011
+/// §4), and the library's checked graph, compiled from source, which E3
+/// types an imported name from (ADR-015 D-5).
+#[derive(Clone)]
+pub struct AdmittedImport {
+    /// The library identity the import names.
+    pub identity: LibraryName,
+    /// The library's import view, read from its emitted v2 bytes.
+    pub view: ImportView,
+    /// The library's checked graph.
+    pub graph: Arc<CheckedGraph>,
+}
+
+fsl_foundation::debug_with_struct!(AdmittedImport, "AdmittedImport" { identity: plain, view: with, graph: with });
+
+impl PackageDeclarations {
+    /// Assemble an admitted set of source units as one declaration namespace.
+    /// Successful assembly sorts units by their `(authority, identity)`
+    /// source reference before forms are combined; declaration names retain
+    /// the source that contributed them so S3 can key nodes and source
+    /// regions under that owner. If canonical assembly finds a quantity
+    /// topology refusal, a noncanonical input is checked again in caller
+    /// order so the first listed defect is reported. Admission of empty,
+    /// duplicate, and colliding owners belongs to the spine's FR-480
+    /// preflight stage.
+    pub fn assemble_units(
+        package_name: String,
+        units: Vec<(RawSourceRef, ParsedUnit)>,
+        models: impl Into<SelectedModels>,
+        imports: Vec<AdmittedImport>,
+        limits: AssemblyLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, AssemblyRefusal> {
+        let models = models.into();
+        let mut canonical_units = units.clone();
+        canonical_units.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let units_are_canonical = units
+            .iter()
+            .map(|(source, _)| source)
+            .eq(canonical_units.iter().map(|(source, _)| source));
+
+        let canonical_result = Self::assemble_units_in_order(
+            package_name.clone(),
+            canonical_units,
+            models.clone(),
+            imports.clone(),
+            limits,
+            cancel,
+        );
+
+        // The aggregate quantity walk can contain independent defects in
+        // different source units. When its canonical pass finds one, an
+        // ordered pass selects the first such defect in the caller's list.
+        // Successful packages are assembled only once and stay canonical.
+        match canonical_result {
+            Err(canonical_refusal)
+                if !units_are_canonical
+                    && canonical_refusal.errors.first().is_some_and(|error| {
+                        matches!(
+                            error.cause,
+                            AssemblyCause::QuantityCycle { .. }
+                                | AssemblyCause::UnitGraphTopology { .. }
+                        )
+                    }) =>
+            {
+                match Self::assemble_units_in_order(
+                    package_name,
+                    units,
+                    models,
+                    imports,
+                    limits,
+                    cancel,
+                ) {
+                    Err(ordered_refusal) => Err(ordered_refusal),
+                    Ok(_) => Err(canonical_refusal),
+                }
+            }
+            result => result,
+        }
+    }
+
+    fn assemble_units_in_order(
+        package_name: String,
+        units: Vec<(RawSourceRef, ParsedUnit)>,
+        models: impl Into<SelectedModels>,
+        imports: Vec<AdmittedImport>,
+        limits: AssemblyLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, AssemblyRefusal> {
+        let Some((source, _)) = units.first() else {
+            return Err(AssemblyRefusal {
+                errors: vec![AssemblyError {
+                    cause: AssemblyCause::EmptyUnitList,
+                    span: Span { start: 0, end: 0 },
+                }],
+            });
+        };
+        let source = source.clone();
+        let mut source_owners = BTreeMap::new();
+        let sources: Vec<_> = units.iter().map(|(source, _)| source.clone()).collect();
+        let mut state_clause_index = 0usize;
+        let mut time_source_index = 0usize;
+        let mut equivalence_index = 0usize;
+        for (source, unit) in &units {
+            for form in unit.forms() {
+                if matches!(form.form(), fsl_forms::DeclarationForm::StateClause(_)) {
+                    source_owners
+                        .insert(format!("state_clause:{state_clause_index}"), source.clone());
+                    state_clause_index += 1;
+                }
+                if matches!(form.form(), fsl_forms::DeclarationForm::TimeSource(_)) {
+                    source_owners.insert(time_source_owner(time_source_index), source.clone());
+                    time_source_index += 1;
+                }
+                match form.form() {
+                    fsl_forms::DeclarationForm::DimensionEquivalence(_) => {
+                        source_owners.insert(
+                            equivalence::source_owner_key(equivalence_index),
+                            source.clone(),
+                        );
+                        equivalence_index += 1;
+                    }
+                    fsl_forms::DeclarationForm::Dimension(dimension) => {
+                        source_owners.insert(dimension.name.name.clone(), source.clone());
+                        source_owners.insert(
+                            super::lowering::quantity_origin(
+                                super::lowering::QuantityKind::Dimension,
+                                &dimension.name.name,
+                            ),
+                            source.clone(),
+                        );
+                    }
+                    fsl_forms::DeclarationForm::Unit(unit) => {
+                        source_owners.insert(unit.name.name.clone(), source.clone());
+                        source_owners.insert(
+                            super::lowering::quantity_origin(
+                                super::lowering::QuantityKind::Unit,
+                                &unit.name.name,
+                            ),
+                            source.clone(),
+                        );
+                    }
+                    _ => {
+                        if let Some(name) = form.declared_name() {
+                            source_owners.insert(name.to_owned(), source.clone());
+                        }
+                    }
+                }
+            }
+        }
+        let combined = ParsedUnit::combine(units.into_iter().map(|(_, unit)| unit));
+        Self::assemble_with_execution_points_and_cancel_and_owners(
+            package_name,
+            combined,
+            models,
+            imports,
+            limits,
+            AssemblyRun {
+                cancel,
+                execution_points: BTreeMap::new(),
+            },
+            SourceUnits {
+                primary: source,
+                sources,
+                source_owners,
+            },
+        )
+    }
+
+    /// FR-091's assembler: the package declared by `unit`, the S2 output of
+    /// the source unit `source` names, whose authority and identity are the
+    /// owner of every declared node (ADR-013 O-04), over `models`, the
+    /// domain packages I1 admitted for the unit's `model` declarations
+    /// (`model::intake::admit_unit`). An admitted model whose alias no
+    /// declaration of the unit spells binds nothing.
+    ///
+    /// `imports` are the imports the S4 source resolution admitted for the
+    /// unit's `import` declarations (ADR-015 D-1); an `import` with no
+    /// admitted entry of its identity is refused.
+    pub fn assemble(
+        source: RawSourceRef,
+        package_name: String,
+        unit: ParsedUnit,
+        models: impl Into<SelectedModels>,
+        imports: Vec<AdmittedImport>,
+    ) -> Result<Self, AssemblyRefusal> {
+        Self::assemble_with_limits(
+            source,
+            package_name,
+            unit,
+            models,
+            imports,
+            AssemblyLimits::default(),
+        )
+    }
+
+    /// [`Self::assemble`] under explicit `limits` (ADR-011 §2.3).
+    pub fn assemble_with_limits(
+        source: RawSourceRef,
+        package_name: String,
+        unit: ParsedUnit,
+        models: impl Into<SelectedModels>,
+        imports: Vec<AdmittedImport>,
+        limits: AssemblyLimits,
+    ) -> Result<Self, AssemblyRefusal> {
+        Self::assemble_with_cancel(
+            source,
+            package_name,
+            unit,
+            models,
+            imports,
+            limits,
+            &Cancel::new(),
+        )
+    }
+
+    /// [`Self::assemble_with_limits`] under the caller's [`Cancel`] handle,
+    /// polled at every type-environment work charge (FR-276). A cancelled
+    /// handle stops the assembly with a type-environment limit refusal; the
+    /// caller that owns the handle reads [`Cancel::tripped`] to tell the two
+    /// apart.
+    pub fn assemble_with_cancel(
+        source: RawSourceRef,
+        package_name: String,
+        unit: ParsedUnit,
+        models: impl Into<SelectedModels>,
+        imports: Vec<AdmittedImport>,
+        limits: AssemblyLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, AssemblyRefusal> {
+        Self::assemble_with_execution_points_and_cancel(
+            source,
+            package_name,
+            unit,
+            models,
+            imports,
+            limits,
+            AssemblyRun {
+                cancel,
+                execution_points: BTreeMap::new(),
+            },
+        )
+    }
+
+    /// [`Self::assemble_with_cancel`] with accepted execution points keyed
+    /// by exact authored state-clause name (FR-104-AC-15).
+    pub fn assemble_with_execution_points_and_cancel(
+        source: RawSourceRef,
+        package_name: String,
+        unit: ParsedUnit,
+        models: impl Into<SelectedModels>,
+        imports: Vec<AdmittedImport>,
+        limits: AssemblyLimits,
+        run: AssemblyRun<'_>,
+    ) -> Result<Self, AssemblyRefusal> {
+        Self::assemble_with_execution_points_and_cancel_and_owners(
+            package_name,
+            unit,
+            models,
+            imports,
+            limits,
+            run,
+            SourceUnits {
+                primary: source.clone(),
+                sources: vec![source],
+                source_owners: BTreeMap::new(),
+            },
+        )
+    }
+
+    fn assemble_with_execution_points_and_cancel_and_owners(
+        package_name: String,
+        unit: ParsedUnit,
+        models: impl Into<SelectedModels>,
+        imports: Vec<AdmittedImport>,
+        limits: AssemblyLimits,
+        run: AssemblyRun<'_>,
+        source_units: SourceUnits,
+    ) -> Result<Self, AssemblyRefusal> {
+        let SourceUnits {
+            primary: source,
+            sources,
+            source_owners,
+        } = source_units;
+        let source_order: Vec<SourceOwner> = sources.iter().map(SourceOwner::from).collect();
+        let AssemblyRun {
+            cancel,
+            execution_points,
+        } = run;
+        let mut model_selection_units = unit.model_selection_units().to_vec();
+        let repeated_model_selection_units = unit.repeated_model_selection_units().to_vec();
+        let import_selection_units = unit.import_selection_units().to_vec();
+        let (mut selections, forms) = unit.into_parts();
+        // The models and the one meter their admission counted on; checking
+        // continues that meter into the conformance stage.
+        let (mut models, mut model_meter, exact_declarations, exact_fields, tuple_declarations) =
+            models.into().into_parts();
+        // FR-230 "Clock-typed positions": a package record type that holds a
+        // clock is clock-bearing where the unit's own source writes it.
+        let package_bearing: BTreeSet<String> = selections
+            .models
+            .iter()
+            .filter_map(|selection| {
+                let model = models.iter().find(|model| {
+                    model.alias == selection.alias
+                        && model.view.domain_package().model_selection.identity
+                            == selection.identity
+                })?;
+                Some(
+                    AdmittedModel::from_view(&model.view)
+                        .with_alias(&selection.alias)
+                        .clock_bearing_record_names(),
+                )
+            })
+            .flatten()
+            .collect();
+        let mut unit = Unit::new(forms, package_bearing);
+        // FR-393: retain the parsed timed forms through S2. FR-230 checks
+        // their meaning, including the facet gate, at S3.
+        let mut errors: Vec<AssemblyError> = Vec::new();
+        let owner = SourceOwner::from(&source);
+        let source_node_owners: BTreeMap<String, SourceOwner> = source_owners
+            .iter()
+            .map(|(key, source)| (key.clone(), SourceOwner::from(source)))
+            .collect();
+        let mut admitted_source_owners: Vec<_> = source_owners
+            .values()
+            .map(|source| SourceOwner::from(source).node_owner(&package_name))
+            .collect();
+        admitted_source_owners.push(owner.node_owner(&package_name));
+        let quantity_owners = OwnerSelection::new(admitted_source_owners);
+        let source_owner_for = |name: &str| {
+            source_owners
+                .get(name)
+                .map(SourceOwner::from)
+                .unwrap_or_else(|| owner.clone())
+        };
+        // The selections the sources make; the source models follow them.
+        let domain_selections = selections.models.len();
+        // FR-569: the unit's `object` declarations are one more selected
+        // model, under the alias no `model` declaration can take.
+        if !unit.objects.is_empty() {
+            source_name_collisions(&unit, &selections, &mut errors);
+            if errors.is_empty() {
+                // An object type is visible only in the unit that declares
+                // it: each declaring unit gets its own source model.
+                let declared_types: BTreeSet<String> = unit.declared.keys().cloned().collect();
+                let mut by_unit: BTreeMap<usize, Vec<fsl_forms::ObjectForm>> = BTreeMap::new();
+                for object in &unit.objects {
+                    let declaring = source_owners
+                        .get(&object.name.name)
+                        .and_then(|owner| sources.iter().position(|source| source == owner))
+                        .unwrap_or(0);
+                    by_unit.entry(declaring).or_default().push(object.clone());
+                }
+                for (position, (declaring, objects)) in by_unit.iter().enumerate() {
+                    // The selected domain packages the declaring unit itself
+                    // selects, whose types a source field, parameter or
+                    // result may name.
+                    let foreign_packages: Vec<(String, DomainPackage)> = unit_model_selections(
+                        &selections.models,
+                        domain_selections,
+                        &model_selection_units,
+                        &repeated_model_selection_units,
+                        *declaring,
+                    )
+                    .into_iter()
+                    .filter_map(|selection| {
+                        let model = models.iter().find(|model| {
+                            model.alias == selection.alias
+                                && model.view.domain_package().model_selection.identity
+                                    == selection.identity
+                        })?;
+                        Some((selection.alias.clone(), model.view.domain_package().clone()))
+                    })
+                    .collect();
+                    let foreign: Vec<(&str, &DomainPackage)> = foreign_packages
+                        .iter()
+                        .map(|(alias, package)| (alias.as_str(), package))
+                        .collect();
+                    let identity = if position == 0 {
+                        format!("source/{package_name}")
+                    } else {
+                        format!("source/{package_name}/{position}")
+                    };
+                    if let Some((selection, model)) = source_model(
+                        objects,
+                        &declared_types,
+                        &foreign,
+                        identity,
+                        &mut model_meter,
+                        &mut errors,
+                    ) {
+                        selections.models.push(selection);
+                        model_selection_units.push(*declaring);
+                        models.push(model);
+                    }
+                }
+            }
+            if !errors.is_empty() {
+                return refuse(errors);
+            }
+        }
+        // The selected packages' dimensions, which a source dimension's
+        // terms may name.
+        let imported = units::Imported::new(
+            &selections
+                .models
+                .iter()
+                .filter_map(|selection| {
+                    let model = models.iter().find(|model| {
+                        model.alias == selection.alias
+                            && model.view.domain_package().model_selection.identity
+                                == selection.identity
+                    })?;
+                    Some((
+                        AdmittedModel::from_view(&model.view).with_alias(&selection.alias),
+                        selection.span,
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        );
+        let quantity_result = units::assemble(
+            &unit.dimensions,
+            &unit.units,
+            &imported,
+            &owner,
+            &units::SourceDocuments {
+                owners: &source_node_owners,
+                order: &source_order,
+            },
+            &package_name,
+            limits,
+        );
+        // Each `model` declaration's admitted domain package, and its
+        // object types by name.
+        let mut admitted = Vec::with_capacity(selections.models.len());
+        let mut object_types = Vec::new();
+        let mut model_composites = Vec::new();
+        let mut model_variant_types = Vec::new();
+        let mut model_scalars = Vec::new();
+        let mut model_records = ModelRecords::default();
+        let mut model_relationships = Vec::new();
+        let mut model_untyped_members = Vec::new();
+        let mut operations = OperationTable::default();
+        let mut object_spans = BTreeMap::new();
+        let mut operation_clauses = Vec::new();
+        let mut type_invariants = Vec::new();
+        // Each package identity's position in `model_spellings`, projected
+        // under the first alias that selects it; every unit's alias of the
+        // same identity names the same declarations (FR-480 "Selections and
+        // imports").
+        let mut model_spellings = ModelSpellings::new(source.clone());
+        let mut packages: BTreeMap<&str, usize> = BTreeMap::new();
+        // Each unit of the admitted graph by its node key, for the package
+        // units a selection spells.
+        let graph_unit_ids: BTreeMap<NodeKey, filament_exact::UnitId> = quantity_result
+            .as_ref()
+            .map(|quantities| {
+                quantities
+                    .graph
+                    .units()
+                    .map(|unit| (unit.key(), unit.id()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The units of the selected packages, which a bare unit name reaches
+        // only as `Alias::name`.
+        let package_unit_ids: Vec<filament_exact::UnitId> = imported
+            .units
+            .values()
+            .filter_map(|imported_unit| graph_unit_ids.get(&imported_unit.key).cloned())
+            .collect();
+        let model_units = quantity_result
+            .as_ref()
+            .ok()
+            .map(|quantities| super::check::declared_unit_ids(&quantities.graph, &package_unit_ids))
+            .unwrap_or_default();
+        for (selection, source_unit) in selections.models.iter().zip(&model_selection_units) {
+            let unit_source = sources.get(*source_unit).unwrap_or(&source);
+            let Some(model) = models.iter().find(|model| {
+                model.alias == selection.alias
+                    && model.view.domain_package().model_selection.identity == selection.identity
+            }) else {
+                model_spellings.bind_model(unit_source, &selection.alias, None);
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::UnadmittedModel {
+                        alias: selection.alias.clone(),
+                    },
+                    span: selection.span,
+                });
+                continue;
+            };
+            let mut declared = AdmittedModel::from_view(&model.view).with_alias(&selection.alias);
+            // Units scope a source model only when the package has several.
+            if super::source_model::is_source_alias(&selection.alias) && !source_owners.is_empty() {
+                declared = declared.declared_in(unit_source);
+            }
+            admitted.push(declared);
+            // Model declarations select package-owned records by identity.
+            // Several aliases may name that same package, but its type and
+            // population declarations contribute to the environment once,
+            // under its first alias; a further alias spells the same
+            // declarations.
+            if let Some(package) = packages.get(selection.identity.as_str()) {
+                model_spellings.bind_model(unit_source, &selection.alias, Some(*package));
+                continue;
+            }
+            let package =
+                model_spellings.add_package(model.view.domain_package().model_selection.clone());
+            packages.insert(&selection.identity, package);
+            model_spellings.bind_model(unit_source, &selection.alias, Some(package));
+            let prefix = format!("{}::", selection.alias);
+            model_spellings.set_units(
+                package,
+                imported
+                    .units
+                    .iter()
+                    .filter_map(|(name, imported_unit)| {
+                        let member = name.strip_prefix(&prefix)?;
+                        let id = graph_unit_ids.get(&imported_unit.key)?.clone();
+                        Some((member.to_owned(), id))
+                    })
+                    .collect(),
+            );
+            // A type of the package names a unit the compiling unit declares,
+            // or else a unit the package's own document declares
+            // (FR-505-AC-7, AC-9).
+            let package_units = match admitted.last() {
+                Some(admitted_model) => {
+                    super::check::package_unit_ids(&model_units, admitted_model)
+                }
+                None => model_units.clone(),
+            };
+            // The source model's members may name the other selected models'
+            // types; a domain package's own never do.
+            let foreign_models: Vec<&SelectedModel> =
+                if super::source_model::is_source_alias(&selection.alias) {
+                    unit_model_selections(
+                        &selections.models,
+                        domain_selections,
+                        &model_selection_units,
+                        &repeated_model_selection_units,
+                        *source_unit,
+                    )
+                    .into_iter()
+                    .filter_map(|other| {
+                        models.iter().find(|candidate| {
+                            candidate.alias == other.alias
+                                && candidate.view.domain_package().model_selection.identity
+                                    == other.identity
+                        })
+                    })
+                    .collect()
+                } else {
+                    Vec::new()
+                };
+            match model_object_types(
+                &selection.alias,
+                model,
+                selection.span,
+                &mut operations,
+                &package_units,
+                &foreign_models,
+            ) {
+                Ok(types) => {
+                    model_spellings.set_names(package, types.package_names(&selection.alias));
+                    for declaration in &types.objects {
+                        object_spans.insert(declaration.name().to_owned(), selection.span);
+                    }
+                    object_types.extend(types.objects);
+                    model_composites.extend(types.composites);
+                    model_variant_types.extend(types.variant_types);
+                    model_scalars.extend(types.scalars);
+                    model_records.extend(types.model_records);
+                    model_relationships.extend(types.relationships);
+                    model_untyped_members.extend(types.untyped_members);
+                    let handles = types.handles;
+                    match operation_clause_declarations(&selection.alias, model, &operations) {
+                        Ok(resolved) => operation_clauses.extend(resolved),
+                        Err(cause) => errors.push(AssemblyError {
+                            cause,
+                            span: selection.span,
+                        }),
+                    }
+                    match type_invariant_declarations(&selection.alias, model, &handles) {
+                        Ok(resolved) => type_invariants.extend(resolved),
+                        Err(cause) => errors.push(AssemblyError {
+                            cause,
+                            span: selection.span,
+                        }),
+                    }
+                }
+                Err(refused) => errors.extend(refused),
+            }
+        }
+        // A later unit that repeats a kept selection (same alias, same
+        // package) binds the alias in its own unit too.
+        for (kept, source_unit) in &repeated_model_selection_units {
+            let (Some(selection), Some(unit_source)) =
+                (selections.models.get(*kept), sources.get(*source_unit))
+            else {
+                continue;
+            };
+            let package = packages.get(selection.identity.as_str()).copied();
+            model_spellings.bind_model(unit_source, &selection.alias, package);
+        }
+        for (import, source_unit) in selections.imports.iter().zip(&import_selection_units) {
+            if let (Some(alias), Some(unit_source)) = (&import.alias, sources.get(*source_unit)) {
+                model_spellings.bind_other(unit_source, alias);
+            }
+        }
+
+        // Selection aliases are unique within a unit, and a `using` alias
+        // names one of its profile selections.
+        let mut aliases: BTreeMap<&str, Vec<(Span, Option<usize>)>> = BTreeMap::new();
+        for (alias, span, source_unit) in
+            selections
+                .profiles
+                .iter()
+                .map(|profile| (profile.alias.as_str(), profile.span, None))
+                .chain(
+                    selections
+                        .imports
+                        .iter()
+                        .zip(&import_selection_units)
+                        .filter_map(|(import, source_unit)| {
+                            Some((import.alias.as_deref()?, import.span, Some(*source_unit)))
+                        }),
+                )
+                .chain(selections.models.iter().zip(&model_selection_units).map(
+                    |(model, source_unit)| (model.alias.as_str(), model.span, Some(*source_unit)),
+                ))
+        {
+            aliases.entry(alias).or_default().push((span, source_unit));
+        }
+        for (alias, entries) in &aliases {
+            let model_aliases_only = entries.iter().all(|(_, source_unit)| source_unit.is_some());
+            let duplicate = if model_aliases_only {
+                let mut spans_by_unit = BTreeMap::<usize, Vec<Span>>::new();
+                for (span, source_unit) in entries {
+                    spans_by_unit
+                        .entry(source_unit.expect("model aliases have a source unit"))
+                        .or_default()
+                        .push(*span);
+                }
+                spans_by_unit
+                    .into_values()
+                    .find(|spans| spans.len() > 1)
+                    .map(|spans| (spans.clone(), spans[1]))
+            } else if entries.len() > 1 {
+                Some((
+                    entries.iter().map(|(span, _)| *span).collect(),
+                    entries[1].0,
+                ))
+            } else {
+                None
+            };
+            if let Some((spans, second)) = duplicate {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::DuplicateAlias {
+                        alias: (*alias).to_owned(),
+                        spans,
+                    },
+                    span: second,
+                });
+            }
+        }
+        let mut qualified = BTreeMap::new();
+        for (index, import) in selections.imports.iter().enumerate() {
+            let admitted = imports
+                .iter()
+                .find(|admitted| admitted.identity.as_str() == import.identity);
+            if let (Some(admitted), Some(alias)) = (admitted, &import.alias) {
+                qualified.insert(alias.clone(), admitted.clone());
+                if let Some(source) = import_selection_units
+                    .get(index)
+                    .and_then(|source_unit| sources.get(*source_unit))
+                {
+                    qualified.insert(
+                        super::check::source_import_key(source, alias),
+                        admitted.clone(),
+                    );
+                }
+            }
+            if admitted.is_none() {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::UnsuppliedImport {
+                        identity: import.identity.clone(),
+                    },
+                    span: import.span,
+                });
+            }
+        }
+        let predicates: BTreeSet<&str> = unit
+            .functions
+            .iter()
+            .filter(|function| function.kind() == fsl_forms::DeclarationKind::Predicate)
+            .map(|function| function.name.as_str())
+            .collect();
+        // FR-326: a `temporal` clause's `using` alias names one of the
+        // unit's profile selections, as a function's does. Which temporal
+        // profile the clause is checked under is the unit's, not the
+        // alias's (ADR-014 A-2), and `check::temporal_clause` decides it.
+        for clause in &unit.temporal_clauses {
+            let using = &clause.form.profile;
+            if !selections
+                .profiles
+                .iter()
+                .any(|profile| profile.alias == using.alias)
+            {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::UndeclaredAlias {
+                        alias: using.alias.clone(),
+                    },
+                    span: using.span,
+                });
+            }
+        }
+        // FR-172: a `hyper` clause's and a `relation`'s `using` alias names one
+        // of the unit's profile selections, as a `temporal` clause's does.
+        for clause in &unit.hyper_clauses {
+            let using = clause.profile();
+            if !selections
+                .profiles
+                .iter()
+                .any(|profile| profile.alias == using.alias)
+            {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::UndeclaredAlias {
+                        alias: using.alias.clone(),
+                    },
+                    span: using.span,
+                });
+            }
+        }
+        // FR-304: an `abstraction` declaration's `using` alias names one of
+        // the unit's profile selections.
+        for abstraction in &unit.abstractions {
+            if !selections
+                .profiles
+                .iter()
+                .any(|profile| profile.alias == abstraction.profile.alias)
+            {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::UndeclaredAlias {
+                        alias: abstraction.profile.alias.clone(),
+                    },
+                    span: abstraction.profile.span,
+                });
+            }
+        }
+        // FR-361: S3 refuses each model construct the unit writes unless its
+        // header selects the model profile.
+        errors.extend(model_gate::refusals(
+            &selections.profiles,
+            &model_gate::Declarations {
+                abstractions: &unit.abstractions,
+                guarantees: &unit.guarantees,
+                compositions: &unit.compositions,
+                functions: &unit.functions,
+                state_clauses: &unit.state_clauses,
+                operation_bodies: &unit.operation_bodies,
+            },
+        ));
+        let selects_model = model_gate::selects_model(&selections.profiles);
+        let mut function_selections = BTreeMap::new();
+        for (index, function) in unit.functions.iter().enumerate() {
+            if let Some(using) = function.using() {
+                // A duplicate alias is already refused above, so the first
+                // profile named `alias` is the only one that can be chosen
+                // when the unit assembles.
+                match selections
+                    .profiles
+                    .iter()
+                    .find(|profile| profile.alias == using.alias)
+                {
+                    Some(profile) => {
+                        function_selections.insert(index, profile.clone());
+                        // FR-110 "Layer selection".
+                        if let Some(layer) = HeaderLayer::from_identity(&profile.identity) {
+                            let selected_admission =
+                                LayerAdmission::new(layer, &predicates, selects_model);
+                            if selects_model && selected_admission.body_needs_model_family(function)
+                            {
+                                let model_admission = LayerAdmission::new(
+                                    HeaderLayer::ModelComplete,
+                                    &predicates,
+                                    selects_model,
+                                );
+                                errors.extend(
+                                    selected_admission
+                                        .function_with_body_admission(function, &model_admission),
+                                );
+                            } else {
+                                errors.extend(selected_admission.function(function));
+                            }
+                        }
+                    }
+                    None => errors.push(AssemblyError {
+                        cause: AssemblyCause::UndeclaredAlias {
+                            alias: using.alias.clone(),
+                        },
+                        span: using.span,
+                    }),
+                }
+            }
+        }
+
+        // A declared type is named by its declared name alone (its handle,
+        // its region, every reference to it), so a name binds one
+        // declaration: every declaration after the first is refused, in
+        // whichever order the declarations are written.
+        for (name, declared) in &unit.declared {
+            let candidates: Vec<Span> = declared.iter().map(|(_, span)| *span).collect();
+            for (_, span) in declared.iter().skip(1) {
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::AmbiguousTypeName {
+                        name: name.clone(),
+                        candidates: candidates.clone(),
+                        native: false,
+                    },
+                    span: *span,
+                });
+            }
+        }
+
+        // An enum names each case once.
+        for enumeration in &unit.enums {
+            let mut spans: BTreeMap<&str, Vec<Span>> = BTreeMap::new();
+            for member in &enumeration.members {
+                spans
+                    .entry(member.case.name.as_str())
+                    .or_default()
+                    .push(member.case.span);
+            }
+            for (case, spans) in spans {
+                if let [_, second, ..] = spans.as_slice() {
+                    errors.push(AssemblyError {
+                        cause: AssemblyCause::DuplicateEnumMember {
+                            enumeration: enumeration.name.name.clone(),
+                            case: case.to_owned(),
+                            spans: spans.clone(),
+                        },
+                        span: *second,
+                    });
+                }
+            }
+        }
+
+        // The unit's dimensions and units, admitted under its owner, and its
+        // dimension equivalences over them and those of its selected
+        // packages, in FR-091's phases: the base pairs before the first
+        // dimension turn, every other pair after the last.
+        let owners = quantity_owners;
+        let (quantities, equivalences) = match quantity_result {
+            Ok(quantities) => {
+                let equivalences = equivalence::assemble(
+                    &unit.equivalences,
+                    equivalence::SourceView::Admitted(&quantities),
+                    &admitted,
+                    equivalence::Ownership {
+                        owner: &owner,
+                        source_owners: &source_node_owners,
+                        units: &source_owners,
+                        spellings: &model_spellings,
+                        package_name: &package_name,
+                    },
+                    limits,
+                    equivalence::Phase::All,
+                )
+                .unwrap_or_else(|found| {
+                    errors.extend(found);
+                    Vec::new()
+                });
+                (Some(quantities), equivalences)
+            }
+            Err(refused) => {
+                let base = equivalence::assemble(
+                    &unit.equivalences,
+                    equivalence::SourceView::Provisional(&refused.provisional),
+                    &admitted,
+                    equivalence::Ownership {
+                        owner: &owner,
+                        source_owners: &source_node_owners,
+                        units: &source_owners,
+                        spellings: &model_spellings,
+                        package_name: &package_name,
+                    },
+                    limits,
+                    equivalence::Phase::Base,
+                )
+                .err()
+                .unwrap_or_default();
+                // A base-pair refusal comes before the first turn, so it
+                // stands in for the turns' topology defects.
+                let topology_only = refused.topology && !base.is_empty();
+                if !topology_only {
+                    errors.extend(refused.errors);
+                }
+                errors.extend(base);
+                (None, Vec::new())
+            }
+        };
+
+        let mut names = Names {
+            unit_table: std::cell::RefCell::new(
+                quantities
+                    .as_ref()
+                    .map(|assembled| {
+                        filament_semantic_value::quantity::UnitTable::declared(&assembled.graph)
+                    })
+                    .unwrap_or_default(),
+            ),
+            units: quantities
+                .as_ref()
+                .map(|assembled| {
+                    super::check::declared_unit_ids(&assembled.graph, &package_unit_ids)
+                })
+                .unwrap_or_default(),
+            ..Names::default()
+        };
+
+        // Every type form names declarations of the unit or admitted model
+        // object and record/event types.
+        for alias in &unit.aliases {
+            check_names(
+                &unit,
+                &names,
+                &model_spellings,
+                source_owners.get(&alias.name.name),
+                &qualified,
+                &alias.target,
+                &mut errors,
+            );
+        }
+        for composite in &unit.composites {
+            match &composite.members {
+                Members::Record(fields) => {
+                    for field in fields {
+                        check_names(
+                            &unit,
+                            &names,
+                            &model_spellings,
+                            source_owners.get(&composite.name.name),
+                            &qualified,
+                            &field.type_form,
+                            &mut errors,
+                        );
+                    }
+                }
+                Members::Tuple(elements) => {
+                    for element in elements {
+                        check_names(
+                            &unit,
+                            &names,
+                            &model_spellings,
+                            source_owners.get(&composite.name.name),
+                            &qualified,
+                            element,
+                            &mut errors,
+                        );
+                    }
+                }
+                Members::Union(members) => {
+                    for payload in members.iter().flat_map(|member| &member.payload) {
+                        check_names(
+                            &unit,
+                            &names,
+                            &model_spellings,
+                            source_owners.get(&composite.name.name),
+                            &qualified,
+                            payload,
+                            &mut errors,
+                        );
+                    }
+                }
+            }
+        }
+        for function in &unit.functions {
+            for form in signature_type_forms(function) {
+                check_names(
+                    &unit,
+                    &names,
+                    &model_spellings,
+                    source_owners.get(&function.name),
+                    &qualified,
+                    form,
+                    &mut errors,
+                );
+            }
+            for form in body_type_forms(function) {
+                check_names(
+                    &unit,
+                    &names,
+                    &model_spellings,
+                    source_owners.get(&function.name),
+                    &qualified,
+                    &form,
+                    &mut errors,
+                );
+            }
+        }
+        for body in &unit.operation_bodies {
+            for form in expression_type_forms([&body.body]) {
+                check_names(
+                    &unit,
+                    &names,
+                    &model_spellings,
+                    source_owners.get(&body.label.name),
+                    &qualified,
+                    &form,
+                    &mut errors,
+                );
+            }
+        }
+        for claim in &unit.state_graph_claims {
+            let operands = super::state_graph_claim::predicates(&claim.kind)
+                .into_iter()
+                .flat_map(|(_, predicate)| &predicate.operands)
+                .map(|operand| &operand.expression);
+            for form in expression_type_forms(operands) {
+                check_names(
+                    &unit,
+                    &names,
+                    &model_spellings,
+                    source_owners.get(&claim.name.name),
+                    &qualified,
+                    &form,
+                    &mut errors,
+                );
+            }
+        }
+        for clause in &unit.state_clauses {
+            for form in expression_type_forms([&clause.body]) {
+                check_names(
+                    &unit,
+                    &names,
+                    &model_spellings,
+                    source_owners.get(&clause.name.name),
+                    &qualified,
+                    &form,
+                    &mut errors,
+                );
+            }
+        }
+        if !errors.is_empty() {
+            return refuse(errors);
+        }
+
+        // Each declared record and tuple's handle, over the unit's owner.
+        // Each enum, admitted under the unit's owner: its declaration key
+        // and its members' keys are minted here (FB-13).
+        let mut enums = Vec::with_capacity(unit.enums.len());
+        for enumeration in &unit.enums {
+            let declaration_owner = source_owner_for(&enumeration.name.name);
+            match admit_enum(enumeration, &declaration_owner, &package_name, &owners) {
+                Ok(binding) => {
+                    names
+                        .types
+                        .entry(enumeration.name.name.clone())
+                        .or_default()
+                        .push(ValueType::Enum(binding.shape()));
+                    enums.push(binding);
+                }
+                Err(refusal) => errors.push(AssemblyError {
+                    cause: AssemblyCause::nominal(refusal),
+                    span: enumeration.name.span,
+                }),
+            }
+        }
+        let mut handles = Vec::with_capacity(unit.composites.len());
+        for composite in &unit.composites {
+            let declaration_owner = source_owner_for(&composite.name.name);
+            match declaration_owner
+                .node_owner(&package_name)
+                .declared_type_handle(&composite.name.name)
+            {
+                Ok(handle) => {
+                    names
+                        .types
+                        .entry(composite.name.name.clone())
+                        .or_default()
+                        .push(ValueType::Composite(handle.clone()));
+                    handles.push(handle);
+                }
+                Err(refusal) => errors.push(AssemblyError {
+                    cause: AssemblyCause::nominal(nominal_key_refusal(refusal)),
+                    span: composite.name.span,
+                }),
+            }
+        }
+        if !errors.is_empty() {
+            return refuse(errors);
+        }
+
+        // Aliases, each after every alias it names; a cycle is refused.
+        let edges: Vec<Vec<usize>> = unit
+            .aliases
+            .iter()
+            .map(|alias| named_aliases(&unit, &alias.target))
+            .collect();
+        let mut resolved: Vec<Option<ValueType>> = vec![None; unit.aliases.len()];
+        let mut failed = vec![false; unit.aliases.len()];
+        for component in strongly_connected(&edges) {
+            let cyclic = component.len() > 1
+                || component
+                    .first()
+                    .is_some_and(|member| edges[*member].contains(member));
+            if cyclic {
+                let members: BTreeSet<usize> = component.iter().copied().collect();
+                let mut cycle = Vec::new();
+                for &member in &component {
+                    failed[member] = true;
+                    for &target in &edges[member] {
+                        if members.contains(&target) {
+                            cycle.push((
+                                unit.aliases[member].name.name.clone(),
+                                unit.aliases[target].name.name.clone(),
+                            ));
+                        }
+                    }
+                }
+                cycle.sort();
+                cycle.dedup();
+                let first = component.iter().min().copied().unwrap_or_default();
+                errors.push(AssemblyError {
+                    cause: AssemblyCause::AliasCycle { edges: cycle },
+                    span: unit.aliases[first].name.span,
+                });
+                continue;
+            }
+            for member in component {
+                if edges[member].iter().any(|target| failed[*target]) {
+                    failed[member] = true;
+                    continue;
+                }
+                let alias = &unit.aliases[member];
+                let alias_names =
+                    names.in_unit(&model_spellings, source_owners.get(&alias.name.name));
+                match resolve_form(&alias_names, &alias.target) {
+                    Ok(value_type) => {
+                        names
+                            .types
+                            .entry(alias.name.name.clone())
+                            .or_default()
+                            .push(value_type.clone());
+                        resolved[member] = Some(value_type);
+                    }
+                    Err(error) => {
+                        failed[member] = true;
+                        errors.push(resolution_error(&unit, error));
+                    }
+                }
+            }
+        }
+        if !errors.is_empty() {
+            return refuse(errors);
+        }
+
+        // Records and tuples.
+        let mut declarations = Vec::with_capacity(unit.composites.len() + model_composites.len());
+        declarations.extend(model_composites);
+        let mut declared_type_spans: BTreeMap<String, Span> = unit
+            .enums
+            .iter()
+            .map(|enumeration| (enumeration.name.name.clone(), enumeration.name.span))
+            .collect();
+        // A dimension's and a unit's declaration occurrence is located at its
+        // name, under the namespace it is declared in (FR-094), so a record
+        // named like a unit does not share its position.
+        declared_type_spans.extend(unit.dimensions.iter().map(|dimension| {
+            (
+                super::lowering::quantity_origin(
+                    super::lowering::QuantityKind::Dimension,
+                    &dimension.name.name,
+                ),
+                dimension.name.span,
+            )
+        }));
+        declared_type_spans.extend(unit.units.iter().map(|declared| {
+            (
+                super::lowering::quantity_origin(
+                    super::lowering::QuantityKind::Unit,
+                    &declared.name.name,
+                ),
+                declared.name.span,
+            )
+        }));
+        // The `[N]` of each `bound` is located under its label (FR-380), the
+        // position its population node's `Type` occurrence resolves to.
+        declared_type_spans.extend(unit.population_bounds.iter().map(|bound| {
+            (
+                super::lowering::bound_origin(&bound.label.name),
+                bound.bracketed,
+            )
+        }));
+        // A selected model's alias is the declaration-site locus for model
+        // graph roots that have no value or function occurrence of their own.
+        // `Origin::TypeDeclaration` resolves this same span table, so such a
+        // generated occurrence remains source-located rather than becoming an
+        // `UnlocatedOccurrence` at emission.
+        declared_type_spans.extend(
+            selections
+                .models
+                .iter()
+                .map(|selection| (selection.alias.clone(), selection.span)),
+        );
+        for (composite, handle) in unit.composites.iter().zip(&handles) {
+            let names = names.in_unit(&model_spellings, source_owners.get(&composite.name.name));
+            let shape = match &composite.members {
+                Members::Record(fields) => {
+                    let mut declared = Vec::with_capacity(fields.len());
+                    for field in fields {
+                        match resolve_form(&names, &field.type_form) {
+                            Ok(value_type) => declared.push(FieldDeclaration::new(
+                                field.name.clone(),
+                                value_type,
+                                if field.optional {
+                                    Presence::Optional
+                                } else {
+                                    Presence::Required
+                                },
+                            )),
+                            Err(error) => errors.push(resolution_error(&unit, error)),
+                        }
+                    }
+                    CompositeShape::Record(declared)
+                }
+                Members::Tuple(elements) => {
+                    let mut declared = Vec::with_capacity(elements.len());
+                    for element in elements {
+                        match resolve_form(&names, element) {
+                            Ok(value_type) => declared.push(value_type),
+                            Err(error) => errors.push(resolution_error(&unit, error)),
+                        }
+                    }
+                    CompositeShape::Tuple(declared)
+                }
+                Members::Union(forms) => {
+                    let mut declared = Vec::with_capacity(forms.len());
+                    for form in forms {
+                        let mut payload = Vec::with_capacity(form.payload.len());
+                        for position in &form.payload {
+                            match resolve_form(&names, position) {
+                                Ok(value_type) => payload.push(value_type),
+                                Err(error) => errors.push(resolution_error(&unit, error)),
+                            }
+                        }
+                        match Identifier::new(form.name.name.clone()) {
+                            Ok(identifier) => {
+                                declared
+                                    .push(UnionMemberDeclaration::resolved(identifier, payload));
+                            }
+                            Err(_) => errors.push(AssemblyError {
+                                cause: AssemblyCause::handle(
+                                    NodeKeyRefusal::InvalidQualifiedNameSegment {
+                                        segment: form.name.name.clone(),
+                                    },
+                                ),
+                                span: form.name.span,
+                            }),
+                        }
+                    }
+                    CompositeShape::Union(declared)
+                }
+            };
+            declarations.push(CompositeDeclaration::new(
+                handle.clone(),
+                composite.name.name.clone(),
+                shape,
+            ));
+            declared_type_spans.insert(composite.name.name.clone(), composite.name.span);
+        }
+        // Each clock-reading declaration's name, which locates a refusal of
+        // the declaration as a whole (`timed_model::prepare`).
+        for declaration in &unit.clock_reading {
+            if let Some(spans) = declaration.function.spans() {
+                declared_type_spans.insert(
+                    super::timed_model::clock_reading_site(&declaration.function.name),
+                    spans.declaration,
+                );
+            }
+        }
+
+        // Each function's check-owned resolved signature.
+        let mut signatures: Vec<ResolvedSignature> = Vec::with_capacity(unit.functions.len());
+        for function in &unit.functions {
+            let names = names.in_unit(&model_spellings, source_owners.get(&function.name));
+            let mut parameters = Vec::with_capacity(function.parameters.len());
+            for (name, form) in &function.parameters {
+                match resolve_form(&names, form) {
+                    Ok(value_type) => parameters.push((name.clone(), value_type)),
+                    Err(error) => errors.push(resolution_error(&unit, error)),
+                }
+            }
+            match resolve_form(&names, &function.result) {
+                Ok(result) => signatures.push((parameters, result)),
+                Err(error) => errors.push(resolution_error(&unit, error)),
+            }
+            // A type form inside the body or measure is resolved here too,
+            // so its errors are assembler errors like a signature's; check
+            // resolves it again against the package scope.
+            for form in body_type_forms(function) {
+                if let Err(error) = resolve_form(&names, &form) {
+                    errors.push(resolution_error(&unit, error));
+                }
+            }
+        }
+        if !errors.is_empty() {
+            return refuse(errors);
+        }
+        // A refused object type is located at its `model` declaration.
+        let mut type_spans = object_spans;
+        type_spans.extend(declared_type_spans.clone());
+        let AdmittedTypes { types, pending } = admit_types(
+            declarations,
+            &object_types,
+            &type_spans,
+            limits.environment,
+            cancel,
+        )?;
+        // SR-770 FND-006: both resolved before either refuses, so a unit
+        // with a bad state clause and a bad attempt reports both in one
+        // refusal (clause errors first, then attempt errors).
+        let resolve = Resolve {
+            source: &source,
+            source_owners: &source_owners,
+            profiles: &selections.profiles,
+            spellings: &model_spellings,
+            types: &types,
+            operations: &operations,
+            selected: &models,
+        };
+        // FR-380: a bound applies to the whole package, so every model holds
+        // its bounds before any clause resolves the population it ranges
+        // over.
+        let (admitted, bound_errors) = match population_bounds(
+            &unit.population_bounds,
+            &resolve,
+            &unit.state_clauses,
+            &unit.functions,
+        ) {
+            Ok(bounds) => (apply_population_bounds(admitted, bounds), Vec::new()),
+            Err(errors) => (admitted, errors),
+        };
+        // FR-105 "Outputs": a `pre` or `post` clause's qualified operation
+        // reference, `M::T::op`, from the start of the context to the end of
+        // the operation name, by the clause's index.
+        let operation_references: Vec<(usize, Span)> = unit
+            .state_clauses
+            .iter()
+            .enumerate()
+            .filter_map(|(index, form)| {
+                let operation = form.operation.as_ref()?;
+                Some((
+                    index,
+                    Span {
+                        start: form.context.span.start,
+                        end: operation.span.end,
+                    },
+                ))
+            })
+            .collect();
+        let state_clauses = state_clauses(
+            unit.state_clauses,
+            &resolve,
+            &admitted,
+            &predicates,
+            &execution_points,
+        );
+        let state_graph_claims =
+            state_graph_claims(unit.state_graph_claims, &resolve, &admitted, &predicates);
+        let operation_bodies = operation_bodies(unit.operation_bodies, &resolve, &predicates);
+        let protocol_attempts = protocol_attempts(
+            &unit.protocols,
+            &source_owners,
+            &model_spellings,
+            &types,
+            &operations,
+            &admitted,
+        );
+        let terminals = terminal_declarations(unit.terminals, &resolve, &admitted);
+        let refinements = refinement_declarations(unit.refinements, &resolve);
+        let (
+            state_clauses,
+            state_graph_claims,
+            protocol_attempts,
+            operation_bodies,
+            terminals,
+            refinements,
+        ) = match (
+            state_clauses,
+            state_graph_claims,
+            protocol_attempts,
+            operation_bodies,
+            terminals,
+            refinements,
+        ) {
+            (Ok(clauses), Ok(claims), Ok(attempts), Ok(bodies), Ok(terminals), Ok(refinements))
+                if bound_errors.is_empty() =>
+            {
+                (clauses, claims, attempts, bodies, terminals, refinements)
+            }
+            (clauses, claims, attempts, bodies, terminals, refinements) => {
+                let mut errors = bound_errors;
+                for refusal in [
+                    clauses.err(),
+                    claims.err(),
+                    attempts.err(),
+                    bodies.err(),
+                    terminals.err(),
+                    refinements.err(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    errors.extend(refusal.errors);
+                }
+                return refuse(errors);
+            }
+        };
+        let hybrids = hybrid_declarations(unit.hybrids, &resolve)?;
+        let (hybrid_claims, ordinary_clauses) = hybrid_claims(
+            std::mem::take(&mut unit.temporal_clauses),
+            &hybrids,
+            &resolve,
+        )?;
+        unit.temporal_clauses = ordinary_clauses;
+        // FR-103, FR-302: the view of each selected model, with `has_body`
+        // set from the bodies that resolved into it. A model no body names
+        // keeps the view intake admitted, whose `has_body` is false
+        // throughout, moved rather than cloned or re-indexed. This is the one
+        // place the flag is held; `AdmittedModel` records keep the intake
+        // value and no reader takes the flag from them. Dispatch linking
+        // reads a called operation's family from these views.
+        let mut selected_views = BTreeMap::new();
+        for model in &models {
+            if !selections
+                .models
+                .iter()
+                .any(|selection| selection.alias == model.alias)
+            {
+                continue;
+            }
+            let bodies: BTreeSet<DeclarationKey> = operation_bodies
+                .iter()
+                .filter(|body| body.model == model.alias)
+                .map(|body| body.key.clone())
+                .collect();
+            let view = if bodies.is_empty() {
+                model.view.clone()
+            } else {
+                model.view.clone().with_operation_bodies(&bodies)
+            };
+            selected_views.insert(model.alias.clone(), view);
+        }
+
+        let mut package = PackageDeclarations::new(source, package_name, limits.identity);
+        package.decimal_literal_limits = limits.decimal_literal;
+        package.sources = sources;
+        package.source_owners = source_owners;
+        package.execution_point_keys = execution_points.keys().cloned().collect();
+        let mut type_units = types.units().clone();
+        type_units.append(names.unit_table.into_inner());
+        package.types = types.with_units(type_units);
+        package.operations = operations;
+        package.operation_clauses = operation_clauses;
+        package.type_invariants = type_invariants;
+        package.models = admitted;
+        package.model_spellings = model_spellings;
+        package.model_inputs = Some((models, model_meter));
+        package.selected_exact_identity_rows = (exact_declarations, exact_fields);
+        package.selected_tuple_declaration_rows = tuple_declarations;
+        package.pending_types = pending.map(super::check::StagedTypes);
+        package.aliases = unit
+            .aliases
+            .iter()
+            .zip(resolved)
+            .filter_map(|(alias, value_type)| Some((alias.name.name.clone(), value_type?)))
+            // A model scalar or alias is named by its resolved type; no
+            // additional declaration identity is minted here.
+            .chain(model_scalars)
+            .collect();
+        package.alias_names = selections
+            .profiles
+            .iter()
+            .map(|profile| (profile.alias.clone(), AliasKind::Profile))
+            .chain(
+                selections
+                    .models
+                    .iter()
+                    .map(|model| (model.alias.clone(), AliasKind::Model)),
+            )
+            .collect();
+        package.native_names = unit
+            .dimensions
+            .iter()
+            .map(|dimension| dimension.name.name.clone())
+            .chain(unit.units.iter().map(|quantity| quantity.name.name.clone()))
+            .collect();
+        for (index, signature) in signatures.into_iter().enumerate() {
+            package.resolved_signatures.insert(index, signature);
+        }
+        package.enums = enums;
+        model_variant_types.sort_by_key(VariantTypeDeclaration::key);
+        package.variant_types = model_variant_types;
+        if let Some(quantities) = quantities {
+            package.units = quantities.graph;
+            package.nominal_spans = quantities.spans;
+        }
+        for (index, equivalence) in equivalences.iter().enumerate() {
+            package
+                .nominal_spans
+                .insert(equivalence.key.clone(), equivalence.span);
+            if let Ok(source) = RawSourceRef::new(
+                equivalence.owner.authority().to_owned(),
+                equivalence.owner.identity().to_owned(),
+            ) {
+                package
+                    .source_owners
+                    .insert(super::lowering::equivalence_origin(index), source);
+            }
+        }
+        package.dimension_equivalences = equivalences;
+        package.functions = unit.functions;
+        package.function_sources = package
+            .functions
+            .iter()
+            .map(|function| {
+                package
+                    .source_owners
+                    .get(&function.name)
+                    .cloned()
+                    .unwrap_or_else(|| package.source.clone())
+            })
+            .collect();
+        package.function_selections = function_selections;
+        declared_type_spans.extend(state_clauses.iter().enumerate().map(|(index, clause)| {
+            (
+                super::lowering::state_clause_name_site(index),
+                clause.name_span,
+            )
+        }));
+        package.state_clauses = state_clauses;
+        package.state_graph_claims = state_graph_claims;
+        package.terminals = terminals;
+        package.refinements = refinements;
+        package.hybrids = hybrids;
+        package.hybrid_claims = hybrid_claims;
+        package.operation_bodies = operation_bodies;
+        package.selected_views = selected_views;
+        // FR-092: a protocol's node is declared at the protocol's name.
+        declared_type_spans.extend(unit.protocols.iter().map(|protocol| {
+            (
+                super::lowering::declaration_origin(&protocol.name.name),
+                protocol.name.span,
+            )
+        }));
+        // FR-105-AC-11: a frame's generated occurrence uses the qualified
+        // operation reference in a protocol attempt, while the attempt's
+        // other occurrences remain rooted at its declared name.
+        for (protocol_index, protocol) in unit.protocols.iter().enumerate() {
+            for (attempt_index, attempt) in protocol.attempts.iter().enumerate() {
+                declared_type_spans.insert(
+                    super::lowering::protocol_attempt_operation_site(protocol_index, attempt_index),
+                    Span {
+                        start: attempt.context.span.start,
+                        end: attempt.operation.span.end,
+                    },
+                );
+            }
+        }
+        // FR-105: a clause's frame `generated` occurrence is located at the
+        // clause's operation reference.
+        declared_type_spans.extend(
+            operation_references
+                .into_iter()
+                .map(|(index, span)| (super::lowering::state_operation_site(index), span)),
+        );
+        // FR-337: a temporal clause's nodes are located at its own sites:
+        // its name, its `over` parameter's name, each formula node's span,
+        // each written fairness constraint's span, and each `holds`
+        // condition's expression tree.
+        let mut declared_site_spans = BTreeMap::new();
+        for (index, clause) in unit.temporal_clauses.iter().enumerate() {
+            use super::lowering::{temporal_site, TemporalSite};
+            let form = &clause.form;
+            let temporal_owner = package.source_owners.get(&form.name.name).cloned();
+            let mut temporal_sites = vec![TemporalSite::Claim, TemporalSite::Over];
+            if let fsl_forms::ActivationForm::Each { when, .. } = &form.activation {
+                temporal_sites.push(TemporalSite::Trigger);
+                if when.is_some() {
+                    temporal_sites.push(TemporalSite::Guard);
+                }
+            }
+            for (capture, _) in form.captures.iter().enumerate() {
+                temporal_sites.push(TemporalSite::Capture(capture));
+                temporal_sites.push(TemporalSite::CaptureValue(capture));
+            }
+            for (id, node) in form.formula.iter() {
+                temporal_sites.push(TemporalSite::Node(id.index()));
+                match node {
+                    fsl_forms::TemporalNodeForm::Holds { .. } => {
+                        temporal_sites.push(TemporalSite::Condition(id.index()));
+                    }
+                    fsl_forms::TemporalNodeForm::AggregateAtom(atom) => {
+                        temporal_sites.extend(
+                            aggregate_parts(atom)
+                                .map(|(part, _)| TemporalSite::Aggregate(id.index(), part)),
+                        );
+                    }
+                    fsl_forms::TemporalNodeForm::Constant { .. }
+                    | fsl_forms::TemporalNodeForm::Operator(_) => {}
+                }
+            }
+            temporal_sites.extend((0..form.fairness.len()).map(TemporalSite::Fairness));
+            if let Some(owner) = temporal_owner {
+                for site in temporal_sites {
+                    package
+                        .source_owners
+                        .insert(temporal_site(index, site), owner.clone());
+                }
+            }
+            declared_type_spans.insert(temporal_site(index, TemporalSite::Claim), form.name.span);
+            declared_type_spans.insert(
+                temporal_site(index, TemporalSite::Over),
+                form.over.name.span,
+            );
+            if let fsl_forms::ActivationForm::Each { parameter, when } = &form.activation {
+                declared_type_spans.insert(
+                    temporal_site(index, TemporalSite::Trigger),
+                    parameter.name.span,
+                );
+                if let Some(when) = when {
+                    declared_site_spans.insert(
+                        temporal_site(index, TemporalSite::Guard),
+                        when.spans.clone(),
+                    );
+                }
+            }
+            for (capture, written) in form.captures.iter().enumerate() {
+                declared_type_spans.insert(
+                    temporal_site(index, TemporalSite::Capture(capture)),
+                    written.parameter.name.span,
+                );
+                declared_site_spans.insert(
+                    temporal_site(index, TemporalSite::CaptureValue(capture)),
+                    written.value.spans.clone(),
+                );
+            }
+            for (id, node) in form.formula.iter() {
+                let span = match node {
+                    fsl_forms::TemporalNodeForm::Constant { span, .. } => *span,
+                    fsl_forms::TemporalNodeForm::Holds { condition, span } => {
+                        declared_site_spans.insert(
+                            temporal_site(index, TemporalSite::Condition(id.index())),
+                            condition.spans.clone(),
+                        );
+                        *span
+                    }
+                    fsl_forms::TemporalNodeForm::Operator(operator) => operator.span,
+                    fsl_forms::TemporalNodeForm::AggregateAtom(atom) => {
+                        for (part, expression) in aggregate_parts(atom) {
+                            declared_site_spans.insert(
+                                temporal_site(index, TemporalSite::Aggregate(id.index(), part)),
+                                expression.spans.clone(),
+                            );
+                        }
+                        atom.span
+                    }
+                };
+                declared_type_spans
+                    .insert(temporal_site(index, TemporalSite::Node(id.index())), span);
+            }
+            for (constraint, written) in form.fairness.iter().enumerate() {
+                declared_type_spans.insert(
+                    temporal_site(index, TemporalSite::Fairness(constraint)),
+                    written.span,
+                );
+            }
+        }
+        // FR-487: a `hyper` clause over `behaviours` locates each `holds`
+        // atom at its condition's expression tree and each `match` conjunct
+        // (a conjunct refuses at its own span), indexed as the family checks them.
+        let mut behaviours = 0;
+        for declaration in &unit.hyper_clauses {
+            let super::hyper_clause::HyperDeclaration::Behaviours(form) = declaration else {
+                continue;
+            };
+            use super::hyper_clause::lowering::{hyper_site, Site};
+            declared_type_spans.insert(hyper_site(behaviours, Site::Claim), form.name.span);
+            declared_type_spans.insert(hyper_site(behaviours, Site::Body), form.span);
+            for (id, node) in form.body.iter() {
+                let span = match node {
+                    fsl_forms::TemporalNodeForm::Constant { span, .. } => *span,
+                    fsl_forms::TemporalNodeForm::Holds { condition, span } => {
+                        declared_site_spans.insert(
+                            hyper_site(behaviours, Site::Atom(id.index())),
+                            condition.spans.clone(),
+                        );
+                        *span
+                    }
+                    fsl_forms::TemporalNodeForm::Operator(operator) => operator.span,
+                    fsl_forms::TemporalNodeForm::AggregateAtom(atom) => atom.span,
+                };
+                declared_type_spans.insert(hyper_site(behaviours, Site::Node(id.index())), span);
+            }
+            let (universal_trees, existential_trees) = super::hyper_clause::conjunct_trees(form);
+            for (k, tree) in universal_trees.into_iter().enumerate() {
+                declared_site_spans.insert(hyper_site(behaviours, Site::Universal(k)), tree);
+            }
+            for (k, tree) in existential_trees.into_iter().enumerate() {
+                declared_site_spans.insert(hyper_site(behaviours, Site::Existential(k)), tree);
+            }
+            let (universal, existential) = super::hyper_clause::conjunct_spans(form);
+            for (k, span) in universal.into_iter().enumerate() {
+                declared_type_spans.insert(hyper_site(behaviours, Site::Universal(k)), span);
+            }
+            for (k, span) in existential.into_iter().enumerate() {
+                declared_type_spans.insert(hyper_site(behaviours, Site::Existential(k)), span);
+            }
+            behaviours += 1;
+        }
+        // FR-447: a hybrid model's nodes are located at its declared name,
+        // each mode's clause and each transition's clause; a hybrid claim's
+        // nodes at its declared name and its `over` parameter's name.
+        for (model, declaration) in package.hybrids.iter().enumerate() {
+            use super::lowering::{hybrid_site, HybridSite};
+            let form = &declaration.form;
+            declared_type_spans.insert(hybrid_site(HybridSite::Model(model)), form.name.span);
+            for (mode, written) in form.modes.iter().enumerate() {
+                declared_type_spans
+                    .insert(hybrid_site(HybridSite::Mode(model, mode)), written.span);
+                for (transition, clause) in written.transitions.iter().enumerate() {
+                    declared_type_spans.insert(
+                        hybrid_site(HybridSite::Transition(model, mode, transition)),
+                        clause.span,
+                    );
+                }
+            }
+        }
+        for (claim, declaration) in package.hybrid_claims.iter().enumerate() {
+            use super::lowering::{hybrid_site, HybridSite};
+            let form = &declaration.form;
+            declared_type_spans.insert(hybrid_site(HybridSite::Claim(claim)), form.name.span);
+            declared_type_spans.insert(hybrid_site(HybridSite::Over(claim)), form.over.name.span);
+        }
+        // FR-410: a state-graph claim's nodes are located at its declared
+        // name, its `over` parameter's name and each predicate's expression
+        // tree; the constant `true` an omitted `from` stands for is located
+        // at the claim.
+        for (index, declaration) in package.state_graph_claims.iter().enumerate() {
+            use super::state_graph_claim::{state_graph_site, Site};
+            let form = &declaration.form;
+            declared_type_spans.insert(state_graph_site(index, Site::Claim), form.name.span);
+            if let Some(over) = &form.over {
+                declared_type_spans.insert(state_graph_site(index, Site::Over), over.name.span);
+            }
+            declared_type_spans.insert(state_graph_site(index, Site::From), form.span);
+            for (role, predicate) in super::state_graph_claim::predicates(&form.kind) {
+                if let Some(operand) = predicate.operands.first() {
+                    declared_site_spans
+                        .insert(state_graph_site(index, role.site()), operand.spans.clone());
+                }
+            }
+        }
+        // FR-185: each random parameter's support values and each reward's
+        // expression are located at their own sites.
+        declared_site_spans.extend(super::probabilistic::site_spans(&unit.probabilistic));
+        // FR-354: each clause value of an extension form is located at its
+        // own site.
+        for (index, form) in unit.extensions.iter().enumerate() {
+            for (clause, written) in form.clauses.iter().enumerate() {
+                declared_site_spans.insert(
+                    super::extension::extension_clause_site(index, clause),
+                    written.value.spans.clone(),
+                );
+            }
+        }
+        package.declared_site_spans = declared_site_spans;
+        // FR-381: a template's operation anchor occurrence is recorded at
+        // the template's name.
+        declared_type_spans.extend(unit.protocols.iter().flat_map(|protocol| {
+            protocol.compensations.iter().map(|template| {
+                (
+                    super::lowering::compensation_origin(&protocol.name.name, &template.name.name),
+                    template.name.span,
+                )
+            })
+        }));
+        // FR-110: the header profile that selects the protocol clause family's
+        // profile is the package's `protocol_profile` (ADR-011 §2.4).
+        if let Some(definition) = selections
+            .profiles
+            .iter()
+            .find_map(|profile| super::profile::protocol_profile(&profile.identity))
+        {
+            package.protocol_profile = Some(definition);
+        }
+        package.header_layers = selections
+            .profiles
+            .iter()
+            .filter_map(|profile| HeaderLayer::from_identity(&profile.identity))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        package.first_source_object = unit.objects.first().map(|object| {
+            let declaring = package
+                .source_owners
+                .get(&object.name.name)
+                .unwrap_or(&package.source);
+            (declaring.clone(), object.span)
+        });
+        package.protocols = unit.protocols;
+        package.temporal_clauses = unit.temporal_clauses;
+        package.timed_forms = unit.timed;
+        package.clock_reading = unit.clock_reading;
+        package.task_set_forms = unit.task_sets;
+        // FR-451: a declaration is located under its own spaced name.
+        declared_type_spans.extend(unit.abstractions.iter().map(|abstraction| {
+            (
+                super::abstraction::declaration_origin(&abstraction.name.name),
+                abstraction.name.span,
+            )
+        }));
+        package.abstractions = unit.abstractions;
+        declared_type_spans.extend(unit.guarantees.iter().map(|guarantee| {
+            (
+                super::guarantee::declaration_origin(&guarantee.name.name),
+                guarantee.name.span,
+            )
+        }));
+        package.guarantees = unit.guarantees;
+        declared_type_spans.extend(unit.compositions.iter().map(|composition| {
+            (
+                super::composition::declaration_origin(&composition.name.name),
+                composition.name.span,
+            )
+        }));
+        package.compositions = unit.compositions;
+        // FR-354: a form is located under its own spaced name.
+        declared_type_spans.extend(
+            unit.extensions
+                .iter()
+                .enumerate()
+                .map(|(index, form)| (super::extension::extension_site(index), form.span)),
+        );
+        package.extension_forms = unit.extensions;
+        package.hyper_clauses = unit.hyper_clauses;
+        package.probabilistic = unit.probabilistic;
+        package.profile_selections = selections.profiles.clone();
+        package.temporal_selections = selections
+            .profiles
+            .iter()
+            .filter_map(|profile| {
+                Some(super::temporal_clause::TemporalSelection {
+                    profile: super::profile::TemporalProfile::from_identity(&profile.identity)?,
+                    span: profile.span,
+                })
+            })
+            .collect();
+        package.protocol_attempts = protocol_attempts;
+        package.declared_type_spans = declared_type_spans;
+        package.model_records = model_records;
+        package.relationships = Relationships::new(model_relationships);
+        package.untyped_members = model_untyped_members;
+        package.imports = qualified;
+        Ok(package)
+    }
+}
+
+/// What the assembler resolves a unit's state clauses and operation bodies
+/// against: its profile selections, the object types and variant types the
+/// admitted models declare, the type environment and operation table built
+/// over them, and the selected models.
+#[derive(Clone, Copy)]
+struct Resolve<'a> {
+    source: &'a RawSourceRef,
+    source_owners: &'a BTreeMap<String, RawSourceRef>,
+    profiles: &'a [fsl_foundation::selection::ProfileSelection],
+    /// The package-owned type names each unit's model aliases spell.
+    spellings: &'a ModelSpellings,
+    types: &'a TypeEnvironment,
+    operations: &'a OperationTable,
+    selected: &'a [SelectedModel],
+}
+
+/// FR-104 "Resolution": each state clause's `using` alias resolved to one
+/// of the unit's profile selections, as a function's is (FR-091); its
+/// context `M::T` to an object type of an admitted domain package; a `pre`
+/// or `post` clause's operation to one of `M::T`'s effective view (FR-103);
+/// and the population its extent names, which must be exactly one for its
+/// context type and for the type declaring its operation. Each unresolved
+/// name refuses at its span, the ambiguous population at the clause's
+/// context.
+fn state_clauses(
+    forms: Vec<StateClauseForm>,
+    resolve: &Resolve<'_>,
+    models: &[AdmittedModel],
+    predicates: &BTreeSet<&str>,
+    execution_points: &BTreeMap<String, filament_contract_model::ExecutionPoint>,
+) -> Result<Vec<StateClauseDeclaration>, AssemblyRefusal> {
+    let Resolve {
+        source,
+        source_owners,
+        profiles,
+        spellings,
+        types,
+        operations,
+        selected,
+    } = *resolve;
+    let selects_model = model_gate::selects_model(profiles);
+    let mut errors = Vec::new();
+    let mut clauses = Vec::with_capacity(forms.len());
+    for (index, form) in forms.into_iter().enumerate() {
+        let error = |cause, span| AssemblyError { cause, span };
+        let selection = profiles
+            .iter()
+            .find(|profile| profile.alias == form.profile.alias)
+            .cloned();
+        match &selection {
+            None => errors.push(error(
+                AssemblyCause::UndeclaredAlias {
+                    alias: form.profile.alias.clone(),
+                },
+                form.profile.span,
+            )),
+            // FR-110 "Layer selection".
+            Some(selection) => {
+                if let Some(layer) = HeaderLayer::from_identity(&selection.identity) {
+                    errors.extend(
+                        LayerAdmission::new(layer, predicates, selects_model).state_clause(&form),
+                    );
+                }
+            }
+        }
+        let context = spellings.object_type(source_owners.get(&form.name.name), &form.context.name);
+        let Some(context) = context else {
+            let cause = if spellings.is_model_alias(&form.context.name) {
+                AssemblyCause::SourceObject(SourceObjectFault::ModelAliasAsType {
+                    alias: form.context.name.clone(),
+                })
+            } else {
+                AssemblyCause::UnresolvedTypeName {
+                    name: form.context.name.clone(),
+                }
+            };
+            errors.push(error(cause, form.context.span));
+            continue;
+        };
+        let mut operation_key = None;
+        let operation = match &form.operation {
+            None => None,
+            Some(operation) => match operations.resolve(types, context.clone(), &operation.name) {
+                OperationLookup::Declared {
+                    declaring,
+                    operation: declaration,
+                } => {
+                    // FR-302: the key of the declaring operation joins the
+                    // clause to the body and the model record.
+                    let alias = super::source_model::alias_of(&form.context.name);
+                    operation_key =
+                        operation_key_of(selected, alias, declaring.clone(), declaration.name());
+                    if operation_key.is_none() {
+                        errors.push(error(
+                            AssemblyCause::ModelType {
+                                alias: alias.to_owned(),
+                                node: operation.name.clone(),
+                            },
+                            operation.span,
+                        ));
+                        continue;
+                    }
+                    Some(ClauseOperation {
+                        declaring,
+                        declaration: declaration.clone(),
+                    })
+                }
+                OperationLookup::Missing => {
+                    errors.push(error(
+                        AssemblyCause::UnresolvedOperation {
+                            context: form.context.name.clone(),
+                            operation: operation.name.clone(),
+                        },
+                        operation.span,
+                    ));
+                    continue;
+                }
+                OperationLookup::Ambiguous(_) => {
+                    errors.push(error(
+                        AssemblyCause::AmbiguousOperation {
+                            context: form.context.name.clone(),
+                            operation: operation.name.clone(),
+                        },
+                        operation.span,
+                    ));
+                    continue;
+                }
+            },
+        };
+        let ambiguous = |populations| {
+            error(
+                AssemblyCause::AmbiguousPopulation {
+                    context: form.context.name.clone(),
+                    populations,
+                },
+                form.context.span,
+            )
+        };
+        let context_population = match population_of(models, context.clone(), types) {
+            Ok(domain) => domain,
+            Err(populations) => {
+                errors.push(ambiguous(populations));
+                continue;
+            }
+        };
+        // The type declaring the operation shares the context's population
+        // when it is the context type itself; only a distinct declaring
+        // type (an inherited operation) needs its own resolution.
+        let frame_population = match &operation {
+            None => None,
+            Some(operation) if operation.declaring == context => context_population.clone(),
+            Some(operation) => match population_of(models, operation.declaring.clone(), types) {
+                Ok(domain) => domain,
+                Err(populations) => {
+                    errors.push(ambiguous(populations));
+                    continue;
+                }
+            },
+        };
+        let Some(selection) = selection else {
+            continue;
+        };
+        let source_owner = source_owners
+            .get(&format!("state_clause:{index}"))
+            .cloned()
+            .unwrap_or_else(|| source.clone());
+        let name = form.name.name;
+        let execution_point = execution_points
+            .get(&name)
+            .cloned()
+            .map(crate::value::member::AcceptedPoint::new);
+        clauses.push(StateClauseDeclaration {
+            kind: form.kind,
+            authored_operation: form
+                .operation
+                .as_ref()
+                .map(|operation| operation.name.clone()),
+            name,
+            source_owner: Some(source_owner),
+            name_span: form.name.span,
+            selection,
+            context,
+            operation,
+            operation_key,
+            execution_point,
+            context_population,
+            frame_population,
+            body: form.body,
+            spans: form.spans,
+            presence_places: Vec::new(),
+        });
+    }
+    if errors.is_empty() {
+        Ok(clauses)
+    } else {
+        refuse(errors)
+    }
+}
+
+/// FR-135: each `refinement` declaration's `using` alias resolved to one of
+/// the unit's profile selections. The model aliases and every row resolve at
+/// S3, where the models' declarations are checked.
+fn refinement_declarations(
+    forms: Vec<fsl_forms::RefinementForm>,
+    resolve: &Resolve<'_>,
+) -> Result<Vec<super::RefinementDeclaration>, AssemblyRefusal> {
+    let mut errors = Vec::new();
+    let mut declarations = Vec::with_capacity(forms.len());
+    for form in forms {
+        let selection = resolve
+            .profiles
+            .iter()
+            .find(|profile| profile.alias == form.profile.alias)
+            .cloned();
+        match selection {
+            Some(selection) => declarations.push(super::RefinementDeclaration { form, selection }),
+            None => errors.push(AssemblyError {
+                cause: AssemblyCause::UndeclaredAlias {
+                    alias: form.profile.alias.clone(),
+                },
+                span: form.profile.span,
+            }),
+        }
+    }
+    if errors.is_empty() {
+        Ok(declarations)
+    } else {
+        refuse(errors)
+    }
+}
+
+/// FR-447: each `hybrid` declaration's `using` alias resolved to one of the
+/// unit's profile selections, as every native declaration's is.
+fn hybrid_declarations(
+    forms: Vec<fsl_forms::HybridForm>,
+    resolve: &Resolve<'_>,
+) -> Result<Vec<super::HybridDeclaration>, AssemblyRefusal> {
+    let mut errors = Vec::new();
+    let mut declarations = Vec::with_capacity(forms.len());
+    for form in forms {
+        let selection = resolve
+            .profiles
+            .iter()
+            .find(|profile| profile.alias == form.profile.alias)
+            .cloned();
+        match selection {
+            Some(selection) => declarations.push(super::HybridDeclaration { form, selection }),
+            None => errors.push(AssemblyError {
+                cause: AssemblyCause::UndeclaredAlias {
+                    alias: form.profile.alias.clone(),
+                },
+                span: form.profile.span,
+            }),
+        }
+    }
+    if errors.is_empty() {
+        Ok(declarations)
+    } else {
+        refuse(errors)
+    }
+}
+
+/// FR-447: the `temporal` clauses whose `over` parameter is typed by one of
+/// the unit's hybrid declarations are hybrid claims, checked in place of the
+/// model-subject rules; each has its `using` alias resolved to one of the
+/// unit's profile selections. Every other clause is returned unchanged.
+fn hybrid_claims(
+    clauses: Vec<super::temporal_clause::TemporalDeclaration>,
+    hybrids: &[super::HybridDeclaration],
+    resolve: &Resolve<'_>,
+) -> Result<
+    (
+        Vec<super::HybridClaimDeclaration>,
+        Vec<super::temporal_clause::TemporalDeclaration>,
+    ),
+    AssemblyRefusal,
+> {
+    let mut errors = Vec::new();
+    let mut claims = Vec::new();
+    let mut ordinary = Vec::new();
+    for clause in clauses {
+        let over_hybrid = matches!(
+            &clause.form.over.value_type.head,
+            TypeFormHead::Name(name)
+                if hybrids.iter().any(|hybrid| hybrid.form.name.name == name.name)
+        );
+        if !over_hybrid {
+            ordinary.push(clause);
+            continue;
+        }
+        let selection = resolve
+            .profiles
+            .iter()
+            .find(|profile| profile.alias == clause.form.profile.alias)
+            .cloned();
+        match selection {
+            Some(selection) => claims.push(super::HybridClaimDeclaration {
+                form: clause.form,
+                span: clause.span,
+                selection,
+            }),
+            None => errors.push(AssemblyError {
+                cause: AssemblyCause::UndeclaredAlias {
+                    alias: clause.form.profile.alias.clone(),
+                },
+                span: clause.form.profile.span,
+            }),
+        }
+    }
+    if errors.is_empty() {
+        Ok((claims, ordinary))
+    } else {
+        refuse(errors)
+    }
+}
+
+/// FR-165 "Forms": each state-graph claim's `using` alias resolved to one of
+/// the unit's profile selections and its `over` type to an object type of an
+/// admitted domain package, whose population must be exactly one or none. A
+/// predicate form outside the selected layer's admitted set refuses as a
+/// state clause body's does (FR-110).
+fn state_graph_claims(
+    forms: Vec<fsl_forms::StateGraphClaimForm>,
+    resolve: &Resolve<'_>,
+    models: &[AdmittedModel],
+    predicates: &BTreeSet<&str>,
+) -> Result<Vec<StateGraphDeclaration>, AssemblyRefusal> {
+    let Resolve {
+        source_owners,
+        profiles,
+        spellings,
+        types,
+        ..
+    } = *resolve;
+    let mut errors = Vec::new();
+    let selects_model = model_gate::selects_model(profiles);
+    let mut claims = Vec::with_capacity(forms.len());
+    let mut names: BTreeMap<String, Span> = BTreeMap::new();
+    for form in forms {
+        let error = |cause, span| AssemblyError { cause, span };
+        if let Some(first) = names.get(&form.name.name) {
+            errors.push(error(
+                AssemblyCause::DuplicateStateGraphClaim {
+                    name: form.name.name.clone(),
+                    first: *first,
+                },
+                form.name.span,
+            ));
+            continue;
+        }
+        names.insert(form.name.name.clone(), form.name.span);
+        let selection = profiles
+            .iter()
+            .find(|profile| profile.alias == form.profile.alias)
+            .cloned();
+        match &selection {
+            None => errors.push(error(
+                AssemblyCause::UndeclaredAlias {
+                    alias: form.profile.alias.clone(),
+                },
+                form.profile.span,
+            )),
+            Some(selection) => {
+                if let Some(layer) = HeaderLayer::from_identity(&selection.identity) {
+                    errors.extend(
+                        LayerAdmission::new(layer, predicates, selects_model)
+                            .state_graph_claim(&form),
+                    );
+                }
+            }
+        }
+        let (context, context_population) = match &form.over {
+            None => (None, None),
+            Some(over_parameter) => {
+                let over = &over_parameter.value_type;
+                let TypeFormHead::Name(name) = &over.head else {
+                    errors.push(error(
+                        AssemblyCause::OverNotObjectType {
+                            claim: form.name.name.clone(),
+                        },
+                        over.span,
+                    ));
+                    continue;
+                };
+                let Some(context) =
+                    spellings.object_type(source_owners.get(&form.name.name), &name.name)
+                else {
+                    errors.push(error(
+                        AssemblyCause::UnresolvedTypeName {
+                            name: name.name.clone(),
+                        },
+                        over.span,
+                    ));
+                    continue;
+                };
+                let context_population = match population_of(models, context.clone(), types) {
+                    Ok(domain) => domain,
+                    Err(populations) => {
+                        errors.push(error(
+                            AssemblyCause::AmbiguousPopulation {
+                                context: name.name.clone(),
+                                populations,
+                            },
+                            over.span,
+                        ));
+                        continue;
+                    }
+                };
+                (Some(context), context_population)
+            }
+        };
+        let Some(selection) = selection else {
+            continue;
+        };
+        claims.push(StateGraphDeclaration {
+            index: claims.len(),
+            form,
+            selection,
+            context,
+            context_population,
+        });
+    }
+    if errors.is_empty() {
+        Ok(claims)
+    } else {
+        refuse(errors)
+    }
+}
+
+/// FR-124: each `terminal` declaration resolved. Its `using` alias must name
+/// one of the unit's profile selections and its `on` alias a `model`
+/// declaration of the unit; a second declaration for one alias refuses at
+/// itself, naming every declaration of the alias. A `when` predicate's
+/// `self` is the one object type the model's populations range over.
+fn terminal_declarations(
+    forms: Vec<TerminalDeclarationForm>,
+    resolve: &Resolve<'_>,
+    models: &[AdmittedModel],
+) -> Result<Vec<TerminalClauseDeclaration>, AssemblyRefusal> {
+    let Resolve {
+        source_owners,
+        profiles,
+        spellings,
+        types,
+        ..
+    } = *resolve;
+    let mut errors = Vec::new();
+    let mut declarations = Vec::with_capacity(forms.len());
+    for (index, form) in forms.iter().enumerate() {
+        let error = |cause, span| AssemblyError { cause, span };
+        let selection = profiles
+            .iter()
+            .find(|profile| profile.alias == form.profile.alias)
+            .cloned();
+        if selection.is_none() {
+            errors.push(error(
+                AssemblyCause::UndeclaredAlias {
+                    alias: form.profile.alias.clone(),
+                },
+                form.profile.span,
+            ));
+        }
+        // The model the declaration's own unit binds the alias to (FR-480
+        // "Selections and imports").
+        let alias = form.model.name.as_str();
+        let package = spellings.selection(source_owners.get(&form.name.name), alias);
+        let Some(model) = models
+            .iter()
+            .find(|model| model.alias() == Some(alias) && Some(model.selection()) == package)
+        else {
+            errors.push(error(
+                AssemblyCause::UnresolvedTerminalModel {
+                    alias: alias.to_owned(),
+                },
+                form.model.span,
+            ));
+            continue;
+        };
+        let spans: Vec<Span> = forms
+            .iter()
+            .filter(|other| other.model.name == form.model.name)
+            .map(|other| other.span)
+            .collect();
+        if forms
+            .iter()
+            .take(index)
+            .any(|earlier| earlier.model.name == form.model.name)
+        {
+            errors.push(error(
+                AssemblyCause::AmbiguousTerminal {
+                    model: alias.to_owned(),
+                    spans,
+                },
+                form.span,
+            ));
+            continue;
+        }
+        let kind = match &form.kind {
+            TerminalDeclarationKind::Any => TerminalClauseKind::Any,
+            TerminalDeclarationKind::When(predicate) => {
+                let objects: Vec<EffectiveId> = model.population_objects().into_iter().collect();
+                let [context] = objects.as_slice() else {
+                    let cause = if objects.is_empty() {
+                        AssemblyCause::UnresolvedTerminalState {
+                            model: alias.to_owned(),
+                        }
+                    } else {
+                        AssemblyCause::AmbiguousTerminalState {
+                            model: alias.to_owned(),
+                        }
+                    };
+                    errors.push(error(cause, form.model.span));
+                    continue;
+                };
+                let context = context.clone();
+                let population = match population_of(models, context.clone(), types) {
+                    Ok(domain) => domain,
+                    Err(populations) => {
+                        errors.push(error(
+                            AssemblyCause::AmbiguousPopulation {
+                                context: alias.to_owned(),
+                                populations,
+                            },
+                            form.model.span,
+                        ));
+                        continue;
+                    }
+                };
+                TerminalClauseKind::When {
+                    predicate: predicate.clone(),
+                    context,
+                    population,
+                }
+            }
+        };
+        let Some(selection) = selection else {
+            continue;
+        };
+        declarations.push(TerminalClauseDeclaration {
+            name: form.name.name.clone(),
+            model: alias.to_owned(),
+            package: model.selection().identity.clone(),
+            selection,
+            span: form.span,
+            kind,
+        });
+    }
+    if errors.is_empty() {
+        Ok(declarations)
+    } else {
+        refuse(errors)
+    }
+}
+
+/// The authored bound of each bounded population, by `model` alias and the
+/// identity of the package it binds, and then the population's declaration
+/// key (FR-380).
+type PopulationBounds = BTreeMap<(String, String), BTreeMap<DeclarationKey, AuthoredBound>>;
+
+/// FR-380 "The declaration": each `bound` declaration resolved. Its alias
+/// must name a `model` declaration of the unit and its population a
+/// population declaration of that model's domain package; its maximum must
+/// fit a `u64`, as FR-333 requires of a `Population<T>[N]`. A label another
+/// bound, clause or function of the package uses, and two bounds naming one
+/// population, each refuse at every declaration involved. The result does
+/// not depend on the order of the declarations.
+fn population_bounds(
+    forms: &[PopulationBoundForm],
+    resolve: &Resolve<'_>,
+    clauses: &[StateClauseForm],
+    functions: &[FunctionDeclaration],
+) -> Result<PopulationBounds, Vec<AssemblyError>> {
+    let Resolve {
+        source_owners,
+        spellings,
+        selected,
+        ..
+    } = *resolve;
+    let mut errors = Vec::new();
+    // Every declaration involved in an ambiguity, by what it shares.
+    let mut ambiguous: Vec<(String, Vec<Span>)> = Vec::new();
+
+    // A label names one declaration of the package.
+    let mut labels: BTreeMap<&str, (Vec<Span>, bool)> = BTreeMap::new();
+    for form in forms {
+        let (spans, _) = labels.entry(form.label.name.as_str()).or_default();
+        spans.push(form.label.span);
+    }
+    for (name, span) in
+        clauses
+            .iter()
+            .map(|clause| (clause.name.name.as_str(), clause.name.span))
+            .chain(functions.iter().filter_map(|function| {
+                Some((function.name.as_str(), function.spans()?.declaration))
+            }))
+    {
+        if let Some((spans, shared)) = labels.get_mut(name) {
+            spans.push(span);
+            *shared = true;
+        }
+    }
+    for (name, (spans, shared)) in labels {
+        if shared || spans.len() > 1 {
+            ambiguous.push((name.to_owned(), spans));
+        }
+    }
+
+    // A bound resolves to a population of its model, once.
+    let mut bounds = PopulationBounds::new();
+    let mut named: BTreeMap<(&str, DeclarationKey), Vec<Span>> = BTreeMap::new();
+    for form in forms {
+        let unresolved = |name: &DeclaredName| AssemblyError {
+            cause: AssemblyCause::UnresolvedPopulationBound {
+                name: name.name.clone(),
+            },
+            span: name.span,
+        };
+        // The model the bound's own unit binds the alias to (FR-480
+        // "Selections and imports").
+        // A one-segment name is a source population.
+        let alias = form
+            .model
+            .as_ref()
+            .map_or(super::source_model::ALIAS, |model| model.name.as_str());
+        let package = spellings.selection(source_owners.get(&form.label.name), alias);
+        let Some(model) = selected.iter().find(|model| {
+            model.alias == alias && Some(&model.view.domain_package().model_selection) == package
+        }) else {
+            errors.push(unresolved(form.model.as_ref().unwrap_or(&form.population)));
+            continue;
+        };
+        let population =
+            model
+                .view
+                .domain_package()
+                .records
+                .iter()
+                .find_map(|record| match record {
+                    DomainPackageRecord::Population(population)
+                        if type_identity_segment(&population.key.package, &population.key.node)
+                            == Some(form.population.name.as_str()) =>
+                    {
+                        Some(population.key.clone())
+                    }
+                    _ => None,
+                });
+        let Some(population) = population else {
+            errors.push(unresolved(&form.population));
+            continue;
+        };
+        let Ok(maximum) = form.maximum.name.parse::<u64>() else {
+            errors.push(AssemblyError {
+                cause: AssemblyCause::IllFormedBounds(TypeFormFault::Malformed),
+                span: form.maximum.span,
+            });
+            continue;
+        };
+        named
+            .entry((alias, population.clone()))
+            .or_default()
+            .push(form.label.span);
+        let bound_model = (
+            alias.to_owned(),
+            model.view.domain_package().model_selection.identity.clone(),
+        );
+        bounds.entry(bound_model).or_default().insert(
+            population.clone(),
+            AuthoredBound {
+                maximum,
+                label: form.label.name.clone(),
+                population,
+            },
+        );
+    }
+    for ((alias, population), spans) in named {
+        if spans.len() > 1 {
+            let name = type_identity_segment(&population.package, &population.node).map_or_else(
+                || population.node.clone(),
+                |segment| super::source_model::qualified(alias, segment),
+            );
+            ambiguous.push((name, spans));
+        }
+    }
+    for (name, mut spans) in ambiguous {
+        spans.sort_by_key(|span| span.start);
+        for span in &spans {
+            errors.push(AssemblyError {
+                cause: AssemblyCause::AmbiguousPopulationBound {
+                    name: name.clone(),
+                    spans: spans.clone(),
+                },
+                span: *span,
+            });
+        }
+    }
+    if errors.is_empty() {
+        Ok(bounds)
+    } else {
+        Err(errors)
+    }
+}
+
+/// `models` with each one's authored population bounds (FR-380).
+fn apply_population_bounds(
+    models: Vec<AdmittedModel>,
+    mut bounds: PopulationBounds,
+) -> Vec<AdmittedModel> {
+    models
+        .into_iter()
+        .map(|model| {
+            match model.alias().and_then(|alias| {
+                bounds.remove(&(alias.to_owned(), model.selection().identity.clone()))
+            }) {
+                Some(held) => model.with_population_bounds(held),
+                None => model,
+            }
+        })
+        .collect()
+}
+
+/// FR-103, FR-302: the `DeclarationKey` of the operation `name` that the
+/// object type `declaring` of the `model` declaration `alias` declares, read
+/// from that model's effective view. `None` when the alias, the type or the
+/// operation is not in it: a broken invariant of the assembler's own
+/// resolution, never a property of the source.
+fn operation_key_of(
+    models: &[SelectedModel],
+    alias: &str,
+    declaring: EffectiveId,
+    name: &str,
+) -> Option<DeclarationKey> {
+    let model = models.iter().find(|model| {
+        model.alias == alias
+            && model
+                .view
+                .type_identities()
+                .values()
+                .any(|identity| identity == &declaring)
+    })?;
+    let owner = model
+        .view
+        .type_identities()
+        .iter()
+        .find_map(|(key, identity)| (*identity == declaring).then_some(key))?;
+    model
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::OperationMember(operation)
+                if &operation.owner == owner
+                    && member_identity_name(&operation.owner.node, &operation.key.node)
+                        == Some(name) =>
+            {
+                Some(operation.key.clone())
+            }
+            _ => None,
+        })
+}
+
+/// FR-104 "Resolution", FR-302: each `operation-body`'s `using` alias
+/// resolved to one of the unit's profile selections, and its target
+/// `M::T::op` resolved through the selected model's effective view to the
+/// declaring operation's `DeclarationKey`, exactly as a `pre` or `post`
+/// clause's operation is. An unresolved name refuses at the target. Exactly
+/// one body resolves to each key: a second refuses as
+/// [`AssemblyCause::DuplicateOperationBody`], naming every body declaration
+/// that resolved to the key.
+fn operation_bodies(
+    forms: Vec<OperationBodyForm>,
+    resolve: &Resolve<'_>,
+    predicates: &BTreeSet<&str>,
+) -> Result<Vec<OperationBodyDeclaration>, AssemblyRefusal> {
+    let Resolve {
+        source_owners,
+        profiles,
+        spellings,
+        types,
+        operations,
+        selected,
+        ..
+    } = *resolve;
+    let selects_model = model_gate::selects_model(profiles);
+    let mut errors = Vec::new();
+    let mut bodies = Vec::with_capacity(forms.len());
+    for form in forms {
+        let error = |cause, span| AssemblyError { cause, span };
+        let selection = profiles
+            .iter()
+            .find(|profile| profile.alias == form.profile.alias)
+            .cloned();
+        match &selection {
+            None => errors.push(error(
+                AssemblyCause::UndeclaredAlias {
+                    alias: form.profile.alias.clone(),
+                },
+                form.profile.span,
+            )),
+            // FR-110 "Layer selection".
+            Some(selection) => {
+                if let Some(layer) = HeaderLayer::from_identity(&selection.identity) {
+                    errors.extend(
+                        LayerAdmission::new(layer, predicates, selects_model).operation_body(&form),
+                    );
+                }
+            }
+        }
+        let (alias, object, member) = match form.target.as_slice() {
+            [model, object, member] => (model.name.as_str(), object, member),
+            [object, member] => (super::source_model::ALIAS, object, member),
+            _ => {
+                // The grammar admits any qualified name; only
+                // `model-alias::Type::operation` and `Type::operation` name
+                // an operation.
+                let name = form
+                    .target
+                    .iter()
+                    .map(|segment| segment.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                errors.push(error(
+                    AssemblyCause::UnresolvedTypeName { name },
+                    form.target_span,
+                ));
+                continue;
+            }
+        };
+        let context_name = super::source_model::qualified(alias, &object.name);
+        let Some(context) =
+            spellings.object_type(source_owners.get(&form.label.name), &context_name)
+        else {
+            errors.push(error(
+                AssemblyCause::UnresolvedTypeName { name: context_name },
+                form.target_span,
+            ));
+            continue;
+        };
+        let (declaring, declaration) =
+            match operations.resolve(types, context.clone(), &member.name) {
+                OperationLookup::Declared {
+                    declaring,
+                    operation,
+                } => (declaring, operation),
+                OperationLookup::Missing => {
+                    errors.push(error(
+                        AssemblyCause::UnresolvedOperation {
+                            context: context_name,
+                            operation: member.name.clone(),
+                        },
+                        member.span,
+                    ));
+                    continue;
+                }
+                OperationLookup::Ambiguous(_) => {
+                    errors.push(error(
+                        AssemblyCause::AmbiguousOperation {
+                            context: context_name,
+                            operation: member.name.clone(),
+                        },
+                        member.span,
+                    ));
+                    continue;
+                }
+            };
+        let Some(key) = operation_key_of(selected, alias, declaring.clone(), declaration.name())
+        else {
+            errors.push(error(
+                AssemblyCause::ModelType {
+                    alias: alias.to_owned(),
+                    node: member.name.clone(),
+                },
+                member.span,
+            ));
+            continue;
+        };
+        let Some(selection) = selection else {
+            continue;
+        };
+        bodies.push(OperationBodyDeclaration {
+            key,
+            model: alias.to_owned(),
+            label: form.label,
+            selection,
+            context,
+            operation: ClauseOperation {
+                declaring,
+                declaration: declaration.clone(),
+            },
+            parameters: form.parameters,
+            body: form.body,
+            spans: form.spans,
+        });
+    }
+    let mut by_key: BTreeMap<&DeclarationKey, Vec<Span>> = BTreeMap::new();
+    for body in &bodies {
+        by_key.entry(&body.key).or_default().push(body.label.span);
+    }
+    for (key, spans) in by_key {
+        if let [_, second, ..] = spans.as_slice() {
+            errors.push(AssemblyError {
+                cause: AssemblyCause::DuplicateOperationBody {
+                    operation: key.clone(),
+                    bodies: spans.clone(),
+                },
+                span: *second,
+            });
+        }
+    }
+    if errors.is_empty() {
+        Ok(bodies)
+    } else {
+        refuse(errors)
+    }
+}
+
+/// FR-114 "Behavior": each protocol's `attempt`s' operations, resolved
+/// exactly as [`state_clauses`] resolves a `pre`/`post` clause's operation
+/// (`types.operation`) and its frame population (`population_of`). The
+/// `contracts` list is checked later, at S3 (`check::protocol_clause`),
+/// against the unit's own checked state clauses -- unlike a state clause's
+/// own operation, which the assembler alone resolves, an attempt's
+/// `contracts` entries name *other declarations of the same unit* (FR-114
+/// "Behavior"'s `missing_declaration`/`wrong_snapshot` refusals), so
+/// checking them here would fail the whole package at E3 over one
+/// protocol's own defect rather than refusing that protocol alone at S3,
+/// the same way FR-113's own anchor and binder refusals do.
+fn protocol_attempts(
+    protocols: &[fsl_forms::ProtocolDeclarationForm],
+    source_owners: &BTreeMap<String, RawSourceRef>,
+    spellings: &ModelSpellings,
+    types: &TypeEnvironment,
+    operations: &OperationTable,
+    models: &[AdmittedModel],
+) -> Result<Vec<Vec<AttemptDeclaration>>, AssemblyRefusal> {
+    let mut errors = Vec::new();
+    let mut resolved = Vec::with_capacity(protocols.len());
+    for protocol in protocols {
+        let mut attempts = Vec::with_capacity(protocol.attempts.len());
+        for attempt in &protocol.attempts {
+            let error = |cause, span| AssemblyError { cause, span };
+            let context = spellings.object_type(
+                source_owners.get(&protocol.name.name),
+                &attempt.context.name,
+            );
+            let Some(context) = context else {
+                errors.push(error(
+                    AssemblyCause::UnresolvedTypeName {
+                        name: attempt.context.name.clone(),
+                    },
+                    attempt.context.span,
+                ));
+                continue;
+            };
+            let operation =
+                match operations.resolve(types, context.clone(), &attempt.operation.name) {
+                    OperationLookup::Declared {
+                        declaring,
+                        operation,
+                    } => ClauseOperation {
+                        declaring,
+                        declaration: operation.clone(),
+                    },
+                    OperationLookup::Missing => {
+                        errors.push(error(
+                            AssemblyCause::UnresolvedOperation {
+                                context: attempt.context.name.clone(),
+                                operation: attempt.operation.name.clone(),
+                            },
+                            attempt.operation.span,
+                        ));
+                        continue;
+                    }
+                    OperationLookup::Ambiguous(_) => {
+                        errors.push(error(
+                            AssemblyCause::AmbiguousOperation {
+                                context: attempt.context.name.clone(),
+                                operation: attempt.operation.name.clone(),
+                            },
+                            attempt.operation.span,
+                        ));
+                        continue;
+                    }
+                };
+            let frame_population = match population_of(models, operation.declaring.clone(), types) {
+                Ok(domain) => domain,
+                Err(populations) => {
+                    errors.push(error(
+                        AssemblyCause::AmbiguousPopulation {
+                            context: attempt.context.name.clone(),
+                            populations,
+                        },
+                        attempt.context.span,
+                    ));
+                    continue;
+                }
+            };
+            attempts.push(AttemptDeclaration {
+                declaration: attempt.declaration,
+                operation,
+                receiver: context,
+                frame_population,
+            });
+        }
+        resolved.push(attempts);
+    }
+    if errors.is_empty() {
+        Ok(resolved)
+    } else {
+        refuse(errors)
+    }
+}
+
+/// Each written expression of the window aggregate `atom` with its part:
+/// the value, the filter, the `fraction` predicate and the threshold.
+fn aggregate_parts(
+    atom: &fsl_forms::AggregateAtomForm,
+) -> impl Iterator<Item = (super::lowering::AggregatePart, &fsl_forms::ExpressionForm)> {
+    use super::lowering::AggregatePart;
+    let predicate = match &atom.term.kind {
+        fsl_forms::AggregateKindForm::Fraction(predicate) => Some(predicate),
+        fsl_forms::AggregateKindForm::Count
+        | fsl_forms::AggregateKindForm::Sum
+        | fsl_forms::AggregateKindForm::Min
+        | fsl_forms::AggregateKindForm::Max
+        | fsl_forms::AggregateKindForm::Quantile(_) => None,
+    };
+    atom.term
+        .value
+        .iter()
+        .map(|value| (AggregatePart::Value, value))
+        .chain(
+            atom.term
+                .filter
+                .iter()
+                .map(|filter| (AggregatePart::Filter, filter)),
+        )
+        .chain(predicate.map(|predicate| (AggregatePart::Predicate, predicate)))
+        .chain(std::iter::once((AggregatePart::Threshold, &atom.threshold)))
+}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod dimensionless_tests;

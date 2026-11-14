@@ -3,7 +3,7 @@ id: TC-1168
 title: "Inspect typed views within the configured entry bound"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-297
+  - target: ix://agent-ix/filament-spec-language/FR-297
     type: verifies
 ---
 # TC-1168: Inspect typed views within the configured entry bound

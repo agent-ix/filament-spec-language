@@ -3,9 +3,9 @@ id: TC-1295
 title: "Evaluate a temporal clause under the finite-window profile on the spine"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
 ---
 # TC-1295: Evaluate a temporal clause under the finite-window profile on the spine
@@ -27,7 +27,7 @@ observation identity for an order-sensitive operator.
 ## Test Procedure
 
 Each row compiles a unit selecting
-`quire.temporal.timestamped-event.finite-window/v1` (clock `ms`, `Exact`
+`filament.temporal.timestamped-event.finite-window/v1` (clock `ms`, `Exact`
 cover unless stated), builds the `TimestampedTrace` from the stated stamps,
 valuations and progress, and runs it through the spine evaluator and through
 `run_clause`. Stamps are in ms. `W` is the watermark, `C(t)` is
@@ -56,7 +56,7 @@ stated, and `p`, `q` are `holds` atoms of the fixture.
 | 18 | row 17 `until` | distinct order keys, one authority; then two authorities; then trace listed in reverse, keys unchanged | evaluates; refuses; same result as the first |
 | 19 | `once[0,4] holds(p)` `on each`, activations at positions 0 and 1 (future reach 0, established at W 4) | stamps 3,4; p F,F; W 4; C(4) | `HistoryCutoff`: `Indeterminate {MissingHistory}` with `where` 0 (the first activation in position order); `AuthoritativeOrigin`: `Completed(false)`; p T at 3: `Completed(true)` for both |
 | 20 | `holds(req) implies eventually[0,3000] holds(ack)`, cover `Counter{u=0}` | req at 0; ack at 2998, 3000, 3001; W, C beyond 3001 | `Completed(true)`; `Indeterminate {StraddlesBound}`; `Completed(false)`; with `Exact` cover true, true, false |
-| 21 | `holds(req) implies eventually[0,3000] holds(ack)`, `Counter{u=1}`, req at 0, ack at 2997, 2998, 3003; W and C beyond 3003 (`TCV-06` to `TCV-08`); and the comparison functions `within_bound` and `definitely_before` called directly on QSpec `tick-cover-vectors.json` `TCV-09` to `TCV-15` (the bounds 0, 1 and -1 of `TCV-13` to `TCV-15` and the `definitely_before` pairs are not clause intervals) | per the vectors | true, indeterminate (`StraddlesBound`), false for `TCV-06` to `TCV-08`; the file's expected value for each of `TCV-09` to `TCV-15` |
+| 21 | `holds(req) implies eventually[0,3000] holds(ack)`, `Counter{u=1}`, req at 0, ack at 2997, 2998, 3003; W and C beyond 3003 (`TCV-06` to `TCV-08`); and the comparison functions `within_bound` and `definitely_before` called directly on FSpec `tick-cover-vectors.json` `TCV-09` to `TCV-15` (the bounds 0, 1 and -1 of `TCV-13` to `TCV-15` and the `definitely_before` pairs are not clause intervals) | per the vectors | true, indeterminate (`StraddlesBound`), false for `TCV-06` to `TCV-08`; the file's expected value for each of `TCV-09` to `TCV-15` |
 | 22 | `eventually[0,2] holds(p)` `on each` | stamps 0,10; p F,F; W 10; C(10); then p T at 0 | `Completed(false)` at 0; then `Pending {where 1, deadline 12}` |
 | 23 | row 3's first clause, meter 6 then 7 | stamps 0,2,5; p F,T,F | `Incomplete` at `temporal.visit`; the verdict with 7 charges |
 | 24 | `run_clause` over rows 1, 3 first case, 6, 8 | as rows | `violation`/exit 10 pos 0; `success`/0; `pending` with FR-285's pending-clause exit; `indeterminate`/11 cause `MissingValuation`; no `unsupported_profile` |
@@ -84,5 +84,5 @@ stated, and `p`, `q` are `holds` atoms of the fixture.
 - No row returns a truth value for a case the table marks `Pending` or
   `Indeterminate`, and no row marked definite returns `Pending` or
   `Indeterminate`.
-- The independent expected values come from the authored stamps and QSpec's
+- The independent expected values come from the authored stamps and FSpec's
   vectors, never from the evaluator's own output.

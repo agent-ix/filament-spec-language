@@ -3,7 +3,7 @@ id: TC-1001
 title: "A model-operation argument and a function argument admit a child at a parent-typed parameter"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-359
+  - target: ix://agent-ix/filament-spec-language/FR-359
     type: verifies
 ---
 # TC-1001: A model-operation argument and a function argument admit a child at a parent-typed parameter

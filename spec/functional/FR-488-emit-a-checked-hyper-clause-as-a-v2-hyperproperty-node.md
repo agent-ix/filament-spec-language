@@ -3,23 +3,23 @@ id: FR-488
 title: "Emit a checked hyper clause as a v2 hyperproperty claim node"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-487
+  - target: ix://agent-ix/filament-spec-language/FR-487
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: references
 ---
 # FR-488: Emit a checked hyper clause as a v2 hyperproperty claim node
@@ -28,15 +28,15 @@ relationships:
 
 The S4 package emitter (ADR-011 layer 4 `package`, edge E4) SHALL emit each
 checked hyper clause over `behaviours` (FR-172) as one
-`quire.checked-semantic-graph/v2` node with `node_tag: "claim"` and
+`filament.checked-semantic-graph/v2` node with `node_tag: "claim"` and
 `semantic_form: "hyperproperty"`, whose body is the seven-binding aggregate
-QSpec FR-402 states, together with the nodes that aggregate references: the
+FSpec FR-402 states, together with the nodes that aggregate references: the
 clause's object-parameter and subject model nodes, its `match` conjunct
 nodes, its `align skip` operation anchors and its body's formula nodes.
-QSL's I2 reader reads the node back, and the checked clause exposes its
-`claim` occurrence (§ "Outputs"). This is the compiler side of QSpec FR-402
-(ADR-023 QS-7) and the hyper analog of FR-337: QSpec owns the aggregate and
-the obligation identity it binds; QSL emits them from its checked clause.
+FSL's I2 reader reads the node back, and the checked clause exposes its
+`claim` occurrence (§ "Outputs"). This is the compiler side of FSpec FR-402
+(ADR-023 QS-7) and the hyper analog of FR-337: FSpec owns the aggregate and
+the obligation identity it binds; FSL emits them from its checked clause.
 
 FR-487 lowers each atom's condition and each conjunct to a checked Boolean
 node. This requirement writes those conditions into the package.
@@ -53,15 +53,15 @@ node ids.
 
 ## Semantic authority and boundary
 
-QSpec FR-402 owns the `hyperproperty` body's seven bindings and their order,
-and the obligation identity. QSpec FR-370 owns the `temporal` node forms,
-the `quire.op.temporal.*` identities and the placement rules this
-requirement relies on. QSpec states no node form for a `match` conjunct, no
+FSpec FR-402 owns the `hyperproperty` body's seven bindings and their order,
+and the obligation identity. FSpec FR-370 owns the `temporal` node forms,
+the `filament.op.temporal.*` identities and the placement rules this
+requirement relies on. FSpec states no node form for a `match` conjunct, no
 encoding of a hyper body's indexed atoms and no reader refusal for the
 `hyperproperty` body (it is a term body of FR-322's grammar). Where this
-requirement chooses a form for those, the choice is QSL's and stays within
-what FR-322, FR-370 and FR-402 permit; the choices that QSpec may replace
-are listed in "Open QSpec questions".
+requirement chooses a form for those, the choice is FSL's and stays within
+what FR-322, FR-370 and FR-402 permit; the choices that FSpec may replace
+are listed in "Open FSpec questions".
 
 ## Inputs
 
@@ -103,27 +103,27 @@ they are today.
   The occurrence is assigned by the emitter, not by S3, so a clause checked
   and not assembled has none; the accessor belongs to the clause as the
   assembled package carries it, as a claim's `occurrence()` does
-  (`qsl-semantics/src/check/claims.rs`).
+  (`fsl-semantics/src/check/claims.rs`).
 - From the I2 reader, for each `claim` occurrence of a
   `claim`/`hyperproperty` node: its identity triple and the NodeId of its
   body wrapper node (the `body` binding's target, § "The body"), or FR-402's
   refusal. A looked-up triple that names a NodeId the package does not hold,
   a node that is not a `claim`/`hyperproperty` node, or an occurrence whose
   role or ordinal differs SHALL return the lookup refusal
-  `hyper-root-unresolved` at the triple. It is a QSL lookup result, not a
+  `hyper-root-unresolved` at the triple. It is an FSL lookup result, not a
   package refusal, as `clause-root-unresolved` is (FR-337).
 
 ## Behavior
 
 ### The node and its aggregate
 
-The emitter SHALL write the node's body as the aggregate of QSpec FR-402
+The emitter SHALL write the node's body as the aggregate of FSpec FR-402
 with its seven bindings in that order:
 
 - `domain`: the `text` literal `behaviours`.
 - `subjects`: one `binding(alias, reference)` per alias of `aliases()`, in
   order of first naming. The reference is to the `model`/`model_root` node
-  of the domain package the alias selects (QSpec FR-402), the node QSpec
+  of the domain package the alias selects (FSpec FR-402), the node FSpec
   FR-322 derives once per selected package identity, whatever object types
   the alias's parameters name.
 - `parameters`: one `binding(name, reference)` per object parameter in
@@ -131,15 +131,15 @@ with its seven bindings in that order:
   type `T` that `v: V::T` declares.
 - `quantifiers`: one `binding("quantifiers", tuple)`, `tuple` being an
   `aggregate` of one **quantifier Group** per quantifier, in source order
-  (QSpec FR-402; a Tuple of QSpec FR-322 "Body grammar").
+  (FSpec FR-402; a Tuple of FSpec FR-322 "Body grammar").
   - A quantifier Group is an `aggregate` of three `binding`s with `text`
     literal values, in order: `variable` = the trace variable's name,
     `quantifier` = `forall` or `exists`, and `alias` = the alias's name;
     then one `reference` per constraint of the variable's resolved fairness
     set, in fairness-set order (none for the empty set).
   - Each reference targets the `temporal`/`fairness` node whose body root
-    is the constraint's `quire.op.temporal.fair` application, minted by the
-    routine FR-337 uses for a clause's fairness argument, with QSpec
+    is the constraint's `filament.op.temporal.fair` application, minted by the
+    routine FR-337 uses for a clause's fairness argument, with FSpec
     FR-370's `fairness` member resolved as FR-337 resolves it, so an
     unmarked constraint and its written `weak whole` form emit one node
     (ADR-018 FA-6), and a constraint shared with a temporal clause shares
@@ -147,8 +147,8 @@ with its seven bindings in that order:
   - The member's `operation` target takes `declaration` and `name` from the
     resolved constraint (FR-123, checked at S3 against the quantifier's
     model): the most derived effective operation and its declaring type, as
-    QSpec FR-370 "Fairness resolution" does, which the QSpec reader re-checks
-    for a quantifier's references (QSpec FR-402 "Reader order"). The emitter
+    FSpec FR-370 "Fairness resolution" does, which the FSpec reader re-checks
+    for a quantifier's references (FSpec FR-402 "Reader order"). The emitter
     SHALL refuse a constraint whose declaring node is a
     `model`/`systems_interface` node `unsupported_construct`/
     `not-yet-implemented` at the constraint, as FR-370-AC-11 refuses such a
@@ -157,7 +157,7 @@ with its seven bindings in that order:
     variable moves its reference to that variable's Group.
 
 **Grammar fit.** Every shape the aggregate uses is legal in FR-322 "Body
-grammar", and the QSpec reader's flat-wire rules (`flat_wire.rs`, `Flat::enter`
+grammar", and the FSpec reader's flat-wire rules (`flat_wire.rs`, `Flat::enter`
 and `aggregate_stratum`) place it as follows. The node body is a Body
 aggregate, so each of the seven bindings stands as a Member `binding`
 (rule: Body aggregate members are Members; `Place::Member` takes a
@@ -179,7 +179,7 @@ none. The `aggregate_stratum` rule reads a binding value by its first
 non-Leaf member, so the `quantifiers` Tuple SHALL hold only Groups and a
 Group only Leaves and bindings of Leaves.
 
-**Structural stage.** After the flat wire, the QSpec reader's structural
+**Structural stage.** After the flat wire, the FSpec reader's structural
 stage (`structural.rs`, `validate_structural_nodes`) checks per node kind. For
 the kinds this requirement emits:
 
@@ -197,7 +197,7 @@ the kinds this requirement emits:
   `dependencies` equal the references of its body (`application_dependencies`),
   as the existing emitters write them. The `hyperproperty` body is an
   aggregate and has no application join; its `dependencies` are the nodes it
-  references (QSpec FR-402).
+  references (FSpec FR-402).
 - The `model` nodes the body references are the existing declaration nodes
   of the parameters' object types and the `model`/`model_root` nodes of the
   subjects' packages.
@@ -227,7 +227,7 @@ The emitter SHALL key the node by FR-322's rule over this body, so equal
 checked clauses emit equal keys, and reversing two quantifiers, moving a
 fairness constraint from one variable to another, renaming the alias a
 variable ranges over, or changing the `match` conjuncts, the `align skip`
-list or the body changes the key (QSpec FR-402-AC-2). It adds no member for
+list or the body changes the key (FSpec FR-402-AC-2). It adds no member for
 the instance, which FR-315's `HyperProductIdentity` binds beside the
 occurrence, or for the copy-swap symmetry, a function of the clause.
 
@@ -242,7 +242,7 @@ occurrence, or for the copy-swap symmetry, a function of the clause.
   `op_sb` (the `b.step.op` read) is level 1 in a conjunct that reads
   `a.step.op` first and level 0 in a conjunct that reads only `b`. Parameter nodes are keyed by name, level and
   type (FR-322), so equal reads at equal levels share one node across atoms,
-  conjuncts and clauses. QSpec states no binder scope for them (Q-3).
+  conjuncts and clauses. FSpec states no binder scope for them (Q-3).
 - The emitter SHALL mint, for each atom slot (`t`, `p`) of
   `atom_slots()` (FR-487 "Atom slots"), one `value`/`parameter` node named
   `slot_s<esc(p)>_s<esc(t)>` (§ "Slot node names"), at the level the rule above gives, typed by the type node of
@@ -253,15 +253,15 @@ occurrence, or for the copy-swap symmetry, a function of the clause.
 - Every atom of the clause SHALL read the same slot nodes, whatever the atom.
 
 The slot is the component: a read of slot `slot_sv_sa` (`v@a`) is a read in the state of
-the component that trace variable `a` names (QSpec states no other carrier,
+the component that trace variable `a` names (FSpec states no other carrier,
 Q-3).
 
 ### Slot node names
 
-The QSpec reader requires a `value`/`parameter` node's `name` to be an ASCII
+The FSpec reader requires a `value`/`parameter` node's `name` to be an ASCII
 identifier, `[A-Za-z_][A-Za-z0-9_]*` (`typed_parameter_binding` with
 `is_identifier`, structural stage), so a name cannot carry `@`, `.` or `:`.
-The emitter SHALL write every slot node name by QSpec FR-402's "Slot
+The emitter SHALL write every slot node name by FSpec FR-402's "Slot
 parameters" encoding, which a consumer decodes by the same rule. It is
 restated here for the emitter and is deterministic and injective:
 
@@ -293,9 +293,9 @@ restated here for the emitter and is deterministic and injective:
 
 - The emitter SHALL write the body of the clause as one
   `temporal`/`temporal_clause` node (the **body wrapper**) whose body is a
-  `quire.op.temporal.clause` application, with one `temporal_profile` law
+  `filament.op.temporal.clause` application, with one `temporal_profile` law
   equal to the package's `profile_selections` row of role
-  `temporal_profile` for the clause's profile and the six arguments of QSpec FR-370, in order:
+  `temporal_profile` for the clause's profile and the six arguments of FSpec FR-370, in order:
   1. `over`: a reference to the slot node `<p>@<t>` of slot 0;
   2. `clock`: the `text` literal `model-steps`;
   3. `activation`: the aggregate that binds `kind` to the text `origin`
@@ -304,14 +304,14 @@ restated here for the emitter and is deterministic and injective:
   5. `fairness`: the empty aggregate;
   6. `formula`: a reference to the `temporal`/`formula` node of the body's
      root.
-  This wrapper is QSpec FR-402's "Body wrapper", the target of its `body`
+  This wrapper is FSpec FR-402's "Body wrapper", the target of its `body`
   binding. The hyper body carries no `over` parameter, no
   clock and no activation of its own; the wrapper fills the argument
   positions FR-370 requires with these fixed values, and the slots are
   where a consumer reads the body's parameters, never `over`.
 - The emitter SHALL write the wrapper's formula as FR-337 writes a temporal
   formula: each node of `body()` as a `temporal`/`formula` application with
-  its own `quire.op.temporal.*` identity and its operands as references to
+  its own `filament.op.temporal.*` identity and its operands as references to
   their formula nodes, each interval and unbounded operator as FR-337
   writes it. A `holds` atom's operand is the atom's checked condition
   lowered as FR-093 lowers a Boolean expression, with slot `k` of the
@@ -326,17 +326,17 @@ restated here for the emitter and is deterministic and injective:
   clause could in principle also declare; a standalone clause that equalled
   the wrapper in every node would share it.
 - **Consequence.** FR-370 gives a `temporal_clause` node `claim`
-  occurrences only, and QSpec FR-402 "Body wrapper" makes the wrapper's
+  occurrences only, and FSpec FR-402 "Body wrapper" makes the wrapper's
   occurrences and name rows the hyper clause's, so every consumer, inside
-  QSL or not, SHALL exclude it from the single-trace temporal claims. Inside
-  QSL: the I2 reader SHALL skip a
+  FSL or not, SHALL exclude it from the single-trace temporal claims. Inside
+  FSL: the I2 reader SHALL skip a
   `temporal`/`temporal_clause` node that is the `body` target of a
   `hyperproperty` node when it lists FR-337's clause roots; a looked-up
   clause root that names the wrapper SHALL return `clause-root-unresolved`;
-  and every QSL consumer that enumerates or resolves temporal clause roots
+  and every FSL consumer that enumerates or resolves temporal clause roots
   (FR-338's resolution, FR-315's lookups, FR-337's listing) SHALL go through
-  that reader and so skip it. A consumer outside QSL (QSpec's readers, CG's
-  item enumeration) is bound by QSpec FR-402 to skip it too.
+  that reader and so skip it. A consumer outside FSL (FSpec's readers, CG's
+  item enumeration) is bound by FSpec FR-402 to skip it too.
 
 ### Match conjuncts
 
@@ -344,7 +344,7 @@ restated here for the emitter and is deterministic and injective:
   expression. The aggregate member is the term the lowering returns: a
   `reference` to the condition's root `expression` node; a constant conjunct
   such as `true` lowers to a boolean `literal` `value` node and the
-  term is a `reference` to it, as QSpec FR-402 states.
+  term is a `reference` to it, as FSpec FR-402 states.
 - The condition's slot `j` (FR-487 "Slots") is bound to a
   `value`/`parameter` node, at level `j` (the level rule above), named by the
   step-label read it stands for as § "Slot node names" gives (`op_s<t>`,
@@ -369,13 +369,13 @@ order, and a clause stops at its first refusal, in this order:
 
 1. a clause under the timed profile (FR-234), at the clause;
 2. a clause with an alias that binds no object parameter, at the clause:
-   QSpec FR-402 gives such an alias its package's `model_root` as subject,
+   FSpec FR-402 gives such an alias its package's `model_root` as subject,
    and the refusal stays only until the emitter writes the `model_root`
    subject this requirement now states in place of the earlier subject, the
    object type of the alias's first object parameter, which such an alias
    lacks (Remaining work: QSL-1094);
 3. a clause whose quantifier has a non-empty fairness set under a profile
-   that QSpec FR-370's profile fit gives an empty fairness argument (the
+   that FSpec FR-370's profile fit gives an empty fairness argument (the
    three bounded profiles), at the constraint, when S3 admitted it;
 4. a clause with a constraint whose declaring node is a `systems_interface`
    (§ "The node and its aggregate"), at the constraint;
@@ -413,7 +413,7 @@ and checking work (NFR-011), the conditions as FR-487 states.
 
 A hyper clause is named and clocked by its body wrapper, the node a consumer
 resolves as the clause's claim, not by the `hyperproperty` node, so the rows
-of QSpec FR-322-AC-342 to FR-322-AC-370 key on the wrapper.
+of FSpec FR-322-AC-342 to FR-322-AC-370 key on the wrapper.
 
 - The emitter SHALL write one `temporal_clause_names` row
   `{declaration, occurrence, name}` for every hyper clause, whatever its
@@ -436,15 +436,15 @@ of QSpec FR-322-AC-342 to FR-322-AC-370 key on the wrapper.
 ## Acceptance Criteria
 
 The vault, `NonInterference` and `SavesPower` are ADR-023 §1's and §8's, as
-in FR-487. "Admitted" means QSL's I2 admission of the emitted package
-(`qsl-package`), which runs QSpec FR-370's reader.
+in FR-487. "Admitted" means FSL's I2 admission of the emitted package
+(`fsl-package`), which runs FSpec FR-370's reader.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-488-AC-1 | Compiling `NonInterference` emits one `claim`/`hyperproperty` node of Boolean `semantic_type` whose body is an aggregate of exactly the seven bindings `domain`, `subjects`, `parameters`, `quantifiers`, `match`, `align_skip`, `body`, in that order. | Test (TC-1266) |
 | FR-488-AC-2 | In AC-1's node, `domain` is the text `behaviours`; `subjects` is one binding `V` to the `model`/`model_root` node of `V`'s package; `parameters` is one binding `v` to the `model` node of `Vault`; `quantifiers` is a Tuple of exactly two quantifier Groups, `a` then `b`, each binding `variable`, `quantifier` `forall` and `alias` `V` and holding no fairness reference; `align_skip` is empty; `body` references a `temporal`/`temporal_clause` node. | Test (TC-1266) |
 | FR-488-AC-3 | The I2 reader admits AC-1's package and returns the clause's `claim` triple and the body wrapper's NodeId. | Test (TC-1266) |
-| FR-488-AC-4 | The body wrapper of `NonInterference` is a `quire.op.temporal.clause` application with one `temporal_profile` law equal to the package's row and the arguments `over` a reference to the `value`/`parameter` node `slot_sv_sa` at level 0, clock `model-steps`, activation binding `kind` to `origin` alone, empty captures, empty fairness, and `formula` a reference to a `quire.op.temporal.always` node with a `null` interval whose operand is a `holds` node. | Test (TC-1266) |
+| FR-488-AC-4 | The body wrapper of `NonInterference` is a `filament.op.temporal.clause` application with one `temporal_profile` law equal to the package's row and the arguments `over` a reference to the `value`/`parameter` node `slot_sv_sa` at level 0, clock `model-steps`, activation binding `kind` to `origin` alone, empty captures, empty fairness, and `formula` a reference to a `filament.op.temporal.always` node with a `null` interval whose operand is a `holds` node. | Test (TC-1266) |
 | FR-488-AC-5 | The `holds` operand of AC-4 is the equality of the field read `l` of `slot_sv_sa` (level 0) and of `slot_sv_sb` (level 1), with no term for `@`; the slot nodes have `expression` occurrences at `hyper 0 slot 0` and `hyper 0 slot 1` and `type` occurrences of their type node. | Test (TC-1266) |
 | FR-488-AC-6 | `SavesPower` emits `subjects` with two bindings `S` and `N` in order of first naming, each to the `model`/`model_root` node of its alias's package, `parameters` `d` and `e` in declaration order, slot nodes `slot_sd_ss` and `slot_se_sn`, and a `holds` operand reading `used` of `slot_sd_ss` and of `slot_se_sn`. | Test (TC-1266) |
 | FR-488-AC-7 | `NonInterference`'s `match` aggregate holds, in source order, a reference to the equality of the `parameter` nodes `op_sa` and `op_sb` (levels 0 and 1, `String`), then a reference to the equality of `arg_sa_sVault_sstep_si` and `arg_sb_sVault_sstep_si` (`Option<Int[0, 1]>`), with each conjunct root's `expression` occurrence at `hyper 0 match <k>`. | Test (TC-1266) |
@@ -452,41 +452,41 @@ in FR-487. "Admitted" means QSL's I2 admission of the emitted package
 | FR-488-AC-9 | For a clause whose conjuncts `c0` (universal), `c1` (reads an existential variable) and `c2` (universal) are written in that order, `match` holds `c0`, `c1`, `c2`, as `CheckedHyperClause::conjuncts()` returns them, with `c1` at `hyper 0 match exists 0`. | Test (TC-1266) |
 | FR-488-AC-10 | `NonInterference` with `align skip { V::Vault::mix }` binds `align_skip` to one reference, to the `state`/`operation_anchor` node of `mix`, equal to the anchor node a state clause naming `mix` references; two listed operations give two references in written order. | Test (TC-1266) |
 | FR-488-AC-11 | Each of these gives a `hyperproperty` NodeId different from `NonInterference`'s: the two quantifiers' aliases changed; one quantifier `exists`; the quantifier order reversed; `fair weak V::Vault::step` on `a`; the same constraint on `b` (its reference in `b`'s Group, not `a`'s); an added `match` conjunct; an `align skip` list; a changed body atom. | Test (TC-1266) |
-| FR-488-AC-12 | Reformatting and a changed clause name give `NonInterference` the same NodeId; two structurally equal clause declarations share one node and have two `claim` occurrences with ordinals 0 and 1. A renamed trace variable gives a different NodeId (QSpec FR-402-AC-3). | Test (TC-1266) |
+| FR-488-AC-12 | Reformatting and a changed clause name give `NonInterference` the same NodeId; two structurally equal clause declarations share one node and have two `claim` occurrences with ordinals 0 and 1. A renamed trace variable gives a different NodeId (FSpec FR-402-AC-3). | Test (TC-1266) |
 | FR-488-AC-13 | With `fair weak V::Vault::step` on `a`, the `quantifiers` Tuple holds `a`'s Group and then `b`'s; `a`'s Group binds `variable` `a`, `quantifier` `forall` and `alias` `V` and then holds one `reference` to a `temporal`/`fairness` node whose `fairness` member is `fairness_kind` `weak`, `granularity` `whole` (an unmarked granularity is `whole`, ADR-018 FA-6, FR-123) and an `operation` target naming `Vault`'s `model` node and `step`; `b`'s Group holds no reference. `fair weak whole V::Vault::step` emits identical bytes and `fair weak each V::Vault::step` a different fairness node and a different NodeId. The package is admitted. A constraint whose declaring node is a `systems_interface` is refused `unsupported_construct`/`not-yet-implemented` at the constraint. | Test (TC-1266) |
 | FR-488-AC-23 | Every slot node name of AC-5 to AC-8 matches `[A-Za-z_][A-Za-z0-9_]*`, and the encoding is injective: `slot_s` names for object parameters `a_b` with trace variable `c` and `a` with trace variable `b_c` differ (`slot_sa__b_sc` and `slot_sa_sb__c`), a non-ASCII or punctuation byte is `_x` plus two uppercase hex digits, and names built from every pair of distinct (tag, fields) over a set including `_`, `s`, `x` and digit-leading names are pairwise distinct. The I2 admission raises no structural refusal (`invalid_package`/`InvalidSemanticGraph`) at any parameter node. | Test (TC-1266) |
-| FR-488-AC-22 | Every emitted `hyperproperty` body of AC-1 to AC-13 passes strict wire validation of the flat grammar (QSpec FR-322 "Body grammar"): no term is refused `malformed_wire`, and the `quantifiers` binding is a Tuple of Groups whose members are bindings of text literals followed by references to `temporal`/`fairness` nodes, and the QSpec reader's temporal-step placement admits those references (QSpec FR-370-AC-21). | Test (TC-1266) |
+| FR-488-AC-22 | Every emitted `hyperproperty` body of AC-1 to AC-13 passes strict wire validation of the flat grammar (FSpec FR-322 "Body grammar"): no term is refused `malformed_wire`, and the `quantifiers` binding is a Tuple of Groups whose members are bindings of text literals followed by references to `temporal`/`fairness` nodes, and the FSpec reader's temporal-step placement admits those references (FSpec FR-370-AC-21). | Test (TC-1266) |
 | FR-488-AC-14 | After assembly, `CheckedHyperClause::occurrence()` of `NonInterference` equals the triple the I2 reader returns and FR-315-AC-12's `HyperProductIdentity::clause()`. A looked-up triple with an unknown NodeId, a non-`hyperproperty` NodeId, role `invariant` or another ordinal returns `hyper-root-unresolved` at the triple. | Test (TC-1266) |
 | FR-488-AC-15 | The body wrapper is not among the I2 reader's temporal clause roots, looking it up as a clause root returns `clause-root-unresolved`, and FR-338's resolution of the wrapper's triple does the same. | Test (TC-1266) |
 | FR-488-AC-16 | `Linked` with `B` = `(let r = v.next in present(r) and deref(value(r)).l = 1) @ a` emits. | Test (TC-1266) |
 | FR-488-AC-17 | `Linked` with `B` = `(let r = (v.next @ a) in present(r) and deref(value(r)).l = 1) @ b` is refused `unsupported_construct`/`not-yet-implemented` at the read of `l`, and so is an atom whose read has no slot root (the object operand a call result) and one rooted in slots of two components. No package is produced. | Test (TC-1266) |
 | FR-488-AC-18 | A clause under the timed profile is refused `unsupported_construct`/`not-yet-implemented` at the clause. A timed clause with an alias that binds no object parameter is refused at the clause, as the timed profile is checked first; the alias case alone is refused at the clause too. A clause with two refusals reports the first in the order of "Clauses S4 does not emit". | Test (TC-1266) |
-| FR-488-AC-19 | An event-position false-extension clause with body `always[0,3] holds(...)` emits a wrapper whose law is that profile's row and an `always` node with the interval `{lower: "0", upper: "3"}`; an infinite-trace `v.l @ a = 0 until v.l @ b = 1` clause emits `quire.op.temporal.until` with a `null` interval and `eventually[2,*]` emits `{lower: "2", upper: null}`. All are admitted. | Test (TC-1266) |
+| FR-488-AC-19 | An event-position false-extension clause with body `always[0,3] holds(...)` emits a wrapper whose law is that profile's row and an `always` node with the interval `{lower: "0", upper: "3"}`; an infinite-trace `v.l @ a = 0 until v.l @ b = 1` clause emits `filament.op.temporal.until` with a `null` interval and `eventually[2,*]` emits `{lower: "2", upper: null}`. All are admitted. | Test (TC-1266) |
 | FR-488-AC-20 | A bounded-profile clause with `fair weak V::Vault::step` on `a`, which S3 admits, is refused `unsupported_construct`/`not-yet-implemented` at the constraint. | Test (TC-1266) |
 | FR-488-AC-21 | The nodes this requirement mints count toward the package node ceiling: with a ceiling one node below `NonInterference`'s emission, compiling is refused with the ceiling's existing refusal, and at the ceiling it compiles. | Test (TC-1266) |
 | FR-488-AC-24 | `NonInterference` emits one `temporal_clause_names` row keyed by its body wrapper's NodeId, at the ordinal of its assembled `claim` occurrence, with the name `NonInterference`; the `hyperproperty` node has no row; two structurally equal hyper clauses with different names share one wrapper and carry two rows at distinct ordinals; renaming one changes no NodeId; and the rows sort with the unit's temporal-clause rows by (NodeId, occurrence). | Test (TC-1327) |
 | FR-488-AC-25 | Under event-position false-extension with a declared clock, the clause emits one `temporal_bindings` row at the wrapper's NodeId and the same occurrence, whose `clock_name` is the wrapper's clock text and whose `clock` is the declared configuration; an absent, unused or profile-mismatched clock selection refuses the compile with no package; under infinite-trace the clause has a name row and no binding. | Test (TC-1327) |
 
-## Open QSpec questions
+## Open FSpec questions
 
-QSpec FR-402 answers Q-1, Q-2, Q-4, Q-5, Q-6, Q-7 and Q-8 (QSL-1093), and this
+FSpec FR-402 answers Q-1, Q-2, Q-4, Q-5, Q-6, Q-7 and Q-8 (QSL-1093), and this
 requirement follows it: each quantifier is one Group whose fairness is a list
-of references to `temporal`/`fairness` nodes, which QSpec FR-370 now places
-and QSpec FR-402's reader resolves (Q-1, Q-7); a subject is its package's
+of references to `temporal`/`fairness` nodes, which FSpec FR-370 now places
+and FSpec FR-402's reader resolves (Q-1, Q-7); a subject is its package's
 `model_root` (Q-2); a constant conjunct is a reference to its literal node
-(Q-4); the body wrapper is QSpec's, excluded by every consumer from the
-single-trace claims (Q-5); the slot names are QSpec's encoding (Q-8); and renaming a trace variable is
+(Q-4); the body wrapper is FSpec's, excluded by every consumer from the
+single-trace claims (Q-5); the slot names are FSpec's encoding (Q-8); and renaming a trace variable is
 not spelling, so it changes the identity (Q-6). One question remains open:
 
 - **Q-3.** A field read in a package carries no observation or component
   member, so a hyper atom's per-trace read has no carrier but the slot
-  parameter node it is rooted in. QSL names the slot `slot_s<p>_s<t>` (escaped), refuses a
-  read it cannot root, and asks QSpec to state a slot or component
-  encoding (a `hyper_slot` member or a component on the read). QSpec also
+  parameter node it is rooted in. FSL names the slot `slot_s<p>_s<t>` (escaped), refuses a
+  read it cannot root, and asks FSpec to state a slot or component
+  encoding (a `hyper_slot` member or a component on the read). FSpec also
   states no binder scope for an atom slot beyond slot 0 or for a `match`
-  conjunct's slots, so QSL's one level rule (the slot's index in its term's
+  conjunct's slots, so FSL's one level rule (the slot's index in its term's
   slot list) leaves them free parameters, and the same read can have a node
-  at two levels; QSpec should state the scope.
+  at two levels; FSpec should state the scope.
 
 ## Dependencies
 
@@ -501,10 +501,10 @@ not spelling, so it changes the identity (Q-6). One question remains open:
 - [FR-315](FR-315-encode-the-smt-lib-transition-relation.md) ("Product
   identity", the consumer of the occurrence) and
   [FR-338](FR-338-check-an-en-1-closure-certificate.md).
-- QSpec FR-402, FR-370, FR-322.
+- FSpec FR-402, FR-370, FR-322.
 
 ## References
 
-- QSpec FR-402 (hyperproperty claim body and obligation identity), FR-370
+- FSpec FR-402 (hyperproperty claim body and obligation identity), FR-370
   (temporal clause body): Linear STD-136 and STD-99.
 - Owning ticket: Linear QSL-1071.

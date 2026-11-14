@@ -3,7 +3,7 @@ id: TC-657
 title: "Scheduler fairness is derived per thread and turned off by scheduling adversarial"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-212
+  - target: ix://agent-ix/filament-spec-language/FR-212
     type: verifies
 ---
 # TC-657: Scheduler fairness is derived per thread and turned off by scheduling adversarial

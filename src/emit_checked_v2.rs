@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! A runnable `quire.checked-package/v2` producer for downstream readers.
+//! A runnable `filament.checked-package/v2` producer for downstream readers.
 //!
-//! [`emit`] reads a complete-V1 (`1-draft`) QSL source file, the domain
+//! [`emit`] reads a complete-V1 (`1-draft`) FSL source file, the domain
 //! package documents its `model` declarations select and the library sources
 //! its `import`s name, and returns the bytes
 //! the spine's parse, select, check and package operations emit for them. It
@@ -10,7 +10,7 @@
 //! caller of [`run`].
 //!
 //! Every failure (usage, unreadable file, write failure, refusal) exits with
-//! the refusal category's code, 20, as the `quire` driver does, unless the
+//! the refusal category's code, 20, as the `fsl` driver does, unless the
 //! producer's catalog code belongs to another category (for example 22 for
 //! an incomplete result); the stderr diagnostic tells them apart. No bytes
 //! are written on failure.
@@ -25,19 +25,19 @@ use std::ffi::OsString;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use qsl_foundation::source::MAX_SOURCE_BYTES;
-use qsl_foundation::{Code, SourceIdentity};
-use qsl_replay::{
+use filament_contract_model::{ClockConfiguration, ExecutionPoint};
+use filament_exact::Cancel;
+use filament_semantic_value::catalog::Category;
+use fsl_foundation::source::MAX_SOURCE_BYTES;
+use fsl_foundation::{Code, SourceIdentity};
+use fsl_replay::{
     spine::{
         self, CheckedUnit, DependencyInput, DependencyInputRefusal, EmittedUnit, ParseRequest,
         SpineLimits, StateClauseExecutionPoints, SuppliedLibrary,
     },
     ReplayRefusal,
 };
-use qsl_semantics::library::LibraryName;
-use quire_contract_model::{ClockConfiguration, ExecutionPoint};
-use quire_exact::Cancel;
-use quire_semantic_value::catalog::Category;
+use fsl_semantics::library::LibraryName;
 
 /// The usage line, shown on a malformed command line.
 pub const USAGE: &str = "usage: emit_checked_v2 [--model <domain-package-file>]... \
@@ -243,7 +243,7 @@ fn without_limit_hint(refusal: &ReplayRefusal) -> String {
     }
 }
 
-/// Read at most the source ceiling plus one byte, as the `quire` driver does, so an
+/// Read at most the source ceiling plus one byte, as the `fsl` driver does, so an
 /// oversized file reaches the producer's own size refusal without an
 /// unbounded read.
 ///
@@ -376,15 +376,15 @@ pub(crate) struct Compiled {
     /// The checked unit the package was emitted from.
     #[cfg(feature = "checked-handoff")]
     pub(crate) checked: CheckedUnit,
-    /// `qsl_replay::source_inventory::qsl_inventory` over the check outcome
+    /// `fsl_replay::source_inventory::fsl_inventory` over the check outcome
     /// with the formal identity of the source path (FR-517).
     #[cfg(feature = "checked-handoff")]
     pub(crate) inventory:
-        Result<quire_contract_model::source_obligation::SourceInventoryOutcome, String>,
+        Result<filament_contract_model::source_obligation::SourceInventoryOutcome, String>,
     /// The ceiling on each package emission the handoff writer makes
     /// (`emit.output_bytes`).
     #[cfg(feature = "checked-handoff")]
-    pub(crate) emit: qsl_package::EmitLimits,
+    pub(crate) emit: fsl_package::EmitLimits,
     /// The emitted package and the evidence its reader needs.
     pub(crate) emitted: EmittedUnit,
 }
@@ -394,7 +394,7 @@ pub(crate) struct Compiled {
 /// alphabet replaced by `_`, prefixed with `u` unless it starts with an ASCII
 /// letter; revision 1.
 #[cfg(feature = "checked-handoff")]
-fn formal_identity(path: &Path) -> Result<quire_contract_model::SourceIdentity, String> {
+fn formal_identity(path: &Path) -> Result<filament_contract_model::SourceIdentity, String> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -412,11 +412,11 @@ fn formal_identity(path: &Path) -> Result<quire_contract_model::SourceIdentity, 
     if !document.starts_with(|c: char| c.is_ascii_alphabetic()) {
         document.insert(0, 'u');
     }
-    let document = quire_contract_model::SourceDocumentId::new(document)
+    let document = filament_contract_model::SourceDocumentId::new(document)
         .map_err(|refused| format!("{refused:?}"))?;
-    let revision =
-        quire_contract_model::SourceRevision::new(1).map_err(|refused| format!("{refused:?}"))?;
-    Ok(quire_contract_model::SourceIdentity::new(
+    let revision = filament_contract_model::SourceRevision::new(1)
+        .map_err(|refused| format!("{refused:?}"))?;
+    Ok(filament_contract_model::SourceIdentity::new(
         document, revision,
     ))
 }
@@ -432,7 +432,7 @@ fn refusal(failure: spine::FrontEndFailure) -> Error {
 /// Read `request`'s inputs and run the spine over them: parse, select, check
 /// and emit, with each temporal clock selection joined to its clause.
 ///
-/// This is the spine pipeline `qsl_replay::compile_package` runs
+/// This is the spine pipeline `fsl_replay::compile_package` runs
 /// (`tests/it/emit_checked_v2.rs` compares the two byte for byte), split at the
 /// checked unit so the writer can keep it. The unit-owner check
 /// (`DependencyInput::check_unit_owner`) runs inside the check stage. A
@@ -468,7 +468,7 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
     let path = request.source.display().to_string();
     let package = LibraryName::new(request.package_name.clone())
         .map_err(|invalid| Error::Producer(Box::new(ReplayRefusal::InvalidPackageName(invalid))))?;
-    let packages = qsl_semantics::model::intake::package_input(models.iter().map(Vec::as_slice))
+    let packages = fsl_semantics::model::intake::package_input(models.iter().map(Vec::as_slice))
         .map_err(|refused| {
             Error::Producer(Box::new(ReplayRefusal::DomainPackages(Box::new(refused))))
         })?;
@@ -501,7 +501,7 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
         );
     #[cfg(feature = "checked-handoff")]
     let inventory = formal_identity(&request.source).and_then(|formal| {
-        qsl_replay::source_inventory::qsl_inventory(Some(&parsed), &outcome, &formal)
+        fsl_replay::source_inventory::fsl_inventory(Some(&parsed), &outcome, &formal)
             .map_err(|refused| refused.to_string())
     });
     let checked = outcome.map_err(refusal)?.into_value();
@@ -534,15 +534,15 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
 fn clause_clock_selections(
     parsed: &spine::ParsedUnitSource,
     selections: &[ClockSelection],
-) -> Vec<qsl_package::TemporalClockSelection> {
+) -> Vec<fsl_package::TemporalClockSelection> {
     selections
         .iter()
         .filter_map(|selection| {
             let form = parsed.unit().forms().iter().find(|form| {
-                matches!(form.form(), qsl_forms::DeclarationForm::Temporal(_))
+                matches!(form.form(), fsl_forms::DeclarationForm::Temporal(_))
                     && form.declared_name() == Some(selection.clause.as_str())
             })?;
-            Some(qsl_package::TemporalClockSelection::new(
+            Some(fsl_package::TemporalClockSelection::new(
                 parsed.source().reference().clone(),
                 form.span(),
                 selection.clock.clone(),
@@ -556,7 +556,7 @@ fn clause_clock_selections(
 pub(crate) fn clock_selections(
     checked: &CheckedUnit,
     selections: &[ClockSelection],
-) -> Result<Vec<qsl_package::TemporalClockSelection>, Error> {
+) -> Result<Vec<fsl_package::TemporalClockSelection>, Error> {
     let clauses = checked.package().graph().temporal_clauses();
     let mut joined = Vec::with_capacity(selections.len());
     for (position, selection) in selections.iter().enumerate() {
@@ -587,7 +587,7 @@ pub(crate) fn clock_selections(
                     clause: selection.clause.clone(),
                 })?,
         };
-        joined.push(qsl_package::TemporalClockSelection::new(
+        joined.push(fsl_package::TemporalClockSelection::new(
             checked.source().reference().clone(),
             span,
             selection.clock.clone(),
@@ -596,7 +596,7 @@ pub(crate) fn clock_selections(
     Ok(joined)
 }
 
-/// Emit the `quire.checked-package/v2` bytes of `request`'s source through
+/// Emit the `filament.checked-package/v2` bytes of `request`'s source through
 /// the spine's parse, select, check and package operations.
 pub fn emit(request: &Request) -> Result<Vec<u8>, Error> {
     Ok(compile(request)?.emitted.package().bytes().to_vec())

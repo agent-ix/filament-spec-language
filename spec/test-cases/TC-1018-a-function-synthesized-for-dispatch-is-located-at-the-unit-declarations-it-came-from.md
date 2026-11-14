@@ -3,7 +3,7 @@ id: TC-1018
 title: "A function synthesized for dispatch is located at the unit declarations it came from"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-1018: A function synthesized for dispatch is located at the unit declarations it came from

@@ -3,9 +3,9 @@ id: TC-446
 title: "Spine compile resolves imports against supplied libraries"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: verifies
 ---
 # TC-446: Spine compile resolves imports against supplied libraries
@@ -25,14 +25,14 @@ Scope: FR-099-AC-1 to FR-099-AC-7, FR-099-AC-9, FR-027-AC-10, FR-027-AC-12.
 Library `test/geometry` is a complete-V1 unit, admitted as
 authority `a`, identity `geometry`, revision (`git`, `1`), declaring
 `function f using v(x: Int[0, 9]): Boolean pure { x < 5 }`. Let `d` be the
-package reference (QSpec FR-322 `package_id` wire member) its spine compile emits for the library. The importing unit, admitted as `a`,
+package reference (FSpec FR-322 `package_id` wire member) its spine compile emits for the library. The importing unit, admitted as `a`,
 `u`, (`git`, `1`), declares
 `import "test/geometry" as g;`.
 
 1. Compile the importing unit, holding one function that references
    nothing of `g`, with `test/geometry` supplied; then with `test/geometry`
    and an unimported `test/other` supplied. Read the first package back
-   through QSL's I2 read.
+   through FSL's I2 read.
 2. Compile `import "test/geometry" as g;` and `import "test/geometry";`.
    Then follow the identity string with `version "1"`. Then supply `test/geometry` from a source whose `f` is
    `x < 6`.
@@ -99,7 +99,7 @@ Tag the tests `#[trace("FR-099-AC-n", "TC-446")]` with the AC each backs.
   `test/a`'s source. No package.
 - Step 4: the three non-empty identities are admitted and the empty one
   refused; both import orders give the closure `test/a`, `test/b`.
-- Step 5: `p` checks; its body is a `quire.op.function.call` application
+- Step 5: `p` checks; its body is a `filament.op.function.call` application
   whose callee is `dependency_reference` `{package: d, node: f's node id}`,
   whose `result_type` is the Boolean type node, and whose node
   `dependencies` do not list `f`. `g::f(true)` refuses `ill_typed` at the

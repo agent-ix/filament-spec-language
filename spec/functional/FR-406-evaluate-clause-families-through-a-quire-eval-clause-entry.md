@@ -1,81 +1,81 @@
 ---
 id: FR-406
-title: "Evaluate the clause families through a quire-eval clause entry and a clause environment contract"
+title: "Evaluate the clause families through a filament-eval clause entry and a clause environment contract"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-403
+  - target: ix://agent-ix/filament-spec-language/FR-403
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-401
+  - target: ix://agent-ix/filament-spec-language/FR-401
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-400
+  - target: ix://agent-ix/filament-spec-language/FR-400
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-265
+  - target: ix://agent-ix/filament-spec-language/FR-265
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-268
+  - target: ix://agent-ix/filament-spec-language/FR-268
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-138
+  - target: ix://agent-ix/filament-spec-language/FR-138
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-139
+  - target: ix://agent-ix/filament-spec-language/FR-139
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-366
+  - target: ix://agent-ix/filament-spec-language/FR-366
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-402
+  - target: ix://agent-ix/filament-spec-language/FR-402
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-405
+  - target: ix://agent-ix/filament-spec-language/FR-405
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/NFR-015
+  - target: ix://agent-ix/filament-spec-language/NFR-015
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/AD-001
+  - target: ix://agent-ix/filament-spec-language/AD-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: traces_to
 ---
-# FR-406: Evaluate the clause families through a quire-eval clause entry and a clause environment contract
+# FR-406: Evaluate the clause families through a filament-eval clause entry and a clause environment contract
 
 ## Description
 
-[FR-403](FR-403-implement-the-no-std-evaluator-in-quire-eval.md) gives
-`quire-eval` one entry, the `Value`-family Begin over a callable application
+[FR-403](FR-403-implement-the-no-std-evaluator-in-filament-eval.md) gives
+`filament-eval` one entry, the `Value`-family Begin over a callable application
 or a checked expression. That Begin returns the `outside-value-family` fault
 for `NodeKind::Pre`, `NamedPopulation`, `PopulationObjects` and `History`.
-Every other evaluation `qsl-eval` performs runs a checked body over admitted
+Every other evaluation `fsl-eval` performs runs a checked body over admitted
 observations: an FR-107 state clause with its FR-265 trail, the ADR-031
 separation check (FR-268), an FR-366 value invariant, an FR-138 history
 update, an FR-139 refinement row, an FR-124 terminal predicate, an FR-167
 state predicate, an ADR-027 protocol slot, an FR-327 temporal `holds`
-atom, an FR-187 reward and an FR-358 closed subexpression. [FR-405](FR-405-retire-the-std-reference-evaluator-for-quire-eval.md)
+atom, an FR-187 reward and an FR-358 closed subexpression. [FR-405](FR-405-retire-the-std-reference-evaluator-for-filament-eval.md)
 retires the std reference evaluator only when all of these run on
-`quire-eval`.
+`filament-eval`.
 
-This requirement defines the second entry of the one `quire-eval`
+This requirement defines the second entry of the one `filament-eval`
 evaluator, the clause entry, and the clause environment contract it reads.
 The clause entry evaluates one checked body over a frame of slots. It
 evaluates every node kind, the four above included. It reads two
 observations, the body's own and an optional pre observation, and reports
-the FR-265 trail as events to a recorder the caller supplies. `quire-eval`
-names no QSL type. The trail, the witness record and the separation check's
-steps stay in `qsl-eval`, which assembles them from the events and the
+the FR-265 trail as events to a recorder the caller supplies. `filament-eval`
+names no FSL type. The trail, the witness record and the separation check's
+steps stay in `fsl-eval`, which assembles them from the events and the
 results. The `Value`-family entry, its environment contract and its fault
-are unchanged, so RT and CG build and call `quire-eval` as before.
+are unchanged, so RT and CG build and call `filament-eval` as before.
 
 ## Inputs
 
 - A registry created from one checked closure (FR-403), and one
-  `quire_exact::Meter` with its optional `Cancel` handle (FR-262).
+  `filament_exact::Meter` with its optional `Cancel` handle (FR-262).
 - A clause input, in one of two forms:
   - **Body form.** A checked node of the closure's own graph, the
     body's slot count, and a frame: one entry per slot, a value or unbound.
-  - **Expression form.** A `quire_checked::CheckedExpression` with
+  - **Expression form.** A `filament_checked::CheckedExpression` with
     completed parameter values.
 - A regime, `Value` or `Clause`.
 - The read map: the checked term's per-read observation, a map from a
@@ -84,7 +84,7 @@ are unchanged, so RT and CG build and call `quire-eval` as before.
   observation.
 - The receiver correspondence, optional: the reference `self` has in the
   body's own observation and, optionally, its reference in the pre
-  observation. `qsl-eval` passes it only on the paths that record a trail:
+  observation. `fsl-eval` passes it only on the paths that record a trail:
   the state clause (`evaluate_clause` and each clause of a clause set) and
   the separation check. Every other path passes none.
 - An environment: a value of a type that implements the clause environment
@@ -94,7 +94,7 @@ are unchanged, so RT and CG build and call `quire-eval` as before.
 
 ## Outputs
 
-- A terminal `quire_eval::Evaluation` or `quire_eval::CallFailure` from
+- A terminal `filament_eval::Evaluation` or `filament_eval::CallFailure` from
   an FR-262 session, with the meter's spend.
 - The trail events, reported to the recorder in evaluation order.
 - The reads reported to the environment through the contract.
@@ -103,26 +103,26 @@ are unchanged, so RT and CG build and call `quire-eval` as before.
 
 ### One evaluator, two entries
 
-1. The clause entry SHALL be part of the crate `quire-eval`. It SHALL share
+1. The clause entry SHALL be part of the crate `filament-eval`. It SHALL share
    the `Value`-family entry's node dispatch, FR-262 scheduler, task stack,
    meter and charge points. Begin over a clause input SHALL return an
    FR-262 session that steps like a `Value`-family session, with the same
    child requests, cancellation and resumption.
-2. `quire-eval` SHALL have no feature that adds or removes the clause
+2. `filament-eval` SHALL have no feature that adds or removes the clause
    entry. Its `[dependencies]` SHALL stay FR-403's set, and it SHALL build
    for `thumbv7em-none-eabi` with the clause entry in place (FR-401-AC-1).
-3. `quire-eval` SHALL name no QSL item. The clause input, the read map, the
+3. `filament-eval` SHALL name no FSL item. The clause input, the read map, the
    receiver correspondence and every event payload are C, SV and K values.
    The clause environment contract and the trail event contract are traits
-   `quire-eval` defines. Their implementations over QSL types are in
-   `qsl-eval`.
+   `filament-eval` defines. Their implementations over FSL types are in
+   `fsl-eval`.
 4. The `Value`-family Begin SHALL keep FR-403's inputs, argument admission,
    environment contract (items 1 to 9) and results. Over a checked
    expression that contains `Pre`, `NamedPopulation`, `PopulationObjects` or
    `History`, it SHALL return the `outside-value-family` fault with no charge
    and no body invocation. The clause environment contract extends FR-403's
    contract: a type that implements only FR-403's contract, such as
-   `quire-eval`'s closure-only environment or RT's, needs no new item and
+   `filament-eval`'s closure-only environment or RT's, needs no new item and
    compiles unchanged.
 
 ### The clause input
@@ -132,7 +132,7 @@ are unchanged, so RT and CG build and call `quire-eval` as before.
    invariant, reward, protocol-slot or `holds`-atom body, or a subnode of
    one. A node of any other graph, including an imported library's graph
    that the closure's scope view holds, SHALL make Begin return
-   `CallFailure::Fault` with stage `quire-eval` and invariant
+   `CallFailure::Fault` with stage `filament-eval` and invariant
    `clause-root-outside-closure`, with no charge. The frame is extended
    with unbound slots to the slot count. The clause entry does not admit
    frame values: they come from admitted observations (FR-106) or from an
@@ -169,7 +169,7 @@ node kind not listed evaluates as on the `Value`-family entry.
 | A field read, `Value` regime | FR-403 items 1 to 3 and 9 on the `own` side | as on the `Value`-family entry | as on the `Value`-family entry |
 | `allInstances` or `lookup` over a `Population`-typed operand, `Value` regime | FR-403 items 6 to 8 at the population anchor: at `post`, as FR-403 states; at `pre`, contract item C5 | as FR-403 items 7 and 8 | At `pre`, a binding with no pre anchor returns `FamilyResult::Refused(ProtocolClauseSnapshot::WrongAnchor)`. |
 | `allInstances` or `lookup` over a `Population`-typed operand, `Clause` regime | none | none | `FamilyResult::Refused(ProtocolClauseUnsupported)` (`AllInstances` or `Lookup`), code `unknown_required_feature`/`unsupported-feature`, located at the node. |
-| `allInstances<T>(P)` or a domain over a `NamedPopulation` `P` (FR-391) | C3 on the node's read-map side | In this order: the coverage check, which charges nothing; the `complete` check; one `population.visit` per listed member; one `collection.bound` sized by the selected count; then the charges `quire_exact::form` admits to form the result collection (its coalescing comparisons, its own `collection.bound` and `collection.result-retain`) | A declared member type set that does not cover `T` stops with FR-084's incomplete-closure result, before any charge. A population not listed `complete` returns `FamilyResult::Refused(NamedPopulationIncomplete)`, code `incomplete_population`/`incomplete-scope`, field `population`, before any charge. The result holds the conforming members in C3's order. |
+| `allInstances<T>(P)` or a domain over a `NamedPopulation` `P` (FR-391) | C3 on the node's read-map side | In this order: the coverage check, which charges nothing; the `complete` check; one `population.visit` per listed member; one `collection.bound` sized by the selected count; then the charges `filament_exact::form` admits to form the result collection (its coalescing comparisons, its own `collection.bound` and `collection.result-retain`) | A declared member type set that does not cover `T` stops with FR-084's incomplete-closure result, before any charge. A population not listed `complete` returns `FamilyResult::Refused(NamedPopulationIncomplete)`, code `incomplete_population`/`incomplete-scope`, field `population`, before any charge. The result holds the conforming members in C3's order. |
 | `lookup<T>(P, r)` over a `NamedPopulation` `P` (FR-391) | C3 on the node's read-map side | In this order: the coverage check and the conformance check of `r` to `T`, which charge nothing; `lookup.key` sized 1; the `complete` check; then `lookup.result-retain` sized 2 for a present key under `empty`, sized 1 for a present key under `undefined` or `refused` and for an absent key under `empty`, and none for an absent key under `undefined` or `refused` | An uncovered `T` stops with FR-084's incomplete-closure result, and a non-conforming `r` returns the boxed type-mismatch refusal C6 builds, both before `lookup.key`. A population not listed `complete` returns `NamedPopulationIncomplete` after `lookup.key`. An absent key returns the boxed absent-key refusal C6 builds under `refused`, and the `StateModel` undefined result `AbsentKey` (FR-403) under `undefined`. |
 | `PopulationObjects` (FR-139) | C3 on the node's read-map side | the charges of forming the result collection | The population's members, in C3's order. An unlisted population is an internal fault, `population-members-unobserved`. |
 | `History` (FR-138) | C4 on the node's read-map side | none | The history value. A field with no value returns `FamilyResult::Refused(HistoryUnresolved)`, code `missing_declaration`/`missing-name`, field `history`. |
@@ -201,7 +201,7 @@ no depth setting and no native recursion that grows with the input
 
 ### The clause environment contract
 
-`quire-eval` SHALL define the clause environment contract as an extension
+`filament-eval` SHALL define the clause environment contract as an extension
 of FR-403's environment contract. FR-403's items 1 to 9 are answered for the
 `own` side. The extension adds these reads:
 
@@ -229,7 +229,7 @@ Observation admission (FR-106), frame check 11 (FR-115), model
 normalization and population admission happen before Begin, outside the
 contract.
 
-`qsl-eval` SHALL implement the clause environment contract over two
+`fsl-eval` SHALL implement the clause environment contract over two
 `ObjectEnvironment`s, the body's own and the optional pre. C3 and C4 answer
 from `population_complete`, `population_members` and `history`. C5 calls
 `value::model_query` over the binding's pre anchor with the session meter.
@@ -240,7 +240,7 @@ membership read, when one is attached.
 
 ### The trail event contract
 
-`quire-eval` SHALL define the trail event contract. When Begin is given a
+`filament-eval` SHALL define the trail event contract. When Begin is given a
 recorder, the clause entry SHALL report each event below to it at the point
 of evaluation stated, in evaluation order. Each event returns either
 success or an `InternalFault`. A fault SHALL end the session with
@@ -271,7 +271,7 @@ A value in a payload is the evaluator's own value, so a recorder can tell
 two reads of one stored collection apart by identity (`Arc` pointer
 equality), as the reference's trail does.
 
-`qsl-eval` SHALL implement the trail event contract as its FR-265 trail
+`fsl-eval` SHALL implement the trail event contract as its FR-265 trail
 recorder. From the events, the clause's observation identities, the
 receiver and the slot bindings' subjects, it builds the `Trail`, and from
 it the FR-107 `ClauseEvaluation`: `reads()`, `decision()`, `stop()` with
@@ -280,13 +280,13 @@ each `StopReport`'s occurrence key, index and runtime value path, and
 `ClauseEvaluation` and is unchanged. The `StopReport`, `ClauseRead`,
 `Provenance`, `RuntimeValuePath`, `ValuePathSubject`, `ValuePathStep`,
 `InvocationBinding`, `ObservationIdentity` and `OccurrenceKey` stay in
-`qsl-eval` and `qsl-foundation`. A recorder failure is the reference's
+`fsl-eval` and `fsl-foundation`. A recorder failure is the reference's
 fault at the same event: `quantifier-has-an-occurrence` or
 `domain-has-an-occurrence` at a `stopped` event.
 
 ### The separation check (ADR-031 SW-13)
 
-`qsl-eval` SHALL run FR-268's separation check as clause-entry Begins in
+`fsl-eval` SHALL run FR-268's separation check as clause-entry Begins in
 the `Clause` regime over one meter, with the clause's bindings in the
 frame's first slots and the receiver correspondence. One recorder SHALL
 carry across every Begin of one check, so a collection bound by a `let`
@@ -294,15 +294,15 @@ keeps the provenance its events recorded when a later Begin reads it. The
 check's steps are FR-268's, numbered as FR-268 numbers them. Step 1, which
 resolves the record's deciding quantifier in the recompiled package and
 requires it to be a `forall` or `exists` of the clause's claim, is a
-structural lookup in `qsl-eval` and makes no Begin. Steps 2 to 4 are:
+structural lookup in `fsl-eval` and makes no Begin. Steps 2 to 4 are:
 
 
 2. **Domain step (step 2).** One Begin for each `let` on the decision path,
-   outermost first, whose value `qsl-eval` binds into the frame for the
+   outermost first, whose value `fsl-eval` binds into the frame for the
    next Begin, then one Begin over the quantifier's domain, from whose
    events the recorder gives the domain's provenance. A `let` Begin that
    completes no value ends the check as stopped at step 2;
-3. **Element step (step 3).** No Begin: `qsl-eval` selects the element whose
+3. **Element step (step 3).** No Begin: `fsl-eval` selects the element whose
    provenance position is the record's `index` and compares its value path
    and value with the record, evaluating nothing;
 4. **Body step (step 4).** One Begin over the quantifier's body with the binder
@@ -315,23 +315,23 @@ charges SHALL equal the reference's.
 ### Causes
 
 The clause causes that the node dispatch raises SHALL be defined in
-`quire-eval` and raised there by both evaluators, so each catalog code,
+`filament-eval` and raised there by both evaluators, so each catalog code,
 field set and rendering has one definition: `HistoryUnresolved`,
 `NamedPopulationIncomplete`, `ProtocolClauseSnapshot` (over SV's
-`WrongSnapshotCause`) and `ProtocolClauseUnsupported`. No `qsl_eval::` path
+`WrongSnapshotCause`) and `ProtocolClauseUnsupported`. No `fsl_eval::` path
 to them remains, and none is re-exported (ADR-011 §7.2).
 
-These causes stay in `qsl-eval`:
+These causes stay in `fsl-eval`:
 
-- `ModelQueryRefusal`, which wraps `qsl-semantics`' `ModelRefusal` and
+- `ModelQueryRefusal`, which wraps `fsl-semantics`' `ModelRefusal` and
   reaches the leaf boxed through contract items C5 and C6 and FR-403's items
   7 and 8;
 - `ProtocolClauseFrameRefusal`, which carries `model::observation`'s
   `AdmissionRecord` and is raised by frame check 11 before any Begin.
 
-### What stays in `qsl-eval`
+### What stays in `fsl-eval`
 
-`qsl-eval` SHALL keep, as callers of the clause entry:
+`fsl-eval` SHALL keep, as callers of the clause entry:
 
 - the FR-107 clause selection and its input refusals (`UnknownClause`,
   `ObservationsMismatch`, `DuplicateClause`) before Begin, the frame built
@@ -353,8 +353,8 @@ These causes stay in `qsl-eval`:
   structural walk that evaluates nothing.
 
 Until FR-405's switch, the production paths run the reference, and the
-clause entry runs through FR-403's separate `quire-eval` entry, which
-`qsl-eval` extends with one clause route per path above. FR-405's switch
+clause entry runs through FR-403's separate `filament-eval` entry, which
+`fsl-eval` extends with one clause route per path above. FR-405's switch
 moves every path onto the clause entry or the `Value`-family entry in one
 change and deletes the separate entry.
 
@@ -366,8 +366,8 @@ FR-402's version-1 case carries no object environment, no domain package
 and no observations, so a clause input cannot be a corpus case. Parity is
 checked in two ways:
 
-1. **The `Value`-family corpus.** With the clause entry in `quire-eval`,
-   FR-402's harness over the QSL-owned corpus reports zero divergences,
+1. **The `Value`-family corpus.** With the clause entry in `filament-eval`,
+   FR-402's harness over the FSL-owned corpus reports zero divergences,
    and each case's compared record equals its record before the clause
    entry existed. The corpus checks that the clause entry leaves the
    `Value`-family entry unchanged; it does not exercise the clause entry.
@@ -376,13 +376,13 @@ checked in two ways:
    each asserts the reference's results and charges.
 
 After FR-405's switch the reference is gone. Each test then runs once, on
-`quire-eval`, with the reference's results as recorded expected values.
+`filament-eval`, with the reference's results as recorded expected values.
 
 ### Size on RT's target
 
 The clause entry is generic over the clause environment and the recorder.
 It is compiled into a binary only when the binary begins it.
-`agent-ix/quire-eval`'s gate SHALL build two `#![no_std]` probe crates,
+`agent-ix/filament-eval`'s gate SHALL build two `#![no_std]` probe crates,
 which are not published, as `staticlib`s for `thumbv7em-none-eabi` with
 `opt-level = "s"`, `lto = "fat"`, `codegen-units = 1` and
 `panic = "abort"`:
@@ -399,7 +399,7 @@ budget, one byte count that the repository's gate configuration holds. The
 change that adds the clause entry sets the budget to 102% of
 `probe-value`'s size at that change's base: `probe-value` names only
 FR-403's API, so the same probe source builds against the base's
-`quire-eval`. The change's description reports that base size, the budget,
+`filament-eval`. The change's description reports that base size, the budget,
 and both probes' sizes at its head. `probe-clause` has no budget. A later
 change that raises the budget changes that one number in a reviewed
 change. RT's own footprint limits stay RT's (AD-001 "RT and CG
@@ -409,34 +409,34 @@ acceptance").
 
 Each criterion below that compares the clause entry with the reference
 holds as written until FR-405's switch. After the switch, the test runs once
-on `quire-eval`, and the reference's results are its recorded expected
+on `filament-eval`, and the reference's results are its recorded expected
 values.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-406-AC-1 | `quire-eval`'s manifest meets FR-403-AC-1 and declares no feature that adds or removes the clause entry. `quire-eval`'s source names no `qsl_` path. Its `thumbv7em-none-eabi` gate build passes with the clause entry. `quire-eval`'s closure-only environment implements only FR-403's contract. | Test and Inspection (TC-1180) |
-| FR-406-AC-2 | With the clause entry in `quire-eval`, FR-402's harness reports zero divergences over the QSL-owned corpus, each case's compared record equals its record at the clause-entry change's base, and FR-403-AC-13's `Value`-family Begin over `pre(allInstances<T>(p))` returns `CallFailure::Fault` with stage `quire-eval`, invariant `outside-value-family` and no charge. | Test (TC-1180) |
+| FR-406-AC-1 | `filament-eval`'s manifest meets FR-403-AC-1 and declares no feature that adds or removes the clause entry. `filament-eval`'s source names no `fsl_` path. Its `thumbv7em-none-eabi` gate build passes with the clause entry. `filament-eval`'s closure-only environment implements only FR-403's contract. | Test and Inspection (TC-1180) |
+| FR-406-AC-2 | With the clause entry in `filament-eval`, FR-402's harness reports zero divergences over the FSL-owned corpus, each case's compared record equals its record at the clause-entry change's base, and FR-403-AC-13's `Value`-family Begin over `pre(allInstances<T>(p))` returns `CallFailure::Fault` with stage `filament-eval`, invariant `outside-value-family` and no charge. | Test (TC-1180) |
 | FR-406-AC-3 | Over the FR-108 corpus, FR-107-AC-1 to AC-5 and AC-13 to AC-20 pass through the clause entry with the reference's outcomes, clause-set entries and outcomes, consumed counters and admitted charges. FR-107-AC-3's `reaches` charge log is the five charges it lists. Evaluating each corpus case ten times gives equal results and charge logs. | Test (TC-1180) |
-| FR-406-AC-4 | `Pre`: FR-107-AC-2 passes through the clause entry, with `pre(self.versionNumber)` 2 and `self.versionNumber` 3. A postcondition that reads `pre(self.versionNumber)` over observations with no pre side returns `FamilyResult::Refused` with `wrong_snapshot`/`wrong-anchor`, located at the read, with the reference's charges. FR-405-AC-6's expression, through `CheckedPackageEvaluation::evaluate` with a pre anchor recording `a`, `b` and a post recording `a`, `b`, `c`, completes with `a` and `b` in ascending reference-key order, with the reference's charges, and leaves one `ObservedRead::Membership` with observation `Pre` in the `ReadLog`. Every test in `qsl-eval/tests/it/model_reference_queries.rs` that evaluates a `pre(...)` expression passes with the reference's expected values. | Test (TC-1180) |
+| FR-406-AC-4 | `Pre`: FR-107-AC-2 passes through the clause entry, with `pre(self.versionNumber)` 2 and `self.versionNumber` 3. A postcondition that reads `pre(self.versionNumber)` over observations with no pre side returns `FamilyResult::Refused` with `wrong_snapshot`/`wrong-anchor`, located at the read, with the reference's charges. FR-405-AC-6's expression, through `CheckedPackageEvaluation::evaluate` with a pre anchor recording `a`, `b` and a post recording `a`, `b`, `c`, completes with `a` and `b` in ascending reference-key order, with the reference's charges, and leaves one `ObservedRead::Membership` with observation `Pre` in the `ReadLog`. Every test in `fsl-eval/tests/it/model_reference_queries.rs` that evaluates a `pre(...)` expression passes with the reference's expected values. | Test (TC-1180) |
 | FR-406-AC-5 | `NamedPopulation` (FR-391): over a snapshot listing population `P` `complete` with members `m1`, `m2`, `m3`, two of them conforming to `T`, `allInstances<T>(M::P)` returns those two in ascending reference-key order, with admitted charges equal to the reference's: three `population.visit`, then `collection.bound` sized 2, then the charges of forming the two-member result, whose `collection.bound` is also sized 2. A `lookup<T>(M::P, r)` with a non-conforming `r` over `P` not listed `complete` returns the type-mismatch refusal with no charge. With `P` not listed `complete`, `allInstances<T>(M::P)` returns `FamilyResult::Refused` with `incomplete_population`/`incomplete-scope` and field `population`. `lookup<T>(M::P, r) absent undefined` with an absent `r` returns the `state-model` undefined result with `binding` and `key` fields. `absent refused` returns the `ModelQueryRefusal` code. A non-conforming `r` returns the type-mismatch `ModelQueryRefusal` code. Each result, location and charge sequence equals the reference's. | Test (TC-1180) |
 | FR-406-AC-6 | `PopulationObjects` and `History`: FR-139's refinement-row tests and FR-138's history-update tests pass through the clause entry with the reference's values and charges. A history field with no value at the read's observation returns `FamilyResult::Refused` with `missing_declaration`/`missing-name` and field `history` naming the field. A `PopulationObjects` read returns its members in ascending reference-key order, and the same result and charges on each of ten runs. | Test (TC-1180) |
 | FR-406-AC-7 | `Clause` regime: a state clause that reads `self.versionNumber` admits `model.navigate` before the read, and, with `deref(...)`, `model.deref` before that. The same body in the `Value` regime admits neither. A state clause whose body is `allInstances<T>(p)` over a `Population` parameter returns `FamilyResult::Refused` with `unknown_required_feature`/`unsupported-feature`, located at the node. | Test (TC-1180) |
-| FR-406-AC-8 | FR-265 trail: with `qsl-eval`'s recorder, FR-107-AC-7 to AC-12 and FR-265-AC-1 to AC-7 pass through the clause entry. The receiver paths, the read entries in order with their paths, the decisions, the stop reports, the bases and the separating witness records equal the reference's. | Test (TC-1180) |
+| FR-406-AC-8 | FR-265 trail: with `fsl-eval`'s recorder, FR-107-AC-7 to AC-12 and FR-265-AC-1 to AC-7 pass through the clause entry. The receiver paths, the read entries in order with their paths, the decisions, the stop reports, the bases and the separating witness records equal the reference's. | Test (TC-1180) |
 | FR-406-AC-9 | ADR-031 SW-13: FR-268's separation-check tests pass through the clause-entry steps with one recorder per check, with the reference's `Separation` result for each, the reference's admitted charges, and no Begin for the element step. A check whose domain is bound by a `let` (FR-265-AC-3's `LetAll`) holds, and a check whose `let` value stops `incomplete` under the meter returns `Separation::Stopped` at step 2, the domain step. | Test (TC-1180) |
 | FR-406-AC-10 | Over FR-265-AC-1's `AllBelow` over `high`, a Begin with no recorder and a Begin with a recorder that accepts every event return equal evaluations, consumed counters, admitted charges and reported reads. A recorder that returns an `InternalFault` at the first `stopped` event ends the session with `CallFailure::Fault` carrying that fault, and the admitted charges stop at that event. | Test (TC-1180) |
 | FR-406-AC-11 | Each of `evaluate_closed_with_frame`, `evaluate_reward`, `evaluate_terminal_predicate`, `evaluate_refinement_row`, `evaluate_history_update`, `evaluate_state_predicate`, `evaluate_protocol_slot`, `evaluate_holds` (FR-327, and FR-391's `holds` atom naming a population) and the FR-366 value-invariant evaluation has its tests pass through the clause entry in the regime this requirement assigns it, with the reference's expected values. | Test (TC-1180) |
-| FR-406-AC-12 | Begin in body form over a node of an imported library graph that the closure's scope view holds returns `CallFailure::Fault` with stage `quire-eval` and invariant `clause-root-outside-closure`, with no charge. Begin in expression form over `x + 1` with `x: Int[0, 9]` given `10` returns `CallFailure::Input` with no charge, and given two values returns `InputRefusal::Arity`, as FR-403-AC-12's `Value`-family Begin does. | Test (TC-1180) |
-| FR-406-AC-13 | `HistoryUnresolved`, `NamedPopulationIncomplete`, `ProtocolClauseSnapshot` and `ProtocolClauseUnsupported` are defined in `quire-eval` and in no QSL crate. `qsl-eval` defines `ModelQueryRefusal` and `ProtocolClauseFrameRefusal`, and none of the four. Each cause's catalog code and fields equal the reference's for AC-4 to AC-7's results. | Test and Inspection (TC-1180) |
-| FR-406-AC-14 | `agent-ix/quire-eval`'s gate builds `probe-value` and `probe-clause` as `thumbv7em-none-eabi` `staticlib`s with the stated profile, reports each one's `.text` plus `.rodata` size from `llvm-size -A`, and fails when `probe-value` exceeds the configured budget; with the budget set one byte below `probe-value`'s measured size the gate fails. The clause-entry change sets the budget to 102% of `probe-value`'s size built against the change's base, and its description reports that size, the budget and both head sizes. | Test and Inspection (TC-1180) |
+| FR-406-AC-12 | Begin in body form over a node of an imported library graph that the closure's scope view holds returns `CallFailure::Fault` with stage `filament-eval` and invariant `clause-root-outside-closure`, with no charge. Begin in expression form over `x + 1` with `x: Int[0, 9]` given `10` returns `CallFailure::Input` with no charge, and given two values returns `InputRefusal::Arity`, as FR-403-AC-12's `Value`-family Begin does. | Test (TC-1180) |
+| FR-406-AC-13 | `HistoryUnresolved`, `NamedPopulationIncomplete`, `ProtocolClauseSnapshot` and `ProtocolClauseUnsupported` are defined in `filament-eval` and in no FSL crate. `fsl-eval` defines `ModelQueryRefusal` and `ProtocolClauseFrameRefusal`, and none of the four. Each cause's catalog code and fields equal the reference's for AC-4 to AC-7's results. | Test and Inspection (TC-1180) |
+| FR-406-AC-14 | `agent-ix/filament-eval`'s gate builds `probe-value` and `probe-clause` as `thumbv7em-none-eabi` `staticlib`s with the stated profile, reports each one's `.text` plus `.rodata` size from `llvm-size -A`, and fails when `probe-value` exceeds the configured budget; with the budget set one byte below `probe-value`'s measured size the gate fails. The clause-entry change sets the budget to 102% of `probe-value`'s size built against the change's base, and its description reports that size, the budget and both head sizes. | Test and Inspection (TC-1180) |
 
 ## Dependencies
 
 - [FR-262](FR-262-evaluate-values-and-calls-at-any-depth.md): the session,
   scheduler, charges and depth behaviour the clause entry shares.
-- [FR-403](FR-403-implement-the-no-std-evaluator-in-quire-eval.md): the
+- [FR-403](FR-403-implement-the-no-std-evaluator-in-filament-eval.md): the
   `Value`-family entry, its argument admission, its environment contract
-  and its separate `qsl-eval` entry.
-- [FR-401](FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md)
+  and its separate `fsl-eval` entry.
+- [FR-401](FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md)
   and [FR-400](FR-400-separate-checked-terms-from-the-checker.md): the leaf,
   its dependency set, and the checked terms and `Observation` in C.
 - [FR-107](FR-107-evaluate-state-clauses-at-s6a.md),
@@ -449,7 +449,7 @@ values.
   the observations and the clause reads.
 - [FR-402](FR-402-differentially-test-the-no-std-evaluator-against-the-std-reference.md):
   the corpus and harness the `Value`-family parity runs on.
-- [FR-405](FR-405-retire-the-std-reference-evaluator-for-quire-eval.md):
+- [FR-405](FR-405-retire-the-std-reference-evaluator-for-filament-eval.md):
   the switch this entry is a prerequisite of (IR-593).
 - [NFR-015](../non-functional/NFR-015-build-evaluator-crates-no-std-behind-a-default-std-feature.md):
   the `thumbv7em-none-eabi` target and toolchain.

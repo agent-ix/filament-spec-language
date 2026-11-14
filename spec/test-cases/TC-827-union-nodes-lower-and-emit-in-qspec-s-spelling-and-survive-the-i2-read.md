@@ -1,12 +1,12 @@
 ---
 id: TC-827
-title: "Union nodes lower and emit in QSpec's spelling and survive the I2 read and recompile"
+title: "Union nodes lower and emit in FSpec's spelling and survive the I2 read and recompile"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-320
+  - target: ix://agent-ix/filament-spec-language/FR-320
     type: verifies
 ---
-# TC-827: Union nodes lower and emit in QSpec's spelling and survive the I2 read and recompile
+# TC-827: Union nodes lower and emit in FSpec's spelling and survive the I2 read and recompile
 
 ## Description
 
@@ -24,7 +24,7 @@ Tag each test `#[trace("TC-827", "<AC id>")]`.
 
 ## Expected Results
 
-- Step 1: v2 nodes in QSpec's union spelling; each `WireNodeId` equals the
+- Step 1: v2 nodes in FSpec's union spelling; each `WireNodeId` equals the
   emitted id; member identities unchanged.
 - Step 2: recompiled `package_id` equals the emitted one.
 - Step 3: the union node and every node naming it are omitted with

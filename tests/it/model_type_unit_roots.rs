@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-419: a selected model's otherwise unused type positions root nominal units.
 
+use filament_spec_language::checked_handoff::{write, CheckedHandoffRequest, Corpus};
+use filament_spec_language::emit_checked_v2::Request;
 use ix_trace_rs::trace;
-use quire_spec_language::checked_handoff::{write, CheckedHandoffRequest, Corpus};
-use quire_spec_language::emit_checked_v2::Request;
 use serde_json::{json, Value};
 
-const U: &str = "ix://quire/unit/U";
+const U: &str = "ix://filament/unit/U";
 const MODEL: &str = "agent-ix/checked-handoff";
 
 /// Add one declaration to the real recipe model with its own unit aliases
@@ -44,7 +44,7 @@ fn model(position: &str) -> Value {
             model["constructs"].as_array_mut().unwrap().push(json!({
                 "kind": {"module": MODEL, "name": "tuple"}, "moduleVersion": "1.0.0",
                 "construct": {"identity": "none", "shape": "tuple", "members": {"positions": "required"},
-                    "meaning": "quire.meaning.model.tuple-value-type/v1"}}));
+                    "meaning": "filament.meaning.model.tuple-value-type/v1"}}));
             json!({"kind": {"module": MODEL, "name": "tuple"}, "positions": [{
                 "identity": format!("{identity}/p0"), "typeRef": U, "origin": origin}]})
         }
@@ -93,7 +93,7 @@ fn assert_root(position: &str) {
     std::fs::write(
         &source,
         "language \"ix:native\" edition \"1-draft\";\n\
-        profile v = \"quire.model.complete/v1\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
         model M = \"agent-ix/checked-handoff\";\n\
         dimension Money;\nunit Base : Money = rational(1, 1);\n\
         unit U : Money = rational(2, 1) * Base;\n\
@@ -112,7 +112,7 @@ fn assert_root(position: &str) {
             out: None,
         },
         corpus: Corpus::None,
-        native_join: qsl_package::V2ReadLimits::fixture().native_join_limits(),
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
     };
     let out = dir.path().join("handoff");
     write(&request, &out).unwrap_or_else(|error| {

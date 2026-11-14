@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Genuine source controls for independent quantity-name lookup domains.
+
+use filament_contract_model::{
+    CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
+};
+use fsl_replay::{compile_admitted, DependencyInput, ReplayLimits, SourceIdentity, StageLimits};
+use ix_trace_rs::trace;
+use serde_json::Value;
+
+const HEADER: &str =
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+const UNITS: &str = "dimension Length;\nunit m : Length = rational(1, 1);\n";
+
+fn assert_admitted(source: &str) {
+    let compiled = compile_admitted(
+        fsl_replay::CompileUnit {
+            source: SourceIdentity::new("a", "u"),
+            package_name: "fixture".to_owned(),
+            path: "quantity-names.native",
+            bytes: source.as_bytes(),
+        },
+        [],
+        &DependencyInput::default(),
+        StageLimits::default(),
+        ReplayLimits::default(),
+    )
+    .unwrap_or_else(|error| panic!("FSL admission failed for {source}: {error:?}"));
+    let wire: Value = serde_json::from_slice(compiled.package().bytes()).unwrap();
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    let read = CheckedPackageV2::read(
+        compiled.package().bytes(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence,
+    );
+    let CheckedPackageV2ReadResult::Admitted(package) = read else {
+        panic!("strict IR admission failed for {source}: {read:?}");
+    };
+    assert_eq!(
+        package.resolved_graph().nodes.len(),
+        wire["semantic_graph"]["nodes"].as_array().unwrap().len()
+    );
+}
+
+#[trace("TC-483", "FR-091-AC-44")]
+#[test]
+fn unit_names_can_match_fields_parameters_cases_variants_and_aliases() {
+    for body in [
+        "record Reading { m: Boolean; }\nfunction f using v(a: Quantity<m>, r: Reading): Boolean pure { r.m }",
+        "function f using v(m: Quantity<m>): Boolean pure { m = m }",
+        "enum Status { m, Other }\nfunction f using v(a: Quantity<m>, s: Status): Boolean pure { s = Status::m }",
+        "union Signal { m, Other }\nfunction f using v(a: Quantity<m>, s: Signal): Boolean pure { s = s }",
+        "type m = Boolean;\nfunction f using v(a: Quantity<m>, b: m): Boolean pure { b }",
+    ] {
+        assert_admitted(&format!("{HEADER}{UNITS}{body}\n"));
+    }
+}
+
+#[trace("TC-483", "FR-091-AC-44")]
+#[test]
+fn distinct_and_case_distinct_type_names_pass_strict_v2() {
+    for name in ["Reading", "M"] {
+        for reverse in [false, true] {
+            let record = format!("record {name} {{ sample: Boolean; }}");
+            let declarations = if reverse {
+                format!("{record}\n{UNITS}")
+            } else {
+                format!("{UNITS}{record}")
+            };
+            assert_admitted(&format!("{HEADER}{declarations}\nfunction f using v(a: Quantity<m>, r: {name}): Boolean pure {{ r.sample }}\n"));
+        }
+    }
+}
+
+/// QSL-950: a unit, a dimension and a record of one name are three
+/// namespaces; each declaration is used so all three nodes are emitted.
+#[trace("TC-483", "FR-091-AC-44", "FR-142-AC-13")]
+#[test]
+fn same_name_unit_dimension_and_record_pass_strict_v2() {
+    for body in [
+        // unit + record
+        "dimension Length;\nunit m : Length = rational(1, 1);\nrecord m { sample: Boolean; }\nfunction f using v(a: Quantity<m>, r: m): Boolean pure { r.sample }",
+        // unit + dimension
+        "dimension m;\nunit m : m = rational(1, 1);\nfunction f using v(a: Quantity<m>): Boolean pure { a = a }",
+        // dimension + record
+        "dimension m;\nunit u : m = rational(1, 1);\nrecord m { sample: Boolean; }\nfunction f using v(a: Quantity<u>, r: m): Boolean pure { r.sample }",
+        // all three
+        "dimension m;\nunit m : m = rational(1, 1);\nrecord m { sample: Boolean; }\nfunction f using v(a: Quantity<m>, r: m): Boolean pure { r.sample }",
+    ] {
+        assert_admitted(&format!("{HEADER}{body}\n"));
+    }
+}
+
+/// A record named like a dimension is used first, so it is minted before the
+/// dimension and unit nodes; it must not take their keys.
+#[trace("TC-483", "FR-091-AC-44", "FR-142-AC-13")]
+#[test]
+fn record_used_before_same_name_dimension_keeps_dimension_node() {
+    assert_admitted(&format!(
+        "{HEADER}dimension m;\nunit u : m = rational(1, 1);\nrecord m {{ sample: Boolean; }}\nfunction f using v(r: m, a: Quantity<u>): Boolean pure {{ r.sample }}\n"
+    ));
+}
+
+/// An enum named like a used dimension is a different namespace; both nodes
+/// are emitted and keep distinct keys.
+#[trace("TC-483", "FR-091-AC-44", "FR-142-AC-13")]
+#[test]
+fn enum_named_like_used_dimension_passes_strict_v2() {
+    assert_admitted(&format!(
+        "{HEADER}dimension m;\nunit u : m = rational(1, 1);\nenum m {{ a, b }}\nfunction f using v(x: Quantity<u>, e: m): Boolean pure {{ e = m::a }}\n"
+    ));
+}

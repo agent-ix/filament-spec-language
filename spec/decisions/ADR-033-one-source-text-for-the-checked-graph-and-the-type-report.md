@@ -3,25 +3,25 @@ id: ADR-033
 title: "One source text produces both the checked graph and the type report"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-035
+  - target: ix://agent-ix/filament-spec-language/FR-035
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-040
+  - target: ix://agent-ix/filament-spec-language/FR-040
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-049
+  - target: ix://agent-ix/filament-spec-language/FR-049
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-362
+  - target: ix://agent-ix/filament-spec-language/FR-362
     type: relates_to
 ---
 # ADR-033: One source text produces both the checked graph and the type report
@@ -31,7 +31,7 @@ option below and closed the decisions in Decision.
 
 ## Recommendation
 
-**Adopt Option A+D: the complete-V1 grammar (`qsl-cst`, mapped by `qsl-forms`)
+**Adopt Option A+D: the complete-V1 grammar (`fsl-cst`, mapped by `fsl-forms`)
 is the one source grammar, and the type report is produced by the S3 binding
 phase and family checkers of ADR-011, from the same parse that feeds the
 checker.** One `Source` is read once. One parse of it yields the `CheckedGraph`
@@ -50,7 +50,7 @@ Reasons:
    phase. ... B6 and B7 → S3 family checkers." Type admission in S3, from the
    S1 and S2 output, is that ruling applied to the type report.
 2. The dependency direction forbids the opposite choice. The root crate depends
-   on `qsl-cst`, `qsl-forms` and `qsl-semantics`, so the layer crates cannot
+   on `fsl-cst`, `fsl-forms` and `fsl-semantics`, so the layer crates cannot
    be re-based on the root crate's syntax.
 3. The graph and type report are outputs of one `Source` and one parse, so
    their association is established by the producer's construction. A
@@ -65,8 +65,8 @@ over S2 forms, family by family. The slice is large; it is measured below.
 
 Measured on main when this was written.
 
-- **The graph path.** `qsl_cst::parse` reads the complete-V1 grammar.
-  `qsl_forms::build_unit` maps the CST to a `ParsedUnit`.
+- **The graph path.** `fsl_cst::parse` reads the complete-V1 grammar.
+  `fsl_forms::build_unit` maps the CST to a `ParsedUnit`.
   `PackageDeclarations::assemble` takes that unit and a `RawSourceRef`, and
   `check` returns the `CheckedGraph`, which carries the `RawSourceRef`
   (authority, identity).
@@ -76,12 +76,12 @@ Measured on main when this was written.
   `checking::composed::admit_types` returns the `TypeReport`. Each namespace
   unit holds its own `Source` and `Source::reference()`.
 - **Callers of the graph path.** The production path is the spine
-  (`qsl-replay/src/spine/lifecycle.rs`): `parse_with_cancel`, `build_unit`,
+  (`fsl-replay/src/spine/lifecycle.rs`): `parse_with_cancel`, `build_unit`,
   `assemble` and `check` over one `Source`, returning the public
   `spine::CheckedUnit` (the checked package, the unit's source and its
-  libraries). Other non-test callers are `qsl-package` (emit) and the
-  `population-fixtures` writer. `qsl-bench` and tests in `qsl-eval`,
-  `qsl-forms`, `qsl-semantics`, `qsl-replay` and the root crate call
+  libraries). Other non-test callers are `fsl-package` (emit) and the
+  `population-fixtures` writer. `fsl-bench` and tests in `fsl-eval`,
+  `fsl-forms`, `fsl-semantics`, `fsl-replay` and the root crate call
   `build_unit` or `assemble` directly.
 - **Callers of the type path.** The root `tests/it/composed_*.rs` files (the
   retired `handoff-writer` producer was the other caller). Nothing outside tests calls both paths on one
@@ -90,25 +90,25 @@ Measured on main when this was written.
   and its sources. The root crate's `checking::source_inventory::CheckedUnit`
   holds a graph, a type report and a formal identity, built by a label-only
   match (the spine's `CheckedUnit` carries the formal identity in neither
-  form: `qsl_inventory` takes it as a parameter, FR-514); `qsl_inventory` lives beside it.
+  form: `fsl_inventory` takes it as a parameter, FR-514); `fsl_inventory` lives beside it.
 - **The grammars differ.** The shared header is `language "ix:native" edition
   "1-draft";`. After it, complete-V1 reads `profile <alias> = "<identity>";`: a
   definition resolves by identity alone, with no version in the
-  selection (`qsl-foundation` `selection`). The composed grammar reads `profile
+  selection (`fsl-foundation` `selection`). The composed grammar reads `profile
   <alias> = "<identity>" version "<v>";` and resolves the
   definition by identity and revision. `import` and `model`
-  declarations read the same in both. So `qsl_cst::parse` returns a recovered
+  declarations read the same in both. So `fsl_cst::parse` returns a recovered
   `ParsedSource` with an `invalid_syntax` diagnostic at `version` for the
   composed binding source, and `build_unit` refuses it
   (`FormsCause::RecoveringCst`).
 - **The families.** At the time of this decision, S2 had dispatch entries for `function`, `type`, `record`,
   `tuple`, `enum`, `predicate`, `dimension`, `unit`, `invariant`, `pre`,
-  `post`, `body`, `protocol` and `temporal` (`qsl-forms/src/dispatch.rs`). It
-  had none for a `relation` or `hyper` clause, which `qsl-cst` parsed and S2
+  `post`, `body`, `protocol` and `temporal` (`fsl-forms/src/dispatch.rs`). It
+  had none for a `relation` or `hyper` clause, which `fsl-cst` parsed and S2
   refused with `NoDispatchEntry`. A `temporal` clause passes S2; S3 refuses it
   with `UnimplementedTemporalClause` (`unsupported_construct`) until its
   checker lands. The composed syntax has four declaration kinds (predicate,
-  state, temporal, protocol); `relation` and `hyper` exist only in `qsl-cst`.
+  state, temporal, protocol); `relation` and `hyper` exist only in `fsl-cst`.
 - **The sources cannot agree today.** The graph test fixture and the composed
   binding fixture are two different texts, so their bytes
   differ. The label-only `CheckedUnit::new` therefore compares authority and
@@ -172,31 +172,31 @@ Measured on main when this was written.
   are deleted when the producer lands; no mismatch refusal replaces them.
 - *One `CheckedUnit`:* the spine's `spine::CheckedUnit` is the one type. It
   carries the checked package, the type report (FR-514) and the source's one
-  reference; the formal identity is a parameter of `qsl_inventory`, not a member. The
+  reference; the formal identity is a parameter of `fsl_inventory`, not a member. The
   type report is one-unit by construction, so a report that covers two units
-  cannot be built. The inventory's own `CheckedUnit` is deleted; `qsl_inventory`
-  lives in `qsl_replay` and reads `spine::CheckedUnit`, no longer in the root
+  cannot be built. The inventory's own `CheckedUnit` is deleted; `fsl_inventory`
+  lives in `fsl_replay` and reads `spine::CheckedUnit`, no longer in the root
   crate's `checking::source_inventory`.
 - *Several source units (amended 2026-10-22 by FR-480):* a package compiled from several source
   units has one `spine::CheckedUnit` per source unit, each reading its own
   `Source` once with the one grammar and carrying that source's reference; the shared
   checked graph lists every unit in `sources`. "One source text" holds
-  for each unit, and a package is not limited to one unit, because QSpec
+  for each unit, and a package is not limited to one unit, because FSpec
   FR-151 and FR-322 define a package of linked source units, each with its
   own source owner.
 
 ### Option A-only: keep the composed linker and checker over S2 forms
 
 Rejected. It re-reads `linking::composed` and `checking::composed` (about
-13,000 lines) over `qsl_forms::ParsedUnit`, which keeps the composed checker
+13,000 lines) over `fsl_forms::ParsedUnit`, which keeps the composed checker
 that ADR-011 says is "deleted, not kept (owner ruling)", and writes the
 re-reading only to delete it at M-6e.
 
 ### Option B: the composed grammar is the single grammar
 
 - *Wins:* the root crate's composed grammar.
-- *Call paths:* `qsl-forms`, `qsl-semantics`, `qsl-package`, `qsl-eval`,
-  `qsl-replay` and `qsl-route` would read the root crate's arena syntax. They
+- *Call paths:* `fsl-forms`, `fsl-semantics`, `fsl-package`, `fsl-eval`,
+  `fsl-replay` and `fsl-route` would read the root crate's arena syntax. They
   cannot depend on the root crate, which depends on them (ADR-011 section 6.1
   keeps layer 1 a leaf), so the syntax would have to move down first.
 - *Migration cost:* highest. It re-implements every S2 form and every S3
@@ -206,7 +206,7 @@ re-reading only to delete it at M-6e.
 
 ### Option C: one front end that feeds both parsers
 
-- *Shape:* a function that takes one text and runs `qsl_cst::parse` for the
+- *Shape:* a function that takes one text and runs `fsl_cst::parse` for the
   graph and `parse_native_source` for the types, or that lowers a `ParsedUnit`
   to a `ComposedUnit` for the type phase.
 - *Why it fails:* a text that satisfies both parsers must be written in the
@@ -237,7 +237,7 @@ text. These points follow from it and are decided.
   `temporal` clause is in the cases of FR-337 "Clauses S4 does not emit" and a
   `hyper` clause in those of FR-488. A
   `hyper` clause over a finite trace domain and a `relation` over names
-  that are not model operations keep the finite reading of QSpec FR-191.
+  that are not model operations keep the finite reading of FSpec FR-191.
 - **Profile selection.** A source selects a profile by identity alone
   (FR-110). A profile line that states `version` after the
   identity is not the single grammar and is refused. The type phase resolves

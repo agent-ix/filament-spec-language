@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use qsl_foundation::diagnostic::StageFailure;
-use qsl_foundation::{AccountingSetting, SettingLimits};
-use qsl_replay::spine;
-use qsl_replay::{Cancel, OutcomeDocument};
-use qsl_semantics::model::{intake, observation};
-use quire_semantic_value::catalog::Category;
+use filament_semantic_value::catalog::Category;
+use fsl_foundation::diagnostic::StageFailure;
+use fsl_foundation::{AccountingSetting, SettingLimits};
+use fsl_replay::spine;
+use fsl_replay::{Cancel, OutcomeDocument};
+use fsl_semantics::model::{intake, observation};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -24,8 +24,8 @@ pub(super) struct Schemas {
 }
 
 impl Schemas {
-    pub(super) fn new(qspec: &Path, corpus: &Value) -> crate::error::Result<Self> {
-        let path = qspec.join("proposals/checked-package-v2/schema.json");
+    pub(super) fn new(fspec: &Path, corpus: &Value) -> crate::error::Result<Self> {
+        let path = fspec.join("proposals/checked-package-v2/schema.json");
         let bytes = fs::read(&path).map_err(|error| {
             crate::error::Error::QualificationRefusal(format!("{}: {error}", path.display()))
         })?;
@@ -37,9 +37,17 @@ impl Schemas {
         let compile = |name| {
             jsonschema::JSONSchema::options()
                 .with_draft(jsonschema::Draft::Draft202012)
-                .with_document("urn:quire:checked-package:v2".to_owned(), package.clone())
-                .with_document("urn:quire:conformance-corpus:v1".to_owned(), corpus.clone())
-                .compile(&json!({"$ref": format!("urn:quire:conformance-corpus:v1#/$defs/{name}")}))
+                .with_document(
+                    "urn:filament:checked-package:v2".to_owned(),
+                    package.clone(),
+                )
+                .with_document(
+                    "urn:filament:conformance-corpus:v1".to_owned(),
+                    corpus.clone(),
+                )
+                .compile(
+                    &json!({"$ref": format!("urn:filament:conformance-corpus:v1#/$defs/{name}")}),
+                )
                 .map_err(|error| crate::error::Error::QualificationRefusal(error.to_string()))
         };
         Ok(Self {
@@ -297,15 +305,15 @@ fn partition(category: Category) -> Partition {
     }
 }
 
-fn compile_refusal(refusal: &qsl_replay::ReplayRefusal) -> Result<Execution, Failure> {
+fn compile_refusal(refusal: &fsl_replay::ReplayRefusal) -> Result<Execution, Failure> {
     let diagnostic = match refusal {
-        qsl_replay::ReplayRefusal::Recompile(refusal) => {
-            qsl_replay::OutcomeDiagnostic::from_compile_refusal(refusal)
+        fsl_replay::ReplayRefusal::Recompile(refusal) => {
+            fsl_replay::OutcomeDiagnostic::from_compile_refusal(refusal)
         }
-        qsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
-            qsl_replay::OutcomeDiagnostic::from_compile_refusal(refusal)
+        fsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
+            fsl_replay::OutcomeDiagnostic::from_compile_refusal(refusal)
         }
-        _ => qsl_replay::OutcomeDiagnostic::new(
+        _ => fsl_replay::OutcomeDiagnostic::new(
             refusal.cause(),
             refusal.code().as_str(),
             None,
@@ -315,8 +323,8 @@ fn compile_refusal(refusal: &qsl_replay::ReplayRefusal) -> Result<Execution, Fai
     let mut actual =
         serde_json::to_value(diagnostic).map_err(|error| Failure::decode("", error.to_string()))?;
     let fields = match refusal {
-        qsl_replay::ReplayRefusal::Recompile(refusal)
-        | qsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
+        fsl_replay::ReplayRefusal::Recompile(refusal)
+        | fsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
             refusal.fields()
         }
         _ => None,
@@ -335,7 +343,7 @@ fn compile_refusal(refusal: &qsl_replay::ReplayRefusal) -> Result<Execution, Fai
 pub(super) fn execute(
     vector: &Vector,
     root: &Path,
-    limits: &qsl_replay::CallerLimits,
+    limits: &fsl_replay::CallerLimits,
     overrides: &[String],
     schemas: &Schemas,
 ) -> Result<Execution, Failure> {
@@ -347,16 +355,16 @@ pub(super) fn execute(
         (ConsumerType::Runtime, Operation::Run) => run(&inputs, limits, overrides, &schemas.call),
         (ConsumerType::Language, Operation::Compile) => {
             let (source, bytes) = inputs.one(InputKind::Source)?;
-            match qsl_replay::compile_package(
-                qsl_replay::CompileUnit {
-                    source: qsl_foundation::SourceIdentity::new("agent-ix", &source.path),
+            match fsl_replay::compile_package(
+                fsl_replay::CompileUnit {
+                    source: fsl_foundation::SourceIdentity::new("agent-ix", &source.path),
                     package_name: "qualification".to_owned(),
                     path: &source.path,
                     bytes,
                 },
                 inputs.models(),
                 &spine::DependencyInput::default(),
-                qsl_replay::StageLimits::from_iter(limits.spine.bounds()),
+                fsl_replay::StageLimits::from_iter(limits.spine.bounds()),
                 limits.replay,
             ) {
                 Ok(compiled) => Ok(Execution {
@@ -370,14 +378,14 @@ pub(super) fn execute(
         }
         (ConsumerType::Tool, Operation::Format) => {
             let (source, bytes) = inputs.one(InputKind::Source)?;
-            let result = qsl_cst::parse(
-                qsl_foundation::SourceIdentity::new("agent-ix", &source.path),
+            let result = fsl_cst::parse(
+                fsl_foundation::SourceIdentity::new("agent-ix", &source.path),
                 &source.path,
                 bytes,
                 limits.spine.source,
             );
             match result {
-                Ok(parsed) => match qsl_cst::format::format_with_limits(&parsed, limits.format) {
+                Ok(parsed) => match fsl_cst::format::format_with_limits(&parsed, limits.format) {
                     Ok(formatted) => Ok(Execution {
                         actual: json!(formatted),
                         bytes: Some(formatted.into_bytes()),
@@ -390,14 +398,14 @@ pub(super) fn execute(
         }
         _ => Err(Failure::decode(
             "/subject",
-            "subject has no QSL public operation",
+            "subject has no FSL public operation",
         )),
     }
 }
 
-fn diagnostic(diagnostic: &qsl_cst::diagnostic::CompleteDiagnostic) -> Result<Execution, Failure> {
+fn diagnostic(diagnostic: &fsl_cst::diagnostic::CompleteDiagnostic) -> Result<Execution, Failure> {
     Ok(Execution {
-        actual: json!({"code": diagnostic.code.as_str(), "cause": diagnostic.cause.as_str(), "locus": diagnostic.region.as_ref().map(|region| qsl_replay::OutcomeLocus::from(&qsl_foundation::diagnostic::Locus::Region(region.clone()))), "message": diagnostic.message}),
+        actual: json!({"code": diagnostic.code.as_str(), "cause": diagnostic.cause.as_str(), "locus": diagnostic.region.as_ref().map(|region| fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))), "message": diagnostic.message}),
         bytes: None,
         partition: partition(diagnostic.code.category()),
     })
@@ -434,7 +442,7 @@ fn front_end_failure(failure: spine::FrontEndFailure) -> Result<Execution, Failu
 
 fn run(
     inputs: &Inputs<'_>,
-    limits: &qsl_replay::CallerLimits,
+    limits: &fsl_replay::CallerLimits,
     overrides: &[String],
     schema: &jsonschema::JSONSchema,
 ) -> Result<Execution, Failure> {
@@ -442,12 +450,12 @@ fn run(
     let (_, call_bytes) = inputs.one(InputKind::Call)?;
     let call_input = document(call_bytes, schema)?;
     let function = text(&call_input["function"], "/function")?;
-    let source_identity = qsl_foundation::SourceIdentity::new("agent-ix", &source.path);
+    let source_identity = fsl_foundation::SourceIdentity::new("agent-ix", &source.path);
     let packages = match intake::package_input(inputs.models()) {
         Ok(packages) => packages,
         Err(_) => {
-            return match qsl_replay::compile_package(
-                qsl_replay::CompileUnit {
+            return match fsl_replay::compile_package(
+                fsl_replay::CompileUnit {
                     source: source_identity,
                     package_name: "qualification".to_owned(),
                     path: &source.path,
@@ -455,7 +463,7 @@ fn run(
                 },
                 inputs.models(),
                 &spine::DependencyInput::default(),
-                qsl_replay::StageLimits::from_iter(limits.spine.bounds()),
+                fsl_replay::StageLimits::from_iter(limits.spine.bounds()),
                 limits.replay,
             ) {
                 Err(refusal) => compile_refusal(&refusal),
@@ -498,9 +506,9 @@ fn run(
         Ok(emitted) => emitted.into_value(),
         Err(failure) => return front_end_failure(failure),
     };
-    let wire_graph = qsl_replay::WireGraph::of_package_bytes(emitted.package().bytes())
+    let wire_graph = fsl_replay::WireGraph::of_package_bytes(emitted.package().bytes())
         .map_err(|message| Failure::decode("/input/files", message))?;
-    let mut objects = qsl_replay::ObjectEnvironment::new(Default::default());
+    let mut objects = fsl_replay::ObjectEnvironment::new(Default::default());
     let mut snapshot = None;
     let snapshots = inputs
         .files
@@ -559,7 +567,7 @@ fn run(
     let values = array(&call_input["arguments"], "/arguments")?;
     let mut arguments = Vec::new();
     let mut population_meter =
-        qsl_semantics::model::population::AdmissionMeter::new(limits.admission);
+        fsl_semantics::model::population::AdmissionMeter::new(limits.admission);
     if let Some(signature) = signature {
         for (index, value) in values.iter().enumerate() {
             let (parameter, parameter_type) = signature.parameters.get(index).ok_or_else(|| {
@@ -568,8 +576,8 @@ fn run(
                     "argument has no declared parameter",
                 )
             })?;
-            if let quire_exact::ValueType::Population(maximum) = parameter_type {
-                use qsl_semantics::model::population::{admit_binding, AdmissionOutcome};
+            if let filament_exact::ValueType::Population(maximum) = parameter_type {
+                use fsl_semantics::model::population::{admit_binding, AdmissionOutcome};
                 let pointer = format!("/arguments/{index}");
                 let name = text(&value["name"], &pointer)?;
                 let provenance = objects
@@ -605,7 +613,7 @@ fn run(
                     &model.view,
                     &document,
                     key,
-                    qsl_semantics::model::dispatch::GeneralizationClosure::Closed,
+                    fsl_semantics::model::dispatch::GeneralizationClosure::Closed,
                     *maximum,
                     &mut population_meter,
                 ) {
@@ -616,7 +624,7 @@ fn run(
                             actual: json!({"code":refusal.code.as_str(), "cause":refusal.catalog_code().cause(), "fields":refusal.cause.catalog_fields()}),
                             bytes: None,
                             partition: if refusal.code
-                                == qsl_foundation::diagnostic::Code::IncompletePopulation
+                                == fsl_foundation::diagnostic::Code::IncompletePopulation
                             {
                                 Partition::Incomplete
                             } else {
@@ -647,7 +655,7 @@ fn run(
             });
         }
     }
-    let mut accounting = qsl_replay::AccountingLimits::default();
+    let mut accounting = fsl_replay::AccountingLimits::default();
     for (name, value) in object(&call_input["accounting"], "/accounting")? {
         let setting = AccountingSetting::ALL
             .iter()
@@ -660,8 +668,8 @@ fn run(
     }
     for operand in overrides {
         if let Some((name, _)) = operand.split_once('=') {
-            if let Some(qsl_foundation::SettingName::Accounting(setting)) =
-                qsl_foundation::SettingName::from_name(name)
+            if let Some(fsl_foundation::SettingName::Accounting(setting)) =
+                fsl_foundation::SettingName::from_name(name)
             {
                 if let Some((_, bound)) = limits
                     .accounting
@@ -732,29 +740,29 @@ fn required_population_name(argument: &Value) -> Result<Option<&str>, Failure> {
 #[ix_trace_rs::string_edge]
 fn call_value(
     value: &Value,
-    objects: &qsl_replay::ObjectEnvironment,
-    graph: &qsl_replay::WireGraph,
+    objects: &fsl_replay::ObjectEnvironment,
+    graph: &fsl_replay::WireGraph,
     index: usize,
-) -> Result<qsl_replay::Value, Failure> {
+) -> Result<fsl_replay::Value, Failure> {
     let pointer = format!("/arguments/{index}");
     match text(&value["kind"], &pointer)? {
         "boolean" => value["value"]
             .as_bool()
-            .map(qsl_replay::Value::Boolean)
+            .map(fsl_replay::Value::Boolean)
             .ok_or_else(|| Failure::decode(pointer, "expected a Boolean")),
         "integer" => {
             let spelling = text(&value["decimal"], &pointer)?;
             let integer = spelling
-                .parse::<qsl_replay::Integer>()
+                .parse::<fsl_replay::Integer>()
                 .map_err(|error| Failure::decode(&pointer, format!("{error:?}")))?;
-            Ok(qsl_replay::Value::Integer(integer))
+            Ok(fsl_replay::Value::Integer(integer))
         }
         "population" => {
             let name = text(&value["name"], &pointer)?;
             let binding = objects
                 .population_binding(name)
                 .ok_or_else(|| Failure::decode(&pointer, "population was not admitted"))?;
-            Ok(qsl_replay::Value::Population(binding.population_id()))
+            Ok(fsl_replay::Value::Population(binding.population_id()))
         }
         "reference" => {
             let universe = graph
@@ -771,7 +779,7 @@ fn call_value(
                     continue;
                 }
                 let original = reference.object_type().original();
-                let admitted_type = qsl_semantics::model::key::model_node_key(
+                let admitted_type = fsl_semantics::model::key::model_node_key(
                     original.package(),
                     "model",
                     "object_type",
@@ -779,7 +787,7 @@ fn call_value(
                 )
                 .map_err(|error| Failure::decode(&pointer, error.to_string()))?;
                 if admitted_type == object_type {
-                    return Ok(qsl_replay::Value::Reference(reference.clone()));
+                    return Ok(fsl_replay::Value::Reference(reference.clone()));
                 }
             }
             Err(Failure::decode(
@@ -799,17 +807,17 @@ mod schema_tests {
     #[test]
     #[trace("TC-1325", "FR-350-AC-11", "FR-350-AC-14")]
     fn required_kind_guards_preserve_published_witness_admission_and_oneof_ambiguity() {
-        let qspec = std::env::var_os("QSPEC_DIR")
+        let fspec = std::env::var_os("FSPEC_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .ancestors()
-                    .map(|parent| parent.join("quire-specification"))
+                    .map(|parent| parent.join("filament-specification"))
                     .find(|path| path.is_dir())
                     .unwrap()
             });
         let original: Value = serde_json::from_slice(
-            &fs::read(qspec.join("proposals/conformance-corpus-v1/schema.json")).unwrap(),
+            &fs::read(fspec.join("proposals/conformance-corpus-v1/schema.json")).unwrap(),
         )
         .unwrap();
         let mut guarded = original.clone();
@@ -821,8 +829,8 @@ mod schema_tests {
         let compile = |schema| {
             jsonschema::JSONSchema::options()
                 .with_draft(jsonschema::Draft::Draft202012)
-                .with_document("urn:quire:conformance-corpus:v1".to_owned(), schema)
-                .compile(&json!({"$ref":"urn:quire:conformance-corpus:v1#/$defs/WitnessValue"}))
+                .with_document("urn:filament:conformance-corpus:v1".to_owned(), schema)
+                .compile(&json!({"$ref":"urn:filament:conformance-corpus:v1#/$defs/WitnessValue"}))
                 .unwrap()
         };
         let original = compile(original);

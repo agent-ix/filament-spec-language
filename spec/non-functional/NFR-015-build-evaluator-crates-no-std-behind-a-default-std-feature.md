@@ -5,31 +5,31 @@ title: "Build evaluator-path crates no_std + alloc behind a default-on std featu
 type: NFR
 quality_attribute: portability
 relationships:
-  - target: ix://agent-ix/quire-spec-language/AD-001
+  - target: ix://agent-ix/filament-spec-language/AD-001
     type: references
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: references
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: references
-  - target: ix://agent-ix/quire-spec-language/NFR-013
+  - target: ix://agent-ix/filament-spec-language/NFR-013
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-403
+  - target: ix://agent-ix/filament-spec-language/FR-403
     type: references
 ---
 # NFR-015: Build evaluator-path crates no_std + alloc behind a default-on std feature
 
 ## Statement
 
-While its `std` feature is disabled, each QSL crate in the per-crate table
+While its `std` feature is disabled, each FSL crate in the per-crate table
 below shall build with `core` and `alloc` only, to the tier its row names.
 
 ## Scope
 
-This is the build contract for the QSL crates that the AD-001 slices make
+This is the build contract for the FSL crates that the AD-001 slices make
 `no_std`-capable. It covers the feature, the target, the toolchain, what each
 crate may depend on with `std` disabled, the surface each crate keeps with
 `std` disabled, and the `make` gate that checks it. With `std` enabled (the
@@ -37,18 +37,18 @@ default) each crate builds and behaves as it does with no `std` feature
 declared; AC-3 and AC-6 verify that.
 
 The shared evaluation-core leaf of FR-262 lives in its own repository and
-never depends on a QSL crate (ADR-011 FB-05). Its own `no_std` gate belongs
+never depends on an FSL crate (ADR-011 FB-05). Its own `no_std` gate belongs
 to that repository and to RT's consumer acceptance, not to this requirement.
-The leaf therefore never reaches `qsl-foundation` through this contract. The
+The leaf therefore never reaches `fsl-foundation` through this contract. The
 foundation items the leaf names, the catalog vocabulary `Category`,
 `CatalogCode`, `CatalogCoded`, `UndefinedCoded`, `UndefinedRecord`,
 `UndefinedReason` and `InternalFault`, move to SV's `catalog` module in
 slice S0 (IR-583, ADR-011 X-14,
-[FR-401](../functional/FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md)).
+[FR-401](../functional/FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md)).
 `Code`, `RefusalRecord`, `Locus` and the setting limits
-stay in `qsl-foundation`. Callers name each moved item at its new path;
-`qsl-foundation` re-exports none of them (ADR-011 §7.2, as X-11 applies
-it). Because `qsl-foundation` and SV both build with `core` and `alloc`
+stay in `fsl-foundation`. Callers name each moved item at its new path;
+`fsl-foundation` re-exports none of them (ADR-011 §7.2, as X-11 applies
+it). Because `fsl-foundation` and SV both build with `core` and `alloc`
 only, the move needs no `std` rework and keeps the closure tier.
 
 ### Feature contract
@@ -67,7 +67,7 @@ only, the move needs no `std` rework and keeps the closure tier.
 - A dependency that has a `std` feature is declared with
   `default-features = false`, and the crate's `std` feature turns that
   dependency's `std` feature on (`serde/std`, `thiserror/std`,
-  and a QSL dependency's own `std`). A dependency used only by `std` items
+  and an FSL dependency's own `std`). A dependency used only by `std` items
   is `optional = true` and enabled by `std` (`dep:<name>`).
 - `--no-default-features` disables `std` and nothing else is needed to
   build. No second feature (`alloc`, `no_std`) exists: `alloc` is always
@@ -78,14 +78,14 @@ only, the move needs no `std` rework and keeps the closure tier.
   switches a map type or an encoding.
 - The `std` feature changes no layer edge: ADR-011 §6.1's "Depends on"
   column holds in both configurations. A layer crate that depends on a lower
-  QSL layer reaches the closure tier only when that lower layer is itself
+  FSL layer reaches the closure tier only when that lower layer is itself
   `no_std`-capable.
 
 ### Target and toolchain
 
 The `no_std` target is `thumbv7em-none-eabi`, the governed target RT builds
 its `std`-disabled runtime for (RT FR-275-AC-9) and the target the shared
-leaves `quire-exact`, `quire-semantic-value` and `quire-canonical` build for
+leaves `filament-exact`, `filament-semantic-value` and `quire-canonical` build for
 in their own gates. Its sysroot has no `std`, so a build that reaches `std`
 fails there instead of passing on the host. It has pointer-width atomics, so
 `alloc::sync::Arc` is available. The compiler is the default toolchain with
@@ -112,14 +112,14 @@ feature unification would turn it back on.
 
 | Crate | Slice | Tier | Normal dependencies with `std` disabled | Behind `std` | Closure-tier condition |
 | --- | --- | --- | --- | --- | --- |
-| `qsl-foundation` | S3 (IR-587) | closure | `quire-exact` (no features; `#![no_std]`), `quire-semantic-value` (`#![no_std]`; from ADR-011 X-13 or X-14, whichever lands first), `serde` with `derive` and `alloc`, `serde_json` with `alloc`, `hashbrown` with `default-hasher`, `thiserror`, each with default features off; the `ix-trace-rs` proc macro, which runs on the host | no item: every `std::` path the crate uses (`cmp`, `fmt`, `str`, `hash`, `marker`, `num`, `iter`, `slice`, `error::Error`, `collections::{BTreeMap, BTreeSet, btree_map}`, `sync::Arc`) has a `core::` or `alloc::` equivalent on this target | holds: every dependency listed is `no_std`-capable |
-| `qsl-package` | S5 (IR-589) | crate | `qsl-foundation` with default features off, `qsl-semantics`, `quire-checked` with default features off (from FR-400's X-13), `quire-semantic-value` and `ix-trace-rs` | `quire-contract-model`, `quire-canonical` (without `std` in the workspace table), `quire-exact` and `thiserror`, each optional and enabled by `std` because only `std` items use them (`serde` is a dev-dependency only: shipped source does not use it), and the items listed in "`qsl-package` surface with `std` disabled" | none in AD-001's slices: `qsl-package` stays crate tier. The evaluator path is `quire-eval`, `quire-checked` and the foundation items moved to SV (FR-403), so no slice makes `qsl-semantics`, `qsl-forms` or `qsl-cst` build with `std` disabled |
+| `fsl-foundation` | S3 (IR-587) | closure | `filament-exact` (no features; `#![no_std]`), `filament-semantic-value` (`#![no_std]`; from ADR-011 X-13 or X-14, whichever lands first), `serde` with `derive` and `alloc`, `serde_json` with `alloc`, `hashbrown` with `default-hasher`, `thiserror`, each with default features off; the `ix-trace-rs` proc macro, which runs on the host | no item: every `std::` path the crate uses (`cmp`, `fmt`, `str`, `hash`, `marker`, `num`, `iter`, `slice`, `error::Error`, `collections::{BTreeMap, BTreeSet, btree_map}`, `sync::Arc`) has a `core::` or `alloc::` equivalent on this target | holds: every dependency listed is `no_std`-capable |
+| `fsl-package` | S5 (IR-589) | crate | `fsl-foundation` with default features off, `fsl-semantics`, `filament-checked` with default features off (from FR-400's X-13), `filament-semantic-value` and `ix-trace-rs` | `filament-contract-model`, `quire-canonical` (without `std` in the workspace table), `filament-exact` and `thiserror`, each optional and enabled by `std` because only `std` items use them (`serde` is a dev-dependency only: shipped source does not use it), and the items listed in "`fsl-package` surface with `std` disabled" | none in AD-001's slices: `fsl-package` stays crate tier. The evaluator path is `filament-eval`, `filament-checked` and the foundation items moved to SV (FR-403), so no slice makes `fsl-semantics`, `fsl-forms` or `fsl-cst` build with `std` disabled |
 
-`qsl-semantics` and `qsl-eval` have no row. The `no_std` evaluator is
-`quire-eval`'s (S6, IR-590, FR-403), gated in its own repository. S4
-(IR-588) moves the evaluator-needed `qsl-semantics` code that needs no
-model state into `quire-eval` or SV and leaves the model reads in `qsl-semantics`
-behind `quire-eval`'s environment contract, so neither crate needs a `std`
+`fsl-semantics` and `fsl-eval` have no row. The `no_std` evaluator is
+`filament-eval`'s (S6, IR-590, FR-403), gated in its own repository. S4
+(IR-588) moves the evaluator-needed `fsl-semantics` code that needs no
+model state into `filament-eval` or SV and leaves the model reads in `fsl-semantics`
+behind `filament-eval`'s environment contract, so neither crate needs a `std`
 feature for the evaluator.
 
 ### The checked-IR path
@@ -127,7 +127,7 @@ feature for the evaluator.
 The checked-IR path is the in-memory checked package an evaluator reads:
 the checked graph, dependency closure keyed by package identity, resolved
 library selections and checked abstraction relation. It is separate from
-the `quire.checked-package/v2` JSON wire.
+the `filament.checked-package/v2` JSON wire.
 
 With `std` disabled, `CheckedPackage::link(graph)` builds a package with an
 empty dependency closure and no selections. The dependency-bearing
@@ -136,21 +136,21 @@ constructor with dependencies and a `no_std` dependency reader are outside
 this requirement.
 
 With `std` disabled the checked-IR path reads no JSON. The shipped source of
-`qsl-package` does not name `serde_json`; it reaches the crate through
-`quire-contract-model` and through `qsl-semantics` and `qsl-cst`. The first
-edge is behind `qsl-package`'s `std` feature. The others stay:
-`qsl-package` is crate tier, so its host check needs only its own source to
+`fsl-package` does not name `serde_json`; it reaches the crate through
+`filament-contract-model` and through `fsl-semantics` and `fsl-cst`. The first
+edge is behind `fsl-package`'s `std` feature. The others stay:
+`fsl-package` is crate tier, so its host check needs only its own source to
 be `no_std`.
 
-QSpec FR-322 defines the `quire.checked-package/v2` wire. IR's
-`quire-contract-model` owns its reader, and QSL's emitter writes it. Node
+FSpec FR-322 defines the `filament.checked-package/v2` wire. IR's
+`filament-contract-model` owns its reader, and FSL's emitter writes it. Node
 ids are `{package, path, ordinal}` objects, compared componentwise and never
 hashed. A `no_std` crate that must read JSON uses `quire-canonical`'s
 shared iterative reader (ADR-030 RU-2), never a second reader.
 
-### `qsl-package` surface with `std` disabled
+### `fsl-package` surface with `std` disabled
 
-Every public export of `qsl-package`, by module:
+Every public export of `fsl-package`, by module:
 
 | Module | With `std` disabled | Behind `std` |
 | --- | --- | --- |
@@ -163,7 +163,7 @@ Every public export of `qsl-package`, by module:
 disabled. With `std` enabled, each clears the remembered emission when it
 binds a relation, because the relation changes what the emitter writes
 (and `bind_abstraction_at` adds a `declaration` occurrence at each site,
-QSpec FR-451). A refused binding leaves the package and remembered emission
+FSpec FR-451). A refused binding leaves the package and remembered emission
 unchanged.
 
 ### Gate
@@ -174,19 +174,19 @@ The `make` target `build-no-std` runs, for each row, its tier's command and
 in a target directory of its own (`$CARGO_TARGET_DIR/no-std`, else
 `target/no-std`, so it reuses no other lane's artifacts, NFR-013). The
 Makefile's `CI_CHECKS` lists it, so `make ci` runs it. It needs no network
-and no tool beyond the repository toolchain. For `qsl-package` it also runs
-`cargo test --locked -p qsl-package --no-default-features`, the only run of the
+and no tool beyond the repository toolchain. For `fsl-package` it also runs
+`cargo test --locked -p fsl-package --no-default-features`, the only run of the
 std-disabled surface tests and the compile-fail cases of AC-5 (NFR-015-AC-8).
 
 ## Rationale
 
-AD-001 converts the evaluator's QSL dependencies one slice at a time, with
+AD-001 converts the evaluator's FSL dependencies one slice at a time, with
 `std` kept on until IR-593 switches the default. A shared contract keeps
 every slice's feature, target and gate the same, so a later slice adds a
 row, not a new convention. Building for a target with no `std` in its
 sysroot is the only check that cannot pass by accident on the host. The
 host `cargo check` of the crate tier lets a crate clean its own source
-before its dependencies are `no_std`-capable, so `qsl-package`'s row does
+before its dependencies are `no_std`-capable, so `fsl-package`'s row does
 not wait for layers 3, 2 and 1. Clippy with `std` disabled catches unused imports and dead `cfg` code
 that exist only in that configuration, which the default and all-features
 lanes never build.
@@ -194,38 +194,38 @@ lanes never build.
 A default-on `std` feature keeps each slice from changing any dependent: the
 workspace, the CLI and every test lane build `std`. Gating the JSON wire
 instead of rewriting it keeps one reader (IR's) and one encoder
-(`quire-canonical`) for `quire.checked-package/v2`, as ADR-013 §2 and
-ADR-030 RU-2 require, and keeps structural node ids in their QSpec FR-322 form.
+(`quire-canonical`) for `filament.checked-package/v2`, as ADR-013 §2 and
+ADR-030 RU-2 require, and keeps structural node ids in their FSpec FR-322 form.
 
 ## Measurement and Evaluation
 
 | Metric | Target | Threshold | Method |
 | --- | --- | --- | --- |
 | Per-crate rows whose tier command or clippy run fails in `make build-no-std` | 0 | 0 | Test |
-| QSpec FR-322 conformance vectors that fail with default features | 0 | 0 | Test |
+| FSpec FR-322 conformance vectors that fail with default features | 0 | 0 | Test |
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| NFR-015-AC-1 | `qsl-foundation` declares a `std` feature with `default = ["std"]`, and `cargo build --locked -p qsl-foundation --no-default-features --target thumbv7em-none-eabi` succeeds on the default toolchain. | Test (TC-1110) |
-| NFR-015-AC-2 | `cargo tree --locked -p qsl-foundation --no-default-features -e normal --depth 1 --target thumbv7em-none-eabi` lists exactly `quire-exact`, `quire-semantic-value` (from ADR-011 X-13 or X-14, whichever lands first), `serde`, `serde_json`, `hashbrown`, `thiserror` and the `ix-trace-rs` proc macro, and the full `cargo tree --locked -p qsl-foundation --no-default-features -e normal,features --target thumbv7em-none-eabi` lists no `std` feature of `serde`, `serde_json` or `thiserror`. | Test (TC-1110) |
-| NFR-015-AC-3 | `cargo test --locked -p qsl-foundation` and `cargo test --locked -p qsl-foundation --no-default-features` both pass on the host, and every workspace test lane passes with `qsl-foundation`'s default features. | Test (TC-1110) |
-| NFR-015-AC-4 | `qsl-package` declares a `std` feature with `default = ["std"]` that enables `dep:quire-contract-model` and `qsl-foundation/std`; `cargo check --locked -p qsl-package --no-default-features` succeeds on the host with the crate root `no_std`; and the full `cargo tree --locked -p qsl-package --no-default-features -e normal -i quire-contract-model` finds no path to `quire-contract-model`. | Test (TC-1111) |
-| NFR-015-AC-5 | With `std` disabled, every export in the "With `std` disabled" column of the `qsl-package` surface table resolves, and every export in its "Behind `std`" column does not. | Test (TC-1111) |
-| NFR-015-AC-6 | With default features, the `quire.checked-package/v2` bytes that `qsl-package` emits match the QSpec FR-322 conformance vectors (`cargo test -p qsl-package --lib checked_v2` against `QSPEC_DIR`), and the FR-091 S1-to-S4 round trip passes. | Test (TC-1111) |
+| NFR-015-AC-1 | `fsl-foundation` declares a `std` feature with `default = ["std"]`, and `cargo build --locked -p fsl-foundation --no-default-features --target thumbv7em-none-eabi` succeeds on the default toolchain. | Test (TC-1110) |
+| NFR-015-AC-2 | `cargo tree --locked -p fsl-foundation --no-default-features -e normal --depth 1 --target thumbv7em-none-eabi` lists exactly `filament-exact`, `filament-semantic-value` (from ADR-011 X-13 or X-14, whichever lands first), `serde`, `serde_json`, `hashbrown`, `thiserror` and the `ix-trace-rs` proc macro, and the full `cargo tree --locked -p fsl-foundation --no-default-features -e normal,features --target thumbv7em-none-eabi` lists no `std` feature of `serde`, `serde_json` or `thiserror`. | Test (TC-1110) |
+| NFR-015-AC-3 | `cargo test --locked -p fsl-foundation` and `cargo test --locked -p fsl-foundation --no-default-features` both pass on the host, and every workspace test lane passes with `fsl-foundation`'s default features. | Test (TC-1110) |
+| NFR-015-AC-4 | `fsl-package` declares a `std` feature with `default = ["std"]` that enables `dep:filament-contract-model` and `fsl-foundation/std`; `cargo check --locked -p fsl-package --no-default-features` succeeds on the host with the crate root `no_std`; and the full `cargo tree --locked -p fsl-package --no-default-features -e normal -i filament-contract-model` finds no path to `filament-contract-model`. | Test (TC-1111) |
+| NFR-015-AC-5 | With `std` disabled, every export in the "With `std` disabled" column of the `fsl-package` surface table resolves, and every export in its "Behind `std`" column does not. | Test (TC-1111) |
+| NFR-015-AC-6 | With default features, the `filament.checked-package/v2` bytes that `fsl-package` emits match the FSpec FR-322 conformance vectors (`cargo test -p fsl-package --lib checked_v2` against `FSPEC_DIR`), and the FR-091 S1-to-S4 round trip passes. | Test (TC-1111) |
 | NFR-015-AC-7 | With `std` disabled, no shipped source of a crate in the per-crate table names `serde_json`, `HashMap` or `HashSet`. | Inspection (TC-1111) |
-| NFR-015-AC-8 | `make build-no-std` runs AC-1's build for each closure-tier row and AC-4's host check for each crate-tier row, each with `-p`, plus `cargo clippy --no-default-features -D warnings` per row, `cargo test --no-default-features` for `qsl-package` (AC-5's evidence), in its own `no-std` target directory, and `build-no-std` is listed in the Makefile's `CI_CHECKS`; a shipped `std::` path added to a closure-tier crate outside `#[cfg(feature = "std")]` makes the target fail. | Test (TC-1110) |
+| NFR-015-AC-8 | `make build-no-std` runs AC-1's build for each closure-tier row and AC-4's host check for each crate-tier row, each with `-p`, plus `cargo clippy --no-default-features -D warnings` per row, `cargo test --no-default-features` for `fsl-package` (AC-5's evidence), in its own `no-std` target directory, and `build-no-std` is listed in the Makefile's `CI_CHECKS`; a shipped `std::` path added to a closure-tier crate outside `#[cfg(feature = "std")]` makes the target fail. | Test (TC-1110) |
 | NFR-015-AC-9 | With default features, after `emit_checked` records an emission, `bind_abstraction` with valid bindings clears the remembered emission, and emitting again includes the bound abstraction. | Test (TC-1111) |
 | NFR-015-AC-10 | With default features, after `emit_checked` records an emission of a package with no abstraction relation, `bind_abstraction_at` with valid bindings and one site clears the remembered emission, and emitting again includes the relation and its declaration occurrence. After an emission, `bind_abstraction_at` with one binding whose key names a declaration the package does not hold refuses with `AbstractionRefusal::MissingDeclaration` and retains the remembered emission unchanged. | Test (TC-1111) |
-| NFR-015-AC-11 | **RETIRED (source-byte integrity removed).** Withdrawn with no replacement: `qsl-foundation` takes no hashing dependency. | Test (TC-1110), retired |
+| NFR-015-AC-11 | **RETIRED (source-byte integrity removed).** Withdrawn with no replacement: `fsl-foundation` takes no hashing dependency. | Test (TC-1110), retired |
 
 ## Verification
 
-TC-1110 builds `qsl-foundation` for `thumbv7em-none-eabi` with `std` off,
+TC-1110 builds `fsl-foundation` for `thumbv7em-none-eabi` with `std` off,
 reads its dependency and feature graph, runs its tests in both
 configurations and checks that `make build-no-std` is part of `make ci` and
-fails on a shipped `std` path. TC-1111 checks `qsl-package` on the host with
+fails on a shipped `std` path. TC-1111 checks `fsl-package` on the host with
 `std` off, reads its dependency closure and its whole public surface, and
 reruns the FR-322 conformance vectors with default features. Rust tests
 carry `#[trace("TC-...", "NFR-015-AC-...")]` attributes (NFR-005).
@@ -240,5 +240,5 @@ carry `#[trace("TC-...", "NFR-015-AC-...")]` attributes (NFR-005).
   RU-2 (one shared JSON reader in `quire-canonical`).
 - [NFR-013](NFR-013-isolate-native-ci-feature-artifacts.md) (lane target
   directories).
-- QSpec FR-322 (`quire.checked-package/v2`); RT FR-275-AC-9 and AC-20
+- FSpec FR-322 (`filament.checked-package/v2`); RT FR-275-AC-9 and AC-20
   (governed target and toolchain floor).

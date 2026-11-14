@@ -1,0 +1,2589 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-154 intake against FCD's real architecture fixture bundle
+//! (`agent-ix/filament-core-data`), read at test time from the checked-out
+//! `agent-ix-extraction-frontend` git dependency's own
+//! `crates/extraction-frontend/fixtures/architecture` and `fixtures/modules`
+//! directories, resolved via `cargo metadata` (the rev is pinned once, in
+//! `Cargo.toml`, and not repeated here).
+//!
+//! `lifts_the_architecture_bundle_and_admits_it` proves
+//! `crate::model::intake::lift_document` drives FCD's real `lift` pipeline
+//! end to end (not an FSL-authored stand-in for its output) by checking the
+//! produced document against the fixture's own committed expected document, then
+//! proves `crate::model::intake::admit` accepts that output under a
+//! matching selection.
+//!
+//! `reading_fcd_199s_golden_shape_admits_the_schema_and_refuses_5_of_its_12_types`
+//! carries FCD PR #200's own architecture golden
+//! (`crates/extraction-frontend/fixtures/architecture/expected/semantic-ir.json`
+//! in the pinned dependency checkout) into `intake::read_records` and
+//! asserts the measured, per-node breakdown: `validate_with_semantic_ir`
+//! admits the whole document at this pin, so `read_records` reaches
+//! per-node reading, and 5 of the golden's 12 types refuse while 7 read
+//! clean -- see that test's own doc comment for the breakdown, including PR
+//! #200 review finding H1 (a missing identity check on relationship
+//! members, fixed in `read_relationship`), which is why the count is 5
+//! rather than the 4 first measured.
+//!
+//! `reads_pump_out_as_a_real_endpoint_record` asserts real record content
+//! for one of the 7 clean-reading types, which the whole-document test
+//! above cannot do (`read_records` discards every already-read record when
+//! any node refuses).
+//!
+//! `a_fspec_conformant_document_admits_reads_and_classifies` is the
+//! complementary positive case: a hand-written Semantic IR 2.0.0 document
+//! using FSpec's own identity form throughout (not FCD's) and no
+//! non-empty `frame` (FCD #199 gap 2 and a separate, still-latent gap this
+//! fixture does not exercise), run through the full pipeline -- `admit` ->
+//! `read_records` -> `DomainPackage::new` -> `classify` ->
+//! `check_connection`/`check_allocation` -- asserting a wholly successful
+//! outcome.
+
+use filament_semantic_value::checking::CheckMode;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
+
+use filament_checked::key::DeclarationKey;
+use fsl_foundation::selection::ModelSelection;
+use fsl_foundation::{Code, Span};
+use fsl_semantics::model::accounting::{ChargePoint, LimitKind, Meter, ModelNormalizationLimits};
+use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
+use fsl_semantics::model::index::ModelIndex;
+use fsl_semantics::model::intake::{
+    admit, admit_unit, lift_document, meaning, package_input, read_domain_package, read_records,
+    PackageDocument, PackageInput,
+};
+use fsl_semantics::model::normalize::{normalize, normalize_with_meter, NormalizeOutcome};
+use fsl_semantics::model::systems::{
+    check_allocation, check_connection, classify, AllocationCheckOutcome, ConnectionCheckOutcome,
+    ConnectionOutcome,
+};
+use ix_trace_rs::trace;
+use serde_json::Value;
+
+/// Parses test document bytes through intake's one parse.
+fn parse_document(bytes: &[u8]) -> PackageDocument {
+    PackageDocument::parse(bytes, fsl_foundation::IntakeLimits::default())
+        .expect("the test document parses as JSON")
+}
+
+#[trace("TC-145", "FR-056-AC-1")]
+#[test]
+fn the_model_reader_cohort_admits_dimensions_and_scaled_units() {
+    let mut document: Value = serde_json::from_slice(include_bytes!(
+        "../../../tests/fixtures/spine-model.semantic-ir.json"
+    ))
+    .expect("the authored model fixture is JSON");
+    let original = read_records(
+        "acme/orders",
+        &parse_document(&serde_json::to_vec(&document).expect("serialize original model")),
+    )
+    .expect("the original model reads");
+    let origin = document["types"][0]["origin"].clone();
+    document["dimensions"] = serde_json::json!([{
+        "identity": "ix://acme/orders/dimension/Time", "name": "Time",
+        "base": true, "terms": [], "origin": origin
+    }]);
+    document["units"] = serde_json::json!([
+        {"identity": "ix://acme/orders/unit/s", "name": "s",
+         "dimension": "ix://acme/orders/dimension/Time", "scale": "1", "offset": "0",
+         "origin": origin},
+        {"identity": "ix://acme/orders/unit/ms", "name": "ms",
+         "dimension": "ix://acme/orders/dimension/Time", "target": "ix://acme/orders/unit/s",
+         "scale": "1/1000", "offset": "0", "origin": origin}
+    ]);
+    let bytes = serde_json::to_vec(&document).expect("serialize authored model");
+    let parsed = parse_document(&bytes);
+    let records = read_records("acme/orders", &parsed)
+        .expect("the FCD reader admits the original model with its dimension/unit graph");
+    assert!(!original.is_empty());
+    assert_eq!(
+        records, original,
+        "the original declarations stay unchanged"
+    );
+
+    document["units"][1]["target"] = "ix://acme/orders/unit/missing".into();
+    let invalid = parse_document(&serde_json::to_vec(&document).expect("serialize mutation"));
+    let errors = read_records("acme/orders", &invalid)
+        .expect_err("the cohort must retain the owner's unresolved-unit refusal");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, fsl_foundation::Code::InvalidModelBinding);
+    assert!(
+        errors[0].detail.contains("UNRESOLVED_UNIT_REF"),
+        "{errors:?}"
+    );
+}
+
+/// Resolves to the checked-out `agent-ix-extraction-frontend` git
+/// dependency's own `fixtures` directory
+/// (`crates/extraction-frontend/fixtures` in the pinned
+/// `agent-ix/filament-core-data` checkout), via `cargo metadata`'s
+/// `manifest_path` for that package -- the same shell-out-and-parse pattern
+/// `tools/arch-lint/metadata.rs` already uses. Memoized: every test below that needs it calls this, and
+/// `cargo metadata` is not free.
+pub(super) fn fcd_fixtures_dir() -> &'static Path {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let output = Command::new(env!("CARGO"))
+            .args(["metadata", "--format-version", "1", "--locked", "--offline"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("run Cargo's locked offline metadata resolver");
+        assert!(
+            output.status.success(),
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let metadata: Value =
+            serde_json::from_slice(&output.stdout).expect("decode cargo metadata");
+        let packages = metadata["packages"]
+            .as_array()
+            .expect("metadata packages array");
+        let manifest_path = packages
+            .iter()
+            .find(|package| package["name"] == "agent-ix-extraction-frontend")
+            .unwrap_or_else(|| {
+                panic!(
+                    "agent-ix-extraction-frontend is not in cargo metadata's package list -- \
+                     is Cargo.toml's git dependency on agent-ix/filament-core-data still \
+                     present and resolvable?"
+                )
+            })["manifest_path"]
+            .as_str()
+            .expect("package manifest_path is a string");
+        Path::new(manifest_path)
+            .parent()
+            .expect("a package manifest_path has a parent directory")
+            .join("fixtures")
+    })
+}
+
+/// FR-260-AC-1 (TC-730 step 2), on a 512 KiB stack: every corpus domain
+/// package FR-056's tests admit also admits when selected by the
+/// identity its document declares. The architecture document is the one
+/// FCD's real lift produces.
+#[trace("TC-730", "FR-260-AC-1")]
+#[test]
+fn every_corpus_package_admits_by_its_identity() {
+    on_a_small_stack(|| {
+        let fixtures = fcd_fixtures_dir();
+        let architecture = lift_document(
+            &fixtures.join("architecture"),
+            &[
+                fixtures.join("modules/fixture-domain"),
+                fixtures.join("modules/fixture-edges"),
+                fixtures.join("modules/fixture-systems"),
+            ],
+        )
+        .expect("FCD's real architecture fixture lifts cleanly");
+        let corpus: [(&str, Vec<u8>); 3] = [
+            (
+                "spine-model",
+                include_bytes!("../../../tests/fixtures/spine-model.semantic-ir.json").to_vec(),
+            ),
+            (
+                "systems-interface",
+                include_bytes!("../../../tests/fixtures/systems-interface.semantic-ir.json")
+                    .to_vec(),
+            ),
+            ("architecture", architecture),
+        ];
+        for (name, bytes) in corpus {
+            let package: Value = serde_json::from_slice(&bytes).unwrap();
+            let offered = DomainPackageRef {
+                identity: package["package"]["identity"].as_str().unwrap().to_owned(),
+            };
+            let by_digest =
+                fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
+            let admitted = admit(
+                offered.identity.as_str(),
+                &by_digest,
+                fsl_foundation::IntakeLimits::default(),
+            );
+            assert!(admitted.is_ok(), "{name}: {:?}", admitted.err());
+        }
+    });
+}
+
+#[trace("TC-145", "FR-056-AC-1")]
+#[test]
+fn lifts_the_architecture_bundle_and_admits_it() {
+    let fixtures = fcd_fixtures_dir();
+    let bundle_root = fixtures.join("architecture");
+    let module_roots = vec![
+        fixtures.join("modules/fixture-domain"),
+        fixtures.join("modules/fixture-edges"),
+        fixtures.join("modules/fixture-systems"),
+    ];
+
+    let document = lift_document(&bundle_root, &module_roots)
+        .expect("FCD's real architecture fixture lifts cleanly");
+
+    // FCD's committed expected document: proof this ran FCD's actual
+    // pipeline over the actual bundle, not a value this test invented.
+    let expected: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(bundle_root.join("expected/semantic-ir.json"))
+            .expect("fixture expected document is present"),
+    )
+    .expect("fixture expected document is valid JSON");
+    let lifted: serde_json::Value =
+        serde_json::from_slice(&document).expect("lifted document is valid JSON");
+    assert_eq!(
+        lifted, expected,
+        "lift_document must produce the fixture's committed expected document"
+    );
+
+    let package = lifted;
+    let identity = package["package"]["identity"]
+        .as_str()
+        .expect("document declares its package identity")
+        .to_owned();
+    let bytes_by_digest =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+
+    let offered = DomainPackageRef {
+        identity: identity.clone(),
+    };
+    let (admitted, admitted_document) = admit(
+        offered.identity.as_str(),
+        &bytes_by_digest,
+        fsl_foundation::IntakeLimits::default(),
+    )
+    .expect("a selection matching the lifted package's own identity is admitted");
+    assert_eq!(admitted.identity, identity);
+    assert_eq!(admitted_document.tree(), &package);
+}
+
+/// TC-145 / FR-056-AC-4 / FR-056-AC-44: exercise the merged FCD member-name
+/// and artifact-id contract through the real lift and FSL read paths. The
+/// assertions inspect FCD's emitted identities before passing those exact
+/// bytes to FSL, so a hand-authored Semantic IR document cannot satisfy this
+/// coverage.
+#[trace("TC-145", "FR-056-AC-4", "FR-056-AC-44")]
+#[test]
+fn lifts_hyphenated_business_ids_and_reads_authored_member_names() {
+    let bundle = write_bundle(&[
+        (
+            "spec/spec.md",
+            "---\ntype: master-requirements\nname: identity-service\norg: acme\ntitle: Identity Service\n---\n# Identity Service\n",
+        ),
+        (
+            "spec/functional/FR-001-note.md",
+            "---\nid: FR-001-note\ntitle: Note\nobject: entity\ntype: entity\nname: Note\n---\n# FR-001-note: Note\n\n## Properties\n\n| Field | Type | Multiplicity | Constraints |\n|-------|------|--------------|-------------|\n| id | String | 1 | identity |\n| created_at | String | 1 | |\n\n## Operations\n\n### find_by_id\n\n| Param | Type | Multiplicity | Constraints |\n|-------|------|--------------|-------------|\n| note_id | String | 1 | |\n\nFind a note by its id. The operation returns nothing.\n",
+        ),
+        (
+            "spec/functional/OP-001-check.md",
+            "---\nid: OP-001-check\ntitle: Note Check\nobject: entity\ntype: entity\nname: NoteCheck\n---\n# OP-001-check: Note Check\n\n## Properties\n\n| Field | Type | Multiplicity | Constraints |\n|-------|------|--------------|-------------|\n| id | String | 1 | identity |\n| note_ref | Note | 1 | |\n",
+        ),
+    ]);
+    let fixtures = fcd_fixtures_dir();
+    let module_roots = vec![
+        fixtures.join("modules/fixture-domain"),
+        fixtures.join("modules/fixture-edges"),
+        fixtures.join("modules/fixture-systems"),
+    ];
+
+    let lifted = lift_document(bundle.path(), &module_roots)
+        .expect("the real FCD pipeline lifts hyphenated business ids and underscore members");
+    let document: Value = serde_json::from_slice(&lifted).expect("FCD output is JSON");
+    let types = document["types"]
+        .as_array()
+        .expect("lifted types are an array");
+    let find_type = |identity: &str| {
+        types
+            .iter()
+            .find(|type_node| type_node["identity"] == identity)
+            .unwrap_or_else(|| panic!("FCD output has no type identity {identity}"))
+    };
+
+    let note = find_type("ix://acme/identity-service/FR-001-note");
+    let created_at = note["fields"]
+        .as_array()
+        .expect("note fields are an array")
+        .iter()
+        .find(|field| field["name"] == "created_at")
+        .expect("FCD emits the authored underscore field name");
+    assert_eq!(
+        created_at["identity"],
+        "ix://acme/identity-service/FR-001-note/created_at"
+    );
+    assert_eq!(
+        note["operations"][0]["name"], "find_by_id",
+        "FCD retains the authored operation member name"
+    );
+    assert_eq!(
+        note["operations"][0]["identity"],
+        "ix://acme/identity-service/FR-001-note/find_by_id"
+    );
+    assert_eq!(
+        note["operations"][0]["params"][0]["name"], "note_id",
+        "FCD retains the authored operation parameter name"
+    );
+    assert_eq!(
+        note["operations"][0]["params"][0]["identity"],
+        "ix://acme/identity-service/FR-001-note/find_by_id/note_id"
+    );
+    let checker = find_type("ix://acme/identity-service/OP-001-check");
+    let note_ref = checker["fields"]
+        .as_array()
+        .expect("checker fields are an array")
+        .iter()
+        .find(|field| field["name"] == "note_ref")
+        .expect("FCD emits the authored underscore reference name");
+    assert_eq!(
+        note_ref["identity"],
+        "ix://acme/identity-service/OP-001-check/note_ref"
+    );
+    assert_eq!(
+        note_ref["typeRef"], "ix://acme/identity-service/FR-001-note",
+        "the cross-artifact reference resolves to the emitted business identity"
+    );
+
+    let records = read_records("acme/identity-service", &parse_document(&lifted))
+        .expect("FSL reads the exact Semantic IR document emitted by FCD");
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    let has_field = |identity: &str| {
+        records.iter().any(|record| {
+            matches!(record, DomainPackageRecord::FieldMember(field) if field.key.node == identity)
+        })
+    };
+    assert!(has_field(
+        "ix://acme/identity-service/FR-001-note/created_at"
+    ));
+    assert!(has_field(
+        "ix://acme/identity-service/OP-001-check/note_ref"
+    ));
+    let has_operation_parameter = records.iter().any(|record| {
+        matches!(record, DomainPackageRecord::OperationMember(operation)
+        if operation.parameters.iter().any(|parameter| {
+            parameter.key.node == "ix://acme/identity-service/FR-001-note/find_by_id/note_id"
+        }))
+    });
+    assert!(
+        has_operation_parameter,
+        "FSL retains the authored parameter identity"
+    );
+    let note_reference = records.iter().find_map(|record| match record {
+        DomainPackageRecord::FieldMember(field)
+            if field.key.node == "ix://acme/identity-service/OP-001-check/note_ref" =>
+        {
+            field.value_type.as_package()
+        }
+        _ => None,
+    });
+    assert_eq!(
+        note_reference,
+        Some(&key(
+            "acme/identity-service",
+            "ix://acme/identity-service/FR-001-note"
+        )),
+        "FSL resolves the reference to the first emitted artifact"
+    );
+}
+
+/// FR-056 requires `UUID` among the native value types a field may name, so
+/// the architecture golden of the pinned `agent-ix-extraction-frontend`
+/// (12 types, no `populations[]`, asserted below) reads clean: `Pump.id`,
+/// `Sys.id` and `Tank.id` (`typeRef` `ix://filament/native/UUID`) read as
+/// `Native(Uuid)` field members.
+///
+/// `read_records` discards every already-read record when any node refuses,
+/// so this whole-document read is the proof that no node of the golden
+/// refuses. `reads_pump_out_as_a_real_endpoint_record` below asserts content
+/// for one type by isolating it.
+#[trace("TC-145", "TC-146", "FR-056-AC-3", "FR-056-AC-5")]
+#[test]
+fn reading_fcd_199s_golden_shape_reads_all_12_types() {
+    let package_identity = "agent-ix/architecture";
+    let document =
+        std::fs::read_to_string(fcd_fixtures_dir().join("architecture/expected/semantic-ir.json"))
+            .expect(
+            "the pinned agent-ix-extraction-frontend checkout carries its own architecture golden",
+        );
+
+    let parsed: Value = serde_json::from_str(&document).expect("the golden is valid JSON");
+    assert_eq!(
+        parsed["types"]
+            .as_array()
+            .expect("the golden's types is an array")
+            .len(),
+        12,
+        "the golden's own type count"
+    );
+    assert!(
+        parsed.get("populations").is_none(),
+        "this test assumes no populations[] in the golden"
+    );
+
+    let records = read_records(package_identity, &parse_document(document.as_bytes()))
+        .expect("every type of the golden reads, `UUID` fields included");
+
+    use fsl_semantics::model::domain_package::{
+        DomainPackageRecord, NativeValueType, ValueTypeRef,
+    };
+
+    for owner in ["Pump", "Sys", "Tank"] {
+        let identity = format!("ix://{package_identity}/{owner}/id");
+        let field = records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::FieldMember(field) if field.key.node == identity => {
+                    Some(field)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{identity} reads as a field member"));
+        assert_eq!(
+            field.value_type,
+            ValueTypeRef::Native(NativeValueType::Uuid),
+            "{identity}"
+        );
+    }
+}
+
+/// The golden's `pump_out` type (`filament.meaning.systems.port/v1`) is one of
+/// the 7 clean-reading types the whole-document test above cannot assert
+/// content for (`read_records` discards already-read records when any
+/// sibling node refuses). This isolates it into its own small document
+/// carrying the golden's own `pump_out`/`sys_pump`/`Flow`/`Sys`/`Pump` nodes
+/// verbatim (`agent-ix-semantic-ir`'s own schema requires every referenced
+/// type -- `pump_out.owner`, `pump_out.interfaceType`, `sys_pump.owner`,
+/// `sys_pump.declaredType` -- to resolve to a real node, so the referential
+/// closure comes along), with only `Sys`/`Pump.id`'s own `typeRef` (the
+/// `ix://filament/native/UUID` refusal, irrelevant to `pump_out` itself)
+/// redirected to a supported native type so the closure itself reads clean
+/// too. `Flow.rate` keeps its golden `typeRef`, `Count`, and `Count` comes
+/// along verbatim: it reads as a record value type owning its one field. `pump_out` reads as a real
+/// [`fsl_semantics::model::domain_package::EndpointRecord`], not
+/// merely "no refusal": owner `sys_pump`, direction `Out`, value type
+/// `Flow`, multiplicity exactly `1..=1`.
+#[trace("TC-145", "FR-056-AC-1")]
+#[test]
+fn reads_pump_out_as_a_real_endpoint_record() {
+    let package_identity = "agent-ix/architecture";
+    let document =
+        std::fs::read_to_string(fcd_fixtures_dir().join("architecture/expected/semantic-ir.json"))
+            .expect(
+            "the pinned agent-ix-extraction-frontend checkout carries its own architecture golden",
+        );
+    let parsed: Value = serde_json::from_str(&document).expect("the golden is valid JSON");
+    let all_types = parsed["types"].as_array().expect("types is an array");
+    let find = |identity: &str| -> Value {
+        all_types
+            .iter()
+            .find(|type_value| type_value["identity"] == identity)
+            .unwrap_or_else(|| panic!("{identity}: not found in the golden"))
+            .clone()
+    };
+
+    let pump_out = find("ix://agent-ix/architecture/pump_out");
+    let sys_pump = find("ix://agent-ix/architecture/sys_pump");
+    let mut sys = find("ix://agent-ix/architecture/Sys");
+    let mut pump = find("ix://agent-ix/architecture/Pump");
+    // `Sys.id`/`Pump.id`'s own `typeRef` is `ix://filament/native/UUID`, R5's
+    // ruling refusal -- irrelevant to `pump_out`'s own content -- redirected
+    // to a supported native type rather than dropped: `identityFields`
+    // requires at least one field, and it must still resolve.
+    for entity in [&mut sys, &mut pump] {
+        entity["fields"][0]["typeRef"] = Value::String("ix://filament/native/Boolean".to_owned());
+    }
+    let flow = find("ix://agent-ix/architecture/Flow");
+    let count = find("ix://agent-ix/architecture/Count");
+
+    let types = vec![pump_out, sys_pump, flow, sys, pump, count];
+    let kept_kinds: Vec<Value> = types
+        .iter()
+        .map(|type_value| type_value["kind"].clone())
+        .collect();
+    let constructs = parsed["constructs"]
+        .as_array()
+        .expect("constructs is an array")
+        .iter()
+        .filter(|construct| kept_kinds.contains(&construct["kind"]))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut document = parsed;
+    document["constructs"] = Value::Array(constructs);
+    document["types"] = Value::Array(types);
+
+    let records = read_records(
+        package_identity,
+        &parse_document(document.to_string().as_bytes()),
+    )
+    .expect(
+        "pump_out and the referential closure needed to satisfy agent-ix-semantic-ir's own \
+         schema, with Sys/Pump's unrelated refusing identity types redirected, read clean",
+    );
+    let endpoint = records
+        .iter()
+        .find_map(|record| match record {
+            fsl_semantics::model::domain_package::DomainPackageRecord::Endpoint(endpoint) => {
+                Some(endpoint)
+            }
+            _ => None,
+        })
+        .expect("exactly one Endpoint record, for pump_out");
+    assert_eq!(
+        endpoint.key,
+        key(package_identity, "ix://agent-ix/architecture/pump_out")
+    );
+    assert_eq!(
+        endpoint.owning_component,
+        key(package_identity, "ix://agent-ix/architecture/sys_pump")
+    );
+    assert_eq!(
+        endpoint.value_type,
+        key(package_identity, "ix://agent-ix/architecture/Flow")
+    );
+    assert_eq!(
+        endpoint.direction,
+        Some(fsl_semantics::model::domain_package::PortDirection::Out)
+    );
+    assert_eq!(endpoint.multiplicity.lower, 1);
+    assert_eq!(endpoint.multiplicity.upper, Some(1));
+
+    // `Count` reads as a record value type, its field `value` owned by it,
+    // and `Flow.rate` resolves its type to that node.
+    use fsl_semantics::model::domain_package::{
+        DomainPackageRecord, NativeValueType, RecordValueTypeRecord, ValueTypeRef,
+    };
+    let count = key(package_identity, "ix://agent-ix/architecture/Count");
+    assert!(records.contains(&DomainPackageRecord::RecordValueType(
+        RecordValueTypeRecord {
+            key: count.clone(),
+            identity_fields: Vec::new(),
+            supertypes: Vec::new()
+        }
+    )));
+    let field = |node: &str| {
+        records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::FieldMember(field) if field.key.node == node => Some(field),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{node}: a field member"))
+    };
+    let value = field("ix://agent-ix/architecture/Count/value");
+    assert_eq!(value.owner, count);
+    assert_eq!(
+        value.value_type,
+        ValueTypeRef::Native(NativeValueType::Integer)
+    );
+    assert_eq!(
+        field("ix://agent-ix/architecture/Flow/rate").value_type,
+        ValueTypeRef::Package(count)
+    );
+}
+
+fn multiplicity_one(lower: u64, upper: Option<u64>) -> serde_json::Value {
+    serde_json::json!({
+        "lower": lower,
+        "upper": upper,
+        "ordered": false,
+        "unique": true,
+    })
+}
+
+fn default_meter() -> Meter {
+    Meter::new(ModelNormalizationLimits::default())
+}
+
+fn key(package: &str, identity: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: package.to_owned(),
+        node: identity.to_owned(),
+    }
+}
+
+/// The FR-154 intake document envelope `agent-ix-semantic-ir`'s own schema
+/// layer requires beyond `constructs[]`/`types[]` (M5, review of PR #200):
+/// `contractVersion`, the canonicalization profile, `source`, `package`'s full
+/// required member set, `occurrences` and `extensions`, filled with
+/// schema-valid stand-ins.
+fn wire_envelope(package_identity: &str, constructs: Value, types: Value) -> Value {
+    serde_json::json!({
+        "contractVersion": "2.0.0",
+        "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {
+            "identity": format!("ix://{package_identity}/spec"),
+            "version": "1.0.0",
+            "dialect": "spec-bundle",
+        },
+        "package": {
+            "identity": package_identity,
+            "version": "1.0.0",
+            "mappingVersions": [],
+            "profileVersions": [],
+        },
+        "occurrences": [],
+        "extensions": [],
+        "constructs": constructs,
+        "types": types,
+    })
+}
+
+fn wire_construct(module: &str, name: &str, meaning: &str, members: Value) -> Value {
+    serde_json::json!({
+        "kind": {"module": module, "name": name},
+        "moduleVersion": "1.0.0",
+        "construct": {
+            "identity": "none",
+            "shape": "record",
+            "members": members,
+            "meaning": meaning,
+        },
+    })
+}
+
+/// Every member `semantic-ir.schema.json`'s `typeDefinition` requires beyond
+/// `identity`/`kind`, filled with schema-valid stand-ins; `extra`'s own
+/// members are then merged on top.
+fn wire_type(identity: &str, kind: Value, extra: Value) -> Value {
+    let mut node = serde_json::json!({
+        "identity": identity,
+        "displayName": identity,
+        "kind": kind,
+        "roles": [],
+        "origin": {
+            "generated": {
+                "generatorIdentity": identity,
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [identity],
+            }
+        },
+        "constraints": [],
+        "extensions": [],
+        "unknownPolicy": "reject",
+    });
+    if let (Some(node), Some(extra)) = (node.as_object_mut(), extra.as_object()) {
+        for (key, value) in extra {
+            node.insert(key.clone(), value.clone());
+        }
+    }
+    node
+}
+
+/// Every member `semantic-ir.schema.json`'s `field` requires beyond
+/// `identity`/`typeRef`, filled with schema-valid stand-ins. The
+/// multiplicity omits `upper`/`ordered`/`unique`: `crate::model::intake`'s
+/// own reader requires `ordered`/`unique` present, but
+/// `agent-ix-semantic-ir`'s `field_rules` refuses either present at all on
+/// a single-valued (`upper <= 1`) field -- an unbounded multiplicity (no
+/// `upper`) satisfies both.
+fn wire_field(identity: &str, name: &str, type_ref: &str) -> Value {
+    serde_json::json!({
+        "identity": identity,
+        "name": name,
+        "typeRef": type_ref,
+        "presence": "optional",
+        "nullable": false,
+        "defaultKind": "none",
+        "multiplicity": {"lower": 0, "ordered": false, "unique": true},
+        "origin": {
+            "generated": {
+                "generatorIdentity": identity,
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [identity],
+            }
+        },
+    })
+}
+
+fn rational_intake_document() -> Value {
+    let package = "test/rational-value-type";
+    let ratio = format!("ix://{package}/Ratio");
+    let holder = format!("ix://{package}/Holder");
+    let constraints = [
+        ("maxDenominator", 12_i64),
+        ("minNumerator", -3_i64),
+        ("minDenominator", 1_i64),
+        ("maxNumerator", 7_i64),
+    ]
+    .into_iter()
+    .map(|(keyword, value)| {
+        let identity = format!("{ratio}/constraints/{keyword}");
+        serde_json::json!({
+            "identity": identity,
+            "keyword": keyword,
+            "operands": {"value": value},
+            "appliesTo": ratio.clone(),
+            "diagnosticCode": format!("rational.{keyword}"),
+            "origin": {"generated": {
+                "generatorIdentity": ratio.clone(),
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [ratio.clone()],
+            }},
+        })
+    })
+    .collect::<Vec<_>>();
+    let field = wire_field(&format!("{holder}/ratio"), "ratio", &ratio);
+    wire_envelope(
+        package,
+        serde_json::json!([
+            wire_construct(
+                package,
+                "value_type",
+                meaning::VALUE_TYPE,
+                serde_json::json!({}),
+            ),
+            wire_construct(
+                package,
+                "object_type",
+                meaning::OBJECT_TYPE,
+                serde_json::json!({})
+            ),
+        ]),
+        serde_json::json!([
+            wire_type(
+                &ratio,
+                serde_json::json!({"module": package, "name": "value_type"}),
+                serde_json::json!({"scalar": "rational", "constraints": constraints}),
+            ),
+            wire_type(
+                &holder,
+                serde_json::json!({"module": package, "name": "object_type"}),
+                serde_json::json!({"supertypes": [], "fields": [field], "operations": []}),
+            ),
+        ]),
+    )
+}
+
+/// FR-505-AC-1: a bounded Rational value type is admitted through Semantic IR
+/// validation and package reading, and its typed field retains that identity.
+#[trace("FR-505-AC-1", "TC-1300")]
+#[test]
+fn reads_a_bounded_rational_value_type_from_a_package_document() {
+    let package = "test/rational-value-type";
+    let ratio = format!("ix://{package}/Ratio");
+    let document = rational_intake_document();
+    let parsed = parse_document(&serde_json::to_vec(&document).expect("serialize package"));
+    let records = read_records(package, &parsed).expect("bounded Rational package reads");
+    let scalar = records
+        .iter()
+        .find_map(|record| match record {
+            fsl_semantics::model::domain_package::DomainPackageRecord::ScalarType(scalar)
+                if scalar.key.node == ratio =>
+            {
+                Some(scalar)
+            }
+            _ => None,
+        })
+        .expect("Ratio scalar record");
+    let fsl_semantics::model::domain_package::ScalarValueDomain::Rational {
+        domain: Some(domain),
+        unit: None,
+    } = &scalar.domain
+    else {
+        panic!("bounded dimensionless Rational was not retained: {scalar:?}");
+    };
+    assert_eq!(
+        domain.numerator().lower(),
+        &filament_exact::Integer::from(-3_i64)
+    );
+    assert_eq!(
+        domain.numerator().upper(),
+        &filament_exact::Integer::from(7_i64)
+    );
+    assert_eq!(
+        domain.denominator().lower(),
+        &filament_exact::Integer::one()
+    );
+    assert_eq!(
+        domain.denominator().upper(),
+        &filament_exact::Integer::from(12_i64)
+    );
+    assert!(records.iter().any(|record| matches!(
+        record,
+        fsl_semantics::model::domain_package::DomainPackageRecord::FieldMember(field)
+            if field.value_type == fsl_semantics::model::domain_package::ValueTypeRef::Package(
+                scalar.key.clone()
+            )
+    )));
+}
+
+fn set_rational_bound(document: &mut Value, keyword: &str, value: Value) {
+    let constraints = document["types"][0]["constraints"].as_array_mut().unwrap();
+    let constraint = constraints
+        .iter_mut()
+        .find(|entry| entry["keyword"] == keyword)
+        .unwrap();
+    constraint["operands"]["value"] = value;
+}
+
+#[trace("TC-1300", "FR-505-AC-1")]
+#[test]
+fn rational_bounds_retain_safe_numbers_and_signed64_strings() {
+    for (minimum, maximum, lower, upper) in [
+        (
+            serde_json::json!(-9007199254740992_i64),
+            serde_json::json!(9007199254740992_i64),
+            -9007199254740992_i64,
+            9007199254740992_i64,
+        ),
+        (
+            serde_json::json!("-9223372036854775808"),
+            serde_json::json!("9223372036854775807"),
+            i64::MIN,
+            i64::MAX,
+        ),
+        (serde_json::json!("0"), serde_json::json!("7"), 0, 7),
+    ] {
+        let mut document = rational_intake_document();
+        set_rational_bound(&mut document, "minNumerator", minimum);
+        set_rational_bound(&mut document, "maxNumerator", maximum);
+        set_rational_bound(&mut document, "minDenominator", serde_json::json!("1"));
+        set_rational_bound(
+            &mut document,
+            "maxDenominator",
+            serde_json::json!("9223372036854775807"),
+        );
+        let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
+        let records = read_records("test/rational-value-type", &parsed).unwrap();
+        let domain = records
+            .iter()
+            .find_map(|record| match record {
+                fsl_semantics::model::domain_package::DomainPackageRecord::ScalarType(scalar) => {
+                    match &scalar.domain {
+                        fsl_semantics::model::domain_package::ScalarValueDomain::Rational {
+                            domain: Some(domain),
+                            unit: None,
+                        } => Some(domain),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .expect("retained unit-less Rational domain");
+        assert_eq!(
+            domain.numerator().lower(),
+            &filament_exact::Integer::from(lower)
+        );
+        assert_eq!(
+            domain.numerator().upper(),
+            &filament_exact::Integer::from(upper)
+        );
+        assert_eq!(
+            domain.denominator().upper(),
+            &filament_exact::Integer::from(i64::MAX)
+        );
+    }
+}
+
+#[trace("TC-1300", "FR-505-AC-3")]
+#[test]
+fn rational_bound_operands_refuse_noncanonical_strings_and_shapes() {
+    for value in [
+        serde_json::json!("-0"),
+        serde_json::json!("+1"),
+        serde_json::json!("01"),
+        serde_json::json!("-01"),
+        serde_json::json!(" 1"),
+        serde_json::json!("1 "),
+        serde_json::json!("−1"),
+        serde_json::json!("１"),
+        serde_json::json!("1.0"),
+        serde_json::json!("1e2"),
+        serde_json::json!("3/4"),
+        serde_json::json!("9223372036854775808"),
+        serde_json::json!("-9223372036854775809"),
+        serde_json::json!(1.5),
+        serde_json::json!(100.0),
+        serde_json::json!(null),
+    ] {
+        let mut document = rational_intake_document();
+        set_rational_bound(&mut document, "minNumerator", value.clone());
+        let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
+        let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
+        assert!(
+            matches!(&refusals[0].cause,
+                fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
+                    if node == "ix://test/rational-value-type/Ratio/constraints/minNumerator" && member.to_string() == "TypeDefinition.constraints[1].operands"
+            ),
+            "{value}: {refusals:?}"
+        );
+    }
+    for operands in [
+        serde_json::json!({}),
+        serde_json::json!({"value": "1", "extra": 0}),
+    ] {
+        let mut document = rational_intake_document();
+        document["types"][0]["constraints"][1]["operands"] = operands;
+        let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
+        let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
+        assert!(
+            matches!(&refusals[0].cause,
+                fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+                    if member.to_string() == "TypeDefinition.constraints[1].operands"
+            ),
+            "{refusals:?}"
+        );
+    }
+}
+
+#[trace("TC-1300", "FR-505-AC-3")]
+#[test]
+fn unsafe_numeric_rational_bounds_refuse_before_operand_intake() {
+    for number in [
+        9007199254740993_i64,
+        9007199254740994_i64,
+        -9007199254740994_i64,
+    ] {
+        let mut document = rational_intake_document();
+        set_rational_bound(&mut document, "minNumerator", serde_json::json!(number));
+        let result = PackageDocument::parse(
+            &serde_json::to_vec(&document).unwrap(),
+            fsl_foundation::IntakeLimits::default(),
+        );
+        let refusal = match result {
+            Ok(_) => panic!("unsafe numeric bound admitted: {number}"),
+            Err(refusal) => refusal,
+        };
+        assert_eq!(refusal.code, Code::NoncanonicalWire);
+        assert!(
+            matches!(&refusal.cause,
+                fsl_semantics::model::refusal::ModelRefusalCause::NoncanonicalNumber {
+                    inexact: fsl_semantics::model::refusal::Inexact::Integer, document_pointer,
+                } if document_pointer.as_str() == "/types/0/constraints/1/operands/value"
+            ),
+            "{refusal:?}"
+        );
+    }
+}
+
+#[trace("TC-1300", "FR-505-AC-3")]
+#[test]
+fn rational_string_bounds_preserve_missing_operand_and_domain_refusal_order() {
+    use fsl_semantics::model::refusal::ModelRefusalCause;
+    // Missing keys precede malformed operands, even when the bad operand appears first.
+    let mut document = rational_intake_document();
+    set_rational_bound(&mut document, "maxDenominator", serde_json::json!("01"));
+    document["types"][0]["constraints"]
+        .as_array_mut()
+        .unwrap()
+        .remove(2);
+    let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
+    let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
+    assert!(
+        matches!(&refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+        if member.to_string() == "TypeDefinition.constraints"),
+        "{refusals:?}"
+    );
+    assert!(refusals[0].detail.contains("minDenominator"));
+    // Operand validation follows keyword order rather than constraint array order.
+    let mut document = rational_intake_document();
+    set_rational_bound(&mut document, "maxDenominator", serde_json::json!("01"));
+    set_rational_bound(&mut document, "maxNumerator", serde_json::json!("+1"));
+    let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
+    let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
+    assert!(
+        matches!(&refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+        if member.to_string() == "TypeDefinition.constraints[3].operands"),
+        "{refusals:?}"
+    );
+    for denominator in ["0", "-1"] {
+        let mut document = rational_intake_document();
+        set_rational_bound(
+            &mut document,
+            "minDenominator",
+            serde_json::json!(denominator),
+        );
+        document["types"][0]["unit"] = serde_json::json!("ix://filament/unit/absent");
+        let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
+        let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
+        assert!(
+            matches!(&refusals[0].cause, ModelRefusalCause::UnsupportedDeclarationForm { member, .. }
+            if member.to_string() == "TypeDefinition.constraints"),
+            "{refusals:?}"
+        );
+    }
+}
+
+fn unit_intake_scale_document(package_identity: &str, count: usize) -> Vec<u8> {
+    let mut types = String::from("[");
+    for index in 0..count {
+        if index > 0 {
+            types.push(',');
+        }
+        let identity = format!("ix://{package_identity}/R{index:05}");
+        let field = wire_field(
+            &format!("{identity}/f"),
+            "f",
+            "ix://filament/native/Boolean",
+        );
+        let value_type = wire_type(
+            &identity,
+            serde_json::json!({
+                "module": package_identity,
+                "name": "record_value_type",
+            }),
+            serde_json::json!({
+                "supertypes": [],
+                "fields": [field],
+            }),
+        );
+        types.push_str(&value_type.to_string());
+    }
+    types.push(']');
+    let document = wire_envelope(
+        package_identity,
+        serde_json::json!([wire_construct(
+            package_identity,
+            "record_value_type",
+            meaning::RECORD_VALUE_TYPE,
+            serde_json::json!({}),
+        )]),
+        serde_json::json!([]),
+    )
+    .to_string()
+    .replace("\"types\":[]", &format!("\"types\":{types}"));
+    document.into_bytes()
+}
+
+fn unit_selection(package_identity: &str) -> ModelSelection {
+    ModelSelection {
+        alias: "M".to_owned(),
+        identity: package_identity.to_owned(),
+        span: Span { start: 0, end: 0 },
+        identity_span: Span { start: 0, end: 0 },
+    }
+}
+
+#[trace("TC-1308", "FR-513-AC-2")]
+#[test]
+fn duplicate_package_documents_refuse_and_one_identity_can_have_two_aliases() {
+    let bytes = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
+    let assert_conflict = |refusal: fsl_semantics::model::normalize::ModelRefusal| {
+        assert_eq!(refusal.code, Code::InvalidPackage);
+        assert_eq!(refusal.cause.as_str(), "conflicting-definition");
+        assert!(matches!(
+            refusal.cause,
+            fsl_semantics::model::refusal::ModelRefusalCause::ConflictingPackage { identity }
+                if identity == "example/config-version"
+        ));
+    };
+    let equal = package_input([bytes.as_slice(), bytes.as_slice()])
+        .expect_err("one package identity cannot be supplied twice, even with equal documents");
+    assert_conflict(equal);
+
+    let same_version_different_content = format!("{}\n", std::str::from_utf8(bytes).unwrap());
+    let changed_content =
+        package_input([bytes.as_slice(), same_version_different_content.as_bytes()])
+            .expect_err("different contents under one identity conflict even when versions agree");
+    assert_conflict(changed_content);
+
+    let different = std::str::from_utf8(bytes)
+        .expect("fixture is UTF-8")
+        .replacen(
+            "\"identity\": \"example/config-version\",\n    \"version\": \"1.0.0\"",
+            "\"identity\": \"example/config-version\",\n    \"version\": \"2.0.0\"",
+            1,
+        );
+    let changed = package_input([bytes.as_slice(), different.as_bytes()])
+        .expect_err("different versions and contents for one package identity conflict");
+    assert_conflict(changed);
+
+    // A refused package input is all-or-nothing: callers cannot select the
+    // first document as a partial binding after the duplicate is found.
+    assert!(package_input([bytes.as_slice(), bytes.as_slice()]).is_err());
+
+    let packages = package_input([bytes.as_slice()]).expect("the single document is keyed");
+    let selection = |alias: &str, start: usize| ModelSelection {
+        alias: alias.to_owned(),
+        identity: "example/config-version".to_owned(),
+        span: Span {
+            start,
+            end: start + 1,
+        },
+        identity_span: Span {
+            start: start + 1,
+            end: start + 2,
+        },
+    };
+    let admitted = admit_unit(
+        &[selection("Config", 0), selection("History", 2)],
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the same admitted identity binds under two aliases");
+    assert_eq!(admitted.len(), 2);
+    assert_eq!(admitted[0].alias, "Config");
+    assert_eq!(admitted[1].alias, "History");
+    assert_eq!(admitted[0].span.start, 0);
+    assert_eq!(admitted[1].span.start, 2);
+    assert_eq!(admitted[0].view, admitted[1].view);
+}
+
+#[trace("NFR-012", "TC-434")]
+#[test]
+fn unit_intake_projection_work_scales_linearly_for_flat_record_fields() {
+    let package_identity = "test/unit-intake-scaling";
+    let mut work_units = Vec::new();
+    for count in [1_000, 4_000, 16_000] {
+        let document = unit_intake_scale_document(package_identity, count);
+        let packages = PackageInput::from([(package_identity.to_owned(), document)]);
+        let selected = admit_unit(
+            &[unit_selection(package_identity)],
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .unwrap_or_else(|refusal| panic!("{count} record fields admit: {refusal:?}"));
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected.exact_field_rows().len(), count);
+        let consumed = selected.consumed(LimitKind::WorkUnits);
+        eprintln!("unit-intake-scale N={count} WorkUnits={consumed}");
+        work_units.push(consumed);
+    }
+    let ratio_1 = work_units[1] as f64 / work_units[0] as f64;
+    let ratio_2 = work_units[2] as f64 / work_units[1] as f64;
+    eprintln!("unit-intake-scale ratios={ratio_1:.4},{ratio_2:.4}");
+    assert!(work_units[1] <= 5 * work_units[0], "4x ratio={ratio_1:.4}");
+    assert!(work_units[2] <= 5 * work_units[1], "4x ratio={ratio_2:.4}");
+}
+
+#[trace("NFR-012", "TC-434")]
+#[test]
+fn unit_intake_projection_charge_denial_returns_no_selected_models() {
+    let package_identity = "test/unit-intake-denial";
+    let document = unit_intake_scale_document(package_identity, 1);
+    let parsed = PackageDocument::parse(&document, fsl_foundation::IntakeLimits::default())
+        .expect("the one-field package parses");
+    let package = read_domain_package(
+        DomainPackageRef {
+            identity: package_identity.to_owned(),
+        },
+        &parsed,
+    )
+    .expect("the one-field package reads");
+    let (outcome, meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
+    assert!(matches!(outcome, NormalizeOutcome::Completed(_)));
+    let normalization_work = meter.consumed(LimitKind::WorkUnits);
+    let limits = ModelNormalizationLimits {
+        work_units: normalization_work,
+        ..ModelNormalizationLimits::default()
+    };
+    let packages = PackageInput::from([(package_identity.to_owned(), document)]);
+
+    let refusal = admit_unit(&[unit_selection(package_identity)], &packages, limits)
+        .expect_err("projection charge denial returns an incomplete refusal");
+    let fsl_semantics::model::intake::UnitIntakeCause::Limit(incomplete) = refusal.cause else {
+        panic!("expected a work limit denial, got {refusal:?}");
+    };
+    assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(incomplete.limit, normalization_work);
+    assert_eq!(incomplete.consumed, normalization_work);
+    assert_eq!(incomplete.next_charge, 1);
+    assert_eq!(
+        incomplete.charge_point,
+        fsl_semantics::model::accounting::ChargePoint::NormalizeDeclaration
+    );
+}
+
+fn original_document() -> (Value, Value, Value) {
+    let package_identity = "test/origins";
+    let owner = "ix://test/origins/A";
+    let target = "ix://test/origins/B";
+    let source_origin = serde_json::json!({"source": {
+        "sourceIdentity": "ix://authored/model/A", "path": "model/A.md",
+        "startLine": 12, "startColumn": 3, "endLine": 15, "endColumn": 9,
+    }});
+    let relationship_origin = serde_json::json!({"source": {
+        "sourceIdentity": "ix://authored/model/A", "path": "model/A.md",
+        "startLine": 30, "startColumn": 2, "endLine": 30, "endColumn": 57,
+    }});
+    let relationship = serde_json::json!({
+        "identity": "ix://test/origins/relationship/A-related-B", "category": "structural", "composite": false,
+        "direction": "source-to-target", "origin": relationship_origin,
+        "sourceEnd": {"role": "related", "type": owner, "multiplicity": {"lower": 0, "ordered": false, "unique": true}},
+        "targetEnd": {"type": target, "multiplicity": {"lower": 0, "ordered": false, "unique": true}},
+    });
+    let kind = serde_json::json!({"module": package_identity, "name": "thing"});
+    let mut construct = wire_construct(
+        package_identity,
+        "thing",
+        meaning::OBJECT_TYPE,
+        serde_json::json!({"fields": "required", "identityFields": "required"}),
+    );
+    construct["construct"]["identity"] = "identified".into();
+    let document = wire_envelope(
+        package_identity,
+        serde_json::json!([construct]),
+        serde_json::json!([
+            wire_type(
+                owner,
+                kind.clone(),
+                serde_json::json!({
+                    "origin": source_origin, "fields": [wire_field("ix://test/origins/A/id", "id", "ix://filament/native/Boolean")],
+                    "identityFields": ["ix://test/origins/A/id"], "supertypes": [], "operations": [], "relationships": [relationship],
+                })
+            ),
+            wire_type(
+                target,
+                kind,
+                serde_json::json!({
+                    "fields": [wire_field("ix://test/origins/B/id", "id", "ix://filament/native/Boolean")],
+                    "identityFields": ["ix://test/origins/B/id"], "supertypes": [], "operations": [], "relationships": [],
+                })
+            ),
+        ]),
+    );
+    (document, source_origin, relationship_origin)
+}
+
+#[trace("TC-145", "FR-056-AC-1", "FR-056-AC-5")]
+#[test]
+fn admitted_declarations_retain_their_original_meaning_and_member_origins() {
+    use fsl_semantics::model::admitted::AdmittedPackage;
+    let package_identity = "test/origins";
+    let (document, source_origin, relationship_origin) = original_document();
+    let bytes = serde_json::to_vec(&document).unwrap();
+    let parsed = parse_document(&bytes);
+    let package = read_domain_package(
+        DomainPackageRef {
+            identity: package_identity.into(),
+        },
+        &parsed,
+    )
+    .expect("a complete valid source document reads");
+    let package =
+        AdmittedPackage::admit(package, &mut default_meter()).expect("all declarations admit");
+    assert_eq!(package.len(), 5);
+    let declaration = package.declaration("A").unwrap();
+    let original = declaration
+        .original
+        .expect("source declaration retains provenance");
+    assert_eq!(original.meaning.as_deref(), Some(meaning::OBJECT_TYPE));
+    assert_eq!(original.origin, source_origin);
+    assert_eq!(original.member_name, None);
+    let relationship = package.member(declaration.key, "related").unwrap();
+    let original = relationship
+        .original
+        .expect("relationship retains its own source");
+    assert_eq!(original.meaning, None);
+    assert_eq!(original.member_name.as_deref(), Some("related"));
+    assert_eq!(original.origin, relationship_origin);
+    let generated = package.declaration("B").unwrap().original.unwrap();
+    assert_eq!(generated.origin, document["types"][1]["origin"]);
+    assert!(generated.origin.get("source").is_none());
+    for declaration in package.declarations() {
+        assert!(
+            declaration.original.is_some(),
+            "no admitted original loses its provenance: {:?}",
+            declaration.key
+        );
+    }
+}
+
+#[trace("TC-145", "FR-056-AC-5")]
+#[test]
+fn missing_relationship_target_retains_its_referring_origin_and_pointer() {
+    let (mut missing, _, relationship_origin) = original_document();
+    missing["types"][0]["relationships"][0]["targetEnd"]["type"] =
+        "ix://test/origins/Missing".into();
+    let parsed = parse_document(&serde_json::to_vec(&missing).unwrap());
+    let refusals = read_records("test/origins", &parsed)
+        .expect_err("an absent relationship target admits no declarations");
+    assert_eq!(refusals.len(), 1);
+    assert_eq!(refusals[0].code, fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(refusals[0].cause.as_str(), "missing-name");
+    assert_eq!(
+        refusals[0].cause,
+        fsl_semantics::model::normalize::ModelRefusalCause::IntakeMissingDeclaration {
+            node: "ix://test/origins/relationship/A-related-B".into(),
+            reference: "ix://test/origins/Missing".into(),
+            origin: relationship_origin,
+            path: "/types/0/relationships/0/targetEnd/type".parse().unwrap(),
+            member: "TypeDefinition.relationships[0].targetEnd.type"
+                .parse()
+                .unwrap(),
+        }
+    );
+}
+
+/// FR-056-AC-5: a reference to a node absent from the package refuses
+/// `missing_declaration`/`missing-name`, retained at the referring field with
+/// that field's identity, origin and pointer. A field with no origin is not a
+/// missing name: the semantic-IR schema requires every member's origin, and
+/// FR-056-AC-5 refuses a member missing its source
+/// `invalid_model_binding`/`malformed-declaration`, so that case never reaches
+/// the missing-name path and needs no origin fallback.
+#[trace("TC-145", "FR-056-AC-5")]
+#[test]
+fn missing_field_type_ref_retains_the_field_identity_origin_and_pointer() {
+    let field = "ix://test/origins/A/id";
+    let (mut missing, _, _) = original_document();
+    missing["types"][0]["fields"][0]["typeRef"] = "ix://test/origins/Missing".into();
+    let field_origin = missing["types"][0]["fields"][0]["origin"].clone();
+
+    let parsed = parse_document(&serde_json::to_vec(&missing).unwrap());
+    let refusals = read_records("test/origins", &parsed)
+        .expect_err("an absent field type admits no declarations");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].code, fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(refusals[0].cause.as_str(), "missing-name");
+    assert_eq!(
+        refusals[0].cause,
+        fsl_semantics::model::normalize::ModelRefusalCause::IntakeMissingDeclaration {
+            node: field.into(),
+            reference: "ix://test/origins/Missing".into(),
+            origin: field_origin,
+            path: "/types/0/fields/0/typeRef".parse().unwrap(),
+            member: "TypeDefinition.fields[0].typeRef".parse().unwrap(),
+        }
+    );
+
+    missing["types"][0]["fields"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("origin");
+    let parsed = parse_document(&serde_json::to_vec(&missing).unwrap());
+    let refusals =
+        read_records("test/origins", &parsed).expect_err("a field with no origin refuses");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].code, fsl_foundation::Code::InvalidModelBinding);
+    assert_eq!(refusals[0].cause.as_str(), "malformed-declaration");
+}
+
+/// (b): a hand-written Semantic IR 2.0.0 document using FSpec's own identity
+/// form throughout -- `ix://<package identity>/<artifact id>` for every
+/// type-definition node, never FCD's own `ix://<pkg>/type/<id>` form (FCD
+/// #199 gap 2) -- and no non-empty operation `frame` (a real, separate,
+/// still-latent gap this fixture does not exercise). It carries no
+/// `relationships[]` of its own here not because the shape is unsupported
+/// -- `read_object_type` reads a type's inline `relationships[]` now (FCD
+/// #199 gap 3, fixed) -- but because this positive case does not need one
+/// to prove the pipeline whole; `read_relationship`'s own coverage is
+/// separate. Every field's `typeRef` names a package type node declared in
+/// this same document rather than a native value type
+/// (`ix://filament/native/<Name>`); at the pinned rev,
+/// `validate_with_semantic_ir` itself now resolves a native `typeRef` (see
+/// `crate::model::intake::validate_with_semantic_ir`'s own doc comment for
+/// FCD's upstream fix), but this fixture simply was not authored to
+/// exercise that path -- native-typeRef resolution is covered separately by
+/// direct unit tests of `read_value_type_ref` and, end to end, by
+/// `reading_fcd_199s_golden_shape_reads_all_12_types`.
+/// It admits through `agent-ix-semantic-ir`'s own validator (M5) --
+/// `wire_envelope`/`wire_construct`/`wire_type`/`wire_field` fill every
+/// member that validator's schema layer requires beyond the shape
+/// `crate::model::intake` itself reads -- not just this reader's own
+/// hand-rolled checks.
+#[trace("TC-145", "FR-056-AC-1")]
+#[test]
+fn a_fspec_conformant_document_admits_reads_and_classifies() {
+    let package_identity = "test/plant";
+
+    let flow_type = format!("ix://{package_identity}/Flow");
+    let sys_pump = format!("ix://{package_identity}/SysPump");
+    let sys_tank = format!("ix://{package_identity}/SysTank");
+    let pump_out = format!("ix://{package_identity}/PumpOut");
+    let tank_in = format!("ix://{package_identity}/TankIn");
+    let pipe = format!("ix://{package_identity}/Pipe");
+    let pump_alloc = format!("ix://{package_identity}/PumpAlloc");
+    let sys = format!("ix://{package_identity}/Sys");
+    let pump = format!("ix://{package_identity}/Pump");
+    let tank = format!("ix://{package_identity}/Tank");
+
+    let document = wire_envelope(
+        package_identity,
+        serde_json::json!([
+            wire_construct(
+                package_identity,
+                "object_type",
+                meaning::OBJECT_TYPE,
+                serde_json::json!({}),
+            ),
+            wire_construct(
+                package_identity,
+                "interface",
+                meaning::SYSTEMS_INTERFACE,
+                serde_json::json!({
+                    "featureOrder": "required",
+                    "fields": "optional",
+                    "operations": "optional",
+                    "supertypes": "optional",
+                }),
+            ),
+            wire_construct(
+                package_identity,
+                "part",
+                meaning::SYSTEMS_PART,
+                serde_json::json!({
+                    "declaredType": "required",
+                    "fields": "forbidden",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+            ),
+            wire_construct(
+                package_identity,
+                "port",
+                meaning::SYSTEMS_PORT,
+                serde_json::json!({
+                    "direction": "required",
+                    "fields": "forbidden",
+                    "interfaceType": "required",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+            ),
+            wire_construct(
+                package_identity,
+                "connection",
+                meaning::SYSTEMS_CONNECTION,
+                serde_json::json!({
+                    "fields": "forbidden",
+                    "flowDirection": "required",
+                    "operations": "forbidden",
+                    "sourceEnd": "required",
+                    "targetEnd": "required",
+                }),
+            ),
+            wire_construct(
+                package_identity,
+                "allocation",
+                meaning::SYSTEMS_ALLOCATION,
+                serde_json::json!({
+                    "fields": "forbidden",
+                    "operations": "forbidden",
+                    "sourceElement": "required",
+                    "targetElement": "required",
+                }),
+            ),
+        ]),
+        serde_json::json!([
+            wire_type(
+                &flow_type,
+                serde_json::json!({"module": package_identity, "name": "interface"}),
+                serde_json::json!({
+                    "supertypes": [],
+                    "fields": [wire_field(
+                        &format!("{flow_type}/rate"),
+                        "rate",
+                        &sys,
+                    )],
+                    "operations": [],
+                    "featureOrder": [format!("{flow_type}/rate")],
+                }),
+            ),
+            wire_type(
+                &sys,
+                serde_json::json!({"module": package_identity, "name": "object_type"}),
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &pump,
+                serde_json::json!({"module": package_identity, "name": "object_type"}),
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &tank,
+                serde_json::json!({"module": package_identity, "name": "object_type"}),
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &sys_pump,
+                serde_json::json!({"module": package_identity, "name": "part"}),
+                serde_json::json!({
+                    "owner": sys.clone(),
+                    "declaredType": pump,
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+            wire_type(
+                &sys_tank,
+                serde_json::json!({"module": package_identity, "name": "part"}),
+                serde_json::json!({
+                    "owner": sys,
+                    "declaredType": tank,
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+            wire_type(
+                &pump_out,
+                serde_json::json!({"module": package_identity, "name": "port"}),
+                serde_json::json!({
+                    "owner": sys_pump.clone(),
+                    "interfaceType": flow_type.clone(),
+                    "direction": "out",
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+            wire_type(
+                &tank_in,
+                serde_json::json!({"module": package_identity, "name": "port"}),
+                serde_json::json!({
+                    "owner": sys_tank,
+                    "interfaceType": flow_type,
+                    "direction": "in",
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+            wire_type(
+                &pipe,
+                serde_json::json!({"module": package_identity, "name": "connection"}),
+                serde_json::json!({
+                    "sourceEnd": {"type": pump_out.clone(), "multiplicity": multiplicity_one(1, Some(1))},
+                    "targetEnd": {"type": tank_in, "multiplicity": multiplicity_one(1, Some(1))},
+                    "flowDirection": "source-to-target",
+                }),
+            ),
+            wire_type(
+                &pump_alloc,
+                serde_json::json!({"module": package_identity, "name": "allocation"}),
+                serde_json::json!({
+                    "sourceElement": pump_out,
+                    "targetElement": sys_pump,
+                }),
+            ),
+        ]),
+    )
+    .to_string()
+    .into_bytes();
+
+    let bytes_by_digest =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let offered = DomainPackageRef {
+        identity: package_identity.to_owned(),
+    };
+    let (package_ref, admitted_document) = admit(
+        offered.identity.as_str(),
+        &bytes_by_digest,
+        fsl_foundation::IntakeLimits::default(),
+    )
+    .expect("a matching selection admits");
+
+    let records = read_records(package_identity, &admitted_document)
+        .expect("an FSpec-conformant document reads with no refusals");
+    let domain_package = DomainPackage::new(package_ref, records);
+
+    let mut meter = default_meter();
+    let classification =
+        classify(&domain_package, &mut meter).expect("an unlimited meter never runs out");
+    assert_eq!(
+        classification.refusals,
+        Vec::new(),
+        "every systems-model node in this document supplies its required capability"
+    );
+
+    let pipe_key = key(package_identity, &pipe);
+    let pump_alloc_key = key(package_identity, &pump_alloc);
+
+    let mut meter = default_meter();
+    let connection_outcome = check_connection(
+        &ModelIndex::build(domain_package.clone()),
+        &classification,
+        &pipe_key,
+        &mut meter,
+    );
+    assert_eq!(
+        connection_outcome,
+        ConnectionCheckOutcome::Completed(ConnectionOutcome::Admitted),
+        "PumpOut (out, Flow) to TankIn (in, Flow), 1..1 to 1..1, is a wholly admitted connection"
+    );
+
+    let mut meter = default_meter();
+    let allocation_outcome = check_allocation(&classification, &pump_alloc_key, &mut meter);
+    assert_eq!(
+        allocation_outcome,
+        AllocationCheckOutcome::Admitted,
+        "PumpAlloc's target SysPump classifies as a Part"
+    );
+}
+
+/// TC-197 Y10 (FR-152-AC-8): a node's systems kind comes from its construct
+/// meaning, never from its kind name. `Probe` has the kind name `port` under
+/// another module but the object-type meaning, so it has no systems kind and
+/// no `systems.kind` charge, and a binder request for a Port naming it refuses
+/// `invalid_model_binding`/`wrong-export` with required kind `Port` and actual
+/// kind `none`. `PumpOut` has the kind name `socket` but the Port meaning, so
+/// it maps to Port.
+///
+/// Mutation used (derived by reading, not executed): classifying by kind name
+/// makes `Probe` a Port and `PumpOut` kindless, so the `Probe` refusal is
+/// lost and `PumpOut` fails to resolve.
+#[trace("FSpec-TC-197", "FSpec-FR-152-AC-8")]
+#[test]
+fn y10_a_systems_kind_comes_from_the_construct_meaning_not_the_kind_name() {
+    use fsl_semantics::model::systems::{resolve_kind, Kind};
+
+    let package_identity = "test/plant";
+    let other = "test/other";
+    let node = |name: &str| format!("ix://{package_identity}/{name}");
+    let object_kind = serde_json::json!({"module": package_identity, "name": "object_type"});
+
+    let document = wire_envelope(
+        package_identity,
+        serde_json::json!([
+            wire_construct(
+                package_identity,
+                "object_type",
+                meaning::OBJECT_TYPE,
+                serde_json::json!({}),
+            ),
+            wire_construct(
+                package_identity,
+                "interface",
+                meaning::SYSTEMS_INTERFACE,
+                serde_json::json!({
+                    "featureOrder": "required",
+                    "fields": "optional",
+                    "operations": "optional",
+                    "supertypes": "optional",
+                }),
+            ),
+            wire_construct(
+                package_identity,
+                "part",
+                meaning::SYSTEMS_PART,
+                serde_json::json!({
+                    "declaredType": "required",
+                    "fields": "forbidden",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+            ),
+            wire_construct(other, "port", meaning::OBJECT_TYPE, serde_json::json!({})),
+            wire_construct(
+                other,
+                "socket",
+                meaning::SYSTEMS_PORT,
+                serde_json::json!({
+                    "direction": "required",
+                    "fields": "forbidden",
+                    "interfaceType": "required",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+            ),
+        ]),
+        serde_json::json!([
+            wire_type(
+                &node("Flow"),
+                serde_json::json!({"module": package_identity, "name": "interface"}),
+                serde_json::json!({
+                    "supertypes": [],
+                    "fields": [wire_field(
+                        &format!("{}/rate", node("Flow")),
+                        "rate",
+                        &node("Sys"),
+                    )],
+                    "operations": [],
+                    "featureOrder": [format!("{}/rate", node("Flow"))],
+                }),
+            ),
+            wire_type(
+                &node("Sys"),
+                object_kind.clone(),
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &node("Pump"),
+                object_kind,
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &node("Probe"),
+                serde_json::json!({"module": other, "name": "port"}),
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &node("SysPump"),
+                serde_json::json!({"module": package_identity, "name": "part"}),
+                serde_json::json!({
+                    "owner": node("Sys"),
+                    "declaredType": node("Pump"),
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+            wire_type(
+                &node("PumpOut"),
+                serde_json::json!({"module": other, "name": "socket"}),
+                serde_json::json!({
+                    "owner": node("SysPump"),
+                    "interfaceType": node("Flow"),
+                    "direction": "out",
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+        ]),
+    )
+    .to_string()
+    .into_bytes();
+
+    let bytes_by_digest =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let offered = DomainPackageRef {
+        identity: package_identity.to_owned(),
+    };
+    let (package_ref, admitted_document) = admit(
+        offered.identity.as_str(),
+        &bytes_by_digest,
+        fsl_foundation::IntakeLimits::default(),
+    )
+    .expect("a matching selection admits");
+    let records = read_records(package_identity, &admitted_document)
+        .expect("the document reads with no refusals");
+    let domain_package = DomainPackage::new(package_ref, records);
+
+    let mut meter = default_meter();
+    let classification =
+        classify(&domain_package, &mut meter).expect("an unlimited meter never runs out");
+    assert_eq!(classification.refusals, Vec::new());
+    assert_eq!(
+        meter
+            .admitted_charges()
+            .iter()
+            .filter(|point| **point == ChargePoint::SystemsKind)
+            .count(),
+        3,
+        "Flow, SysPump and PumpOut are charged; Probe has no systems kind"
+    );
+
+    let refusal = resolve_kind(
+        &classification,
+        Kind::Port,
+        &key(package_identity, &node("Probe")),
+    )
+    .expect_err("a port-named object type is not a Port");
+    assert_eq!(refusal.code, fsl_foundation::Code::InvalidModelBinding);
+    assert_eq!(refusal.cause.as_str(), "wrong-export");
+    assert!(refusal.detail.contains("required kind Port"), "{refusal:?}");
+    assert!(refusal.detail.contains("actual kind none"), "{refusal:?}");
+
+    let resolved = resolve_kind(
+        &classification,
+        Kind::Port,
+        &key(package_identity, &node("PumpOut")),
+    )
+    .expect("the Port meaning maps the renamed node to Port");
+    assert_eq!(resolved.kind, Kind::Port);
+}
+
+/// FR-056-AC-6 (TC-147): `normalize.record` charging under
+/// `ModelNormalizationLimitsV1`, decided after all admission checks.
+///
+/// This is not new production code: the charge itself is a general
+/// mechanism every model rung shares (`crate::model::normalize`'s own
+/// `charge_all`, reached through the public `normalize`/
+/// `normalize_with_meter` entry points), which charges `normalize.record`
+/// once per `domain_package.records` entry, ascending by index --
+/// `read_records`/`DomainPackage::new` (FR-056's own output) already
+/// produce `records` sorted ascending by declaration key. What this test
+/// adds is FR-056's own trace: proving that existing mechanism, driven by
+/// this crate's actual intake pipeline (`admit` -> `read_records` ->
+/// `DomainPackage::new`), satisfies TC-147's exact scenario -- the exact
+/// bound completes with every declaration, one less is incomplete at
+/// `normalize.record`, and step 2's "admission refusals are decided
+/// before the first charge" holds structurally: `admit`/`read_records`
+/// are separate, earlier calls than `normalize`, so a stale-digest
+/// refusal (already covered by `a_parsed_document_under_another_digest_refuses_content_mismatch`) never
+/// reaches a charge at all.
+#[trace("TC-147", "FR-056-AC-6")]
+#[test]
+fn charges_normalize_record_once_per_intake_declaration() {
+    let package_identity = "acme/orders";
+    let widget = format!("ix://{package_identity}/Widget");
+    let document = wire_envelope(
+        package_identity,
+        serde_json::json!([wire_construct(
+            package_identity,
+            "object_type",
+            meaning::OBJECT_TYPE,
+            serde_json::json!({}),
+        )]),
+        serde_json::json!([wire_type(
+            &widget,
+            serde_json::json!({"module": package_identity, "name": "object_type"}),
+            serde_json::json!({
+                "supertypes": [],
+                "fields": [wire_field(
+                    &format!("{widget}/flag"),
+                    "flag",
+                    "ix://filament/native/Boolean",
+                )],
+                "operations": [],
+            }),
+        )]),
+    )
+    .to_string()
+    .into_bytes();
+
+    let records = read_records(package_identity, &parse_document(&document))
+        .expect("Widget and its one field read clean");
+    assert_eq!(
+        records.len(),
+        2,
+        "one ObjectTypeRecord plus one FieldMemberRecord"
+    );
+
+    // A plain struct literal, not the `test-support`-gated
+    // `DomainPackageRef::fixture` (PR #200 review follow-up): this test file
+    // carries no `required-features` gate in `Cargo.toml`, so it must keep
+    // compiling and running under `cargo test --workspace`'s default
+    // features, the way every other test in this file already does.
+    let domain_package = DomainPackage::new(
+        DomainPackageRef {
+            identity: package_identity.to_owned(),
+        },
+        records,
+    );
+
+    let exact = ModelNormalizationLimits {
+        declaration_records: 2,
+        ..ModelNormalizationLimits::default()
+    };
+    // R2-6 (PR #200 review round 2): TC-147's Expected Results say "the
+    // exact bound completes with N declarations" -- inspect the
+    // `EffectiveView`'s own entry count, not just that some `Completed`
+    // came back.
+    match normalize(&domain_package, exact) {
+        NormalizeOutcome::Completed(view) => {
+            assert_eq!(
+                view.declarations().len(),
+                2,
+                "the completed view carries both declarations, not just any Completed outcome"
+            );
+        }
+        other => panic!("expected Completed with 2 declarations, got {other:?}"),
+    }
+
+    let one_less = ModelNormalizationLimits {
+        declaration_records: 1,
+        ..ModelNormalizationLimits::default()
+    };
+    match normalize(&domain_package, one_less) {
+        NormalizeOutcome::Incomplete(incomplete) => {
+            assert_eq!(incomplete.limit_kind, LimitKind::DeclarationRecords);
+            assert_eq!(incomplete.limit, 1);
+            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeRecord);
+        }
+        other => panic!("expected Incomplete at normalize.record, got {other:?}"),
+    }
+}
+
+/// H3 (PR #200 review): `serde_json::from_slice`'s default recursion limit
+/// is 128. `read_records` used to re-parse the validated bytes with it,
+/// which would panic on a document nested past 128 (achievable
+/// schema-legally inside a producer extension's own free-form `payload`,
+/// which this test exercises at depth 150). It reads the one tree
+/// `PackageDocument::parse` built, which has no depth bound (FR-260).
+///
+/// A plain `serde_json::from_str` on this exact document's bytes fails with
+/// "recursion limit exceeded" (asserted below, so this test is not vacuous),
+/// and `read_records` reads the document clean.
+#[test]
+fn reads_a_document_nested_past_serde_jsons_default_recursion_limit() {
+    let package_identity = "acme/orders";
+    let widget = format!("ix://{package_identity}/Widget");
+
+    let mut deeply_nested_payload = serde_json::json!(0);
+    for _ in 0..150 {
+        deeply_nested_payload = serde_json::json!([deeply_nested_payload]);
+    }
+
+    let mut document = wire_envelope(
+        package_identity,
+        serde_json::json!([wire_construct(
+            package_identity,
+            "object_type",
+            meaning::OBJECT_TYPE,
+            serde_json::json!({}),
+        )]),
+        serde_json::json!([wire_type(
+            &widget,
+            serde_json::json!({"module": package_identity, "name": "object_type"}),
+            serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+        )]),
+    );
+    document["extensions"] = serde_json::json!([{
+        "identity": format!("ix://{package_identity}/ext/probe"),
+        "version": "1.0.0",
+        "required": false,
+        "payload": deeply_nested_payload,
+    }]);
+    let text = document.to_string();
+
+    assert!(
+        serde_json::from_str::<Value>(&text).is_err(),
+        "sanity: this document really does exceed serde_json's own default \
+         recursion limit, or this test proves nothing"
+    );
+
+    let records = read_records(package_identity, &parse_document(text.as_bytes()))
+        .expect("depth 150 is past serde_json's own recursion limit and reads clean, not a panic");
+    assert_eq!(records.len(), 1);
+}
+
+/// Runs `body` on a thread with a 512 KiB stack and fails if it overflows.
+fn on_a_small_stack(body: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(body)
+        .expect("the test thread spawns")
+        .join()
+        .expect("the body does not overflow the stack");
+}
+
+/// No byte limit: the tests below feed documents of many megabytes.
+fn unbounded() -> fsl_foundation::IntakeLimits {
+    fsl_foundation::IntakeLimits::default()
+        .with_input_bytes(u64::MAX)
+        .with_sequence_maximum(u32::MAX)
+}
+
+/// FR-260-AC-1 (TC-730 step 1): a package whose declarations are valid and
+/// which holds an array nested 100,000 deep at a member the semantic-IR
+/// schema does not admit is admitted by FR-154, read by FR-056's reader and
+/// refused by the reader-refusal rule on a 512 KiB stack: no declaration, the
+/// `agent-ix-semantic-ir` diagnostic retained, no `resource_exhausted` cause
+/// and no depth named.
+#[trace("TC-730", "FR-260-AC-1")]
+#[test]
+fn a_deep_member_the_schema_refuses_is_judged_by_the_readers_rule() {
+    on_a_small_stack(|| {
+        const DEPTH: usize = 100_000;
+        let package_identity = "acme/orders";
+        let widget = format!("ix://{package_identity}/Widget");
+        let mut document = wire_envelope(
+            package_identity,
+            serde_json::json!([wire_construct(
+                package_identity,
+                "object_type",
+                meaning::OBJECT_TYPE,
+                serde_json::json!({}),
+            )]),
+            serde_json::json!([wire_type(
+                &widget,
+                serde_json::json!({"module": package_identity, "name": "object_type"}),
+                serde_json::json!({
+                    "supertypes": [],
+                    "fields": [],
+                    "operations": [],
+                    "bogus": "@@DEEP@@",
+                    "origin": {"source": {
+                        "sourceIdentity": "ix://acme/orders/spec",
+                        "path": "spec/Widget.md",
+                        "startLine": 3,
+                        "startColumn": 5,
+                    }},
+                }),
+            )]),
+        );
+        document["extensions"] = serde_json::json!([]);
+        let deep = format!("{}0{}", "[".repeat(DEPTH), "]".repeat(DEPTH));
+        let text = document.to_string().replace("\"@@DEEP@@\"", &deep);
+        let bytes = text.into_bytes();
+        let parsed = PackageDocument::parse(&bytes, unbounded()).expect("the deep document reads");
+        let refusals = read_records(package_identity, &parsed)
+            .expect_err("a member the schema does not admit refuses");
+        assert!(!refusals.is_empty());
+        for refusal in &refusals {
+            assert_ne!(
+                refusal.code,
+                fsl_foundation::diagnostic::Code::ResourceExhausted,
+                "{refusal:?}"
+            );
+            assert!(
+                matches!(
+                    refusal.cause,
+                    fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { .. }
+                ),
+                "{refusal:?}"
+            );
+        }
+        // The retained diagnostic names the member's IR node, artifact id
+        // and span.
+        let named = refusals.iter().any(|refusal| {
+            refusal.detail.contains("agent-ix-semantic-ir refused")
+                && matches!(
+                    &refusal.cause,
+                    fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
+                        node,
+                        artifact: Some(artifact),
+                        span: Some(span),
+                        ..
+                    } if *node == widget
+                        && artifact == "ix://acme/orders/spec"
+                        && (span.start.line, span.start.column) == (3, 5)
+                )
+        });
+        assert!(named, "{refusals:?}");
+        drop(parsed);
+    });
+}
+
+/// FR-260-AC-3 (TC-731): a package whose composite types form a cycle of 300
+/// types, and one of 100,000 types, are each refused with semantic-IR's
+/// composite-cycle refusal on a 512 KiB stack.
+#[trace("TC-731", "FR-260-AC-3")]
+#[test]
+fn a_composite_cycle_of_any_length_is_refused_by_the_readers_rule() {
+    on_a_small_stack(|| {
+        let package_identity = "acme/orders";
+        for count in [300_usize, 100_000] {
+            let origin = r#"{"generated":{"generatorIdentity":"ix://acme/orders/gen","generatorVersion":"1.0.0","inputIdentities":["ix://acme/orders/gen"]}}"#;
+            let mut types = String::from("[");
+            for position in 0..count {
+                let next = (position + 1) % count;
+                let this = format!("ix://{package_identity}/C{position}");
+                let target = format!("ix://{package_identity}/C{next}");
+                if position > 0 {
+                    types.push(',');
+                }
+                types.push_str(&format!(
+                    r#"{{"identity":"{this}","displayName":"C","kind":{{"module":"{package_identity}","name":"object_type"}},"roles":[],"origin":{origin},"constraints":[],"extensions":[],"unknownPolicy":"reject","supertypes":[],"fields":[],"operations":[],"relationships":[{{"category":"structural","composite":true,"direction":"source-to-target","identity":"ix://{package_identity}/relationship/C{position}-has-C{next}","origin":{origin},"sourceEnd":{{"multiplicity":{{"lower":0,"ordered":false,"unique":false}},"role":"owner","type":"{this}"}},"targetEnd":{{"multiplicity":{{"lower":1,"upper":1,"ordered":false,"unique":false}},"type":"{target}"}}}}]}}"#
+                ));
+            }
+            types.push(']');
+            let document = wire_envelope(
+                package_identity,
+                serde_json::json!([wire_construct(
+                    package_identity,
+                    "object_type",
+                    meaning::OBJECT_TYPE,
+                    serde_json::json!({}),
+                )]),
+                serde_json::json!([]),
+            );
+            let text = document
+                .to_string()
+                .replace("\"types\":[]", &format!("\"types\":{types}"));
+            let parsed = PackageDocument::parse(text.as_bytes(), unbounded())
+                .expect("the cyclic document reads");
+            let refusals =
+                read_records(package_identity, &parsed).expect_err("a composite cycle refuses");
+            let closing = format!("ix://{package_identity}/relationship/C{}-has-C0", count - 1);
+            let names_it = refusals.iter().any(|refusal| {
+                refusal.code == fsl_foundation::diagnostic::Code::InvalidModelBinding
+                    && matches!(
+                        &refusal.cause,
+                        fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
+                            node,
+                            ..
+                        } if *node == closing
+                    )
+            });
+            assert!(names_it, "{count} types: {refusals:?}");
+            drop(parsed);
+        }
+    });
+}
+
+/// ADR-010 OBS-006 / ADR-013 O-03 (#213 S-2's own adverse test, named but not
+/// landed by #131/PR #200): a selection naming the reserved `filament/native`
+/// pseudo-package identity refuses at `admit`, before any byte check runs --
+/// distinct from a native `typeRef` (`ix://filament/native/<Name>`) resolving to
+/// `ValueTypeRef::Native`, which the golden-shape test above already covers.
+/// No PR #200 head encodes this refusal: `admit` had no check for it at all
+/// until this change.
+#[test]
+fn admit_refuses_the_reserved_native_pseudo_package_identity() {
+    let offered = DomainPackageRef {
+        identity: fsl_semantics::model::intake::native::RESERVED_IDENTITY.to_owned(),
+    };
+    let bytes_by_digest = fsl_semantics::model::intake::PackageInput::new();
+
+    let refusal = admit(
+        offered.identity.as_str(),
+        &bytes_by_digest,
+        fsl_foundation::IntakeLimits::default(),
+    )
+    .expect_err(
+        "a selection naming the filament/native pseudo-package never admits, \
+         regardless of what bytes it would otherwise resolve to",
+    );
+    assert_eq!(
+        refusal.cause,
+        fsl_semantics::model::refusal::ModelRefusalCause::ReservedPackageIdentity {
+            identity: offered.identity,
+        }
+    );
+    assert_eq!(refusal.cause.as_str(), "malformed-declaration");
+}
+
+/// ADR-013 O-01 (#213 S-2, QC-5 -- landed as `duplicate_selection`/
+/// `duplicate-identity`, revision `1-draft.6`): a package selects at most
+/// one version of a domain-package identity. `admit_selections` refuses the
+/// second selection of an already-selected identity before doing any of that
+/// item's own byte-level admission work, whether or not the requested
+/// version differs from the one already selected.
+#[test]
+fn admit_selections_refuses_a_second_selection_of_the_same_identity() {
+    // A minimal but genuinely admittable first selection, so the refusal
+    // below is provably about the *second* selection's repeated identity,
+    // not a byte-level failure of the first: the document bytes are its
+    // RFC 8785 encoding, from the one encoder (ADR-013:113).
+    let tree = quire_canonical::read(
+        br#"{"package": {"identity": "acme/orders", "version": "1"}}"#,
+        u64::MAX,
+    )
+    .expect("the document reads");
+    let document = quire_canonical::to_vec(
+        &tree,
+        filament_semantic_value::semantic_node::IDENTITY_LIMITS,
+    )
+    .expect("a document of strings encodes");
+    let bytes_by_digest =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+
+    let refusal = fsl_semantics::model::intake::admit_selections(
+        &["acme/orders".to_owned(), "acme/orders".to_owned()],
+        &bytes_by_digest,
+        fsl_foundation::IntakeLimits::default(),
+    )
+    .expect_err("a second selection of the same domain-package identity never admits");
+    assert_eq!(
+        refusal.cause,
+        fsl_semantics::model::refusal::ModelRefusalCause::DuplicateSelection {
+            identity: "acme/orders".to_owned(),
+        }
+    );
+    assert_eq!(refusal.cause.as_str(), "duplicate-identity");
+}
+
+/// SR-722 FND-008: FCD makes `operations` optional on every construct kind
+/// (its own `Member::Operations` default presence), and FCD's own `frames`
+/// rule walks every type's operations regardless of its meaning -- but only
+/// `read_object_type` ever queues a `PendingFrame`; `read_component` (a
+/// systems part) has no `OperationMemberRecord` shape for one at all.
+/// `validate_with_semantic_ir` no longer surfaces FCD's own
+/// `UNRESOLVED_FRAME_PATH` diagnostic (FR-103, SR-722 FND-003's own fix),
+/// so a part carrying an operation whose `modifies` names nothing must
+/// still refuse -- `read_component`'s own new `operations` guard, not FCD's
+/// frame-path rule, is what catches it.
+#[test]
+fn a_systems_part_carrying_an_operation_with_a_broken_frame_refuses() {
+    let package_identity = "acme/orders";
+    let sys = format!("ix://{package_identity}/Sys");
+    let pump = format!("ix://{package_identity}/Pump");
+    let sys_pump = format!("ix://{package_identity}/SysPump");
+    let broken_operation = serde_json::json!({
+        "identity": format!("{sys_pump}/run"),
+        "name": "run",
+        "params": [],
+        "pre": [],
+        "post": [],
+        "origin": {
+            "generated": {
+                "generatorIdentity": format!("{sys_pump}/run"),
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [format!("{sys_pump}/run")],
+            }
+        },
+        "frame": {
+            "modifies": [format!("ix://{package_identity}/nope")],
+            "creates": [],
+            "deletes": [],
+        },
+    });
+    let document = wire_envelope(
+        package_identity,
+        serde_json::json!([
+            wire_construct(
+                package_identity,
+                "object_type",
+                meaning::OBJECT_TYPE,
+                serde_json::json!({}),
+            ),
+            wire_construct(
+                package_identity,
+                "part",
+                meaning::SYSTEMS_PART,
+                serde_json::json!({
+                    "declaredType": "required",
+                    "fields": "forbidden",
+                    "multiplicity": "required",
+                    "operations": "optional",
+                    "owner": "required",
+                }),
+            ),
+        ]),
+        serde_json::json!([
+            wire_type(
+                &sys,
+                serde_json::json!({"module": package_identity, "name": "object_type"}),
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &pump,
+                serde_json::json!({"module": package_identity, "name": "object_type"}),
+                serde_json::json!({"supertypes": [], "fields": [], "operations": []}),
+            ),
+            wire_type(
+                &sys_pump,
+                serde_json::json!({"module": package_identity, "name": "part"}),
+                serde_json::json!({
+                    "owner": sys,
+                    "declaredType": pump,
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                    "operations": [broken_operation],
+                }),
+            ),
+        ]),
+    )
+    .to_string()
+    .into_bytes();
+
+    let bytes_by_digest =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let offered = DomainPackageRef {
+        identity: package_identity.to_owned(),
+    };
+    let (_, admitted_document) = admit(
+        offered.identity.as_str(),
+        &bytes_by_digest,
+        fsl_foundation::IntakeLimits::default(),
+    )
+    .expect("a matching selection admits");
+
+    let refusals = read_records(package_identity, &admitted_document)
+        .expect_err("a systems part carrying an operation refuses, broken frame or not");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].code.as_str(), "unsupported_construct");
+    assert_eq!(refusals[0].cause.as_str(), "declaration-form");
+}
+
+/// Write `contents` (a `(relative path, bytes)` list) under a fresh tempdir
+/// and return it.
+fn write_bundle(contents: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (path, text) in contents {
+        let full = dir.path().join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).expect("create fixture parent dir");
+        }
+        std::fs::write(&full, text).expect("write fixture file");
+    }
+    dir
+}
+
+/// (L2) `lift_document`'s `LiftFailure::Refused` branch: FCD's real `lift`
+/// refuses a bundle outright, before extraction, when `spec.md` carries no
+/// `org` (FCD's own `BUNDLE_UNIDENTIFIED` negative, `crates/extraction-frontend/
+/// fixtures/negatives/BUNDLE_UNIDENTIFIED` at the pinned rev): FCD cannot
+/// mint even the bundle's own identity, so no document is written at all.
+#[trace("TC-145", "FR-056-AC-2")]
+#[test]
+fn lift_document_refuses_a_bundle_with_no_identity() {
+    let bundle = write_bundle(&[(
+        "spec/spec.md",
+        "---\ntype: master-requirements\nname: config-service\ntitle: \"Config Service\"\n---\n# Config Service\n",
+    )]);
+    let fixtures = fcd_fixtures_dir();
+    let module_roots = vec![
+        fixtures.join("modules/fixture-domain"),
+        fixtures.join("modules/fixture-edges"),
+        fixtures.join("modules/fixture-systems"),
+    ];
+
+    let error = lift_document(bundle.path(), &module_roots)
+        .expect_err("a bundle with no org: carries no identity for FCD to mint");
+    match error {
+        fsl_semantics::model::intake::LiftFailure::Refused(refusal) => {
+            assert_eq!(
+                refusal,
+                agent_ix_extraction_frontend::Refusal {
+                    diagnostic: Box::new(agent_ix_extraction_frontend::Diagnostic {
+                        code: agent_ix_extraction_frontend::WireCode::Registry(
+                            agent_ix_extraction_frontend::Code::BundleUnidentified
+                        ),
+                        severity: agent_ix_extraction_frontend::Severity::Error,
+                        message: "spec/spec.md carries no `org`".to_owned(),
+                        owner: "ix://agent-ix/filament-core-data/extraction-frontend".to_owned(),
+                        locus: Some(agent_ix_extraction_frontend::Locus {
+                            source_identity: "ix://local/bundle/spec".to_owned(),
+                            path: "spec/spec.md".to_owned(),
+                            start_line: 1,
+                            start_column: 1,
+                        }),
+                        blocking: true,
+                        causes: Vec::new(),
+                        related: Vec::new(),
+                    }),
+                }
+            );
+        }
+        other => panic!("expected LiftFailure::Refused, got {other:?}"),
+    }
+}
+
+/// (L2) `lift_document`'s `LiftFailure::Blocked` branch: FCD's real `lift`
+/// loads and extracts the bundle, then blocks on a rules-layer diagnostic.
+///
+/// This reproduces FCD's own `DUPLICATE_IDENTITY` negative fixture
+/// (`crates/extraction-frontend/fixtures/negatives/DUPLICATE_IDENTITY` at
+/// this crate's now-pinned rev): a single file where `FR-001`'s own field
+/// and its own operation are both named `revision`. FCD #199/#200 collapses
+/// the field and operation identity namespaces into one `<Owner>/<name>`
+/// segment with no kind segment of its own, so the two now mint the same
+/// identity and `lift_document` blocks. Before FCD #199/#200 this same bundle did *not*
+/// collide -- `NodeKind::Field` and `NodeKind::Operation` minted under
+/// different segments there -- which is why this test was deleted rather
+/// than kept `#[ignore]`d until FCD moved; this is that test, rebuilt
+/// fresh against the collision this pin actually produces.
+///
+/// The expected diagnostic is read verbatim from FCD's own committed
+/// `crates/extraction-frontend/fixtures/negatives/DUPLICATE_IDENTITY/expected/diagnostics.json`
+/// at this crate's pinned rev, not invented here.
+#[trace("TC-145", "FR-056-AC-2")]
+#[test]
+fn lift_document_blocks_on_a_duplicate_identity() {
+    let bundle = write_bundle(&[
+        (
+            "spec/spec.md",
+            "---\ntype: master-requirements\nname: identity-service\norg: agent-ix\ntitle: \"Identity Service\"\n---\n# Identity Service\n",
+        ),
+        (
+            "spec/functional/FR-001-note.md",
+            "---\nid: FR-001\ntitle: Note\nobject: entity\ntype: entity\n---\n# FR-001: Note\n\n## Description\n\nAn authored fixture record whose field and whose own operation mint the\nsame member identity.\n\n## Properties\n\n| Field | Type | Multiplicity | Constraints |\n|-------|------|--------------|-------------|\n| revision | Integer | 1 | |\n| id | UUID | 1 | identity |\n\n## Operations\n\n### revision\n\nReturns: Integer [1]\n",
+        ),
+    ]);
+    let fixtures = fcd_fixtures_dir();
+    let module_roots = vec![
+        fixtures.join("modules/fixture-domain"),
+        fixtures.join("modules/fixture-edges"),
+        fixtures.join("modules/fixture-systems"),
+    ];
+
+    let error = lift_document(bundle.path(), &module_roots).expect_err(
+        "FR-001's own field and its own operation, both named `revision`, mint the same identity",
+    );
+    match error {
+        fsl_semantics::model::intake::LiftFailure::Blocked(diagnostics) => {
+            assert_eq!(
+                diagnostics,
+                vec![agent_ix_extraction_frontend::Diagnostic {
+                    code: agent_ix_extraction_frontend::WireCode::Registry(
+                        agent_ix_extraction_frontend::Code::DuplicateIdentity
+                    ),
+                    severity: agent_ix_extraction_frontend::Severity::Error,
+                    message: "identity `ix://agent-ix/identity-service/FR-001/revision` \
+                              is already minted by an earlier node"
+                        .to_owned(),
+                    owner: "ix://agent-ix/filament-core-data/extraction-frontend".to_owned(),
+                    locus: Some(agent_ix_extraction_frontend::Locus {
+                        source_identity: "ix://agent-ix/identity-service/spec".to_owned(),
+                        path: "spec/functional/FR-001-note.md".to_owned(),
+                        start_line: 23,
+                        start_column: 1,
+                    }),
+                    blocking: true,
+                    causes: Vec::new(),
+                    related: vec![agent_ix_extraction_frontend::Locus {
+                        source_identity: "ix://agent-ix/identity-service/spec".to_owned(),
+                        path: "spec/functional/FR-001-note.md".to_owned(),
+                        start_line: 18,
+                        start_column: 3,
+                    }],
+                }]
+            );
+        }
+        other => panic!("expected LiftFailure::Blocked, got {other:?}"),
+    }
+}
+
+/// A bare-string core kind refuses at the member `kind` of the declaration,
+/// through the package read as well as the record read.
+#[test]
+fn a_bare_string_kind_refuses_at_the_kind_member_through_the_package_read() {
+    let package_identity = "test/bare";
+    let document = wire_envelope(
+        package_identity,
+        serde_json::json!([]),
+        serde_json::json!([wire_type(
+            "ix://test/bare/Count",
+            serde_json::json!("scalar"),
+            serde_json::json!({"scalar": "integer"}),
+        )]),
+    );
+    let bytes = serde_json::to_vec(&document).unwrap();
+    let parsed = parse_document(&bytes);
+    let selection = DomainPackageRef {
+        identity: package_identity.into(),
+    };
+    let refusals = match read_domain_package(selection, &parsed) {
+        Ok(package) => match fsl_semantics::model::normalize::normalize(
+            &package,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        ) {
+            fsl_semantics::model::normalize::NormalizeOutcome::Refused(refusals) => {
+                refusals.iter().cloned().collect()
+            }
+            other => panic!("the bare-string kind must refuse, got {other:?}"),
+        },
+        Err(refusals) => refusals,
+    };
+    let members: Vec<String> = refusals
+        .iter()
+        .filter_map(|refusal| match &refusal.cause {
+            fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
+                node,
+                member,
+                ..
+            } if node == "ix://test/bare/Count" => Some(member.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        members.iter().any(|member| member == "TypeDefinition.kind"),
+        "{members:?}"
+    );
+}
+
+/// A package `package_identity` whose object type `Sys` has the part
+/// `SysPump`, a `Pump`, with the out Port `PumpOut` of interface `Flow`.
+fn port_document(package_identity: &str) -> Vec<u8> {
+    let flow = format!("ix://{package_identity}/Flow");
+    let sys = format!("ix://{package_identity}/Sys");
+    let pump = format!("ix://{package_identity}/Pump");
+    let sys_pump = format!("ix://{package_identity}/SysPump");
+    let pump_out = format!("ix://{package_identity}/PumpOut");
+    let kind = |name: &str| serde_json::json!({"module": package_identity, "name": name});
+    let object = serde_json::json!({"supertypes": [], "fields": [], "operations": []});
+    wire_envelope(
+        package_identity,
+        serde_json::json!([
+            wire_construct(
+                package_identity,
+                "object_type",
+                meaning::OBJECT_TYPE,
+                serde_json::json!({}),
+            ),
+            wire_construct(
+                package_identity,
+                "interface",
+                meaning::SYSTEMS_INTERFACE,
+                serde_json::json!({
+                    "featureOrder": "required",
+                    "fields": "optional",
+                    "operations": "optional",
+                    "supertypes": "optional",
+                }),
+            ),
+            wire_construct(
+                package_identity,
+                "part",
+                meaning::SYSTEMS_PART,
+                serde_json::json!({
+                    "declaredType": "required",
+                    "fields": "forbidden",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+            ),
+            wire_construct(
+                package_identity,
+                "port",
+                meaning::SYSTEMS_PORT,
+                serde_json::json!({
+                    "direction": "required",
+                    "fields": "forbidden",
+                    "interfaceType": "required",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+            ),
+        ]),
+        serde_json::json!([
+            wire_type(
+                &flow,
+                kind("interface"),
+                serde_json::json!({
+                    "supertypes": [],
+                    "fields": [wire_field(&format!("{flow}/rate"), "rate", &sys)],
+                    "operations": [],
+                    "featureOrder": [format!("{flow}/rate")],
+                }),
+            ),
+            wire_type(&sys, kind("object_type"), object.clone()),
+            wire_type(&pump, kind("object_type"), object),
+            wire_type(
+                &sys_pump,
+                kind("part"),
+                serde_json::json!({
+                    "owner": sys,
+                    "declaredType": pump,
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+            wire_type(
+                &pump_out,
+                kind("port"),
+                serde_json::json!({
+                    "owner": sys_pump,
+                    "interfaceType": flow,
+                    "direction": "out",
+                    "multiplicity": multiplicity_one(1, Some(1)),
+                }),
+            ),
+        ]),
+    )
+    .to_string()
+    .into_bytes()
+}
+
+/// FR-480 "Selections and imports" (QSL-1638): units `a` and `b` bind `N`
+/// to two packages that both declare the Port `PumpOut`, and each unit's
+/// protocol has `role r on N::PumpOut`. Each role is the Port of its own
+/// unit's package, with that package's selection, whichever is admitted
+/// first.
+#[trace("FR-480")]
+#[test]
+fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
+    const A: &str = "test/plant-a";
+    const B: &str = "test/plant-b";
+    let units: Vec<(&str, String)> = [("a", A, "Pa"), ("b", B, "Pb")]
+        .into_iter()
+        .map(|(identity, package, protocol)| {
+            (
+                identity,
+                format!(
+                    "profile s = \"filament.model.complete/v1\";\n\
+                     profile p = \"filament.protocol.finite-global/v1\";\n\
+                     model N = {package:?};\n\
+                     protocol {protocol} using p over (c: N::Sys) on origin {{\n\
+                     role r on N::PumpOut;\n\
+                     run sequence Main {{ }}\n\
+                     finish Done as (d: Boolean) {{ true }};\n\
+                     }}"
+                ),
+            )
+        })
+        .collect();
+    let units: Vec<(&str, &str)> = units
+        .iter()
+        .map(|(identity, text)| (*identity, text.as_str()))
+        .collect();
+    let (a, b) = (port_document(A), port_document(B));
+    let checked = crate::model_operations::assemble_units(&units, &[a.as_slice(), b.as_slice()])
+        .with_unwritten_protocols()
+        .check(
+            CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default(),
+        )
+        .unwrap_or_else(|refusals| panic!("both protocols check: {refusals:?}"));
+    for (protocol, package) in [("Pa", A), ("Pb", B)] {
+        let checked = checked
+            .protocols()
+            .iter()
+            .find(|checked| checked.name == protocol)
+            .unwrap_or_else(|| panic!("{protocol} is checked"));
+        let [role] = checked.roles.as_slice() else {
+            panic!("{protocol} has one role: {:?}", checked.roles);
+        };
+        assert_eq!(
+            role.model_member,
+            Some(key(package, &format!("ix://{package}/PumpOut"))),
+            "{protocol}"
+        );
+        assert_eq!(role.model_selection.as_deref(), Some(package), "{protocol}");
+    }
+}

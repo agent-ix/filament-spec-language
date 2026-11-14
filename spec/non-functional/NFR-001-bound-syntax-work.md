@@ -4,26 +4,26 @@ title: "Bound syntax work and storage"
 type: NFR
 quality_attribute: performance_efficiency
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-001"
+  - target: "ix://agent-ix/filament-spec-language/FR-001"
     type: constrains
-  - target: "ix://agent-ix/quire-spec-language/FR-002"
+  - target: "ix://agent-ix/filament-spec-language/FR-002"
     type: constrains
-  - target: "ix://agent-ix/quire-spec-language/FR-003"
+  - target: "ix://agent-ix/filament-spec-language/FR-003"
     type: constrains
-  - target: "ix://agent-ix/quire-spec-language/FR-004"
+  - target: "ix://agent-ix/filament-spec-language/FR-004"
     type: constrains
-  - target: "ix://agent-ix/quire-spec-language/ADR-030"
+  - target: "ix://agent-ix/filament-spec-language/ADR-030"
     type: depends_on
 ---
 # NFR-001: Bound syntax work and storage
 
 ## Statement
 
-When the next syntax-processing operation would exceed a selected resource ceiling, the compiler shall return a `stage_limit_exceeded` diagnostic naming the ceiling's kind (`quire.native.diagnostics/v1`) without performing that operation.
+When the next syntax-processing operation would exceed a selected resource ceiling, the compiler shall return a `stage_limit_exceeded` diagnostic naming the ceiling's kind (`filament.native.diagnostics/v1`) without performing that operation.
 
 ## Scope
 
-Native and complete-V1 source intake, tokenization and parsing, S2 form building (`qsl_forms::build_unit`), and native formatting and source-map validation.
+Native and complete-V1 source intake, tokenization and parsing, S2 form building (`fsl_forms::build_unit`), and native formatting and source-map validation.
 
 ## Measurement and Evaluation
 

@@ -1,0 +1,29 @@
+[package]
+name = "fsl-inspect"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "Typed, bounded inspection views for FSL results"
+
+[dependencies]
+fsl-foundation = { path = "../fsl-foundation" }
+fsl-package = { path = "../fsl-package" }
+fsl-semantics = { path = "../fsl-semantics" }
+fsl-replay = { path = "../fsl-replay" }
+fsl-analyze = { path = "../fsl-analyze" }
+fsl-eval = { path = "../fsl-eval" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.151"
+filament-exact = { workspace = true }
+quire-canonical = { workspace = true }
+filament-contract-model = { workspace = true }
+filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", branch = "main" }
+[dev-dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+fsl-cst = { path = "../fsl-cst" }
+fsl-forms = { path = "../fsl-forms" }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

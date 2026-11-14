@@ -3,7 +3,7 @@ id: TC-127
 title: "Evaluate ordered query values against independent expected results"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-046
+  - target: ix://agent-ix/filament-spec-language/FR-046
     type: verifies
 ---
 # TC-127: Evaluate ordered query values against independent expected results

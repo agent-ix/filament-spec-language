@@ -1,16 +1,16 @@
 ---
 id: TC-1180
-title: "The quire-eval clause entry matches the std reference on every clause path"
+title: "The filament-eval clause entry matches the std reference on every clause path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-406
+  - target: ix://agent-ix/filament-spec-language/FR-406
     type: verifies
 ---
-# TC-1180: The quire-eval clause entry matches the std reference on every clause path
+# TC-1180: The filament-eval clause entry matches the std reference on every clause path
 
 ## Description
 
-Verify FR-406. `quire-eval`'s clause entry evaluates every node kind over
+Verify FR-406. `filament-eval`'s clause entry evaluates every node kind over
 two observations, reports the FR-265 trail as events, and gives the std
 reference's results, charges and reads on every clause path. The
 `Value`-family entry is unchanged, and the clause entry adds at most 2% to
@@ -18,16 +18,16 @@ a `Value`-only `thumbv7em-none-eabi` binary. Scope: FR-406-AC-1 to
 FR-406-AC-14.
 
 Until FR-405's switch, each comparing step runs against the reference and
-against the clause entry. After the switch it runs once on `quire-eval`
+against the clause entry. After the switch it runs once on `filament-eval`
 against the reference's recorded values.
 
 ## Test Procedure
 
-1. In `agent-ix/quire-eval`, read `quire-eval`'s manifest and run
-   `cargo tree -p quire-eval -e features -i quire-checked`. Search its source
-   for `qsl_`. Run the `thumbv7em-none-eabi` gate build. Read which traits
+1. In `agent-ix/filament-eval`, read `filament-eval`'s manifest and run
+   `cargo tree -p filament-eval -e features -i filament-checked`. Search its source
+   for `fsl_`. Run the `thumbv7em-none-eabi` gate build. Read which traits
    the closure-only environment implements.
-2. Run FR-402's harness over the QSL-owned corpus at the clause-entry
+2. Run FR-402's harness over the FSL-owned corpus at the clause-entry
    change's base and head, and diff the compared records. Begin the
    `Value`-family entry over `pre(allInstances<T>(p))` built by
    `check_postcondition_expression`.
@@ -38,7 +38,7 @@ against the reference's recorded values.
    reading `pre(self.versionNumber)` over observations with no pre side.
    Evaluate FR-405-AC-6's expression through
    `CheckedPackageEvaluation::evaluate` with a `ReadLog` attached. Run the
-   `pre(...)` tests of `qsl-eval/tests/it/model_reference_queries.rs`.
+   `pre(...)` tests of `fsl-eval/tests/it/model_reference_queries.rs`.
 5. Over a snapshot listing `P` `complete` with `m1`, `m2`, `m3`, two
    conforming to `T`, evaluate `allInstances<T>(M::P)`. Repeat with `P` not
    listed `complete`. Evaluate `lookup<T>(M::P, r)` with an absent `r`
@@ -52,7 +52,7 @@ against the reference's recorded values.
    `deref(value(self.parent)).versionNumber`, in the `Clause` regime and in
    the `Value` regime, with the charge log. Evaluate a state clause whose
    body is `allInstances<T>(p)` over a `Population` parameter.
-8. With `qsl-eval`'s recorder, run FR-107-AC-7 to AC-12 and FR-265-AC-1 to
+8. With `fsl-eval`'s recorder, run FR-107-AC-7 to AC-12 and FR-265-AC-1 to
    AC-7 through the clause entry.
 9. Run FR-268's separation-check tests through the clause-entry steps, with
    the charge log, counting Begins per step and recorders per check. Run
@@ -66,11 +66,11 @@ against the reference's recorded values.
     closure's scope view holds. Begin
     the expression form over `x + 1` with `x: Int[0, 9]` given `10`, and
     given two values.
-13. Search the QSL crates and `quire-eval` for the definitions of the four
+13. Search the FSL crates and `filament-eval` for the definitions of the four
     clause causes, `ModelQueryRefusal` and `ProtocolClauseFrameRefusal`.
     Compare the catalog codes and fields of steps 4 to 7's results with the
     reference's.
-14. In `agent-ix/quire-eval`, at the clause-entry change's head, run the
+14. In `agent-ix/filament-eval`, at the clause-entry change's head, run the
     gate's probe builds (`staticlib`, `thumbv7em-none-eabi`,
     `opt-level = "s"`, fat LTO, one codegen unit, `panic = "abort"`) and
     read the `.text` plus `.rodata` sizes `llvm-size -A` reports. Build
@@ -81,11 +81,11 @@ against the reference's recorded values.
 ## Expected Results
 
 1. The manifest meets FR-403-AC-1 with no feature for the clause entry. No
-   `construct` feature appears, and no `qsl_` path occurs. The gate build
+   `construct` feature appears, and no `fsl_` path occurs. The gate build
    passes. The closure-only environment implements only FR-403's contract.
 2. Zero divergences. Every compared record is equal at base and head. The
    `Value`-family Begin returns `CallFailure::Fault` with stage
-   `quire-eval`, invariant `outside-value-family` and no charge.
+   `filament-eval`, invariant `outside-value-family` and no charge.
 3. Every criterion holds with the reference's outcomes, entries, counters
    and charges. `reaches` admits exactly FR-107-AC-3's five charges. The
    ten runs are equal.
@@ -126,7 +126,7 @@ against the reference's recorded values.
     `clause-root-outside-closure` and no charge. The expression form gives
     `CallFailure::Input` for `10` and `InputRefusal::Arity` for two values,
     each with no charge.
-13. The four causes are defined only in `quire-eval`. `qsl-eval` defines
+13. The four causes are defined only in `filament-eval`. `fsl-eval` defines
     `ModelQueryRefusal` and `ProtocolClauseFrameRefusal` and none of the
     four. Codes and fields equal the reference's.
 14. The gate reports both probes' sizes and passes at the configured

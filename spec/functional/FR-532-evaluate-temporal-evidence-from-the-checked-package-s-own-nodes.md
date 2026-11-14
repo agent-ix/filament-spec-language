@@ -3,25 +3,25 @@ id: FR-532
 title: "Evaluate temporal evidence from the checked package's own nodes"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-504
+  - target: ix://agent-ix/filament-spec-language/FR-504
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-524
+  - target: ix://agent-ix/filament-spec-language/FR-524
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-531
+  - target: ix://agent-ix/filament-spec-language/FR-531
     type: depends_on
-  - target: ix://agent-ix/quire-protocol/FR-046
+  - target: ix://agent-ix/filament-protocol/FR-046
     type: references
 ---
 # FR-532: Evaluate temporal evidence from the checked package's own nodes
@@ -79,7 +79,7 @@ subject view and the held rows:
 - `activation`: `Origin` or `Each` as `activation()` returns it;
 - `profile`: the evaluator profile (`EventPositionFalseExtension`,
   `FixedSampleFalseExtension`, `TimestampedEventFiniteWindow`) that the `profile`
-  row's definition identity names in the closed table of QSpec's finite-window
+  row's definition identity names in the closed table of FSpec's finite-window
   profile identities, or the infinite-trace profile by its own identity;
 - `clock`: the `TemporalBinding` row's `clock_name` and clock configuration, keyed
   `{ declaration, role, ordinal }`;
@@ -125,7 +125,7 @@ no `valuations`, `visited` or `evaluation_steps` unit beyond the atom's one look
 ### Truth from the graph
 
 The evaluator walks the `formula_graph()` entries with the operators, intervals and
-bounds the entries carry (the `quire.op.temporal.*` identities of FR-337, the
+bounds the entries carry (the `filament.op.temporal.*` identities of FR-337, the
 interval forms of FR-515) and applies the finite-window semantics of FR-504 to them.
 For one formula the verdict, settlement, support, per-visit charges and non-values
 are the ones the checked-formula walk gives. A cycle or out-of-range operand position, an operator
@@ -135,11 +135,11 @@ without a finite upper bound, a timed interval under a bounded profile and a
 
 ### Window aggregates
 
-A clause with a window aggregate atom is written as a `quire.op.temporal.aggregate`
+A clause with a window aggregate atom is written as a `filament.op.temporal.aggregate`
 entry whose one `aggregate` argument binds the kind, the `quantile` level `q`, the
 `fraction` predicate, the value, the optional filter, the window (`window_kind`,
 `lower`, `upper`), the normalized `min_count`, the comparison and the threshold
-(FR-337-AC-15). QSpec FR-414 defines the aggregate term and QSpec FR-370 "Window
+(FR-337-AC-15). FSpec FR-414 defines the aggregate term and FSpec FR-370 "Window
 aggregate atom" defines these wire bindings (QSL-1644).
 
 Every route SHALL evaluate such an atom as FR-516 "Window aggregate atoms" states,
@@ -147,8 +147,8 @@ from the entry's members read from the bytes and the per-position samples of the
 request. `formula_graph()` SHALL read the entry (FR-515: `aggregate` member) and the
 truth plan SHALL walk it as the atom it is.
 
-A package route evaluates such an atom. QSL emits the node (FR-337-AC-15), QSpec FR-370
-catalogues it and the Contract IR reader QSL locks admits it. The package subject view
+A package route evaluates such an atom. FSL emits the node (FR-337-AC-15), FSpec FR-370
+catalogues it and the Contract IR reader FSL locks admits it. The package subject view
 reads the node's argument and the evidence request carries the per-position
 `aggregate_samples`, so a clause with the node is evaluated from the entry's members
 and those samples, never from a `holds` valuation. A window position the request does not list gives a `Missing` non-value
@@ -193,17 +193,17 @@ the three routes. Construction charges nothing.
 | FR-532-AC-6 | `from_package` over a package with two `temporal_clause_names` rows that pair to one `{ declaration, occurrence }` returns `PackageMismatch::AmbiguousName` and charges nothing; no package makes it return `ClauseRow`, `ProfileSelections` or `Bindings`, which an inspection of the constructor confirms. | Test (TC-1332) |
 | FR-532-AC-7 | A clause whose `formula_graph()` carries an operator without a finite upper bound, a timed interval under a bounded profile, an operand cycle, an out-of-range operand position or a `predicate_leaves()` count that differs from the `holds` count gives `clause-unreadable` with an empty charge log over `from_package`; the same shape with a finite bound, a closed interval, acyclic in-range operands and equal counts gives a result; a tick sum that overflows `u64` gives the `history_span` `Incomplete`. | Test (TC-1332) |
 | FR-532-AC-8 | Two clauses of different nodes in one package each pair with their own clock row over `from_package`; a `binding` asserting the other clause's row refuses `binding-mismatch` naming the dimension FR-522 names; a node with several occurrences refuses `occurrence-required` without a selector and `occurrence-unknown` with an unknown one; a package with the rows of FR-515-AC-20 (producer ordinals 7 then 3) pairs by key. | Test (TC-1332) |
-| FR-532-AC-9 | A search of `qsl-eval/src/temporal/evidence` for the symbols `CheckedTemporalClause::activation`, `::profile`, `::clock` and `SourceIdentity` finds that the evaluator and the three constructors reach the activation, the profile and the clock only through `ClauseFacts`: an inspection finds no read of `CheckedTemporalClause::activation`, `profile` or `clock` outside the cross-check, and `qsl_foundation::SourceIdentity` is no member of `LedgerBinding`. | Inspection (TC-1332) |
+| FR-532-AC-9 | A search of `fsl-eval/src/temporal/evidence` for the symbols `CheckedTemporalClause::activation`, `::profile`, `::clock` and `SourceIdentity` finds that the evaluator and the three constructors reach the activation, the profile and the clock only through `ClauseFacts`: an inspection finds no read of `CheckedTemporalClause::activation`, `profile` or `clock` outside the cross-check, and `fsl_foundation::SourceIdentity` is no member of `LedgerBinding`. | Inspection (TC-1332) |
 
 ## Dependencies
 
 - **Upstream:** FR-515 (views and rows), FR-516, FR-522 to FR-524, FR-526, FR-043,
-  FR-504, FR-531; QSpec's finite-window profile identities.
+  FR-504, FR-531; FSpec's finite-window profile identities.
 - **Delivery:** the code change retires `CheckedTemporalClause` as an input of the
   call and the arena index as an atom spelling, and makes `ClauseFormula::of_graph`
   dedupe shared nodes by the entry's `node` (the per-use list it reads today would
   count a shared node once per use in `formula_nodes`, against FR-523-AC-6 and
-  FR-532-AC-10). The aggregate criteria need the QSpec catalog entry for the aggregate node and its
+  FR-532-AC-10). The aggregate criteria need the FSpec catalog entry for the aggregate node and its
   admission by Contract IR, both of which exist, and an in-process emission of an
   aggregate clause for the three-route agreement.
-- **Downstream:** quire-protocol FR-046.
+- **Downstream:** filament-protocol FR-046.

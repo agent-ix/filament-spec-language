@@ -1,49 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! QSL#214 (FR-064): `cargo xtask string-edge` -- QSL's adapter over the
-//! standalone `qsl-string-edge` scanner. It supplies QSL's crate source roots
-//! and QSL's edge rules and nothing else: the detector, the marker and
+//! QSL#214 (FR-064): `cargo xtask string-edge` -- FSL's adapter over the
+//! standalone `fsl-string-edge` scanner. It supplies FSL's crate source roots
+//! and FSL's edge rules and nothing else: the detector, the marker and
 //! test-code handling, the allow-list checks and the report all live in
-//! `qsl-string-edge`, the one implementation consumer repositories run too.
+//! `fsl-string-edge`, the one implementation consumer repositories run too.
 
 use std::path::{Path, PathBuf};
 
-use qsl_string_edge::{scan, EdgeRules, ScanRequest};
+use fsl_string_edge::{scan, EdgeRules, ScanRequest};
 
 use crate::error::{Error, Result};
 
 /// Every crate source root this scan covers, relative to the workspace root:
-/// the QSL root crate, `xtask`, and `qsl-walk-grow` (ADR-011 §6.1 layer WG),
-/// `qsl-foundation` (ADR-011 §7.3 X-2), `qsl-cst` (ADR-011 §7.3 X-3),
-/// `qsl-source` (ADR-011 §7.3 X-4), `qsl-forms` (ADR-011 §7.3 X-5),
-/// `qsl-semantics` (ADR-011 §7.3 X-6), `qsl-package` (ADR-011 §7.3 X-7),
-/// `qsl-eval` (ADR-011 §7.3 X-8), `qsl-route` (ADR-011 §7.3 X-9),
-/// `qsl-replay` (ADR-011 §7.3 X-10 -- each extracted §6.1 layer crate adds its
-/// own entry here the same way), `qsl-analyze` (ADR-011 §7.3 X-12),
-/// `qsl-inspect` (the typed inspection CLI),
-/// `qsl-bench` (the benchmark harness) and `qsl-string-edge` (the scanner
+/// the FSL root crate, `xtask`, and `fsl-walk-grow` (ADR-011 §6.1 layer WG),
+/// `fsl-foundation` (ADR-011 §7.3 X-2), `fsl-cst` (ADR-011 §7.3 X-3),
+/// `fsl-source` (ADR-011 §7.3 X-4), `fsl-forms` (ADR-011 §7.3 X-5),
+/// `fsl-semantics` (ADR-011 §7.3 X-6), `fsl-package` (ADR-011 §7.3 X-7),
+/// `fsl-eval` (ADR-011 §7.3 X-8), `fsl-route` (ADR-011 §7.3 X-9),
+/// `fsl-replay` (ADR-011 §7.3 X-10 -- each extracted §6.1 layer crate adds its
+/// own entry here the same way), `fsl-analyze` (ADR-011 §7.3 X-12),
+/// `fsl-inspect` (the typed inspection CLI),
+/// `fsl-bench` (the benchmark harness) and `fsl-string-edge` (the scanner
 /// scans itself), and `checked-closure-consumer` (the standalone compile-fail
 /// consumer fixture).
 fn crate_roots() -> Vec<PathBuf> {
     [
         "src",
         "xtask/src",
-        "qsl-walk-grow/src",
-        "qsl-foundation/src",
-        "qsl-cst/src",
-        "qsl-command/src",
-        "tools/qsl-probability-check/src",
-        "qsl-source/src",
-        "qsl-forms/src",
-        "qsl-semantics/src",
-        "qsl-package/src",
-        "qsl-eval/src",
-        "qsl-route/src",
-        "qsl-replay/src",
-        "qsl-analyze/src",
-        "qsl-inspect/src",
-        "qsl-bench/src",
-        "qsl-conformance/src",
-        "qsl-string-edge/src",
+        "fsl-walk-grow/src",
+        "fsl-foundation/src",
+        "fsl-cst/src",
+        "fsl-command/src",
+        "tools/fsl-probability-check/src",
+        "fsl-source/src",
+        "fsl-forms/src",
+        "fsl-semantics/src",
+        "fsl-package/src",
+        "fsl-eval/src",
+        "fsl-route/src",
+        "fsl-replay/src",
+        "fsl-analyze/src",
+        "fsl-inspect/src",
+        "fsl-bench/src",
+        "fsl-conformance/src",
+        "fsl-string-edge/src",
         "tests/fixtures/checked-closure-consumer/src",
         "tests/fixtures/hyper-query-consumer/src",
     ]
@@ -52,7 +52,7 @@ fn crate_roots() -> Vec<PathBuf> {
     .collect()
 }
 
-/// QSL's edge rules. The allow-list is empty: nothing in the QSL crates has
+/// FSL's edge rules. The allow-list is empty: nothing in the FSL crates has
 /// yet been reviewed and admitted as a genuine non-branching string
 /// comparison; each addition is a deliberate, reviewed decision, not a
 /// default.
@@ -60,7 +60,7 @@ fn rules() -> EdgeRules {
     EdgeRules::default()
 }
 
-/// Run the `string-edge` scan over QSL's crate roots under `workspace_root`.
+/// Run the `string-edge` scan over FSL's crate roots under `workspace_root`.
 /// Returns the "clean" summary text on success (a clean scan is `Ok`,
 /// matching `cargo xtask string-edge`'s own success/failure contract); an
 /// occurrence report is returned as [`Error::StringEdgeFound`], not `Ok`, so
@@ -107,7 +107,7 @@ mod tests {
 
     /// Every workspace member's `src/` is a scan root, except the
     /// documented [`UNSCANNED_MEMBERS`]. A crate extracted later, or a root
-    /// dropped from the list (removing `qsl-route/src`
+    /// dropped from the list (removing `fsl-route/src`
     /// failed nothing), fails here.
     #[trace("TC-162", "FR-064-AC-11")]
     #[test]
@@ -348,13 +348,13 @@ mod tests {
     fn an_invalid_input_fixture_fails_like_the_library_with_exit_two() {
         let dir = fixture_workspace();
         let root = dir.path();
-        fs::remove_dir_all(root.join("qsl-route/src")).expect("drop one configured root");
+        fs::remove_dir_all(root.join("fsl-route/src")).expect("drop one configured root");
         let error = run(root).expect_err("a missing configured root cannot be clean");
         assert!(
             matches!(
                 &error,
-                Error::StringEdgeScan(qsl_string_edge::Error::RootUnresolved { path, .. })
-                    if path == Path::new("qsl-route/src")
+                Error::StringEdgeScan(fsl_string_edge::Error::RootUnresolved { path, .. })
+                    if path == Path::new("fsl-route/src")
             ),
             "{error:?}"
         );
@@ -369,7 +369,7 @@ mod tests {
     /// `clock_binding_name` (the `"clock:"` prefix, a `strip_prefix`) and the
     /// operation-role selector. An allow-list entry at each must
     /// be refused as gating a branch, whether or not a `#[string_edge]` mark
-    /// covers the site. The `"quire.protocol.finite-global/v1"` profile string
+    /// covers the site. The `"filament.protocol.finite-global/v1"` profile string
     /// is now only registry data (`RegisteredDefinition::identity`), matched by
     /// the registry's own table, and the `"allocation"` site is gone from the
     /// tree. Fails if a site's file/item vanishes without this list being
@@ -379,12 +379,12 @@ mod tests {
     fn real_adr010_sites_are_refused_as_allow_list_entries() {
         let sites = [
             // A real named-`const NAME: &str` site
-            // (`identity == NARROW`, `qsl-semantics/src/check/claims.rs`),
+            // (`identity == NARROW`, `fsl-semantics/src/check/claims.rs`),
             // not a string literal -- the const-resolving detector is what
             // finds this occurrence.
             (
-                "qsl-semantics/src",
-                "qsl-semantics/src/check/claims.rs",
+                "fsl-semantics/src",
+                "fsl-semantics/src/check/claims.rs",
                 "operation_role",
             ),
         ];
@@ -393,7 +393,7 @@ mod tests {
                 base_dir: workspace_root(),
                 crate_roots: vec![PathBuf::from(crate_root)],
                 rules: EdgeRules {
-                    allow_list: vec![qsl_string_edge::AllowListEntry {
+                    allow_list: vec![fsl_string_edge::AllowListEntry {
                         file: file.to_owned(),
                         item: item.to_owned(),
                         reason: "test: a real ADR-010 section 4.3 production dispatch site"
@@ -405,7 +405,7 @@ mod tests {
             assert!(
                 matches!(
                     &error,
-                    qsl_string_edge::Error::AllowListGatesABranch { file: f, item: i, .. }
+                    fsl_string_edge::Error::AllowListGatesABranch { file: f, item: i, .. }
                         if f == file && i == item
                 ),
                 "{file}::{item} is not refused as an allow-list entry: {error:?}"

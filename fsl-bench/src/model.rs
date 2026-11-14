@@ -1,0 +1,533 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Model-layer inputs: a Semantic IR 2.0.0 document with a caller-chosen
+//! number of object types, carried through FR-154 model intake
+//! (`intake::admit` -> `intake::read_domain_package`) into
+//! normalization, population admission and `allInstances`.
+//!
+//! The document is authored in FSpec's own identity form
+//! (`ix://<package>/<name>`), the same form
+//! `fsl-semantics/tests/it/model_intake.rs`'s
+//! `a_fspec_conformant_document_admits_reads_and_classifies` uses: a
+//! document lifted by FCD's `lift` from a spec bundle is refused by
+//! `read_records` at the pinned FCD revision (FCD's `ix://<pkg>/type/<id>`
+//! identity form; see `intake.rs`'s module doc), so it cannot build a large
+//! `DomainPackage` today. Everything after the bytes -- the admission
+//! table, `agent-ix-semantic-ir`'s validator, the per-node reader -- is the
+//! production intake path.
+//!
+//! ## Shape
+//!
+//! `types` object types, each with one native `Boolean` field:
+//!
+//! - a supertype chain `C0 <- C1 <- ... <- C{depth}` (`C{i}` declares
+//!   `supertypes: [C{i-1}]`), so `C{depth}` has `depth` proper ancestors;
+//! - `types - depth - 1` filler types `F{i}`, each declaring
+//!   `supertypes: [C0]`, so the whole package is one connected component
+//!   (one object universe);
+//! - one closed population `Pop` whose member type is `C0`.
+//!
+//! [`population_document`] fills `Pop` with objects whose most-specific
+//! type is the chain's deepest type, so an `allInstances<C0>` query walks
+//! all `depth` generalization steps per member.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use filament_checked::key::DeclarationKey;
+use filament_exact::{CardinalityBound, CollectionKind, CollectionType, Meter, ValueType};
+use fsl_foundation::IntakeLimits;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::conformance::{resolve_redefinition_target, RedefinitionTargetOutcome};
+use fsl_semantics::model::dispatch::GeneralizationClosure;
+use fsl_semantics::model::domain_package::{
+    DomainPackage, DomainPackageRecord, DomainPackageRef, OperationEffect,
+};
+use fsl_semantics::model::index::ModelIndex;
+use fsl_semantics::model::intake::{
+    admit, meaning, read_domain_package, read_records, PackageDocument,
+};
+use fsl_semantics::model::normalize::{
+    normalize_shared, EffectiveView, ModelRefusal, NormalizeOutcome,
+};
+use fsl_semantics::model::population::PopulationBinding;
+use fsl_semantics::model::population::{
+    admit_binding, admit_invocation, AdmissionMeter, AdmissionOutcome, InvocationContext,
+    InvocationDelta, PopulationAdmissionLimits, PopulationDocument, PopulationMember,
+};
+use fsl_semantics::value::model_query::{evaluate_all_instances, ModelQueryHalt};
+use serde_json::{json, Value};
+
+/// The benchmark domain package's identity.
+pub const PACKAGE: &str = "bench/model";
+
+/// The package version every selection names.
+pub const VERSION: &str = "1.0.0";
+
+/// A model document's size parameters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ModelShape {
+    /// Object types declared (each also declares one field member record).
+    pub types: usize,
+    /// Proper ancestors of the chain's deepest type (`A` in F6's O(N x A)).
+    pub depth: usize,
+}
+
+impl ModelShape {
+    /// The filler type count: every declared type not on the chain.
+    fn fillers(self) -> usize {
+        self.types.saturating_sub(self.depth + 1)
+    }
+}
+
+/// `ix://bench/model/<name>`: FSpec's identity form for a package node.
+pub fn node(name: &str) -> String {
+    format!("ix://{PACKAGE}/{name}")
+}
+
+/// The declaration key of the package node named `name`.
+pub fn key(name: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: node(name),
+    }
+}
+
+/// The chain's `index`-th type's name, `C{index}`.
+pub fn chain_type(index: usize) -> String {
+    format!("C{index}")
+}
+
+fn origin(identity: &str) -> Value {
+    json!({
+        "generated": {
+            "generatorIdentity": identity,
+            "generatorVersion": "1.0.0",
+            "inputIdentities": [identity],
+        }
+    })
+}
+
+fn construct(name: &str, meaning: &str) -> Value {
+    json!({
+        "kind": {"module": PACKAGE, "name": name},
+        "moduleVersion": "1.0.0",
+        "construct": {
+            "identity": "none",
+            "shape": "record",
+            "members": {},
+            "meaning": meaning,
+        },
+    })
+}
+
+fn object_type(name: &str, supertypes: &[String]) -> Value {
+    let identity = node(name);
+    let field = format!("{identity}/flag");
+    json!({
+        "identity": identity,
+        "displayName": name,
+        "kind": {"module": PACKAGE, "name": "object_type"},
+        "roles": [],
+        "origin": origin(&identity),
+        "constraints": [],
+        "extensions": [],
+        "unknownPolicy": "reject",
+        "supertypes": supertypes,
+        "fields": [{
+            "identity": field,
+            "name": "flag",
+            "typeRef": "ix://filament/native/Boolean",
+            "presence": "optional",
+            "nullable": false,
+            "defaultKind": "none",
+            "multiplicity": {"lower": 0, "ordered": false, "unique": true},
+            "origin": origin(&field),
+        }],
+        "operations": [],
+    })
+}
+
+/// The Semantic IR 2.0.0 document for `shape`, as the exact bytes intake
+/// admits: `serde_json`'s compact output, whose key order is already
+/// sorted, so these bytes are their own JCS form.
+pub fn document(shape: ModelShape) -> Vec<u8> {
+    let mut types = Vec::with_capacity(shape.types.max(shape.depth + 1));
+    for index in 0..=shape.depth {
+        let supertypes = match index.checked_sub(1) {
+            Some(parent) => vec![node(&chain_type(parent))],
+            None => Vec::new(),
+        };
+        types.push(object_type(&chain_type(index), &supertypes));
+    }
+    for index in 0..shape.fillers() {
+        types.push(object_type(&format!("F{index}"), &[node(&chain_type(0))]));
+    }
+    let population = node("Pop");
+    let document = json!({
+        "contractVersion": "2.0.0",
+        "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {
+            "identity": node("spec"),
+            "version": VERSION,
+            "dialect": "spec-bundle",
+        },
+        "package": {
+            "identity": PACKAGE,
+            "version": VERSION,
+            "mappingVersions": [],
+            "profileVersions": [],
+        },
+        "occurrences": [],
+        "extensions": [],
+        "constructs": [
+            construct("object_type", meaning::OBJECT_TYPE),
+            construct("population", meaning::POPULATION),
+        ],
+        "types": types,
+        "populations": [{
+            "identity": population,
+            "displayName": "Pop",
+            "kind": {"module": PACKAGE, "name": "population"},
+            "members": [node(&chain_type(0))],
+            "extent": "closed",
+            "origin": origin(&population),
+        }],
+    });
+    // The document's RFC 8785 bytes, from the one encoder (ADR-013 §2,
+    // ADR-013:113) over the shared reader's tree of its JSON text.
+    let text = serde_json::to_vec(&document).expect("a json! document serializes");
+    let tree = quire_canonical::read(&text, u64::MAX).expect("a serialized document reads");
+    quire_canonical::to_vec(
+        &tree,
+        filament_semantic_value::semantic_node::IDENTITY_LIMITS,
+    )
+    .expect("a read document has an RFC 8785 encoding")
+}
+
+/// A domain package selection and the byte map FR-154's admission table
+/// reads it from.
+#[derive(Clone, Debug)]
+pub struct Offer {
+    /// The offered `{identity}` selection.
+    pub selection: DomainPackageRef,
+    /// The package bytes, keyed by the identity they declare.
+    pub packages: BTreeMap<String, Vec<u8>>,
+}
+
+/// Offer `document` under its own identity.
+pub fn offer(document: Vec<u8>) -> Offer {
+    Offer {
+        selection: DomainPackageRef {
+            identity: PACKAGE.to_owned(),
+        },
+        packages: BTreeMap::from([(PACKAGE.to_owned(), document)]),
+    }
+}
+
+/// Which intake stage refused.
+#[derive(Clone, Debug)]
+pub enum IntakeFailure {
+    /// FR-154's four-check admission table (`intake::admit`) refused.
+    Admit(Box<ModelRefusal>),
+    /// The per-node reader (`intake::read_records`) refused these nodes.
+    Read(Vec<ModelRefusal>),
+}
+
+// Every call into `model::intake` goes through the three functions below,
+// so an intake signature change is one edit here, not one per bench.
+
+/// FR-154's admission table (`intake::admit`) over `offer`: the selection
+/// and the package document it parsed.
+pub fn admit_offer(
+    offer: &Offer,
+) -> Result<(DomainPackageRef, PackageDocument), Box<ModelRefusal>> {
+    admit(
+        offer.selection.identity.as_str(),
+        &offer.packages,
+        IntakeLimits::default(),
+    )
+    .map_err(Box::new)
+}
+
+/// Parse package bytes the way `admit` does (`PackageDocument::parse`).
+pub fn parse_document(bytes: &[u8]) -> Result<PackageDocument, Box<ModelRefusal>> {
+    PackageDocument::parse(bytes, IntakeLimits::default()).map_err(Box::new)
+}
+
+/// The per-node reader (`intake::read_records`) over an admitted document.
+pub fn read(document: &PackageDocument) -> Result<Vec<DomainPackageRecord>, Vec<ModelRefusal>> {
+    read_records(PACKAGE, document)
+}
+
+/// FR-154 intake: [`admit_offer`], then `read_domain_package` so the resulting
+/// package retains each declaration's original meaning and FCD provenance.
+pub fn intake(offer: &Offer) -> Result<DomainPackage, IntakeFailure> {
+    let (selection, document) = admit_offer(offer).map_err(IntakeFailure::Admit)?;
+    read_domain_package(selection, &document).map_err(IntakeFailure::Read)
+}
+
+/// FR-150 normalization of `domain_package` under the default limits (NFR-012). The
+/// package is shared into the view, never copied, so the timed work is
+/// normalization alone.
+///
+/// # Panics
+///
+/// Panics when normalization does not complete: every generated shape is a
+/// valid, acyclic, single-component package.
+pub fn view(domain_package: &Arc<DomainPackage>) -> EffectiveView {
+    match normalize_shared(
+        Arc::clone(domain_package),
+        ModelNormalizationLimits::default(),
+    ) {
+        NormalizeOutcome::Completed(view) => view,
+        other => panic!("the generated package normalizes: {other:?}"),
+    }
+}
+
+/// A population document of `members` objects `o0` .. `o{members - 1}`,
+/// each of the chain's deepest type `C{depth}`.
+pub fn population_document(shape: ModelShape, members: usize) -> PopulationDocument {
+    let deepest = key(&chain_type(shape.depth));
+    PopulationDocument {
+        model_identity: PACKAGE.to_owned(),
+        members: (0..members)
+            .map(|index| PopulationMember {
+                object: format!("o{index}"),
+                type_identity: deepest.clone(),
+                field_values: Vec::new(),
+            })
+            .collect(),
+    }
+}
+
+/// FR-153 binding admission of `document` into `Pop`, with a closed
+/// subtype closure and a declared maximum of `document`'s own size.
+pub fn admit_population(view: &EffectiveView, document: &PopulationDocument) -> AdmissionOutcome {
+    let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+    admit_binding(
+        view,
+        document,
+        &key("Pop"),
+        GeneralizationClosure::Closed,
+        Some(u64::try_from(document.members.len()).unwrap_or(u64::MAX)),
+        &mut meter,
+    )
+}
+
+/// FR-153 invocation admission of `document` as both the pre and the post
+/// population of one invocation whose frame changes nothing (an empty
+/// effect, no created or deleted object): the admission work of
+/// [`admit_population`] done at both instants, plus a frame check that
+/// passes.
+pub fn admit_unchanged_invocation(
+    view: &EffectiveView,
+    document: &PopulationDocument,
+) -> AdmissionOutcome {
+    let population = key("Pop");
+    let effect = OperationEffect::default();
+    let mut pre_meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+    let mut post_meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+    admit_invocation(
+        InvocationContext {
+            view,
+            population: &population,
+            subtype_closure: GeneralizationClosure::Closed,
+            declared_maximum: Some(u64::try_from(document.members.len()).unwrap_or(u64::MAX)),
+        },
+        document,
+        document,
+        &InvocationDelta {
+            effect: &effect,
+            declared_created: &[],
+            declared_deleted: &[],
+        },
+        &mut pre_meter,
+        &mut post_meter,
+    )
+}
+
+/// A generated package, its effective view and an admitted `Pop` binding of
+/// `members` objects of the chain's deepest type.
+///
+/// # Panics
+///
+/// Panics when intake or admission refuses: every generated shape is valid.
+pub fn admitted(shape: ModelShape, members: usize) -> (Arc<DomainPackage>, PopulationBinding) {
+    let domain_package =
+        Arc::new(intake(&offer(document(shape))).expect("the generated document passes intake"));
+    let effective = view(&domain_package);
+    match admit_population(&effective, &population_document(shape, members)) {
+        AdmissionOutcome::Admitted(binding) => (domain_package, binding),
+        other => panic!("the generated population admits: {other:?}"),
+    }
+}
+
+/// `allInstances<C0>` through the evaluator-facing bridge
+/// (`value::model_query::evaluate_all_instances`), which resolves `C0`'s
+/// effective identity through the binding's reverse type catalog.
+///
+/// # Panics
+///
+/// Panics when `binding`'s catalog does not name `C0`.
+pub fn query_all_instances_of_root(
+    binding: &PopulationBinding,
+) -> Result<filament_exact::Value, ModelQueryHalt> {
+    let root = binding
+        .type_catalog()
+        .get(&key(&chain_type(0)))
+        .expect("C0 is a declared object type")
+        .clone();
+    let maximum = binding.declared_maximum().unwrap_or(u64::MAX);
+    let collection = CollectionType::new(
+        CollectionKind::Set,
+        ValueType::Reference(root),
+        Some(CardinalityBound::new(0, maximum).expect("0 <= any maximum")),
+    );
+    let mut meter = Meter::new(crate::check::SCALAR_UNLIMITED);
+    evaluate_all_instances(binding, &collection, &mut meter)
+}
+
+/// `resolve_redefinition_target` for the chain root's field: one model
+/// conformance check against the package's shared `ModelIndex`, which is
+/// built once per package, not once per check.
+pub fn resolve_root_field_redefinition(
+    index: &ModelIndex,
+) -> Result<RedefinitionTargetOutcome, Box<ModelRefusal>> {
+    let field = DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: format!("{}/flag", node(&chain_type(0))),
+    };
+    resolve_redefinition_target(
+        index,
+        &field,
+        ModelNormalizationLimits::default().ancestor_steps,
+    )
+    .map_err(Box::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fsl_semantics::model::accounting::LimitKind;
+    use fsl_semantics::model::normalize::normalize_with_meter;
+
+    #[test]
+    fn smallest_shape_admits_and_queries() {
+        let shape = ModelShape { types: 1, depth: 0 };
+        let (domain_package, binding) = admitted(shape, 1);
+        assert_eq!(domain_package.records.len(), 3);
+        assert!(query_all_instances_of_root(&binding).is_ok());
+        let effective = view(&domain_package);
+        assert!(resolve_root_field_redefinition(effective.model_index()).is_ok());
+        assert!(matches!(
+            admit_unchanged_invocation(&effective, &population_document(shape, 1)),
+            AdmissionOutcome::Admitted(_)
+        ));
+    }
+
+    #[test]
+    fn source_byte_intake_retains_original_meaning_and_origin() {
+        let package = intake(&offer(document(ModelShape { types: 1, depth: 0 })))
+            .expect("the valid source document admits");
+
+        let type_origin = package
+            .original(&key("C0"))
+            .expect("the type's original declaration is retained");
+        assert_eq!(type_origin.meaning.as_deref(), Some(meaning::OBJECT_TYPE));
+        assert_eq!(
+            type_origin.origin,
+            json!({
+                "generated": {
+                    "generatorIdentity": "ix://bench/model/C0",
+                    "generatorVersion": "1.0.0",
+                    "inputIdentities": ["ix://bench/model/C0"],
+                }
+            })
+        );
+        assert_eq!(type_origin.member_name, None);
+
+        let field_key = DeclarationKey {
+            package: PACKAGE.to_owned(),
+            node: "ix://bench/model/C0/flag".to_owned(),
+        };
+        let field_origin = package
+            .original(&field_key)
+            .expect("the field's original declaration is retained");
+        assert_eq!(field_origin.meaning, None);
+        assert_eq!(field_origin.member_name.as_deref(), Some("flag"));
+        assert_eq!(
+            field_origin.origin,
+            json!({
+                "generated": {
+                    "generatorIdentity": "ix://bench/model/C0/flag",
+                    "generatorVersion": "1.0.0",
+                    "inputIdentities": ["ix://bench/model/C0/flag"],
+                }
+            })
+        );
+
+        let population_origin = package
+            .original(&key("Pop"))
+            .expect("the population's original declaration is retained");
+        assert_eq!(
+            population_origin.meaning.as_deref(),
+            Some(meaning::POPULATION)
+        );
+        assert_eq!(
+            population_origin.origin,
+            json!({
+                "generated": {
+                    "generatorIdentity": "ix://bench/model/Pop",
+                    "generatorVersion": "1.0.0",
+                    "inputIdentities": ["ix://bench/model/Pop"],
+                }
+            })
+        );
+        assert_eq!(population_origin.member_name, None);
+    }
+
+    #[test]
+    fn source_byte_intake_preserves_reader_refusals() {
+        let mut value: Value = serde_json::from_slice(&document(ModelShape { types: 1, depth: 0 }))
+            .expect("the generated document is JSON");
+        value["types"][0]["fields"][0]["presence"] = json!("sometimes");
+        let offered = offer(serde_json::to_vec(&value).expect("the invalid fixture serializes"));
+
+        let package = intake(&offered)
+            .expect("intake retains typed reader refusals until normalization charges records");
+        let (outcome, meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
+        assert_eq!(
+            meter.admission_count(),
+            3,
+            "only the type, field, and population charges precede refusal",
+        );
+        assert_eq!(
+            meter.consumed(LimitKind::DeclarationRecords),
+            3,
+            "all three source records are charged before refusal",
+        );
+        let NormalizeOutcome::Refused(refusals) = outcome else {
+            panic!("normalization reports the retained reader refusal");
+        };
+        // FR-056: a reader diagnostic is retained at its deepest identified
+        // member, and the model reader's own refusal of the same member
+        // repeats it, so one refusal names `C0/flag`.
+        assert_eq!(
+            refusals.len(),
+            1,
+            "the reader diagnostic is retained once, at the member"
+        );
+        let refusal = &refusals[0];
+        assert_eq!(refusal.code.as_str(), "invalid_model_binding");
+        assert!(matches!(
+            &refusal.cause,
+            fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
+                node,
+                ..
+            } if node == "ix://bench/model/C0/flag"
+        ));
+        assert!(refusal.detail.contains("SCHEMA_VIOLATION"));
+        assert!(refusal.detail.contains("/ir/types/0/fields/0/presence"));
+        assert!(refusal.detail.contains("presence is a closed enumeration"));
+    }
+}

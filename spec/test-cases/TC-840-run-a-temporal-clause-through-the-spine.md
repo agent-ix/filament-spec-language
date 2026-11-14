@@ -3,7 +3,7 @@ id: TC-840
 title: "run_clause runs a selected temporal clause over a supplied trace"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
 ---
 # TC-840: run_clause runs a selected temporal clause over a supplied trace

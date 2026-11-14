@@ -3,22 +3,22 @@ id: FR-341
 title: "Classify a spine compile result into one refinement class"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-034
+  - target: ix://agent-ix/filament-spec-language/US-034
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: traces_to
-  - target: ix://agent-ix/quire-specification/AD-003
+  - target: ix://agent-ix/filament-specification/AD-003
     type: depends_on
 ---
 # FR-341: Classify a spine compile result into one refinement class
 
 ## Description
 
-QSL SHALL provide one classification of a spine `compile` result
+FSL SHALL provide one classification of a spine `compile` result
 (`Result<CheckedPackage, CompileRefusal>`) into a refinement class, shared
 by the spec-versioning gate (FR-342 reads it for a run that stops at
 compile) and the profile-layering gate (FR-345). It reads every cause the
@@ -53,8 +53,8 @@ than an I2 read ceiling) names no limit.
 | 2 | any cause has code `runtime_invariant`; or the refusal is `Intake` with a cause other than its limit cause, `Profile`, `DependencyInput`, `Import` with a cause other than its limit cause (an import's own ceiling or an `i2.*` read ceiling), `Dependency`, `Link` or `Emit`; except that a `Link` or `Emit` refusal holding `unsupported_projection` is not a tool failure and takes rule 5 | `tool failure` (the case's setup is broken) |
 | 3 | the refusal is `Source`, `Forms`, `OperationClause` (a kept operation clause that does not parse), `TypeInvariant` (a type-level invariant clause that does not parse), `Assembly` or `Check`, and any cause has a typed refusal code: a code other than `stage_limit_exceeded`, `resource_exhausted`, `unsupported_construct` and `unsupported_projection` | `refused` |
 | 4 | any cause has code `stage_limit_exceeded` or `resource_exhausted` (the caller's model budget, denied at I1 or at S3), whichever stage raised it | `incomplete` |
-| 5 | the refusal is `Omitted`; or any cause has code `unsupported_projection`; or any cause is `unsupported_construct` with cause `not-yet-implemented` | `unsupported` (a QSL implementation gap) |
-| 6 | otherwise: every cause is `unsupported_construct`, with cause `declaration-form`, `expression-form` or no catalog cause (a `Forms` `NoDispatchEntry` or `UnrepresentedConstruct` refusal has none) | `prohibited` (the selected profile prohibits the form, QSpec AD-003) |
+| 5 | the refusal is `Omitted`; or any cause has code `unsupported_projection`; or any cause is `unsupported_construct` with cause `not-yet-implemented` | `unsupported` (an FSL implementation gap) |
+| 6 | otherwise: every cause is `unsupported_construct`, with cause `declaration-form`, `expression-form` or no catalog cause (a `Forms` `NoDispatchEntry` or `UnrepresentedConstruct` refusal has none) | `prohibited` (the selected profile prohibits the form, FSpec AD-003) |
 
 - The classification SHALL be one exhaustive `match` over `CompileRefusal`
   with no wildcard arm, so that a new refusal variant does not compile until
@@ -80,7 +80,7 @@ than an I2 read ceiling) names no limit.
 ## Dependencies
 
 - ADR-011 (the spine stages and `CompileRefusal`), FR-110 (`Profile`).
-- QSpec AD-003 (profile-prohibited forms are distinct from typed refusals).
+- FSpec AD-003 (profile-prohibited forms are distinct from typed refusals).
 
 ## References
 

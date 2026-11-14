@@ -16,16 +16,16 @@ jobs:
     # that even before this change.
     timeout-minutes: 45
     env:
-      # TC-177 reads the FR-331 schema from a live quire-specification checkout.
-      QSPEC_DIR: ${{ github.workspace }}/quire-specification
+      # TC-177 reads the FR-331 schema from a live filament-specification checkout.
+      FSPEC_DIR: ${{ github.workspace }}/filament-specification
     steps:
       - uses: actions/checkout@v4
-      - name: Check out quire-specification (TC-177 FR-331 schema)
+      - name: Check out filament-specification (TC-177 FR-331 schema)
         uses: actions/checkout@v4
         with:
-          repository: agent-ix/quire-specification
-          path: quire-specification
-          token: ${{ secrets.QSPEC_READ_TOKEN }}
+          repository: agent-ix/filament-specification
+          path: filament-specification
+          token: ${{ secrets.FSPEC_READ_TOKEN }}
       - name: No committed binaries
         run: tools/check-no-committed-binaries.sh
       # rust-toolchain.toml selects the toolchain and its CI components.

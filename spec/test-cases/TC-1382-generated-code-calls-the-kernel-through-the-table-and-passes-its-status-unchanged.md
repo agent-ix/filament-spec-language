@@ -3,7 +3,7 @@ id: TC-1382
 title: "Generated code calls the kernel through the table and passes its status unchanged"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-561
+  - target: ix://agent-ix/filament-spec-language/FR-561
     type: verifies
 ---
 # TC-1382: Generated code calls the kernel through the table and passes its status unchanged

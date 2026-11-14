@@ -3,9 +3,9 @@ id: TC-1035
 title: "Snapshots carry relationship instances and admission refuses each defect in check order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: verifies
 ---
 # TC-1035: Snapshots carry relationship instances and admission refuses each defect in check order

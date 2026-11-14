@@ -3,59 +3,59 @@ id: ADR-016
 title: "State, model and finite execution on the shared foundation (ARCH-40)"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-015
+  - target: ix://agent-ix/filament-spec-language/ADR-015
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-063
+  - target: ix://agent-ix/filament-spec-language/FR-063
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-083
+  - target: ix://agent-ix/filament-spec-language/FR-083
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-089
+  - target: ix://agent-ix/filament-spec-language/FR-089
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-116
+  - target: ix://agent-ix/filament-spec-language/FR-116
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: relates_to
-  - target: ix://agent-ix/quire-specification/FR-013
+  - target: ix://agent-ix/filament-specification/FR-013
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-150
+  - target: ix://agent-ix/filament-specification/FR-150
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-351
+  - target: ix://agent-ix/filament-specification/FR-351
     type: depends_on
-  - target: ix://agent-ix/quire-specification/STD-111
+  - target: ix://agent-ix/filament-specification/STD-111
     type: depends_on
 ---
 # ADR-016: State, model and finite execution on the shared foundation (ARCH-40)
@@ -68,7 +68,7 @@ untrusted data, recorded as found.
 **Implemented and on the spine.**
 
 - Model intake and normalization (I1, S3 `model`). `model::intake::admit`
-  (`qsl-semantics/src/model/intake.rs:564`) and `admit_unit`
+  (`fsl-semantics/src/model/intake.rs:564`) and `admit_unit`
   (`model/intake/unit.rs:98`) admit a domain package, and `normalize`
   (`model/normalize.rs:2780`) derives the effective view. `EffectiveId` is
   minted only in `model`: `EffectiveDeclarationPreimage::identity_and_canonical_len`
@@ -81,16 +81,16 @@ untrusted data, recorded as found.
   (`check/mod.rs:334`), and resolves it through
   `CheckedGraph::resolve_declaration` (`check/mod.rs:1656`).
 - Static model typing at S3. Field reads resolve through
-  `quire_semantic_value::declaration::TypeEnvironment::attribute` (from
+  `filament_semantic_value::declaration::TypeEnvironment::attribute` (from
   `check/check.rs:1659`). `allInstances` is typed from
   `ValueType::Population(Option<u64>)` (`check/check.rs:2164`). `lookup`
   checks `S` against `T` with `TypeEnvironment::conforms`
   (`check/check.rs:2214`). #164's three items
   are delivered: an inherited field read through `deref`
-  (`qsl-eval/tests/it/inherited_attributes.rs:152`), upcast reference
-  equality (TC-198 L08, `qsl-eval/tests/it/equality_matrix.rs:1028`), and
+  (`fsl-eval/tests/it/inherited_attributes.rs:152`), upcast reference
+  equality (TC-198 L08, `fsl-eval/tests/it/equality_matrix.rs:1028`), and
   the check-time `lookup` conformance refusal. TC-219 and TC-220
-  (`qsl-semantics/tests/it/type_environment_model.rs:206-400`) compare the
+  (`fsl-semantics/tests/it/type_environment_model.rs:206-400`) compare the
   check-time and runtime conformance answers.
 - Population data at S6a. `PopulationBinding` (`model/population.rs:551`),
   `admit_binding` (`:806`), `admit_invocation` (`:1259`), `all_instances`
@@ -99,20 +99,20 @@ untrusted data, recorded as found.
   `PopulationBinding` correspondence, and `ObjectEnvironment::with_population`
   refuses a second, unequal record with `PopulationConflict`.
 - State clauses (ADR-012 §15, FR-102 to FR-109): forms
-  (`qsl-forms/src/protocol_clause.rs:61`), the checker `check::state_clause`
+  (`fsl-forms/src/protocol_clause.rs:61`), the checker `check::state_clause`
   with `ProtocolClauseFamily` (`check/state_clause.rs:275`, `:331`),
   observation-keyed facts (`check/observation.rs:27`, `check/facts.rs:36`),
   lowering to `state`/`state_clause`, `operation_anchor` and `frame`
   (`check/lowering/state.rs:154`, `:283`, `:318`), the S6a arm
-  (`qsl-eval/src/value/expression/s6a/protocol_clause.rs:94`), and
-  `qsl_replay::spine::run_clause` (`qsl-replay/src/spine/clause.rs:552`).
+  (`fsl-eval/src/value/expression/s6a/protocol_clause.rs:94`), and
+  `fsl_replay::spine::run_clause` (`fsl-replay/src/spine/clause.rs:552`).
 - Frames (FR-114 to FR-116): `admit_frame_invocation`
   (`model/observation.rs:1245`), which reaches `population::decide_frame`
   through `observation::frame::enforce`; the S6a `evaluate_frame` hook
-  (`qsl-eval/src/value/expression/mod.rs:408`); and `replay_frame`
-  (`qsl-replay/src/execute/frame.rs:167`) over `FrameCounterexample`.
+  (`fsl-eval/src/value/expression/mod.rs:408`); and `replay_frame`
+  (`fsl-replay/src/execute/frame.rs:167`) over `FrameCounterexample`.
 - The finite exploration engine (FR-101 AC-1 to AC-11): `explore_request`
-  (`qsl-eval/src/simulation/explore.rs:269`), `sample_request`
+  (`fsl-eval/src/simulation/explore.rs:269`), `sample_request`
   (`simulation/sample.rs:270`), `replay` (`simulation/trace.rs:117`),
   `Outcome{Exhaustive, Bounded, Cancelled}` with `Outcome::category()`
   (`explore.rs:75`, `:111`), and `SampleProvenance{seed, trace, sampler,
@@ -125,12 +125,12 @@ untrusted data, recorded as found.
   `Outcome::Stopped`.
 - FR-120. `ModelSystem`, `model::state::StateModel`, `explore_model` and
   `sample_model` do not exist. The only `TransitionSystem` implementers are
-  four test fixtures (`qsl-eval/tests/it/finite_simulation.rs:106`, `:148`,
+  four test fixtures (`fsl-eval/tests/it/finite_simulation.rs:106`, `:148`,
   `:189`, `:216`).
 - A `StateModel` family implementation. `FamilyKind::StateModel`
-  (`qsl-semantics/src/family/mod.rs:93`) has no `FamilyContract`
+  (`fsl-semantics/src/family/mod.rs:93`) has no `FamilyContract`
   implementer, and `S6aFamilyKind` has exactly `Value` and `ProtocolClause`
-  (`qsl-eval/src/value/expression/s6a/mod.rs:102-108`).
+  (`fsl-eval/src/value/expression/s6a/mod.rs:102-108`).
 - Dispatch at S3. `check::checked_dispatch_operation` is called only from a
   test (`check/lowering/model/tests.rs:418`); no unit compile links dispatch.
 - Conformance composition. `normalize` does not call
@@ -148,13 +148,13 @@ untrusted data, recorded as found.
   `fixtures.rs` (native model, runtime) delegates its spine files to the same
   module.
 
-**IR dependencies.** QSL consumes IR-370's checked-package reader, which
-decides the reference edge of a `quire.op.model.reaches_field` application.
+**IR dependencies.** FSL consumes IR-370's checked-package reader, which
+decides the reference edge of a `filament.op.model.reaches_field` application.
 TC-463 step 1 (`s4_state_package_reads_back_through_i2`) and TC-469 step 6
 (`tc_469_step_6_the_emitted_package_admits_via_i04`) run and pass. IR `lower`
 returns no form for a `state` node. Gate QSL-20 (#219, ARCH-G3) is Backlog.
 
-"QSpec FR-nnn" names a quire-specification requirement; a bare FR id is a QSL
+"FSpec FR-nnn" names a filament-specification requirement; a bare FR id is an FSL
 requirement. `StateModel` alone names the family (`FamilyKind::StateModel`);
 FR-120's layer-3 seam type is written `model::state::StateModel`. Item ids
 `SC-`, `ID-`, `EX-`, `FE-`, `ND-`, `FP-`, `G-`, `OR-` and `PI-` are local to
@@ -181,9 +181,9 @@ about static types. S6a decides every question about population data.
 | SC-1 | Does a field, operation or relationship end exist on a static object type, including inherited members? | S3 | the `model` effective view through `TypeEnvironment::attribute`/`operation`; relationship ends after G-5 | `missing_declaration`; an ambiguous operation `ambiguous_declaration` |
 | SC-2 | Does static type `S` conform to `T` (upcast equality, `lookup` key type, argument passing, clause context type)? | S3 | `TypeEnvironment::conforms`, total over a closure computed once under `TypeEnvironmentLimits.ancestor_steps` (B-3, ADR-014 §1) | `ill_typed`/`type-mismatch`; a chain past the ceiling refuses `stage_limit_exceeded` |
 | SC-3 | Which operation a dispatched call selects (unique most-specific) | S3 | `link_dispatch` through `check::checked_dispatch_operation`, once G-7 wires it | ambiguity or ineligibility refuses at S3 with no partial table (FR-083) |
-| SC-4 | The declared maximum of a population and the element type of `allInstances` | S3 | For queried model object type `T`, `ValueType::Population(Some(n))` gives `Set<Reference<T>>[0,n]`; `Population(None)` gives the unbounded `Set<Reference<T>>`, with no inferred finite maximum (QSpec FR-153; ADR-014 §2) | a type fact |
+| SC-4 | The declared maximum of a population and the element type of `allInstances` | S3 | For queried model object type `T`, `ValueType::Population(Some(n))` gives `Set<Reference<T>>[0,n]`; `Population(None)` gives the unbounded `Set<Reference<T>>`, with no inferred finite maximum (FSpec FR-153; ADR-014 §2) | a type fact |
 | SC-5 | Which objects exist, their most-specific type, field values, closure and dangling references | S6a admission | `admit_binding`, `admit_invocation`, FR-106 `admit_observations` | `dangling_reference`, `incomplete_population` (incomplete), `invalid_runtime_input` |
-| SC-6 | Does a runtime object's dynamic type conform to `T` (`lookup` narrowing)? | S6a | `model::population::lookup` through `ModelIndex::conforms` under the binding's read-only `ancestor_steps` ceiling | `absent undefined` → `FamilyResult::Undefined` `absent-key`; `absent refused` → `ModelRefusal`; the ceiling reached → `Refused`, `resource_exhausted`/`insufficient-next-charge` (ADR-014 §7, QSL FR-082) |
+| SC-6 | Does a runtime object's dynamic type conform to `T` (`lookup` narrowing)? | S6a | `model::population::lookup` through `ModelIndex::conforms` under the binding's read-only `ancestor_steps` ceiling | `absent undefined` → `FamilyResult::Undefined` `absent-key`; `absent refused` → `ModelRefusal`; the ceiling reached → `Refused`, `resource_exhausted`/`insufficient-next-charge` (ADR-014 §7, FSL FR-082) |
 | SC-7 | Does a dispatched call's precondition hold for its receiver? | S6a | `StateModel` undefined cause `PreconditionFalse` (ADR-013 O-16) | `FamilyResult::Undefined` `precondition-false` |
 | SC-8 | Does a change stay inside an operation's frame? | S6a | `population::decide_frame` (FE-1) | `frame_violation`, `population_delta_mismatch` |
 
@@ -214,13 +214,13 @@ refusal cites the row of ADR-012 §15.6 or FR-098 that fixes its code.
 | ID-1 | Original declaration: `DeclarationKey{package, node}` | the domain package; admitted at I1 (ADR-013 O-03) | Carried in `StateObject.type_identity`, the `semantic` map keys and FR-120's declaration identity text | Reached from a `NodeKey` only through the model correspondence (ID-3) | Re-admitted from the QC-1 byte provision | declared | FR-081 tests; TC-469 step 6, one package identity across every case (`config_version_spine.rs:806`) |
 | ID-2 | Effective declaration: `EffectiveId` | `model` normalization only (O-05) | The type component of every `ObjectReference`; FR-120 encodes it as `object_type` | Absent from v2 (O-05) | Recomputed by re-normalization; a reference whose type is no `EffectiveId` of the bound universe refuses at FR-106 admission, `invalid_runtime_input` (ADR-012 §15.6) | normalized | FR-081 tests; FR-120-AC-4 (G-4) |
 | ID-3 | Checked node of a model declaration: `NodeKey` over `ModelOwner` | `check` only (O-04, C-02), recorded in `ModelCorrespondence` | S6a selects clauses, anchors and frames by `NodeKey` | Written as `WireNodeId` | `WireNodeId` → `NodeKey` by lookup in the recompiled package (O-04) | normalized | TC-417 to TC-419 (FR-094) |
-| ID-4 | Reference: `ObjectReference{UniverseId, EffectiveId, ObjectId}` | `model` at admission (O-05) | Keys `ObjectEnvironment`; QSpec FR-181 triple in state keys | Only as a witness value decoded by `Witness::decode` (C-11) | Admitted again from the replay input; a foreign universe refuses `foreign_reference` (FR-096) | declared over the triple | FR-084 tests (`model_population.rs`) |
+| ID-4 | Reference: `ObjectReference{UniverseId, EffectiveId, ObjectId}` | `model` at admission (O-05) | Keys `ObjectEnvironment`; FSpec FR-181 triple in state keys | Only as a witness value decoded by `Witness::decode` (C-11) | Admitted again from the replay input; a foreign universe refuses `foreign_reference` (FR-096) | declared over the triple | FR-084 tests (`model_population.rs`) |
 | ID-5 | Population: `PopulationId` | `model` at admission (O-13, QC-21) | Resolves its `PopulationBinding` through `ObjectEnvironment` | Absent | Re-minted by re-admission | normalized | TC-291 to TC-297; FR-089-AC-7 (G-3) |
 | ID-6 | Clause, anchor and frame: the node ids of `state`/`state_clause`, `operation_anchor` and `frame` | `check` (ADR-012 §15.4) | Selected by the name → (node id, occurrence) table in the in-process `CheckedPackage` (FR-109) | Clause node id and occurrence key enter the obligation identity (O-09) | Resolved in the recompiled package; a differing frame refuses `FrameIdentityMismatch` (FR-116) | normalized | TC-515 (FR-116) |
 | ID-7 | Observation: snapshot or invocation `DocumentRef` addressed by its document `identity` label set | the document's producer; admitted by FR-106 | Anchors each clause evaluation; carried in the run report | Not on the v2 wire (ADR-012 §15.4) | Supplied by identity through the byte provision; a provision that does not hold it is `Incomplete` with `unavailable_observation`/`missing-required-artifact` (FR-106, ADR-012 §15.6) | normalized | FR-106 admission tests |
-| ID-8 | Simulated state: QSpec FR-181 state key, the canonical RFC 8785 byte string of the state (`quire.simulation.state-key/v1`) | `qsl_eval::simulation` from the `TransitionSystem` key (FR-101) | Coalescing compares full key bytes; traces and frontiers hold keys | Absent | FR-101 `replay` recomputes it; never E9 | lexical over key bytes | TC-453 (FR-101-AC-2) |
-| ID-9 | Transition: QSpec FR-181 `{"type":"transition","operation":…,"receiver":…\|null,"arguments":…}` (receiver not among the arguments; JCS key order `arguments`, `operation`, `receiver`, `type`) | the `TransitionSystem`; FR-120 names the operation by ID-1's declaration identity text | Orders successors (FR-101) | Absent | FR-101 `replay` | lexical over JCS bytes | TC-453 (FR-101-AC-1) |
-| ID-10 | Synthesized state observation: the pair (`DocumentRef{quire, quire.simulation.state/<state key>, quire.simulation.state-key/v1, 1}`, anchor) | FR-120 `model::state::StateModel::observation` | Lets a clause evaluation name a simulated state as an observation. Its identity is the pair: one `DocumentRef` names every anchoring of one state, because the key omits the anchor | Absent | Never resolved through a byte provision; only through ID-8 | the pair | FR-120-AC-5 (G-4) |
+| ID-8 | Simulated state: FSpec FR-181 state key, the canonical RFC 8785 byte string of the state (`filament.simulation.state-key/v1`) | `fsl_eval::simulation` from the `TransitionSystem` key (FR-101) | Coalescing compares full key bytes; traces and frontiers hold keys | Absent | FR-101 `replay` recomputes it; never E9 | lexical over key bytes | TC-453 (FR-101-AC-2) |
+| ID-9 | Transition: FSpec FR-181 `{"type":"transition","operation":…,"receiver":…\|null,"arguments":…}` (receiver not among the arguments; JCS key order `arguments`, `operation`, `receiver`, `type`) | the `TransitionSystem`; FR-120 names the operation by ID-1's declaration identity text | Orders successors (FR-101) | Absent | FR-101 `replay` | lexical over JCS bytes | TC-453 (FR-101-AC-1) |
+| ID-10 | Synthesized state observation: the pair (`DocumentRef{quire, filament.simulation.state/<state key>, filament.simulation.state-key/v1, 1}`, anchor) | FR-120 `model::state::StateModel::observation` | Lets a clause evaluation name a simulated state as an observation. Its identity is the pair: one `DocumentRef` names every anchoring of one state, because the key omits the anchor | Absent | Never resolved through a byte provision; only through ID-8 | the pair | FR-120-AC-5 (G-4) |
 | ID-11 | Counterexample: `WitnessEnvelope<P>` | CG from a backend run (O-25) | not applicable | Carries obligation identity, occurrence key, `package_id`, `run_limits`, declared domains, `trace_position` | The only E9 input (FR-098) | lexical over the admitted transcript | TC-515 |
 
 **Original and effective provenance.** The original `DeclarationKey` is the
@@ -256,16 +256,16 @@ A `PopulationBinding` carries membership only; field values belong to the
 two bindings that differ in their admission limit `ancestor_steps`, which is
 not identity. Reason: identity follows content (ADR-013 §2 normalized kind),
 and no production path admits two bindings into one evaluation today
-(`admit_binding` is called from tests and `qsl-bench/src/model.rs:309`), so
+(`admit_binding` is called from tests and `fsl-bench/src/model.rs:309`), so
 the change needs no migration.
 
 **Keyings of simulation domains, kept apart.** A clause's requirement record
 keys a population domain as `DomainKey::Population{member_type:
 object_type node, ordinal}` (ADR-012 §15.7). That key crosses to `route`, CG and
-QSpec FR-331. FR-120 names every simulation root (population, parameter,
+FSpec FR-331. FR-120 names every simulation root (population, parameter,
 result, granted field) by a structural key (owner, simulation role, ordinal) over a naming object,
 and FR-101's `RequiresBound` reports it. That key is local to one
-`ModelSimulationRequest`. It never crosses to `route`, CG, QSpec FR-331 or
+`ModelSimulationRequest`. It never crosses to `route`, CG, FSpec FR-331 or
 replay, and no conversion between the two exists. A caller answers a
 simulation `RequiresBound` on a population root with a universe. On a
 parameter, result or field root it can only change the model, for example by
@@ -274,7 +274,7 @@ declaring a `bounded_domain`.
 ### 3. Population, state keys, seeds, frontiers, trace positions, cancellation, exhaustion and incomplete outcomes
 
 ADR-014 TR-1, TR-6 and TR-7 and FR-101 define the engine's types. Two terms:
-**bound exhaustion** is reaching an exploration `Limits` field (QSpec
+**bound exhaustion** is reaching an exploration `Limits` field (FSpec
 FR-181's sense), and an **exhaustive run** is one whose frontier emptied
 (`Outcome::Exhaustive`).
 
@@ -282,9 +282,9 @@ FR-181's sense), and an **exhaustive run** is one whose frontier emptied
 | --- | --- | --- |
 | EX-1 | Model population in a simulated state | A complete, closed population state per universe population (FR-120). A universe is a caller-chosen simulation input. It bounds no claim, so it is not an ADR-014 bound value, is not a `ProofBound` and is never converted into one. Its scope is EX-9's. |
 | EX-2 | State key | FR-120's typed canonical form over FR-101's encoder. The anchor is not in the key (ID-10). |
-| EX-3 | Seed | `SampleProvenance.seed` (TR-6). Exploration has no seed. Only `quire.simulation.sampler/v1` runs; any other generator refuses `GeneratorMismatch`. |
+| EX-3 | Seed | `SampleProvenance.seed` (TR-6). Exploration has no seed. Only `filament.simulation.sampler/v1` runs; any other generator refuses `GeneratorMismatch`. |
 | EX-4 | Frontier | FR-101 `Frontier`, in next-expansion order, on `BoundReached`, `Bounded`, `Cancelled` and (after G-1) `Stopped`. |
-| EX-5 | Trace positions | Three distinct concepts, never converted: (a) FR-101's step index inside a simulation `Trace`; (b) ADR-014 TR-2 `TemporalPosition`, carried as `qsl_replay::TracePosition`, owned by `TemporalTrace`; (c) the QSpec FR-351 separating-witness trace position. A state-family `WitnessEnvelope` carries `trace_position: None`. A simulation step index never becomes a `TracePosition`. |
+| EX-5 | Trace positions | Three distinct concepts, never converted: (a) FR-101's step index inside a simulation `Trace`; (b) ADR-014 TR-2 `TemporalPosition`, carried as `fsl_replay::TracePosition`, owned by `TemporalTrace`; (c) the FSpec FR-351 separating-witness trace position. A state-family `WitnessEnvelope` carries `trace_position: None`. A simulation step index never becomes a `TracePosition`. |
 | EX-6 | Cancellation | Only exploration is cancellable. `poll` is called once before each state's expansion, so a cancellation takes effect within one expansion; the returned outcome is `Cancelled{cause: cancelled/caller-cancelled}`. S6a clause evaluation and admission are not cancellable (ADR-014 §7). Sampling is bounded by `max_steps` and is not cancellable. |
 | EX-7 | Bound exhaustion versus a clause meter | If the run reaches `max_states` or `max_transitions`, it returns `Bounded{limit}`; a run that completes its `max_depth` search horizon returns `BoundReached{depth}`, which is inconclusive. If a clause meter runs out inside an expansion, the run is not bound-exhausted: an invariant evaluation records `InvariantUndetermined`, and a contract-clause evaluation or the `max_candidates` cap stops the expansion with `ExpansionStop` `resource_exhausted`/`insufficient-next-charge` (FR-120). |
 | EX-8 | Incomplete outcomes | `Bounded`, `Cancelled` and `Stopped` with `resource_exhausted` are ADR-013 O-16 incomplete. `Stopped` with `runtime_invariant` is internal failure. `NotSimulated::RequiresBound` is a disposition, not an outcome. FR-106 `incomplete_population` is incomplete at admission. `Exhaustive` is success of the exploration only (§6). |
@@ -295,10 +295,10 @@ FR-181's sense), and an **exhaustive run** is one whose frontier emptied
 
 | ID | Decision |
 | --- | --- |
-| FE-1 | **One frame decision.** `population::decide_frame` (`pub(crate)` in `qsl-semantics`) is the only function that decides whether a change stays inside a frame. `admit_invocation`, FR-106 `observation::frame::enforce` (reached from `admit_frame_invocation` for FR-115) and FR-120's expansion over in-memory states all call it. It walks redefinition through `redefinition_reaches`, which charges no meter today (QSL-48); metering it is a prerequisite of G-4. A redefinition cycle cannot reach it, because normalization refuses one. Verified by inspection. |
-| FE-2 | **One frame source.** An operation's frame is its one `OperationEffect` admitted at I1 (FR-103) and bound in the checked package (FR-114). A request, snapshot or universe never supplies a frame (QSpec FR-013-AC-3). |
+| FE-1 | **One frame decision.** `population::decide_frame` (`pub(crate)` in `fsl-semantics`) is the only function that decides whether a change stays inside a frame. `admit_invocation`, FR-106 `observation::frame::enforce` (reached from `admit_frame_invocation` for FR-115) and FR-120's expansion over in-memory states all call it. It walks redefinition through `redefinition_reaches`, which charges no meter today (QSL-48); metering it is a prerequisite of G-4. A redefinition cycle cannot reach it, because normalization refuses one. Verified by inspection. |
+| FE-2 | **One frame source.** An operation's frame is its one `OperationEffect` admitted at I1 (FR-103) and bound in the checked package (FR-114). A request, snapshot or universe never supplies a frame (FSpec FR-013-AC-3). |
 | FE-3 | **One clause evaluator.** A state clause is evaluated only through `CheckedPackageEvaluation::evaluate_clause` and the `ProtocolClause` S6a arm (FR-107), with a fresh `Meter` per evaluation. `run_clause`, `ModelSystem` and replay all use it. |
-| FE-4 | **Model reads inside clause bodies.** Field reads, `deref` and `reaches` evaluate over the clause's observation (ADR-012 §15.5). A state clause names a population through the qualified name `M::P` (QSL FR-391), as the operand of `allInstances<T>(p)` or `lookup<T>(p, r)` or as the domain of a quantifier or population form, and S6a reads that population from the clause's observation (FR-107, FR-391). A clause's `self`, `result` and parameters draw from `ValueTypeRef`, whose members are `Clock`, `Native`, `Package` and `Unit`, and bind no population value. The S6a refusal `ProtocolClauseUnsupported` (`unknown_required_feature`/`unsupported-feature`, the `AllInstances` and `Lookup` arms of the evaluator) is raised only for a population operand that admission did not supply. TC-467 exercises that guard by bypassing admission. |
+| FE-4 | **Model reads inside clause bodies.** Field reads, `deref` and `reaches` evaluate over the clause's observation (ADR-012 §15.5). A state clause names a population through the qualified name `M::P` (FSL FR-391), as the operand of `allInstances<T>(p)` or `lookup<T>(p, r)` or as the domain of a quantifier or population form, and S6a reads that population from the clause's observation (FR-107, FR-391). A clause's `self`, `result` and parameters draw from `ValueTypeRef`, whose members are `Clock`, `Native`, `Package` and `Unit`, and bind no population value. The S6a refusal `ProtocolClauseUnsupported` (`unknown_required_feature`/`unsupported-feature`, the `AllInstances` and `Lookup` arms of the evaluator) is raised only for a population operand that admission did not supply. TC-467 exercises that guard by bypassing admission. |
 | FE-5 | **Effects as data.** A simulator or evaluator performs no effect. Effects are `StepEffect` data (FR-120 "Effects as data"). Forms that read ambient state refuse at S3 (FR-120-AC-12). |
 
 ### 5. Authored nondeterminism versus reproducible exploration bookkeeping
@@ -318,7 +318,7 @@ proof of any clause for an unbounded population, for other universes or for
 other initial states, and it is never `proved`. A clean run (EX-10) means "no
 violation found within this request" (EX-9). Three rules hold it there:
 
-- exploration results never enter a QSpec FR-331 result, an FR-100 clause
+- exploration results never enter an FSpec FR-331 result, an FR-100 clause
   outcome or any proof accounting. No map from an exploration to a clause
   outcome exists, and none is added;
 - the requires-bound pre-check returns `NotSimulated::RequiresBound` for an
@@ -340,9 +340,9 @@ its dependency on QSL-20 in the ticket ("where proof evidence is claimed")
 does not apply.
 
 Amended by ADR-018 §3 and §5: these rules hold for `explore` and `sample`. A
-temporal model-check result (ADR-018 EN-1, layer A `qsl-analyze` `model_check`) is a
+temporal model-check result (ADR-018 EN-1, layer A `fsl-analyze` `model_check`) is a
 negotiated backend result: it reaches proof accounting through negotiation
-and a QSpec FR-331 terminal record, and its counterexample is a
+and an FSpec FR-331 terminal record, and its counterexample is a
 `WitnessEnvelope` with a `ReplaySource::ModelTrace` source that enters E9.
 
 ### 7. Family placement of the model
@@ -352,7 +352,7 @@ and a QSpec FR-331 terminal record, and its counterexample is a
 | FP-1 | `StateModel` owns model declarations, population extent, redefinition, dispatch and the model expression forms (`deref`, `allInstances`, `lookup`, dispatched calls, `reaches` inside a clause), as ADR-012 §3 and §15.2 state. Its checked outputs are `check`-core types (ADR-012 §1): `NodeKind::Attribute`, `AllInstances`, `Lookup`, `Reaches` and the dispatch table. Amended by FR-380: the declaration `bound <label> on <alias>::<population> [N]` is the one `StateModel` declaration with a leading token. S2 builds it through the declaration dispatch arm `LeadingTokenKind::Bound => state_model::population_bound`, and that is the only `StateModel` arm there. |
 | FP-2 | `StateModel`'s `check` hook takes one model expression form, the way `Value`'s function-application checker (`check::family::Application`, ADR-012 §14.1 FR-065-AC-4 row) takes one nested call: the enclosing family's typer calls it from a thin arm with the shared `CheckContext`. Today that work sits inside the `Value` typer (`check/check.rs:1659`, `:2164`, `:2214`). Moving it is G-2. |
 | FP-3 | `StateModel` implements `FamilyContract` and not `ReferenceEvaluation`, and no `StateModel` variant is added to `S6aFamilyKind`. No S6a input is a `StateModel` item: a model form is always nested in a `Value` function body or a `ProtocolClause` body, and it evaluates inside that family's `evaluate` hook through `value::model_query`, raising `StateModel`-owned causes (ADR-013 O-16). This applies ADR-012 §2's #214 rule (a contract part nothing can construct is left out). ADR-012 §2, §3, §5.1 S1 and §13.5 are amended to say so. Reopen condition: an S6a entry whose selected item is a `StateModel` declaration. Amended by FR-380: the `bound` declaration is a `StateModel` declaration with an S2 entry (FP-1) and no S6a entry: it is a package-level declaration that the checker resolves (FR-380) and the evaluator reads as a bound on a population (the `cardinality_out_of_bound` refusal travels in the enclosing family's result), so the reopen condition is not met for S6a and there is still no `evaluate` hook and no `S6aFamilyKind::StateModel`. |
-| FP-4 | Simulation is a layer-5 consumer of checked packages (ADR-011 §6.1 `simulation`), not a family. `ModelSystem` is a production `TransitionSystem`, and it evaluates through the `ProtocolClause` evaluator (FE-3), which is ADR-011 §8's "through a family evaluator". With it, lane D has converged, and `qsl_eval::simulation::Outcome` is a canonical S6a-layer outcome whose O-16 map is `Outcome::category()` (ADR-014 §7). Amended by ADR-027 TS-1: `ProtocolSystem`, the protocol transition system, is the second production `TransitionSystem`, beside `ModelSystem`; it applies each attempt through `ModelSystem`'s application rule (TS-3). |
+| FP-4 | Simulation is a layer-5 consumer of checked packages (ADR-011 §6.1 `simulation`), not a family. `ModelSystem` is a production `TransitionSystem`, and it evaluates through the `ProtocolClause` evaluator (FE-3), which is ADR-011 §8's "through a family evaluator". With it, lane D has converged, and `fsl_eval::simulation::Outcome` is a canonical S6a-layer outcome whose O-16 map is `Outcome::category()` (ADR-014 §7). Amended by ADR-027 TS-1: `ProtocolSystem`, the protocol transition system, is the second production `TransitionSystem`, beside `ModelSystem`; it applies each attempt through `ModelSystem`'s application rule (TS-3). |
 
 ### 8. Conformance summary
 
@@ -379,7 +379,7 @@ successor.
 | G-2a | `StateModel` check hook for each model form | QSL-68 (#120) | a `check::state_model` family module implementing `FamilyContract` per FP-2 | FR-300-AC-1 and FR-300-AC-2: each of the five model forms checks through `check::state_model` | TC-790 | after G-3 to G-7; blocks no feature work |
 | G-2b | Seam coverage | QSL-68 | the FR-063 checked-in seam list | FR-300-AC-3: `xtask seam-probe` reports the `StateModel` arms at S1 (`catalog_code()` only) and S3, and S2 has none by design | TC-791 | with G-2a |
 | G-2c | Cause prefix | QSL-68 | none | FR-301-AC-1 and FR-301-AC-2: a model refusal raised under `Value` evaluation renders with the `state-model` catalog prefix | TC-792 | with G-2a |
-| G-3 | ID-5 population identity | QSL-68 (#120) | `population_id_preimage` builds FR-089's seven-member preimage; `with_population` keeps `PopulationConflict` | FR-089-AC-1 (amended) and FR-089-AC-7 | TC-291 (the 3-and-7 conflict test at `qsl-eval/tests/it/model_reference_queries.rs:2834` changes to expect two ids) | before G-4 |
+| G-3 | ID-5 population identity | QSL-68 (#120) | `population_id_preimage` builds FR-089's seven-member preimage; `with_population` keeps `PopulationConflict` | FR-089-AC-1 (amended) and FR-089-AC-7 | TC-291 (the 3-and-7 conflict test at `fsl-eval/tests/it/model_reference_queries.rs:2834` changes to expect two ids) | before G-4 |
 | G-4 | FR-120 `ModelSystem`, `model::state::StateModel`, `explore_model`, `sample_model` | QSL-67 (#121) | as FR-120 "Outputs" and "Frame and observation seam"; the expansion calls `decide_frame` (FE-1); candidates generated lazily in canonical order, each generated candidate charged to `max_candidates`; an eligible deterministic assignment `post.f = e(pre, args)` is solved directly and generates only the candidates whose `f` equals the solved value, FR-120 "Directly solved assignments" | FR-120-AC-1 to AC-13, AC-29 to AC-33 | TC-471 to TC-473, TC-1418 | after G-1, G-3 and QSL-48 |
 | G-5 | FR-085 relationship-end resolution | QSL-68 (#120) | FR-085's resolution step over `RelationshipEnd` | FR-085-AC-1 to AC-3 | TC-230 to TC-232 | independent |
 | G-6 | M-6c state lane deletion | QSL-67 (#121), with QSL-68 for the model half (ADR-011 M-6c row) | the spine generator `examples/config-version/spine_corpus.rs` has no native import, so TC-469's `build()` needs no native module | ADR-012 §15.8 step 2 and ADR-011 M-6c exactly, including the SEAM-3 reads and the IR import that feed `state` (`src/state/evaluation.rs:15`), `lowering`, IT-010 and the dev dependencies; each path is deleted in the slice that makes it unreachable, and no two paths run side by side; FR-108's independent table stays | TC-469 step 1 passes with the native modules deleted; the parity test is gone | independent of G-4 |
@@ -407,12 +407,12 @@ gets a `blocks` edge from QSL-68 to QSL-67 for G-3 before G-4.
 
 | ID | Behavior | Owner | Oracle |
 | --- | --- | --- | --- |
-| OR-1 | Ambiguous dispatch | `model::dispatch::link_dispatch`; QSL-68 | Model layer: TC-222 to TC-225 (`qsl-semantics/tests/it/model_dispatch.rs`). Unit level: G-7's test |
+| OR-1 | Ambiguous dispatch | `model::dispatch::link_dispatch`; QSL-68 | Model layer: TC-222 to TC-225 (`fsl-semantics/tests/it/model_dispatch.rs`). Unit level: G-7's test |
 | OR-2 | Static conformance (SC-2) and its runtime agreement | `TypeEnvironment::conforms`, `lookup`; QSL-68 | TC-219 and TC-220 (`type_environment_model.rs:206-400`); FR-082 tests (`model_conformance.rs`); TC-198 L08 (`equality_matrix.rs:1028`) |
 | OR-3 | Closure (dangling references, complete populations) | S6a admission; QSL-68 and QSL-67 | FR-084 tests (`model_population.rs`), with TC-227 pending (G-9); FR-106 `dangling_reference` and `incomplete_population` rows (ADR-012 §15.6) |
-| OR-4 | Cancellation | `qsl_eval::simulation`; QSL-67 | FR-101-AC-6, TC-455 `cancellation_stops_the_run_and_returns_the_frontier` (`finite_simulation.rs:728`) |
-| OR-5 | Bound exhaustion | `qsl_eval::simulation`; QSL-67 | FR-101-AC-7, TC-455 (`:773`, `:826`, `:880`); TC-439 category map (`:1113`) |
-| OR-6 | Unsupported | S6a `ProtocolClauseUnsupported` (FE-4); CG negotiation and `route` for proof; QSL-67 | TC-467 `all_instances_under_a_protocol_clause_refuses_unsupported_construct` (`evaluate.rs:2169`); TC-155 `only_the_supported_item_is_routed` (`qsl-route/tests/it/routing.rs:225`) |
+| OR-4 | Cancellation | `fsl_eval::simulation`; QSL-67 | FR-101-AC-6, TC-455 `cancellation_stops_the_run_and_returns_the_frontier` (`finite_simulation.rs:728`) |
+| OR-5 | Bound exhaustion | `fsl_eval::simulation`; QSL-67 | FR-101-AC-7, TC-455 (`:773`, `:826`, `:880`); TC-439 category map (`:1113`) |
+| OR-6 | Unsupported | S6a `ProtocolClauseUnsupported` (FE-4); CG negotiation and `route` for proof; QSL-67 | TC-467 `all_instances_under_a_protocol_clause_refuses_unsupported_construct` (`evaluate.rs:2169`); TC-155 `only_the_supported_item_is_routed` (`fsl-route/tests/it/routing.rs:225`) |
 | OR-7 | Incomplete | S6a meter, exploration and admission; QSL-67 and QSL-68 | TC-469's incomplete cases through `run_clause`; TC-226 `l02_…` (`model_population.rs:525`); `tc465_row23_…` (`state_clauses.rs:3349`); TC-455; FR-101-AC-12 (G-1) |
 | OR-8 | Requires-bound before exploration | `explore_request`, `sample_request`; QSL-67 | FR-101-AC-8, TC-455 `requires_bound_refuses_before_any_transition_system_call` (`finite_simulation.rs:975`) |
 
@@ -422,7 +422,7 @@ FE-1, §6 and EX-9 are verified by inspection or analysis, not by a test.
 
 | ID | Requirement |
 | --- | --- |
-| PI-1 | `quire-contract-model`'s checked-package reader decides the reference edge of `quire.op.model.reaches_field` (IR-370). TC-463 step 1 and TC-469 step 6 run and pass, backing FR-105-AC-3 and FR-108-AC-6's I04 `read` half; no state-node emission test is ignored or weakened. |
+| PI-1 | `filament-contract-model`'s checked-package reader decides the reference edge of `filament.op.model.reaches_field` (IR-370). TC-463 step 1 and TC-469 step 6 run and pass, backing FR-105-AC-3 and FR-108-AC-6's I04 `read` half; no state-node emission test is ignored or weakened. |
 | PI-2 | FCD `agent-ix-extraction-frontend` and `agent-ix-semantic-ir` are consumed through `model::intake` only (ADR-011 §7.1). A change to intake shapes is a filament-core-data ticket. |
 | PI-5 | No state-clause proof evidence is claimed until IR `lower` admits `state` nodes and CG has an `operation-contract` arm for them. Neither has a ticket yet (Open dependencies). Gate QSL-20 (#219) counts no evidence from this family before then. |
 
@@ -441,7 +441,7 @@ function.
   directly; TC-469 step 6 checks that every case and a direct compile give
   one `package_id` (`:806`), and the ID-row oracles check the rest.
 - **Frame run and frame replay**: FR-115 TC-514
-  (`qsl-replay/src/spine/clause/tests/frame.rs`) and FR-116 TC-515
+  (`fsl-replay/src/spine/clause/tests/frame.rs`) and FR-116 TC-515
   (`tests/frame_replay.rs`) exercise FE-1, FE-2 and ID-6 through E9
   recompilation.
 - **Finite exploration engine** (FR-101 TC-453 to TC-455, over test
@@ -476,7 +476,7 @@ function.
   `StateModel` has no `evaluate` hook (FP-3).
 - ADR-013 O-13 Population row, T-6 and QC-21: the `PopulationId` preimage is
   ID-5's. O-16 (both simulation sentences) and §6: the converged
-  `qsl_eval::simulation::Outcome` is canonical (FP-4).
+  `fsl_eval::simulation::Outcome` is canonical (FP-4).
 - FR-089 Behavior, AC-1, new AC-7 and Status: ID-5.
 - FR-120 "Post-states" and new AC-13: every generated candidate counts
   toward `max_candidates`, candidates are generated lazily, and a directly solved deterministic assignment generates, and so counts, only the candidates its solved value admits (G-4).

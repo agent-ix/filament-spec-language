@@ -19,7 +19,7 @@ pub(crate) use admitted_charge::admitted_charge_points;
 #[cfg(feature = "checked-handoff")]
 pub(crate) fn resolved_package(bytes: &[u8]) -> serde_json::Value {
     let mut wire: serde_json::Value = serde_json::from_slice(bytes).expect("a package document");
-    qsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
         .expect("every operand slot names a row entry");
     wire
 }
@@ -29,6 +29,6 @@ pub(crate) fn resolved_package(bytes: &[u8]) -> serde_json::Value {
 #[cfg(feature = "checked-handoff")]
 pub(crate) fn slotted_package_bytes(wire: &serde_json::Value) -> Vec<u8> {
     let mut wire = wire.clone();
-    qsl_semantics::check::wire_id::write_operand_rows(&mut wire);
+    fsl_semantics::check::wire_id::write_operand_rows(&mut wire);
     serde_json::to_vec(&wire).expect("the wire encodes")
 }

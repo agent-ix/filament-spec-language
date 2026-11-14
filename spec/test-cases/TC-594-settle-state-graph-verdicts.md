@@ -3,7 +3,7 @@ id: TC-594
 title: "State-graph outcomes settle as terminal records that state their settlement method"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
 ---
 # TC-594: State-graph outcomes settle as terminal records that state their settlement method

@@ -3,23 +3,23 @@ id: StR-001
 title: "Trust native finite-state assessments"
 type: StR
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-001"
+  - target: "ix://agent-ix/filament-spec-language/FR-001"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-002"
+  - target: "ix://agent-ix/filament-spec-language/FR-002"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-003"
+  - target: "ix://agent-ix/filament-spec-language/FR-003"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-004"
+  - target: "ix://agent-ix/filament-spec-language/FR-004"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-005"
+  - target: "ix://agent-ix/filament-spec-language/FR-005"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-006"
+  - target: "ix://agent-ix/filament-spec-language/FR-006"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-106"
+  - target: "ix://agent-ix/filament-spec-language/FR-106"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-107"
+  - target: "ix://agent-ix/filament-spec-language/FR-107"
     type: satisfied_by
-  - target: "ix://agent-ix/quire-spec-language/FR-010"
+  - target: "ix://agent-ix/filament-spec-language/FR-010"
     type: satisfied_by
 ---
 # StR-001: Trust native finite-state assessments

@@ -3,7 +3,7 @@ id: TC-1009
 title: "An operation parameter and result typed by a variant type are admitted, checked and run"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-360
+  - target: ix://agent-ix/filament-spec-language/FR-360
     type: verifies
 ---
 # TC-1009: An operation parameter and result typed by a variant type are admitted, checked and run

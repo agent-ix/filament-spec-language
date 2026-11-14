@@ -3,30 +3,30 @@ id: FR-234
 title: "Check timed intervals and classify timed property forms"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-233
+  - target: ix://agent-ix/filament-spec-language/FR-233
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-250
+  - target: ix://agent-ix/filament-specification/FR-250
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-255
+  - target: ix://agent-ix/filament-specification/FR-255
     type: depends_on
 ---
 # FR-234: Check timed intervals and classify timed property forms
 
 ## Description
 
-QSL's S3 checker SHALL admit the timed profile over a `model-time` claim
+FSL's S3 checker SHALL admit the timed profile over a `model-time` claim
 and over a timed trace, check timed intervals with open or closed ends on
 every interval-capable operator, and record each claim's timed property
 form, TT-1 to TT-4 (ADR-026 DF-1 to DF-7). The form decides which engine
@@ -92,7 +92,7 @@ for a clause DF-5 does not admit over a timed subject.
   engine. A `BoundedWindow` clause SHALL admit punctual intervals.
 - Over a single timed trace every admitted formula SHALL evaluate,
   punctual intervals included.
-- **Pointwise meaning.** The layer-5 evaluator SHALL implement QSpec
+- **Pointwise meaning.** The layer-5 evaluator SHALL implement FSpec
   FR-416's pointwise meaning of every timed operator and its stutter
   invariance, deciding each time-stamp difference's membership in an
   interval in exact arithmetic with each end's openness.
@@ -111,12 +111,12 @@ for a clause DF-5 does not admit over a timed subject.
 - ADR-026 §6 DF-1 to DF-7; ADR-014 TR-3 and A-4; ADR-018 TP-1 to TP-4.
 - [FR-123](FR-123-check-fairness-and-interval-operators-of-infinite-trace-clauses.md),
   [FR-233](FR-233-bind-a-model-claim-to-model-time-or-model-steps.md).
-- QSpec FR-416 (pointwise meaning of timed operators), QSpec FR-090 and
-  FR-250 (the profile row), QSpec FR-255 (interval keys
+- FSpec FR-416 (pointwise meaning of timed operators), FSpec FR-090 and
+  FR-250 (the profile row), FSpec FR-255 (interval keys
   with end openness).
 
 ## References
 
-- QSpec half: QSpec FR-416 (Linear STD-139) owns the timed profile row,
-  its pointwise semantics and interval openness, with QSpec FR-250 and
+- FSpec half: FSpec FR-416 (Linear STD-139) owns the timed profile row,
+  its pointwise semantics and interval openness, with FSpec FR-250 and
   FR-255 (ADR-026 OV-1, OV-4).

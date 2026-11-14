@@ -8,38 +8,38 @@
 //! produces is the emitted bytes of two equal clauses with their occurrence
 //! ordinals renumbered.
 
-use qsl_package::EmitLimits;
+use fsl_package::EmitLimits;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use ix_trace_rs::trace;
-use qsl_eval::temporal::evidence::{
+use filament_eval::{CallAdmissionFailure, CallFailure};
+use filament_exact::Meter;
+use fsl_eval::temporal::evidence::{
     ActivationState, ClauseFormula, ClauseWork, CompletenessRecord, EvidencePackage,
     EvidencePosition, EvidenceRef, EvidenceRequest, EvidenceResult, ExecutionDisposition,
     ExecutionOrigin, PackageRows, Payload, Relation, SemanticTriggerIdentity,
     TemporalEvidenceLimits, TraceBinding, TriggerEvidence,
 };
-use qsl_eval::temporal::{ClockCover, ProgressClosure, ProgressCompleteness, Valuation};
-use qsl_foundation::SourceIdentity;
-use qsl_package::{
+use fsl_eval::temporal::{ClockCover, ProgressClosure, ProgressCompleteness, Valuation};
+use fsl_foundation::SourceIdentity;
+use fsl_package::{
     read_evaluation_emission, AdmittedPackageRead, CheckedNodeId, CheckedOccurrence,
     CheckedOccurrenceRole, ClockConfiguration, Emission, TemporalClockSelection, V2ReadLimits,
 };
-use qsl_replay::spine::{DependencyInput, SuppliedLibrary};
-use qsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
-use qsl_semantics::library::LibraryName;
-use quire_eval::{CallAdmissionFailure, CallFailure};
-use quire_exact::Meter;
+use fsl_replay::spine::{DependencyInput, SuppliedLibrary};
+use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+use fsl_semantics::library::LibraryName;
+use ix_trace_rs::trace;
 use serde_json::Value;
 
 use super::checked_handoff::{request as handoff_request, KINDS};
-use quire_spec_language::checked_handoff::Corpus;
+use filament_spec_language::checked_handoff::Corpus;
 
 /// A compiled unit with the emission its clock selections give.
 pub(super) struct Built {
-    unit: qsl_replay::spine::CheckedUnit,
+    unit: fsl_replay::spine::CheckedUnit,
     pub(super) emission: Emission,
-    packages: qsl_semantics::model::intake::PackageInput,
+    packages: fsl_semantics::model::intake::PackageInput,
 }
 
 impl Built {
@@ -75,7 +75,7 @@ impl Built {
     pub(super) fn try_read(
         &self,
         emission: &Emission,
-    ) -> Result<AdmittedPackageRead<'_>, qsl_package::ImportViewRefusal> {
+    ) -> Result<AdmittedPackageRead<'_>, fsl_package::ImportViewRefusal> {
         self.try_read_under(emission, V2ReadLimits::fixture())
     }
 
@@ -84,7 +84,7 @@ impl Built {
         &self,
         emission: &Emission,
         limits: V2ReadLimits,
-    ) -> Result<AdmittedPackageRead<'_>, qsl_package::ImportViewRefusal> {
+    ) -> Result<AdmittedPackageRead<'_>, fsl_package::ImportViewRefusal> {
         read_evaluation_emission(
             self.unit.package(),
             emission,
@@ -92,14 +92,14 @@ impl Built {
             &self.packages,
             limits,
             EmitLimits::fixture(),
-            qsl_package::SourceWitnessSupplier::new(emission),
+            fsl_package::SourceWitnessSupplier::new(emission),
         )
     }
 }
 
 /// The clock `selections` joined to the clause of each name.
 fn selections(
-    unit: &qsl_replay::spine::CheckedUnit,
+    unit: &fsl_replay::spine::CheckedUnit,
     clocks: &[(String, ClockConfiguration)],
 ) -> Vec<TemporalClockSelection> {
     clocks
@@ -128,11 +128,11 @@ fn selections(
 }
 
 fn emit(
-    unit: qsl_replay::spine::CheckedUnit,
+    unit: fsl_replay::spine::CheckedUnit,
     clocks: &[(String, ClockConfiguration)],
-    packages: qsl_semantics::model::intake::PackageInput,
+    packages: fsl_semantics::model::intake::PackageInput,
 ) -> Built {
-    let emission = qsl_package::emit_checked_with_temporal_selections(
+    let emission = fsl_package::emit_checked_with_temporal_selections(
         unit.package(),
         &selections(&unit, clocks),
         EmitLimits::fixture(),
@@ -161,7 +161,7 @@ pub(super) fn recipe(kind: &str) -> Built {
             bytes: read(path),
         })
         .collect();
-    let packages = qsl_semantics::model::intake::package_input(models.iter().map(Vec::as_slice))
+    let packages = fsl_semantics::model::intake::package_input(models.iter().map(Vec::as_slice))
         .expect("the recipe's model");
     let unit = crate::support::front_end::checked(
         SourceIdentity::new("local", format!("source:{}", emit_request.source.display())),
@@ -332,12 +332,12 @@ fn both_routes_hold_the_emissions_rows_and_ids() {
         let emitted = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the emission");
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the read-back package");
 
@@ -416,12 +416,12 @@ fn both_routes_give_the_evaluator_the_same_formula() {
         let emitted = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the emission");
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the read-back package");
         for clause in clause_ids(&emitted) {
@@ -451,7 +451,7 @@ fn both_routes_give_the_evaluator_the_same_formula() {
     let read = built.read(&built.emission);
     let back = EvidencePackage::from_read(
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the read-back package");
     let due = clause_ids(&back)
@@ -468,8 +468,8 @@ fn both_routes_give_the_evaluator_the_same_formula() {
             .map(|node| (node.operation, node.operands.clone()))
             .collect::<Vec<_>>(),
         [
-            ("quire.op.temporal.always", vec![1]),
-            ("quire.op.temporal.holds", vec![])
+            ("filament.op.temporal.always", vec![1]),
+            ("filament.op.temporal.holds", vec![])
         ]
     );
     assert_eq!(
@@ -477,7 +477,7 @@ fn both_routes_give_the_evaluator_the_same_formula() {
             .iter()
             .map(|used| used.operation)
             .collect::<Vec<_>>(),
-        ["quire.op.temporal.always", "quire.op.temporal.holds"]
+        ["filament.op.temporal.always", "filament.op.temporal.holds"]
     );
     assert_eq!(
         ClauseFormula::of_graph(view.formula_graph())
@@ -505,12 +505,12 @@ fn the_call_gives_equal_results_over_both_routes_and_any_replaced_input_differs(
         let emitted = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the emission");
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the read-back package");
         for clause in clause_ids(&emitted) {
@@ -534,9 +534,9 @@ fn the_call_gives_equal_results_over_both_routes_and_any_replaced_input_differs(
             assert!(!left_charges.is_empty());
 
             // Replace one input of one side.
-            let call = |changed: &qsl_eval::temporal::evidence::EvidenceSubject<'_>| {
+            let call = |changed: &fsl_eval::temporal::evidence::EvidenceSubject<'_>| {
                 let mut meter = unlimited();
-                let result = qsl_eval::temporal::evidence::evaluate_temporal_evidence(
+                let result = fsl_eval::temporal::evidence::evaluate_temporal_evidence(
                     changed, &asked, &mut meter,
                 )
                 .map(|issued| issued.result().clone());
@@ -584,12 +584,12 @@ fn each_clause_pairs_with_its_own_clock_row() {
     let emitted = EvidencePackage::from_emission(
         &built.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the emission");
     let back = EvidencePackage::from_read(
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the read-back package");
     let ids = clause_ids(&emitted);
@@ -630,14 +630,14 @@ pub(super) fn event_clauses_over(
     clauses: &str,
     authorities: &[(&str, &str)],
 ) -> Built {
-    let packages = qsl_semantics::model::intake::package_input([
+    let packages = fsl_semantics::model::intake::package_input([
         crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes(),
     ])
     .expect("the ConfigVersion model");
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
-         profile t = \"quire.temporal.event-position.false-extension/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
          {imports}model Config = \"example/config-version\";\n{clauses}\n"
     );
     let supplied: Vec<SuppliedLibrary> = libraries
@@ -719,7 +719,7 @@ pub(super) fn twins() -> Built {
     }
 }
 
-fn authority_of(row: &qsl_package::TemporalBinding) -> String {
+fn authority_of(row: &fsl_package::TemporalBinding) -> String {
     match &row.clock {
         ClockConfiguration::EventPosition { sequence_authority } => sequence_authority.to_string(),
         other => panic!("an event-position clock: {other:?}"),
@@ -739,7 +739,7 @@ fn twins_pair_their_rows_by_key_over_the_read_back_route() {
     let read = built.read(&built.emission);
     let back = EvidencePackage::from_read(
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the read-back package");
     let [node] = clause_ids(&back).try_into().expect("one shared node");
@@ -832,7 +832,7 @@ fn twins_pair_their_rows_by_key_over_the_read_back_route() {
     let read = single.read(&single.emission);
     let package = EvidencePackage::from_read(
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the read-back package");
     let [clause] = clause_ids(&package).try_into().expect("one clause");
@@ -863,12 +863,12 @@ fn instance_bound_atoms_are_derived_and_equal_over_both_routes() {
         let emitted = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the emission");
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the read-back package");
         let [clause] = clause_ids(&emitted).try_into().expect("one clause");
@@ -905,7 +905,7 @@ pub(super) fn edited(built: Built, edit: impl FnOnce(&mut Value)) -> Built {
 /// Two clauses of one name, `Same`, with their own formulas and clocks. The
 /// checker admits them, so the clock selections are joined by position.
 pub(super) fn same_named_clauses() -> Built {
-    let packages = qsl_semantics::model::intake::package_input([
+    let packages = fsl_semantics::model::intake::package_input([
         crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes(),
     ])
     .expect("the ConfigVersion model");
@@ -915,8 +915,8 @@ pub(super) fn same_named_clauses() -> Built {
         )
     };
     let source = format!(
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.model.complete/v1\";\n\
-         profile t = \"quire.temporal.event-position.false-extension/v1\";\n\
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
          model Config = \"example/config-version\";\n{}{}",
         clause(1),
         clause(2)
@@ -945,7 +945,7 @@ pub(super) fn same_named_clauses() -> Built {
             )
         })
         .collect();
-    let emission = qsl_package::emit_checked_with_temporal_selections(
+    let emission = fsl_package::emit_checked_with_temporal_selections(
         unit.package(),
         &selections,
         EmitLimits::fixture(),
@@ -965,10 +965,10 @@ pub(super) fn same_named_clauses() -> Built {
 fn twins_pair_their_rows_by_key_over_the_bytes_only_route() {
     let built = twins();
     let read = built.read(&built.emission);
-    let bare = qsl_package::BarePackage::new(read.admitted());
+    let bare = fsl_package::BarePackage::new(read.admitted());
     let back = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the bare package");
     let [node] = clause_ids(&back).try_into().expect("one shared node");
@@ -1061,7 +1061,7 @@ fn twins_pair_their_rows_by_key_over_the_bytes_only_route() {
     let read = single.read(&single.emission);
     let package = EvidencePackage::from_read(
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the read-back package");
     let [clause] = clause_ids(&package).try_into().expect("one clause");
@@ -1084,13 +1084,13 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
     let emitted = EvidencePackage::from_emission(
         &built.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the emission");
-    let bare = qsl_package::BarePackage::new(read.admitted());
+    let bare = fsl_package::BarePackage::new(read.admitted());
     let back = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the bare package");
     let ids = clause_ids(&emitted);

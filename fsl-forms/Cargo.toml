@@ -1,0 +1,51 @@
+[package]
+name = "fsl-forms"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "ADR-011 §6.1 layer 2: S2 parsed semantic forms -- the forms core's closed dispatch entry table, the parsed-form contract and the shared parsed-form types."
+
+# ADR-011 §6.1 layer 2 depends on "1, F, K", the shared walker leaf W
+# (`filament-walk`, ADR-030 D-1 item 2), and layer SV's canonical absence-mode
+# vocabulary from `filament-semantic-value`. The root crate's
+# `tests/it/family_outcome_layering.rs` (TC-398) asserts that this table and
+# `[dev-dependencies]` name no other workspace crate.
+[dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+fsl-cst = { path = "../fsl-cst" }
+fsl-foundation = { path = "../fsl-foundation" }
+filament-semantic-value = { workspace = true }
+filament-exact = { workspace = true }
+filament-walk = { workspace = true }
+
+[dev-dependencies]
+# `dispatch`'s unit tests build CSTs with `LosslessCst::fixture`, gated on
+# `fsl-cst`'s own `test-support` feature; resolver 2 turns it on only when a
+# test target is built, so it never reaches the production lib.
+fsl-cst = { path = "../fsl-cst", features = ["test-support"] }
+# `dispatch`'s TC-167 test parses its own source to inspect the dispatch
+# `match`; `tests/it/identity_free_forms.rs` (TC-398) walks every field type.
+syn = { version = "2.0.119", features = ["full", "visit"] }
+# Line numbers in that walk's findings, the same way `xtask` reads them.
+proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+# FR-063: `seam_probe` is the `RUSTFLAGS`-set `--cfg` `xtask
+# seam-probe` builds this crate under (as a dependency of `fsl-semantics` and
+# every crate above it): it adds `Expression::__SeamProbe`, a probe-only
+# variant this crate's own `Expression::children`/`detach_children`/
+# `is_childless` each carry an unconditional arm for, so this crate keeps
+# compiling under the probe (the real S2 seam it exists to demonstrate is
+# `fsl-semantics`' `Typer::infer_form`, above this crate).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(seam_probe)", "cfg(seam_probe_forms)"] }
+
+[lints.clippy]
+all = "deny"

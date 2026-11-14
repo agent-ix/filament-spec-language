@@ -1,26 +1,26 @@
 ---
 id: TC-295
-title: "The QSL layer admits a Value::Population identity under ValueType::Population by its resolved binding's declared maximum"
+title: "The FSL layer admits a Value::Population identity under ValueType::Population by its resolved binding's declared maximum"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-089
+  - target: ix://agent-ix/filament-spec-language/FR-089
     type: verifies
 ---
-# TC-295: The QSL layer admits a Value::Population identity under ValueType::Population by its resolved binding's declared maximum
+# TC-295: The FSL layer admits a Value::Population identity under ValueType::Population by its resolved binding's declared maximum
 
 ## Description
 
-Verify FR-089-AC-5: the QSL layer treats `ValueType::Population(maximum)` as
+Verify FR-089-AC-5: the FSL layer treats `ValueType::Population(maximum)` as
 admitting a `Value::Population(population_id)` exactly when the binding that
 `population_id` resolves to, through `model`'s recorded correspondence, has a
 declared maximum equal to `maximum` -- the pairing
 `CheckedPackage::call`/`evaluate`'s own argument-admission `validate`
-(`qsl-eval/src/value/expression/mod.rs`) performs between
+(`fsl-eval/src/value/expression/mod.rs`) performs between
 `ValueType::Population(maximum)` and `Value::Population(binding)`. The kernel
-`ValueType::admits` refuses every population pair (FR-089-AC-6, TC-297 of `agent-ix/quire-exact`); this
-comparison is the QSL layer's. Scope: FR-089-AC-5.
+`ValueType::admits` refuses every population pair (FR-089-AC-6, TC-297 of `agent-ix/filament-exact`); this
+comparison is the FSL layer's. Scope: FR-089-AC-5.
 
-Implemented: `ValueType::admits` is `quire_exact`'s own kernel
+Implemented: `ValueType::admits` is `filament_exact`'s own kernel
 function now, which has no access to the recorded correspondence and refuses
 every `(Population, Population)` pair outright (FR-089-AC-6), so `validate`
 special-cases `ValueType::Population`/`Value::Population` ahead of its
@@ -31,7 +31,7 @@ resolves `population_id` through it, and refuses
 maximum differs from the checked parameter's `maximum` -- whether or not
 the checked body actually consumes the parameter (PR #326 review finding
 F1). The evaluator's own `Machine::resolve_population`
-(`qsl-eval/src/value/expression/evaluate.rs`'s `AllInstances`/`Lookup` sites)
+(`fsl-eval/src/value/expression/evaluate.rs`'s `AllInstances`/`Lookup` sites)
 performs the identical comparison and is exercised by this test case's own
 consumed-parameter procedure; it is unreachable through either public entry
 point for a checked program once `validate` already refuses first, and is

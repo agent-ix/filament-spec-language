@@ -3,7 +3,7 @@ id: TC-695
 title: "Timed liveness under time divergence and fairness, and time-lock search, on the symbolic graph"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-240
+  - target: ix://agent-ix/filament-spec-language/FR-240
     type: verifies
 ---
 # TC-695: Timed liveness under time divergence and fairness, and time-lock search, on the symbolic graph

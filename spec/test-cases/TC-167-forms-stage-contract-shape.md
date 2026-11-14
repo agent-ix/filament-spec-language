@@ -3,7 +3,7 @@ id: TC-167
 title: "The S2 forms stage refuses on a recovering CST and mints no identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: verifies
 ---
 # TC-167: The S2 forms stage refuses on a recovering CST and mints no identity

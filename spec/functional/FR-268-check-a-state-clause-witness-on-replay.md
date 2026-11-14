@@ -3,21 +3,21 @@ id: FR-268
 title: "Re-derive and separation-check a state-clause witness on replay"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-122
+  - target: ix://agent-ix/filament-spec-language/FR-122
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-265
+  - target: ix://agent-ix/filament-spec-language/FR-265
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-269
+  - target: ix://agent-ix/filament-spec-language/FR-269
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-351
+  - target: ix://agent-ix/filament-specification/FR-351
     type: depends_on
 ---
 # FR-268: Re-derive and separation-check a state-clause witness on replay
@@ -52,7 +52,7 @@ the search that found the element.
   evaluation.
 - If the replayed verdict agrees with the proved one, then the executor SHALL
   compare the payload's `witness` with its re-derived record componentwise
-  under QSpec FR-351 identity. The comparison includes the deciding
+  under FSpec FR-351 identity. The comparison includes the deciding
   quantifier and compares the deciding element under ADR-013 O-13
   semantic equality.
   - If both records are absent, then the executor SHALL settle FR-122's
@@ -96,7 +96,7 @@ the search that found the element.
 | FR-268-AC-1 | Over FR-265's `witness` unit, an envelope for `AllBelow` over `high` whose payload carries FR-265-AC-1's record settles `reproduced-with-evaluated-witness` on the `Witness` arm and holds that record; the same payload on the `Input` arm settles `reproduced-without-witness`. An envelope for `NestedAll` over `high` carrying FR-265-AC-4's record, and one for `FilteredAll` carrying FR-265-AC-5's, each settle `reproduced-with-evaluated-witness`. | Test (TC-743) |
 | FR-268-AC-2 | Re-derivation mismatch: the `AllBelow` over `high` envelope whose record names the equal element 600 at index 2, after the stop, one whose record names the `forall` of `GuardedAll`, and one with no record each settle `inconclusive`, `Witness`, holding the payload's record (or its absence) and the re-derived one (or its absence). | Test (TC-743) |
 | FR-268-AC-3 | Separation check, called on its own over the admitted `high` observation and `AllBelow`: FR-265-AC-1's record passes; a record whose deciding quantifier names a node outside the clause's claim, one whose index is 3 (past the domain's end), one whose value path names another member, one whose deciding element is 700 at index 1, and one naming 0 at index 0 (whose body is `true`) each fail, naming the failing step (1, 3, 3, 3 and 4 respectively), each as the `DisagreementCause::Witness` step FR-269 carries. Over variants of `AllBelow` whose domain expression evaluates `undefined` on `high`, whose body evaluates `undefined` for `mid`, and whose domain evaluation is refused (a `count` into `Int[0, 0]` of a one-element collection), the check fails at step 2 with `UndefinedEvaluation`, at step 4 with `UndefinedEvaluation`, and at step 2 with the refusal record, respectively; with the evaluation meter set one unit below step 2's need it settles `NoValue`. | Test (TC-743) |
-| FR-268-AC-4 | The FR-122 envelopes whose clauses reach no decisive occurrence (`VersionUnchanged` over changed-version and `ParentOrder` over violating-parent) carry no record and settle as FR-122-AC-1 states, with no QSpec FR-351 record on the result. An `AllBelow` envelope whose encoded record exceeds the envelope's reader bound refuses at decode under FR-070-AC-7. Replaying the FR-268-AC-1 `Witness`-arm envelope twice gives equal results. | Test (TC-743) |
+| FR-268-AC-4 | The FR-122 envelopes whose clauses reach no decisive occurrence (`VersionUnchanged` over changed-version and `ParentOrder` over violating-parent) carry no record and settle as FR-122-AC-1 states, with no FSpec FR-351 record on the result. An `AllBelow` envelope whose encoded record exceeds the envelope's reader bound refuses at decode under FR-070-AC-7. Replaying the FR-268-AC-1 `Witness`-arm envelope twice gives equal results. | Test (TC-743) |
 
 ## Dependencies
 
@@ -109,10 +109,10 @@ the search that found the element.
   cause), [FR-070](FR-070-implement-typed-counterexample-witness-envelope.md)
   (the envelope and reader bound), [FR-072](FR-072-implement-typed-replay-result.md)
   (the result).
-- QSpec FR-351 (record identity).
+- FSpec FR-351 (record identity).
 
 ## References
 
 - Owning ticket: Linear QSL-389. Implementation: Linear QSL-45.
-- QSpec half (Linear STD-144): QSpec FR-351-AC-7 and QSpec FR-352-AC-7. Replay consumer:
-  agent-ix/quire-contract-codegen#50.
+- FSpec half (Linear STD-144): FSpec FR-351-AC-7 and FSpec FR-352-AC-7. Replay consumer:
+  agent-ix/filament-contract-codegen#50.

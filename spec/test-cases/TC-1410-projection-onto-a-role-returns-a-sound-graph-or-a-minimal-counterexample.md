@@ -3,9 +3,9 @@ id: TC-1410
 title: "Projection onto a role returns a sound local graph or a minimal counterexample"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-570
+  - target: ix://agent-ix/filament-spec-language/FR-570
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-174
+  - target: ix://agent-ix/filament-specification/FR-174
     type: references
 ---
 # TC-1410: Projection onto a role returns a sound local graph or a minimal counterexample
@@ -15,7 +15,7 @@ relationships:
 Verify the projection result's graph, correspondence, choice and merge rule,
 counterexample and non-conclusive paths over the `bounded-static` profile.
 
-Scope: FR-570-AC-1 to FR-570-AC-8; QSpec FR-174-AC-1 to AC-5.
+Scope: FR-570-AC-1 to FR-570-AC-8; FSpec FR-174-AC-1 to AC-5.
 
 ## Test Procedure
 

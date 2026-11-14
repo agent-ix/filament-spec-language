@@ -3,7 +3,7 @@
 // `model M` selects `spine-model.semantic-ir.json` by its identity.
 // The profile selects the closed `root` role (FR-110).
 language "ix:native" edition "1-draft";
-profile v = "quire.model.complete/v1";
+profile v = "filament.model.complete/v1";
 model M = "acme/orders";
 function keep using v(g: M::Gadget): M::Gadget pure { g }
 function held using v(w: Reference<M::Widget>): Boolean pure { true }

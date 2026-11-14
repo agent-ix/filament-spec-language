@@ -3,35 +3,35 @@
 //! type from source to the package, and a claim over an unbounded
 //! declaration reaches a request item whose settlement is the caller's
 //! fixture (FR-333, FR-334, FR-335). The population half of TC-844 and the
-//! S6a half of TC-845 are in `qsl-eval`'s tests.
+//! S6a half of TC-845 are in `fsl-eval`'s tests.
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
-use ix_trace_rs::trace;
-use qsl_forms::build_unit;
-use qsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
-use qsl_foundation::{Code, RequestIndex, SourceIdentity};
-use qsl_package::CheckedPackage;
-use qsl_route::request::{items_from_requirements, ExtentClassification, RequestWriter};
-use qsl_route::routing::{route, Disposition};
-use qsl_route::{CandidateOutcome, Registry};
-use qsl_semantics::check::{
+use filament_exact::{NodeKey, PathSegment};
+use fsl_forms::build_unit;
+use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
+use fsl_foundation::{Code, RequestIndex, SourceIdentity};
+use fsl_package::CheckedPackage;
+use fsl_route::request::{items_from_requirements, ExtentClassification, RequestWriter};
+use fsl_route::routing::{route, Disposition};
+use fsl_route::{CandidateOutcome, Registry};
+use fsl_semantics::check::{
     AssemblyCause, AssemblyRefusal, Capability, CheckedGraph, PackageDeclarations, TypeFormFault,
 };
-use qsl_semantics::family::{ClaimExtent, Requirements};
-use quire_exact::{NodeKey, PathSegment};
+use fsl_semantics::family::{ClaimExtent, Requirements};
+use ix_trace_rs::trace;
 
 use super::request_builder::{check, package, registry, HEADER};
 
 /// `declarations` through S1, S2 and the assembler, whose refusal is returned.
 fn try_assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> {
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
@@ -83,14 +83,14 @@ fn has_collection_bounds(graph: &CheckedGraph) -> bool {
 
 /// The S4 document, including its structural node ids.
 fn emitted(graph: CheckedGraph) -> serde_json::Value {
-    let emission = qsl_package::emit_checked(
+    let emission = fsl_package::emit_checked(
         &CheckedPackage::link(graph),
-        qsl_package::EmitLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
     )
     .expect("the checked unit emits");
     assert!(emission.omitted().is_empty(), "every fixture node emits");
     let mut wire = serde_json::from_slice(emission.package().bytes()).expect("a v2 document");
-    qsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
         .expect("every operand slot names a row entry");
     wire
 }
@@ -111,42 +111,42 @@ fn emitted_type<'a>(document: &'a serde_json::Value, form: &str) -> &'a serde_js
 
 /// A ConfigVersion unit used by the published population type vectors.
 fn config_graph(declaration: &str) -> CheckedGraph {
-    let packages = qsl_semantics::model::intake::package_input([
+    let packages = fsl_semantics::model::intake::package_input([
         crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes(),
     ])
     .expect("the ConfigVersion model package loads");
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
          model Config = \"example/config-version\";\n\
          {declaration}\n"
     );
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:fr334-type-vectors"),
         "types.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the model type unit");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let raw = parsed.source().reference().clone();
     let unit = build_unit(&parsed).expect("S2 builds the model type unit");
-    let models = qsl_semantics::model::intake::admit_unit(
+    let models = fsl_semantics::model::intake::admit_unit(
         &unit.selections().models,
         &packages,
-        qsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("the ConfigVersion model is admitted");
     PackageDeclarations::assemble(raw, "std610".to_string(), unit, models, Vec::new())
         .expect("the model type unit assembles")
         .check(
             CheckMode::Linked,
-            quire_semantic_value::checking::CheckingLimits::default(),
+            filament_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("{declaration}: {refusals:?}"))
 }
 
-/// Resolve the compact structural-key references published by QSpec.
+/// Resolve the compact structural-key references published by FSpec.
 fn expand_vector_key(keys: &serde_json::Value, name: &str) -> serde_json::Value {
     let entry = &keys[name];
     let segments = entry["segments"].as_array().expect("vector key segments");
@@ -167,19 +167,19 @@ fn expand_vector_key(keys: &serde_json::Value, name: &str) -> serde_json::Value 
     })
 }
 
-/// Compare the emitted structural identity with one expanded QSpec key.
+/// Compare the emitted structural identity with one expanded FSpec key.
 fn assert_emitted_vector_key(
     document: &serde_json::Value,
     keys: &serde_json::Value,
     expected: &str,
 ) {
     let expected_key =
-        qsl_foundation::node_wire::node_key_from_json(&expand_vector_key(keys, expected))
+        fsl_foundation::node_wire::node_key_from_json(&expand_vector_key(keys, expected))
             .expect("the published vector key is a structural NodeKey");
     // FR-322 "Operand index segments": an emitted id names each operand node
     // by its index in the node table, so the document supplies the context
     // that resolves it back to the structural key the vector publishes.
-    let graph = qsl_semantics::check::wire_id::WireGraph::of_package_value(document)
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(document)
         .expect("the emitted document supplies its operand-index context");
     let matches: Vec<_> = document["semantic_graph"]["nodes"]
         .as_array()
@@ -255,11 +255,11 @@ fn an_inverted_bound_refuses_and_a_non_numeric_bound_fails_at_s1() {
     );
 
     let text = format!("{HEADER}function f using v(s: Set<Integer>[0, x]): Integer pure {{ 0 }}\n");
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     assert!(!parsed.is_admissible());
@@ -295,7 +295,7 @@ fn a_collection_bound_adds_minimum_and_maximum_to_the_type_node() {
     let unbounded = emitted(unbounded_graph);
     let bounded = emitted(bounded_graph);
     let key = |document: &serde_json::Value, node: &serde_json::Value| {
-        qsl_semantics::check::wire_id::WireGraph::of_package_value(document)
+        fsl_semantics::check::wire_id::WireGraph::of_package_value(document)
             .expect("the emitted document supplies its operand-index context")
             .key_of_value(&node["node_id"])
             .expect("an emitted structural node id")
@@ -538,27 +538,27 @@ fn a_quantity_root_leaves_no_finite_bound_available() {
 }
 
 /// FR-334 AC4: every collection and population vector is compiled and emitted
-/// by QSL, then compared directly by structural node key with QSpec's source
-/// vector. The source vectors remain in the QSpec checkout named by QSPEC_DIR.
+/// by FSL, then compared directly by structural node key with FSpec's source
+/// vector. The source vectors remain in the FSpec checkout named by FSPEC_DIR.
 #[trace(
     "TC-844",
     "FR-334-AC-4",
-    "QSpec-FR-144-AC-9",
-    "QSpec-FR-144-AC-13",
-    "QSpec-FR-153-AC-9"
+    "FSpec-FR-144-AC-9",
+    "FSpec-FR-144-AC-13",
+    "FSpec-FR-153-AC-9"
 )]
 #[test]
-fn emitted_collection_and_population_type_keys_match_qspec_vectors() {
-    let qspec =
-        std::env::var_os("QSPEC_DIR").expect("QSPEC_DIR must name a quire-specification checkout");
-    let path = std::path::PathBuf::from(qspec)
+fn emitted_collection_and_population_type_keys_match_fspec_vectors() {
+    let fspec = std::env::var_os("FSPEC_DIR")
+        .expect("FSPEC_DIR must name a filament-specification checkout");
+    let path = std::path::PathBuf::from(fspec)
         .join("proposals/checked-package-v2/collection-population-type-vectors.json");
     let vectors: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
     )
     .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     assert_eq!(
-        vectors["version"], "quire.collection-population-type-vectors/v1",
+        vectors["version"], "filament.collection-population-type-vectors/v1",
         "the checked vector contract is current"
     );
     let keys = &vectors["node_keys"];
@@ -585,7 +585,7 @@ fn emitted_collection_and_population_type_keys_match_qspec_vectors() {
         let document = emitted(graph);
         assert_emitted_vector_key(&document, keys, expected);
         let expected_key =
-            qsl_foundation::node_wire::node_key_from_json(&expand_vector_key(keys, expected))
+            fsl_foundation::node_wire::node_key_from_json(&expand_vector_key(keys, expected))
                 .expect("the collection key expands");
         collection_keys.insert(id.to_string(), expected_key);
     }
@@ -616,7 +616,7 @@ fn emitted_collection_and_population_type_keys_match_qspec_vectors() {
         let document = emitted(graph);
         assert_emitted_vector_key(&document, keys, expected);
         let expected_key =
-            qsl_foundation::node_wire::node_key_from_json(&expand_vector_key(keys, expected))
+            fsl_foundation::node_wire::node_key_from_json(&expand_vector_key(keys, expected))
                 .expect("the population key expands");
         population_keys.insert(id.to_string(), expected_key);
     }

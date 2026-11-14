@@ -3,9 +3,9 @@ id: TC-138
 title: "Publish and read authenticated compiled temporal selections"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: references }
-  - { target: ix://agent-ix/quire-protocol/IT-001, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: references }
+  - { target: ix://agent-ix/filament-protocol/IT-001, type: references }
 ---
 # TC-138: Publish and read authenticated compiled temporal selections
 

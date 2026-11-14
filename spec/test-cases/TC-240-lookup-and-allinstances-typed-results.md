@@ -3,7 +3,7 @@ id: TC-240
 title: "allInstances and lookup return the FR-153 typed result shape and its bound/foreign/ineligible refusals"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: verifies
 ---
 # TC-240: allInstances and lookup return the FR-153 typed result shape and its bound/foreign/ineligible refusals
@@ -17,7 +17,7 @@ count; a foreign-universe key refuses; and a non-binding receiver or a
 non-object-type `T` each refuse with their own cause. Scope: FR-084-AC-5.
 
 Step 3 (the unbounded population) is backed:
-`qsl-semantics/tests/it/model_population.rs`,
+`fsl-semantics/tests/it/model_population.rs`,
 `an_unbounded_binding_selects_every_member_with_no_bound`, tagged
 `#[trace("TC-240", "FR-084-AC-5")]`.
 

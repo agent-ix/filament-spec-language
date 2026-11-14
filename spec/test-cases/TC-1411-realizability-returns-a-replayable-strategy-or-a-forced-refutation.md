@@ -3,9 +3,9 @@ id: TC-1411
 title: "Realizability returns a replayable strategy, a forced refutation or a non-conclusive result"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-571
+  - target: ix://agent-ix/filament-spec-language/FR-571
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-175
+  - target: ix://agent-ix/filament-specification/FR-175
     type: references
 ---
 # TC-1411: Realizability returns a replayable strategy, a forced refutation or a non-conclusive result
@@ -15,7 +15,7 @@ relationships:
 Verify the strategy witness and its replay gate, both refutation forms,
 the premise rules and the environment quantification.
 
-Scope: FR-571-AC-1 to FR-571-AC-6; QSpec FR-175-AC-1 to AC-5.
+Scope: FR-571-AC-1 to FR-571-AC-6; FSpec FR-175-AC-1 to AC-5.
 
 ## Test Procedure
 

@@ -3,7 +3,7 @@ id: TC-220
 title: "A conformance ancestor walk that exhausts its edge limit stops incomplete instead of truncating"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
 ---
 # TC-220: A conformance ancestor walk that exhausts its edge limit stops incomplete instead of truncating

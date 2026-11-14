@@ -1,0 +1,1654 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-269: the [`DisagreementCause`] wire codec and its strict reader.
+//!
+//! A `Witness` cause's `given` and `derived` records are each present in
+//! full or absent (FSpec FR-351 has no partial record). An absent member is
+//! an absent JSON member, never `null` or a default (FSpec FR-352-AC-7).
+//! The record's members follow FSpec FR-352's `witness` table and its value
+//! path FSpec FR-207's `runtime_value` form. The reader refuses an unknown
+//! member, an unknown tag, a `null` member and a record missing a component
+//! its family assigns.
+
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
+use filament_exact::{Origin, Role, Value};
+use filament_semantic_value::declaration::EnvironmentFailure;
+use filament_semantic_value::location::{
+    ExpressionLocation as Location, ExpressionOwner as Declaration, OperationClauseKind,
+};
+use fsl_foundation::diagnostic::catalog_category;
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::witness::{
+    InvocationBinding, ObservationIdentity, RuntimeValuePath, SeparationStep, ValuePathStep,
+    ValuePathSubject,
+};
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::CheckedHybridModel;
+use ix_trace_rs::string_edge;
+use quire_canonical::{Document, Encode, Limits, Node, NodeRef, Sink, Writer};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::value::RawValue;
+
+use super::{
+    DecidingElement, DisagreementCause, HybridTraceDisagreement, SeparatingWitnessRecord,
+    SeparationReason, SeparationRefusal, Verdict, WitnessFailure,
+};
+use crate::hybrid_replay::{
+    ExactInterval, HybridCounterexample, HybridCounterexampleKind, HybridTrace, TraceBefore,
+    TraceJump, TraceState,
+};
+use crate::identity::TracePosition;
+use filament_semantic_value::catalog::Category;
+
+mod replay;
+mod value;
+use value::{decode_element, encode_element, reference_of, validate_element_shape, Keys};
+
+/// Why a [`DisagreementCause`] did not encode or read.
+#[derive(Debug, thiserror::Error)]
+pub enum CauseCodecError {
+    /// A replay result belongs to another public entry's result contract.
+    #[error("the {0} result uses its owning replay result codec")]
+    UnsupportedReplayArm(&'static str),
+    /// The document is not a cause this reader admits: malformed JSON, an
+    /// unknown or missing member, an unknown tag, or a `null` member.
+    #[error("the cause document does not read: {0}")]
+    Malformed(#[from] serde_json::Error),
+    /// A digest member is not 64 lowercase hexadecimal digits.
+    #[error("the member {0} is not a 32-byte lowercase hex digest")]
+    Digest(&'static str),
+    /// An integer member is not a decimal integer.
+    #[error("the member {0} is not a decimal integer")]
+    Integer(&'static str),
+    /// An identity member is empty.
+    #[error("the member {0} is empty")]
+    Empty(&'static str),
+    /// A record naming a deciding quantifier carries no index: a collection
+    /// quantifier's family assigns one (FSpec FR-351).
+    #[error("a record naming a deciding quantifier carries no index")]
+    MissingIndex,
+    /// The document is not well-formed JSON the shared reader admits.
+    #[error("the cause document is not readable JSON: {0}")]
+    Read(#[from] quire_canonical::ReadError),
+    /// `quire-canonical` refused to write or re-write a form.
+    #[error("the cause document does not encode canonically: {0}")]
+    Canonical(#[from] quire_canonical::Error),
+    /// A deciding element's document is not one of the typed forms: a form
+    /// that is no object, or lacks, repeats or adds a member.
+    #[error("the deciding element is malformed: {0}")]
+    Shape(&'static str),
+    /// A deciding element of a kind this codec has no encoding for: a
+    /// population, which no claim's domain holds.
+    #[error("the deciding element's kind has no encoding")]
+    UnsupportedElement,
+    /// A declaration identity the checked package does not hold.
+    #[error("the member {0} names no declaration of the checked package")]
+    Unresolved(&'static str),
+    /// A value member outside its kind's domain, or not in canonical form.
+    #[error("the {0} is not a canonical value of its kind")]
+    Value(&'static str),
+    /// A refusal's code is not a catalog code, or its cause or a field name
+    /// is empty or not a catalog spelling.
+    #[error("the refusal's {0} is not a catalog spelling")]
+    Spelling(&'static str),
+    /// A member's membership in its declared type was not decided because
+    /// the type environment could not reserve storage (`resource_exhausted`):
+    /// never a [`Self::Value`] refusal.
+    #[error("the {member} could not be admitted: {failure:?}")]
+    Storage {
+        /// The member whose admission was undecided.
+        member: &'static str,
+        /// The kernel's storage failure.
+        failure: EnvironmentFailure,
+    },
+    /// A hybrid trace cause requires the checked model whose names it uses.
+    #[error("a hybrid trace cause requires its checked model")]
+    MissingHybridModel,
+    /// A typed trace index does not name an entry in its checked model.
+    #[error("the hybrid trace's {0} index is not present in the checked model")]
+    HybridIndex(&'static str),
+    /// This cause codec currently admits only the formula counterexample arm.
+    #[error("the hybrid counterexample kind is not supported by this codec")]
+    HybridKind,
+}
+
+/// A [`CauseCodecError::Shape`] refusal.
+fn malformed(detail: &'static str) -> CauseCodecError {
+    CauseCodecError::Shape(detail)
+}
+
+impl DisagreementCause {
+    /// FR-269: this cause's JSON document.
+    pub fn to_json(
+        &self,
+        hybrid_model: Option<&CheckedHybridModel>,
+    ) -> Result<String, CauseCodecError> {
+        Ok(serde_json::to_string(&CauseWire::<Box<RawValue>>::of(
+            self,
+            hybrid_model,
+        )?)?)
+    }
+
+    /// FR-269: read a cause from `text`, refusing any document that is not
+    /// exactly a cause this codec writes. Declaration identities resolve
+    /// among those `package` admitted.
+    pub fn from_json(
+        text: &str,
+        package: &CheckedPackage,
+        hybrid_model: Option<&CheckedHybridModel>,
+    ) -> Result<Self, CauseCodecError> {
+        // The deciding element nests as deep as the value it holds, which
+        // serde_json's recursive reader refuses past 128 levels. The shared
+        // reader keeps it as a document on the heap; the cause's own members
+        // are read by serde from that document with each deciding element
+        // replaced by its index, and each element is decoded from its
+        // document node on an explicit stack.
+        let document = quire_canonical::read(text.as_bytes(), u64::MAX)?;
+        let splice = Splice {
+            document: &document,
+            elements: RefCell::new(Vec::new()),
+        };
+        let bytes = quire_canonical::to_vec(&splice, Limits::new(u64::MAX))?;
+        let wire = serde_json::from_slice::<CauseWire<ElementSlot>>(&bytes)?;
+        let keys = Keys::new(package);
+        let mut elements = splice
+            .elements
+            .into_inner()
+            .into_iter()
+            .map(|node| read_deciding(node, keys).map(Some))
+            .collect::<Result<Vec<_>, _>>()?;
+        wire.read(keys, &mut elements, hybrid_model)
+    }
+}
+
+/// A cause document copied as the shared reader holds it, each record's
+/// `deciding_element` replaced by its index among `elements`.
+struct Splice<'d> {
+    document: &'d Document,
+    /// The deciding element nodes, in the order their indexes were handed out.
+    elements: RefCell<Vec<NodeRef<'d>>>,
+}
+
+impl Encode for Splice<'_> {
+    /// `#[string_edge]`: finds a cause document's `given`, `derived` and
+    /// `deciding_element` members by their wire names.
+    #[string_edge]
+    fn encode_into<S: Sink + ?Sized>(
+        &self,
+        writer: &mut Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        let root = self.document.root();
+        let Node::Object(members) = root.node() else {
+            return root.encode_into(writer);
+        };
+        writer.begin_object()?;
+        for (name, member) in members {
+            writer.name(name)?;
+            match (name, member.node()) {
+                ("given" | "derived", Node::Object(record)) => {
+                    writer.begin_object()?;
+                    for (name, member) in record {
+                        writer.name(name)?;
+                        if name == "deciding_element" {
+                            let mut elements = self.elements.borrow_mut();
+                            let slot = elements.len();
+                            elements.push(member);
+                            writer.integer(i128::try_from(slot).unwrap_or(i128::MAX))?;
+                        } else {
+                            member.encode_into(writer)?;
+                        }
+                    }
+                    writer.end_object()?;
+                }
+                _ => member.encode_into(writer)?,
+            }
+        }
+        writer.end_object()
+    }
+}
+
+/// The index of a deciding element among those a [`Splice`] collected.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(transparent)]
+struct ElementSlot(usize);
+
+/// The deciding elements read from a document, each taken once.
+type Elements = [Option<DecidingElement>];
+
+/// The deciding element at `slot`, moved out of `elements`.
+fn take(elements: &mut Elements, slot: ElementSlot) -> Result<DecidingElement, CauseCodecError> {
+    elements
+        .get_mut(slot.0)
+        .and_then(Option::take)
+        .ok_or_else(|| malformed("a deciding element is read twice"))
+}
+
+/// A deciding element read from its document node: a JSON string is a
+/// protocol element's canonical string (ADR-036 PA-24), every other form a
+/// kernel value.
+fn read_deciding(node: NodeRef<'_>, keys: Keys<'_>) -> Result<DecidingElement, CauseCodecError> {
+    match node.node() {
+        Node::String(text) => {
+            crate::protocol_analysis::read_node_text(text)
+                .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+            Ok(DecidingElement::Protocol(text.to_owned()))
+        }
+        _ => decode_element(node, keys).map(DecidingElement::Value),
+    }
+}
+
+/// An optional member that must be absent rather than `null`: present, it
+/// reads as `T` (so `null` refuses); absent, `#[serde(default)]` gives
+/// `None`.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(
+    tag = "cause",
+    rename_all = "kebab-case",
+    deny_unknown_fields,
+    bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>")
+)]
+enum CauseWire<E> {
+    Verdicts {
+        proved: VerdictWire,
+        replayed: VerdictWire,
+    },
+    NoValue {
+        proved: VerdictWire,
+        replayed: VerdictWire,
+    },
+    Witness {
+        proved: VerdictWire,
+        replayed: VerdictWire,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        given: Option<Box<RecordWire<E>>>,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        derived: Option<Box<RecordWire<E>>>,
+        failure: FailureWire,
+    },
+    HybridTrace {
+        disagreement: HybridDisagreementWire,
+    },
+}
+
+impl CauseWire<Box<RawValue>> {
+    fn of(
+        cause: &DisagreementCause,
+        hybrid_model: Option<&CheckedHybridModel>,
+    ) -> Result<Self, CauseCodecError> {
+        Ok(match cause {
+            DisagreementCause::Verdicts { proved, replayed } => Self::Verdicts {
+                proved: VerdictWire::of(*proved),
+                replayed: VerdictWire::of(*replayed),
+            },
+            DisagreementCause::NoValue { proved, replayed } => Self::NoValue {
+                proved: VerdictWire::of(*proved),
+                replayed: VerdictWire::of(*replayed),
+            },
+            DisagreementCause::Witness {
+                proved,
+                replayed,
+                given,
+                derived,
+                failure,
+            } => Self::Witness {
+                proved: VerdictWire::of(*proved),
+                replayed: VerdictWire::of(*replayed),
+                given: given
+                    .as_deref()
+                    .map(RecordWire::of)
+                    .transpose()?
+                    .map(Box::new),
+                derived: derived
+                    .as_deref()
+                    .map(RecordWire::of)
+                    .transpose()?
+                    .map(Box::new),
+                failure: FailureWire::of(failure),
+            },
+            DisagreementCause::HybridTrace(disagreement) => Self::HybridTrace {
+                disagreement: HybridDisagreementWire::of(
+                    disagreement,
+                    hybrid_model.ok_or(CauseCodecError::MissingHybridModel)?,
+                )?,
+            },
+        })
+    }
+}
+
+impl CauseWire<ElementSlot> {
+    fn read(
+        self,
+        keys: Keys<'_>,
+        elements: &mut Elements,
+        hybrid_model: Option<&CheckedHybridModel>,
+    ) -> Result<DisagreementCause, CauseCodecError> {
+        Ok(match self {
+            Self::Verdicts { proved, replayed } => DisagreementCause::Verdicts {
+                proved: proved.read(),
+                replayed: replayed.read(),
+            },
+            Self::NoValue { proved, replayed } => DisagreementCause::NoValue {
+                proved: proved.read(),
+                replayed: replayed.read(),
+            },
+            Self::Witness {
+                proved,
+                replayed,
+                given,
+                derived,
+                failure,
+            } => DisagreementCause::Witness {
+                proved: proved.read(),
+                replayed: replayed.read(),
+                given: given
+                    .map(|record| record.read(keys, elements))
+                    .transpose()?
+                    .map(Box::new),
+                derived: derived
+                    .map(|record| record.read(keys, elements))
+                    .transpose()?
+                    .map(Box::new),
+                failure: failure.read()?,
+            },
+            Self::HybridTrace { disagreement } => DisagreementCause::HybridTrace(
+                disagreement.read(hybrid_model.ok_or(CauseCodecError::MissingHybridModel)?)?,
+            ),
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
+enum HybridDisagreementWire {
+    NotReproduced {
+        counterexample: HybridCounterexampleWire,
+    },
+    NotExact {
+        counterexample: HybridCounterexampleWire,
+    },
+}
+
+impl HybridDisagreementWire {
+    fn of(
+        disagreement: &HybridTraceDisagreement,
+        model: &CheckedHybridModel,
+    ) -> Result<Self, CauseCodecError> {
+        match disagreement {
+            HybridTraceDisagreement::NotReproduced { counterexample } => Ok(Self::NotReproduced {
+                counterexample: HybridCounterexampleWire::of(counterexample, model)?,
+            }),
+            HybridTraceDisagreement::NotExact { counterexample } => Ok(Self::NotExact {
+                counterexample: HybridCounterexampleWire::of(counterexample, model)?,
+            }),
+        }
+    }
+
+    fn read(self, model: &CheckedHybridModel) -> Result<HybridTraceDisagreement, CauseCodecError> {
+        match self {
+            Self::NotReproduced { counterexample } => Ok(HybridTraceDisagreement::NotReproduced {
+                counterexample: Box::new(counterexample.read(model)?),
+            }),
+            Self::NotExact { counterexample } => Ok(HybridTraceDisagreement::NotExact {
+                counterexample: Box::new(counterexample.read(model)?),
+            }),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HybridCounterexampleWire {
+    #[serde(rename = "type")]
+    kind_tag: HybridCounterexampleTag,
+    kind: HybridCounterexampleKindWire,
+    trace: HybridTraceWire,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum HybridCounterexampleTag {
+    HybridCounterexample,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum HybridCounterexampleKindWire {
+    Formula,
+}
+
+impl HybridCounterexampleWire {
+    fn of(
+        counterexample: &HybridCounterexample,
+        model: &CheckedHybridModel,
+    ) -> Result<Self, CauseCodecError> {
+        let HybridCounterexampleKind::Formula = counterexample.kind else {
+            return Err(CauseCodecError::HybridKind);
+        };
+        Ok(Self {
+            kind_tag: HybridCounterexampleTag::HybridCounterexample,
+            kind: HybridCounterexampleKindWire::Formula,
+            trace: HybridTraceWire::of(&counterexample.trace, model)?,
+        })
+    }
+
+    fn read(self, model: &CheckedHybridModel) -> Result<HybridCounterexample, CauseCodecError> {
+        let HybridCounterexampleTag::HybridCounterexample = self.kind_tag;
+        Ok(HybridCounterexample {
+            kind: match self.kind {
+                HybridCounterexampleKindWire::Formula => HybridCounterexampleKind::Formula,
+            },
+            trace: self.trace.read(model)?,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HybridTraceWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delta: Option<RationalWire>,
+    jumps: Vec<HybridJumpWire>,
+    #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
+    loop_to: Option<u64>,
+    start: HybridStateWire,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HybridStateWire {
+    enclosure: BTreeMap<String, HybridIntervalWire>,
+    mode: String,
+    time: HybridIntervalWire,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HybridBeforeWire {
+    enclosure: BTreeMap<String, HybridIntervalWire>,
+    time: HybridIntervalWire,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HybridJumpWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    before: Option<HybridBeforeWire>,
+    state: HybridStateWire,
+    transition: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HybridIntervalWire {
+    lower: RationalWire,
+    upper: RationalWire,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RationalWire {
+    numerator: String,
+    denominator: String,
+}
+
+impl RationalWire {
+    fn of(value: &filament_exact::Rational) -> Self {
+        Self {
+            numerator: value.numerator().to_string(),
+            denominator: value.denominator().to_string(),
+        }
+    }
+
+    fn read(self) -> Result<filament_exact::Rational, CauseCodecError> {
+        let numerator =
+            canonical_integer(&self.numerator).ok_or(CauseCodecError::Value("rational"))?;
+        let denominator =
+            canonical_integer(&self.denominator).ok_or(CauseCodecError::Value("rational"))?;
+        let value = filament_exact::Rational::new(numerator.clone(), denominator.clone())
+            .map_err(|_| CauseCodecError::Value("rational"))?;
+        if value.numerator() != &numerator || value.denominator() != &denominator {
+            return Err(CauseCodecError::Value("rational"));
+        }
+        Ok(value)
+    }
+}
+
+impl HybridIntervalWire {
+    fn of(interval: &ExactInterval) -> Self {
+        Self {
+            lower: RationalWire::of(&interval.lower),
+            upper: RationalWire::of(&interval.upper),
+        }
+    }
+
+    fn read(self) -> Result<ExactInterval, CauseCodecError> {
+        Ok(ExactInterval::new(self.lower.read()?, self.upper.read()?))
+    }
+}
+
+impl HybridTraceWire {
+    fn of(trace: &HybridTrace, model: &CheckedHybridModel) -> Result<Self, CauseCodecError> {
+        crate::hybrid_replay::admit(model, trace)
+            .map_err(|_| CauseCodecError::HybridIndex("trace"))?;
+        let state = |state: &TraceState| state_wire(state, model);
+        let jumps = trace
+            .jumps
+            .iter()
+            .map(|jump| {
+                Ok(HybridJumpWire {
+                    before: jump
+                        .before
+                        .as_ref()
+                        .map(|before| before_wire(before, model))
+                        .transpose()?,
+                    state: state(&jump.state)?,
+                    transition: jump.transition,
+                })
+            })
+            .collect::<Result<_, CauseCodecError>>()?;
+        Ok(Self {
+            delta: trace.delta.as_ref().map(RationalWire::of),
+            jumps,
+            loop_to: trace.loop_to,
+            start: state(&trace.start)?,
+        })
+    }
+
+    fn read(self, model: &CheckedHybridModel) -> Result<HybridTrace, CauseCodecError> {
+        let trace = HybridTrace {
+            start: read_state(self.start, model)?,
+            jumps: self
+                .jumps
+                .into_iter()
+                .map(|jump| {
+                    Ok(TraceJump {
+                        transition: jump.transition,
+                        before: jump
+                            .before
+                            .map(|before| read_before(before, model))
+                            .transpose()?,
+                        state: read_state(jump.state, model)?,
+                    })
+                })
+                .collect::<Result<_, CauseCodecError>>()?,
+            delta: self.delta.map(RationalWire::read).transpose()?,
+            loop_to: self.loop_to,
+        };
+        crate::hybrid_replay::admit(model, &trace)
+            .map_err(|_| CauseCodecError::HybridIndex("trace"))?;
+        Ok(trace)
+    }
+}
+
+fn state_wire(
+    state: &TraceState,
+    model: &CheckedHybridModel,
+) -> Result<HybridStateWire, CauseCodecError> {
+    let mode = model
+        .modes
+        .get(state.mode.get())
+        .ok_or(CauseCodecError::HybridIndex("mode"))?;
+    let enclosure = model
+        .variables
+        .iter()
+        .zip(&state.enclosure)
+        .map(|(variable, interval)| {
+            (
+                variable.name.as_str().to_owned(),
+                HybridIntervalWire::of(interval),
+            )
+        })
+        .collect();
+    if state.enclosure.len() != model.variables.len() {
+        return Err(CauseCodecError::HybridIndex("variable"));
+    }
+    Ok(HybridStateWire {
+        enclosure,
+        mode: mode.name.as_str().to_owned(),
+        time: HybridIntervalWire::of(&state.time),
+    })
+}
+
+fn before_wire(
+    before: &TraceBefore,
+    model: &CheckedHybridModel,
+) -> Result<HybridBeforeWire, CauseCodecError> {
+    let enclosure = model
+        .variables
+        .iter()
+        .zip(&before.enclosure)
+        .map(|(variable, interval)| {
+            (
+                variable.name.as_str().to_owned(),
+                HybridIntervalWire::of(interval),
+            )
+        })
+        .collect();
+    if before.enclosure.len() != model.variables.len() {
+        return Err(CauseCodecError::HybridIndex("variable"));
+    }
+    Ok(HybridBeforeWire {
+        enclosure,
+        time: HybridIntervalWire::of(&before.time),
+    })
+}
+
+fn read_state(
+    state: HybridStateWire,
+    model: &CheckedHybridModel,
+) -> Result<TraceState, CauseCodecError> {
+    let mode = model
+        .modes
+        .iter()
+        .position(|mode| mode.name.as_str() == state.mode)
+        .map(fsl_semantics::check::ModeIndex::new)
+        .ok_or(CauseCodecError::HybridIndex("mode"))?;
+    let enclosure = read_enclosure(state.enclosure, model)?;
+    Ok(TraceState {
+        mode,
+        time: state.time.read()?,
+        enclosure,
+    })
+}
+
+fn read_before(
+    before: HybridBeforeWire,
+    model: &CheckedHybridModel,
+) -> Result<TraceBefore, CauseCodecError> {
+    Ok(TraceBefore {
+        time: before.time.read()?,
+        enclosure: read_enclosure(before.enclosure, model)?,
+    })
+}
+
+fn read_enclosure(
+    values: BTreeMap<String, HybridIntervalWire>,
+    model: &CheckedHybridModel,
+) -> Result<Vec<ExactInterval>, CauseCodecError> {
+    if values.len() != model.variables.len() {
+        return Err(CauseCodecError::HybridIndex("variable"));
+    }
+    model
+        .variables
+        .iter()
+        .map(|variable| {
+            values
+                .get(variable.name.as_str())
+                .ok_or(CauseCodecError::HybridIndex("variable"))?
+                .clone()
+                .read()
+        })
+        .collect()
+}
+
+/// Whether `text` spells an integer in canonical decimal form.
+/// `#[string_edge]`: validates an integer spelling received from the wire.
+#[string_edge]
+fn canonical_integer(text: &str) -> Option<filament_exact::Integer> {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    let canonical = !digits.is_empty()
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+        && (digits == "0" || !digits.starts_with('0'))
+        && text != "-0";
+    canonical.then(|| text.parse().ok()).flatten()
+}
+
+/// A verdict on the wire: its category's [`Category::as_str`] label. A
+/// proof or replay verdict is never `undefined` (FR-285), so the reader
+/// refuses that label and every label `Category` does not spell.
+#[derive(Clone, Copy)]
+struct VerdictWire(Category);
+
+impl VerdictWire {
+    fn of(verdict: Verdict) -> Self {
+        Self(verdict.category())
+    }
+
+    fn read(self) -> Verdict {
+        Verdict::from_category(self.0)
+    }
+}
+
+impl Serialize for VerdictWire {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for VerdictWire {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let label = String::deserialize(deserializer)?;
+        Category::ALL
+            .into_iter()
+            .filter(|category| *category != Category::Undefined)
+            .find(|category| category.as_str() == label)
+            .map(Self)
+            .ok_or_else(|| serde::de::Error::custom(format!("not a verdict: {label}")))
+    }
+}
+
+#[cfg(test)]
+mod verdict_tests {
+    use super::VerdictWire;
+    use filament_semantic_value::catalog::Category;
+
+    /// Every verdict category round-trips through its `as_str` label, and
+    /// `undefined` and an unknown label are refused.
+    #[test]
+    fn verdict_labels_round_trip_and_undefined_is_refused() {
+        for category in Category::ALL {
+            let label = serde_json::to_string(&VerdictWire(category)).unwrap();
+            assert_eq!(label, format!("\"{}\"", category.as_str()));
+            let read = serde_json::from_str::<VerdictWire>(&label);
+            if category == Category::Undefined {
+                assert!(read.is_err(), "undefined must not read");
+            } else {
+                assert_eq!(read.unwrap().0, category);
+            }
+        }
+        assert!(serde_json::from_str::<VerdictWire>("\"maybe\"").is_err());
+    }
+}
+
+/// FSpec FR-352's `witness` record.
+#[derive(Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>")
+)]
+pub(crate) struct RecordWire<E> {
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    quantifier: Option<OccurrenceWire>,
+    deciding_element: E,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    index: Option<u64>,
+    value_path: PathWire,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    trace_position: Option<String>,
+}
+
+impl RecordWire<Box<RawValue>> {
+    pub(crate) fn of(record: &SeparatingWitnessRecord) -> Result<Self, CauseCodecError> {
+        let deciding_element = match &record.deciding_element {
+            DecidingElement::Value(value) => {
+                if record.index.is_none() {
+                    return Err(CauseCodecError::MissingIndex);
+                }
+                if record.quantifier.is_none() {
+                    return Err(CauseCodecError::Shape("quantifier"));
+                }
+                encode_element(value)?
+            }
+            DecidingElement::Protocol(node) => {
+                if record.quantifier.is_some() {
+                    return Err(CauseCodecError::Shape("quantifier"));
+                }
+                if record.index.is_some() {
+                    return Err(CauseCodecError::Shape("index"));
+                }
+                if record.trace_position.is_none() {
+                    return Err(CauseCodecError::Shape("trace_position"));
+                }
+                crate::protocol_analysis::read_node_text(node)
+                    .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+                RawValue::from_string(serde_json::to_string(node)?)?
+            }
+        };
+        Ok(Self {
+            quantifier: record.quantifier.as_ref().map(OccurrenceWire::of),
+            deciding_element,
+            index: record.index,
+            value_path: PathWire::of(&record.value_path),
+            trace_position: record
+                .trace_position
+                .as_ref()
+                .map(|position| position.as_str().to_owned()),
+        })
+    }
+
+    /// Validate the state-clause subset of the shared witness shape without
+    /// resolving its deciding value against an in-memory checked package.
+    pub(crate) fn validate_state(&self) -> Result<(), CauseCodecError> {
+        if self.index.is_none() {
+            return Err(CauseCodecError::MissingIndex);
+        }
+        if self.trace_position.is_some() {
+            return Err(CauseCodecError::Shape("trace_position"));
+        }
+        self.quantifier
+            .clone()
+            .ok_or(CauseCodecError::Shape("quantifier"))?
+            .read()?;
+        let element = quire_canonical::read(self.deciding_element.get().as_bytes(), u64::MAX)
+            .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+        validate_element_shape(element.root())
+            .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+        self.value_path
+            .validate_shape()
+            .map_err(|_| CauseCodecError::Shape("value_path"))?;
+        Ok(())
+    }
+
+    /// Decode a state-clause witness against the exact checked package that
+    /// owns its declaration keys. The wire reader can validate shape alone;
+    /// a consumer supplies the package for semantic identity resolution.
+    pub(crate) fn read_state(
+        &self,
+        package: &CheckedPackage,
+        element: NodeRef<'_>,
+    ) -> Result<SeparatingWitnessRecord, CauseCodecError> {
+        let keys = Keys::new(package);
+        Ok(SeparatingWitnessRecord {
+            quantifier: Some(
+                self.quantifier
+                    .clone()
+                    .ok_or(CauseCodecError::Shape("quantifier"))?
+                    .read()?,
+            ),
+            deciding_element: DecidingElement::Value(decode_element(element, keys)?),
+            index: self.index,
+            value_path: self.value_path.clone().read(keys)?,
+            trace_position: self
+                .trace_position
+                .as_ref()
+                .map(|p| TracePosition::new(p.clone())),
+        })
+    }
+}
+
+/// Package-independent shape check for a `/2` deciding element.
+pub(crate) fn validate_state_element(node: NodeRef<'_>) -> Result<(), CauseCodecError> {
+    validate_element_shape(node).map_err(|_| CauseCodecError::Shape("deciding_element"))
+}
+
+impl RecordWire<ElementSlot> {
+    fn read(
+        self,
+        keys: Keys<'_>,
+        elements: &mut Elements,
+    ) -> Result<SeparatingWitnessRecord, CauseCodecError> {
+        let deciding_element = take(elements, self.deciding_element)?;
+        let (quantifier, index) = match &deciding_element {
+            // A record naming a deciding quantifier is a collection
+            // quantifier's family, which assigns an index (FSpec FR-351).
+            DecidingElement::Value(_) => (
+                Some(
+                    self.quantifier
+                        .ok_or(CauseCodecError::Shape("quantifier"))?
+                        .read()?,
+                ),
+                Some(self.index.ok_or(CauseCodecError::MissingIndex)?),
+            ),
+            // A protocol family has no quantifier occurrence and assigns no
+            // index, and always names a trace position (FSpec FR-351,
+            // ADR-036 PA-24).
+            DecidingElement::Protocol(_) => {
+                if self.quantifier.is_some() {
+                    return Err(CauseCodecError::Shape("quantifier"));
+                }
+                if self.index.is_some() {
+                    return Err(CauseCodecError::Shape("index"));
+                }
+                if self.trace_position.is_none() {
+                    return Err(CauseCodecError::Shape("trace_position"));
+                }
+                (None, None)
+            }
+        };
+        Ok(SeparatingWitnessRecord {
+            quantifier,
+            deciding_element,
+            index,
+            value_path: self.value_path.read(keys)?,
+            trace_position: self.trace_position.map(TracePosition::new),
+        })
+    }
+}
+
+/// FR-283's `decisive` member of a temporal violation's monitor record and
+/// item: `quantifier` and `index` absent when no quantifier decides.
+#[derive(Serialize)]
+pub(crate) struct DecisiveWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quantifier: Option<OccurrenceWire>,
+    element: Box<RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index: Option<u64>,
+    value_path: PathWire,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aggregate: Option<OccurrenceWire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position: Option<u64>,
+}
+
+impl DecisiveWire {
+    pub(crate) fn of(decisive: &super::TemporalDecisive) -> Result<Self, CauseCodecError> {
+        Ok(Self {
+            quantifier: decisive.quantifier.as_ref().map(OccurrenceWire::of),
+            element: encode_element(&decisive.element)?,
+            index: decisive.index,
+            value_path: PathWire::of(&decisive.value_path),
+            aggregate: decisive.aggregate.as_ref().map(OccurrenceWire::of),
+            position: decisive.position,
+        })
+    }
+}
+
+/// An occurrence key: `node_id`, `role`, `ordinal` (FSpec FR-322).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OccurrenceWire {
+    node_id: String,
+    role: String,
+    ordinal: u64,
+}
+
+impl OccurrenceWire {
+    fn of(occurrence: &OccurrenceKey) -> Self {
+        Self {
+            node_id: crate::id_text::node_text(occurrence.node()).unwrap_or_default(),
+            role: occurrence.origin().role().as_str().to_owned(),
+            ordinal: occurrence.origin().ordinal(),
+        }
+    }
+
+    fn read(self) -> Result<OccurrenceKey, CauseCodecError> {
+        Ok(OccurrenceKey::new(
+            spelled(crate::id_text::node_from_text, &self.node_id, "node_id")?,
+            Origin::new(Role::new(self.role), self.ordinal),
+        ))
+    }
+}
+
+/// FSpec FR-207's `runtime_value` wire form.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PathWire {
+    kind: PathKind,
+    root: RootWire,
+    steps: Vec<StepWire>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PathKind {
+    RuntimeValue,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootWire {
+    observation: ObservationWire,
+    subject: SubjectWire,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ObservationWire {
+    authority: String,
+    identity: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "tag", rename_all = "snake_case", deny_unknown_fields)]
+enum SubjectWire {
+    Object {
+        universe: String,
+        #[serde(rename = "type")]
+        object_type: String,
+        object_identity: String,
+    },
+    Invocation {
+        invocation: ObservationWire,
+        binding: InvocationBindingWire,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parameter: Option<String>,
+    },
+    Built {
+        occurrence: OccurrenceWire,
+    },
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum InvocationBindingWire {
+    Parameter,
+    Result,
+    Receiver,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "tag", rename_all = "snake_case", deny_unknown_fields)]
+enum StepWire {
+    Field { name: String },
+    OptionValue,
+    Member { name: String },
+    Index { index: u64 },
+    Reference { object: ObjectWire },
+}
+
+/// A declared object identity in a `reference` step.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ObjectWire {
+    universe: String,
+    #[serde(rename = "type")]
+    object_type: String,
+    object_identity: String,
+}
+
+impl PathWire {
+    /// Validate the path's package-independent identifiers at strict read.
+    fn validate_shape(&self) -> Result<(), CauseCodecError> {
+        match &self.root.subject {
+            SubjectWire::Object {
+                universe,
+                object_type,
+                object_identity,
+            } => {
+                spelled(crate::id_text::universe_from_text, universe, "universe")?;
+                spelled(crate::id_text::effective_from_text, object_type, "type")?;
+                filament_exact::ObjectId::new(object_identity.clone())
+                    .map_err(|_| CauseCodecError::Empty("object_identity"))?;
+            }
+            SubjectWire::Invocation {
+                invocation,
+                binding,
+                parameter,
+            } => {
+                if invocation.authority.is_empty() {
+                    return Err(CauseCodecError::Empty("authority"));
+                }
+                if invocation.identity.is_empty() {
+                    return Err(CauseCodecError::Empty("identity"));
+                }
+                match (binding, parameter) {
+                    (InvocationBindingWire::Parameter, Some(parameter))
+                        if !parameter.is_empty() => {}
+                    (InvocationBindingWire::Result | InvocationBindingWire::Receiver, None) => {}
+                    (InvocationBindingWire::Parameter, Some(_)) => {
+                        return Err(CauseCodecError::Empty("parameter"));
+                    }
+                    _ => return Err(CauseCodecError::Shape("invocation_binding")),
+                }
+            }
+            SubjectWire::Built { occurrence } => {
+                occurrence.clone().read()?;
+            }
+        }
+        for step in &self.steps {
+            if let StepWire::Reference { object } = step {
+                spelled(
+                    crate::id_text::universe_from_text,
+                    &object.universe,
+                    "universe",
+                )?;
+                spelled(
+                    crate::id_text::effective_from_text,
+                    &object.object_type,
+                    "type",
+                )?;
+                filament_exact::ObjectId::new(object.object_identity.clone())
+                    .map_err(|_| CauseCodecError::Empty("object_identity"))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn of(path: &RuntimeValuePath) -> Self {
+        let observation = &path.observation;
+        Self {
+            kind: PathKind::RuntimeValue,
+            root: RootWire {
+                observation: ObservationWire {
+                    authority: observation.authority.clone(),
+                    identity: observation.identity.clone(),
+                },
+                subject: match &path.subject {
+                    ValuePathSubject::Object(object) => SubjectWire::Object {
+                        universe: crate::id_text::universe_text(object.universe())
+                            .unwrap_or_default(),
+                        object_type: crate::id_text::effective_text(object.object_type())
+                            .unwrap_or_default(),
+                        object_identity: object.object().as_str().to_owned(),
+                    },
+                    ValuePathSubject::Invocation {
+                        invocation,
+                        binding,
+                    } => {
+                        let (binding, parameter) = match binding {
+                            InvocationBinding::Parameter(parameter) => {
+                                (InvocationBindingWire::Parameter, Some(parameter.clone()))
+                            }
+                            InvocationBinding::Result => (InvocationBindingWire::Result, None),
+                            InvocationBinding::Receiver => (InvocationBindingWire::Receiver, None),
+                        };
+                        SubjectWire::Invocation {
+                            invocation: ObservationWire {
+                                authority: invocation.authority.clone(),
+                                identity: invocation.identity.clone(),
+                            },
+                            binding,
+                            parameter,
+                        }
+                    }
+                    ValuePathSubject::Built(occurrence) => SubjectWire::Built {
+                        occurrence: OccurrenceWire::of(occurrence),
+                    },
+                },
+            },
+            steps: path
+                .steps
+                .iter()
+                .map(|step| match step {
+                    ValuePathStep::Field(name) => StepWire::Field { name: name.clone() },
+                    ValuePathStep::OptionValue => StepWire::OptionValue,
+                    ValuePathStep::Member(name) => StepWire::Member { name: name.clone() },
+                    ValuePathStep::Index(index) => StepWire::Index { index: *index },
+                    ValuePathStep::Reference(object) => StepWire::Reference {
+                        object: ObjectWire {
+                            universe: crate::id_text::universe_text(object.universe())
+                                .unwrap_or_default(),
+                            object_type: crate::id_text::effective_text(object.object_type())
+                                .unwrap_or_default(),
+                            object_identity: object.object().as_str().to_owned(),
+                        },
+                    },
+                })
+                .collect(),
+        }
+    }
+
+    fn read(self, keys: Keys<'_>) -> Result<RuntimeValuePath, CauseCodecError> {
+        let PathKind::RuntimeValue = self.kind;
+        let observation = self.root.observation;
+        Ok(RuntimeValuePath {
+            observation: ObservationIdentity {
+                authority: observation.authority,
+                identity: observation.identity,
+            },
+            subject: match self.root.subject {
+                SubjectWire::Object {
+                    universe,
+                    object_type,
+                    object_identity,
+                } => ValuePathSubject::Object(reference_of(
+                    keys,
+                    &universe,
+                    &object_type,
+                    object_identity,
+                )?),
+                SubjectWire::Invocation {
+                    invocation,
+                    binding,
+                    parameter,
+                } => ValuePathSubject::Invocation {
+                    invocation: ObservationIdentity {
+                        authority: invocation.authority,
+                        identity: invocation.identity,
+                    },
+                    binding: match (binding, parameter) {
+                        (InvocationBindingWire::Parameter, Some(parameter)) => {
+                            InvocationBinding::Parameter(parameter)
+                        }
+                        (InvocationBindingWire::Result, None) => InvocationBinding::Result,
+                        (InvocationBindingWire::Receiver, None) => InvocationBinding::Receiver,
+                        _ => return Err(CauseCodecError::Shape("invocation_binding")),
+                    },
+                },
+                SubjectWire::Built { occurrence } => ValuePathSubject::Built(occurrence.read()?),
+            },
+            steps: self
+                .steps
+                .into_iter()
+                .map(|step| {
+                    Ok(match step {
+                        StepWire::Field { name } => ValuePathStep::Field(name),
+                        StepWire::OptionValue => ValuePathStep::OptionValue,
+                        StepWire::Member { name } => ValuePathStep::Member(name),
+                        StepWire::Index { index } => ValuePathStep::Index(index),
+                        StepWire::Reference { object } => ValuePathStep::Reference(reference_of(
+                            keys,
+                            &object.universe,
+                            &object.object_type,
+                            object.object_identity,
+                        )?),
+                    })
+                })
+                .collect::<Result<_, CauseCodecError>>()?,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "failure", rename_all = "kebab-case", deny_unknown_fields)]
+enum FailureWire {
+    Mismatch,
+    Separation { step: StepName, reason: ReasonWire },
+}
+
+/// FR-268's step names.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum StepName {
+    Quantifier,
+    Domain,
+    Element,
+    Body,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "kebab-case", deny_unknown_fields)]
+enum ReasonWire {
+    Unmet,
+    UndefinedEvaluation {
+        expression: LocationWire,
+        cause: String,
+    },
+    Refused {
+        code: String,
+        cause: String,
+        fields: BTreeMap<String, String>,
+    },
+}
+
+impl FailureWire {
+    fn of(failure: &WitnessFailure) -> Self {
+        match failure {
+            WitnessFailure::Mismatch => Self::Mismatch,
+            WitnessFailure::Separation { step, reason } => Self::Separation {
+                step: match step {
+                    SeparationStep::Quantifier => StepName::Quantifier,
+                    SeparationStep::Domain => StepName::Domain,
+                    SeparationStep::Element => StepName::Element,
+                    SeparationStep::Body => StepName::Body,
+                },
+                reason: match reason {
+                    SeparationReason::Unmet => ReasonWire::Unmet,
+                    SeparationReason::UndefinedEvaluation { expression, cause } => {
+                        ReasonWire::UndefinedEvaluation {
+                            expression: LocationWire::of(expression),
+                            cause: cause.clone(),
+                        }
+                    }
+                    SeparationReason::Refused(refusal) => ReasonWire::Refused {
+                        code: refusal.code.clone(),
+                        cause: refusal.cause.clone(),
+                        fields: refusal.fields.clone(),
+                    },
+                },
+            },
+        }
+    }
+
+    fn read(self) -> Result<WitnessFailure, CauseCodecError> {
+        Ok(match self {
+            Self::Mismatch => WitnessFailure::Mismatch,
+            Self::Separation { step, reason } => WitnessFailure::Separation {
+                step: match step {
+                    StepName::Quantifier => SeparationStep::Quantifier,
+                    StepName::Domain => SeparationStep::Domain,
+                    StepName::Element => SeparationStep::Element,
+                    StepName::Body => SeparationStep::Body,
+                },
+                reason: match reason {
+                    ReasonWire::Unmet => SeparationReason::Unmet,
+                    ReasonWire::UndefinedEvaluation { expression, cause } => {
+                        SeparationReason::UndefinedEvaluation {
+                            expression: expression.read(),
+                            cause,
+                        }
+                    }
+                    ReasonWire::Refused {
+                        code,
+                        cause,
+                        fields,
+                    } => SeparationReason::Refused(refusal(code, cause, fields)?),
+                },
+            },
+        })
+    }
+}
+
+/// A refusal read from the wire: its code is a catalog code, and its cause
+/// and each field name are catalog spellings, lower-case words joined by
+/// `-` or `_`.
+fn refusal(
+    code: String,
+    cause: String,
+    fields: BTreeMap<String, String>,
+) -> Result<SeparationRefusal, CauseCodecError> {
+    if catalog_category(&code).is_none() {
+        return Err(CauseCodecError::Spelling("code"));
+    }
+    if !is_spelling(&cause) {
+        return Err(CauseCodecError::Spelling("cause"));
+    }
+    if !fields.keys().all(|name| is_spelling(name)) {
+        return Err(CauseCodecError::Spelling("field"));
+    }
+    Ok(SeparationRefusal {
+        code,
+        cause,
+        fields,
+    })
+}
+
+/// Whether `text` is a catalog spelling: lower-case ASCII words of letters
+/// and digits, joined by single `-` or `_`.
+fn is_spelling(text: &str) -> bool {
+    !text.is_empty()
+        && text.split(['-', '_']).all(|word| {
+            !word.is_empty()
+                && word
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+/// An expression location: its declaration and child-index path.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocationWire {
+    declaration: DeclarationWire,
+    path: Vec<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum DeclarationWire {
+    Body {
+        function: String,
+        index: usize,
+    },
+    Measure {
+        function: String,
+        index: usize,
+    },
+    Expression,
+    TypeDeclaration {
+        name: String,
+    },
+    StateClause {
+        clause: String,
+        index: usize,
+    },
+    ProtocolAttempt {
+        protocol: usize,
+        attempt: usize,
+    },
+    ModelOperationClause {
+        operation: String,
+        clause: OperationClauseWire,
+        position: usize,
+    },
+}
+
+/// Which list of a model operation a clause belongs to, as it is spelled on
+/// the wire.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum OperationClauseWire {
+    Requires,
+    Ensures,
+}
+
+impl From<OperationClauseKind> for OperationClauseWire {
+    fn from(kind: OperationClauseKind) -> Self {
+        match kind {
+            OperationClauseKind::Requires => Self::Requires,
+            OperationClauseKind::Ensures => Self::Ensures,
+        }
+    }
+}
+
+impl From<OperationClauseWire> for OperationClauseKind {
+    fn from(kind: OperationClauseWire) -> Self {
+        match kind {
+            OperationClauseWire::Requires => Self::Requires,
+            OperationClauseWire::Ensures => Self::Ensures,
+        }
+    }
+}
+
+impl LocationWire {
+    fn of(location: &Location) -> Self {
+        Self {
+            declaration: match &location.origin {
+                Declaration::Body { function, index } => DeclarationWire::Body {
+                    function: function.clone(),
+                    index: *index,
+                },
+                Declaration::Measure { function, index } => DeclarationWire::Measure {
+                    function: function.clone(),
+                    index: *index,
+                },
+                Declaration::Expression => DeclarationWire::Expression,
+                Declaration::TypeDeclaration { name } => {
+                    DeclarationWire::TypeDeclaration { name: name.clone() }
+                }
+                Declaration::StateClause { clause, index } => DeclarationWire::StateClause {
+                    clause: clause.clone(),
+                    index: *index,
+                },
+                Declaration::ProtocolAttempt { protocol, attempt } => {
+                    DeclarationWire::ProtocolAttempt {
+                        protocol: *protocol,
+                        attempt: *attempt,
+                    }
+                }
+                Declaration::ModelOperationClause {
+                    operation,
+                    kind,
+                    position,
+                } => DeclarationWire::ModelOperationClause {
+                    operation: operation.clone(),
+                    clause: (*kind).into(),
+                    position: *position,
+                },
+            },
+            path: location.path(),
+        }
+    }
+
+    fn read(self) -> Location {
+        Location::at(
+            match self.declaration {
+                DeclarationWire::Body { function, index } => Declaration::Body { function, index },
+                DeclarationWire::Measure { function, index } => {
+                    Declaration::Measure { function, index }
+                }
+                DeclarationWire::Expression => Declaration::Expression,
+                DeclarationWire::TypeDeclaration { name } => Declaration::TypeDeclaration { name },
+                DeclarationWire::StateClause { clause, index } => {
+                    Declaration::StateClause { clause, index }
+                }
+                DeclarationWire::ProtocolAttempt { protocol, attempt } => {
+                    Declaration::ProtocolAttempt { protocol, attempt }
+                }
+                DeclarationWire::ModelOperationClause {
+                    operation,
+                    clause,
+                    position,
+                } => Declaration::ModelOperationClause {
+                    operation,
+                    kind: clause.into(),
+                    position,
+                },
+            },
+            &self.path,
+        )
+    }
+}
+
+/// Whether `left` and `right` have the same typed value encoding; a value
+/// with no encoding is the same as nothing.
+pub(super) fn same_encoding(left: &Value, right: &Value) -> bool {
+    matches!(
+        (encode_element(left), encode_element(right)),
+        (Ok(left), Ok(right)) if left.get() == right.get()
+    )
+}
+
+/// A structural identity read back from its text spelling, or the refusal
+/// naming the member.
+pub(super) fn spelled<T>(
+    read: fn(&str) -> Option<T>,
+    text: &str,
+    member: &'static str,
+) -> Result<T, CauseCodecError> {
+    read(text).ok_or(CauseCodecError::Digest(member))
+}
+
+#[cfg(test)]
+mod tc235_path_tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    #[trace("FSpec-TC-235", "FSpec-FR-207-AC-8", "FSpec-FR-047-AC-9")]
+    #[test]
+    fn tc235_m22_invocation_binding_paths_use_the_production_codec() {
+        let identity = |name: &str| ObservationIdentity {
+            authority: "test".to_owned(),
+            identity: name.to_owned(),
+        };
+        let path = |binding| RuntimeValuePath {
+            observation: identity("q1"),
+            subject: ValuePathSubject::Invocation {
+                invocation: identity("i1"),
+                binding,
+            },
+            steps: vec![ValuePathStep::Field("placed".to_owned())],
+        };
+        let receiver = path(InvocationBinding::Receiver);
+        let parameter = path(InvocationBinding::Parameter("flags".to_owned()));
+        assert_ne!(receiver, parameter);
+        assert!(InvocationBinding::Parameter("flags".to_owned()) < InvocationBinding::Receiver);
+        let encode = |path: &RuntimeValuePath| serde_json::to_value(PathWire::of(path)).unwrap();
+        let receiver_json = encode(&receiver);
+        let parameter_json = encode(&parameter);
+        assert_eq!(receiver_json["kind"], "runtime_value");
+        assert_eq!(receiver_json["root"]["observation"]["identity"], "q1");
+        assert_eq!(
+            receiver_json["root"]["subject"]["invocation"]["identity"],
+            "i1"
+        );
+        assert_eq!(receiver_json["root"]["subject"]["binding"], "receiver");
+        assert!(receiver_json["root"]["subject"].get("parameter").is_none());
+        assert_eq!(parameter_json["root"]["subject"]["binding"], "parameter");
+        assert_eq!(parameter_json["root"]["subject"]["parameter"], "flags");
+        for json in [&receiver_json, &parameter_json] {
+            assert_eq!(json["steps"].as_array().unwrap().len(), 1);
+            assert_eq!(json["steps"][0]["tag"], "field");
+            assert_eq!(json["steps"][0]["name"], "placed");
+            let wire: PathWire = serde_json::from_value(json.clone()).unwrap();
+            wire.validate_shape().unwrap();
+        }
+        assert_ne!(receiver_json, parameter_json);
+        let process = RuntimeValuePath {
+            observation: identity("q1"),
+            subject: ValuePathSubject::Object(filament_exact::ObjectReference::new(
+                crate::fixture_universe(1),
+                crate::fixture_effective(2),
+                filament_exact::ObjectId::new("r1").unwrap(),
+            )),
+            steps: vec![ValuePathStep::Member("attempts".to_owned())],
+        };
+        let process_json = encode(&process);
+        assert_eq!(process_json["root"]["subject"]["tag"], "object");
+        assert!(process_json["root"]["subject"].get("binding").is_none());
+        for (path, expected_binding) in
+            [(&receiver_json, "receiver"), (&parameter_json, "parameter")]
+        {
+            let wire: PathWire = serde_json::from_value(path.clone()).unwrap();
+            assert_eq!(serde_json::to_value(wire).unwrap(), *path);
+            assert_eq!(path["root"]["subject"]["binding"], expected_binding);
+        }
+        let mut missing_parameter = parameter_json.clone();
+        missing_parameter["root"]["subject"]
+            .as_object_mut()
+            .unwrap()
+            .remove("parameter");
+        let wire: PathWire = serde_json::from_value(missing_parameter).unwrap();
+        assert!(matches!(
+            wire.validate_shape(),
+            Err(CauseCodecError::Shape("invocation_binding"))
+        ));
+        let mut unknown_binding = receiver_json;
+        unknown_binding["root"]["subject"]["binding"] = serde_json::json!("context");
+        assert!(serde_json::from_value::<PathWire>(unknown_binding).is_err());
+    }
+
+    /// A `reference` step carries the referenced object's declared identity
+    /// as `object` (FSpec FR-207's serialization), and a malformed identity
+    /// refuses at shape validation.
+    #[trace("FSpec-FR-207-AC-10")]
+    #[test]
+    fn a_reference_step_serializes_the_referenced_object_identity() {
+        let object = |key: &str| {
+            filament_exact::ObjectReference::new(
+                crate::fixture_universe(1),
+                crate::fixture_effective(2),
+                filament_exact::ObjectId::new(key).unwrap(),
+            )
+        };
+        let path = RuntimeValuePath {
+            observation: ObservationIdentity {
+                authority: "test".to_owned(),
+                identity: "q1".to_owned(),
+            },
+            subject: ValuePathSubject::Object(object("child")),
+            steps: vec![
+                ValuePathStep::Member("parent".to_owned()),
+                ValuePathStep::Reference(object("root")),
+            ],
+        };
+        let json = serde_json::to_value(PathWire::of(&path)).unwrap();
+        assert_eq!(
+            json["steps"][1],
+            serde_json::json!({
+                "tag": "reference",
+                "object": {
+                    "universe": crate::id_text::universe_text(&crate::fixture_universe(1)).unwrap(),
+                    "type": crate::id_text::effective_text(&crate::fixture_effective(2)).unwrap(),
+                    "object_identity": "root",
+                },
+            })
+        );
+        let wire: PathWire = serde_json::from_value(json.clone()).unwrap();
+        wire.validate_shape().unwrap();
+        let mut malformed = json;
+        malformed["steps"][1]["object"]["universe"] = serde_json::json!("not hex");
+        let wire: PathWire = serde_json::from_value(malformed).unwrap();
+        assert!(wire.validate_shape().is_err());
+    }
+}

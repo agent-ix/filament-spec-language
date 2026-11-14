@@ -3,36 +3,36 @@ id: FR-325
 title: "Parse temporal operators with an optional interval into S2 TemporalTrace forms"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-393
+  - target: ix://agent-ix/filament-spec-language/FR-393
     type: traces_to
 ---
 # FR-325: Parse temporal operators with an optional interval into S2 TemporalTrace forms
 
 ## Description
 
-S1 (`qsl-cst`) SHALL parse every unary temporal operator (`eventually`,
+S1 (`fsl-cst`) SHALL parse every unary temporal operator (`eventually`,
 `always`, `once`, `historically`) and every binary temporal operator
 (`until`, `release`, `since`, `triggered`) with an interval `[a,b]`, an
 interval `[a,*]`, a timed interval (FR-393), or no interval, under every profile
 (ADR-014 A-1). S2
-(`qsl-forms`) SHALL build one TemporalTrace form per temporal clause, holding
+(`fsl-forms`) SHALL build one TemporalTrace form per temporal clause, holding
 each operator with an optional interval form, as the M-3b TemporalTrace forms
 of ADR-011. Parsing selects no meaning: whether an interval is required,
 admitted or refused is the S3 check's decision (FR-326, FR-123): `[a,*]`
 is admitted under the infinite-trace profile and refused under the bounded
-profiles (ADR-018 IV-1, QSpec FR-048-AC-10).
+profiles (ADR-018 IV-1, FSpec FR-048-AC-10).
 
 ## Use case
 
@@ -71,14 +71,14 @@ profile.
 ## Behavior
 
 - S2 SHALL build one fairness form per `fair` constraint, in source order
-  (QSpec FR-362's `fairness` production). A written kind SHALL build
+  (FSpec FR-362's `fairness` production). A written kind SHALL build
   `Some` of that kind, `Weak` or `Strong`, and an unwritten kind SHALL
   build `None`, which S3 reads as `weak` (FR-129). An unwritten
   granularity SHALL build `None`, which S3 reads as `whole` (FR-123).
 - S2 SHALL build one capture form per `capture`, in source order (the
-  QSpec shared grammar's `capture` production, which FR-362's
+  FSpec shared grammar's `capture` production, which FR-362's
   `temporal-clause` places after the fairness constraints). The capture's
-  meaning, an immutable value fixed at activation, is QSpec FR-093's and
+  meaning, an immutable value fixed at activation, is FSpec FR-093's and
   S3's to check.
 - When an operator is written with no interval, S2 SHALL build its form
   with `interval: None`.
@@ -113,13 +113,13 @@ profile.
 - ADR-014 §5 A-1 and §11; ADR-018 §11 IV-1 (operators
   that carry an interval); ADR-011 M-3b.
 - [FR-067](FR-067-add-s2-forms-and-retire-seam-5.md) (the S2 forms stage).
-- QSpec FR-090-AC-7 and FR-250-AC-6 (which profile admits the unbounded
-  operator edition). QSpec owns the surface grammar, including the
+- FSpec FR-090-AC-7 and FR-250-AC-6 (which profile admits the unbounded
+  operator edition). FSpec owns the surface grammar, including the
   infinite-trace interval rule (ADR-018 QS-13).
 
 ## References
 
 - Linear QSL-384 (this requirement's spec ticket); QSL-43 (implementation).
-- QSpec FR-367 (interval operators under infinite-trace; Linear STD-131,
+- FSpec FR-367 (interval operators under infinite-trace; Linear STD-131,
   ADR-018 QS-13) and Linear STD-99 (the `[a,*]`
   grammar note and the v2 temporal operation identities).

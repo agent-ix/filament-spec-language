@@ -3,28 +3,28 @@ id: US-010
 title: "Carry a proof result, witness or replay outcome without a shadow type"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-010: Carry a proof result, witness or replay outcome without a shadow type
 
 ## Story
 
-**As a** QSL contributor building the function-application Kani/replay
+**As a** FSL contributor building the function-application Kani/replay
 exemplar (#217) or widening the replay facade for a new semantic family
 (#186's state `forall`)
 **I want** one typed proof-result, counterexample/witness and replay
 request/result envelope that every family and every backend consumer reuses
 unchanged
 **So that** I never have to invent my own ad hoc struct to carry a proof
-verdict or a witness across the QSL/backend boundary, and a caller can never
+verdict or a witness across the FSL/backend boundary, and a caller can never
 mistake a partially-decoded or re-keyed envelope for a trustworthy one.
 
 ## Context
 
 ADR-013 O-24 to O-27 and ADR-011 §2.1 E8/E9 decide that a proof result, a
 counterexample/witness and a replay request/result each has exactly one
-canonical QSL-owned type, living in the layer-6 `replay` module's public
+canonical FSL-owned type, living in the layer-6 `replay` module's public
 API, and that this is the *only* surface the CG replay adapter reaches
 (ADR-011 FB-05). Before this ticket, no such type exists: AD-016 arrow 7
 still names a bare `&str` function-selection parameter, the AD-016
@@ -32,7 +32,7 @@ Replay-ownership row still lists five separately-stored `Witness` fields
 that this record's amendment (QC-13) collapses to one stored field plus four
 derived ones, and #217's Kani exemplar and #186's state-`forall` payload
 both have nowhere to plug in without either inventing their own witness type
-or reaching into QSL internals CG is not allowed to touch.
+or reaching into FSL internals CG is not allowed to touch.
 
 This ticket (#231) builds the four envelope types and their round trips. It
 does not invoke a backend, does not implement the Kani harness, and does not

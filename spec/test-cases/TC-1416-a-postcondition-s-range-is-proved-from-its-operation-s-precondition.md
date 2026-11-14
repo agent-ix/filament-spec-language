@@ -3,9 +3,9 @@ id: TC-1416
 title: "A postcondition's range is proved from its operation's precondition"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-577
+  - target: ix://agent-ix/filament-spec-language/FR-577
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-121
+  - target: ix://agent-ix/filament-spec-language/FR-121
     type: verifies
 ---
 # TC-1416: A postcondition's range is proved from its operation's precondition
@@ -16,7 +16,7 @@ Verify that the `test/bank` withdrawal postcondition
 `self.balance = pre(self.balance) - amount` checks under its sibling
 precondition `amount <= self.balance`. Without that precondition it refuses
 at the difference, and the refusal carries the operand, the intervals and
-the region through `qsl_replay::call_site`. Also verify each fact rule of
+the region through `fsl_replay::call_site`. Also verify each fact rule of
 FR-577 (strict, flipped, negated, repeated, joined, cross-clause and
 unreachable facts), each form that yields or transfers no fact, the
 redefinition-family and context exclusions, and evaluation outside the
@@ -28,9 +28,9 @@ Scope: FR-577-AC-1 to FR-577-AC-33; FR-121-AC-37.
 
 Fixture: FR-577's bank fixture and bank unit, and `Debited1`, as its
 Acceptance Criteria preamble writes them. The unit selects the package as
-`model Bank = ...`. Every compile of the bank unit runs through `qsl_replay::call_site` with
+`model Bank = ...`. Every compile of the bank unit runs through `fsl_replay::call_site` with
 the `Bank::Account::withdraw` operation selection. Steps 3 and 12 compile a
-unit that declares only a function through `qsl_replay::call_site` with that
+unit that declares only a function through `fsl_replay::call_site` with that
 function's selection (`g`, `f`).
 
 1. Compile the bank unit (AC-1). Compile it with `CanAfford` moved after
@@ -59,7 +59,7 @@ function's selection (`g`, `f`).
 12. Compile a unit declaring only FR-577-AC-31's function `f`, with the
     function selection `f` (AC-31).
 13. From step 1's package, replay a `Debited` envelope through
-    `qsl_replay::replay_state_clause` with pre `balance = 3`, `amount = 5`
+    `fsl_replay::replay_state_clause` with pre `balance = 3`, `amount = 5`
     and post `balance = 0` (AC-32).
 14. Build a protocol over step 1's package whose attempt of `withdraw` lists
     `contracts [Debited]` only, and explore it from a state with

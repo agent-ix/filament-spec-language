@@ -1,21 +1,21 @@
 ---
 id: US-037
-title: "Build and run QSL from a clean clone or a release tag as an outside user"
+title: "Build and run FSL from a clean clone or a release tag as an outside user"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/NFR-017
+  - target: ix://agent-ix/filament-spec-language/NFR-017
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/NFR-018
+  - target: ix://agent-ix/filament-spec-language/NFR-018
     type: exercises
 ---
-# US-037: Build and run QSL from a clean clone or a release tag as an outside user
+# US-037: Build and run FSL from a clean clone or a release tag as an outside user
 
 ## Story
 
 **As a** developer outside the project who has only a Rust toolchain
-**I want** to clone QSL, or check out a release tag, build it with the locked
+**I want** to clone FSL, or check out a release tag, build it with the locked
 dependencies and run the examples the README shows
 **So that** I can try the compiler without sibling checkouts, private
 repositories or local patches, and get the same build the maintainers got.
@@ -33,7 +33,7 @@ if a dependency repository rewrites its history.
 
 - **Given** a machine with only Rust at the `rust-version` and no Cargo
   cache.
-- **When** the developer clones QSL, runs `cargo build --locked --workspace`
+- **When** the developer clones FSL, runs `cargo build --locked --workspace`
   and the README's ConfigVersion commands.
 - **Then** the build succeeds and the walkthrough cases exit 0, 10, 20, 22
   and 10 as the README's table states.

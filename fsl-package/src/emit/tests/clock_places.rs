@@ -1,0 +1,878 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-230-AC-49/AC-50 (TC-685 step 33), FSpec FR-322-AC-148..150: a dense
+//! model's clock places reach S4 as template `clock_place` nodes, one for
+//! each path, whose slot steps carry the symbolic element selector.
+
+use super::admission_corpus::config_version_unit;
+use super::*;
+use crate::checked_v2::{read_checked_package_v2, CheckedTimedModel};
+use crate::emit::timed_models_of;
+use filament_contract_model::CheckedPackageEvidence;
+use filament_semantic_value::checking::CheckMode;
+
+/// ConfigVersion with the clock `x: Clock` and the clock collection `s:
+/// Sequence<Clock>[0, 3]`.
+fn clocked_document() -> Vec<u8> {
+    clocked_document_with(true)
+}
+
+/// ConfigVersion with the clock `x: Clock`, and `s: Sequence<Clock>[0, 3]`
+/// when `collection` holds.
+pub(super) fn clocked_document_with(collection: bool) -> Vec<u8> {
+    let mut document: Value =
+        serde_json::from_slice(config_version_unit::DOMAIN_PACKAGE.as_bytes())
+            .expect("the fixture is JSON");
+    let config = &mut document["types"][1];
+    let template = config["fields"][0].clone();
+    let field = |name: &str, lower: u64, upper: u64, ordered: bool, unique: bool| {
+        let identity = format!("ix://example/config-version/ConfigVersion/{name}");
+        let mut field = template.clone();
+        field["identity"] = json!(identity);
+        field["name"] = json!(name);
+        field["typeRef"] = json!("ix://filament/native/Clock");
+        field["multiplicity"] =
+            json!({"lower": lower, "upper": upper, "ordered": ordered, "unique": unique});
+        field["origin"]["generated"]["generatorIdentity"] = json!(identity);
+        field["origin"]["generated"]["inputIdentities"] = json!([identity]);
+        field
+    };
+    let fields = config["fields"].as_array_mut().expect("fields");
+    fields.push(field("x", 1, 1, false, true));
+    if collection {
+        fields.push(field("s", 0, 3, true, false));
+    }
+    crate::emit::tests::wire_bytes(&document).expect("the fixture stays JSON")
+}
+
+/// The unit selecting [`clocked_document`] under a dense time source, with
+/// `body` after it.
+pub(super) fn clocked_unit(body: &str) -> String {
+    let unit = config_version_unit::unit_text().replace(
+        "profile v = \"filament.model.complete/v1\";\n",
+        "profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n",
+    );
+    format!(
+        "{unit}dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config dense unit ms;\n{body}"
+    )
+}
+
+/// The member `name` of the aggregate body `node`.
+pub(super) fn member<'v>(node: &'v Value, name: &str) -> &'v Value {
+    &node["members"]
+        .as_array()
+        .expect("an aggregate")
+        .iter()
+        .find(|member| member["name"] == name)
+        .unwrap_or_else(|| panic!("member {name}"))["value"]
+}
+
+/// Each step of an aggregate path, its literal members by name and a
+/// reference member as `ref:<node id>`.
+fn steps(path: &Value) -> Vec<Vec<(String, String)>> {
+    path["members"]
+        .as_array()
+        .expect("a path")
+        .iter()
+        .map(|step| {
+            step["members"]
+                .as_array()
+                .expect("a step")
+                .iter()
+                .map(|member| {
+                    let value = &member["value"];
+                    let shown = match value["term"].as_str() {
+                        Some("reference") => format!("ref:{}", value["target"]),
+                        _ => match &value["value"] {
+                            Value::String(text) => text.clone(),
+                            other => other.to_string(),
+                        },
+                    };
+                    (
+                        member["name"].as_str().unwrap_or_default().to_owned(),
+                        shown,
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// FR-230-AC-49 (TC-685 step 33), FSpec FR-322-AC-148/149: `x: Clock` and
+/// `s: Sequence<Clock>[0, 3]` emit one `clock_place` each. The place of `s`
+/// is the template of every slot: its path is `field(s)`, `slot(sequence,
+/// <Integer type node>, 0, 3)`, with the symbolic selector a reference to
+/// the emitted Integer scalar node and no index. Each `resolved_path` row
+/// names its declaring type, member and type, the collection row its kind
+/// and bounds, the slot row `Sequence<ix://filament/native/Clock>[slot]`. A
+/// place is exactly `model`, `path` and `resolved_path` (FSpec
+/// FR-322-AC-261), and the root lists both places.
+#[trace("TC-685")]
+#[test]
+fn a_clock_collection_emits_one_template_place() {
+    let document = clocked_document();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let graph = assemble_with_models(clocked_unit("").as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("a model of clocks alone checks: {refusals:?}"));
+    let integer = fsl_semantics::check::builtin_integer_type_key(graph.package_name())
+        .expect("the built-in integer key");
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    assert!(
+        nodes(&wire)
+            .iter()
+            .any(
+                |node| fsl_foundation::node_wire::node_key_from_json(&node["node_id"]).as_ref()
+                    == Ok(&integer)
+                    && node["node_tag"] == "scalar_type"
+                    && node["semantic_form"] == "integer"
+            ),
+        "the selector's Integer type node is in the graph"
+    );
+    let places: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "clock_place")
+        .collect();
+    let path_of = |place: &Value| steps(member(&place["body"], "path"));
+    let field = |name: &str| {
+        vec![
+            ("kind".to_owned(), "field".to_owned()),
+            ("name".to_owned(), name.to_owned()),
+        ]
+    };
+    let collection = places
+        .iter()
+        .copied()
+        .find(|place| path_of(place).len() == 2)
+        .expect("the place of s");
+    assert_eq!(
+        path_of(collection),
+        [
+            field("s"),
+            vec![
+                ("kind".to_owned(), "slot".to_owned()),
+                ("collection".to_owned(), "sequence".to_owned()),
+                (
+                    "selector".to_owned(),
+                    format!(
+                        "ref:{}",
+                        fsl_foundation::node_wire::node_key_to_json(&integer)
+                            .expect("a structural key")
+                    )
+                ),
+                ("minimum".to_owned(), "0".to_owned()),
+                ("maximum".to_owned(), "3".to_owned()),
+            ],
+        ]
+    );
+    let rows = steps(member(&collection["body"], "resolved_path"));
+    let row = |values: [&str; 7]| {
+        [
+            "path_step",
+            "declaring_type",
+            "member_identity",
+            "member_type",
+            "collection_kind",
+            "minimum",
+            "maximum",
+        ]
+        .into_iter()
+        .zip(values)
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        rows,
+        [
+            row([
+                "0",
+                "ix://example/config-version/ConfigVersion",
+                "ix://example/config-version/ConfigVersion/s",
+                "Sequence<ix://filament/native/Clock>",
+                "sequence",
+                "0",
+                "3",
+            ]),
+            row([
+                "1",
+                "ix://filament/native/Clock",
+                "Sequence<ix://filament/native/Clock>[slot]",
+                "ix://filament/native/Clock",
+                "none",
+                "",
+                "",
+            ]),
+        ]
+    );
+    let single = places
+        .iter()
+        .copied()
+        .find(|place| path_of(place).len() == 1)
+        .expect("the place of x");
+    assert_eq!(path_of(single), [field("x")]);
+    for place in &places {
+        assert_eq!(
+            place["body"]["members"]
+                .as_array()
+                .expect("a place body")
+                .iter()
+                .map(|member| member["name"].as_str().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            ["model", "path", "resolved_path"]
+        );
+    }
+    let [root] = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "timed_model")
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one emitted timed root");
+    };
+    let mut listed: Vec<&Value> = member(&root["body"], "clock_places")["members"]
+        .as_array()
+        .expect("clock_places")
+        .iter()
+        .map(|reference| &reference["target"])
+        .collect();
+    let mut emitted: Vec<&Value> = places.iter().map(|place| &place["node_id"]).collect();
+    listed.sort_by_key(|digest| digest.to_string());
+    emitted.sort_by_key(|digest| digest.to_string());
+    assert_eq!(listed, emitted);
+    assert_eq!(listed.len(), 2);
+}
+
+/// The emitted package over `document` with no further unit text, read back
+/// through I2 into its typed timed models.
+fn read_back(document: &[u8]) -> Result<Vec<CheckedTimedModel>, String> {
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let graph = assemble_with_models(clocked_unit("").as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("a model of clocks alone checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document(package_identity(document), document.to_vec())
+        .expect("a fresh evidence key");
+    let read = read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .map_err(|failure| format!("{failure:?}"))?;
+    CheckedTimedModel::from_admitted(&read.into_value().admitted).map_err(str::to_owned)
+}
+
+/// FSpec FR-322 "Timed-model nodes" read-back: the template place of `x:
+/// Clock`, with its `resolved_path` row and empty `guards`, is admitted by
+/// I2 and reconstructed.
+#[trace("TC-685")]
+#[test]
+fn a_clock_place_reads_back() {
+    let typed = read_back(&clocked_document_with(false))
+        .unwrap_or_else(|failure| panic!("the I2 read admits the place: {failure}"));
+    let [timed] = typed.as_slice() else {
+        panic!("one timed model reads back");
+    };
+    let [place] = timed.clock_places.as_slice() else {
+        panic!("one place reads back");
+    };
+    assert_eq!(
+        place.path,
+        [crate::checked_v2::ClockPathStep::Field("x".to_owned())]
+    );
+}
+
+/// FSpec FR-322-AC-148 read-back of a template slot step: the place of `s:
+/// Sequence<Clock>[0, 3]`, whose first row's member type is the rendered
+/// collection `Sequence<ix://filament/native/Clock>`.
+#[trace("TC-685")]
+#[test]
+fn a_template_slot_place_reads_back() {
+    let typed = read_back(&clocked_document())
+        .unwrap_or_else(|failure| panic!("the I2 read admits the template places: {failure}"));
+    let [timed] = typed.as_slice() else {
+        panic!("one timed model reads back");
+    };
+    assert_eq!(timed.clock_places.len(), 2);
+}
+
+/// ConfigVersion with the record `Timer { x: Clock; n: VersionNumber }`, the
+/// package sequence type `Ticks` of `Clock`, and the fields of FSpec's
+/// timed-slot-selector vectors: `ts: Sequence<Timer>[0, 3]` (SL-01), `g:
+/// Sequence<Ticks>` unbounded, the `Sequence<Sequence<Clock>>` of SL-05,
+/// `s: Sequence<Clock>` unbounded (SL-07), and the presence places `v:
+/// Option<Clock>` and `q: Sequence<Option<Clock>>[0, 2]`.
+pub(super) fn vector_document() -> Vec<u8> {
+    const PREFIX: &str = "ix://example/config-version";
+    let mut document: Value =
+        serde_json::from_slice(config_version_unit::DOMAIN_PACKAGE.as_bytes())
+            .expect("the fixture is JSON");
+    let generated = |identity: &str| {
+        json!({"generated": {"generatorIdentity": identity, "generatorVersion": "1.0.0",
+            "inputIdentities": [identity]}})
+    };
+    let field = |owner: &str, name: &str, type_ref: &str, multiplicity: Value| {
+        let identity = format!("{PREFIX}/{owner}/{name}");
+        json!({"identity": identity, "name": name, "typeRef": type_ref,
+            "presence": "required", "nullable": false, "defaultKind": "none",
+            "multiplicity": multiplicity, "origin": generated(&identity)})
+    };
+    let single = json!({"lower": 1, "upper": 1, "ordered": false, "unique": false});
+    let declared_type = |name: &str, kind: Value, extra: Value| {
+        let identity = format!("{PREFIX}/{name}");
+        let mut node = json!({"identity": identity, "displayName": identity, "kind": kind,
+            "roles": [], "origin": generated(&identity), "constraints": [], "extensions": [],
+            "unknownPolicy": "reject"});
+        for (key, value) in extra.as_object().expect("members") {
+            node[key] = value.clone();
+        }
+        node
+    };
+    let constructs = document["constructs"].as_array_mut().expect("constructs");
+    let mut record = constructs[0].clone();
+    record["kind"]["name"] = json!("value_record");
+    record["construct"]["meaning"] =
+        json!(fsl_semantics::model::intake::meaning::RECORD_VALUE_TYPE);
+    constructs.push(record);
+    let types = document["types"].as_array_mut().expect("types");
+    types.push(declared_type(
+        "Timer",
+        json!({"module": "example/config-version", "name": "value_record"}),
+        json!({"fields": [
+            field("Timer", "x", "ix://filament/native/Clock", single.clone()),
+            field("Timer", "n", &format!("{PREFIX}/VersionNumber"),
+                json!({"lower": 1, "upper": 1, "ordered": false, "unique": true})),
+        ]}),
+    ));
+    types.push(declared_type(
+        "Ticks",
+        json!("sequence"),
+        json!({"items": "ix://filament/native/Clock"}),
+    ));
+    let fields = types[1]["fields"].as_array_mut().expect("fields");
+    let unbounded = json!({"lower": 0, "ordered": true, "unique": false});
+    fields.push(field(
+        "ConfigVersion",
+        "ts",
+        &format!("{PREFIX}/Timer"),
+        json!({"lower": 0, "upper": 3, "ordered": true, "unique": false}),
+    ));
+    fields.push(field(
+        "ConfigVersion",
+        "g",
+        &format!("{PREFIX}/Ticks"),
+        unbounded.clone(),
+    ));
+    fields.push(field(
+        "ConfigVersion",
+        "s",
+        "ix://filament/native/Clock",
+        unbounded,
+    ));
+    for (name, multiplicity) in [
+        (
+            "v",
+            json!({"lower": 1, "upper": 1, "ordered": false, "unique": true}),
+        ),
+        (
+            "q",
+            json!({"lower": 0, "upper": 2, "ordered": true, "unique": false}),
+        ),
+    ] {
+        let mut held = field(
+            "ConfigVersion",
+            name,
+            "ix://filament/native/Clock",
+            multiplicity,
+        );
+        held["presence"] = json!("optional");
+        fields.push(held);
+    }
+    crate::emit::tests::wire_bytes(&document).expect("the fixture stays JSON")
+}
+
+/// [`read_back`] of the unit with `body` after [`clocked_unit`]'s text.
+fn read_back_with(document: &[u8], body: &str) -> Result<Vec<CheckedTimedModel>, String> {
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let graph = assemble_with_models(clocked_unit(body).as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document(package_identity(document), document.to_vec())
+        .expect("a fresh evidence key");
+    let read = read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .map_err(|failure| format!("{failure:?}"))?;
+    CheckedTimedModel::from_admitted(&read.into_value().admitted).map_err(str::to_owned)
+}
+
+/// FR-230-AC-53 (TC-685 step 36), FSpec FR-322 "Timed-model nodes": a
+/// model whose only timed members are its clock and two `urgent`
+/// declarations emits, in declared order, an `urgency` of kind `when` whose
+/// predicate is the checked expression node of `self.versionNumber > 0`
+/// (reading `self` through a `parameter` node), and one of kind `operation`
+/// naming the model node and `attemptUpdate`; I2 admits both and reads them
+/// back.
+#[trace("TC-685", "FR-230-AC-53")]
+#[test]
+fn urgency_declarations_emit_and_read_back() {
+    let typed = read_back_with(
+        &clocked_document_with(false),
+        "urgent Busy when { self.versionNumber > 0 };\n\
+         urgent Prompt Config::ConfigVersion::attemptUpdate;\n",
+    )
+    .unwrap_or_else(|failure| panic!("the I2 read admits the urgency: {failure}"));
+    let [timed] = typed.as_slice() else {
+        panic!("one timed model reads back");
+    };
+    let [when, operation] = timed.urgencies.as_slice() else {
+        panic!("two urgencies: {:?}", timed.urgencies);
+    };
+    let crate::checked_v2::CheckedUrgency::When { .. } = when else {
+        panic!("the first is `when`: {when:?}");
+    };
+    let crate::checked_v2::CheckedUrgency::Operation {
+        model,
+        operation_name,
+        ..
+    } = operation
+    else {
+        panic!("the second is `operation`: {operation:?}");
+    };
+    assert_eq!(operation_name, "attemptUpdate");
+    assert_eq!(model, &timed.model);
+}
+
+/// FR-230-AC-53 (TC-685 step 36): the emitted `when` urgency references the
+/// expression node of its predicate, a Boolean `>` application whose
+/// operand reads `self` through a level-0 `parameter` node, and both
+/// urgency nodes are located at their own declarations, in ascending
+/// order in the root's `urgencies`.
+#[trace("TC-685", "FR-230-AC-53")]
+#[test]
+fn an_urgency_predicate_is_a_located_expression_node() {
+    let document = clocked_document_with(false);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let body = "urgent Prompt Config::ConfigVersion::attemptUpdate;\n\
+                urgent Busy when { self.versionNumber > 0 };\n";
+    let unit = clocked_unit(body);
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let by_id = |digest: &Value| {
+        nodes(&wire)
+            .iter()
+            .find(|node| &node["node_id"] == digest)
+            .unwrap_or_else(|| panic!("node {digest}"))
+    };
+    let [root] = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "timed_model")
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one timed root");
+    };
+    let listed: Vec<&Value> = member(&root["body"], "urgencies")["members"]
+        .as_array()
+        .expect("urgencies")
+        .iter()
+        .map(|reference| by_id(&reference["target"]))
+        .collect();
+    let starts: Vec<u64> = listed
+        .iter()
+        .map(|node| {
+            wire["source_map"]
+                .as_array()
+                .expect("source map")
+                .iter()
+                .find(|entry| entry["node_id"] == node["node_id"])
+                .and_then(|entry| entry["regions"][0]["start"].as_u64())
+                .expect("a located urgency")
+        })
+        .collect();
+    let at = |text: &str| unit.find(text).expect("declared") as u64;
+    assert_eq!(starts, [at("urgent Prompt"), at("urgent Busy")]);
+    let kinds: Vec<&Value> = listed
+        .iter()
+        .map(|node| &member(&node["body"], "kind")["value"])
+        .collect();
+    assert_eq!(kinds, [&json!("operation"), &json!("when")]);
+    let predicate = by_id(&member(&listed[1]["body"], "predicate")["target"]);
+    assert_eq!(predicate["node_tag"], "expression");
+    let located = wire["source_map"]
+        .as_array()
+        .expect("source map")
+        .iter()
+        .find(|entry| entry["node_id"] == predicate["node_id"])
+        .and_then(|entry| entry["regions"][0]["start"].as_u64())
+        .expect("a located predicate");
+    assert!(
+        located >= at("self.versionNumber > 0") && located < at("self.versionNumber > 0") + 22,
+        "{located}"
+    );
+    let reads_self = reached(&wire, predicate).iter().any(|node| {
+        node["semantic_form"] == "parameter"
+            && member(&node["body"], "name")["value"] == "self"
+            && member(&node["body"], "level")["value"] == "0"
+    });
+    assert!(
+        reads_self,
+        "the predicate reads self, a level-0 parameter node"
+    );
+}
+
+/// Every node `from` reaches through its dependencies, `from` included.
+fn reached<'w>(wire: &'w Value, from: &'w Value) -> Vec<&'w Value> {
+    let mut seen: Vec<&Value> = Vec::new();
+    let mut pending = vec![from];
+    while let Some(node) = pending.pop() {
+        if seen.iter().any(|known| known["node_id"] == node["node_id"]) {
+            continue;
+        }
+        for dependency in node["dependencies"].as_array().into_iter().flatten() {
+            if let Some(next) = nodes(wire)
+                .iter()
+                .find(|candidate| &candidate["node_id"] == dependency)
+            {
+                pending.push(next);
+            }
+        }
+        seen.push(node);
+    }
+    seen
+}
+
+/// The emitted wire of [`clocked_unit`] over `document` with `body`.
+fn emitted(document: &[u8], body: &str) -> (String, Value) {
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let unit = clocked_unit(body);
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    (unit, wire(&emission))
+}
+
+/// The `urgency` nodes the timed root lists, in order.
+fn listed_urgencies(wire: &Value) -> Vec<&Value> {
+    let [root] = nodes(wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "timed_model")
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one timed root");
+    };
+    member(&root["body"], "urgencies")["members"]
+        .as_array()
+        .expect("urgencies")
+        .iter()
+        .map(|reference| {
+            nodes(wire)
+                .iter()
+                .find(|node| node["node_id"] == reference["target"])
+                .expect("a listed urgency")
+        })
+        .collect()
+}
+
+/// SR-1770001 FND-001, SR-1770002 FND-001 (TC-685, FR-230-AC-53): two
+/// `urgent` declarations of equal content, `when` over one predicate or
+/// `operation` over one operation, are one `urgency` node (its key is its
+/// content) listed once by the root, with one `expression` occurrence at
+/// each declaration (FSpec FR-322: a node has one or more source
+/// occurrences); I2 admits the package and reads the node back once.
+#[trace("TC-685", "FR-230-AC-53")]
+#[test]
+fn equal_urgencies_are_one_node_located_at_each_declaration() {
+    for body in [
+        "urgent A when { self.versionNumber > 0 };
+urgent B when { self.versionNumber > 0 };
+",
+        "urgent A Config::ConfigVersion::attemptUpdate;
+         urgent B Config::ConfigVersion::attemptUpdate;
+",
+    ] {
+        let document = clocked_document_with(false);
+        let (unit, wire) = emitted(&document, body);
+        let [urgency] = listed_urgencies(&wire)[..] else {
+            panic!("{body}: one listed urgency");
+        };
+        let mut starts: Vec<(u64, u64)> = wire["source_map"]
+            .as_array()
+            .expect("source map")
+            .iter()
+            .filter(|entry| entry["node_id"] == urgency["node_id"])
+            .map(|entry| {
+                (
+                    entry["ordinal"].as_u64().expect("an ordinal"),
+                    entry["regions"][0]["start"].as_u64().expect("a start"),
+                )
+            })
+            .collect();
+        starts.sort_unstable();
+        let at = |text: &str| unit.find(text).expect("declared") as u64;
+        assert_eq!(starts, [(0, at("urgent A")), (1, at("urgent B"))], "{body}");
+        let typed = read_back_with(&document, body)
+            .unwrap_or_else(|failure| panic!("{body}: the I2 read admits it: {failure}"));
+        assert_eq!(typed[0].urgencies.len(), 1, "{body}");
+    }
+}
+
+/// SR-1770002 FND-002 (TC-685, FR-230-AC-53): a predicate that reads no
+/// `self` (`1 > 0`) writes no `parameter` node: its expression node reaches
+/// none.
+#[trace("TC-685", "FR-230-AC-53")]
+#[test]
+fn a_self_free_urgency_predicate_writes_no_parameter() {
+    let (_, wire) = emitted(
+        &clocked_document_with(false),
+        "urgent Now when { 1 > 0 };
+",
+    );
+    let [urgency] = listed_urgencies(&wire)[..] else {
+        panic!("one listed urgency");
+    };
+    let predicate = nodes(&wire)
+        .iter()
+        .find(|node| node["node_id"] == member(&urgency["body"], "predicate")["target"])
+        .expect("the predicate node");
+    assert!(
+        reached(&wire, predicate)
+            .iter()
+            .all(|node| node["semantic_form"] != "parameter"),
+        "no parameter node"
+    );
+}
+
+/// FR-230-AC-50 and AC-53 (TC-685, STD-554): an `urgent when` reading
+/// the presences of a clock collection's elements (`forall(e in self.q :
+/// present(e))`) has no quantifier form over the collection's slots, so its
+/// model is refused `TimedModelNotEmitted`.
+#[trace("TC-685")]
+#[test]
+fn an_urgency_reading_element_presences_is_not_emitted() {
+    let mut document: Value = serde_json::from_slice(&clocked_document_with(false)).expect("JSON");
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("fields");
+    let mut q = fields.last().expect("x").clone();
+    let identity = "ix://example/config-version/ConfigVersion/q";
+    q["identity"] = json!(identity);
+    q["name"] = json!("q");
+    q["presence"] = json!("optional");
+    q["multiplicity"] = json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    q["origin"]["generated"]["generatorIdentity"] = json!(identity);
+    q["origin"]["generated"]["inputIdentities"] = json!([identity]);
+    fields.push(q);
+    let document = crate::emit::tests::wire_bytes(&document).expect("JSON");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = clocked_unit("urgent All when { forall(e in self.q : present(e)) };\n");
+    let refusals = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("an element presence urgency is not written yet");
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            fsl_semantics::check::CheckCause::Temporal(cause)
+                if matches!(**cause, fsl_semantics::check::TemporalCause::TimedModelNotEmitted { .. })
+        )),
+        "{refusals:?}"
+    );
+}
+
+/// `units`, each a source identity and its text, assembled as one package
+/// over `documents`, as spine `compile` runs several source units.
+fn assemble_units_with_models(
+    units: &[(&str, &str)],
+    documents: &[&[u8]],
+) -> Result<PackageDeclarations, String> {
+    let units: Vec<_> = units
+        .iter()
+        .map(|(identity, text)| {
+            let parsed = fsl_cst::parse(
+                fsl_foundation::SourceIdentity::new("agent-ix", *identity),
+                "program.native",
+                text.as_bytes(),
+                fsl_cst::Limits::default(),
+            )
+            .expect("S1 admits the unit");
+            assert_eq!(parsed.diagnostics(), []);
+            let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+            (parsed.source().reference().clone(), unit)
+        })
+        .collect();
+    let packages = fsl_semantics::model::intake::package_input(documents.iter().copied()).unwrap();
+    let selections: Vec<_> = units
+        .iter()
+        .map(|(_, unit)| unit.selections().models.as_slice())
+        .collect();
+    let models = fsl_semantics::model::intake::admit_units_with_cancel(
+        &selections,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .map_err(|refusal| format!("intake: {refusal:?}"))?;
+    PackageDeclarations::assemble_units(
+        "pkg".to_owned(),
+        units,
+        models,
+        Vec::new(),
+        fsl_semantics::check::AssemblyLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .map_err(|refusal| format!("{refusal:?}"))
+}
+
+/// FR-480 "Selections and imports" (QSL-1638), FR-322 "Timed-model nodes":
+/// two units each write `time Config` with `Config` bound to a different
+/// package. The emitter reads each source's timed models, and so its clock
+/// places, urgencies and clauses, through the model node: a source reads its
+/// own package's timed model only. (S4 cannot yet write both models: their
+/// declarations are both named `Config::Timed`.)
+#[trace("FR-480")]
+#[test]
+fn two_units_timing_two_packages_under_one_alias_emit_their_own_clock_places() {
+    const OTHER: &str = "example/other-config-version";
+    let first = clocked_document();
+    // The second package keeps the clock `x` only.
+    let second = String::from_utf8(clocked_document_with(false))
+        .expect("the document is UTF-8")
+        .replace("example/config-version", OTHER);
+    // The sources differ in their unit: two content-equal sources are one
+    // node (its key is its content), which a source map cannot yet locate
+    // twice.
+    let a = clocked_unit("unit s : Time = rational(1000, 1) * ms;\n");
+    let b = "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
+             profile t = \"filament.temporal.complete/v1\";\n"
+        .to_owned()
+        + &format!("model Config = {OTHER:?};\ntime Config dense unit s;\n");
+    let graph = assemble_units_with_models(
+        &[("a", &a), ("b", &b)],
+        &[first.as_slice(), second.as_bytes()],
+    )
+    .expect("the units assemble")
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap_or_else(|refusals| panic!("each unit times its own package: {refusals:?}"));
+    // Each source's timed models are its own package's: one model, with that
+    // package's clock places only.
+    let mut places: Vec<usize> = graph
+        .time_sources()
+        .iter()
+        .map(|source| {
+            let [timed] = timed_models_of(&graph, source).collect::<Vec<_>>()[..] else {
+                panic!("one timed model for each source");
+            };
+            timed.place_nodes().len()
+        })
+        .collect();
+    places.sort_unstable();
+    assert_eq!(places, [1, 2]);
+}
+
+/// FR-230-AC-60 (TC-1334), FSpec FR-322 "Population references": a time
+/// invariant, two `urgent when` declarations and a precondition that name
+/// the one population `config_history` reference one `relation`/`population`
+/// node; `CallsExist` writes no `self` parameter node and `Known` writes
+/// one; I2 admits the package and reads the same predicates back.
+#[trace("TC-1334", "FR-230-AC-60")]
+#[test]
+fn a_timed_predicate_population_is_the_one_shared_reference_node() {
+    let document = clocked_document_with(false);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let body = "time invariant HasCalls when { \
+                forall(c in Config::config_history : c.versionNumber > 0) } { self.x <= 1 ms }\n\
+                urgent CallsExist when { exists(c in Config::config_history : c.versionNumber > 0) };\n\
+                urgent Known when { present(lookup<Config::ConfigVersion>(\
+                Config::config_history, self) absent empty) };\n\
+                pre UsesCalls using v on Config::ConfigVersion::attemptUpdate { \
+                forall(c in Config::config_history : true) }\n";
+    let graph = assemble_with_models(clocked_unit(body).as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let [population] = nodes(&wire)
+        .iter()
+        .filter(|node| node["node_tag"] == "relation" && node["semantic_form"] == "population")
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("exactly one population reference node");
+    };
+    let by_id = |digest: &Value| {
+        nodes(&wire)
+            .iter()
+            .find(|node| &node["node_id"] == digest)
+            .unwrap_or_else(|| panic!("node {digest}"))
+    };
+    let reads_population = |node: &Value| {
+        reached(&wire, node)
+            .iter()
+            .any(|reached| reached["node_id"] == population["node_id"])
+    };
+    let reads_self = |node: &Value| {
+        reached(&wire, node).iter().any(|node| {
+            node["semantic_form"] == "parameter" && member(&node["body"], "name")["value"] == "self"
+        })
+    };
+    let [invariant] = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "time_invariant")
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one time invariant");
+    };
+    assert!(reads_population(by_id(
+        &member(&invariant["body"], "predicate")["target"]
+    )));
+    let urgencies: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "urgency")
+        .collect();
+    let [exists, known] = urgencies[..] else {
+        panic!("two urgencies");
+    };
+    let exists = by_id(&member(&exists["body"], "predicate")["target"]);
+    let known = by_id(&member(&known["body"], "predicate")["target"]);
+    assert!(reads_population(exists) && reads_population(known));
+    assert!(!reads_self(exists), "`CallsExist` writes no self parameter");
+    assert!(reads_self(known), "`Known` writes a self parameter");
+    let clauses: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "state_clause" && reads_population(node))
+        .collect();
+    assert_eq!(clauses.len(), 1, "the precondition references the node");
+
+    let typed = read_back_with(&document, body)
+        .unwrap_or_else(|failure| panic!("the I2 read admits the package: {failure}"));
+    let [timed] = typed.as_slice() else {
+        panic!("one timed model reads back");
+    };
+    assert_eq!((timed.invariants.len(), timed.urgencies.len()), (1, 2));
+}

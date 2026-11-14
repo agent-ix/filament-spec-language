@@ -3,7 +3,7 @@ id: TC-534
 title: "A refuted liveness record names the strong constraint that would exclude its lasso"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-133
+  - target: ix://agent-ix/filament-spec-language/FR-133
     type: verifies
 ---
 # TC-534: A refuted liveness record names the strong constraint that would exclude its lasso

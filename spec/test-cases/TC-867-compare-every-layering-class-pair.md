@@ -3,7 +3,7 @@ id: TC-867
 title: "The layering comparison returns the table's result for every parent and child class"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-345
+  - target: ix://agent-ix/filament-spec-language/FR-345
     type: verifies
 ---
 # TC-867: The layering comparison returns the table's result for every parent and child class
@@ -24,8 +24,8 @@ Scope: FR-345-AC-1 to FR-345-AC-3.
 2. Take as the parent side the compile result of a unit with an ill-typed
    function body (`refused`) and as the child side the compile result of
    the ConfigVersion unit (`admitted`), naming the case by the two units'
-   `RawSourceRef`s and the edge `quire.state.core/v1` to
-   `quire.state.queries/v1`. Compare and report.
+   `RawSourceRef`s and the edge `filament.state.core/v1` to
+   `filament.state.queries/v1`. Compare and report.
 3. Take as the parent side a refusal whose every cause is
    `unsupported_construct`/`declaration-form` (`prohibited`) and as the
    child an admitted compile. Compare.

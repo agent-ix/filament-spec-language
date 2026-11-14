@@ -1,17 +1,17 @@
 ---
 id: TC-522
-title: "Model-check outcomes settle as QSpec FR-331 terminal records with their strength"
+title: "Model-check outcomes settle as FSpec FR-331 terminal records with their strength"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: verifies
 ---
-# TC-522: Model-check outcomes settle as QSpec FR-331 terminal records with their strength
+# TC-522: Model-check outcomes settle as FSpec FR-331 terminal records with their strength
 
 ## Description
 
 Verify the map from EN-1's outcomes and their replay results to
-`TerminalValue`, QSpec FR-360 labels, FR-243 bases and O-16 categories; the
+`TerminalValue`, FSpec FR-360 labels, FR-243 bases and O-16 categories; the
 category of every `ProofBasis` and new inconclusive cause; each replay
 refusal path; a faulting replay; and the named limit of a run that reached it.
 

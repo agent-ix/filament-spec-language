@@ -1,0 +1,532 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-416 step 7 (FR-093-AC-13): the emitter's application nodes against
+//! FSpec's v2 positive fixtures `positive-operation-identities.json` and
+//! `positive-control-operations.json`, read from `$FSPEC_DIR` at run time
+//! under `make conformance`. Nothing of FSpec is copied into this repository.
+
+use super::*;
+use filament_semantic_value::checking::CheckMode;
+
+/// The application nodes of the fixture at `path`.
+fn fixture_applications(path: &std::path::Path) -> Vec<Value> {
+    let bytes =
+        std::fs::read(path).unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+    let fixture: Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("parsing {}: {error}", path.display()));
+    fixture["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{} has no semantic_graph.nodes", path.display()))
+        .iter()
+        .filter(|node| node["body"]["term"] == "application")
+        .cloned()
+        .collect()
+}
+
+/// The FR-093-AC-13 comparison members of an application node, and only
+/// those: `node_tag`, `semantic_form`, `operator`, `operation.identity`, law
+/// roles in order, `mode`, member `kind` and `name`, each leaf's `path` and
+/// `mode`, and each argument's term kind and binding name. Every other
+/// member (ids, keys, `semantic_type`, dependencies, law definitions) is
+/// placeholder in the fixtures and stays outside the comparison.
+fn compared(node: &Value) -> Value {
+    fn lowered(term: &Value) -> Value {
+        match term["term"].as_str() {
+            Some("binding") => json!(["binding", term["name"], lowered(&term["value"])]),
+            other => json!([other]),
+        }
+    }
+    let body = &node["body"];
+    let operation = &body["operation"];
+    let roles: Vec<&Value> = operation["laws"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|law| &law["role"])
+        .collect();
+    let leaves: Vec<Value> = operation["leaves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|leaf| json!({"path": leaf["path"], "mode": leaf["mode"]}))
+        .collect();
+    let member = if operation["member"].is_null() {
+        Value::Null
+    } else {
+        json!({"kind": operation["member"]["kind"], "name": operation["member"]["name"]})
+    };
+    let arguments: Vec<Value> = body["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(lowered)
+        .collect();
+    json!({
+        "node_tag": node["node_tag"],
+        "semantic_form": node["semantic_form"],
+        "operator": body["operator"],
+        "identity": operation["identity"],
+        "laws": roles,
+        "mode": operation["mode"],
+        "member": member,
+        "leaves": leaves,
+        "arguments": arguments,
+    })
+}
+
+/// One function body FSL lowers to an application node with `identity`
+/// (and, where the fixtures carry several nodes of one identity, `mode`).
+pub(super) struct Case {
+    identity: &'static str,
+    mode: Option<&'static str>,
+    pub(super) package: CheckedPackage,
+}
+
+fn form(builtin: BuiltinType, bounds: &[&str]) -> TypeForm {
+    TypeForm::builtin(builtin, SPAN).with_bounds(bounds.iter().map(|b| (*b).to_owned()).collect())
+}
+
+fn text(profile: &str) -> TypeForm {
+    form(BuiltinType::Text, &["0", "8", profile])
+}
+
+fn typed(
+    name: &str,
+    parameters: &[(&str, TypeForm)],
+    result: TypeForm,
+    body: Expression,
+) -> FunctionDeclaration {
+    FunctionDeclaration::new(
+        name,
+        parameters
+            .iter()
+            .map(|(name, form)| ((*name).to_owned(), form.clone()))
+            .collect(),
+        result,
+        None,
+        body,
+    )
+}
+
+/// `7 op -2`: an application whose operands are both integer literals, which
+/// the lowering writes as inline literal terms of the application's
+/// arguments (FR-358, ADR-013 O-09), as FSpec's integer fixtures do.
+fn literals(operator: BinaryOperator) -> Expression {
+    use filament_exact::Integer;
+    Expression::binary(
+        operator,
+        Expression::integer(Integer::from(7_i64)),
+        Expression::integer(Integer::from(-2_i64)),
+    )
+}
+
+fn binary(operator: BinaryOperator, left: &str, right: &str) -> Expression {
+    Expression::binary(operator, name(left), name(right))
+}
+
+/// `record R { name: Text[0, 8; nfc]; }` (FR-093-AC-11's shape).
+fn record_types() -> TypeEnvironment {
+    let text = ValueType::Text(
+        filament_exact::TextType::new(0, 8, filament_exact::TextProfile::Nfc).unwrap(),
+    );
+    TypeEnvironment::new(
+        [CompositeDeclaration::new(
+            fixture_type_key("R"),
+            "R",
+            CompositeShape::Record(vec![FieldDeclaration::new(
+                "name",
+                text,
+                Presence::Required,
+            )]),
+        )],
+        [],
+    )
+    .expect("FR-143 admits R")
+}
+
+/// The package's one admitted IEEE profile: the catalog's own definition.
+fn ieee_profile() -> fsl_semantics::value::AdmittedIeeeProfile {
+    let entry = DefinitionRole::IeeeProfile.reference();
+    fsl_semantics::value::admit_ieee_profile(&[entry], &[])
+        .expect("the typed IEEE profile role is admitted")
+}
+
+fn linked(types: TypeEnvironment, functions: Vec<FunctionDeclaration>) -> CheckedPackage {
+    let mut declarations =
+        PackageDeclarations::new(source(), "pkg", fsl_foundation::IdentityLimits::default());
+    declarations.types = types;
+    declarations.functions = functions;
+    declarations.ieee_profile = Some(ieee_profile());
+    CheckedPackage::link(
+        declarations
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .expect("the fixture functions check"),
+    )
+}
+
+fn package(functions: Vec<FunctionDeclaration>) -> CheckedPackage {
+    linked(TypeEnvironment::default(), functions)
+}
+
+fn with_record(functions: Vec<FunctionDeclaration>) -> CheckedPackage {
+    linked(record_types(), functions)
+}
+
+/// `fadd(f, g) = f + g` over `Float64[mode]`.
+fn float_add(mode: &str) -> CheckedPackage {
+    float_add_of(BuiltinType::Float64, mode)
+}
+
+/// `fadd(f, g) = f + g` over `width[mode]`, `width` `Float32` or `Float64`.
+pub(super) fn float_add_of(width: BuiltinType, mode: &str) -> CheckedPackage {
+    let float = || form(width, &[mode]);
+    package(vec![typed(
+        "fadd",
+        &[("f", float()), ("g", float())],
+        float(),
+        binary(BinaryOperator::Add, "f", "g"),
+    )])
+}
+
+/// `total(s) = sum<D>(x in s: x)` over `Sequence<E>[0, 4]`, `E` and `D`
+/// two-place decimals of nearest-even rounding, `D` wide enough for four `E`.
+fn decimal_sum() -> CheckedPackage {
+    let decimal = |bound: i64| {
+        ValueType::Decimal(
+            filament_exact::DecimalType::new(
+                filament_exact::Integer::from(-bound),
+                filament_exact::Integer::from(bound),
+                2,
+                2,
+                filament_exact::RoundingMode::NearestEven,
+            )
+            .expect("a well-formed decimal type"),
+        )
+    };
+    let mut declarations =
+        PackageDeclarations::new(source(), "pkg", fsl_foundation::IdentityLimits::default());
+    declarations.aliases = vec![
+        ("E".to_owned(), decimal(25_000)),
+        ("D".to_owned(), decimal(100_000)),
+    ];
+    declarations.ieee_profile = Some(ieee_profile());
+    declarations.functions = vec![typed(
+        "total",
+        &[(
+            "s",
+            TypeForm::collection(CollectionKind::Sequence, SPAN)
+                .with_arguments(vec![TypeForm::name("E", SPAN)])
+                .with_bounds(vec!["0".into(), "4".into()]),
+        )],
+        TypeForm::name("D", SPAN),
+        Expression::sum(
+            fsl_forms::DeclaredName {
+                name: "D".to_owned(),
+                span: SPAN,
+            },
+            "x".to_owned(),
+            name("s"),
+            name("x"),
+        ),
+    )];
+    CheckedPackage::link(
+        declarations
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .expect("the fixture functions check"),
+    )
+}
+
+pub(super) fn cases() -> Vec<Case> {
+    let integer = || TypeForm::builtin(BuiltinType::Integer, SPAN);
+    let positive_rational = || form(BuiltinType::Rational, &["1", "9", "1", "9"]);
+    let case = |identity, mode, package| Case {
+        identity,
+        mode,
+        package,
+    };
+    let record = || TypeForm::name("R", SPAN);
+    let texts = || {
+        TypeForm::collection(CollectionKind::Sequence, SPAN)
+            .with_arguments(vec![text("nfc")])
+            .with_bounds(vec!["0".into(), "5".into()])
+    };
+    vec![
+        case("filament.op.control.if", None, package(vec![t()])),
+        case(
+            "filament.op.integer.add",
+            None,
+            package(vec![typed(
+                "add",
+                &[],
+                integer(),
+                literals(BinaryOperator::Add),
+            )]),
+        ),
+        case(
+            "filament.op.integer.mul",
+            None,
+            package(vec![typed(
+                "mul",
+                &[],
+                integer(),
+                literals(BinaryOperator::Multiply),
+            )]),
+        ),
+        case(
+            "filament.op.rational.div",
+            None,
+            package(vec![typed(
+                "rdiv",
+                &[("x", positive_rational()), ("y", positive_rational())],
+                form(BuiltinType::Rational, &["-1000", "1000", "1", "1000"]),
+                binary(BinaryOperator::Divide, "x", "y"),
+            )]),
+        ),
+        case(
+            "filament.op.text.eq",
+            Some("nfc"),
+            package(vec![typed(
+                "teq",
+                &[("p", text("nfc")), ("r", text("nfc"))],
+                boolean(),
+                binary(BinaryOperator::Equal, "p", "r"),
+            )]),
+        ),
+        case(
+            "filament.op.text.eq",
+            Some("binary-utf8"),
+            package(vec![typed(
+                "beq",
+                &[("p", text("binary-utf8")), ("r", text("binary-utf8"))],
+                boolean(),
+                binary(BinaryOperator::Equal, "p", "r"),
+            )]),
+        ),
+        case(
+            // `a = a`, not `a = b`: IR's v2 reader refuses `a = b` over two
+            // distinct record parameters (`ill_typed`/`operator-ineligible`,
+            // IR-307), so this uses one operand twice, as the fixture does.
+            "filament.op.structural.eq",
+            None,
+            with_record(vec![typed(
+                "seq",
+                &[("a", record())],
+                boolean(),
+                binary(BinaryOperator::Equal, "a", "a"),
+            )]),
+        ),
+        case(
+            "filament.op.record.project",
+            None,
+            with_record(vec![typed(
+                "proj",
+                &[("a", record())],
+                text("nfc"),
+                Expression::field(name("a"), "name".to_owned()),
+            )]),
+        ),
+        case(
+            "filament.op.collection.contains",
+            None,
+            package(vec![typed(
+                "has",
+                &[("s", texts()), ("t", text("nfc"))],
+                boolean(),
+                Expression::contains(name("s"), name("t")),
+            )]),
+        ),
+        case(
+            "filament.op.function.call",
+            None,
+            package(vec![
+                typed("g", &[], boolean(), Expression::boolean(true)),
+                typed(
+                    "c",
+                    &[],
+                    boolean(),
+                    Expression::call("g".to_owned(), vec![]),
+                ),
+            ]),
+        ),
+        case("filament.op.collection.sum.decimal", None, decimal_sum()),
+        // The fixtures' two `float64.add` nodes carry `toward-zero` and
+        // `nearest-even`: the mode is part of the `Float64[mode]` type
+        // (FR-091-OQ-4), so one case per mode compares `mode` too.
+        case(
+            "filament.op.ieee.float64.add",
+            Some("toward-zero"),
+            float_add("toward-zero"),
+        ),
+        case(
+            "filament.op.ieee.float64.add",
+            Some("nearest-even"),
+            float_add("nearest-even"),
+        ),
+    ]
+}
+
+/// Fixture identities no case here writes: no row of FR-093's table lowers in a
+/// function body: IEEE `numeric_equal`, integer
+/// division and remainder, `reaches`, and the four rows AC-3 excludes because
+/// the `Value` family builds no such node in a function body.
+const NOT_LOWERED: [&str; 7] = [
+    "filament.op.ieee.numeric_equal",
+    "filament.op.integer.div",
+    "filament.op.integer.rem",
+    "filament.op.model.reaches",
+    "filament.op.model.dispatch_call",
+    "filament.op.model.lookup",
+    "filament.op.model.all_instances",
+];
+
+/// FR-093-AC-13 / TC-416 step 7: for each application node of FSpec's
+/// `positive-operation-identities.json` and
+/// `positive-control-operations.json` whose identity a row lowers, the node
+/// FSL emits for a function holding that operation equals the fixture node
+/// on the AC's members. The admitted-equality accessor materializes supported
+/// Plan rows and names exact missing per-fact witnesses for Text, Enum, and
+/// Quantity schedules.
+///
+/// Fails when `FSPEC_DIR` is unset; `make conformance`
+/// requires it.
+#[trace("FR-093-AC-13", "TC-416")]
+#[test]
+fn conformance_emitted_application_nodes_match_fspec_positive_fixtures() {
+    let fspec = std::env::var_os("FSPEC_DIR")
+        .expect("FSPEC_DIR must name a filament-specification checkout");
+    let directory = std::path::Path::new(&fspec).join("proposals/checked-package-v2/fixtures");
+    let cases = cases();
+    let mut hit = vec![false; cases.len()];
+    let mut emitted = Vec::new();
+    for case in &cases {
+        let emission = emit(&case.package);
+        assert_eq!(
+            emission.omitted,
+            [],
+            "{}: nothing is omitted",
+            case.identity
+        );
+        let emitted_wire = wire(&emission);
+        let has_equality_sidecar = emitted_wire
+            .get("checked_term_data")
+            .and_then(|data| data.get("equality_decisions"))
+            .and_then(Value::as_array)
+            .is_some_and(|rows| !rows.is_empty());
+        if has_equality_sidecar {
+            assert_equality_reader_outcomes(&emission, read_back(&emission));
+        } else {
+            let read = read_back(&emission);
+            assert!(
+                matches!(read, Read::Verified { .. }),
+                "{}: IR's v2 reader must admit a fixture without checked_term_data, got {read:?}",
+                case.identity
+            );
+        }
+        emitted.push(emitted_wire);
+    }
+
+    let mut compared_nodes = 0_usize;
+    for file in [
+        "positive-operation-identities.json",
+        "positive-control-operations.json",
+    ] {
+        for fixture in fixture_applications(&directory.join(file)) {
+            let identity = fixture["body"]["operation"]["identity"].as_str().unwrap();
+            let mode = fixture["body"]["operation"]["mode"]["value"].as_str();
+            if NOT_LOWERED.contains(&identity) {
+                continue;
+            }
+            let (index, _) = cases
+                .iter()
+                .enumerate()
+                .find(|(_, case)| {
+                    case.identity == identity && (case.mode.is_none() || case.mode == mode)
+                })
+                .unwrap_or_else(|| panic!("{file}: no case writes {identity} (mode {mode:?})"));
+            hit[index] = true;
+            let ours: Vec<&Value> = nodes(&emitted[index])
+                .iter()
+                .filter(|node| node["body"]["operation"]["identity"] == identity)
+                .collect();
+            let [ours] = ours.as_slice() else {
+                panic!("{identity}: expected one emitted node, got {}", ours.len());
+            };
+            assert_eq!(
+                compared(ours),
+                compared(&fixture),
+                "{file}: {identity} (mode {mode:?})"
+            );
+            compared_nodes += 1;
+        }
+    }
+    assert!(
+        hit.iter().all(|hit| *hit),
+        "a case matched no fixture node: {:?}",
+        cases
+            .iter()
+            .zip(&hit)
+            .filter(|(_, hit)| !**hit)
+            .map(|(case, _)| case.identity)
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "conformance: {compared_nodes} emitted application nodes match FSpec's positive fixtures"
+    );
+}
+
+/// `total(s) = sum<F>(x in s: x)` over `Sequence<F>[0, 4]`, `F` a binary64
+/// nearest-even float, checked with the IEEE profile.
+fn float_sum() -> Result<CheckedPackage, Vec<CheckRefusal>> {
+    let float = ValueType::Float(filament_exact::FloatType::new(
+        filament_exact::IeeeWidth::Binary64,
+        filament_exact::RoundingMode::NearestEven,
+    ));
+    let mut declarations =
+        PackageDeclarations::new(source(), "pkg", fsl_foundation::IdentityLimits::default());
+    declarations.aliases = vec![("F".to_owned(), float)];
+    declarations.ieee_profile = Some(ieee_profile());
+    declarations.functions = vec![typed(
+        "total",
+        &[(
+            "s",
+            TypeForm::collection(CollectionKind::Sequence, SPAN)
+                .with_arguments(vec![TypeForm::name("F", SPAN)])
+                .with_bounds(vec!["0".into(), "4".into()]),
+        )],
+        TypeForm::name("F", SPAN),
+        Expression::sum(
+            fsl_forms::DeclaredName {
+                name: "F".to_owned(),
+                span: SPAN,
+            },
+            "x".to_owned(),
+            name("s"),
+            name("x"),
+        ),
+    )];
+    declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .map(CheckedPackage::link)
+}
+
+/// FR-517-AC-20: a float sum is emitted with its IEEE profile law and IR's v2
+/// reader admits it.
+#[trace("FR-517-AC-20", "TC-1312")]
+#[test]
+fn a_float_sum_is_emitted_and_read_back_by_the_ir_reader() {
+    let package = float_sum().expect("the fixture functions check");
+    let emission = emit(&package);
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let sum = nodes(&wire)
+        .iter()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.collection.sum.float64")
+        .expect("the float64 sum node");
+    assert_eq!(
+        sum["body"]["operation"]["laws"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert!(
+        matches!(read_back(&emission), Read::Verified { .. }),
+        "IR's v2 reader admits the float sum"
+    );
+}

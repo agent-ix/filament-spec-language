@@ -3,7 +3,7 @@ id: TC-385
 title: "S6a's input type admits no Relation, and FamilyOutcome has exactly two arms"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-385: S6a's input type admits no Relation, and FamilyOutcome has exactly two arms

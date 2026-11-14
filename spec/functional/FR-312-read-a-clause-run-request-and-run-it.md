@@ -3,36 +3,36 @@ id: FR-312
 title: "Read a clause-run request and run it through run_clause"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-014
+  - target: ix://agent-ix/filament-spec-language/US-014
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-301
+  - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-031
+  - target: ix://agent-ix/filament-spec-language/FR-031
     type: references
 ---
 # FR-312: Read a clause-run request and run it through run_clause
 
 ## Description
 
-QSL SHALL provide `qsl_replay::spine::read_clause_run_request`, which reads a
+FSL SHALL provide `fsl_replay::spine::read_clause_run_request`, which reads a
 clause-run request file and the files it names into FR-109's
-`ClauseRunRequest`. The request shape is QSL's. The `run` command
+`ClauseRunRequest`. The request shape is FSL's. The `run` command
 ([FR-100](FR-100-run-a-named-function-through-the-spine.md)) and the
-orchestrating driver (agent-ix/quire-driver, ADR-011 T-13) expose it: each
+orchestrating driver (agent-ix/filament-driver, ADR-011 T-13) expose it: each
 passes the request file to this reader, calls
-`qsl_replay::spine::run_clause` (FR-109) with the result, and writes the
+`fsl_replay::spine::run_clause` (FR-109) with the result, and writes the
 report as FR-267's `native-run-result/2` clause-run document. Neither forms
 a `ClauseRunRequest` any other way.
 
@@ -74,10 +74,10 @@ place of `call`. `clause` is a closed object:
     `{name, trace, over}`, `{finite}` or `{lasso}` for `trace`, and
     `{prefix, loop}` for `lasso`;
 - `observations`: an object mapping each key to the file of a
-  `quire.state.snapshot/v1` or `quire.state.invocation/v1` document
+  `filament.state.snapshot/v1` or `filament.state.invocation/v1` document
   (FR-106);
 - `accounting`: optional, a closed object whose members are any subset of
-  the ten `quire.value.accounting/v1` counter names, each a JSON integer
+  the ten `filament.value.accounting/v1` counter names, each a JSON integer
   from 0 to `u64::MAX`, with the same defaults as FR-100's
   `call.accounting`; a counter supplied here overrides only that counter's
   default. A direct `work_units` member of `clause` is not accepted;
@@ -92,7 +92,7 @@ package and dependency inputs.
   ClauseRunRequestRefusal>`.
 - `command`'s `run` returns the report as one `native-run-result/2`
   clause-run result document (FR-267), with FR-285's exit code of the
-  disposition's category (FR-109, QSpec FR-301), and writes nothing to the
+  disposition's category (FR-109, FSpec FR-301), and writes nothing to the
   process streams; the driver writes that document to stdout (FR-287,
   Overlap).
 
@@ -111,12 +111,12 @@ package and dependency inputs.
   `invalid-request` at stage `request`, naming the member.
 - If a `1-draft` request carries both `call` and `clause`, or neither, then
   the reader SHALL refuse `invalid-request` at stage `request`.
-- When `qsl-replay` is built with `quire-extraction` and the request's
+- When `fsl-replay` is built with `quire-extraction` and the request's
   `program` carries `extraction`, the reader SHALL decode `extraction` and
   `clauses`, check the request's mode, build and validate the clause-only
   Quire context, extract the body through FR-030 and put the extracted
   source in the `ClauseRunRequest` as its unit, as FR-031 states. Its mode,
-  context and extraction refusals are FR-031's. When `qsl-replay` is built
+  context and extraction refusals are FR-031's. When `fsl-replay` is built
   without that feature, the reader SHALL refuse `extraction` as an unknown
   member.
 - If `selection` holds no variant, more than one, or a variant whose
@@ -141,7 +141,7 @@ package and dependency inputs.
   `Temporal{name, trace, over}` with one FR-106 `DocumentRef` per trace
   key, in the order the request lists the keys; a key listed twice names
   the same document at both positions. Each key SHALL name a
-  `quire.state.snapshot/v1` document whose observation role is `current`;
+  `filament.state.snapshot/v1` document whose observation role is `current`;
   an invocation document or another role refuses `invalid-request` at
   stage `request`, naming `trace`. A `trace` variant other than `finite`
   and `lasso` (a model trace, FR-330's `TraceInput::Model`, and a timestamped
@@ -192,7 +192,7 @@ method-only Verification cells do not replace the existing trace tags.
   `Temporal` selection, its trace input and `over` binding.
 - [FR-267](FR-267-write-run-results-as-native-run-result-2.md): the `/2`
   clause-run document and the command-error envelope.
-- QSpec FR-301 (exit codes).
+- FSpec FR-301 (exit codes).
 
 ## Status
 

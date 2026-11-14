@@ -3,7 +3,7 @@ id: TC-686
 title: "A timed subject's behaviours read as timed traces with delays, urgency, idle tails and digital time"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-231
+  - target: ix://agent-ix/filament-spec-language/FR-231
     type: verifies
 ---
 # TC-686: A timed subject's behaviours read as timed traces with delays, urgency, idle tails and digital time

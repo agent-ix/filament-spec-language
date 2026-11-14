@@ -3,7 +3,7 @@ id: TC-726
 title: "Deep types key and lower their text leaves on a small stack"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-258
+  - target: ix://agent-ix/filament-spec-language/FR-258
     type: verifies
 ---
 # TC-726: Deep types key and lower their text leaves on a small stack

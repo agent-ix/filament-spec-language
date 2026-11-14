@@ -3,13 +3,13 @@ id: TC-1250
 title: "The SMT encoding limits and solver run limits are request settings that settle V-7 and are recorded for the certificate check"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: verifies
 ---
 # TC-1250: The SMT encoding limits and solver run limits are request settings that settle V-7 and are recorded for the certificate check

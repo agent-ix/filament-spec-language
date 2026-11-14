@@ -3,7 +3,7 @@ id: TC-1202
 title: "A schedulability claim emits a v2 claim node the I2 reader resolves"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-454
+  - target: ix://agent-ix/filament-spec-language/FR-454
     type: verifies
 ---
 # TC-1202: A schedulability claim emits a v2 claim node the I2 reader resolves
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify that S4 emits each checked `schedulable` and `response` claim as a
-QSpec FR-482 `claim`/`schedulability` node holding its task set, that the
+FSpec FR-482 `claim`/`schedulability` node holding its task set, that the
 policy and every premise enter the node id while spelling does not, that the
 I2 reader resolves the claim by its triple for FR-248's checker, and that it
 refuses a malformed node.

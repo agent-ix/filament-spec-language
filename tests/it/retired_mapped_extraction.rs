@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-484: the legacy mapped and root extraction API and feature are absent,
-//! while the qsl-source and qsl-replay extraction owners remain available.
+//! while the fsl-source and fsl-replay extraction owners remain available.
 
 use ix_trace_rs::trace;
 use serde_json::Value;
@@ -61,7 +61,7 @@ fn retired_mapped_and_extraction_imports_fail_in_a_downstream_crate() {
             path.file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| {
-                    name.starts_with("libquire_spec_language-") && name.ends_with(".rlib")
+                    name.starts_with("libfilament_spec_language-") && name.ends_with(".rlib")
                 })
         })
         .max_by_key(|path| {
@@ -78,7 +78,7 @@ fn retired_mapped_and_extraction_imports_fail_in_a_downstream_crate() {
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("libqsl_command-") && name.ends_with(".rlib"))
+                .is_some_and(|name| name.starts_with("libfsl_command-") && name.ends_with(".rlib"))
         })
         .max_by_key(|path| {
             std::fs::metadata(path)
@@ -89,12 +89,12 @@ fn retired_mapped_and_extraction_imports_fail_in_a_downstream_crate() {
     let source = temporary.path().join("lib.rs");
     std::fs::write(
         &source,
-        "use quire_spec_language::mapped;\n\
-         use quire_spec_language::command as retired_command;\n\
-         use quire_spec_language::formal_source as retired_formal_source;\n\
-         use qsl_command::command::extraction as legacy_extraction;\n\
-         use qsl_command::command::output::extraction as legacy_output;\n\
-         use qsl_command::command::RunCause;\n\
+        "use filament_spec_language::mapped;\n\
+         use filament_spec_language::command as retired_command;\n\
+         use filament_spec_language::formal_source as retired_formal_source;\n\
+         use fsl_command::command::extraction as legacy_extraction;\n\
+         use fsl_command::command::output::extraction as legacy_output;\n\
+         use fsl_command::command::RunCause;\n\
          fn removed_cause() { let _ = RunCause::Extraction; }\n",
     )
     .expect("downstream probe source writes");
@@ -107,9 +107,9 @@ fn retired_mapped_and_extraction_imports_fail_in_a_downstream_crate() {
             "--crate-type=lib",
         ])
         .arg("--extern")
-        .arg(format!("quire_spec_language={}", library.display()))
+        .arg(format!("filament_spec_language={}", library.display()))
         .arg("--extern")
-        .arg(format!("qsl_command={}", command_library.display()))
+        .arg(format!("fsl_command={}", command_library.display()))
         .arg("-L")
         .arg(format!("dependency={}", dependencies.display()))
         .arg(&source)
@@ -143,9 +143,9 @@ fn retired_mapped_and_extraction_imports_fail_in_a_downstream_crate() {
 #[test]
 fn root_extraction_feature_and_dependency_are_absent_but_replay_owners_remain() {
     let metadata = metadata();
-    let root = package(&metadata, "quire-spec-language");
-    let source = package(&metadata, "qsl-source");
-    let replay = package(&metadata, "qsl-replay");
+    let root = package(&metadata, "filament-spec-language");
+    let source = package(&metadata, "fsl-source");
+    let replay = package(&metadata, "fsl-replay");
 
     assert!(!root["features"]
         .as_object()
@@ -155,7 +155,7 @@ fn root_extraction_feature_and_dependency_are_absent_but_replay_owners_remain() 
         .as_array()
         .unwrap()
         .iter()
-        .any(|dependency| dependency["name"] == "qsl-source"));
+        .any(|dependency| dependency["name"] == "fsl-source"));
     assert!(source["features"]
         .as_object()
         .unwrap()

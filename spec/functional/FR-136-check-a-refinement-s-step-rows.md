@@ -3,17 +3,17 @@ id: FR-136
 title: "Check a refinement's step rows at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: depends_on
 ---
 # FR-136: Check a refinement's step rows at S3
@@ -77,7 +77,7 @@ pub enum StepTarget {
 
 - The checked model binding that FR-135 retains for each side SHALL include
   the selected model package's canonical identity and version. S4 SHALL emit
-  the identity-bound `model_root` node required by QSpec FR-322 for each
+  the identity-bound `model_root` node required by FSpec FR-322 for each
   selected package, regardless of declaration count; the selected version
   participates in the root key, while the source alias does not.
 - For a model subject, S4 SHALL set the refinement node's `semantic_type` to
@@ -85,7 +85,7 @@ pub enum StepTarget {
   For a protocol subject, `semantic_type` remains the concrete model root,
   body `abstract` remains the abstract model root, and body `protocol` names
   the exact selected protocol clause. A dependency-package abstract root uses
-  the QSpec local-or-dependency key form; a concrete root in the package being
+  the FSpec local-or-dependency key form; a concrete root in the package being
   emitted is local.
 - The concrete model root is an annotation at `semantic_type` and is not
   added to `dependencies` solely for that reason. The abstract model root is
@@ -106,7 +106,7 @@ pub enum StepTarget {
   and never a protocol. The step rows select the protocol: a row whose left
   side is `<C>::<protocol>::<name>`, `fork`, `join`, `cend`, `duplicate`,
   `lose`, `spawn` or `retire` followed by that form, or `activate
-  <C>::<protocol>` (QSpec FR-432), names the protocol clause `<protocol>`,
+  <C>::<protocol>` (FSpec FR-432), names the protocol clause `<protocol>`,
   a protocol clause of the declaring package whose roles act on `<C>`.
 - S3 SHALL classify a row's source by resolving the segment after `<C>::`
   among the concrete model's object types and the protocol clauses of the
@@ -126,7 +126,7 @@ pub enum StepTarget {
 - A protocol name that is no protocol clause of the declaring package SHALL
   refuse `missing_declaration`/`missing-name` at that segment. A clause
   whose roles act only on a model other than `<C>` SHALL refuse
-  `invalid_model_binding`/`malformed-declaration` at that segment, as QSpec
+  `invalid_model_binding`/`malformed-declaration` at that segment, as FSpec
   FR-375 states for the abstract side.
 - A `memory <kind>` row names no protocol. Its kind SHALL resolve among the
   memory step kinds of the protocol's memory models (below), and with no
@@ -250,7 +250,7 @@ subject until the checked clause is available meets the same rule.
   expression.
 - The argument count SHALL equal the abstract operation's parameter count,
   with `_` for an argument the concrete step leaves open; a different count
-  SHALL refuse `ill_typed`/`operator-ineligible` at the row, as QSpec FR-375
+  SHALL refuse `ill_typed`/`operator-ineligible` at the row, as FSpec FR-375
   states.
 - When both the concrete step's operation and the abstract operation
   declare a result, the concrete result type SHALL conform to the abstract
@@ -263,7 +263,7 @@ subject until the checked clause is available meets the same rule.
 - The header selects the abstract and concrete model packages. A model
   subject SHALL NOT require exactly one `state_machine` record on either
   side. The checked model and its mapped state are identified by the header
-  model keys and the refinement's `object` rows (QSpec FR-375; FR-135).
+  model keys and the refinement's `object` rows (FSpec FR-375; FR-135).
 - Each `state_machine` declaration's field set is mapped by its explicit
   `object` row (FR-135). An object-type-only model, such as ADR-020 §8's
   `Spec` or `Impl`, is a valid subject and uses its population/object rows;
@@ -305,4 +305,4 @@ subject until the checked clause is available meets the same rule.
 
 ## References
 
-- The QSpec half (grammar and step semantics): QSpec FR-375 and FR-377 (Linear STD-133).
+- The FSpec half (grammar and step semantics): FSpec FR-375 and FR-377 (Linear STD-133).

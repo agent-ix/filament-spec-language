@@ -3,70 +3,70 @@ id: FR-230
 title: "Check a state model's time declaration, clocks, clock constraints, time invariants and urgency"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-205
+  - target: ix://agent-ix/filament-specification/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-361
+  - target: ix://agent-ix/filament-spec-language/FR-361
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-393
+  - target: ix://agent-ix/filament-spec-language/FR-393
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-154
+  - target: ix://agent-ix/filament-specification/FR-154
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
   - target: ix://agent-ix/filament-core-data/FR-146
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-415
+  - target: ix://agent-ix/filament-specification/FR-415
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-143
+  - target: ix://agent-ix/filament-specification/FR-143
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: depends_on
 ---
 # FR-230: Check a state model's time declaration, clocks, clock constraints, time invariants and urgency
 
 ## Description
 
-QSL's S3 checker SHALL admit the timed members of a state model (ADR-026
+FSL's S3 checker SHALL admit the timed members of a state model (ADR-026
 CK-1 to CK-9): one `time` member naming the model's time source, `Clock`
 fields under a dense source, clock resets in postconditions, atomic clock
 constraints in guards, time invariants and urgency declarations. It records
 them on the checked state model so that the timed subject (FR-231), the zone
 engine (FR-239) and replay (FR-237) read one checked form. S3 confines every
 clock read to an atomic clock constraint, so no real value reaches the value
-kernel. Clock members are admitted only at package positions admitted by QSpec
+kernel. Clock members are admitted only at package positions admitted by FSpec
 FR-154 and FR-322: function, predicate or operation parameters and results,
 record fields, alias targets, `Option` arguments and collection positions.
 Tuple positions typed directly by `Clock` and variant payloads typed by
-`Clock` are not admitted; QSpec FR-154-AC-25 refuses the latter as
+`Clock` are not admitted; FSpec FR-154-AC-25 refuses the latter as
 `unsupported_construct`/`declaration-form` at `Variant.payloadType`. For each
 admitted clock-bearing collection, the checker records one clock place for
-each live element (QSpec FR-415 "Clock collections").
+each live element (FSpec FR-415 "Clock collections").
 
 ## Use case
 
@@ -87,16 +87,16 @@ check source uniqueness or clock placement, or validate a timed constraint.
 S2 produces no timed-facet or timed-model refusal for these grammar-valid
 forms. S3 reads the unit's FR-110 selected-layer union, including each
 selected layer's `requires` closure. If that union omits
-`quire.temporal.complete/v1`, FR-230-AC-7 applies. If it contains the layer,
+`filament.temporal.complete/v1`, FR-230-AC-7 applies. If it contains the layer,
 S3 validates the forms and either records the checked `TimedModel` and its
 derived constraints or returns the located refusal this requirement names;
 it does not leave a timed form unchecked.
 
 ## Inputs
 
-- A parsed state model with its members, in the spelling QSpec's shared
+- A parsed state model with its members, in the spelling FSpec's shared
   grammar fixes for the `time` member, `Clock` fields, resets, clock
-  constraints, `time invariant` and `urgent` (QSpec half, References).
+  constraints, `time invariant` and `urgent` (FSpec half, References).
 
 ## Outputs
 
@@ -104,7 +104,7 @@ On the checked state model:
 
 ```rust
 pub enum TimeSource {
-    Dense { unit: TimeUnit },                                   // QSpec FR-142
+    Dense { unit: TimeUnit },                                   // FSpec FR-142
     Tick { operation: OperationId, period: ExactQuantity, unit: TimeUnit },
 }
 
@@ -147,8 +147,8 @@ span on refusal.
 
 - The checker SHALL admit at most one `time` member per state model; a
   second SHALL refuse `invalid_timed_model`/`duplicate-time-source` at
-  its span, naming the first (QSpec FR-415).
-- The checker SHALL resolve the unit `u` as a unit of QSpec FR-142's time
+  its span, naming the first (FSpec FR-415).
+- The checker SHALL resolve the unit `u` as a unit of FSpec FR-142's time
   dimension (next section), and SHALL refuse a unit of another dimension,
   including a unit of a different dimension named `Time`, with
   `ill_typed`/`type-mismatch` at the unit's span.
@@ -163,7 +163,7 @@ span on refusal.
 - Under `time tick O period p unit u`, the checker SHALL resolve `O` to an
   operation of the model (FR-103), refusing `missing_declaration`/
   `missing-name` otherwise, and SHALL require `p` to be a positive exact
-  rational quantity of the time dimension (QSpec FR-205), refusing zero or a
+  rational quantity of the time dimension (FSpec FR-205), refusing zero or a
   negative period with `invalid_model_binding`/`malformed-declaration`.
 - A model with a `time` member is a timed model. The `TimedModel` SHALL be
   part of the checked package, so two models that differ only in it have
@@ -171,20 +171,20 @@ span on refusal.
 
 ### The time dimension and its units
 
-QSL has no built-in dimension and no built-in unit: `ms` and `s` are not
+FSL has no built-in dimension and no built-in unit: `ms` and `s` are not
 predeclared. The checker reads the **unit graph of the checked package**
-(FR-091), which holds the dimensions and units a QSL unit declares in its own
+(FR-091), which holds the dimensions and units an FSL unit declares in its own
 source (FR-094-AC-8) together with those the admitted domain package supplies
-in its `dimensions` and `units` (QSpec FR-154, filament-core-data FR-146);
-QSpec FR-142 gives the meaning of their identities and conversions. A model
+in its `dimensions` and `units` (FSpec FR-154, filament-core-data FR-146);
+FSpec FR-142 gives the meaning of their identities and conversions. A model
 may therefore use a time unit declared in either place. A unit the domain
 package supplies is a checked-package node with no declaration name, owned by
-its selection (QSpec FR-322 "Model-owned members" step 4): the source reaches
+its selection (FSpec FR-322 "Model-owned members" step 4): the source reaches
 it only through the model alias, `time dense unit M::ms` after
 `model M = "acme/rpc" …`, matched against the `name`s of that package's units,
 and a source `ms` and the package's `ms` are two units. A dimension the package supplies is reached the same way,
 `M::Time`, and a source `Time` and the package's `Time` are two dimensions
-(QSpec FR-142 "Namespaces").
+(FSpec FR-142 "Namespaces").
 
 - The **time dimension** of a model SHALL be the exact nominal dimension node
   referenced by its checked timed-model root's `time_dimension` binding. It is
@@ -194,10 +194,10 @@ and a source `ms` and the package's `ms` are two units. A dimension the package 
   declaration order. Every quantity the model reads as time (the period
   `p`, a clock constant, a reset value and a time-invariant bound) SHALL be a
   quantity of that node, or of a dimension node that a dimension equivalence
-  of the unit relates to it (QSpec FR-142 "Dimension equivalence"; FR-091),
+  of the unit relates to it (FSpec FR-142 "Dimension equivalence"; FR-091),
   which the checker converts exactly to the model's unit `u` through the
   equivalence's root ratio (FR-230-AC-28), and SHALL
-  otherwise be refused `ill_typed`/`type-mismatch` at its span (QSpec FR-142
+  otherwise be refused `ill_typed`/`type-mismatch` at its span (FSpec FR-142
   "Dimensions of different owners"). The **time units** SHALL be
   the units typed by that node. The explicit binding records this resolved
   authority in the checked graph; dimension names and dimensional vectors do
@@ -210,13 +210,13 @@ and a source `ms` and the package's `ms` are two units. A dimension the package 
   and a quantity such as `3 ms` in this order: `u` is found by name, its
   dimension node is verified as the base `Time` dimension and recorded as the
   explicit root `time_dimension`, then `u` has a zero composed offset. It SHALL convert a quantity exactly by
-  composing the unit's edges (QSpec FR-142).
-- If a QSL unit's own source declares two dimensions named `Time`, the
+  composing the unit's edges (FSpec FR-142).
+- If an FSL unit's own source declares two dimensions named `Time`, the
   assembler refuses it first, `ambiguous_declaration`/`ambiguous-name`
   (FR-091), and S3 never sees it. If the unit's source and an admitted domain
   package both declare a dimension of one name, `Time` or any other, or two
   admitted domain packages do, the declarations are distinct dimensions and
-  the checker SHALL refuse nothing (QSpec FR-142 "Namespaces"); the time
+  the checker SHALL refuse nothing (FSpec FR-142 "Namespaces"); the time
   dimension is the one the unit `u` is typed by.
 - If the graph has no base dimension named `Time`, the checker SHALL refuse a
   `time` member or time quantity `missing_declaration`/`missing-name` at its
@@ -236,8 +236,8 @@ and a source `ms` and the package's `ms` are two units. A dimension the package 
 
 A `Clock` field belongs to a model object type, and object types come from
 the admitted domain package. The package declares it as a field typed
-`ix://quire/native/Clock` with the clock field shape (filament-core-data
-FR-146, the contract of Linear STD-295; QSpec FR-154), and QSpec FR-322
+`ix://filament/native/Clock` with the clock field shape (filament-core-data
+FR-146, the contract of Linear STD-295; FSpec FR-154), and FSpec FR-322
 "Model-owned members" gives it the clock type. The checker SHALL read each
 such field as a clock of its owning object type, in declaration order, and
 SHALL apply "Clocks and resets", "Clock constraints and guards" and "Time
@@ -247,7 +247,7 @@ under "Clock-typed positions", and the package fields feed the same places;
 the rules of this requirement also need the facet to be selectable (Timed
 facet gate).
 
-A package field whose `typeRef` is `ix://quire/native/Clock` SHALL be admitted
+A package field whose `typeRef` is `ix://filament/native/Clock` SHALL be admitted
 as a clock field, not looked up as a native value type. Its package-declared
 `unique:false` multiplicity is valid; the field still contributes the clock
 place(s) required by its declared bounds.
@@ -268,7 +268,7 @@ place(s) required by its declared bounds.
 
 - The checker SHALL admit `x ~ c`, with `~` one of `<`, `<=`, `=`, `>=`,
   `>` and `c` an exact non-negative rational time quantity, as an atomic
-  clock constraint, converting `c` exactly to `u` (QSpec FR-142, FR-205).
+  clock constraint, converting `c` exactly to `u` (FSpec FR-142, FR-205).
   A negative constant SHALL refuse `invalid_timed_model`/
   `negative-clock-constant` at the constant's span.
 - The checker SHALL admit a clock read only as the clock operand of an
@@ -348,7 +348,7 @@ place(s) required by its declared bounds.
   of `T`. A `P` that does not read `self` SHALL be evaluated once at `s`: a
   time invariant whose `P` holds at `s` applies to the places of every object
   of `T` at `s`, and an `urgent when` whose `P` holds at `s` makes `s`
-  urgent whatever objects `s` holds, including none (QSpec FR-415
+  urgent whatever objects `s` holds, including none (FSpec FR-415
   "Urgency": no positive delay at a state where `P` holds). A time invariant
   that holds at a state with no object of `T` bounds no place, and for
   quiescence (FR-231) it does not apply there: a time invariant applies at
@@ -367,10 +367,10 @@ place(s) required by its declared bounds.
 ### Clock-typed positions
 
 A **clock-bearing** type, a **clock place** and a **guarded** place are
-QSpec FR-415's "Clock places". S3 follows an alias chain to the type the alias
+FSpec FR-415's "Clock places". S3 follows an alias chain to the type the alias
 names, so `type A = Clock;` makes `A` the clock type and `type B = Option<A>` the
 optional clock type. The source form is built at S2; whether a package type
-position admits that type is governed by QSpec FR-154 and FR-322. The rules
+position admits that type is governed by FSpec FR-154 and FR-322. The rules
 below apply to clock-bearing positions admitted by those requirements and fix
 what each such position means.
 
@@ -408,7 +408,7 @@ what each such position means.
   it as a data predicate of its
   convex part.
   **Presence is derived.** `present(p)` is the derived Boolean predicate of
-  QSpec FR-415 "Presence is derived" and FR-322 "Timed-model nodes" (Presence),
+  FSpec FR-415 "Presence is derived" and FR-322 "Timed-model nodes" (Presence),
   FR-322-AC-155 to FR-322-AC-157, not a field. The checker SHALL resolve it
   through the place identity of "Place identity" (the owner object, the
   `clock_place` node and the slots) and SHALL NOT declare an `Option<Boolean>`
@@ -423,7 +423,7 @@ what each such position means.
   or the removal of the slot) sets the presence false and leaves the dropped
   clock **unconstrained**: no zone constraint, time invariant bound or elapse
   applies to it, it has no valuation, and a later write that makes it present
-  resets it afresh. **No implicit reset** (QSpec FR-415-AC-21): a place
+  resets it afresh. **No implicit reset** (FSpec FR-415-AC-21): a place
   SHALL become present only by a write of its clock (a reset, an `Option`
   write that writes the clock, or a reset of a `Clock` parameter for the
   instance that binds it to the place). An `Option<Clock>` bit SHALL NOT
@@ -440,10 +440,10 @@ what each such position means.
   decides the precondition case; a state invariant that reads a clock
   presence refuses `unsupported_construct`/`not-yet-implemented` at the read
   first, so the invariant case is not reached yet. For absence the two forms
-  split as QSpec FR-415 "The same rule for absence" states: `not
+  split as FSpec FR-415 "The same rule for absence" states: `not
   present(self.v)` of a present, unwritten `v` has no successor, since an
   `Option<Clock>` bit does not change unwritten.
-  "Every present clock is 0 in every initial state" (QSpec
+  "Every present clock is 0 in every initial state" (FSpec
   FR-415, FR-231, FR-239's zero valuation) therefore reads over the present
   clocks only. **State-key form.** A presence bit SHALL be held only for a **live** guarded
   place that has **no snapshot member**: an `Option<Clock>` (as a field, a
@@ -454,7 +454,7 @@ what each such position means.
   object's `record` (FR-120) by the place's own `Option` shell: an
   `Option<Clock>` value encodes as `{"type":"option","value":null}` when absent
   and `{"type":"option","value":{"type":"tuple","name":"Clock","components":[]}}`
-  when present, so QSL's `semantic` SHALL stay the map of FR-120. The bits of a
+  when present, so FSL's `semantic` SHALL stay the map of FR-120. The bits of a
   collection SHALL be those of its live elements only, in the collection's own
   order, so a variable-size or unbounded collection has exactly as many bits as
   it has live `Option<Clock>` elements, and a dropped slot has none.
@@ -492,7 +492,7 @@ what each such position means.
   a constant of that kind SHALL refuse `invalid_timed_model`/
   `clock-bound-not-constant` at the argument.
 - **Records and admitted aggregate paths.** A record type may contain admitted
-  clock fields under QSpec FR-154 and FR-322. The checker SHALL read a data
+  clock fields under FSpec FR-154 and FR-322. The checker SHALL read a data
   field of such a record as an ordinary value, and SHALL refuse a clock-bearing
   value read whole (as an operand of `=`, an argument of a data parameter, the
   right side of an assignment to a data field, or a conversion)
@@ -505,7 +505,7 @@ what each such position means.
   `absent` is dropped. A literal with a clock component anywhere else SHALL
   refuse `invalid_timed_model`/`clock-write`. Tuple positions typed directly
   by `Clock` and variant payloads typed directly by `Clock` are refused at
-  package admission as QSpec FR-322 and FR-154-AC-25 specify.
+  package admission as FSpec FR-322 and FR-154-AC-25 specify.
 - **Checked package.** The checked package SHALL hold no value/type node for
   `Clock`, an alias of it, `Option<Clock>`, a clock parameter or a clock result.
   It SHALL emit one `timed_model`/`timed_model` root node owned by the state
@@ -523,22 +523,22 @@ what each such position means.
   collection, its kind and bounds. These rows are checked-package data joined
   to the selected declaration; I2 does not reopen source text or infer members
   from a spelling.
-  A `Slot` step is written as the template step of QSpec FR-322 "Timed-model
+  A `Slot` step is written as the template step of FSpec FR-322 "Timed-model
   nodes" (FR-322-AC-148 to FR-322-AC-150). There is one `clock_place` node for
   each path, and its slot selector is the symbolic element selector, never an
   index, so a collection holding more or fewer elements changes no node.
   A place is exactly `model`, `path` and `resolved_path`: it lists no guard
-  (QSpec FR-322-AC-261). S3 SHALL write each place, self-typed and located
+  (FSpec FR-322-AC-261). S3 SHALL write each place, self-typed and located
   at the model's time declaration, with its path positions, collection
-  bounds and row positions JSON numbers as QSpec's timed nodes spell them,
+  bounds and row positions JSON numbers as FSpec's timed nodes spell them,
   so the key S3 gives it is the key IR derives and a `presence_read` names
   it.
   **Presence reads.** `present(p)` of a clock place SHALL be written as
-  QSpec FR-322's `presence_read` (FR-322-AC-155): the application of
-  `quire.op.option.present`, typed `Boolean`, over the place's
+  FSpec FR-322's `presence_read` (FR-322-AC-155): the application of
+  `filament.op.option.present`, typed `Boolean`, over the place's
   `clock_place` template and the owner term (`self`, or another object's
   term such as `self.peer`). A postcondition's top-level `present(self.v)`
-  or `not present(self.v)` (QSpec `CW-05`) SHALL stay in the lowered
+  or `not present(self.v)` (FSpec `CW-05`) SHALL stay in the lowered
   postcondition as that `presence_read` (its `not`), with no clause node,
   and the evaluator SHALL read it at the candidate post-state's presence
   bits, which the step's presence bits also follow (Presence bit). A
@@ -550,12 +550,12 @@ what each such position means.
   presences' reads and its data predicate.
   **Clause nodes.** Each operation's guard SHALL be written as one
   `clock_guard` of the operation's no-point `state`/`operation_anchor`
-  (QSpec FR-342-AC-11), one part for each convex part of the precondition's
+  (FSpec FR-342-AC-11), one part for each convex part of the precondition's
   disjunctive form: the part's predicate is the Boolean expression node of its
   data predicate, lowered at its own site, or of `true`, followed by its
   optional ordered `binders` of typed slot parameters, then its
   `clock_constraint` nodes. Two guarded preconditions of one operation SHALL
-  be the one guard of their conjunction (QSpec FR-322: at most one
+  be the one guard of their conjunction (FSpec FR-322: at most one
   `clock_guard` for each anchor): each part of the one with each part of the
   other is a part, its predicate the `and` application of the two predicates
   (the other alone where one is `true`) and its constraints both lists. A constraint on a clock of `self` is of kind
@@ -564,14 +564,14 @@ what each such position means.
   on the clock of an object `self` reaches through reference fields
   (FR-230-AC-10's `peer`) is of kind `place` with the owner term that
   expression, for each field the `record.project` of the field over the
-  `quire.op.model.deref` of the reference so far, as an attribute read; a
+  `filament.op.model.deref` of the reference so far, as an attribute read; a
   constraint on a `Clock` parameter is of kind `parameter` (the anchor and the
   parameter's name). Each reset SHALL be one `clock_reset` of the anchor: of
   kind `place` (the place, owner, slots, the binders of a reset by selection,
   the condition and the value) or of kind `parameter` (the name and the
   value, no condition). A place reset's condition is `true`, or, for a reset
   by selection whose premise is `present(e)` of its binder alone
-  (`forall(e in self.q: present(e) implies e = 0 ms)`, QSpec `SD-02`), the
+  (`forall(e in self.q: present(e) implies e = 0 ms)`, FSpec `SD-02`), the
   `presence_read` of the element's place at the owner term and the binder.
   Each time invariant SHALL be one `time_invariant` of its predicate's
   expression node and its upper bounds; a `max` constraint on clocks is the
@@ -585,11 +585,11 @@ what each such position means.
   located at its own source; clause nodes of equal content are one node with
   an occurrence at each source, and the root lists every clause and every
   constraint a part or an invariant names once. Every aggregate is written in
-  QSpec FR-322's declared order (FR-322-AC-260, FR-322-AC-265).
+  FSpec FR-322's declared order (FR-322-AC-260, FR-322-AC-265).
   A model with a member S4 does not write yet SHALL be refused
   `TimedModelNotEmitted` (`unsupported_construct`/`not-yet-implemented`) at
   the member, never emitted without it: a clock-reading clause bound to an
-  execution point (QSpec FR-342-AC-10 defines its closed carrier; QSL's
+  execution point (FSpec FR-342-AC-10 defines its closed carrier; FSL's
   point-qualified producer support is a later increment); a guard part, invariant or
   `urgent when` predicate reading the presences of a clock collection's
   elements (`forall(e in self.q: present(e))`, whose quantified
@@ -597,7 +597,7 @@ what each such position means.
   requiring a presence by a comparison with `absent` (`self.v != absent`,
   `not (self.v = absent)`), at the comparison, whose `presence_read` S3
   does not write yet; and a reset of an element no single binder selects.
-  The forms the checked package excludes (QSpec FR-322-AC-267, STD-560)
+  The forms the checked package excludes (FSpec FR-322-AC-267, STD-560)
   SHALL be refused `unsupported_construct`/`expression-form` at the form,
   naming the construct, and never emitted: a guard disjunct that constrains
   no clock, at the disjunct, unless another part of the guard always holds
@@ -612,7 +612,7 @@ what each such position means.
   declaration, so that its order key is its own source region. Two
   declarations of equal content (one predicate, or one operation) SHALL be
   one node, listed once, with one `expression` occurrence located at each
-  declaration (QSpec FR-322: a node has one or more source occurrences). `urgent O`
+  declaration (FSpec FR-322: a node has one or more source occurrences). `urgent O`
   writes the kind `operation`, the model node and `O`'s declared operation
   name. `urgent when { P }` writes the kind `when` and a reference to the
   checked expression node of `P`, which S3 lowers at `P`'s own site so each
@@ -625,7 +625,7 @@ what each such position means.
   **Population reads in timed predicates.** A named population read in the
   predicate of a `time_invariant` or a `when` `urgency` SHALL be written
   inside that predicate's expression exactly as FR-391 writes it in a state
-  clause: the population-reference operand term lowers to QSpec FR-322's
+  clause: the population-reference operand term lowers to FSpec FR-322's
   population reference (the `relation`/`population` node keyed by the
   population's declaration key), with the `all_instances` or `lookup`
   application over it and the quantifier or population form over that
@@ -639,7 +639,7 @@ what each such position means.
   urgency predicate or operation; and every bound's comparison, exact value
   and resolved unit. `Clock` remains a place, never a value type. Record and
   tuple nodes list data components only. Union payload admission and checked
-  representation follow QSpec FR-154-AC-25 and FR-322; the timed-model node
+  representation follow FSpec FR-154-AC-25 and FR-322; the timed-model node
   represents each clock place reachable through an admitted aggregate path.
   Timed nodes enter `semantic_graph.nodes` in producer graph order, the
   reader's identity projection and package identity. S4 SHALL not refuse a
@@ -658,10 +658,10 @@ what each such position means.
 - **Clock collections.** The checker SHALL admit a clock-bearing type as the element of a `Set`,
   `Bag`, `Sequence`, `OrderedSet` or as the value of a `Map`, nested in `Option`, in another
   collection, in a record, and as a member whose multiplicity is not `[1, 1]`,
-  following QSpec FR-415 "Clock collections". QSL source spells no `Map`, so a `Map` reaches the
+  following FSpec FR-415 "Clock collections". FSL source spells no `Map`, so a `Map` reaches the
   checker as a domain package map type, which declares its key type, its value type and its
-  bound. The key type SHALL be a scalar data type (QSpec FR-322 `Map<K,V>`, `K` a scalar key
-  type), whose values have a total canonical key (QSpec FR-144). The checker SHALL refuse every other key type `ill_typed`/`operator-ineligible` at the
+  bound. The key type SHALL be a scalar data type (FSpec FR-322 `Map<K,V>`, `K` a scalar key
+  type), whose values have a total canonical key (FSpec FR-144). The checker SHALL refuse every other key type `ill_typed`/`operator-ineligible` at the
   map type's key type: a clock-bearing key (`Clock`, an alias of it, a record such as
   `Timer { x: Clock; n: Int }`), a record, tuple or union key with no clock (a `Composite`), and
   an `Option`, collection or `Map` key. A key is an immutable lookup value with a canonical
@@ -672,25 +672,25 @@ what each such position means.
   exactly while the collection holds it. For a `Map` the shape's kind is `Map`, the clock type
   is the map's value type, and the instance is selected by the entry's **key**, written
   `[key]` in a place list (`Call.m.[key].x`). The key is never a position. The slot step's
-  selector in the `clock_place` node is a reference to the key type node (QSpec FR-322
+  selector in the `clock_place` node is a reference to the key type node (FSpec FR-322
   "Timed-model nodes"). A key place is live exactly while the map holds the key. The guard of
   a slot or key place is that presence test, composed with the guards above it.
   The static clock dimension of the model SHALL be, for each object and each clock collection,
   the declared maximum (the collection type's bound `u`, the member's multiplicity upper bound)
   times the clocks of one element, summed with the places outside collections; a collection with
   no declared maximum SHALL record `max: None` and add no static bound, and its live places are
-  bounded in analysis by the model checker's `max_clocks` limit (QSpec FR-415 "Cardinality
+  bounded in analysis by the model checker's `max_clocks` limit (FSpec FR-415 "Cardinality
   bound").
 - **Initial element count.** An element place of a clock collection is live
   exactly while the collection holds the element. A collection whose element
   has a non-clock component takes its initial elements, and so its count, from
-  the snapshot (QSL FR-106). A **pure-clock collection** is a `Sequence`,
+  the snapshot (FSL FR-106). A **pure-clock collection** is a `Sequence`,
   `Set`, `Bag` or `OrderedSet` whose element type has no non-clock component
   (FR-120's rule): `Clock`, an alias of it, `Option<Clock>`, and a record or
   tuple of such components. It has no snapshot data, so its initial element
   count SHALL range over `[min, max]` (over-approximating) and SHALL NOT take
   `min`; each initial state is one choice of count. `min` is the collection's
-  lower bound (QSpec FR-144's `K<T>[a, b]` `a`, a field's multiplicity lower
+  lower bound (FSpec FR-144's `K<T>[a, b]` `a`, a field's multiplicity lower
   bound, else 0) and `max` its declared maximum. Each present initial clock is
   0; an absent element (an `Option<Clock>` element at an initial bit of
   absent) is unconstrained ("Presence bit"). A `Set` or `OrderedSet` whose
@@ -701,7 +701,7 @@ what each such position means.
   (`Undecided(NoInitialState)`, FR-239). With no declared maximum the range is
   `[min, ∞)`: the initial states are produced in ascending count and the
   analysis stops `incomplete` with `limit-reached` on `max_clocks` as in
-  "Cardinality bound" (QSpec FR-415-AC-13); it does not return
+  "Cardinality bound" (FSpec FR-415-AC-13); it does not return
   `NotSimulated::RequiresBound`, which FR-120 applies only to `domains()` of an
   unbounded frame-granted value. A `Map` is not a pure-clock collection: its
   keys are data the snapshot carries, so its entries come from the snapshot.
@@ -716,7 +716,7 @@ what each such position means.
   below, so its key places keep their clocks across every step that does not
   write them.
 - **Element identity.** A `Set`, `Bag` or `OrderedSet` of a clock-bearing element type SHALL
-  decide uniqueness and multiplicity by equality of the data parts (QSpec FR-144), so the
+  decide uniqueness and multiplicity by equality of the data parts (FSpec FR-144), so the
   checker SHALL record `Set<Clock>` as holding at most one element. A `Map` of a clock-bearing
   value type SHALL decide an entry's identity by its key alone: a key occurs at most once, the
   key places of an entry are those of its key, and a write of an entry for a key the map holds
@@ -770,7 +770,7 @@ what each such position means.
   collection written anywhere but as the right side of such a conjunct SHALL refuse
   `clock-write`. A frame that does not name `f` SHALL leave its places and provenance unchanged.
 - **Clock references.** `Reference<Clock>` (a package `reference` whose `target` is
-  `ix://quire/native/Clock`, or an alias of it) SHALL denote one clock place of the model, named
+  `ix://filament/native/Clock`, or an alias of it) SHALL denote one clock place of the model, named
   by object, field path and, in a clock collection, slot, in the order of "Places". A value of
   `Reference<Clock>` is data: it holds no clock value, so it SHALL be stored in any field,
   parameter, result, record component or collection element a data value may occupy, and
@@ -800,7 +800,7 @@ what each such position means.
   none. Two place ids are equal exactly when their texts are byte equal. The id is
   stable within one checked package, compared for equality only (`<` over two
   ids refuses `ill_typed`/`operator-ineligible`), and an id of one package
-  names no place of another. QSpec FR-415 states the same id as the state key, and
+  names no place of another. FSpec FR-415 states the same id as the state key, and
   nothing is vendored here. The `clock_place` node key names the template of the
   path and is the same for every instance; `<slots>` is the concrete position of
   the instance at each `Slot` step and is never part of any node. A place under
@@ -815,21 +815,21 @@ what each such position means.
   The same value is carried in a field, a parameter, a result, a record
   component and a collection element, and `Option<Reference<Clock>>` is absent
   or one place id. The domain-package target form of a `reference` whose
-  `target` is `ix://quire/native/Clock` (or an alias of it) is that place id
-  and needs no kernel value form: it is QSpec FR-181's reference value
+  `target` is `ix://filament/native/Clock` (or an alias of it) is that place id
+  and needs no kernel value form: it is FSpec FR-181's reference value
   `{"type":"reference","universe","object_type","identity"}`, with the
   population's `universe`, `object_type` the effective id of the Clock
   type after alias resolution (so `Reference<A>` and `Reference<Clock>` to one
   place give one triple, and it never has the shape of an object reference to
   the owner) and `identity` the lowercase hex of the id
-  text's UTF-8 bytes (quire-exact's `ObjectReference` takes any nonempty
+  text's UTF-8 bytes (filament-exact's `ObjectReference` takes any nonempty
   authored identity). A snapshot-supplied `Reference<Clock>` whose identity
   does not decode to a place id of this form, or names a place the universe
   and the checked package do not contain, SHALL be refused
   `invalid_runtime_input`/`invalid-value` (FR-120 key encoding). The state key
   holds the place id as that value and no clock value.
 - **Clock constraints on a type.** A package constraint whose `appliesTo` is the clock type
-  (`ix://quire/native/Clock` itself or an alias of it) is a **clock constraint**. The keywords
+  (`ix://filament/native/Clock` itself or an alias of it) is a **clock constraint**. The keywords
   admitted are `max`, with `operands.value` an exact non-negative rational number of the model's
   time unit, which the checker SHALL record as the time invariant `x <= c` on every clock place of
   that type (the places typed by the alias, or every clock place when `appliesTo` is `Clock`),
@@ -845,7 +845,7 @@ what each such position means.
 
 ### Unit-typed members
 
-`Quantity<u>` (QSpec FR-142 "Quantity type reference") is a type in every
+`Quantity<u>` (FSpec FR-142 "Quantity type reference") is a type in every
 position that takes a type, and the checker SHALL treat it alike in each.
 
 - The checker SHALL admit `Quantity<u>` as a function, predicate or operation
@@ -863,14 +863,14 @@ position that takes a type, and the checker SHALL treat it alike in each.
   dimension, SHALL refuse `ill_typed`/`type-mismatch` at the expression.
 - A package field, operation parameter, operation result, alias `target`,
   sequence `items` and map `values` whose `typeRef` is
-  `ix://quire/unit/<name>` SHALL read as `Quantity<u>` at that position, the
+  `ix://filament/unit/<name>` SHALL read as `Quantity<u>` at that position, the
   alias, sequence or map as the alias, `Sequence<Quantity<u>>` or
   `Map<Text, Quantity<u>>` of it (FR-056). A `name` that matches no unit SHALL
   refuse `missing_declaration`/`missing-name` naming the member and its typed
-  member path. Union payload admission and type resolution follow QSpec
+  member path. Union payload admission and type resolution follow FSpec
   FR-154-AC-25 and FR-322 (FR-056).
 - A unit-typed member SHALL carry no default. A package constraint whose
-  `appliesTo` is the unit (`ix://quire/unit/<name>` or an alias of it) SHALL admit the keywords
+  `appliesTo` is the unit (`ix://filament/unit/<name>` or an alias of it) SHALL admit the keywords
   `min` and `max`, `operands.value` an exact rational number of the unit written as a canonical
   rational string, and the constrained position's domain SHALL be the quantities of the unit
   from `min` to `max`. A literal of the position outside that interval SHALL refuse
@@ -884,13 +884,13 @@ position that takes a type, and the checker SHALL treat it alike in each.
 
 ### Timed facet gate
 
-QSpec's shared grammar admits the timed forms (`time-decl`, `time-invariant`,
+FSpec's shared grammar admits the timed forms (`time-decl`, `time-invariant`,
 `urgent-decl` and the `Clock` type) when the package selects
-`quire.temporal.complete/v1`, and gives a recognised form whose facet is absent
-a located `unsupported_construct` (QSpec `temporal-complete.md`). The facet is
-a header-selectable layer that requires `quire.model.complete/v1` (FR-110,
+`filament.temporal.complete/v1`, and gives a recognised form whose facet is absent
+a located `unsupported_construct` (FSpec `temporal-complete.md`). The facet is
+a header-selectable layer that requires `filament.model.complete/v1` (FR-110,
 FR-361 item 18). A unit **selects the timed facet** when at least one of its
-header `profile` declarations names `quire.temporal.complete/v1`; it selects
+header `profile` declarations names `filament.temporal.complete/v1`; it selects
 nothing else (FR-361 item 1). S1 and S2 build the forms under every selection
 (FR-393), so the refusal is S3's. The rules of the other sections of this
 requirement apply to a unit that selects the facet.
@@ -898,9 +898,9 @@ requirement apply to a unit that selects the facet.
 The family of a refused construct is `time-declaration` for a `time` member,
 `time-invariant` for a `time invariant`, `urgent-declaration` for an `urgent`
 declaration and `clock-type` for a `Clock` in a type position. An unqualified
-`Clock` in any type position is the clock type (QSpec shared grammar).
+`Clock` in any type position is the clock type (FSpec shared grammar).
 
-- If a unit's header does not select `quire.temporal.complete/v1`, then S3
+- If a unit's header does not select `filament.temporal.complete/v1`, then S3
   SHALL refuse each `time` member, each `time invariant`, each `urgent`
   declaration and each `Clock` that the unit's own source writes in a type
   position (a parameter, result, record field, type alias target, or the
@@ -910,7 +910,7 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
   model for a `time` member, `time invariant` or `urgent` declaration; the
   function, operation, record or alias for an admitted `Clock` type position), the
   header layers the unit selected in source order and the required facet
-  `quire.temporal.complete/v1`, as FR-361 items 10 and 11 do for the model
+  `filament.temporal.complete/v1`, as FR-361 items 10 and 11 do for the model
   forms.
 - A construct S3 refuses under this gate SHALL receive no other
   refusal.
@@ -928,31 +928,31 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-230-AC-1 | S2 builds ADR-026 §11's `Rpc` time member as `TimeSourceForm::Dense` with unit `ms`, the two time invariants in source order with bounds `3 ms` and `T`, and `send`'s reset and `reply`'s `x >= 1` guard as timed forms with their source spans, and produces no timed semantic refusal. The package field `Call.x`, typed `ix://quire/native/Clock`, is admitted at intake and reaches S3 as a clock declaration; it is not an S2 source form. With `quire.temporal.complete/v1` selected, S3 checks to `TimeSource::Dense{ms}`, one clock field `Call.x`, two time invariants (`inflight` with `x <= 3`, `Waiting` with `x <= T`), `send`'s reset of `x` to 0, and `reply`'s guard with the one convex part `x >= 1`. For the variant with `time dense unit s`, S2 builds a dense source naming `s`; S3 checks with `reply`'s bound converted to `1/1000`, and its package identity differs from the `ms` unit's. | Test |
-| FR-230-AC-2 | Each vector below is grammar-valid: S2 builds its source-level time, reset, constraint, invariant or urgency form with the offending construct's span and returns no timed semantic refusal; clock fields supplied by domain packages are admitted at intake. S3 then refuses each at that span: a second `time` member (`invalid_timed_model`/`duplicate-time-source`); `time dense unit m` (`ill_typed`/`type-mismatch`, with `m` declared on the fixture's non-Time `Length` dimension); `self.n = self.x` with `n: Int` (`invalid_timed_model`/`clock-read-outside-constraint`); `x <= self.y` with both clocks (`invalid_timed_model`/`clock-comparison`); `x >= -1 ms` (`invalid_timed_model`/`negative-clock-constant`); a `Clock` field under `time tick` (`invalid_timed_model`/`clock-without-dense-time`); `self.x = self.x + 1` (`invalid_timed_model`/`clock-write`); a time invariant body `x >= 1` (`invalid_timed_model`/`time-invariant-shape`); `urgent reply` where `reply` guards on `x` (`invalid_timed_model`/`urgent-guard-reads-clock`); `urgent when P` in an untimed model (`missing_declaration`/`missing-name`). Each clock of these vectors is a package-admitted field typed `ix://quire/native/Clock`. | Test |
+| FR-230-AC-1 | S2 builds ADR-026 §11's `Rpc` time member as `TimeSourceForm::Dense` with unit `ms`, the two time invariants in source order with bounds `3 ms` and `T`, and `send`'s reset and `reply`'s `x >= 1` guard as timed forms with their source spans, and produces no timed semantic refusal. The package field `Call.x`, typed `ix://filament/native/Clock`, is admitted at intake and reaches S3 as a clock declaration; it is not an S2 source form. With `filament.temporal.complete/v1` selected, S3 checks to `TimeSource::Dense{ms}`, one clock field `Call.x`, two time invariants (`inflight` with `x <= 3`, `Waiting` with `x <= T`), `send`'s reset of `x` to 0, and `reply`'s guard with the one convex part `x >= 1`. For the variant with `time dense unit s`, S2 builds a dense source naming `s`; S3 checks with `reply`'s bound converted to `1/1000`, and its package identity differs from the `ms` unit's. | Test |
+| FR-230-AC-2 | Each vector below is grammar-valid: S2 builds its source-level time, reset, constraint, invariant or urgency form with the offending construct's span and returns no timed semantic refusal; clock fields supplied by domain packages are admitted at intake. S3 then refuses each at that span: a second `time` member (`invalid_timed_model`/`duplicate-time-source`); `time dense unit m` (`ill_typed`/`type-mismatch`, with `m` declared on the fixture's non-Time `Length` dimension); `self.n = self.x` with `n: Int` (`invalid_timed_model`/`clock-read-outside-constraint`); `x <= self.y` with both clocks (`invalid_timed_model`/`clock-comparison`); `x >= -1 ms` (`invalid_timed_model`/`negative-clock-constant`); a `Clock` field under `time tick` (`invalid_timed_model`/`clock-without-dense-time`); `self.x = self.x + 1` (`invalid_timed_model`/`clock-write`); a time invariant body `x >= 1` (`invalid_timed_model`/`time-invariant-shape`); `urgent reply` where `reply` guards on `x` (`invalid_timed_model`/`urgent-guard-reads-clock`); `urgent when P` in an untimed model (`missing_declaration`/`missing-name`). Each clock of these vectors is a package-admitted field typed `ix://filament/native/Clock`. | Test |
 | FR-230-AC-3 | S2 builds `time tick tick period 1/2 ms unit ms` as a `TimeSourceForm::Tick` naming operation `tick`, exact period `1/2 ms` and unit `ms`; it builds `period 0 ms` as an exact zero quantity and retains an unresolved tick operation name in the form, with no timed semantic refusal. S3 resolves `tick` and checks the valid form to `TimeSource::Tick` with period `1/2`; `period 0 ms` refuses `invalid_model_binding`/`malformed-declaration` at the period, and a tick operation name that resolves to nothing refuses `missing_declaration`/`missing-name` at the operation name. | Test |
 | FR-230-AC-4 | S2 builds `(x < 1 or x > 2) and self.ready` as an expression form preserving the ordered operators and exact bounds, and builds `10^40 ms` as an exact time quantity form without a timed semantic refusal. S3 converts the guard to two convex parts, `x < 1` and `x > 2`, each with the data predicate `self.ready`. A model with 64 package-admitted clock fields over a universe of 100 objects has 6,400 clock places and checks the `10^40 ms` constant with no refusal. | Test |
 | FR-230-AC-5 | S2 builds each grammar-valid `time dense unit u` form and each quantity literal, including `time dense unit hour`, `time dense unit M::ms` and `3 M::ms`, as timed forms retaining their unit names and spans; it neither resolves a unit nor assigns a dimension. S3 reads the checked package's source and admitted-package unit graph. In a graph whose own source declares base dimension `Time`, root `s` and `ms` (`1/1000` of `s`), `time dense unit ms` and `time dense unit s` check, and `3 ms` read under `unit s` converts to `3/1000`. A unit of a derived dimension `Duration = Time` refuses `ill_typed`/`type-mismatch`, because `Duration` is not the `Time` node. `time dense unit hour` refuses `missing_declaration`/`missing-name` naming `hour`; a graph with no base `Time` refuses `time dense unit ms` `missing_declaration`/`missing-name` naming `Time` (not `ms`); two dimensions named `Time` in the unit's source refuse `ambiguous_declaration`/`ambiguous-name` at assembly, before S3; a unit `degc` of a time dimension with offset `273` refuses `ill_typed`/`type-mismatch`. Two graphs that declare `ms` as `1/1000` and as `1/100` give different package identities. With base dimension `Time`, root `s` and `ms` supplied by the admitted domain package `acme/rpc` (`model M = "acme/rpc" …`) and none in the source, `time dense unit M::ms` and `time dense unit M::s` check and `3 M::ms` under `unit M::s` converts to `3/1000`; a source that declares `unit ms : Time = 1/1000 * M::s;` beside the package's `ms` checks `time dense unit ms` over the source unit, with no ambiguity; a `Time` declared in both the source and the domain package, a dimension `Rate` declared in both the source and package `acme/rpc`, and two admitted domain packages `acme/rpc` and `acme/flow` that each declare a base `Time` remain distinct declarations and check with no refusal. | Test |
-| FR-230-AC-7 | A unit whose header selects no `quire.temporal.complete/v1` (a header that selects `quire.model.complete/v1` alone, or no `profile`) and whose own source writes `time dense unit ms;`, a `time invariant`, an `urgent when P;` declaration, a function `f(c: Clock)`, a function `g(): Clock`, a record with a `Clock` field, `type Alias = Clock;` and `Option<Clock>` refuses each, `unsupported_construct`/`declaration-form` at its span, in source order and every one, retaining its family, its owning declaration, the unit's selected layers and the required facet, with no other refusal. | Test |
-| FR-230-AC-8 | A header `profile t = "quire.temporal.complete/v1";` resolves at E3 to the temporal layer (FR-110-AC-13), and the unit's S3 check admits its `time` member, `time invariant`, `urgent` declaration and each `Clock` type position admitted by QSpec FR-154 and FR-322, with no `unsupported_construct`/`declaration-form` refusal; the checked state models of AC-1 to AC-5 are produced from units whose header selects the layer. The same unit with the identity `quire.temporal.complete/v1` in no header gets AC-7's refusals. | Test |
+| FR-230-AC-7 | A unit whose header selects no `filament.temporal.complete/v1` (a header that selects `filament.model.complete/v1` alone, or no `profile`) and whose own source writes `time dense unit ms;`, a `time invariant`, an `urgent when P;` declaration, a function `f(c: Clock)`, a function `g(): Clock`, a record with a `Clock` field, `type Alias = Clock;` and `Option<Clock>` refuses each, `unsupported_construct`/`declaration-form` at its span, in source order and every one, retaining its family, its owning declaration, the unit's selected layers and the required facet, with no other refusal. | Test |
+| FR-230-AC-8 | A header `profile t = "filament.temporal.complete/v1";` resolves at E3 to the temporal layer (FR-110-AC-13), and the unit's S3 check admits its `time` member, `time invariant`, `urgent` declaration and each `Clock` type position admitted by FSpec FR-154 and FR-322, with no `unsupported_construct`/`declaration-form` refusal; the checked state models of AC-1 to AC-5 are produced from units whose header selects the layer. The same unit with the identity `filament.temporal.complete/v1` in no header gets AC-7's refusals. | Test |
 | FR-230-AC-9 | With `predicate within(c: Clock, b: Quantity<ms>): Boolean { c <= b }` over a dense model, the precondition `within(self.x, 3 ms)` expands to the atomic constraint `x <= 3` on the clock `Call.x`, a time invariant body `within(self.x, 3 ms)` checks as the bound `x <= 3`, `within(self.x, 3 ms) and within(self.y, 1 ms)` expands to two constraints, and the checked package holds no node for `within`. `within(self.x, self.limit)` refuses `invalid_timed_model`/`clock-bound-not-constant` at the argument, `within(5, 3 ms)` refuses `ill_typed`/`type-mismatch` at `5`, a body `self.n = c` for a clock parameter `c` with `n: Int` refuses `clock-read-outside-constraint`, a body that resets `c` refuses `clock-write`, and `within(self.x, 3 ms)` in an `invariant` clause refuses `clock-read-outside-constraint` at the call. | Test |
 | FR-230-AC-10 | With `function pick(a: Clock, b: Clock, left: Boolean): Clock { if left then a else b }`, the guard `pick(self.x, self.y, self.l) >= 1 ms` checks to two convex parts, `x >= 1` with the data predicate `self.l` and `y >= 1` with `not self.l`; a function `peer_clock(o: Call): Clock { o.peer.x }` with `peer: Reference<Call>` over a universe `{c1, c2}` checks `peer_clock(self) <= 2 ms` to the parts `c1.x <= 2` under `self.peer = c1` and `c2.x <= 2` under `self.peer = c2`; a function `g(): Clock { 0 }` refuses `ill_typed`/`type-mismatch` at the body. | Test |
 | FR-230-AC-11 | With `record Timer { x: Clock; n: Int }` held by object field `t` of `Call` over a universe of three objects, the model has three clocks, each the place `Call.t.x`, declared in object order; `self.t.x >= 1 ms` in a precondition and `self.t = Timer { x: 0 ms, n: 3 }` in a postcondition check as a guard and a reset of the clock and a write of `n`; `self.u = self.t` refuses `clock-read-outside-constraint` at `self.t`, `self.t.n = 4` checks as a data write, and a `Timer` literal in a `let` refuses `clock-write`. The checked `Timer` record node lists `n` only. | Test |
-| FR-230-AC-12 | With `type Alias = Clock;` and a field `w: Alias`, `w` is a clock under `time dense`. With a field `v: Option<Clock>` the guard `present(self.v) and value(self.v) >= 1 ms` checks to one convex part `v >= 1` carrying the data predicate `present(self.v)`, `value(self.v) >= 1 ms` alone refuses `undefined_expression`/`unproved-presence` at the read, `self.v = 0 ms` records a reset of `v` that makes it present, `self.v = absent` records no reset and drops it, and a time invariant `when present(self.v) { value(self.v) <= 3 ms }` records the bound with the guard. Clock payload admission follows QSpec FR-154-AC-25 and FR-322: a variant payload typed directly by `Clock` is refused `unsupported_construct`/`declaration-form`; the checker applies timed behavior only to clock-bearing paths admitted by those QSpec requirements. | Test |
+| FR-230-AC-12 | With `type Alias = Clock;` and a field `w: Alias`, `w` is a clock under `time dense`. With a field `v: Option<Clock>` the guard `present(self.v) and value(self.v) >= 1 ms` checks to one convex part `v >= 1` carrying the data predicate `present(self.v)`, `value(self.v) >= 1 ms` alone refuses `undefined_expression`/`unproved-presence` at the read, `self.v = 0 ms` records a reset of `v` that makes it present, `self.v = absent` records no reset and drops it, and a time invariant `when present(self.v) { value(self.v) <= 3 ms }` records the bound with the guard. Clock payload admission follows FSpec FR-154-AC-25 and FR-322: a variant payload typed directly by `Clock` is refused `unsupported_construct`/`declaration-form`; the checker applies timed behavior only to clock-bearing paths admitted by those FSpec requirements. | Test |
 | FR-230-AC-13 | An operation `reset(c: Clock)` with postcondition `c = 0` and a frame naming `Call.x` has one checked instance per object's place of `Call.x`, each instance naming its place; the same operation with an empty frame refuses `invalid_timed_model`/`clock-write` at the reset; an operation `check(c: Clock)` with the precondition `c >= 1 ms` and no reset has one instance for each clock place of the model. | Test |
 | FR-230-AC-14 | A field `t: Timer` of an object type in a `time tick` model and in an untimed model refuses `invalid_timed_model`/`clock-without-dense-time` at its span, and so does a field `ts: Sequence<Timer>`. A function `f(c: Clock)`, a function `g(): Clock { self.x }`, a record with a `Clock` field, `type Alias = Clock;`, `Option<Clock>` and `Sequence<Clock>` declared in a dense model's unit raise no refusal of their own. | Test |
 | FR-230-AC-15 | With dimension `Time`, root `s` and `ms` of scale `1/1000`: `record Window { d: Quantity<ms>; n: Int }`, `type Span = Quantity<ms>;`, a field `o: Option<Quantity<ms>>`, a tuple `(Quantity<ms>, Int)`, a union case `Within(Quantity<ms>)`, `Set<Quantity<ms>>`, `Map<Text, Quantity<ms>>`, `function f(d: Quantity<ms>): Quantity<ms>`, `predicate p(d: Span)` and an operation parameter and result of `Quantity<ms>` each check; `Span` and `Quantity<ms>` are one type, every position is typed by the one `scalar_type`/`unit` node of `ms`, and no node is introduced for the alias, the tuple element, the union payload or `Option`. `f(3 s)` refuses `ill_typed`/`type-mismatch`; `record R { d: Quantity<Time> }` refuses `missing_declaration`/`missing-name`. | Test |
-| FR-230-AC-16 | A domain package `acme/rpc` with a clock field `Call.x`, an operation `reset` whose parameter is `ix://quire/native/Clock`, an operation `clk` whose result is `ix://quire/native/Clock`, an alias `Stopwatch` whose `target` is `ix://quire/native/Clock` with a field `Call.s` typed `Stopwatch`, an optional clock field `Call.w` and a record `Timer` with a clock field `x` held by `Call.t` checks to the clocks `Call.x`, `Call.s`, `Call.w` (guarded) and `Call.t.x`; `reset`'s postcondition `c = 0` with a frame naming `Call.x` checks as in FR-230-AC-13. A package sequence type whose `items` is `ix://quire/native/Clock`, a map type whose `values` is `ix://quire/native/Clock` and a field `Call.q` typed `ix://quire/native/Clock` with multiplicity `{0, 3, true, false}` check to the clock collections of FR-230-AC-19. | Test |
-| FR-230-AC-17 | A domain package `acme/rpc` with a unit `ms` and an alias `D` whose `target` is `ix://quire/unit/acme/rpc/ms`, a sequence type with that `items`, a map type with that `values`, a field, an operation parameter and an operation result typed by it checks to `Quantity<M::ms>` at each position (with `model M = "acme/rpc"`); the same alias, `items` or `values` naming `ix://quire/unit/ghost` refuses `missing_declaration`/`missing-name` naming the member and its path (`TypeDefinition.target`, `TypeDefinition.items`, `TypeDefinition.values`). | Test |
+| FR-230-AC-16 | A domain package `acme/rpc` with a clock field `Call.x`, an operation `reset` whose parameter is `ix://filament/native/Clock`, an operation `clk` whose result is `ix://filament/native/Clock`, an alias `Stopwatch` whose `target` is `ix://filament/native/Clock` with a field `Call.s` typed `Stopwatch`, an optional clock field `Call.w` and a record `Timer` with a clock field `x` held by `Call.t` checks to the clocks `Call.x`, `Call.s`, `Call.w` (guarded) and `Call.t.x`; `reset`'s postcondition `c = 0` with a frame naming `Call.x` checks as in FR-230-AC-13. A package sequence type whose `items` is `ix://filament/native/Clock`, a map type whose `values` is `ix://filament/native/Clock` and a field `Call.q` typed `ix://filament/native/Clock` with multiplicity `{0, 3, true, false}` check to the clock collections of FR-230-AC-19. | Test |
+| FR-230-AC-17 | A domain package `acme/rpc` with a unit `ms` and an alias `D` whose `target` is `ix://filament/unit/acme/rpc/ms`, a sequence type with that `items`, a map type with that `values`, a field, an operation parameter and an operation result typed by it checks to `Quantity<M::ms>` at each position (with `model M = "acme/rpc"`); the same alias, `items` or `values` naming `ix://filament/unit/ghost` refuses `missing_declaration`/`missing-name` naming the member and its path (`TypeDefinition.target`, `TypeDefinition.items`, `TypeDefinition.values`). | Test |
 | FR-230-AC-18 | With the domain packages `acme/rpc` (alias `R`, base dimension `Time`, root `s`, unit `ms` of `1/1000` of `s`) and `acme/flow` (alias `F`, base dimension `Time`, root `sec`) both selected and a source that also declares `dimension Time; unit s : Time = 1;` and no dimension equivalence: `time dense unit R::ms` checks with the `acme/rpc` `Time` as the model's time dimension and `x <= 3 R::ms` and `period 1/2 R::s` check; `time dense unit F::sec` checks with the `acme/flow` `Time` as the time dimension, and the source `time dense unit s` checks with the source `Time` as the time dimension; the three models have three different package identities. Under `time dense unit R::ms`, `x <= 3 F::sec` and `x <= 3 s` refuse `ill_typed`/`type-mismatch` at the constant; under `time tick O period 1 F::sec unit R::ms` the period refuses `ill_typed`/`type-mismatch`; a unit `len` of a base dimension `Length` and a unit of a derived `Duration = R::Time` each still refuse `time dense unit` with `ill_typed`/`type-mismatch`. | Test |
 | FR-230-AC-19 | Over a dense model whose object type `Call` has `ts: Sequence<Timer>[0, 3]` (`Timer { x: Clock; n: Int }`), `b: Bag<Clock>[0, 2]`, `s: Set<Clock>`, `m` typed by a domain package map type whose key is `Text`, whose values are `Timer` and whose bound is `[0, 2]` (`Map<Text, Timer>[0, 2]`), `o: Option<Sequence<Clock>[0, 2]>` and `q: Sequence<Option<Clock>>[0, 2]`, the checker lists the places `Call.ts.[slot].x`, `Call.b.[slot]`, `Call.s.[slot]`, `Call.m.[key].x` (selected by key, guarded by `m` holding the key), `Call.o.[slot]` (guarded by `present(o)`) and `Call.q.[slot]` (guarded by `present` of the element), each with its `CollectionShape` (that of `m` of kind `Map`, `min` 0, `max` 2); the static clock dimension of one object is `3 + 2 + 0 + 2 + 2 + 2` (the unbounded `s` adds no static bound, `max: None`); `s` holds at most one element and `b` one for each occurrence; `ts` is typed by the `collection_bounds` node over the sequence of the `Timer` data node listing `n` only. A package map type whose key is `Timer` (`Map<Timer, Int>`), one whose key is the record `Cfg { a: Boolean }`, which holds no clock, and one whose key is `Option<Text>` each refuse `ill_typed`/`operator-ineligible` at the map type's key type. | Test |
 | FR-230-AC-20 | `self.ts = filter(e in self.ts: e.n > 1)` checks with the provenance `Carried` from each surviving slot; `self.ts = flatten(sequence[sequence[Timer { x: 0 ms, n: 9 }], self.ts])` checks with `Fresh { x = 0 }` at slot 0 and `Carried` from slot `j` at slot `j + 1`; `self.st = set[Timer { x: 0 ms, n: 1 }, Timer { x: 5 ms, n: 1 }]` records one `Fresh { x = 0 }` occurrence, the first; `self.ts = sequence[Timer { x: self.u, n: 1 }]` (a clock read as a component) and `self.ts = sequence[Timer { x: self.ts[0].x, n: 1 }]` refuse `invalid_timed_model`/`clock-write` at the occurrence; `self.ts` written in an `invariant` clause or a `let` refuses `clock-write`; a frame that does not name `ts` leaves it unchanged. | Test |
 | FR-230-AC-21 | `self.ts[1].x = 0 ms` checks as a reset of slot 1 and refuses `undefined_expression`/`unproved-presence` at `1` unless the precondition establishes `1 < size(self.ts)`; `self.m[k].x = 0 ms` resets by key and `self.m[k] = Timer { x: 0 ms, n: 1 }` replaces the entry with a fresh one; `forall(e in self.ts: e.n > 1 implies e.x = 0 ms)` records a reset with the data predicate `e.n > 1`; the guard `forall(e in self.ts: e.x <= 3 ms)` records one entry for each size 0 to 3 with the conjunction over the live slots (true for size 0); `exists(e in self.ts: e.n = 2 and e.x >= 1 ms)` records one convex part for each slot with the data predicate "holds the slot" and `n = 2`; a time invariant body `forall(e in self.ts: e.x <= 3 ms)` records `x <= 3` on each live slot and a body `exists(...)` refuses `time-invariant-shape`; `self.a = self.b`, `contains(self.ts, t)` and `count<Int>(e in self.ts: e.x >= 1 ms)` over clock collections refuse `clock-read-outside-constraint`, while `size(self.ts) > 1` and `e.n` check as data reads. | Test |
-| FR-230-AC-22 | `Option<Clock>` is covered in the admitted positions: a field, an operation parameter `arm(c: Option<Clock>)` with `c = 0 ms` (one instance for each guarded place, each making its place present), a function result `maybe(o: Timer): Option<Clock>` with the body `o.x` (a place expression) and the body `absent` (an inactive place), an alias target, a record component, `Option<Timer>` with `value(self.o).x >= 1 ms` refusing `undefined_expression`/`unproved-presence` unless `present(self.o)` holds, `Sequence<Option<Clock>>` with a slot whose `value` needs both the slot's and the element's presence, and `Option<Sequence<Clock>>` whose slots are live only while the option is present. A direct `Clock` variant payload is refused at package admission per QSpec FR-154-AC-25. | Test |
-| FR-230-AC-23 | A domain package `acme/rpc` with a sequence type over `ix://quire/native/Clock`, a map type over it, a field `Call.q` typed `ix://quire/native/Clock` with multiplicity `{0, 3, true, false}` (`unique:false`), a field `Call.r` typed `Timer` with `{0, 2, true, false}` and an operation parameter and result of multiplicity `{0, 2, true, false}` checks to the clock collections `Call.q`, `Call.r.[slot].x` and the parameter and result of those shapes, with static dimension `3 + 2` for one `Call`; a model whose collection maximum is `4` instead of `3` has a different package identity. | Test |
+| FR-230-AC-22 | `Option<Clock>` is covered in the admitted positions: a field, an operation parameter `arm(c: Option<Clock>)` with `c = 0 ms` (one instance for each guarded place, each making its place present), a function result `maybe(o: Timer): Option<Clock>` with the body `o.x` (a place expression) and the body `absent` (an inactive place), an alias target, a record component, `Option<Timer>` with `value(self.o).x >= 1 ms` refusing `undefined_expression`/`unproved-presence` unless `present(self.o)` holds, `Sequence<Option<Clock>>` with a slot whose `value` needs both the slot's and the element's presence, and `Option<Sequence<Clock>>` whose slots are live only while the option is present. A direct `Clock` variant payload is refused at package admission per FSpec FR-154-AC-25. | Test |
+| FR-230-AC-23 | A domain package `acme/rpc` with a sequence type over `ix://filament/native/Clock`, a map type over it, a field `Call.q` typed `ix://filament/native/Clock` with multiplicity `{0, 3, true, false}` (`unique:false`), a field `Call.r` typed `Timer` with `{0, 2, true, false}` and an operation parameter and result of multiplicity `{0, 2, true, false}` checks to the clock collections `Call.q`, `Call.r.[slot].x` and the parameter and result of those shapes, with static dimension `3 + 2` for one `Call`; a model whose collection maximum is `4` instead of `3` has a different package identity. | Test |
 | FR-230-AC-24 | With object `Call` holding clocks `x` and `y` and a field `r: Reference<Clock>`, a universe of two calls, and `time dense unit ms`, the precondition `deref(self.r) >= 1 ms` checks to four convex parts, `Call1.x >= 1`, `Call1.y >= 1`, `Call2.x >= 1` and `Call2.y >= 1`, each with the data condition `self.r = ref(place)`; the postcondition `self.r = ref(self.x)` writes the data value of the place `Call.x` of `self` and resets no clock; `deref(self.r) = 0 ms` resets each of the four places and refuses `invalid_timed_model`/`clock-write` at the reset when the frame names only `Call.x`. `ref(self.x) = ref(other.x)` checks as a data comparison and is false for two calls; `deref(self.r)` over `r: Option<Reference<Clock>>` refuses `undefined_expression`/`unproved-presence` at the `deref` without `present(self.r)` in the guard and checks with it. Two states that differ only in clock values have the same state key, and two that differ in `r` have different state keys. A `ref(self.q[0])` for a slot place names slot `0` and still names slot `0` after the collection reorders its elements. | Test |
-| FR-230-AC-25 | A constraint `max` `"3"` whose `appliesTo` is the alias `Timeout` of `Clock` checks as the time invariant `x <= 3` on every place typed `Timeout` and on no other clock, guarded by the presence of an `Option<Timeout>` place; the same constraint with `appliesTo` `ix://quire/native/Clock` bounds every clock place of the model by `3`; a `min` `"1"` constraint refuses `invalid_timed_model`/`time-invariant-shape`; `minLength` and `format` constraints and a negative or non-rational `max` operand each refuse `invalid_model_binding`/`malformed-declaration` at the constraint; the same constraint under a `time tick` or untimed unit refuses `clock-without-dense-time`. | Test |
-| FR-230-AC-26 | A constraint `min` `"0"` and `max` `"10"` whose `appliesTo` is the alias `Level` of `ix://quire/unit/ms` gives `Level` the domain of the quantities of `ms` from `0` to `10`: `5 ms` checks and `11 ms` refuses `ill_typed`/`type-mismatch` at the literal; a keyword `minLength` on it refuses `invalid_model_binding`/`malformed-declaration`; a package `reference` whose `target` is `ix://quire/unit/ms` refuses `invalid_model_binding`/`malformed-declaration` at `TypeDefinition.target`. | Test |
+| FR-230-AC-25 | A constraint `max` `"3"` whose `appliesTo` is the alias `Timeout` of `Clock` checks as the time invariant `x <= 3` on every place typed `Timeout` and on no other clock, guarded by the presence of an `Option<Timeout>` place; the same constraint with `appliesTo` `ix://filament/native/Clock` bounds every clock place of the model by `3`; a `min` `"1"` constraint refuses `invalid_timed_model`/`time-invariant-shape`; `minLength` and `format` constraints and a negative or non-rational `max` operand each refuse `invalid_model_binding`/`malformed-declaration` at the constraint; the same constraint under a `time tick` or untimed unit refuses `clock-without-dense-time`. | Test |
+| FR-230-AC-26 | A constraint `min` `"0"` and `max` `"10"` whose `appliesTo` is the alias `Level` of `ix://filament/unit/ms` gives `Level` the domain of the quantities of `ms` from `0` to `10`: `5 ms` checks and `11 ms` refuses `ill_typed`/`type-mismatch` at the literal; a keyword `minLength` on it refuses `invalid_model_binding`/`malformed-declaration`; a package `reference` whose `target` is `ix://filament/unit/ms` refuses `invalid_model_binding`/`malformed-declaration` at `TypeDefinition.target`. | Test |
 | FR-230-AC-27 | Over FR-230-AC-18's packages and source with `dimension R::Time ~ F::Time by 1 R::s = 1 F::sec;` declared (root ratio 1), `time dense unit R::ms` checks with `x <= 3 F::sec` and the constant converts to `3000` in `R::ms` (`F::sec` is `1000` of `R::ms` through the equivalence class and its root ratio), a reset of `x` to `2 F::sec` converts to `2000`, and `time tick O period 1 F::sec unit R::ms` checks with period `1000`; `x <= 3 s` over the unrelated source `Time` still refuses `ill_typed`/`type-mismatch` at the constant, and the `len` and `Duration = R::Time` units of AC-18 still refuse `time dense unit` with `ill_typed`/`type-mismatch`, `Duration` having no equivalence. The three models keep three different package identities, and a model's identity differs from that of the same model without the equivalence. | Test |
 | FR-230-AC-28 | With FR-230-AC-18's `acme/rpc` and a package `acme/clock` (alias `G`, base dimension `Time`, root `msec`, and `sec` of `1000` of `msec`) selected, and `dimension R::Time ~ G::Time by 1 R::s = 1000 G::msec;` declared (root ratio 1000), `time dense unit R::ms` checks with `x <= 3 G::msec` and the constant converts to `3` in `R::ms` (`1` of `G::msec` is `1/1000` of `R::s`, that is `1` of `R::ms`, so `3 G::msec` is `3` of `R::ms`), a reset of `x` to `2000 G::msec` converts to `2000`, and `time tick O period 1 G::sec unit R::ms` checks with period `1000`; with the declaration written `by 1 R::s = 1 G::msec` (root ratio 1) the same constant `3 G::msec` converts to `3000`, so the model's identity differs between the two declarations; `x <= 3 s` over the unrelated source `Time` still refuses `ill_typed`/`type-mismatch`. | Test |
 | FR-230-AC-29 | For each S3-admitted timed state model, the checked package contains exactly one `timed_model`/`timed_model` root and typed dependent nodes for its time source, every clock place, reset, guard, invariant, urgency and clock constraint; `Clock` and clock-bearing aliases/options/parameters/results have no value or type nodes, and data type nodes omit clock components. The root and all dependent timed nodes occur in `semantic_graph.nodes` and therefore the identity projection. | Test |
@@ -970,20 +970,20 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-41 | `present(...)` of `Option<Timer>`, of a union case `Armed(Boolean)` and of a slot of `q` is read from the snapshot's data, `member` or the collection's size, and those places hold no bit; `v: Option<Clock>` and each `Option<Clock>` element of `q` hold a bit whose initial value takes both values, giving `2` initial states for `v` alone. | Test |
 | FR-230-AC-42 | In a model with `v: Option<Clock>`, `q: Sequence<Option<Clock>>[0, 2]`, `o: Option<Timer>` and a union case `Armed(Boolean)`, only `v` and the live `Option<Clock>` elements of `q` carry a presence bit, encoded by their `option` shell as `{"type":"option","value":null}` (absent) or `{"type":"option","value":{"type":"tuple","name":"Clock","components":[]}}` (present); `semantic` stays a map; a one-element `q` has one bit and a dropped slot none; the keys of `o`, `Armed`, the slots of `q` and a model with no `Option<Clock>` are unchanged; two states that differ only in one bit have different state keys. | Test |
 | FR-230-AC-43 | In FR-230-AC-24's model, `ref(self.x)` of `Call1` and of `Call2` have different place ids, `ref(self.q[0])` and `ref(self.q[1])` have different place ids, `ref(self.m[k])` over a `Map` value refuses `ill_typed`/`type-mismatch`, `ref(self.x) = ref(other.x)` is false for two calls and true for one call, and the id of `Call1.x` is the text `place/v1/<h(owner)>/<h(node key)>/-` while that of `Call1.q[1]` ends `/1`. | Test |
-| FR-230-AC-44 | A place id is stored in a field, a parameter, a result, a record component and a `Sequence<Reference<Clock>>` element and reads back equal; `=` over two ids is a data read, `<` refuses `ill_typed`/`operator-ineligible`; the id of `ref(self.q[0])` is unchanged after a reorder of `q`; and a package `reference` instance is QSpec FR-181's `reference` value whose `object_type` is the Clock type's effective id and whose `identity` is the hex of the id text. | Test |
+| FR-230-AC-44 | A place id is stored in a field, a parameter, a result, a record component and a `Sequence<Reference<Clock>>` element and reads back equal; `=` over two ids is a data read, `<` refuses `ill_typed`/`operator-ineligible`; the id of `ref(self.q[0])` is unchanged after a reorder of `q`; and a package `reference` instance is FSpec FR-181's `reference` value whose `object_type` is the Clock type's effective id and whose `identity` is the hex of the id text. | Test |
 | FR-230-AC-45 | A snapshot `Reference<Clock>` whose identity is not of the `place/v1/...` form, or names an owner object or `clock_place` the package and universe do not contain, refuses `invalid_runtime_input`/`invalid-value`. | Test |
 | FR-230-AC-46 | Over `s: Sequence<Clock>[1, 3]`, `b: Bag<Clock>[0, 2]`, `r: Sequence<Timer>[1, 3]` with a snapshot of two `Timer` elements and `st: Sequence<Stopwatch>[0, 2]` (`Stopwatch { x: Clock }`): the initial count of `s` ranges over `[1, 3]` and gives three initial states, `b` over `[0, 2]`, `st` over `[0, 2]`, and `r` takes the count 2 from the snapshot; over `qo: Sequence<Option<Clock>>[0, 2]` an element at initial bit absent is unconstrained and every present initial clock is 0. | Test |
 | FR-230-AC-47 | `t: Set<Clock>[0, 5]`, `o: OrderedSet<Clock>[0, 5]`, `so: Set<Option<Clock>>[0, 5]` and a `Set<Stopwatch>[0, 5]` each range over `[0, 1]`; `Set<Clock>[2, 5]` leaves no initial state (`Undecided(NoInitialState)`); a `Map<Text, Clock>[0, 2]` is not pure-clock and takes its entries from the snapshot. | Test |
 | FR-230-AC-48 | Over `u: Sequence<Clock>` with no declared maximum, initial states are produced in ascending count from 0 and the analysis stops `incomplete` with `limit-reached` whose `limit` is `max_clocks` once the live clocks exceed it, and it does not return `NotSimulated::RequiresBound`. | Test |
-| FR-230-AC-49 | The emitted `clock_place` of `ts.x` below `ts: Sequence<Timer>[0, 3]` is one node for the three places `ts.0.x`, `ts.1.x` and `ts.2.x`, its slot step carries the symbolic element selector of QSpec FR-322-AC-148 and no index, and the place ids of slots 0 and 1 differ only in the final component of `<slots>`; the same holds for `Set`, `Bag`, `OrderedSet` and a nested `Sequence` (two `<slots>` components). | Test |
-| FR-230-AC-50 | A clock-reading `pre` bound to an execution point refuses `TimedModelNotEmitted` (`unsupported_construct`/`not-yet-implemented`) at the clause and emits no point-qualified anchor. A model with no guard emits empty aggregates and reads back (QSpec FR-322-AC-150). The excluded forms refuse `unsupported_construct`/`expression-form` at the form (QSpec FR-322-AC-267: `GJ-01`, `CW-01` to `CW-03`, `SD-01`): `self.x >= 1 ms or self.versionNumber > 0` at `self.versionNumber > 0`, `self.ts = sequence[...]` and `self.ts = filter(...)` at the write, `self.v = absent` at the write and `forall(e in self.ts: e.n > 1 implies e.x = 0 ms)` at `e.n > 1`; `self.x >= 0 ms or self.versionNumber > 0` is the one part `x >= 0 ms` (`GJ-03`). | Test |
-| FR-230-AC-55 | Over `ts: Sequence<Timer>[0, 3]`, `forall(e in self.ts: e.x < 5 ms)` emits one `clock_guard` whose parts cover each possible live length; the zero-length part has no constraints and its predicate selects size zero, and each nonempty part carries the ordered typed slot parameters before its corresponding clock-constraint references. `exists(e in self.ts: e.x < 5 ms)` emits disjunctive parts for the selected live slots, each with the same ordered binder form, and emits no part for an empty `ts`. Thus `forall` is true and `exists` is false when `ts` is empty, and otherwise they denote conjunction and disjunction over the live places respectively. A quantified clock guard that reads element presence, such as `forall(e in self.q: present(e))`, remains refused at the owning timed member without emitting partial nodes. The guard binder uses the QSpec carrier and order rules (FR-322-AC-295) and quantifier semantics (FR-415-AC-24; CL-57, CL-58, CL-62). | Test |
+| FR-230-AC-49 | The emitted `clock_place` of `ts.x` below `ts: Sequence<Timer>[0, 3]` is one node for the three places `ts.0.x`, `ts.1.x` and `ts.2.x`, its slot step carries the symbolic element selector of FSpec FR-322-AC-148 and no index, and the place ids of slots 0 and 1 differ only in the final component of `<slots>`; the same holds for `Set`, `Bag`, `OrderedSet` and a nested `Sequence` (two `<slots>` components). | Test |
+| FR-230-AC-50 | A clock-reading `pre` bound to an execution point refuses `TimedModelNotEmitted` (`unsupported_construct`/`not-yet-implemented`) at the clause and emits no point-qualified anchor. A model with no guard emits empty aggregates and reads back (FSpec FR-322-AC-150). The excluded forms refuse `unsupported_construct`/`expression-form` at the form (FSpec FR-322-AC-267: `GJ-01`, `CW-01` to `CW-03`, `SD-01`): `self.x >= 1 ms or self.versionNumber > 0` at `self.versionNumber > 0`, `self.ts = sequence[...]` and `self.ts = filter(...)` at the write, `self.v = absent` at the write and `forall(e in self.ts: e.n > 1 implies e.x = 0 ms)` at `e.n > 1`; `self.x >= 0 ms or self.versionNumber > 0` is the one part `x >= 0 ms` (`GJ-03`). | Test |
+| FR-230-AC-55 | Over `ts: Sequence<Timer>[0, 3]`, `forall(e in self.ts: e.x < 5 ms)` emits one `clock_guard` whose parts cover each possible live length; the zero-length part has no constraints and its predicate selects size zero, and each nonempty part carries the ordered typed slot parameters before its corresponding clock-constraint references. `exists(e in self.ts: e.x < 5 ms)` emits disjunctive parts for the selected live slots, each with the same ordered binder form, and emits no part for an empty `ts`. Thus `forall` is true and `exists` is false when `ts` is empty, and otherwise they denote conjunction and disjunction over the live places respectively. A quantified clock guard that reads element presence, such as `forall(e in self.q: present(e))`, remains refused at the owning timed member without emitting partial nodes. The guard binder uses the FSpec carrier and order rules (FR-322-AC-295) and quantifier semantics (FR-415-AC-24; CL-57, CL-58, CL-62). | Test |
 | FR-230-AC-56 | Over `ts: Sequence<Timer>[0, 3]`, `time invariant All when { true } { forall(e in self.ts: e.x <= 9 ms) }` emits one `time_invariant` with one ordered slot `parameter` reference in `binders`, and one upper-bound `clock_constraint` on the `ts` element clock template whose ordered slot term is that binder; the bound applies to each live slot, and the invariant is vacuously true with no live slot. The same source form with `exists` parses and is refused `invalid_timed_model`/`time-invariant-shape` at the invariant without emitting partial timed nodes. The quantified presence predicate `time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }` remains refused at the owning timed member without partial output. Binder typing and order follow FR-322-AC-295 and FR-415-AC-24 (CL-59, CL-60, CL-62). The separate point-qualified clock-clause refusal remains FR-230-AC-50 under FR-342-AC-11. | Test |
 | FR-230-AC-57 | Over `ts: Sequence<Timer>[0, 3]`, `time invariant Mixed when { true } { forall(e in self.ts: e.x <= 9 ms) and self.x < 12 ms }` parses to its source-ordered quantified and ordinary bounds (FR-393-AC-9) and then refuses `invalid_timed_model`/`time-invariant-shape` at the invariant; it emits no partial timed nodes, so the ordinary `self.x` bound cannot become vacuous when `ts` is empty. | Test |
-| FR-230-AC-51 | Over `v: Option<Clock>` and `q: Sequence<Option<Clock>>[0, 2]` on two objects, `present(other.v)`, `present(self.q[i])`, and `present(e)` in the bodies of `forall(e in self.q: ...)` and `exists(e in self.q: ...)` each check as a `Boolean` data predicate resolved through the place identity, are recorded as data predicates of the convex part at the owner and slot, declare no `Option<Boolean>` or other member, and leave every model declaration key as it is without `v`; a `present` with a wrong slot count or owner type is refused as QSpec FR-322-AC-156 states. | Test |
-| FR-230-AC-52 | Over `v: Option<Clock>` in an operation's frame, the QSpec clock-presence-frame vectors FP-01, FP-03, FP-05, FP-07, FP-09, FP-11 and FP-13 step as published: a requirement of an absent place with no write has no successor and refuses `invalid_timed_model`/`clock-presence-unwritten` when the precondition establishes absence; a write makes it present with its clock, a write of `absent` drops it, and an unwritten `v` keeps its bit and clock (QSpec FR-415-AC-21, TC-367 CK-31). | Test |
+| FR-230-AC-51 | Over `v: Option<Clock>` and `q: Sequence<Option<Clock>>[0, 2]` on two objects, `present(other.v)`, `present(self.q[i])`, and `present(e)` in the bodies of `forall(e in self.q: ...)` and `exists(e in self.q: ...)` each check as a `Boolean` data predicate resolved through the place identity, are recorded as data predicates of the convex part at the owner and slot, declare no `Option<Boolean>` or other member, and leave every model declaration key as it is without `v`; a `present` with a wrong slot count or owner type is refused as FSpec FR-322-AC-156 states. | Test |
+| FR-230-AC-52 | Over `v: Option<Clock>` in an operation's frame, the FSpec clock-presence-frame vectors FP-01, FP-03, FP-05, FP-07, FP-09, FP-11 and FP-13 step as published: a requirement of an absent place with no write has no successor and refuses `invalid_timed_model`/`clock-presence-unwritten` when the precondition establishes absence; a write makes it present with its clock, a write of `absent` drops it, and an unwritten `v` keeps its bit and clock (FSpec FR-415-AC-21, TC-367 CK-31). | Test |
 | FR-230-AC-53 | A dense model whose only timed members are its clock `x`, `urgent Busy when { self.versionNumber > 0 }` and `urgent Prompt Config::ConfigVersion::attemptUpdate` emits two `urgency` nodes listed in declared order, each located at its declaration: the `when` one references the located Boolean expression node of the predicate, whose `self` is a level-0 `parameter` node, and the `operation` one the model node and `attemptUpdate`; I2 admits and reads both back. Two declarations of equal content are one node listed once with an occurrence at each declaration. `urgent Armed when { present(self.v) }` over `v: Option<Clock>` references the `presence_read` of `v`'s template and `self`; `urgent All when { forall(e in self.q : present(e)) }` over `q: Sequence<Option<Clock>>[0, 2]` is refused `TimedModelNotEmitted`. | Test |
-| FR-230-AC-54 | Over `x: Clock`, `pre { self.x >= 1 ms and self.versionNumber > 0 or self.x < 5 ms }` emits one `clock_guard` of `attemptUpdate`'s no-point anchor with two parts (the expression node of `self.versionNumber > 0` with `ge 1/1`, and `true` with `lt 5/1`), `post { self.x = 0 ms }` one `clock_reset` of kind `place` with owner `self` and condition `true`, and `time invariant Bounded when { self.versionNumber >= 0 } { self.x <= 9 ms }` one `time_invariant` with the bound `le 9/1`; each clause node is located at its source and the root lists every clause and constraint once, in declared order. A constraint written twice is one node with two occurrences; `self.x = 2 ms` writes `eq`. Over `attemptUpdate(c: Clock)`, `c >= 1 ms` is a constraint and `c = 0 ms` a reset of kind `parameter` naming the anchor and `c`. With `peer: ConfigVersion` and `peer_clock(o) { o.peer.x }`, `peer_clock(self) <= 2 ms` is a constraint of kind `place` on `x` whose owner is the `record.project` of `peer` over the `model.deref` of `self`. Over `v: Option<Clock>`, `present(self.v)` is a `presence_read` over `v`'s template and `self`, S3's place key being the key IR derives: the predicate of the part of `present(self.v) and value(self.v) >= 1 ms`, the whole predicate of `time invariant when { present(self.v) }`, and conjoined with `self.versionNumber > 0` in an `urgent when`; `present(self.peer.v)` takes the owner `self.peer`. Two guarded preconditions of `attemptUpdate`, `self.x >= 1 ms or self.x > 7 ms` and `self.versionNumber > 0 and self.x < 5 ms`, emit one `clock_guard` with two parts, each the predicate `self.versionNumber > 0` and the constraints of both; with a data predicate on each side the part's predicate is their `quire.op.boolean.and`. Over `q: Sequence<Option<Clock>>[0, 2]`, `post { forall(e in self.q: present(e) implies e = 0 ms) }` is one `clock_reset` of `q`'s element place whose one binder `e` is its slot term and whose condition is the `presence_read` of that place at `self` and `e` (QSpec `SD-02`). `post { present(self.v) }` over `v: Option<Clock>` writes no clause node and its postcondition is the `presence_read` of `v`'s place at `self` (QSpec `CW-05`); `post { self.v != absent }` is refused `TimedModelNotEmitted` at the comparison. | Test |
+| FR-230-AC-54 | Over `x: Clock`, `pre { self.x >= 1 ms and self.versionNumber > 0 or self.x < 5 ms }` emits one `clock_guard` of `attemptUpdate`'s no-point anchor with two parts (the expression node of `self.versionNumber > 0` with `ge 1/1`, and `true` with `lt 5/1`), `post { self.x = 0 ms }` one `clock_reset` of kind `place` with owner `self` and condition `true`, and `time invariant Bounded when { self.versionNumber >= 0 } { self.x <= 9 ms }` one `time_invariant` with the bound `le 9/1`; each clause node is located at its source and the root lists every clause and constraint once, in declared order. A constraint written twice is one node with two occurrences; `self.x = 2 ms` writes `eq`. Over `attemptUpdate(c: Clock)`, `c >= 1 ms` is a constraint and `c = 0 ms` a reset of kind `parameter` naming the anchor and `c`. With `peer: ConfigVersion` and `peer_clock(o) { o.peer.x }`, `peer_clock(self) <= 2 ms` is a constraint of kind `place` on `x` whose owner is the `record.project` of `peer` over the `model.deref` of `self`. Over `v: Option<Clock>`, `present(self.v)` is a `presence_read` over `v`'s template and `self`, S3's place key being the key IR derives: the predicate of the part of `present(self.v) and value(self.v) >= 1 ms`, the whole predicate of `time invariant when { present(self.v) }`, and conjoined with `self.versionNumber > 0` in an `urgent when`; `present(self.peer.v)` takes the owner `self.peer`. Two guarded preconditions of `attemptUpdate`, `self.x >= 1 ms or self.x > 7 ms` and `self.versionNumber > 0 and self.x < 5 ms`, emit one `clock_guard` with two parts, each the predicate `self.versionNumber > 0` and the constraints of both; with a data predicate on each side the part's predicate is their `filament.op.boolean.and`. Over `q: Sequence<Option<Clock>>[0, 2]`, `post { forall(e in self.q: present(e) implies e = 0 ms) }` is one `clock_reset` of `q`'s element place whose one binder `e` is its slot term and whose condition is the `presence_read` of that place at `self` and `e` (FSpec `SD-02`). `post { present(self.v) }` over `v: Option<Clock>` writes no clause node and its postcondition is the `presence_read` of `v`'s place at `self` (FSpec `CW-05`); `post { self.v != absent }` is refused `TimedModelNotEmitted` at the comparison. | Test |
 | FR-230-AC-58 | In a dense timed model (model alias `Config`, object type `Call` with `inflight: Boolean`, `waiting: Boolean`, `n: Int[0, 2]` and clock `x`, the one population `calls`, `time dense unit ms`), `time invariant HasCalls when { forall(c in Config::calls : c.inflight) } { self.x <= 1 ms }`, `urgent CallsExist when { exists(c in Config::calls : c.waiting) }`, a time invariant predicate `exists(c in allInstances<Config::Call>(Config::calls) : c.inflight)`, `urgent Known when { present(lookup<Config::Call>(Config::calls, self) absent empty) }`, a time invariant predicate `count(c in Config::calls where c.waiting) < 2` and an `urgent when` predicate `sum(c in Config::calls : c.n) > 0` each check and produce a `TimedModel` holding the declaration: each population operand is typed `Population<Call>`, each domain and the `allInstances` result `Set<Reference<Call>>`, every read is at `current`, and the predicate's only population domain is `calls`, the context population, with no second domain. A predicate `exists(c in Config::calls : c.waiting) and present(lookup<Config::Call>(Config::calls, self) absent empty)` checks with both reads naming `calls`. In a predicate, `exists(c in Config::nothing : true)` refuses `missing_declaration`/`missing-name` at `nothing`, and with a second model alias `Other` of the unit whose domain package declares a population `jobs`, `exists(j in Other::jobs : true)` refuses `missing_declaration`/`missing-name` at `jobs`; `Config::calls = Config::calls` refuses `ill_typed`/`operator-ineligible` at the first `Config::calls`; and the time invariant body `forall(c in Config::calls : c.x <= 3 ms)` refuses `invalid_timed_model`/`time-invariant-shape`, each with no `TimedModel`. Predicates that read only `self`, and the same population reads in a unit-level precondition (FR-391), still check. | Test (TC-1334) |
 | FR-230-AC-59 | Over AC-58's model, each declaration below the only time invariant or urgency declaration of its model, at a discrete state whose `calls` holds `c1` (`inflight` true, `waiting` false) and `c2` (`inflight` false, `waiting` true), with `x = 0` on both: `HasCalls` applies to neither object and bounds no clock, so a delay of 5 is admissible; `time invariant AnyInflight when { exists(c in Config::calls : c.inflight) } { self.x <= 1 ms }` reads no `self` and applies to both objects, so a delay of 1 is admissible and a delay of `1 + 1/1000` is not; `urgent CallsExist` makes the state urgent, so no positive delay is admissible, and with `c2.waiting` false instead it does not hold and a delay of 5 is admissible. `urgent Known` is evaluated once for each of `c1` and `c2` with `self` bound to it and holds of both. At a discrete state whose `calls` holds no object, `urgent Idle when { count(c in Config::calls where c.waiting) = 0 }` holds once at the state and makes it urgent, and `AnyInflight` and `time invariant AllInflight when { forall(c in Config::calls : c.inflight) } { self.x <= 1 ms }` bound no clock, so with either alone the state is quiescent. Each predicate gives the same truth as its `allInstances<Config::Call>(Config::calls)` spelling at the same state. | Test (TC-1334) |
 | FR-230-AC-60 | The package emitted for a unit holding AC-58's `HasCalls`, `CallsExist` and `Known` and the precondition `pre UsesCalls using v on Config::Call::reply { forall(c in Config::calls : true) }` holds exactly one `relation`/`population` reference node, keyed by `calls`' declaration key, which the `time_invariant` predicate of `HasCalls`, the `when` `urgency` predicates of `CallsExist` and `Known` (`Known` through its `lookup` application) and the precondition all reference; `CallsExist`'s predicate writes no `self` `parameter` node and `Known`'s writes one. I2 admits the package and reads back the same `TimedModel`, each predicate with its population operand. | Test (TC-1334) |
@@ -999,8 +999,8 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
   (the sibling `terminal` declaration),
   [FR-391](FR-391-name-a-population-in-a-state-clause.md) (the population
   scope of the `time invariant when` and `urgent when` predicates).
-- QSpec FR-142 (dimensions, units and exact unit conversion, read from the
-  admitted package) and QSpec FR-205 (exact quantities).
+- FSpec FR-142 (dimensions, units and exact unit conversion, read from the
+  admitted package) and FSpec FR-205 (exact quantities).
 - [FR-361](FR-361-gate-model-constructs-on-the-model-profile-selection.md)
   (items 8, 10 and 11: the gate's stage and retained payload),
   [FR-393](FR-393-parse-time-declarations-clocks-and-timed-intervals-and-build-their-s2-forms.md)
@@ -1012,10 +1012,10 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 
 ## References
 
-- QSpec half: QSpec FR-415 (Linear STD-139) owns the shared grammar of the
+- FSpec half: FSpec FR-415 (Linear STD-139) owns the shared grammar of the
   `time` member, `Clock` fields, resets, clock constraints, time invariants
   and `urgent` (ADR-026 OV-7).
-- Selection of the timed facet: FR-110-AC-13 and FR-361-AC-14 (the header `profile` that names `quire.temporal.complete/v1`).
+- Selection of the timed facet: FR-110-AC-13 and FR-361-AC-14 (the header `profile` that names `filament.temporal.complete/v1`).
 - filament-core-data FR-146 (Linear STD-295, agent-ix/filament-core-data#301):
   the `Clock` field type and the `dimensions` and `units` of the admitted
   domain package.

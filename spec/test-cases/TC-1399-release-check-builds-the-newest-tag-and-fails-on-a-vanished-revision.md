@@ -3,7 +3,7 @@ id: TC-1399
 title: "release-check builds the current release tag and fails on a vanished locked revision"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-018
+  - target: ix://agent-ix/filament-spec-language/NFR-018
     type: verifies
 ---
 # TC-1399: release-check builds the current release tag and fails on a vanished locked revision

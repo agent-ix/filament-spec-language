@@ -3,41 +3,41 @@ id: FR-140
 title: "Evaluate the refinement mapping at a concrete state"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-138
+  - target: ix://agent-ix/filament-spec-language/FR-138
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-139
+  - target: ix://agent-ix/filament-spec-language/FR-139
     type: depends_on
 ---
 # FR-140: Evaluate the refinement mapping at a concrete state
 
 ## Description
 
-QSL's layer-6 crate `qsl-replay` SHALL compute `map(s, h)`, the abstract
+FSL's layer-6 crate `fsl-replay` SHALL compute `map(s, h)`, the abstract
 state that a concrete state `s` with history values `h` maps to (ADR-020
 RM-7). It builds each abstract population as the key-preserving image of
 its source population (RM-2), gives each image object the abstract type
 mapped from its concrete most-specific type (RM-3), and evaluates each
 visible field row through the one clause evaluator. A row that evaluates
 undefined refutes the refinement at that state; a row that is refused or
-incomplete makes the mapping undetermined there (QSpec FR-377).
+incomplete makes the mapping undetermined there (FSpec FR-377).
 
 ## Use case
 
@@ -148,8 +148,8 @@ step row, or a history update.
   the row evaluates to `Some(v)`. A hidden field stays in `hidden`; an unset
   optional field is not hidden. A field declared `Option<T>` (a value that
   is an option) takes the row's option value unchanged, so `none` stays an
-  explicit `none` and the field is set (QSpec FR-377). No well-typed row
-  evaluates to `null` (QSpec FR-143), so `map_state` has no `null` case.
+  explicit `none` and the field is set (FSpec FR-377). No well-typed row
+  evaluates to `null` (FSpec FR-143), so `map_state` has no `null` case.
 - `MappedState.visible` SHALL list no relationship extent. No refinement row
   maps a relationship (ADR-020 RM-2 to RM-4), so FR-135 refuses a refinement
   whose abstract model declares a relationship (`unsupported_construct`/
@@ -157,10 +157,10 @@ step row, or a history update.
   for a mapped state to hold.
 - `map_state` SHALL read the rows in a fixed order that does not depend on
   the order they were written in: the populations in ascending node-key order of
-  the row's first named declaration, the abstract population (QSpec FR-375),
+  the row's first named declaration, the abstract population (FSpec FR-375),
   within each population its objects in ascending key order, and per
   object its type's object row and then that type's field rows in ascending
-  field name as UTF-8 bytes (QSpec FR-377 "Failure precedence").
+  field name as UTF-8 bytes (FSpec FR-377 "Failure precedence").
   `map_state` SHALL return the first `MappingFailure::Undefined` in that
   order if any row is undefined; otherwise the first
   `MappingFailure::Undetermined` in that order. An undefined row therefore
@@ -184,7 +184,7 @@ step row, or a history update.
 - If the evaluator hits an internal fault such as a broken invariant, then
   `map_state` SHALL return `MappingFailure::Fault` with its catalog code at
   once. The fault is not an outcome of any row and takes no part in the
-  order above: the item settles `failed` (QSpec FR-383) and the failure is
+  order above: the item settles `failed` (FSpec FR-383) and the failure is
   never `Undefined`, `Undetermined` or inconclusive.
 - When the refinement has no hidden field, `map_state` SHALL return a
   complete abstract state in `MappedState.visible`.
@@ -220,7 +220,7 @@ step row, or a history update.
 
 - ADR-020 §1 RM-2, RM-3, RM-7 and §5 RE-4, RE-5; ADR-016 FE-3 and ID-10;
   ADR-013 O-16 and ADR-018 UE-2 (the undefined cause record).
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (state key), [FR-107](FR-107-evaluate-state-clauses-at-s6a.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-135](FR-135-check-a-refinement-declaration-s-subjects-and-state-mapping.md),
@@ -229,4 +229,4 @@ step row, or a history update.
 
 ## References
 
-- The QSpec half (the population map and reference lifting): QSpec FR-377 (Linear STD-133).
+- The FSpec half (the population map and reference lifting): FSpec FR-377 (Linear STD-133).

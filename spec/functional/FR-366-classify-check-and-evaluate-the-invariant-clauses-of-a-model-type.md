@@ -3,25 +3,25 @@ id: FR-366
 title: "Classify, check and evaluate the invariant clauses of a model type"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-359
+  - target: ix://agent-ix/filament-spec-language/FR-359
     type: references
-  - target: ix://agent-ix/quire-specification/FR-208
+  - target: ix://agent-ix/filament-specification/FR-208
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-207
+  - target: ix://agent-ix/filament-specification/FR-207
     type: depends_on
-  - target: ix://agent-ix/quire-specification/TC-235
+  - target: ix://agent-ix/filament-specification/TC-235
     type: references
 ---
 # FR-366: Classify, check and evaluate the invariant clauses of a model type
@@ -30,13 +30,13 @@ relationships:
 
 A clause a domain package attaches to a type (`TypeDefinition.clauses`) is a
 type-level clause. Intake keeps its `language` and `text` (FR-056) and
-nothing else. This requirement gives that clause its meaning under QSpec
+nothing else. This requirement gives that clause its meaning under FSpec
 FR-208 and FR-208-AC-10: the engine SHALL classify every type-level clause as
 an invariant, a guard or an unevaluated clause, SHALL parse and check each
 invariant of a `quire` clause, and SHALL evaluate the invariants of a record
 value type or an event type once for every value of the type that an
 observation reaches, reporting a false result as a logical violation located
-by its QSpec FR-207 runtime value path. QSpec TC-235 M06 run 4, M13 and M14
+by its FSpec FR-207 runtime value path. FSpec TC-235 M06 run 4, M13 and M14
 are the reference rows.
 
 Today a type-level `quire` clause is retained and nothing parses, checks or
@@ -69,11 +69,11 @@ invariant "evaluates nothing" is replaced by this requirement.
 
 - A type-level clause SHALL be classified `Unevaluated` when its language is
   not `quire`. It is kept with its text and source identity, never parsed,
-  checked or evaluated (QSpec FR-208-AC-4).
+  checked or evaluated (FSpec FR-208-AC-4).
 - A `quire` clause SHALL be classified `Guard` when a transition of a state
   machine names it as its `guard`, and `Invariant` otherwise. A guard is not
   an invariant, is not conjoined to any invariant and is not evaluated by this
-  requirement (QSpec FR-208-AC-10).
+  requirement (FSpec FR-208-AC-10).
 - A state machine specializing another keeps an inherited guard as a guard: a
   clause is `Guard` for the machine that declares it and for every
   specialization that inherits the transition naming it. A subtype
@@ -157,7 +157,7 @@ The *values* an evaluation ranges over are these:
 - For a state machine: the one machine the selected invocation's `context`
   names, and only it. Its values are its one context in the `pre` snapshot and
   its one in the `post` snapshot of the invocation, each a separate value
-  (QSpec FR-208-AC-10), with `self` the context; the invariants evaluated for
+  (FSpec FR-208-AC-10), with `self` the context; the invariants evaluated for
   each are the effective invariants of that machine, its own and those it
   inherits from its supertypes. A machine the invocation does not name has no
   value, whatever invariants it has or inherits, and no context is required of
@@ -180,10 +180,10 @@ Evaluation rules:
   or `Refused`, so a result never reaches `Undecided`. A false result is a
   logical violation, a Boolean `false` with no diagnostic code or cause, never
   a refusal.
-- Each result SHALL carry the QSpec FR-207 runtime value path of its value:
+- Each result SHALL carry the FSpec FR-207 runtime value path of its value:
   - a record or event value under an object: the root observation is the
     selected current observation and the subject the declared object identity
-    of the object (QSpec FR-204); the steps are `member` for the field, then
+    of the object (FSpec FR-204); the steps are `member` for the field, then
     `option_value` for a present optional, `index` for a collection element and
     `field` for a field of a record value;
   - an object or a run: the subject is its declared object identity and the
@@ -197,7 +197,7 @@ Evaluation rules:
     observation is the invocation's `post` observation and the subject the
     result binding.
 - The elements of a multiplicity field are located by their position in the stored order (`index 0`, `index 1`), and the results SHALL be ordered by the FR-207 key order of their paths (the
-  observation key first, as QSpec FR-207 compares it), then by clause key.
+  observation key first, as FSpec FR-207 compares it), then by clause key.
   Values are evaluated in that order, whatever order the observation lists
   its objects or the invocation its parameters.
 - `outcome` SHALL be `False` when any result is `Completed(false)`, `True` when
@@ -214,7 +214,7 @@ Evaluation rules:
   `model.navigate` and `model.deref` for object-field reads only); the charges
   are the ones the invariant's body makes. A comparison `a >= b` over two
   integers charges `ordering.operands`, `ordering.arithmetic` and
-  `ordering.result-retain`, in that order, as `quire-exact` states.
+  `ordering.result-retain`, in that order, as `filament-exact` states.
 - A type none of whose values the observation reaches has no result. A
   well-formed invariant of such a type is checked and reports nothing.
 - A `Guard` and an `Unevaluated` clause have no result.
@@ -234,7 +234,7 @@ Evaluation rules:
 | FR-366-AC-7 | A `TaxedMoney` value at the `Money` slot `quoted` is evaluated against `TaxedMoney`'s effective invariants; a `Money` record nested in a record `Pair { first: Money; second: Money }` field `pair` of an object is located by `[member pair, field first]` and `[member pair, field second]`, each evaluated; an event value bound to a parameter is evaluated at the parameter binding with no steps (intake refuses an event type as the declared type of an operation parameter and of a field, so no admitted observation holds an event value; that half is carried to QSL-793 and FR-106, and TC-1051 step 6 supplies the value on the admitted observations); a `Reference<Order>` field `buddy` is not followed: the referenced object's `Money` fields are reached once, at the referenced object's own declared identity, and not again under `buddy`. | Test (TC-1051) |
 | FR-366-AC-8 | With a meter that denies the fourth charge, the evaluation of AC-4 returns the one result for `discount` (its three charges: `ordering.operands`, `ordering.arithmetic`, `ordering.result-retain`) and `Incomplete` with `resource_exhausted`/`insufficient-next-charge`: the fourth charge is the `ordering.operands` of the value at `[member history, index 0]`, whose evaluation is not reported, and no later value has a result. A meter that denies the third charge returns no result and `Incomplete`. A `Guard` and an `Unevaluated` clause have no result. | Test (TC-1051) |
 | FR-366-AC-9 | An object-type or process invariant over the object `r2` of an observation `s1` holding the runs `r1` `{attempts: 0}` and `r2` `{attempts: -1}` (TC-235 M16 run 1, the clause `NonNegativeAttempts` as a type-level invariant `self.attempts >= 0` of the process `Fulfilment`) has two results, `Completed(true)` at `(s1, object r1)` and `Completed(false)` at `(s1, object r2)`, each with no steps, and outcome `False`; the state-machine invariant `Extra` of `OrderLifecycle` over TC-1045's `Orders` fixture and its invocation `i1` of `place` (`flags` `{placed: true}`) with the `pre` context `{placed: false, cancelled: false}` and the `post` context `{placed: true, cancelled: true}` has two results, one at `(pre snapshot of i1, invocation i1 binding receiver)` and one at `(post snapshot of i1, invocation i1 binding receiver)`, each `Completed(true)` with no steps, and the snapshots, which hold no `ExpressLifecycle` context, admit though `ExpressLifecycle` specializes `OrderLifecycle` and so inherits `Extra`; a `pre` snapshot with no `OrderLifecycle` context refuses `invalid_model_binding`/`wrong-context`; `evaluate_clause` named `NonNegativeAttempts`, over a unit that declares no state clause of that name, returns `UnknownClause`. | Test (TC-1051) |
-| FR-366-AC-10 | Over step 9's `Pair`, compiled in a unit whose header profile selects `quire.model.complete/v1` and that declares the `pure` functions below: with `total_of(b: Reference<Order>): Integer` whose body is `b.total.amount_minor`, `Peer` as `present(self.buddy) implies total_of(value(self.buddy)) >= 0` refuses `unsupported_construct`/`expression-form` naming `ix://test/orders/Pair/Peer` at `TypeDefinition.clauses[0]`; with `checked(b: Reference<Order>): Boolean` whose body is `total_of(b) >= 0` and `Peer` as `present(self.buddy) implies checked(value(self.buddy))`, the same refusal at the same locus. Each of these compiles: with `linked(b: Option<Reference<Order>>): Boolean` whose body is `present(b)`, `Peer` as `linked(self.buddy) or not linked(self.buddy)`; with `same(a: Reference<Order>, b: Reference<Order>): Boolean` whose body is `a = b`, `Peer` as `present(self.buddy) implies same(value(self.buddy), value(self.buddy))` (identity comparison is not a read); with `wrap(b: Option<Reference<Order>>): Boolean` whose body is `linked(b)`, `Peer` as `wrap(self.buddy) or not wrap(self.buddy)` (pass-through to a non-reading callee). In the same `quire.model.complete/v1` unit, whose `requires` closure admits named predicates (FR-110-AC-8), the same read declared as a named predicate `positive(b: Reference<Order>)` with body `b.total.amount_minor >= 0`, called as `present(self.buddy) implies positive(value(self.buddy))`, refuses the same. | Test (TC-1050) |
+| FR-366-AC-10 | Over step 9's `Pair`, compiled in a unit whose header profile selects `filament.model.complete/v1` and that declares the `pure` functions below: with `total_of(b: Reference<Order>): Integer` whose body is `b.total.amount_minor`, `Peer` as `present(self.buddy) implies total_of(value(self.buddy)) >= 0` refuses `unsupported_construct`/`expression-form` naming `ix://test/orders/Pair/Peer` at `TypeDefinition.clauses[0]`; with `checked(b: Reference<Order>): Boolean` whose body is `total_of(b) >= 0` and `Peer` as `present(self.buddy) implies checked(value(self.buddy))`, the same refusal at the same locus. Each of these compiles: with `linked(b: Option<Reference<Order>>): Boolean` whose body is `present(b)`, `Peer` as `linked(self.buddy) or not linked(self.buddy)`; with `same(a: Reference<Order>, b: Reference<Order>): Boolean` whose body is `a = b`, `Peer` as `present(self.buddy) implies same(value(self.buddy), value(self.buddy))` (identity comparison is not a read); with `wrap(b: Option<Reference<Order>>): Boolean` whose body is `linked(b)`, `Peer` as `wrap(self.buddy) or not wrap(self.buddy)` (pass-through to a non-reading callee). In the same `filament.model.complete/v1` unit, whose `requires` closure admits named predicates (FR-110-AC-8), the same read declared as a named predicate `positive(b: Reference<Order>)` with body `b.total.amount_minor >= 0`, called as `present(self.buddy) implies positive(value(self.buddy))`, refuses the same. | Test (TC-1050) |
 
 ## Dependencies
 
@@ -245,5 +245,5 @@ Evaluation rules:
   receiver path of an object, state machine or process invariant), FR-056
   (equality on native `String`, `UUID` and `Timestamp`) and FR-359 (a subtype
   value at an ancestor slot).
-- QSpec FR-208 and FR-208-AC-10 (invariant meaning), FR-207 (the runtime value
+- FSpec FR-208 and FR-208-AC-10 (invariant meaning), FR-207 (the runtime value
   path), FR-204 (declared object identity) and TC-235 M06, M13, M14.

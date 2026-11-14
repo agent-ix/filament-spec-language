@@ -3,7 +3,7 @@ id: TC-569
 title: "The sort canonicaliser maps each state into its orbit and coalesces orbits"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: verifies
 ---
 # TC-569: The sort canonicaliser maps each state into its orbit and coalesces orbits

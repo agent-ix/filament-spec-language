@@ -3,15 +3,15 @@ id: FR-153
 title: "Decide each fairness on the annotated quotient"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-162
+  - target: ix://agent-ix/filament-spec-language/FR-162
     type: depends_on
 ---
 # FR-153: Decide each fairness on the annotated quotient
@@ -20,7 +20,7 @@ relationships:
 
 Under symmetry, a `whole` fairness constraint reads the same on the quotient
 as on the subject, but an `each` constraint names one transition identity,
-which a permutation maps to another. QSL's `model_check` SHALL decide weak
+which a permutation maps to another. FSL's `model_check` SHALL decide weak
 and strong `each` fairness on the **annotated quotient**, the retained
 reduced product whose edges carry the permutation their target was
 canonicalised by (ADR-021 AQ-1 to AQ-6). For each SCC it computes a cycle
@@ -96,7 +96,7 @@ set `R` of quotient states removed for the refinement.
 |----|----------|--------------|
 | FR-153-AC-1 | ADR-021 §7.1, instance `c = a`, group `{id, (b c)}`, claim `always eventually holds(c.versionNumber = 2)` under `fair weak each attemptUpdate`: the accepting SCC with `va = 0` has six canonical states and entry `(0,0,0)`; the tree word at `(0,0,1)` is `(b c)`; the non-tree edge `(0,0,0) -upd(c)-> (0,0,1)` gives generator `(b c)`; `W_taken` closes to `{upd(b), upd(c)}`, `W_disabled` is empty, and the SCC fails weak `each` because `upd(a)` is uncovered. The instance returns `Holds` over 30 product states. | Test (TC-570) |
 | FR-153-AC-2 | ADR-021 §7.1's refutation: `eventually always holds(c.versionNumber != 2)` under `fair weak each attemptUpdate`, instance `c = a`: the accepting SCC spans all 18 canonical states with edges of all three labels, its cycle group is `{id, (b c)}`, the closure of `W_taken` covers `upd(a)`, `upd(b)` and `upd(c)`, and the SCC passes. | Test (TC-570) |
-| FR-153-AC-3 | Strong `each`: the `Toggle` unit has object type `T` with `on: Boolean` and `fired: Boolean`, population `toggles` annotated `symmetric`, universe `{a, b}`, one class `[a, b]`, both objects initially all false, and operations `flip()` (frame `modifies self.on`, post `self.on = not pre(self.on)`) and `fire()` (frame `modifies self.fired`, pre `self.on and not self.fired`, post `self.fired`). The claim is `eventually holds(w = w)` over a watcher `w` of a second, unreduced population `watchers` (a temporal clause always names an `over` parameter, QSpec FR-370-AC-13), so it runs under the full group of `toggles`; the run supplies the atom's letter, true exactly in the states where every `toggles` object has `fired` true, and a counterexample replays under the same letter. Under `fair weak each flip` and `fair weak each fire` it returns `Violated`, with a loop that flips `a` and `b` alternately and never fires: each `fire` identity is disabled somewhere in that SCC. Under `fair weak each flip` and `fair strong each fire` it returns `Holds`. In that run, the SCC holding the alternating loop fails strong `each`, because both `fire` identities are enabled in it and neither is taken. The refinement removes the quotient states where a lift enables an untaken `fire`, and the SCCs left have no fair accepting cycle. | Test (TC-571) |
+| FR-153-AC-3 | Strong `each`: the `Toggle` unit has object type `T` with `on: Boolean` and `fired: Boolean`, population `toggles` annotated `symmetric`, universe `{a, b}`, one class `[a, b]`, both objects initially all false, and operations `flip()` (frame `modifies self.on`, post `self.on = not pre(self.on)`) and `fire()` (frame `modifies self.fired`, pre `self.on and not self.fired`, post `self.fired`). The claim is `eventually holds(w = w)` over a watcher `w` of a second, unreduced population `watchers` (a temporal clause always names an `over` parameter, FSpec FR-370-AC-13), so it runs under the full group of `toggles`; the run supplies the atom's letter, true exactly in the states where every `toggles` object has `fired` true, and a counterexample replays under the same letter. Under `fair weak each flip` and `fair weak each fire` it returns `Violated`, with a loop that flips `a` and `b` alternately and never fires: each `fire` identity is disabled somewhere in that SCC. Under `fair weak each flip` and `fair strong each fire` it returns `Holds`. In that run, the SCC holding the alternating loop fails strong `each`, because both `fire` identities are enabled in it and neither is taken. The refinement removes the quotient states where a lift enables an untaken `fire`, and the SCCs left have no fair accepting cycle. | Test (TC-571) |
 | FR-153-AC-4 | Every AC-1 to AC-3 run with symmetry selected gives the same verdict as the unreduced run of the same claim; repeating each run gives equal generators and equal verdicts. With the run's meter set below the cost of AC-2's orbit closure, the run stops `Stopped(ResourceExhausted, …)` naming the meter. | Test (TC-571) |
 
 ## Dependencies
@@ -107,10 +107,10 @@ set `R` of quotient states removed for the refinement.
   (the SCC phase and the fairness filter), [FR-152](FR-152-canonicalise-a-model-state-by-sorting-its-symmetry-classes.md)
   (permutations), [FR-162](FR-162-offer-reductions-through-transition-system-hooks.md)
   (the retained edges with their permutations).
-- QSpec owns `each` fairness on the annotated quotient as normative
+- FSpec owns `each` fairness on the annotated quotient as normative
   semantics (ADR-021 QS-3).
 
 ## References
 
-- QSpec half: QSpec FR-384 (Linear STD-134; ADR-021 §9 QS-3). Strong fairness: ADR-019,
+- FSpec half: FSpec FR-384 (Linear STD-134; ADR-021 §9 QS-3). Strong fairness: ADR-019,
   Linear QSL-365. Owning ticket: Linear QSL-368.

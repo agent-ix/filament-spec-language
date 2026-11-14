@@ -3,7 +3,7 @@ id: TC-618
 title: "Phase 0 walks stop at their step budget, and the horizon is not a limit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: verifies
 ---
 # TC-618: Phase 0 walks stop at their step budget, and the horizon is not a limit

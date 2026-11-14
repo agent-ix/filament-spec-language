@@ -3,7 +3,7 @@ id: TC-037
 title: "Refuse foreign native source requests"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-014
+  - target: ix://agent-ix/filament-spec-language/FR-014
     type: verifies
 ---
 # TC-037: Refuse foreign native source requests

@@ -1,0 +1,1482 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-251 "Plan root" and FR-487: the public handoff from an authored unit to
+//! its tick-monitor plan-root package, read back through Contract IR's strict
+//! reader.
+
+use filament_contract_model::{
+    read_checked_package, CheckedNodeId, CheckedPackageDispatchResult, CheckedPackageEvidence,
+    CheckedPackageReadLimits, CheckedPackageV2,
+};
+use filament_exact::{Cancel, Integer, Rational};
+use fsl_analyze::monitor_root::{emit_plan_root, PlanRoot, PlanRootRefusal, PlanRootRequest};
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::SpineLimits;
+use fsl_replay::{MonitorTarget, TimingObligationSettings};
+use fsl_semantics::check::{CheckCause, TemporalCause};
+use fsl_semantics::library::LibraryName;
+use ix_trace_rs::trace;
+
+use crate::monitor_entries::{microsecond_target, ROOT_SHAPES};
+use crate::monitor_plan::{ratio, unit_source};
+use crate::units::Domain;
+
+/// Read limits roomy enough for the program's checked closure.
+pub(crate) const LIMITS: CheckedPackageReadLimits = CheckedPackageReadLimits {
+    bytes: 1 << 26,
+    nodes: 1_000_000,
+    edges: 10_000_000,
+    occurrences: 10_000_000,
+    diagnostics: 10_000,
+    work: 1_000_000_000,
+};
+
+pub(crate) fn target() -> MonitorTarget {
+    microsecond_target(ratio(0, 1), 2, 12, 3600)
+}
+
+pub(crate) fn root_of(
+    unit: &str,
+    clause: &str,
+    target: &MonitorTarget,
+) -> Result<PlanRoot, PlanRootRefusal> {
+    let domain = Domain::config_version();
+    let packages =
+        fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
+    let source = SourceIdentity::new("agent-ix", "monitor-root");
+    let name = LibraryName::new("fixture").unwrap();
+    emit_plan_root(
+        &PlanRootRequest {
+            source: &source,
+            path: "monitor.native",
+            bytes: unit.as_bytes(),
+            packages: &packages,
+            package_name: &name,
+            limits: SpineLimits::default(),
+            clause,
+            target,
+            settings: &TimingObligationSettings::default(),
+        },
+        &Cancel::new(),
+    )
+}
+
+pub(crate) fn authored(shape: &str) -> String {
+    unit_source(shape, "", true, "on origin")
+}
+
+/// The package read back through Contract IR's strict reader, with the domain
+/// package document its model selects supplied.
+pub(crate) fn read_back(bytes: &[u8], evidence: &CheckedPackageEvidence) -> Box<CheckedPackageV2> {
+    let domain = Domain::config_version();
+    let mut evidence = evidence.clone();
+    // A document the evidence already holds is the same document.
+    let _ = evidence.insert_domain_package_document(domain.package, domain.document.clone());
+    match read_checked_package(bytes, LIMITS, &evidence) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("the strict reader did not admit the plan root: {other:?}"),
+    }
+}
+
+fn admitted(root: &PlanRoot) -> Box<CheckedPackageV2> {
+    read_back(
+        root.emission().package().bytes(),
+        root.emission().evidence(),
+    )
+}
+
+fn json(root: &PlanRoot) -> serde_json::Value {
+    // The resolved form: a node's ids name graph positions, not operand slots.
+    fsl_semantics::check::wire_id::resolved_package_value(root.emission().package().bytes())
+        .unwrap()
+}
+
+/// The first of each kind of the plan root's keys: the root and its four
+/// entries, as the strict reader derives them.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct Keys {
+    pub(crate) root: CheckedNodeId,
+    pub(crate) entries: [CheckedNodeId; 4],
+}
+
+pub(crate) fn keys(package: &CheckedPackageV2) -> Keys {
+    assert_eq!(package.monitor_plans().len(), 1);
+    let plan = package.monitor_plans().next().unwrap();
+    Keys {
+        root: plan.structural_key().clone(),
+        entries: [
+            plan.init().structural_key().clone(),
+            plan.on_event().structural_key().clone(),
+            plan.on_watermark().structural_key().clone(),
+            plan.on_gap().structural_key().clone(),
+        ],
+    }
+}
+
+/// FR-251 "Plan root" / FR-251-AC-9 / TC-1081 step 6: the unit is taken to
+/// one plan-root node whose premises are the target's, with the four entries
+/// as declaration-less function nodes, and the strict reader admits it.
+#[trace("TC-1081", "FR-251-AC-9")]
+#[test]
+fn the_authored_unit_is_taken_to_a_plan_root_the_strict_reader_admits() {
+    let root = root_of(&authored(ROOT_SHAPES[0]), "C", &target()).expect("the plan root");
+    let package = admitted(&root);
+    assert_eq!(package.monitor_plans().len(), 1);
+    let view = package.monitor_plans().next().unwrap();
+    assert_eq!(view.counter(), "counter");
+    assert_eq!(view.counter_width_bits(), 12);
+    assert_eq!(view.max_reading_gap(), 3600);
+    assert_eq!(view.activation_capacity(), "8");
+    assert_eq!(view.max_event_rate().numerator.as_ref(), "1");
+    assert_eq!(view.max_event_rate().denominator.as_ref(), "500");
+    assert_eq!(view.uncertainty().numerator.as_ref(), "0");
+    let buffers: Vec<String> = view
+        .buffers()
+        .map(|buffer| buffer.capacity().to_owned())
+        .collect();
+    let expected: Vec<String> = root
+        .plan()
+        .buffers()
+        .iter()
+        .map(|(_, capacity)| capacity.to_string())
+        .collect();
+    assert_eq!(buffers, expected);
+
+    let wire = json(&root);
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let roots: Vec<&serde_json::Value> = nodes
+        .iter()
+        .filter(|n| n["node_tag"] == "temporal" && n["semantic_form"] == "monitor_plan")
+        .collect();
+    assert_eq!(roots.len(), 1);
+    let members = roots[0]["body"]["members"].as_array().unwrap();
+    let names: Vec<&str> = members
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, fsl_replay::PLAN_ROOT_BINDINGS.to_vec());
+    for name in ["init", "on_event", "on_watermark", "on_gap"] {
+        let member = members.iter().find(|m| m["name"] == name).unwrap();
+        let entry = nodes
+            .iter()
+            .find(|n| n["node_id"] == member["value"]["target"])
+            .unwrap();
+        assert_eq!(entry["node_tag"], "function");
+        assert!(entry.get("declaration").is_none() && entry.get("owner").is_none());
+    }
+    // FR-487 field spellings.
+    let fields = |name: &str| -> Vec<String> {
+        let record = nodes
+            .iter()
+            .find(|n| n["declaration"]["qualified_name"] == serde_json::json!([name]))
+            .unwrap();
+        record["body"]["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(fields("Instance"), ["subject", "subformula", "origin"]);
+    assert_eq!(fields("Activation"), ["subformula", "origin", "status"]);
+    assert_eq!(fields("LimitReached"), ["limit", "value", "setting"]);
+    assert_eq!(fields("ActStatus")[0], "position");
+    assert_eq!(
+        fields("State"),
+        [
+            "now",
+            "history_start",
+            "buffer_0",
+            "activations",
+            "event_position"
+        ]
+    );
+}
+
+/// The root binds the plan the producer derived: the same plan the unit's
+/// clause and the target derive again, its obligations alongside.
+#[trace("TC-1081", "FR-251-AC-9")]
+#[test]
+fn the_returned_plan_is_the_one_the_root_carries() {
+    let unit = authored(ROOT_SHAPES[0]);
+    let root = root_of(&unit, "C", &target()).unwrap();
+    let again = root_of(&unit, "C", &target()).unwrap();
+    assert_eq!(root.plan(), again.plan());
+    assert_eq!(root.plan().id(), again.plan().id());
+    assert_eq!(root.plan().root_premises().counter, "counter");
+    assert_eq!(root.obligations().len(), 2);
+}
+
+/// Emitting the same unit twice gives byte-identical packages, and the
+/// strict reader derives the same keys from both.
+#[trace("TC-1081", "FR-251-AC-9")]
+#[test]
+fn emitting_twice_gives_identical_bytes_and_keys() {
+    let unit = authored(ROOT_SHAPES[0]);
+    let first = root_of(&unit, "C", &target()).unwrap();
+    let second = root_of(&unit, "C", &target()).unwrap();
+    assert_eq!(
+        first.emission().package().bytes(),
+        second.emission().package().bytes()
+    );
+    assert_eq!(keys(&admitted(&first)), keys(&admitted(&second)));
+}
+
+/// The clause of the root, named by the operator that opens its formula.
+fn clause_operator(root: &PlanRoot) -> String {
+    let wire = json(root);
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let plan = nodes
+        .iter()
+        .find(|n| n["semantic_form"] == "monitor_plan")
+        .unwrap();
+    let clause_id = &plan["body"]["members"][0]["value"]["target"];
+    let clause = nodes.iter().find(|n| &n["node_id"] == clause_id).unwrap();
+    assert_eq!(clause["semantic_form"], "temporal_clause");
+    let formula = clause["body"]["arguments"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    formula["target"]["path"][3].as_str().unwrap().to_owned()
+}
+
+/// FND: a package with two temporal clauses binds the one the request
+/// names, by its identity, whichever comes first in the graph.
+#[test]
+fn a_package_with_two_clauses_binds_the_selected_one() {
+    let second = "temporal D using t over (c: M::ConfigVersion) clock \"model-time\" on origin { eventually[0 ms, 3 ms] holds(c.versionNumber = 3) }";
+    let unit = unit_source(ROOT_SHAPES[0], second, true, "on origin");
+    let first = root_of(&unit, "C", &target()).expect("C");
+    let other = root_of(&unit, "D", &target()).expect("D");
+    assert_eq!(clause_operator(&first), "filament.op.temporal.always");
+    assert_eq!(clause_operator(&other), "filament.op.temporal.eventually");
+    let both = [&first, &other].map(admitted);
+    assert_ne!(keys(&both[0]).root, keys(&both[1]).root);
+}
+
+#[test]
+fn a_clause_the_unit_does_not_have_is_refused() {
+    let refusal = root_of(&authored(ROOT_SHAPES[0]), "Missing", &target()).unwrap_err();
+    assert!(
+        matches!(&refusal, PlanRootRefusal::UnknownClause { clause } if clause == "Missing"),
+        "{refusal:?}"
+    );
+}
+
+/// A unit that declares one of the generated names is refused rather than
+/// bound to the wrong declaration: the entries are checked in the unit, so
+/// the checker sees the clash.
+#[test]
+fn a_user_declaration_of_a_generated_name_is_refused() {
+    for name in ["State", "Result", "Inputs", "Scope", "monitorInit"] {
+        let extra = if name == "monitorInit" {
+            format!("function {name} using v(): Integer pure {{ 1 }}")
+        } else {
+            format!("record {name} {{ x: Integer; }}")
+        };
+        let unit = unit_source(ROOT_SHAPES[0], &extra, true, "on origin");
+        let refusal = root_of(&unit, "C", &target()).unwrap_err();
+        assert!(
+            matches!(refusal, PlanRootRefusal::FrontEnd(_)),
+            "{name}: {refusal:?}"
+        );
+    }
+}
+
+/// FR-251 "Fault boundary": a clause with no complete program derives no
+/// plan, so no package is produced.
+#[test]
+fn a_clause_without_a_complete_program_derives_no_plan() {
+    use fsl_replay::MonitorPlanRefusal as Refusal;
+    for shape in [
+        "once holds(c.versionNumber = 3)",
+        "historically holds(c.versionNumber = 3)",
+        "holds(c.versionNumber = 2) since holds(c.versionNumber = 3)",
+    ] {
+        let refusal = root_of(&authored(shape), "C", &target()).unwrap_err();
+        assert!(
+            matches!(
+                refusal,
+                PlanRootRefusal::Plan(Refusal::UnboundedPast { .. })
+            ),
+            "{shape}: {refusal:?}"
+        );
+    }
+    for shape in [
+        "always eventually holds(c.versionNumber = 3)",
+        "eventually always holds(c.versionNumber = 3)",
+    ] {
+        let refusal = root_of(&authored(shape), "C", &target()).unwrap_err();
+        assert!(
+            matches!(
+                refusal,
+                PlanRootRefusal::Plan(Refusal::UnboundedOverUnbounded { .. })
+            ),
+            "{shape}: {refusal:?}"
+        );
+    }
+}
+
+/// Ticks beyond the program's integers refuse with the operator named.
+#[test]
+fn ticks_beyond_the_program_integers_derive_no_plan() {
+    use fsl_replay::MonitorPlanRefusal as Refusal;
+    let huge = format!(
+        "eventually[0 ms, 1{} ms] holds(c.versionNumber = 3)",
+        "0".repeat(40)
+    );
+    let tiny_rate = MonitorTarget {
+        max_event_rate: Some(
+            Rational::new(Integer::from(1_i64), Integer::from(10_i128.pow(30))).expect("nonzero"),
+        ),
+        ..target()
+    };
+    let refusal = root_of(&authored(&huge), "C", &tiny_rate).unwrap_err();
+    assert!(
+        matches!(refusal, PlanRootRefusal::Plan(Refusal::TickRange { .. })),
+        "{refusal:?}"
+    );
+}
+
+/// The front end refuses an aggregate atom in a clause over a model
+/// subject, and under the timed profile no other subject is admitted, so no
+/// timed clause reaches the entries with one.
+#[test]
+fn a_timed_clause_cannot_hold_an_aggregate_atom() {
+    let refusal = root_of(
+        &authored("eventually[0 ms, 3 ms] count over past[0 ms, 3 ms] >= 1"),
+        "C",
+        &target(),
+    )
+    .unwrap_err();
+    let PlanRootRefusal::FrontEnd(front) = refusal else {
+        panic!("a front-end refusal");
+    };
+    let fsl_replay::ReplayRefusal::Recompile(compile) = *front else {
+        panic!("a recompile refusal");
+    };
+    let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = *compile else {
+        panic!("a check refusal");
+    };
+    let CheckCause::Temporal(cause) = &refusals[0].cause else {
+        panic!("a temporal refusal: {:?}", refusals[0].cause);
+    };
+    assert!(
+        matches!(**cause, TemporalCause::AggregateModelSubject { .. }),
+        "{cause:?}"
+    );
+}
+
+/// A function that shares a generated type's name leaves the name declared
+/// twice; no plan root is written (the strict reader refuses the base, or the
+/// writer refuses the ambiguous name).
+#[test]
+fn a_function_named_like_a_generated_type_writes_no_plan_root() {
+    let unit = unit_source(
+        ROOT_SHAPES[0],
+        "function State using v(): Integer pure { 1 }",
+        true,
+        "on origin",
+    );
+    let refusal = root_of(&unit, "C", &target()).unwrap_err();
+    assert!(matches!(refusal, PlanRootRefusal::Write(_)), "{refusal:?}");
+}
+
+/// The unit with `bump` and `twice` helpers called by the clause's atom
+/// (`bump` adding `step`) and an `isGate` helper called by the activation
+/// guard (comparing with `gate`). The entries call the generated helpers
+/// that call these.
+fn helper_unit(step: i64, gate: i64) -> String {
+    let helpers = format!(
+        "function bump using v(x: Int[0, 1000]): Integer pure {{ x + {step} }}\n\
+         function twice using v(x: Int[0, 1000]): Integer pure {{ bump(x) + bump(x) }}\n\
+         function isGate using v(x: Int[0, 1000]): Boolean pure {{ x = {gate} }}\n"
+    );
+    unit_source(
+        "always holds(twice(c.versionNumber) = 5)",
+        &helpers,
+        true,
+        "on each (q: M::ConfigVersion) when (isGate(q.versionNumber))",
+    )
+}
+
+/// The node ids a wire value names through `target` references.
+fn targets(value: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(target) = map.get("target") {
+                out.push(target.clone());
+            }
+            map.values().for_each(|child| targets(child, out));
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|child| targets(child, out)),
+        _ => {}
+    }
+}
+
+/// The call closure the root's key must end with, computed from the wire
+/// independently of the writer: the graph position of the body root of every
+/// declared function the four entries and the clause reach, ascending by the
+/// functions' node ids, one per function.
+fn expected_closure(wire: &serde_json::Value) -> Vec<u64> {
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let by_id = |id: &serde_json::Value| nodes.iter().find(|n| &n["node_id"] == id).unwrap();
+    let plan = nodes
+        .iter()
+        .find(|n| n["semantic_form"] == "monitor_plan")
+        .unwrap();
+    let members = plan["body"]["members"].as_array().unwrap();
+    let member =
+        |name: &str| members.iter().find(|m| m["name"] == name).unwrap()["value"]["target"].clone();
+    let mut pending: Vec<serde_json::Value> =
+        ["clause", "init", "on_event", "on_watermark", "on_gap"]
+            .iter()
+            .map(|name| member(name))
+            .collect();
+    let mut seen: Vec<serde_json::Value> = Vec::new();
+    let mut called: Vec<(CheckedNodeId, serde_json::Value)> = Vec::new();
+    while let Some(id) = pending.pop() {
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id.clone());
+        let node = by_id(&id);
+        if node["node_tag"] == "function" && node.get("declaration").is_some() {
+            let body = node["body"]["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["name"] == "body")
+                .unwrap()["value"]["target"]
+                .clone();
+            called.push((serde_json::from_value(id.clone()).unwrap(), body));
+        }
+        targets(&node["body"], &mut pending);
+    }
+    called.sort_by(|a, b| a.0.cmp(&b.0));
+    called
+        .iter()
+        .map(|(_, body)| nodes.iter().position(|n| &n["node_id"] == body).unwrap() as u64)
+        .collect()
+}
+
+/// The positions the root's key path ends with, after the activation
+/// capacity text.
+fn closure_tail(wire: &serde_json::Value) -> Vec<u64> {
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let plan = nodes
+        .iter()
+        .find(|n| n["semantic_form"] == "monitor_plan")
+        .unwrap();
+    let path = plan["node_id"]["path"].as_array().unwrap();
+    let capacity = path
+        .iter()
+        .position(|segment| segment == "8")
+        .expect("the activation capacity text ends the premises");
+    path[capacity + 1..]
+        .iter()
+        .map(|segment| segment["node"].as_u64().expect("an index segment"))
+        .collect()
+}
+
+/// FSpec FR-487-AC-13 and FR-251-AC-38: two plans that differ only in the
+/// body of a declared helper have different `PlanId`s and different root
+/// keys, whether the helper is called by an atom (directly or through
+/// another helper) or by the activation guard, while the atoms' and the
+/// guard's own checked bodies are equal; the entries' keys and the helpers'
+/// own declaration-path ids are unchanged, the helpers stay declared, an
+/// equal helper body gives an equal `PlanId` and root key, and the key's
+/// tail is exactly the body roots of the called helpers, once each,
+/// ascending by helper node id.
+#[trace("TC-1081", "FR-487-AC-13", "FR-251-AC-38")]
+#[test]
+fn the_root_key_covers_the_bodies_of_called_helpers() {
+    let one = root_of(&helper_unit(1, 2), "C", &target()).expect("base");
+    let again = root_of(&helper_unit(1, 2), "C", &target()).expect("base again");
+    let atom = root_of(&helper_unit(2, 2), "C", &target()).expect("atom helper body");
+    let guard = root_of(&helper_unit(1, 3), "C", &target()).expect("guard helper body");
+    assert_eq!(
+        one.plan().id(),
+        again.plan().id(),
+        "an equal helper body gives an equal PlanId"
+    );
+    for (what, other) in [("atom", &atom), ("guard", &guard)] {
+        assert_eq!(
+            other.plan().program().atoms(),
+            one.plan().program().atoms(),
+            "the {what} case keeps every atom body"
+        );
+        assert_eq!(
+            other.plan().program().guard(),
+            one.plan().program().guard(),
+            "the {what} case keeps the guard body"
+        );
+        assert_ne!(
+            other.plan().id(),
+            one.plan().id(),
+            "a swapped {what} helper body changes the PlanId"
+        );
+    }
+    let [a, a2, b, c] = [&one, &again, &atom, &guard].map(admitted);
+    let (ka, ka2, kb, kc) = (keys(&a), keys(&a2), keys(&b), keys(&c));
+    assert_eq!(ka, ka2, "an equal helper body gives an equal root key");
+    assert_ne!(
+        ka.root, kb.root,
+        "a swapped atom helper body changes the root key"
+    );
+    assert_ne!(
+        ka.root, kc.root,
+        "a swapped guard helper body changes the root key"
+    );
+    assert_eq!(
+        ka.entries, kb.entries,
+        "the entries' own keys are unchanged"
+    );
+    assert_eq!(
+        ka.entries, kc.entries,
+        "the entries' own keys are unchanged"
+    );
+
+    let wire = [&one, &atom, &guard].map(json);
+    let declared = |wire: &serde_json::Value, name: &str| -> serde_json::Value {
+        let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+        let found: Vec<&serde_json::Value> = nodes
+            .iter()
+            .filter(|n| n["declaration"]["qualified_name"] == serde_json::json!([name]))
+            .collect();
+        assert_eq!(found.len(), 1, "{name} stays one declared node");
+        assert_eq!(found[0]["node_tag"], "function");
+        found[0]["node_id"].clone()
+    };
+    for name in ["bump", "twice", "isGate"] {
+        for other in &wire[1..] {
+            assert_eq!(declared(&wire[0], name), declared(other, name), "{name}");
+        }
+    }
+    for wire in &wire {
+        let expected = expected_closure(wire);
+        let tail = closure_tail(wire);
+        assert_eq!(
+            tail, expected,
+            "the call closure, ascending, one per helper"
+        );
+        let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+        let root_of_helper = |name: &str| {
+            let helper = nodes
+                .iter()
+                .find(|n| n["declaration"]["qualified_name"] == serde_json::json!([name]))
+                .unwrap();
+            let body = helper["body"]["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["name"] == "body")
+                .unwrap();
+            nodes
+                .iter()
+                .position(|n| n["node_id"] == body["value"]["target"])
+                .unwrap() as u64
+        };
+        for name in ["bump", "twice", "isGate"] {
+            assert!(
+                tail.contains(&root_of_helper(name)),
+                "{name} is in the closure"
+            );
+        }
+        // An entry calls generated helpers that are declared functions; they
+        // are in the closure too, so the closure is longer than the three
+        // authored helpers.
+        assert!(tail.len() > 3, "{}", tail.len());
+    }
+    // The order is pinned: a reversed or duplicated tail differs.
+    let tail = closure_tail(&wire[0]);
+    let mut reversed = tail.clone();
+    reversed.reverse();
+    assert_ne!(
+        tail, reversed,
+        "the tail is not palindromic, so order is observable"
+    );
+    let mut doubled = tail.clone();
+    doubled.push(tail[0]);
+    assert_ne!(
+        doubled,
+        expected_closure(&wire[0]),
+        "a duplicated entry is not the closure"
+    );
+}
+
+/// FR-251-AC-42: the plan root's emission retains every witness row of the
+/// acquisition it was written from, so a consumer never rebuilds them: the
+/// selected model declaration and field rows equal the unit's own
+/// acquisition, every retained row names a node of the emitted package, and
+/// IR's join accepts the exact rows against the package read back.
+#[trace("TC-1081", "FR-251-AC-42")]
+#[test]
+fn the_plan_root_retains_the_acquisitions_witness_rows() {
+    let unit = authored(ROOT_SHAPES[0]);
+    let root = root_of(&unit, "C", &target()).expect("the plan root");
+    let emission = root.emission();
+
+    let domain = Domain::config_version();
+    let packages =
+        fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
+    let source = SourceIdentity::new("agent-ix", "monitor-root");
+    let cancel = Cancel::new();
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: &source,
+            path: "monitor.native",
+            bytes: unit.as_bytes(),
+        },
+        SpineLimits::default().source,
+        &cancel,
+    )
+    .map_err(|_| "parses")
+    .expect("the stage succeeds")
+    .into_value();
+    let selected =
+        fsl_replay::spine::select(&parsed, &packages, SpineLimits::default().model, &cancel)
+            .map_err(|_| "selects")
+            .expect("the stage succeeds")
+            .into_value();
+    let acquisition = fsl_replay::spine::check(
+        &parsed,
+        "fixture".to_owned(),
+        &selected,
+        &fsl_replay::spine::DependencyInput::default(),
+        SpineLimits::default(),
+        &cancel,
+    )
+    .map_err(|_| "checks")
+    .expect("the stage succeeds")
+    .into_value();
+    let graph = acquisition.package().graph();
+    assert!(!graph.selected_exact_declaration_rows().is_empty());
+    assert_eq!(
+        emission.selected_exact_declaration_rows(),
+        graph.selected_exact_declaration_rows()
+    );
+    assert_eq!(
+        emission.selected_exact_field_rows(),
+        graph.selected_exact_field_rows()
+    );
+    assert!(!emission.selected_source_unit_rows().is_empty());
+    assert!(!emission.equality_producer_identity_rows().is_empty());
+    assert!(!emission.equality_fact_witness_rows().is_empty());
+
+    let package = admitted(&root);
+    let wire = json(&root);
+    let ids: Vec<&serde_json::Value> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| &node["node_id"])
+        .collect();
+    let known = |id: &CheckedNodeId| ids.contains(&&serde_json::to_value(id).unwrap());
+    for row in emission.selected_source_unit_rows() {
+        assert!(known(&row.structural_node), "{row:?}");
+    }
+    for row in emission.equality_producer_identity_rows() {
+        assert!(known(row.checked_node()), "{row:?}");
+        assert!(known(&row.source_map_entry().node_id), "{row:?}");
+    }
+    for row in emission.equality_fact_witness_rows() {
+        assert!(known(row.checked_application()), "{row:?}");
+        assert!(known(row.structural_node()), "{row:?}");
+    }
+    filament_contract_model::SelectedExactIdentities::from_stage_rows(
+        &package,
+        emission.selected_exact_declaration_rows().iter().cloned(),
+        emission.selected_exact_field_rows().iter().cloned(),
+        &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+    )
+    .expect("IR joins the retained exact rows to the plan-root package");
+}
+
+fn ir_source_record_rows(root: &PlanRoot) -> Vec<filament_contract_model::SelectedSourceRecordRow> {
+    root.emission()
+        .selected_source_record_rows()
+        .iter()
+        .map(|row| filament_contract_model::SelectedSourceRecordRow {
+            structural_node: row.structural_node.clone(),
+            source_authority: row.source_authority.clone(),
+            source_identity: row.source_identity.clone(),
+            qualified_declaration: row.qualified_declaration.clone(),
+            record_key: row.record_key.clone(),
+            members: row
+                .members
+                .iter()
+                .map(
+                    |member| filament_contract_model::SelectedSourceRecordMemberRow {
+                        original_member_identity: member.original_member_identity.clone(),
+                        admitted_name: member.admitted_name.clone(),
+                        presence: member.presence,
+                        type_node: member.type_node.clone(),
+                        value_type: member.value_type.clone(),
+                    },
+                )
+                .collect(),
+        })
+        .collect()
+}
+
+/// FR-251-AC-44 / TC-1081 step 28: the retained source record rows name each
+/// member by the binding the plan-root package holds after the writer's field
+/// renames (`origin_tick` as `origin`, `amount` as `value`), keep the declared
+/// field name, and the strict reader's source-record join accepts them; a row
+/// that keeps the base name is refused.
+#[trace("TC-1081", "TC-1331", "FR-251-AC-44", "FR-531-AC-19", "FR-517-AC-23")]
+#[test]
+fn retained_source_record_rows_name_the_final_bindings_and_the_ir_join_accepts_them() {
+    use filament_contract_model::{ExactTypeProjectionErrorCode, SelectedExactIdentities};
+    let mut native_budget = filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000);
+
+    let root = root_of(&authored(ROOT_SHAPES[0]), "C", &target()).expect("the plan root");
+    let package = admitted(&root);
+    let rows = ir_source_record_rows(&root);
+    let handoff = root
+        .emission()
+        .identity_rows(&package, &mut native_budget)
+        .expect("the final emission retains required handoff facts");
+    let bytes = handoff
+        .to_bytes(&package)
+        .expect("the source-record handoff encodes");
+    let read = fsl_package::ReadIdentityRows::read(
+        &bytes,
+        &package,
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+    )
+    .expect("final renamed source rows join natively");
+    assert_eq!(read.source_records(), rows);
+    assert_eq!(read.to_bytes(&package).unwrap(), bytes);
+    let named = |record: &str| -> Vec<(String, String)> {
+        let row = rows
+            .iter()
+            .find(|row| row.qualified_declaration.last().map(AsRef::as_ref) == Some(record))
+            .unwrap_or_else(|| panic!("a row for {record}"));
+        row.members
+            .iter()
+            .map(|m| {
+                (
+                    m.original_member_identity.to_string(),
+                    m.admitted_name.to_string(),
+                )
+            })
+            .collect()
+    };
+    let pairs = |names: &[(&str, &str)]| -> Vec<(String, String)> {
+        names
+            .iter()
+            .map(|(a, b)| ((*a).into(), (*b).into()))
+            .collect()
+    };
+    assert_eq!(
+        named("Instance"),
+        pairs(&[
+            ("subject", "subject"),
+            ("subformula", "subformula"),
+            ("origin_tick", "origin")
+        ])
+    );
+    assert_eq!(
+        named("Activation"),
+        pairs(&[
+            ("subformula", "subformula"),
+            ("origin_tick", "origin"),
+            ("status", "status")
+        ])
+    );
+    assert_eq!(
+        named("LimitReached"),
+        pairs(&[
+            ("limit", "limit"),
+            ("amount", "value"),
+            ("setting", "setting")
+        ])
+    );
+
+    let joined = SelectedExactIdentities::empty()
+        .with_source_record_rows(&package, rows.clone(), &mut native_budget)
+        .expect("IR joins the retained source record rows");
+    assert_eq!(joined.source_record_rows().count(), rows.len());
+    for row in &rows {
+        let projected = package
+            .project_exact_type(&row.structural_node, &joined, &mut native_budget)
+            .expect("the record projects");
+        assert_eq!(projected.source_record_view(), Some(row));
+    }
+
+    // The base name is refused: each renamed member, one at a time.
+    for (record, member) in [("Activation", 1), ("Instance", 2), ("LimitReached", 1)] {
+        let mut stale = rows.clone();
+        let row = stale
+            .iter_mut()
+            .find(|row| row.qualified_declaration.last().map(AsRef::as_ref) == Some(record))
+            .unwrap();
+        let original = row.members[member].original_member_identity.clone();
+        assert_ne!(original, row.members[member].admitted_name);
+        row.members[member].admitted_name = original;
+        let error = SelectedExactIdentities::empty()
+            .with_source_record_rows(&package, stale, &mut native_budget)
+            .expect_err("a base name is not the final binding name");
+        assert_eq!(
+            error.code,
+            ExactTypeProjectionErrorCode::MismatchedIdentityWitness
+        );
+    }
+}
+
+/// FR-251-AC-43 / TC-1081 step 27: the plan's subject (clause node and claim
+/// occurrence) selects, through the returned emission's temporal binding
+/// rows, the clause declaration and claim occurrence the plan-root package
+/// holds, as the strict reader admits it: the declaration the plan root's
+/// `clause` member names and the declaration of that occurrence's name row.
+#[trace("TC-1081", "FR-251-AC-43")]
+#[test]
+fn the_subject_occurrence_selects_the_emitted_clause_claim_after_the_writer_rekey() {
+    let second = "temporal D using t over (c: M::ConfigVersion) clock \"model-time\" on origin { eventually[0 ms, 3 ms] holds(c.versionNumber = 3) }";
+    let unit = unit_source(ROOT_SHAPES[0], second, true, "on origin");
+    let mut selected = Vec::new();
+    for clause in ["C", "D"] {
+        let root = root_of(&unit, clause, &target()).expect(clause);
+        let subject = root.plan().subject();
+        let ordinal = subject.occurrence().origin().ordinal();
+        let declaration = root
+            .emission()
+            .temporal_binding_rows()
+            .declaration(subject.clause_node(), ordinal)
+            .expect("the subject selects an emitted declaration")
+            .clone();
+        let package = admitted(&root);
+        assert_eq!(package.monitor_plans().len(), 1);
+        let plan = package.monitor_plans().next().unwrap();
+        assert_eq!(plan.clause(), &declaration, "the root binds the selection");
+        let names = package.temporal_clause_names().expect("name rows");
+        let row = names
+            .iter()
+            .find(|row| row.declaration == declaration && row.occurrence == ordinal)
+            .expect("the selected occurrence has a name row");
+        assert_eq!(row.name.as_ref(), subject.clause_name());
+        assert_eq!(row.name.as_ref(), clause);
+        assert!(
+            root.emission()
+                .temporal_binding_rows()
+                .declaration(subject.clause_node(), ordinal + 1)
+                .is_none(),
+            "an occurrence the package does not hold selects nothing"
+        );
+        selected.push(declaration);
+    }
+    assert_ne!(
+        selected[0], selected[1],
+        "each subject selects its own clause"
+    );
+}
+
+/// FR-092-AC-22 / TC-1021 step 12: the tuple rows a plan-root emission
+/// retains follow the writer's rekey, and the strict reader's source-tuple
+/// join accepts them; a row that permutes its positions is refused.
+#[trace("TC-1021", "FR-092-AC-22")]
+#[test]
+fn retained_source_tuple_rows_follow_the_plan_root_and_the_ir_join_accepts_them() {
+    use filament_contract_model::{ExactTypeProjectionErrorCode, SelectedExactIdentities};
+    let mut native_budget = filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000);
+
+    let extra = "enum Color { RED, BLUE }\n\
+        tuple Pair(Integer, Boolean);\n\
+        tuple Triple(Pair, Option<Integer>, Boolean);\n\
+        record Holder { cs: Sequence<Color>[0, 2]; }\n\
+        function hold using v(t: Triple, b: Holder): Boolean pure { true }";
+    let unit = unit_source(ROOT_SHAPES[0], extra, true, "on origin");
+    let root = root_of(&unit, "C", &target()).expect("the plan root");
+    let package = admitted(&root);
+    let rows = root.emission().selected_source_tuple_rows().to_vec();
+    let declared = |name: &str| {
+        rows.iter()
+            .any(|row| row.qualified_declaration.last().map(AsRef::as_ref) == Some(name))
+    };
+    assert!(declared("Pair") && declared("Triple"), "{rows:?}");
+    let joined = SelectedExactIdentities::empty()
+        .with_source_tuple_rows(&package, rows.clone(), &mut native_budget)
+        .expect("IR joins the retained source tuple rows");
+    for row in &rows {
+        let projected = package
+            .project_exact_type(&row.structural_node, &joined, &mut native_budget)
+            .expect("the tuple projects");
+        assert_eq!(projected.source_tuple_view(), Some(row));
+    }
+    // The enum and collection rows follow the same rekey.
+    let enum_rows = root
+        .emission()
+        .selected_source_enum_rows(&mut native_budget)
+        .expect("budgeted enum rows");
+    let color = enum_rows
+        .iter()
+        .find(|row| {
+            row.declaration
+                .qualified_declaration
+                .last()
+                .map(AsRef::as_ref)
+                == Some("Color")
+        })
+        .expect("Color's row");
+    let joined = SelectedExactIdentities::empty()
+        .with_source_enum_rows(&package, enum_rows.clone(), &mut native_budget)
+        .expect("IR joins the retained source enum rows");
+    let projected = package
+        .project_exact_type(
+            &color.declaration.structural_node,
+            &joined,
+            &mut native_budget,
+        )
+        .expect("the enum projects");
+    assert_eq!(
+        projected.value_type(),
+        &filament_exact::ValueType::Enum(color.declaration.shape.clone())
+    );
+    let collection = root
+        .emission()
+        .selected_source_collection_rows()
+        .iter()
+        .find(|row| row.element_node == color.declaration.structural_node)
+        .expect("the Sequence<Color> row");
+    let base = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == collection.base_node)
+        .expect("the collection node is admitted");
+    let filament_contract_model::CheckedTerm::Aggregate { members } = &base.body else {
+        panic!("a collection body is an aggregate");
+    };
+    assert_eq!(
+        members,
+        &[filament_contract_model::CheckedTerm::Reference {
+            target: collection.element_node.clone()
+        }]
+    );
+    let triple = rows
+        .iter()
+        .find(|row| row.qualified_declaration.last().map(AsRef::as_ref) == Some("Triple"))
+        .expect("Triple's row");
+    let mut permuted = triple.clone();
+    permuted.positions.swap(0, 2);
+    let error = SelectedExactIdentities::empty()
+        .with_source_tuple_rows(&package, [permuted], &mut native_budget)
+        .expect_err("permuted positions are refused");
+    assert_eq!(
+        error.code,
+        ExactTypeProjectionErrorCode::MismatchedIdentityWitness
+    );
+}
+
+/// The final emitter's original checked owner survives temporary producer
+/// inputs. Original checker keys remain distinct from final writer joins.
+#[trace("TC-1081", "FR-251-AC-47")]
+#[test]
+fn the_actual_combined_checked_unit_retains_its_source_and_time_facts() {
+    let root = {
+        let unit = authored(ROOT_SHAPES[0]);
+        root_of(&unit, "C", &target()).expect("the plan root")
+    };
+    let checked = root.checked_unit();
+    let unit = authored(ROOT_SHAPES[0]);
+    assert!(checked.source().text().starts_with(&unit));
+    assert!(checked.source().text().len() > unit.len());
+    for entry in [
+        "monitorInit",
+        "monitorOnEvent",
+        "monitorOnWatermark",
+        "monitorOnGap",
+    ] {
+        assert!(
+            checked.source().text()[unit.len()..].contains(entry),
+            "{entry}"
+        );
+    }
+    let graph = checked.package().graph();
+    let clause = graph
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == "C")
+        .expect("the retained selected clause");
+    assert_eq!(&clause.identity(), root.plan().subject().clause_node());
+    assert_eq!(graph.time_sources().len(), 1);
+    let source = &graph.time_sources()[0];
+    assert_eq!(source.model, "M");
+    assert_eq!(source.unit, "ms");
+    assert_eq!(
+        source.model_node,
+        fsl_semantics::model::key::object_type_node_key(&filament_checked::key::DeclarationKey {
+            package: "example/config-version".to_owned(),
+            node: "ix://example/config-version/ConfigVersion".to_owned(),
+        })
+        .expect("the selected model object key")
+    );
+    assert_eq!(source.source, fsl_semantics::check::TimeSourceKind::Dense);
+    assert!(source.tick_operation_anchor.is_none());
+    assert!(source.tick_operation_key.is_none());
+    assert!(source
+        .nominal_nodes
+        .iter()
+        .any(|node| node.key == source.unit_node));
+    let package = admitted(&root);
+    let declaration = root
+        .emission()
+        .temporal_binding_rows()
+        .declaration(
+            root.plan().subject().clause_node(),
+            root.plan().subject().occurrence().origin().ordinal(),
+        )
+        .expect("the final clause selection");
+    assert_eq!(
+        package.monitor_plans().next().unwrap().clause(),
+        declaration
+    );
+}
+
+/// Model-step order encodes original checked facts, rather than one opaque ID.
+#[trace("TC-1081", "FR-251-AC-48")]
+#[test]
+fn model_step_order_is_a_complete_canonical_value_with_exact_encoding_limits() {
+    use fsl_analyze::monitor_root::ModelStepOrderRefusalCode;
+    use fsl_semantics::check::wire_id::structural_id;
+    let root = root_of(&authored(ROOT_SHAPES[0]), "C", &target()).unwrap();
+    let order = root
+        .model_step_order(quire_canonical::Limits::new(1 << 20))
+        .unwrap();
+    let source = &root.checked_unit().package().graph().time_sources()[0];
+    let expected = serde_json::json!({
+        "kind": "model-step",
+        "model": structural_id(&source.model_node),
+        "unit": structural_id(&source.unit_node),
+        "dimension": structural_id(&source.time_dimension),
+        "source": {"kind": "dense"},
+    });
+    let actual: serde_json::Value = serde_json::from_slice(order.bytes()).unwrap();
+    assert_eq!(actual, expected);
+    let size = u64::try_from(order.bytes().len()).unwrap();
+    assert_eq!(
+        root.model_step_order(quire_canonical::Limits::new(size))
+            .unwrap(),
+        order
+    );
+    let error = root
+        .model_step_order(quire_canonical::Limits::new(size - 1))
+        .unwrap_err();
+    assert_eq!(error.code, ModelStepOrderRefusalCode::Encoding);
+    let Some(quire_canonical::Error::Limit(limit)) = error.encoding else {
+        panic!("the original native canonical limit is retained");
+    };
+    assert_eq!(limit.kind, quire_canonical::LimitKind::CanonicalBytes);
+    assert_eq!(limit.bound, size - 1);
+    assert_eq!(limit.required, size);
+    let clone = order.clone();
+    drop(root);
+    assert_eq!(clone.bytes(), order.bytes());
+}
+
+#[trace("TC-1081", "FR-251-AC-48")]
+#[test]
+fn model_step_order_retains_digital_operation_and_period_and_distinguishes_sources() {
+    use fsl_semantics::check::wire_id::structural_id;
+    let dense = authored(ROOT_SHAPES[0]);
+    let units = [
+        dense.clone(),
+        dense.replace("time M dense unit ms;", "time M dense unit s;"),
+        dense.replace(
+            "time M dense unit ms;",
+            "time M tick M::ConfigVersion::attemptUpdate period 1 ms unit ms;",
+        ),
+        dense.replace(
+            "time M dense unit ms;",
+            "time M tick M::ConfigVersion::attemptUpdate period 2 ms unit ms;",
+        ),
+    ];
+    let mut values = Vec::new();
+    for (index, unit) in units.iter().enumerate() {
+        let root = root_of(unit, "C", &target()).unwrap();
+        let order = root
+            .model_step_order(quire_canonical::Limits::new(1 << 20))
+            .unwrap();
+        let source = &root.checked_unit().package().graph().time_sources()[0];
+        let value: serde_json::Value = serde_json::from_slice(order.bytes()).unwrap();
+        assert_eq!(
+            value["model"],
+            serde_json::to_value(structural_id(&source.model_node)).unwrap()
+        );
+        assert_eq!(
+            value["unit"],
+            serde_json::to_value(structural_id(&source.unit_node)).unwrap()
+        );
+        assert_eq!(
+            value["dimension"],
+            serde_json::to_value(structural_id(&source.time_dimension)).unwrap()
+        );
+        if index >= 2 {
+            let operation = source
+                .tick_operation_anchor
+                .as_ref()
+                .expect("checked digital operation");
+            assert_eq!(
+                value["source"],
+                serde_json::json!({
+                    "kind": "tick", "operation": structural_id(operation),
+                    "period": {"numerator": (index - 1).to_string(), "denominator": "1"},
+                })
+            );
+        } else {
+            assert_eq!(value["source"], serde_json::json!({"kind": "dense"}));
+        }
+        values.push(order);
+    }
+    for (index, value) in values.iter().enumerate() {
+        for other in &values[index + 1..] {
+            assert_ne!(
+                value, other,
+                "source kind, unit and period remain order-value components"
+            );
+        }
+    }
+}
+
+/// Renaming a checked source alias preserves the selected model-step value;
+/// source-content authentication remains the separate progress association.
+#[trace("TC-1081", "FR-251-AC-48")]
+#[test]
+fn source_aliases_are_not_model_step_order_authority() {
+    let unit = authored(ROOT_SHAPES[0]);
+    let renamed = unit
+        .replace("model M =", "model Renamed =")
+        .replace("time M ", "time Renamed ")
+        .replace("M::", "Renamed::");
+    let first = root_of(&unit, "C", &target()).unwrap();
+    let second = root_of(&renamed, "C", &target()).unwrap();
+    assert_ne!(
+        first.checked_unit().source().text(),
+        second.checked_unit().source().text()
+    );
+    assert_eq!(
+        first
+            .model_step_order(quire_canonical::Limits::new(1 << 20))
+            .unwrap(),
+        second
+            .model_step_order(quire_canonical::Limits::new(1 << 20))
+            .unwrap()
+    );
+}
+
+/// Converted model shapes enter the actual IR selected monitor closure with
+/// the same budget that paid for their FSL-owned materialization.
+#[trace("TC-1331", "FR-531-AC-30")]
+#[test]
+fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure() {
+    use filament_contract_model::{NativeJoinBudget, SelectedMonitorClosureRows};
+    use serde_json::json;
+
+    let domain = Domain::config_version();
+    let mut document: serde_json::Value = serde_json::from_slice(&domain.document).unwrap();
+    let tier = format!("ix://{}/Tier", domain.package);
+    document["constructs"].as_array_mut().unwrap().push(json!({
+        "kind": {"module": domain.package, "name": "tier"},
+        "moduleVersion": "1.0.0",
+        "construct": {"identity": "none", "shape": "enumeration",
+            "members": {"variants": "required"},
+            "meaning": fsl_semantics::model::intake::meaning::VARIANT_TYPE}
+    }));
+    let mut declaration = document["types"][0].clone();
+    declaration["identity"] = json!(tier);
+    declaration["displayName"] = json!("Tier");
+    declaration["kind"]["name"] = json!("tier");
+    declaration.as_object_mut().unwrap().remove("scalar");
+    declaration["constraints"] = json!([]);
+    declaration["variants"] = ["Gold", "Standard"]
+        .into_iter()
+        .map(|case| {
+            json!({
+                "identity": format!("ix://{}/variant/Tier-{case}", domain.package),
+                "name": case,
+                "origin": {"source": {"sourceIdentity": document["source"]["identity"],
+                    "path": "fixture.fspec", "startLine": 1, "startColumn": 1}}
+            })
+        })
+        .collect();
+    document["types"].as_array_mut().unwrap().push(declaration);
+    let mut field = document["types"][1]["fields"][0].clone();
+    field["identity"] = json!(format!("ix://{}/ConfigVersion/tier", domain.package));
+    field["name"] = json!("tier");
+    field["typeRef"] = json!(tier);
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(field);
+    let bytes = serde_json::to_vec(&document).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
+    let unit = unit_source(
+        "always holds(is_gold(c.tier))",
+        "function is_gold using v(tier: M::Tier): Boolean pure { tier = M::Tier::Gold }",
+        true,
+        "on origin",
+    );
+    let source = SourceIdentity::new("agent-ix", "monitor-root");
+    let name = LibraryName::new("fixture").unwrap();
+    let root = emit_plan_root(
+        &PlanRootRequest {
+            source: &source,
+            path: "monitor.native",
+            bytes: unit.as_bytes(),
+            packages: &packages,
+            package_name: &name,
+            limits: SpineLimits::default(),
+            clause: "C",
+            target: &target(),
+            settings: &TimingObligationSettings::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("authored model-enum monitor emits");
+    // A Boolean-input monitor does not reach the atom's model type. Author
+    // genuine typed snapshot entries through the existing ClauseSource path.
+    // The Boolean atom keeps this type-closure control independent of cross-
+    // package enum equality; Tier is reached through the actual Inputs field.
+    use fsl_analyze::monitor_entries::{
+        names, render, spec_from_plan, ClauseSource, WIRE_FIELD_NAMES,
+    };
+    use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest};
+    let mut spec = spec_from_plan(root.plan()).unwrap();
+    spec.clause = Some(ClauseSource {
+        parameters: vec![("tier".to_owned(), "M::Tier".to_owned())],
+        atoms: spec
+            .atoms
+            .iter()
+            .map(|index| (*index, "true".to_owned()))
+            .collect(),
+        guard: None,
+        profile: "v".to_owned(),
+    });
+    let typed_source = format!("{unit}\n{}", render(&spec));
+    let limits = SpineLimits::default();
+    let cancel = Cancel::new();
+    let parsed = parse(
+        &ParseRequest {
+            source: &source,
+            path: "monitor.native",
+            bytes: typed_source.as_bytes(),
+        },
+        limits.source,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let models = select(&parsed, &packages, limits.model, &cancel)
+        .unwrap()
+        .into_value();
+    let checked = check(
+        &parsed,
+        name.as_str().to_owned(),
+        &models,
+        &DependencyInput::default(),
+        limits,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let base = fsl_package::emit_checked(checked.package(), limits.package.emit()).unwrap();
+    let mut evidence = base.evidence().clone();
+    for (identity, document) in &packages {
+        evidence
+            .insert_domain_package_document(identity.as_str(), document.as_slice())
+            .unwrap();
+    }
+    let premises = root.plan().root_premises();
+    let buffers: Vec<_> = root
+        .plan()
+        .buffers()
+        .iter()
+        .map(|(id, capacity)| (id.index(), *capacity))
+        .collect();
+    let clause = checked.package().graph().temporal_clauses()[0].identity();
+    let emission = fsl_package::emit_monitor_plan_over(
+        &base,
+        name,
+        &evidence,
+        &fsl_package::MonitorPlanWire {
+            clause: &clause,
+            formula: root.plan().program().formula(),
+            counter: &premises.counter,
+            counter_width_bits: premises.counter_width_bits,
+            max_reading_gap: premises.max_reading_gap,
+            max_event_rate: &premises.max_event_rate,
+            uncertainty: &premises.uncertainty,
+            buffers: &buffers,
+            tick_unit: root.plan().binding().unit(),
+            activation_capacity: premises.activation_capacity,
+            state: names::STATE,
+            inputs: names::INPUTS,
+            scope: names::SCOPE,
+            result: names::RESULT,
+            entries: [
+                names::INIT,
+                names::ON_EVENT,
+                names::ON_WATERMARK,
+                names::ON_GAP,
+            ],
+            renamed_records: &["Instance", "Activation", "LimitReached"],
+            renames: &WIRE_FIELD_NAMES,
+        },
+        limits.imports,
+        limits.package.emit(),
+    )
+    .expect("genuine typed snapshot plan emits");
+    let package =
+        match read_checked_package(emission.package().bytes(), LIMITS, emission.evidence()) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the genuine custom-domain plan root must read: {other:?}"),
+        };
+    let mut budget = NativeJoinBudget::new(100_000_000, 100_000_000);
+    let identities = emission
+        .identity_rows(&package, &mut budget)
+        .expect("same-emission identity rows");
+    let equality = emission
+        .equality_witness(&package, &mut budget)
+        .expect("same-emission equality rows");
+    let enums = emission
+        .selected_source_enum_rows(&mut budget)
+        .expect("source enum adapter");
+    let model_shapes = emission
+        .selected_ir_model_enum_shape_rows(&mut budget)
+        .expect("model enum adapter");
+    assert_eq!(
+        model_shapes.len(),
+        1,
+        "the reached snapshot input retains the field's original Tier type"
+    );
+    let collections: Vec<_> = emission
+        .selected_source_collection_rows()
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            row.to_ir(
+                &mut budget,
+                filament_contract_model::NativeJoinLocus {
+                    source: filament_contract_model::NativeJoinLocusSource::AdapterRow(index),
+                    form: "monitor_source_collection_row",
+                },
+            )
+            .expect("monitor result sequence converts")
+        })
+        .collect();
+    let prefix = budget.consumed();
+    let plan = package
+        .monitor_plans()
+        .next()
+        .expect("one genuine plan root");
+    // The order value is FSL's model-step order for this root; the progress
+    // association is the real observation owner's admitted value for the
+    // root's own claim row. IR borrows both without decoding them.
+    let order = root
+        .model_step_order(quire_canonical::Limits::new(1 << 20))
+        .expect("FSL admits the model-step order");
+    let (progress, _subject) =
+        crate::monitor_authority::observation::admitted(Some(vec![crate::monitor_authority::row(
+            &root,
+        )]));
+    let association = progress
+        .association_canonical_bytes()
+        .expect("the owner retained its association value");
+    assert!(matches!(
+        root.checked_unit().package().graph().time_sources()[0].source,
+        fsl_semantics::check::TimeSourceKind::Dense
+    ));
+    let authority = filament_contract_model::SelectedMonitorAuthorityRow::try_new(
+        package.admission_binding(),
+        plan.clause().clone(),
+        filament_contract_model::CheckedOccurrence {
+            role: filament_contract_model::CheckedOccurrenceRole::Claim,
+            ordinal: root.plan().subject().occurrence().origin().ordinal(),
+        },
+        filament_contract_model::SelectedMonitorTimeSource::Dense,
+        order.bytes(),
+        association,
+    )
+    .expect("a claim row with both admitted values");
+    let closure = plan
+        .project_selected_type_closure(
+            SelectedMonitorClosureRows {
+                declarations: identities.declarations(),
+                fields: identities.fields(),
+                model_tuples: emission.selected_tuple_declaration_rows(),
+                source_units: emission.selected_source_unit_rows(),
+                model_enum_declarations: emission.selected_model_enum_declaration_rows(),
+                model_enum_members: emission.selected_model_enum_member_rows(),
+                model_enum_shapes: &model_shapes,
+                source_records: identities.source_records(),
+                source_tuples: emission.selected_source_tuple_rows(),
+                source_unions: identities.source_unions(),
+                source_enums: &enums,
+                source_collections: &collections,
+                equality_applications: equality.applications(),
+                equality_facts: equality.facts(),
+                authority: &authority,
+            },
+            &mut budget,
+        )
+        .expect("IR admits and projects converted authentic model shapes");
+    assert_eq!(closure.model_enums(), model_shapes.as_slice());
+    let projected = package
+        .project_exact_type(
+            &model_shapes[0].structural_node,
+            closure.identities(),
+            &mut budget,
+        )
+        .expect("the joined authentic model enum projects through native IR");
+    assert_eq!(
+        projected.value_type(),
+        &filament_exact::ValueType::Enum(model_shapes[0].shape.clone())
+    );
+    assert!(budget.consumed().work > prefix.work);
+    assert!(budget.consumed().storage > prefix.storage);
+}
+
+/// FR-251 "Plan root" / QSL-1824: an atom that calls a helper with a bounded
+/// model field where the helper's parameter is the unbounded `Integer` writes
+/// a plan root the strict reader admits. The checker makes the widening
+/// explicit as an exact integer conversion, so the argument's type node is the
+/// parameter's (Contract IR FR-347 "Function-call arguments"); before QSL-1824
+/// the base package was refused `ill_typed`.
+#[trace("TC-1081", "FR-251-AC-51")]
+#[test]
+fn an_atom_calling_a_helper_with_a_wider_parameter_writes_a_plan_root() {
+    let narrow = unit_source(
+        "always holds(f(c.versionNumber))",
+        "function f using v(x: Int[0, 1000]): Boolean pure { x >= 0 }",
+        true,
+        "on origin",
+    );
+    let root = root_of(&narrow, "C", &target()).expect("the field's own type is admitted");
+    assert_eq!(admitted(&root).monitor_plans().len(), 1);
+
+    let wide = unit_source(
+        "always holds(g(c.versionNumber))",
+        "function g using v(a: Integer): Boolean pure { a >= 0 }",
+        true,
+        "on origin",
+    );
+    let root = root_of(&wide, "C", &target()).expect("the widened argument is admitted");
+    assert_eq!(admitted(&root).monitor_plans().len(), 1);
+}
+
+/// FR-065 call-argument widening (QSL-1824): a bounded integer argument reaches
+/// a parameter of a wider bound through the same exact conversion.
+#[trace("TC-376", "FR-065-AC-9")]
+#[test]
+fn an_atom_calling_a_helper_with_a_wider_bounded_parameter_writes_a_plan_root() {
+    let wider = unit_source(
+        "always holds(h(c.versionNumber))",
+        "function h using v(a: Int[0, 2000]): Boolean pure { a >= 0 }",
+        true,
+        "on origin",
+    );
+    let root = root_of(&wider, "C", &target()).expect("the widened argument is admitted");
+    assert_eq!(admitted(&root).monitor_plans().len(), 1);
+}

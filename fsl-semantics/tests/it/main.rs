@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! `fsl-semantics`' integration tests: the ones that exercise only ADR-011
+//! §6.1 layer 3, moved from the root crate's `tests/it/`. One
+//! binary, one link step, the same shape as the root crate's `it` target.
+//!
+//! The modules gated on `feature = "test-support"` call this crate's
+//! test-only fixture constructors (`DeclarationKey::fixture`,
+//! `DomainPackageRef::fixture` and friends), which exist only under that
+//! feature; `cargo test --all-features` turns it on. Gating the `mod` line
+//! keeps a default-feature build from compiling them at all.
+
+// Integration units declare this source package name explicitly. Imported model
+// identities in individual fixtures remain independent of the source package.
+const TEST_PACKAGE_NAME: &str = "fsl-semantics-integration-tests";
+
+mod bare_native_members;
+#[cfg(feature = "test-support")]
+mod business_meanings;
+mod check_mode;
+mod child_composite;
+#[cfg(feature = "test-support")]
+mod clock_places;
+mod complete_value_lock;
+#[cfg(feature = "test-support")]
+mod dimension_equivalence;
+mod dispatch_linking;
+#[cfg(feature = "test-support")]
+mod enum_type_admission;
+#[cfg(feature = "test-support")]
+mod hyper_clauses;
+mod identity_golden_vectors;
+mod ieee_profiles;
+mod import_view_names;
+mod integer_division;
+mod library_resolution;
+mod model_admission_limits;
+#[cfg(feature = "test-support")]
+mod model_conformance;
+#[cfg(feature = "test-support")]
+mod model_conformance_boundary;
+#[cfg(feature = "test-support")]
+mod model_dispatch;
+#[cfg(feature = "test-support")]
+mod model_identity_contracts;
+#[cfg(feature = "test-support")]
+mod model_identity_cost;
+#[cfg(feature = "test-support")]
+mod model_identity_full_size;
+#[cfg(feature = "test-support")]
+mod model_identity_links;
+#[cfg(feature = "test-support")]
+#[cfg(feature = "test-support")]
+mod model_intake;
+#[cfg(feature = "test-support")]
+mod model_normalization;
+mod model_operations;
+#[cfg(feature = "test-support")]
+mod model_population;
+mod model_receiver_frames;
+#[cfg(feature = "test-support")]
+mod model_relationship;
+#[cfg(feature = "test-support")]
+mod model_state;
+#[cfg(feature = "test-support")]
+mod model_subject_bound;
+#[cfg(feature = "test-support")]
+mod model_systems;
+#[cfg(feature = "test-support")]
+mod model_systems_resolve;
+mod moved_item_paths;
+mod named_population;
+mod native_literals;
+mod native_scalar_equality;
+mod native_snapshot_values;
+mod observation_composites;
+mod operation_bodies;
+mod operation_clauses;
+mod option_values;
+#[cfg(feature = "test-support")]
+mod population_bound;
+mod probabilistic_declarations;
+mod quantities;
+mod rational_value_types;
+#[cfg(feature = "test-support")]
+mod refinement_class_catalog;
+#[cfg(feature = "test-support")]
+mod refinement_declarations;
+#[cfg(feature = "test-support")]
+mod refinement_populations;
+#[cfg(feature = "test-support")]
+mod refinement_protocol;
+#[cfg(feature = "test-support")]
+mod refinement_step_simulation;
+#[cfg(feature = "test-support")]
+mod relationship_extents;
+#[cfg(feature = "test-support")]
+mod relationship_navigation;
+#[cfg(feature = "test-support")]
+mod relationship_reachability;
+#[cfg(feature = "test-support")]
+mod relationship_snapshots;
+mod reserved_declaration_names;
+#[cfg(feature = "test-support")]
+mod source_objects;
+mod state_clauses;
+#[cfg(feature = "test-support")]
+mod state_graph_claims;
+#[cfg(feature = "test-support")]
+mod strong_fairness;
+#[cfg(feature = "test-support")]
+mod symmetric_population;
+#[cfg(feature = "test-support")]
+mod task_set_releases;
+#[cfg(feature = "test-support")]
+mod task_sets;
+#[cfg(feature = "test-support")]
+mod tc235_business_meanings;
+#[cfg(feature = "test-support")]
+#[path = "../support/tc235_k2.rs"]
+mod tc235_k2;
+#[cfg(feature = "test-support")]
+mod temporal_fairness;
+#[cfg(feature = "test-support")]
+mod terminal_declarations;
+#[cfg(feature = "test-support")]
+mod timed_declarations;
+#[cfg(feature = "test-support")]
+mod timed_intervals;
+#[cfg(feature = "test-support")]
+mod timed_model;
+#[cfg(feature = "test-support")]
+mod type_environment_model;
+mod unit_typed_members;
+mod variant_fields;
+mod variant_type;
+
+#[path = "../../../tests/support/admitted_charge.rs"]
+mod admitted_charge;
+pub(crate) use admitted_charge::admitted_charge_points;

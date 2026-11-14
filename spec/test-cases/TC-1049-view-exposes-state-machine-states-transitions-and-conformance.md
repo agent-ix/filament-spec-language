@@ -3,14 +3,14 @@ id: TC-1049
 title: "The completed effective view exposes a state machine's effective states and transitions and conformance"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-1049: The completed effective view exposes a state machine's effective states and transitions and conformance
 
 ## Description
 
-Verify that the public effective view answers a state machine's effective states and transitions and type conformance, so the quire-specification TC-235 M19 run 1 and run 7 outcomes are asserted through the view and not by walking source records. Scope: FR-081-AC-17, FR-081-AC-18, FR-081-AC-19, FR-081-AC-20 and FR-081-AC-21.
+Verify that the public effective view answers a state machine's effective states and transitions and type conformance, so the filament-specification TC-235 M19 run 1 and run 7 outcomes are asserted through the view and not by walking source records. Scope: FR-081-AC-17, FR-081-AC-18, FR-081-AC-19, FR-081-AC-20 and FR-081-AC-21.
 
 Catches an implementation that exposes only the machine's own states and transitions (omitting the ancestor's), that orders them by hash or insertion, that drops the inherited transition's guard, that reports conformance by display name, or that adds states and transitions to `declarations()` and so changes identities.
 

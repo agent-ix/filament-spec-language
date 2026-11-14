@@ -3,7 +3,7 @@ id: TC-574
 title: "Read, write and enabling footprints derive from clauses and frames, and decide independence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: verifies
 ---
 # TC-574: Read, write and enabling footprints derive from clauses and frames, and decide independence

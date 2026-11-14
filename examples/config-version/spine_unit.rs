@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-108 (TC-469): the ConfigVersion spine unit text and the domain
 //! package it selects. `spine.rs` builds its spine files from these, and
-//! `qsl-package`'s emission-to-admission corpus (FR-093-AC-19) emits the
+//! `fsl-package`'s emission-to-admission corpus (FR-093-AC-19) emits the
 //! same unit, so both read one datum. Nothing here depends on a crate.
 
 /// `example/config-version`'s Semantic IR 2.0.0 domain package (FR-103-AC-1
@@ -29,7 +29,7 @@ pub fn unit_text() -> String {
     format!(
         "// SPDX-License-Identifier: AGPL-3.0-only\n\
          language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
          model Config = {PACKAGE_IDENTITY:?};\n\
          invariant ParentOrder using v on Config::ConfigVersion at current {{ \
          present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }}\n\

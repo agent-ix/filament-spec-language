@@ -3,7 +3,7 @@ id: TC-841
 title: "The replay facade replays a temporal counterexample over an observed trace"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-331
+  - target: ix://agent-ix/filament-spec-language/FR-331
     type: verifies
 ---
 # TC-841: The replay facade replays a temporal counterexample over an observed trace

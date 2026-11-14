@@ -3,7 +3,7 @@ id: TC-1298
 title: "A protocol declaration's refusal stays inside that declaration at every stage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-503
+  - target: ix://agent-ix/filament-spec-language/FR-503
     type: verifies
 ---
 # TC-1298: A protocol declaration's refusal stays inside that declaration at every stage
@@ -26,7 +26,7 @@ in one source unless a row says two.
 
 | # | Unit and operation | Expected |
 | --- | --- | --- |
-| 1 | `qsl_cst::parse` over W, X, Z with X missing its closing brace before Z's `protocol` keyword | recovered `ParsedSource`; `invalid_syntax` attached to X's span; W's and Z's CST equal their CST in W, Z alone |
+| 1 | `fsl_cst::parse` over W, X, Z with X missing its closing brace before Z's `protocol` keyword | recovered `ParsedSource`; `invalid_syntax` attached to X's span; W's and Z's CST equal their CST in W, Z alone |
 | 2 | `parse` over row 1's unit | refused at S1; results [W `Cleared{S2}`, X `Refused` `invalid_syntax`, Z `Cleared{S2}`] |
 | 3 | `parse` over a unit with a syntax error in the header; over a unit whose last brace is missing so X runs to the end of the source | refused, no `protocol_results` each |
 | 4 | `compile` over row 1's unit | results [W `Emitted`, X `Refused`, Z `Emitted`]; W's and Z's nodes byte-identical to compiling each alone; category `refusal`, exit 20; no package |
