@@ -207,6 +207,7 @@ fn kernel_mode_still_proves_a_termination_measure() {
 
 /// A rational result outside its declared domain is `unproved-range` under
 /// `Linked`; `Kernel` leaves the bound to the evaluator.
+#[trace("FR-495-AC-14", "TC-1421")]
 #[test]
 fn an_unproved_rational_range_checks_only_under_kernel() {
     kernel_drops(
@@ -218,6 +219,7 @@ fn an_unproved_rational_range_checks_only_under_kernel() {
 
 /// A rational `/` whose divisor may be zero is `unproved-nonzero` under
 /// `Linked`; `Kernel` leaves the divisor to the evaluator.
+#[trace("FR-495-AC-15", "TC-1421")]
 #[test]
 fn an_unproved_rational_divisor_checks_only_under_kernel() {
     kernel_drops(
@@ -230,6 +232,7 @@ fn an_unproved_rational_divisor_checks_only_under_kernel() {
 /// A reduction with no identity over a possibly empty source is refused as
 /// an unproved nonempty-reduction obligation under `Linked`; `Kernel` leaves the emptiness to the
 /// evaluator.
+#[trace("FR-495-AC-16", "TC-1421")]
 #[test]
 fn an_unproved_nonempty_reduction_checks_only_under_kernel() {
     kernel_drops(
@@ -237,4 +240,9 @@ fn an_unproved_nonempty_reduction_checks_only_under_kernel() {
          function m using v(q: Sequence<S>[0, 2]): S pure { reduce<S>(acc, x in q: acc) }",
         |found| matches!(found, Obligation::NonemptyReduction { .. }),
     );
+    let nonempty = "type S = Int[0, 3];\n\
+                    function m using v(q: Sequence<S>[1, 2]): S pure { reduce<S>(acc, x in q: acc) }";
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        check(nonempty, mode).unwrap_or_else(|refusals| panic!("{mode:?}: {refusals:?}"));
+    }
 }
