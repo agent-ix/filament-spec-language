@@ -15,7 +15,7 @@ the limit, its configured value, the count reached and the setting that
 raises it, that the rendered diagnostic says how to raise it, and that each
 limits type maps its fields to the table.
 
-Scope: FR-255-AC-1, FR-255-AC-2, FR-255-AC-3.
+Scope: FR-255-AC-1, FR-255-AC-2, FR-255-AC-3, FR-255-AC-21.
 
 ## Test Procedure
 
@@ -28,8 +28,9 @@ Scope: FR-255-AC-1, FR-255-AC-2, FR-255-AC-3.
 3. For each stage's limits type, read the setting name of each field. Set
    each field through its builder method to a value distinct from its
    default.
+4. Give the settings operation `explore.workers=4`, `model_check.workers=2`, `statistical.workers=8`, `explore.workers=0` and `explore.threads=4`, and `explore.workers=2` alone (FR-255-AC-21).
 
-Tag the tests `#[trace("TC-720", "FR-255-AC-1")]`, `#[trace("TC-720", "FR-255-AC-2")]`, `#[trace("TC-720", "FR-255-AC-3")]`.
+Tag the tests `#[trace("TC-720", "FR-255-AC-1")]`, `#[trace("TC-720", "FR-255-AC-2")]`, `#[trace("TC-720", "FR-255-AC-3")]` and `#[trace("TC-720", "FR-255-AC-21")]`.
 
 ## Expected Results
 
@@ -44,3 +45,4 @@ Tag the tests `#[trace("TC-720", "FR-255-AC-1")]`, `#[trace("TC-720", "FR-255-AC
   equals the table and the accounting table, and neither the supplied-value
   ceilings of FR-277 nor the monitor target's `monitor.max_event_rate` is in
   that union; each builder call changes only its own field.
+- Step 4: the first three return caller limits with that worker count set and the others 1; `explore.workers=0` returns the usage refusal with cause `invalid_runtime_input`/`invalid-value`; `explore.threads=4` returns the unknown-setting refusal; `explore.workers=2` leaves `explore.states` at 10000000; no worker name is in the engine limit table.

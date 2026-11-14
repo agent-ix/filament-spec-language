@@ -380,7 +380,7 @@ successor.
 | G-2b | Seam coverage | QSL-68 | the FR-063 checked-in seam list | FR-300-AC-3: `xtask seam-probe` reports the `StateModel` arms at S1 (`catalog_code()` only) and S3, and S2 has none by design | TC-791 | with G-2a |
 | G-2c | Cause prefix | QSL-68 | none | FR-301-AC-1 and FR-301-AC-2: a model refusal raised under `Value` evaluation renders with the `state-model` catalog prefix | TC-792 | with G-2a |
 | G-3 | ID-5 population identity | QSL-68 (#120) | `population_id_preimage` builds FR-089's seven-member preimage; `with_population` keeps `PopulationConflict` | FR-089-AC-1 (amended) and FR-089-AC-7 | TC-291 (the 3-and-7 conflict test at `qsl-eval/tests/it/model_reference_queries.rs:2834` changes to expect two ids) | before G-4 |
-| G-4 | FR-120 `ModelSystem`, `model::state::StateModel`, `explore_model`, `sample_model` | QSL-67 (#121) | as FR-120 "Outputs" and "Frame and observation seam"; the expansion calls `decide_frame` (FE-1); candidates generated lazily in canonical order, each generated candidate charged to `max_candidates` | FR-120-AC-1 to AC-13 | TC-471 to TC-473 | after G-1, G-3 and QSL-48 |
+| G-4 | FR-120 `ModelSystem`, `model::state::StateModel`, `explore_model`, `sample_model` | QSL-67 (#121) | as FR-120 "Outputs" and "Frame and observation seam"; the expansion calls `decide_frame` (FE-1); candidates generated lazily in canonical order, each generated candidate charged to `max_candidates`; an eligible deterministic assignment `post.f = e(pre, args)` is solved directly and generates only the candidates whose `f` equals the solved value, FR-120 "Directly solved assignments" | FR-120-AC-1 to AC-13, AC-29 to AC-33 | TC-471 to TC-473, TC-1418 | after G-1, G-3 and QSL-48 |
 | G-5 | FR-085 relationship-end resolution | QSL-68 (#120) | FR-085's resolution step over `RelationshipEnd` | FR-085-AC-1 to AC-3 | TC-230 to TC-232 | independent |
 | G-6 | M-6c state lane deletion | QSL-67 (#121), with QSL-68 for the model half (ADR-011 M-6c row) | the spine generator `examples/config-version/spine_corpus.rs` has no native import, so TC-469's `build()` needs no native module | ADR-012 §15.8 step 2 and ADR-011 M-6c exactly, including the SEAM-3 reads and the IR import that feed `state` (`src/state/evaluation.rs:15`), `lowering`, IT-010 and the dev dependencies; each path is deleted in the slice that makes it unreachable, and no two paths run side by side; FR-108's independent table stays | TC-469 step 1 passes with the native modules deleted; the parity test is gone | independent of G-4 |
 | G-7 | Dispatch at S3 | QSL-68 (#120) | spine `compile` links dispatch through `check::checked_dispatch_operation` | FR-302-AC-1 to FR-302-AC-6: spine `compile` carries one dispatch table per called operation and refuses an ambiguous or empty dispatch at S3 with no checked package | TC-793 to TC-795, TC-809 | independent |
@@ -479,7 +479,7 @@ function.
   `qsl_eval::simulation::Outcome` is canonical (FP-4).
 - FR-089 Behavior, AC-1, new AC-7 and Status: ID-5.
 - FR-120 "Post-states" and new AC-13: every generated candidate counts
-  toward `max_candidates`, and candidates are generated lazily (G-4).
+  toward `max_candidates`, candidates are generated lazily, and a directly solved deterministic assignment generates, and so counts, only the candidates its solved value admits (G-4).
 - `spec/spec.md`: index row.
 
 ## Open dependencies
