@@ -167,3 +167,18 @@ pub enum RealizabilityCounterexample {
         separating_witness: SeparatingWitnessRecord,
     },
 }
+
+impl RealizabilityCounterexample {
+    /// The FR-351 record the refutation carries (PA-24).
+    #[must_use]
+    pub fn separating_witness(&self) -> &SeparatingWitnessRecord {
+        match self {
+            Self::IndistinguishableHistories {
+                separating_witness, ..
+            }
+            | Self::EnvironmentDefeat {
+                separating_witness, ..
+            } => separating_witness,
+        }
+    }
+}

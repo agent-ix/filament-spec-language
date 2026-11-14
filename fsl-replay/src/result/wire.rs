@@ -890,6 +890,84 @@ pub(crate) fn validate_state_element(node: NodeRef<'_>) -> Result<(), CauseCodec
     validate_element_shape(node).map_err(|_| CauseCodecError::Shape("deciding_element"))
 }
 
+/// FSpec FR-352's `witness` on a protocol-analysis record: FR-351's protocol
+/// family, with no `quantifier` and no `index` (members the closed shape
+/// refuses), a `deciding_element` holding a node id's canonical text, a
+/// `value_path` at the assessed root with no steps, and a canonical decimal
+/// `trace_position`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProtocolWitnessWire {
+    deciding_element: String,
+    value_path: PathWire,
+    trace_position: String,
+}
+
+impl ProtocolWitnessWire {
+    /// The wire form of a protocol family's record.
+    pub(crate) fn of(record: &SeparatingWitnessRecord) -> Result<Self, CauseCodecError> {
+        let DecidingElement::Protocol(node) = &record.deciding_element else {
+            return Err(CauseCodecError::Shape("deciding_element"));
+        };
+        if record.quantifier.is_some() {
+            return Err(CauseCodecError::Shape("quantifier"));
+        }
+        if record.index.is_some() {
+            return Err(CauseCodecError::Shape("index"));
+        }
+        let position = record
+            .trace_position
+            .as_ref()
+            .ok_or(CauseCodecError::Shape("trace_position"))?;
+        let wire = Self {
+            deciding_element: node.clone(),
+            value_path: PathWire::of(&record.value_path),
+            trace_position: position.as_str().to_owned(),
+        };
+        wire.validate()?;
+        Ok(wire)
+    }
+
+    /// Refuse a deciding element that is not a node id's canonical text, a
+    /// value path whose root subject is not `object` or that has a step, and
+    /// a trace position that is not a canonical decimal string.
+    pub(crate) fn validate(&self) -> Result<(), CauseCodecError> {
+        crate::protocol_analysis::read_node_text(&self.deciding_element)
+            .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+        if !matches!(self.value_path.root.subject, SubjectWire::Object { .. })
+            || !self.value_path.steps.is_empty()
+        {
+            return Err(CauseCodecError::Shape("value_path"));
+        }
+        self.value_path
+            .validate_shape()
+            .map_err(|_| CauseCodecError::Shape("value_path"))?;
+        canonical_decimal(&self.trace_position).ok_or(CauseCodecError::Shape("trace_position"))?;
+        Ok(())
+    }
+
+    /// The deciding node, `None` for a record that did not validate.
+    pub(crate) fn deciding_node(&self) -> Option<filament_contract_model::CheckedNodeId> {
+        crate::protocol_analysis::read_node_text(&self.deciding_element).ok()
+    }
+
+    /// The trace position, `None` for a record that did not validate.
+    pub(crate) fn trace_position(&self) -> Option<u64> {
+        canonical_decimal(&self.trace_position)
+    }
+}
+
+/// The value of a canonical decimal string: ASCII digits only, with no sign
+/// and no leading zero.
+fn canonical_decimal(text: &str) -> Option<u64> {
+    let digits = text.as_bytes();
+    let leading_zero = digits.len() > 1 && digits.first() == Some(&b'0');
+    if digits.is_empty() || leading_zero || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    text.parse().ok()
+}
+
 impl RecordWire<ElementSlot> {
     fn read(
         self,
@@ -964,7 +1042,7 @@ impl DecisiveWire {
 }
 
 /// An occurrence key: `node_id`, `role`, `ordinal` (FSpec FR-322).
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OccurrenceWire {
     node_id: String,
@@ -990,7 +1068,7 @@ impl OccurrenceWire {
 }
 
 /// FSpec FR-207's `runtime_value` wire form.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PathWire {
     kind: PathKind,
@@ -998,27 +1076,27 @@ struct PathWire {
     steps: Vec<StepWire>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PathKind {
     RuntimeValue,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RootWire {
     observation: ObservationWire,
     subject: SubjectWire,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ObservationWire {
     authority: String,
     identity: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "tag", rename_all = "snake_case", deny_unknown_fields)]
 enum SubjectWire {
     Object {
@@ -1038,7 +1116,7 @@ enum SubjectWire {
     },
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum InvocationBindingWire {
     Parameter,
@@ -1046,7 +1124,7 @@ enum InvocationBindingWire {
     Receiver,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "tag", rename_all = "snake_case", deny_unknown_fields)]
 enum StepWire {
     Field { name: String },
@@ -1057,7 +1135,7 @@ enum StepWire {
 }
 
 /// A declared object identity in a `reference` step.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ObjectWire {
     universe: String,

@@ -17,7 +17,7 @@ relationships:
 Verify the record's presence, components, trace position and value path, and
 that the state-clause record still round-trips.
 
-Scope: FR-574-AC-1 to FR-574-AC-7.
+Scope: FR-574-AC-1 to FR-574-AC-8.
 
 ## Test Procedure
 
@@ -36,6 +36,9 @@ Scope: FR-574-AC-1 to FR-574-AC-7.
    its observation absent and with its object identity absent; change only
    the root and compare FR-572 keys.
 6. Round-trip a state-clause record (FR-265) with quantifier and index.
+7. Write each result of step 1 as a FSpec FR-352 `native-run-result/2`
+   protocol-analysis record and read it with the strict reader; serve a
+   request refused before analysis.
 
 Tag the tests `#[trace("TC-1414", "FR-574-AC-n")]`.
 
@@ -52,3 +55,6 @@ Tag the tests `#[trace("TC-1414", "FR-574-AC-n")]`.
   root component refused `invalid_runtime_input`/`missing-member` naming it;
   the keys equal.
 - Step 6: the record is unchanged.
+- Step 7: each record reads back equal, a refuted one's FR-351 record equal
+  to its counterexample's and no other carrying one; the refused request
+  has no record.

@@ -381,7 +381,7 @@ impl SymmetryRefusal {
 }
 
 /// ADR-018 PC-1: who stands behind a proved result.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Certification {
     /// The qualified core produced or checked the proof.
@@ -406,7 +406,10 @@ impl Certification {
 /// FSpec FR-243's settlement basis: the closed vocabulary every truth
 /// result carries exactly one of (ADR-031 SW-3, SW-10). Compared by its
 /// exact label.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum SettlementBasis {
     /// `closed-scope`: the decision scope is complete and closed.
     ClosedScope,

@@ -697,7 +697,8 @@ pub struct RunLimit {
 
 /// The cause slug of a construct outside the `bounded-static` profile
 /// (FR-575), under the `unsupported_projection` code.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum UnsupportedSlug {
     /// A protocol activated `on each` trigger rather than `on origin`.
     ActivationOnEach,

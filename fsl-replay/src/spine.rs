@@ -229,8 +229,10 @@ pub use native_result::{
     CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
     FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
     IndeterminateReasonRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError,
-    NativeRunResult, NativeRunResultError, PositionRead, ProgressValueRead, RefusalLocusRead,
-    SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
+    NativeRunResult, NativeRunResultError, PositionRead, ProgressValueRead, ProtocolAnalysisKind,
+    ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
+    ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
+    TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
 };
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
