@@ -60,6 +60,7 @@ pub struct ModelCheckRequest<'a> {
     pub item: ModelCheckItem<'a>,
     pub max_depth: Option<usize>,           // the search horizon k
     pub max_live_instances: Option<u64>,    // FR-209: method bound
+    pub workers: usize,                     // FR-101 "Workers": setting `model_check.workers`, default 1
     pub max_store_buffer: Option<u64>,      // FR-225: method bound
     pub max_messages: Option<u64>,          // FR-225: method bound
     pub limits: ModelCheckLimits,
@@ -324,6 +325,19 @@ automaton states and the depth reached.
   Some({MaxStates | MaxTransitions, value})}`. When the `Cancel` handle is
   cancelled, checked at every charge of the run's meter (ADR-029 FR-276),
   the engine SHALL return `Stopped{cause: Cancelled, limit: None}`.
+- The engine SHALL take the worker count of FR-101 "Workers" from
+  `workers`. A request SHALL return the same verdict, the same
+  counterexample (its states, loop and order), the same certificate bytes,
+  the same limit and value of a `Stopped` result and the same
+  `ModelCheckRefusal` for every `workers >= 1`; `workers` 0 SHALL refuse
+  `invalid_runtime_input`/`invalid-value` before any check. Every budget
+  (`max_states`, `max_transitions`, `max_automaton_states`, the evaluation
+  meter and the system's `max_candidates`) SHALL be charged in the merge
+  order of FR-101, so a run stops at the state a one-worker run stops at. A
+  run cancelled through `cancel` MAY stop at a different state from one
+  run to the next, and its result SHALL be the one-worker result of a
+  prefix of that run's merge order. `workers` is no member of the
+  certificate, the record or the obligation identity.
 - With `max_depth = Some(k)`, the engine SHALL expand every product state at
   depth below `k` and retain its edges. When it reaches depth `k` with no
   first-phase violation, a safety item SHALL return `BoundReached{depth:
@@ -546,6 +560,7 @@ automaton states and the depth reached.
 | FR-126-AC-17 | Over the `Counter` subject under infinite-trace, `always (holds(c.value = 3) implies eventually[1,1] not holds(c.value = 3))` `on origin`, violated only at the stutter position after value 3, returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`, a loop at position 3 with the terminal stutter marker set, and length 4; the counterexample replays to `reproduced-with-evaluated-witness`. | Test (TC-521) |
 | FR-126-AC-18 | Certificate order. AC-1's weak `each` proof returns a `ComponentCertificate` whose closure `states` are ascending by `ProductStateRef` with no duplicate, every component of binding `a` listed before every component of binding `b`, each component's `states` ascending by `ProductStateRef`, and each binding's components in the order the "Components within a binding" rule computes from the retained product graph; running the request twice gives byte-equal certificates. The `Fork` unit (population `forks`, field `phase: Int[0, 2]`, universe `{f}`, initial phase 0, operations `left` from phase 0 to 1, `right` from phase 0 to 2 and `back` from phase 2 to 1, no `terminal` declaration) with `always eventually holds(f.phase = 1)` and no fairness constraint returns `Holds{Exhaustive}` over the five product states `(0,q0)`, `(0,q1)`, `(1,q0)`, `(2,q0)`, `(2,q1)` (the negation automaton's `q0` reads any letter, its accepting `q1` reads only letters in which `f.phase = 1` is false, and a product state reads the letter of its own model state), with canonical breadth-first indices 0, 1, 2, 3, 4 in that order, and a certificate whose five singleton components are listed `(0,q0)`, `(0,q1)`, `(2,q0)`, `(1,q0)`, `(2,q1)`: the edge `(2,q0)` to `(1,q0)` lists `(2,q0)` before `(1,q0)` although `(1,q0)` has the smaller vertex index, and `(2,q1)`, which no edge leaves, is listed last, after the phase-1 component. The only component with a self-edge, `(1,q0)` (the terminal stutter edge), carries `MissingAcceptance`, every other component carries `Trivial`, and FR-339's checker accepts it. FR-130-AC-5's entry lists `acq(1)` before `acq(2)`. | Test (TC-521) |
 | FR-126-AC-19 | Over the `Counter` subject and the `DeadlockFreedom` claim, a meter budget whose `work_units` is 0 and every other counter at its FR-255 accounting-table default stops the run with `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}` at the `inc` precondition's evaluation, the counter the precondition's `Incomplete` names. Over a `Counter` variant whose `inc` has no precondition, under `work_units` 0, `always holds(c.value <= 3)` stops with `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}` at the letter of position 0, with no counterexample and no certificate. Over the example subject of AC-1 and the `DeadlockFreedom` claim with `max_candidates` 1, the run stops with `Stopped{ResourceExhausted, {MaxCandidates, 1}}`. Each `ReachedLimit` names its limit's FR-255 setting: `accounting.work_units` for the meter stops and `expansion.max_candidates` for the candidate stop, and the settings operation given `accounting.work_units=1000000` or `expansion.max_candidates=1000000` raises the bound that stopped the run. | Test (TC-521) |
+| FR-126-AC-20 | Over the `Counter` subject with a `Violated` claim, a `Holds` claim with a certificate and a claim stopped by `max_states` 5, `check_model` with `workers` 1, 2, 4 and 64 returns the same verdict, the same counterexample states and loop in the same order, byte-equal certificates and, for the stopped claim, `Stopped{ResourceExhausted, {MaxStates, 5}}` with equal counts. With `max_candidates` set one below the candidates the one-worker run charges for the first state, every `workers` value stops with the same `MaxCandidates` limit. A run whose `Cancel` handle is cancelled after a delay, with `workers` 4, returns `Stopped{Cancelled, None}`. `workers` 0 refuses `invalid_runtime_input`/`invalid-value` before any check. | Test (TC-1417) |
 
 ## Dependencies
 

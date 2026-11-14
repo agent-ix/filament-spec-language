@@ -73,6 +73,11 @@ AC-14).
   reaches `max_states` or `max_transitions` names it and its value in
   `Outcome::Bounded`, and the caller raises it by setting that `Limits`
   member.
+- For exploration, a worker count `workers: usize`, the number of threads
+  that may expand states at once; 1 expands on the calling thread alone.
+  It is a request setting named `explore.workers`, default 1. It is a
+  resource choice, not a limit: no worker count stops a run, and it enters
+  no result (see "Workers").
 - For sampling: a `u64` seed, a `u64` trace index, a `usize` step ceiling
   and the sampler's `DefinitionRef` (`qsl_foundation::selection`), whose
   identity names the generator.
@@ -156,6 +161,7 @@ pub fn explore_request<S: TransitionSystem>(
     position_limit: u64,
     limits: Limits,
     max_depth: Option<usize>,
+    workers: usize,
     poll: impl FnMut() -> bool,
 ) -> Result<Exploration<S::Finding>, NotSimulated>;
 
@@ -183,6 +189,8 @@ pub enum NotSimulated {
     /// A state or transition identity reached during the walk has no RFC
     /// 8785 encoding under `quire-canonical`.
     KeyEncoding(EncodingRefusal),
+    /// `workers` is 0 (see "Workers").
+    Workers,
 }
 
 pub struct RequiresBound {
@@ -221,8 +229,8 @@ bounded request, the same disposition `qsl-route`'s own
 `catalog_fields` as inherent methods, not a `CatalogCoded` impl -- a
 `CatalogCoded` cause is always `Category::Refusal`, which `RequiresBound`
 is not -- and `catalog_code` returns `None` for `RequiresBound`. It is
-`Some(invalid_runtime_input/invalid-value)` for `EmptyInitial` and
-`KeyEncoding`, the same category ADR-014 TR-2 gives a malformed runtime
+`Some(invalid_runtime_input/invalid-value)` for `EmptyInitial`,
+`KeyEncoding` and `Workers`, the same category ADR-014 TR-2 gives a malformed runtime
 request; `GeneratorMismatch` reads the same code for a different reason
 (FR-101-AC-10). `Extent` delegates to whichever of `classify_extent`'s own
 two failure types stopped it: `LimitExceeded`'s own
@@ -250,9 +258,66 @@ returns `Exhaustive` with zero states, transitions and depth: its reachable
 set is empty and fully visited.
 
 **State key.** QSL uses the typed canonical form specified by QSpec FR-181.
-The state key is that form's canonical (RFC 8785) byte string, compared,
-ordered and used as a map key directly, with no hash. QSL coalesces states by
-equality of the complete canonical key bytes.
+The state key is that form's canonical (RFC 8785) byte string; it is the
+identity of a state in every output: the trace, the frontier, the findings,
+a replay and a certificate. QSL coalesces states by equality of the complete
+canonical key bytes, and by nothing weaker.
+
+**Seen set and packed state.** The set of states already reached is an
+index, not an identity, so how it finds a state is the engine's choice as
+long as it never changes which states are equal. It may bucket keys by a
+hash of their full bytes, which keeps the lookup cost independent of key
+length, provided a bucket hit is confirmed by comparing the full bytes: two
+states with the same hash and different bytes remain two states. The hash
+is not part of any output, is not stored in a trace, frontier, finding or
+certificate, and does not decide any order; discovery order, the frontier
+and the stats are functions of the canonical key bytes alone, so no
+hash function, hash seed or table iteration order reaches a result.
+Visiting and ordering stay as "Canonical order" states them.
+
+The engine may also hold a state in a packed layout derived from the
+checked types of the system's state (a fixed-width record of the finite
+domains' ordinals and bounded integers, for example) to cut the cost of
+keeping and comparing it. A packed layout is a bijection with the typed
+canonical form on the values the checked types admit: packing then
+unpacking returns the same state, unpacking a packed state yields exactly
+the canonical key bytes that state has, and two states have equal packed
+forms exactly when their canonical key bytes are equal. A state holding a
+value outside the layout's domain is not packed and is indexed by its
+canonical bytes. The packed form never leaves the engine: every output
+names a state by its canonical key bytes, so a run with a packed layout and
+one without return byte-equal results.
+
+**Workers.** `workers` is the number of threads that may expand states at
+once. It affects the time a run takes and nothing it returns. A run over
+the same system, limits, horizon and cancellation outcome returns an equal
+`Exploration` (its `outcome`, `stats`, `frontier` and `findings`, the
+order of each included) for every `workers >= 1`, and the same
+`NotSimulated` result. A worker count above the cores the process may use
+is allowed and changes no result. `workers` 0 returns
+`NotSimulated::Workers` before any `TransitionSystem` method is called.
+
+The engine produces results as if it expanded states one at a time in the
+canonical order of "Canonical order": it merges each state's expansion in
+that order, and the merge, not the completion of an expansion, assigns the
+state its discovery position and charges the budgets. A worker may expand a
+state ahead of the merge; an expansion that the merge never reaches
+(because an earlier state stopped the run) contributes nothing to the
+stats, findings or frontier, and so does not count toward `max_states`,
+`max_transitions` or the system's own limits such as FR-120's
+`max_candidates`. Consequently `max_states`, `max_transitions`,
+the horizon and the first `ExpansionStop` stop the run at the same state
+whatever `workers` is: the stopped state is the first in canonical order
+whose merge reaches the limit or whose expansion stops, not the first to
+finish. Cancellation is the one cause that depends on timing, because it
+depends on when the poll answers. A `Cancelled` outcome is the outcome the
+one-worker run returns when the poll answers `true` after the merge of some
+`n` states, for the `n` the run reached: its stats, findings and frontier
+are those of a prefix of `n` merged states in canonical order, never a state
+merged out of order.
+
+The statistical sampling of FR-191 is the second use of workers, and states
+its own rule.
 
 **Traces and frontiers record state keys.** Every state a trace or frontier
 names is its state key: `Trace.initial` and each `Step.key` are `StateKey`s, a
@@ -358,6 +423,13 @@ repository (this repository's TC-210 is a witness-envelope case).
 | FR-101-AC-13 | On a test system whose expansion of state `s` returns finding `f`, `Exploration.findings` holds one `StateFindings` for `s` with its key, its depth and `[f]`, in expansion order; a system whose `s` sits in a `Bounded` frontier has no entry for it; the stopped state of AC-12 has no entry. | Test (TC-474) |
 | FR-101-AC-14 | Sampling the chain `0 → 1`, whose expansion of `1` stops with `resource_exhausted`/`insufficient-next-charge`, ends with `StopReason::Stopped(resource_exhausted/insufficient-next-charge)` at step 1, and that trace replays successfully. The same trace replayed against a system whose expansion of `1` does not stop refuses `ReplayError::Stopped{step: 1, recorded: Some(<cause>), replayed: None}`; against one that stops with `runtime_invariant`, `recorded` and `replayed` name the two causes; a trace sampled with `max_steps` 1 from a chain whose `1` does not stop ends `StepLimit` at `1`, and replayed against the stopping chain it refuses with `recorded: None`. A trace whose recorded findings differ from the recomputed ones refuses `ReplayError::FindingMismatch` at that step. | Test (TC-474) |
 | FR-101-AC-15 | `Limits::default()` is `max_states` 10,000,000 and `max_transitions` 100,000,000, and `Limits` has no depth member; `max_depth: None` sets no horizon. A chain of 3 states explored with `Limits::default()` returns `Exhaustive`; with `max_states` set to 2 and the other members at their defaults it returns `Outcome::Bounded` at `Limit::States` with value 2. | Test (TC-536) |
+| FR-101-AC-16 | Over a test system with at least 200 reachable states and findings on some of them, `explore_request` with `workers` 1, 2, 4 and 64 returns equal `Exploration` values: the same `Outcome` variant with equal `Stats`, the same frontier and the same `findings`, each in the same order, and the same trace order when the run is replayed. A system whose `successors` sleeps for a pseudo-random time per state, so that expansions finish out of order, returns the same result as the one-worker run. | Test (TC-1417) |
+| FR-101-AC-17 | `workers` 0 returns `NotSimulated::Workers`, catalog code `invalid_runtime_input`/`invalid-value`, and calls no `TransitionSystem` method. A system that records every `successors` call, explored with `workers` 4 and a run stopped by `max_states` 5, shows that the stats and findings count only states the merge reached: `Stats.states` is 5, `findings` holds no entry for a state beyond the stop, and the result equals the one-worker run's, whatever the number of `successors` calls the recorder saw. | Test (TC-1417) |
+| FR-101-AC-18 | On a test system with a wide first level, a run stopped by `max_states`, by `max_transitions`, or by a system whose expansion of two different states returns `ExpansionStop` with different causes, returns for `workers` 1, 2, 4 and 64 the same `Bounded` limit and value, the same `Stopped` cause and frontier: the stopped state is the earlier of the two in canonical order, though the later one is made to finish first. | Test (TC-1417) |
+| FR-101-AC-19 | A run whose poll answers `true` after a delay, with `workers` 4, returns `Outcome::Cancelled` whose stats, findings and frontier equal those of the one-worker run whose poll answers `true` after the merge of the same number `n` of states, for some `n` from 0 up to the reachable state count; no state outside the first `n` in canonical order appears in its stats, findings or frontier. | Test (TC-1417) |
+| FR-101-AC-20 | A seen set that indexes by a hash returns the same `Exploration` whichever hash function and seed it uses. With a test hash function that returns one constant for every key, exploration of a system of 100 distinct states returns `Stats.states` 100, the frontier and findings of the default run, and no state coalesced with another that has different key bytes; with two initial states whose keys differ and whose hashes are equal it admits both. Equal full key bytes still coalesce into one state. No `StateKey`, trace, frontier or finding carries the hash. | Test (TC-1417) |
+| FR-101-AC-21 | For a system whose state type is finite, `unpack(pack(s))` is `s` and the canonical key bytes of the unpacked state equal those of `s`, for every reachable state; two reachable states have equal packed forms exactly when their canonical key bytes are equal, checked over every pair of 200 states, including negative zero against zero in a `float64` field, which stay two states, and an integer at each end of its declared range. A state that holds a value outside the layout's domain is explored, and coalesces with another exactly when their canonical key bytes are equal. | Test (TC-1417) |
+| FR-101-AC-22 | The same system explored with a packed layout and without one returns byte-equal results: every `StateKey` in the frontier, the trace, the findings and a replay is the canonical key bytes, `replay` of a trace from the packed run succeeds against the unpacked system and the reverse, and no output holds a packed form. | Test (TC-1417) |
 
 FR-101-AC-5 withdrawn clause: the `KeyMismatch` refusal (recorded key compared with the recomputed successor key), retired because no QSL check could fail on it.
 

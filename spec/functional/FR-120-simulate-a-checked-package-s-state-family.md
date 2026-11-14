@@ -684,6 +684,54 @@ expansion the same way. When the count would exceed `max_candidates`, the expans
 stops with `resource_exhausted`/`insufficient-next-charge`, naming the limit
 `MaxCandidates` and no counter.
 
+**Directly solved assignments.** An operation that writes several fields
+has a candidate set that is the product of their domains (two `Int[0, 99]`
+fields give 10^4 candidates per application), though a postcondition such as
+`self.a = pre(self.b)` allows exactly one value of `a`. The generator MAY
+solve such an assignment instead of enumerating the field's domain, under
+these rules, which keep every result the enumeration would give:
+
+- *Eligible.* An application is solved only when each of its applicable
+  `post` clauses is exactly one equation `self.f = e` (or the equation
+  with its sides swapped) where `f` is a field its frame `modifies`, no two
+  clauses assign the same field, and `e` reads only the pre-observation
+  (`pre(...)`, `self` and its pre-state fields) and the operation's
+  arguments: not the candidate, not `result`, not another field's post
+  value. Any other `post` clause on the application, a conjunction that adds
+  a conjunct to the equation, an assignment to a field the frame does not
+  grant, and an operation whose clauses name `result` make the application
+  ineligible; it is enumerated as before. A field no clause assigns keeps
+  its enumerated domain.
+- *Value.* The generator evaluates `e` once per application, with a fresh
+  meter, through `evaluate_clause`. Only `Completed(v)` solves the
+  assignment. Any other outcome (`Undefined`, `Refused`, `Incomplete`) falls
+  back to enumeration for that application, so its findings and stops are the
+  enumeration's. When `v` is outside `f`'s domain the solved candidate set is
+  empty, which is also what the enumeration yields, since its postcondition
+  is false on every candidate: the application has no successor and no
+  finding.
+- *What is counted.* A candidate is counted when the generator generates
+  it. A solved assignment generates only the candidates whose `f` equals
+  `v`, so the count is the number of enumeration candidates with `f` equal to
+  `v`, one per combination of the other fields' values: the application
+  counts the product of the unsolved fields' domains, and none when `v` is out of
+  domain. Each such candidate counts once, closure and frame rejection
+  included, and each (candidate, result) pair counts as above. The
+  candidates the enumeration would have generated and the solved assignment
+  skips are not counted. This is the one rule for every generator, solved or
+  enumerating, so the count of an application is a function of the model,
+  the state and the request alone, never of the generator's strategy.
+- *Invariant.* For an eligible application the generator produces the same
+  successor set as the enumeration, in the same canonical order (the
+  skipped candidates are the ones whose postcondition is false, and the
+  rest keep their relative order), with the same transition identities,
+  `StepEffect`s and results, and records the same findings and the same
+  `ExpansionStop` as the enumeration, whenever the run does not reach
+  `max_candidates`. A run the enumeration completes under `max_candidates`
+  completes under it with a solved assignment and returns the same
+  `Exploration`; a run that stops under `max_candidates` only because of
+  candidates the solved assignment skips MAY complete.
+
 ### Invariants
 
 Every expansion evaluates each invariant clause of the package, in
@@ -804,7 +852,12 @@ identity text of operation `op`.
 | FR-120-AC-25 | Over AC-22's model, `op: Open` (record `Open { n: Integer, b: Boolean }`), `tm: Tm` (record `Tm { x: Clock, k: Integer }`) and `wr: Wrap2` (record `Wrap2 { o: Open }`) added as fields, one at a time in a frame that grants it, are unbounded roots: `explore_model` and `sample_model` return `NotSimulated::RequiresBound` naming each field's node key, before any state is expanded. A field `choice: Choice`, where the admitted model variant type `Choice` has nullary case `Empty` and `Enabled` with payload type `Boolean`, is finite with three values in order: `Empty`, `Enabled(false)`, `Enabled(true)`; it adds no unbounded root. A variant case with payload type `Integer` is unbounded. A clock component does not make `tm` bounded, and `Wrap2` is unbounded by its nested component. | Test (TC-1270) |
 | FR-120-AC-26 | In a model with `time dense unit ms`, `Cfg` and `Open` as in AC-22 and AC-25 and `Tick { x: Clock }`, a frame that grants the field, `sc: Sequence<Cfg>[0, 2]` is a finite value domain of 1 + 6 + 36 = 43 values: the empty sequence, then the 6 one-element sequences in `Cfg` order, then the 36 two-element sequences with the first element most significant (`[c0, c0]`, `[c0, c1]`, ..., `[c5, c5]`). `st: Sequence<Tick>[0, 3]` and `sk: Sequence<Clock>[0, 3]` have 4 values each, one for each length, and so does `so: Sequence<Option<Clock>>[0, 3]`. With AC-24's `Timer { x: Clock, n: Int[0, 3] }` (`p` = 4), `sr21: Sequence<Timer>[0, 2]` has 1 + 4 + 16 = 21 values and `sr85: Sequence<Timer>[0, 3]` has 1 + 4 + 16 + 64 = 85, ordered length first and then by `n` with the first element most significant (`[]`, `[n0]`, ..., `[n3]`, `[n0, n0]`, `[n0, n1]`, ...); the `x` adds no factor. `Set<Cfg>[0, 1]` has 1 + 6 = 7 values and `Set<Cfg>[0, 2]` has 1 + 6 + 15 = 22, ordered by count and then by ascending `Cfg`; `Bag<Cfg>[0, 2]` has 1 + 6 + 21 = 28; with `Timer` as above `Set<Timer>[0, 2]` has 1 + 4 + C(4, 2) = 11 values and `Bag<Timer>[0, 2]` has 1 + 4 + C(5, 2) = 15, ordered by count and then by `n`; from a pre-state set `{ {x: 5 ms, n: 1} }`, the candidate `{n 1, n 2}` holds `x` 5 ms for `n` 1 (matched by equal `n`) and 0 ms for `n` 2, and the candidate `{n 2}` holds `x` 0 ms; `Set<Clock>[0, 2]` has 2, and so does `Set<Clock>` with no declared maximum (FR-230 caps it at one element). No candidate ranges over a clock slot's value. From a pre-state in which `sr21` is `[ {x: 5 ms, n: 1} ]`, the candidate of length 2 with `n` values 1, 2 holds the pre-state `x` 5 ms in slot 0 and a fresh `x` 0 ms in slot 1; the candidate of length 0 holds no slot; from a pre-state of length 0 every slot of a length-2 candidate is fresh at 0 ms. A `Reference<Clock>` field, `Sequence<Reference<Clock>>[0, 1]`, `Sequence<Open>[0, 1]`, `Sequence<Cfg>` and `Set<Cfg>` with no declared maximum, and a `Map<Boolean, Boolean>` and an `OrderedSet<Boolean>` with no declared maximum are unbounded: `explore_model` and `sample_model` return `NotSimulated::RequiresBound` naming the field's node key, before any state is expanded. | Test (TC-1270) |
 | FR-120-AC-27 | Over a model whose `Counter` has the relationship `link` (both ends `0..2`, neither `unique`), operations `remove` (frame `deletes Counter`) and `spawn` (frame `creates Counter`) and universe `{c1, c2}`: from `s0` holding `c1`, `c2` and the listed pair (`c1`, `c2`), `remove c1` then `spawn` yields a state with `s0`'s objects and no pair, and its key differs from `s0`'s. A snapshot listing the pair once and one listing it twice are both admitted, have different keys, and exploration from the two counts 2 states. (For context, a state that lists no extents keeps FR-120-AC-4's key, with no `relationships` entry.) | Test (TC-471) |
-| FR-120-AC-28 | In a model whose fields are granted by a frame, `Map<Boolean, Boolean>[0, 1]` has 1 + 2 * 2 = 5 values and `Map<Boolean, Boolean>[0, 2]` has 1 + 2 * 2 + 1 * 4 = 9 (the term for `k` above the key count adds nothing). `Map<Boolean, Int[0, 2]>[0, 2]` has 1 + 2 * 3 + 1 * 9 = 16 values, ordered by entry count, then by keys (`false` before `true`), then by values: the empty map, `{false: 0}`, `{false: 1}`, `{false: 2}`, `{true: 0}`, `{true: 1}`, `{true: 2}`, then `{false: 0, true: 0}`, `{false: 0, true: 1}`, ..., `{false: 2, true: 2}`. `OrderedSet<Boolean>[0, 2]` has 1 + 2 + 2 = 5 values: `[]`, `[false]`, `[true]`, `[false, true]`, `[true, false]`. `OrderedSet<Int[0, 2]>[0, 3]` has 1 + 3 + 6 + 6 = 16 and `OrderedSet<Int[0, 2]>[0, 5]` also has 16. `OrderedSet<Clock>[0, 2]` and `OrderedSet<Clock>` with no declared maximum have 2 values, as `Set<Clock>` does. A `Map<Boolean, Clock>[0, 1]` and a `Map<Boolean, Stopwatch>[0, 1]` (`Stopwatch { x: Clock }`, a clock-bearing record value) are each unbounded and return `NotSimulated::RequiresBound` naming the field's node key, before any state is expanded. | Test (TC-1270) |
+| FR-120-AC-28 | In a model whose fields are granted by a frame, `Map<Boolean, Boolean>[0, 1]` has 1 + 2 * 2 = 5 values and `Map<Boolean, Boolean>[0, 2]` has 1 + 2 * 2 + 1 * 4 = 9 (the term for `k` above the key count adds nothing). `Map<Boolean, Int[0, 2]>[0, 2]` has 1 + 2 * 3 + 1 * 9 = 16 values, ordered by entry count, then by keys (`false` before `true`), then by values: the empty map, `{false: 0}`, `{false: 1}`, `{false: 2}`, `{true: 0}`, `{true: 1}`, `{true: 2}`, then `{false: 0, true: 0}`, `{false: 0, true: 1}`, ..., `{false: 2, true: 2}`. `OrderedSet<Boolean>[0, 2]` has 1 + 2 + 2 = 5 values: `[]`, `[false]`, `[true]`, `[false, true]`, `[true, false]`. `OrderedSet<Int[0, 2]>[0, 3]` has 1 + 3 + 6 + 6 = 16 and `OrderedSet<Int[0, 2]>[0, 5]` also has 16. `OrderedSet<Clock>[0, 2]` and `OrderedSet<Clock>` with no declared maximum have 2 values, as `Set<Clock>` does. A `Map<Boolean, Clock>[0, 1]` and a `Map<Boolean, Stopwatch>[0, 1]` (`Stopwatch { x: Clock }`, a clock-bearing record value) are each unbounded and return `NotSimulated::RequiresBound` naming the field's node key, before any state is expanded. | Test (TC-1270) || FR-120-AC-29 | Over a model whose object type `Cell` (population `cells`, universe `{k1}`) declares `a: Int[0, 99]` and `b: Int[0, 99]`, an operation `swap()` with frame `modifies a, b` and the clauses `post A { self.a = pre(self.b) }` and `post B { self.b = pre(self.a) }`, from the state with `a` 3 and `b` 5, the expansion has one successor, with `a` 5 and `b` 3, and generates one candidate. Its charge, the argument vector, that candidate and the pair FR-120 counts for it, is exact: the expansion completes with `max_candidates` set to that charge and stops with `resource_exhausted`/`insufficient-next-charge` naming `MaxCandidates` with it one lower. It never generates the 10^4 candidates of the enumeration, so the same expansion with `max_candidates` 1,000 completes. | Test (TC-1418) |
+| FR-120-AC-30 | Over AC-29's model, `step()` with frame `modifies a, b` and the one clause `post A { self.a = pre(self.a) + 1 }` has 100 candidates per application, one per `b`, and 100 successors from the state with `a` 3, ordered by ascending `b`, each with `a` 4. The reference clause `post A { self.a = pre(self.a) + 1 and true }`, which is ineligible and so enumerated, gives 10^4 candidates and, after the same filtering, the same 100 successors with equal state keys, equal transition identities, equal `StepEffect`s, the same order and the same findings; exploring both forms to depth 3 returns equal `Exploration` values, and the solved form completes with `max_candidates` 300 while the enumerated one stops under it with `MaxCandidates`. | Test (TC-1418) |
+| FR-120-AC-31 | Over AC-29's model, each of these is ineligible and enumerates its application's 10^4 candidates, so it stops with `MaxCandidates` at `max_candidates` 1,000: `post A { self.a = self.b }` (reads the candidate); two clauses `post A { self.a = 1 }` and `post B { self.a = 2 }` (the same field); `post A { self.a = pre(self.b) }` with a second clause `post C { self.b > 0 }`; and a clause that names `result` on an operation that declares one. Separately `post A { self.a = pre(self.b) + 1 }` from the state with `b` 99 is eligible and its value 100 is outside `a`'s domain: the expansion has no successor, generates no candidate and records no finding, as the enumeration has no successor and no finding. | Test (TC-1418) |
+| FR-120-AC-32 | Over AC-29's model, an equation whose `e` is `Undefined` (`self.a = pre(self.a) / 0`) or whose evaluation is `Incomplete` under a meter budget whose `work_units` is 0 is not solved: the expansion enumerates and records the findings the enumeration records (a `ContractUndetermined` for `A` with the candidate's state key, for the `Undefined` case) or stops with `resource_exhausted`/`insufficient-next-charge` naming `EvaluationMeter` with counter `work_units`, as a run with the solver absent does. | Test (TC-1418) |
+| FR-120-AC-33 | The `mc/frame_candidates` axis of `qsl-bench` builds AC-29's `swap` and AC-30's `step` models in a solved form and in the ineligible reference form. Its smallest-size test asserts, for the same state, that the solved form generates 1 and 100 candidates, the reference form 10^4 for each, and that the two forms return equal successor state-key sequences; it asserts counts, not times. The A/B comparison of BENCHMARKING.md decides a speed claim; no stored figure is a threshold. | Test (TC-1418) |
+
 ## Dependencies
 
 - [FR-215](FR-215-implement-protocolsystem-as-a-transitionsystem.md): the
