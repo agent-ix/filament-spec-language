@@ -41,3 +41,4 @@ PASS with one low finding. TC-1420 inherits the AC-13 constructibility defect
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | f66c0b693: TC-1419 retitled and renamed to `...-presence-obligation-and-keeps-state-clauses-and-measures.md`. Its description now lists every obligation Kernel drops. Outside this review's own SR files, no file in the tree names the old filename or title. |

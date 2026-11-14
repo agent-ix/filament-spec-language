@@ -80,3 +80,6 @@ the rational half of AC-13 names a fixture that the stated entry point cannot bu
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | f66c0b693: AC-13's rational half is now stated over the definedness walk of an already-checked body, and TC-1420 step 1 makes it an in-crate test. On #2706 that is buildable: `CheckedBody::from_nodes` (ir.rs ~471, test/test-support) builds a `Rational`/`RationalNegate` node over an `Integer` operand, and `Definedness::new(..).with_check_mode(mode).check(body.root())` refuses `Unproved(RationalRange)` in both modes (facts.rs ~1199 Kernel guard; ~1291-1319 Linked arms). |
+| FND-002 | fixed | f66c0b693: the boundary is now scoped to a state clause a package declares, checked through `PackageDeclarations::check`, and it says that `CheckedGraph::check_clause_expression` takes its own mode and drops obligations under Kernel (matches mod.rs ~8614). AC-11 names the same entry. |
+| FND-003 | fixed | f66c0b693: AC-12 now says "as its only refusal" for both the Linked and Kernel outcomes of `f(x) + 1`, and gives the path `[0]`. |

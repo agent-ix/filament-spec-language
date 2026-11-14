@@ -32,3 +32,4 @@ are written as indicative description, not as SHALL requirements.
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | f66c0b693: each of the four boundaries and the lead sentence now carry SHALL / SHALL NOT. |

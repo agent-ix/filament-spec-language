@@ -40,3 +40,4 @@ of refusals, so a wrong implementation fails it:
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | accepted-no-change | f66c0b693 keeps the dispatch halves as a guard that the up-front dispatch refusals stay independent of the mode, and AC-13 and TC-1420 now say so ("The dispatch refusals are made before any body walk, so today they cannot differ by mode; the criterion guards that they stay independent of the mode"). The weakness is real but disclosed and harmless, so it does not block merge. |
