@@ -1998,9 +1998,12 @@ fn a_retire_predicate_reads_a_protocol_capture() {
 /// `cells` in place of `Job` and `jobs`, and `r.v >= 2` in place of
 /// `w.done`: the role predicate `r.v >= 2 and present(lookup<M::Cell>(M::cells,
 /// j) absent empty)`, with `j` the protocol capture `k` of type
-/// `Reference<M::Cell>`, checks, and `retire(r, c)` is enabled exactly where
-/// `c.v >= 2` holds and `j` is a member of `cells`; with the membership
-/// negated nothing ever retires; with `M::absent` in place of `M::cells` the
+/// `Reference<M::Cell>`, checks. With both instances live, no `retire` is
+/// enabled while `c.v` is 1, and after the attempt raises `c.v` to 2, with
+/// `j` a member of `cells`, only `retire(r, c)` is; with the membership
+/// negated no `retire` is enabled at either of those two states. Every state
+/// here has `j` in `cells`: the fixture has no state without it. With
+/// `M::absent` in place of `M::cells` the
 /// unit refuses `missing_declaration`/`missing-name` at `absent`, naming the
 /// role `r`.
 #[trace("TC-653", "FR-208-AC-6")]
@@ -2046,7 +2049,7 @@ fn a_retire_predicate_reads_a_named_population() {
     let (before, raised) = retire_at(&format!("not {member}"));
     assert!(
         before.is_empty() && raised.is_empty(),
-        "j is a member of cells, so its negation never holds"
+        "j is a member of cells, so its negation does not hold at either state"
     );
 
     let refusals = check_refusals(&unit_with(

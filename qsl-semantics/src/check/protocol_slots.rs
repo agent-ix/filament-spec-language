@@ -540,11 +540,18 @@ impl Checker<'_, '_> {
                 {
                     // A population name that names nothing keeps its own
                     // cause, located at its second segment through the
-                    // name's span in the slot (FR-391 "Resolution").
+                    // name's own span in the slot (FR-391 "Resolution"); a
+                    // name with no span of its own, or one too short for the
+                    // segment, stays located by its location alone.
+                    let named = slot
+                        .form
+                        .spans
+                        .at(&location.path())
+                        .filter(|named| named.start.saturating_add(offset) < named.end);
                     let cause = CheckCause::MissingSegment {
                         name,
                         offset,
-                        span: Some(span),
+                        span: named,
                     };
                     self.refusals.push((span, CheckRefusal { location, cause }));
                 } else {
