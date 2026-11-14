@@ -1,16 +1,17 @@
 ---
 id: TC-1419
-title: "Kernel mode drops a function body's presence obligation and nothing else"
+title: "Kernel mode drops a function body's presence obligation and keeps state clauses and measures"
 type: TC
 relationships:
   - target: ix://agent-ix/quire-spec-language/FR-495
     type: verifies
 ---
-# TC-1419: Kernel mode drops a function body's presence obligation and nothing else
+# TC-1419: Kernel mode drops a function body's presence obligation and keeps state clauses and measures
 
 ## Description
 
-Verify that `CheckMode::Kernel` records no presence obligation for a function
+Verify that `CheckMode::Kernel`, which drops a function body's range, nonzero,
+presence, rational-range and nonempty-reduction obligations (FR-495), records no presence obligation for a function
 body, and that it leaves a state clause and a termination measure checked as
 under `CheckMode::Linked`. Scope: FR-495-AC-10, FR-495-AC-11 and FR-495-AC-12.
 
