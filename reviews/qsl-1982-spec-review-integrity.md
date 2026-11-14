@@ -38,3 +38,4 @@ PASS with one low finding.
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | fa9f478c1: AC-15 now cites the "Zero divisor, two observations" bullet, whose Kernel half names "a decimal or rational `/`" evaluating to `Undefined::DivisionByZero` (FR-495 line 146). The bullet, not AC-15, now owns the evaluation outcome, so TC-1421 checking only the Linked/Kernel outcomes is consistent. |

@@ -77,3 +77,4 @@ that is not the rule the checker applies.
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | fa9f478c1: AC-14 now gives the reason as the declared numerator `[0, 1]` and denominator `[1, 2]` against the sum's numerator `[0, 4]` and denominator `[1, 4]`. That matches quire-exact `RationalDomain::result_of(Add)` (cross products `[0, 2]` + `[0, 2]`; denominator 2 * 2) and `contains_domain`. |
