@@ -8,6 +8,7 @@
 use ix_trace_rs::trace;
 use qsl_package::CheckedPackage;
 use quire_exact::{EnumMember, Value, ValueType};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use super::{default_run, refused_parameter, WitnessValue, UNLIMITED};
@@ -58,7 +59,7 @@ fn package_over(document: &serde_json::Value, alias: &str) -> CheckedPackage {
     .expect("assembly succeeds");
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}")),
     )
 }

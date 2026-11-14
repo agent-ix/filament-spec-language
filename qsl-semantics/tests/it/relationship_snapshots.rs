@@ -10,6 +10,7 @@
 //! no navigation relationship (an object type's identity stands for it in
 //! rows 9).
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -450,7 +451,7 @@ fn checked(variant: &Variant) -> Admission {
         Vec::new(),
     )
     .expect("the model assembles")
-    .check(CheckingLimits::default())
+    .check(CheckMode::Linked, CheckingLimits::default())
     .expect("the unit checks");
     Admission { graph, packages }
 }

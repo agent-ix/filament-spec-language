@@ -6,6 +6,7 @@
 use ix_trace_rs::trace;
 use qsl_foundation::SourceIdentity;
 use quire_exact::{Integer, PathSegment, Rational};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use crate::check::node_key::{BodyTerm, LeafTerm, MemberTerm, NodeTag, Owner};
@@ -41,7 +42,7 @@ fn check(text: &str) -> CheckedGraph {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckingLimits::default())
+    .check(CheckMode::Linked, CheckingLimits::default())
     .expect("the unit checks")
 }
 

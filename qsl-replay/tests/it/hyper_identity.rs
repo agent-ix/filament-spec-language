@@ -11,6 +11,7 @@ use qsl_replay::{
 use qsl_semantics::check::{admitted_source, PackageDeclarations};
 use quire_exact::NodeKey;
 use quire_exact::{LimitKind, Meter};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 fn fixture_node(fill: u8) -> NodeKey {
@@ -210,7 +211,7 @@ fn a_package_with_no_emission_names_product_identity() {
         "fixture",
         qsl_foundation::IdentityLimits::default(),
     )
-    .check(CheckingLimits::default())
+    .check(CheckMode::Linked, CheckingLimits::default())
     .expect("an empty package checks");
     let empty = CheckedPackage::link(graph);
     let subjects = [world.subject_over(&empty, Vec::new())];

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-520-AC-4 / TC-1315 row 5: compensation attempt bounds at the engine.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
@@ -171,7 +172,7 @@ fn fixture(bound: u64) -> Fixture {
             Vec::new(),
         )
         .expect("unit assembled")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("protocol checks: {refusals:?}")),
     );
 

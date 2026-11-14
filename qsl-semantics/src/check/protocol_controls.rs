@@ -706,6 +706,7 @@ mod tests {
     use ix_trace_rs::trace;
     use qsl_forms::{build_unit, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector};
     use qsl_foundation::SourceIdentity;
+    use quire_semantic_value::checking::CheckMode;
     use quire_semantic_value::checking::CheckingLimits;
 
     use super::super::{
@@ -794,7 +795,7 @@ mod tests {
 
     fn refusals(declarations: &str) -> (String, Vec<CheckRefusal>) {
         let (text, assembled) = assemble(declarations);
-        match assembled.check(CheckingLimits::default()) {
+        match assembled.check(CheckMode::Linked, CheckingLimits::default()) {
             Err(refusals) => (text, refusals),
             Ok(_) => panic!("{declarations}: checking refuses"),
         }
@@ -803,7 +804,7 @@ mod tests {
     fn checks(declarations: &str) -> CheckedGraph {
         let (_, assembled) = assemble(declarations);
         assembled
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"))
     }
 

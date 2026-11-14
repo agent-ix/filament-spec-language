@@ -4,6 +4,7 @@
 //! package holds, after every rename the plan-root writer performs.
 
 use quire_contract_model::{CheckedNodeId, ClockConfiguration, TemporalBinding};
+use quire_semantic_value::checking::CheckMode;
 
 use super::*;
 use crate::emit::monitor_plan::carry_rows;
@@ -50,7 +51,7 @@ fn rooted(selected: usize) -> Rooted {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     let base = emit_checked(&package).expect("the package emits");

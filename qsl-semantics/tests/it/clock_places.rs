@@ -8,6 +8,7 @@ use qsl_semantics::check::{
     BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, NodeRef, NodeTag, PlaceStep,
     SlotRef,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::declaration::CompositeShape;
 use serde_json::{json, Value};
 
@@ -2932,7 +2933,10 @@ fn a_reference_to_clock_is_refused_in_every_type_position() {
             Ok(declarations) => format!(
                 "{:?}",
                 declarations
-                    .check(quire_semantic_value::checking::CheckingLimits::default())
+                    .check(
+                        CheckMode::Linked,
+                        quire_semantic_value::checking::CheckingLimits::default()
+                    )
                     .expect_err("Reference<Clock> is refused")
             ),
         };

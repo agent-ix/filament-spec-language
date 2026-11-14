@@ -3,6 +3,7 @@
 //! over the TC-134 workflow package: its causal relation, its protocol view
 //! and the typed views of the record-to-node map.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeSet;
 
 use qsl_semantics::check::{CheckedProtocol, EdgeKind as InEdge, Port as InPort};
@@ -60,7 +61,7 @@ fn fixture_over(text: &str) -> Fixture {
     );
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the workflow checks: {refusals:?}"));
     let selections = tc134_selections(&graph);
     let [protocol] = graph.protocols() else {

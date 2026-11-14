@@ -10,6 +10,7 @@ use quire_exact::{
     ObjectReference, ValueType,
 };
 use quire_semantic_value::admission::ObservationAdmission;
+use quire_semantic_value::checking::CheckMode;
 
 macro_rules! assert_value_eq {
     ($actual:expr, $expected:expr $(, $message:literal)?) => {{
@@ -100,7 +101,7 @@ fn fixture_named(
                 Vec::new(),
             )
             .unwrap()
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("TC-1070's legitimate protocol package checks"),
         ),
         view,

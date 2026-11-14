@@ -13,6 +13,7 @@
 //! thread's register: `read1` writes `r1` only, so the left thread's
 //! register is `(core, r1)` and the right one's `(core, r2)`.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
@@ -380,7 +381,7 @@ pub(crate) fn package_without_protocol_profile_selection(body: &str) -> CheckedP
     declarations.protocol_profile = None;
     let graph = declarations
         .with_unwritten_refinements()
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -468,7 +469,7 @@ fn package_with_provisions(
         None => declarations.with_unwritten_refinements(),
     };
     let graph = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }

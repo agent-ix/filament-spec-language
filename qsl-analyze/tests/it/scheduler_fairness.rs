@@ -10,6 +10,7 @@
 //! Its branches, channel premises and nodes are FR-212's.
 
 use qsl_package::EmitLimits;
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeSet;
 
 use ix_trace_rs::trace;
@@ -572,7 +573,7 @@ pub(crate) fn check_refusal(body: &str) -> CheckRefusal {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckingLimits::default())
+    .check(CheckMode::Linked, CheckingLimits::default())
     .expect_err("the unit refuses");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     refusals.remove(0)

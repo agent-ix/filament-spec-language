@@ -23,6 +23,7 @@
 //! derivations and re-encoded with IR's public encoder, then read by IR's
 //! public reader; nothing of IR is copied.
 
+use quire_semantic_value::checking::CheckMode;
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -226,7 +227,7 @@ fn with_population_package<T>(
     let mut declarations = assemble(&packages)?;
     declarations.functions.extend([pop]);
     let graph = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusal| Error::Check(format!("{refusal:?}")))?;
     with(&CheckedPackage::link(graph))
 }

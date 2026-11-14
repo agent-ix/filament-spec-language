@@ -5,6 +5,7 @@
 //! a value-validity record only. These need `qsl-route` and the ConfigVersion
 //! domain package, which only the root crate's tests hold.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -79,7 +80,7 @@ fn check(text: &str, packages: &qsl_semantics::model::intake::PackageInput) -> C
     .expect("the model is admitted");
     PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the unit checks")
 }
 

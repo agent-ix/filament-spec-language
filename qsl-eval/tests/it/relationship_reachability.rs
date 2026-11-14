@@ -6,6 +6,7 @@
 //! outcome, the charged points in order, and the work units. Every expected
 //! value is the row's.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -232,7 +233,7 @@ fn orders_package(shape: Shape, declarations: &str) -> CheckedPackage {
     .expect("the model assembles");
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the clauses check"),
     )
 }

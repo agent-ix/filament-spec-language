@@ -10,6 +10,7 @@ use super::protocol_reference::{clause_argument, node_by_id, node_of, not_emitte
 use super::reachability::{lower_package, lower_with, Lowered};
 use super::*;
 use qsl_semantics::check::{CheckRefusal, ProtocolConstruct};
+use quire_semantic_value::checking::CheckMode;
 
 pub(super) const PROFILES: &str = "profile p = \"quire.protocol.finite-global/v1\";\n\
                          profile e = \"quire.temporal.timed/v1\";\n";
@@ -615,7 +616,7 @@ pub(super) fn checked_package(
     } else {
         assembled
     };
-    assembled.check(CheckingLimits::default())
+    assembled.check(CheckMode::Linked, CheckingLimits::default())
 }
 
 /// FR-092-AC-18, FR-383: every construct whose node is still not written
@@ -1036,7 +1037,10 @@ fn checked_protocols_with_budget(
     );
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check_with_protocol_results(CheckingLimits::default().with_work_budget(work_budget))
+        .check_with_protocol_results(
+            CheckMode::Linked,
+            CheckingLimits::default().with_work_budget(work_budget),
+        )
 }
 
 fn minimum_protocol_work_budget(protocols: &str) -> u64 {
@@ -1080,7 +1084,7 @@ fn a_source_object_refusal_wins_over_a_refused_protocol() {
         .expect("the test model admits");
     let graph = assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check_with_protocol_results(CheckingLimits::default())
+        .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
         .expect("unit-level checks succeed");
     assert_eq!(graph.protocol_refusals().len(), 1);
     let at = text.find("object Widget").unwrap();
@@ -1115,7 +1119,7 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
             .expect("the test model admits");
         assemble_with_models(unit(protocols).as_bytes(), &packages)
             .expect("the unit assembles")
-            .check_with_protocol_results(CheckingLimits::default())
+            .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
             .expect("unit-level checks succeed")
     };
     let standalone = CheckedPackage::link(check(&good));

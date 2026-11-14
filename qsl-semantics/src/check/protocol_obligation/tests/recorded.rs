@@ -5,6 +5,7 @@
 use ix_trace_rs::trace;
 use qsl_forms::ProtocolNodeKind;
 use qsl_foundation::diagnostic::Code;
+use quire_semantic_value::checking::CheckMode;
 
 use super::{
     ambiguous_population_model, assemble, assemble_against, changed, checked, edit,
@@ -587,7 +588,10 @@ fn a_template_over_two_populations_refuses_its_operation() {
     );
     let (text, assembled) = assemble_against(ambiguous_population_model(), &source);
     let found = assembled
-        .check(quire_semantic_value::checking::CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            quire_semantic_value::checking::CheckingLimits::default(),
+        )
         .expect_err("an operation over two populations refuses");
     let causes = obligation_causes(&found);
     let [cause] = causes.as_slice() else {

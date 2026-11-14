@@ -15,6 +15,7 @@ use qsl_semantics::model::accounting::{
 use qsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use qsl_semantics::model::normalize::ModelRefusalCause;
 use quire_checked::key::DeclarationKey;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::{json, Value};
 
@@ -262,7 +263,7 @@ fn run_unit(
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("assembly succeeds: {:?}", refusal.errors))
-    .check(CheckingLimits::default())
+    .check(CheckMode::Linked, CheckingLimits::default())
     .map(|_| ());
     Run { n, outcome }
 }

@@ -5,6 +5,7 @@
 //! its model twin gives. Fixture S declares the object types in the unit;
 //! fixture D, its twin, is the domain package `test/orders` selected as `M`.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -343,7 +344,7 @@ impl Unit {
             .link_dispatch(ModelNormalizationLimits::default())
             .expect("dispatch links");
         let graph: CheckedGraph = declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .map_err(|refusals| pending.report(refusals))
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
         Self {

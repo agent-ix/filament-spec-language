@@ -398,7 +398,7 @@ pub(crate) mod tests {
     use qsl_foundation::{diagnostic::StageFailure, setting::Setting};
     use qsl_semantics::check::PackageDeclarations;
     use quire_exact::{Cancel, CancelCause, Location, NodeKey, Origin, Role};
-    use quire_semantic_value::checking::CheckingLimits;
+    use quire_semantic_value::checking::{CheckMode, CheckingLimits};
 
     fn fixture_node(name: &str) -> NodeKey {
         NodeKey::new(
@@ -429,7 +429,7 @@ pub(crate) mod tests {
             Vec::new(),
         )
         .expect("the fixture assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the fixture checks");
         let package = qsl_package::CheckedPackage::link(graph);
         let emission = qsl_package::emit_checked(&package, qsl_package::EmitLimits::new(1 << 32))

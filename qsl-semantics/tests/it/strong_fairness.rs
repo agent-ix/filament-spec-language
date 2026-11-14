@@ -12,6 +12,7 @@ use qsl_foundation::Span;
 use qsl_semantics::check::{
     check_clauses, CheckCause, CheckRefusal, CheckedTemporalClause, TemporalCause,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
 use serde_json::{json, Value};
@@ -198,7 +199,7 @@ fn node_identity(written: &str) -> quire_exact::NodeKey {
     )
     .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"));
     let graph = package
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the package checks: {refusals:?}"));
     let [clause] = graph.temporal_clauses() else {
         panic!("{body}: one emitted clause");

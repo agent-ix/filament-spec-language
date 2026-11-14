@@ -15,6 +15,7 @@ use qsl_semantics::model::domain_package::{
 use qsl_semantics::model::normalize::{normalize, NormalizeOutcome};
 use quire_checked::key::DeclarationKey;
 use quire_exact::{EffectiveId, Integer};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::declaration::ObjectTypeDeclaration;
 
 use super::*;
@@ -151,7 +152,7 @@ fn source_declared_nodes_carry_their_source_owner() {
     declarations.functions = vec![keep];
     let package = CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the package checks"),
     );
     let emission = emit(&package);
@@ -345,7 +346,7 @@ fn acme_dispatch_package(root: &str) -> CheckedPackage {
     declarations.functions.push(held);
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{root} checks: {refusals:?}")),
     )
 }

@@ -14,6 +14,7 @@
     reason = "each test binary uses the part of the fixture it needs"
 )]
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
@@ -425,7 +426,7 @@ pub fn check_over(queue: &[u8], body: &str) -> Result<Checked, Vec<Refused>> {
     .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"))
     .with_unwritten_refinements();
     let regions = declarations.regions();
-    match declarations.check(CheckingLimits::default()) {
+    match declarations.check(CheckMode::Linked, CheckingLimits::default()) {
         Ok(graph) => Ok(Checked { graph, packages }),
         Err(refusals) => Err(refusals
             .into_iter()

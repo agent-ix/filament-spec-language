@@ -17,6 +17,7 @@ use qsl_semantics::check::{
     RefinementCause, RefinementSupport, StepTarget,
 };
 use quire_exact::ValueType;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::{json, Value};
 
@@ -141,7 +142,7 @@ fn check_over(
         .with_unwritten_protocols();
     let regions = declarations.regions();
     declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| {
             refusals
                 .into_iter()

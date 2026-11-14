@@ -22,6 +22,7 @@ use quire_contract_model::{
     ExpressionForm, FunctionForm, HybridForm, ModelForm, ProtocolForm, RelationForm,
     ScalarTypeForm, StateForm, TemporalForm,
 };
+use quire_semantic_value::checking::CheckMode;
 
 use super::super::extent_agreement::{package_declaring, records};
 use super::variant_types::fixture as variant_fixture;
@@ -569,7 +570,7 @@ fn modelled(
     declarations.functions.extend(functions);
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the package checks"),
     )
 }
@@ -586,7 +587,7 @@ fn modelled_with_documents(
     declarations.functions.extend(functions);
     CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the package checks"),
     )
 }
@@ -1487,7 +1488,7 @@ fn package_with_internals(
         declarations = declarations.with_refinement_internals(value);
     }
     let graph = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{unit}: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -1694,7 +1695,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     .expect("dependency assembles");
     let dependency = std::sync::Arc::new(CheckedPackage::link(
         dependency_declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("dependency checks"),
     ));
     let dependency_emission = emit_checked(&dependency).expect("dependency emits");
@@ -1766,7 +1767,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         .with_refinement_internals(json!([{"refinement":"R","internal":["Spec::Twice::Done"]}]));
     let root = CheckedPackage::link_with(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("dependency protocol refinement checks"),
         vec![crate::checked::Import {
             identity: library.clone(),
@@ -1989,7 +1990,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     )
     .expect("wrong-owner dependency assembles");
     let refusals = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("a dependency protocol over another model is refused");
     assert!(
         refusals.iter().any(|refusal| matches!(
@@ -2032,7 +2033,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         )
         .expect("missing-clause dependency assembles");
         let refusals = declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect_err("an unknown dependency clause or type refuses");
         assert!(refusals.iter().any(|refusal| matches!(
             &refusal.cause,
@@ -2089,7 +2090,7 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
             Vec::new(),
         )
         .expect("dependency assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("dependency checks"),
     ));
     let dependency_emission = emit_checked(&dependency).expect("dependency emits");
@@ -2149,7 +2150,7 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
             }],
         )
         .expect("root assembles");
-        declarations.check(CheckingLimits::default())
+        declarations.check(CheckMode::Linked, CheckingLimits::default())
     };
     let graph = check(&unit("node Spec::Twice::a1(self)")).expect("the dependency node row checks");
     let checked = graph.refinements().first().expect("one checked refinement");
@@ -2973,7 +2974,7 @@ fn refused_rows(rows: &str, operations: &[&str]) -> Vec<qsl_semantics::check::Ch
         qsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(|_| ())
         .expect_err("the refinement is not emitted")
         .into_iter()

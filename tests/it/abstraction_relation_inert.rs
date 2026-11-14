@@ -17,6 +17,7 @@ use qsl_route::{
     Registry,
 };
 use qsl_semantics::check::{CheckedGraph, PackageDeclarations};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use crate::support::config_version_spine::{cases::CASES, spine};
@@ -54,7 +55,7 @@ fn graph_of(text: &str) -> CheckedGraph {
     .expect("the model is admitted");
     PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"))
 }
 

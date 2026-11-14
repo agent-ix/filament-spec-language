@@ -4,6 +4,7 @@
 //! declarations it holds.
 
 use super::*;
+use quire_semantic_value::checking::CheckMode;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile P = \"quire.model.complete/v1\";\n";
@@ -59,7 +60,7 @@ fn fixtures_s_s_r_and_s_p_refuse_at_the_first_object() {
             .link_dispatch(Default::default())
             .unwrap_or_else(|refusals| panic!("{name}: {refusals:?}"));
         let graph = declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{name}: {:?}", pending.report(refusals)));
         let package = CheckedPackage::link(graph);
         let at = text.find("object Order").unwrap();
@@ -131,7 +132,7 @@ fn fixture_s_m_refuses_at_the_first_object() {
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
     let package = CheckedPackage::link(graph);
     let at = text.find("object Order").unwrap();
@@ -169,7 +170,7 @@ fn fixture_e_s_checks_and_refuses_at_object_node() {
         .link_dispatch(Default::default())
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("E-S checks: {:?}", pending.report(refusals)));
     let package = CheckedPackage::link(graph);
     let at = text.find("object Node").unwrap();

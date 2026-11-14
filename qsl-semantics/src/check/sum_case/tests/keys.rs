@@ -7,6 +7,7 @@
 
 use ix_trace_rs::trace;
 use quire_exact::{NodeKey, VariantId};
+use quire_semantic_value::checking::CheckMode;
 
 use super::*;
 use crate::check::{CheckedGraph, SemanticNode};
@@ -24,7 +25,7 @@ const RECT: &str = "function rect using v(): Shape pure { Shape::Rect(2, 3) }\n"
 fn graph(declarations: &str) -> CheckedGraph {
     unit(declarations)
         .package
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"))
 }
 

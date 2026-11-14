@@ -15,6 +15,7 @@ use qsl_semantics::check::{
 };
 use qsl_semantics::family::ClaimExtent;
 use quire_checked::node::NodeKind;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::json;
 
@@ -57,18 +58,20 @@ fn check_under(
     let declarations = admit_and_assemble_with_body(&document, body)
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
     let regions = declarations.regions();
-    declarations.check(limits).map_err(|refusals| {
-        refusals
-            .into_iter()
-            .map(|refusal| {
-                let named = regions.refusal_region(&refusal).map(|region| {
-                    let (start, end) = (region.start() as usize, region.end() as usize);
-                    unit[start..end].to_owned()
-                });
-                (refusal, named)
-            })
-            .collect()
-    })
+    declarations
+        .check(CheckMode::Linked, limits)
+        .map_err(|refusals| {
+            refusals
+                .into_iter()
+                .map(|refusal| {
+                    let named = regions.refusal_region(&refusal).map(|region| {
+                        let (start, end) = (region.start() as usize, region.end() as usize);
+                        unit[start..end].to_owned()
+                    });
+                    (refusal, named)
+                })
+                .collect()
+        })
 }
 
 fn claim<'g>(graph: &'g CheckedGraph, name: &str) -> &'g CheckedStateGraphClaim {
@@ -506,7 +509,7 @@ fn an_operation_parameter_read_refuses_as_a_missing_name() {
     let declarations = admit_and_assemble_with_body(&document, body).expect("the unit assembles");
     let regions = declarations.regions();
     let refusals = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the parameter is not in scope");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");

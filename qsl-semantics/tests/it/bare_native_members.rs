@@ -5,6 +5,7 @@
 
 use ix_trace_rs::trace;
 use qsl_semantics::check::CheckCause;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::{json, Value};
 
@@ -120,7 +121,7 @@ fn assembled(
         &format!("function keep using v(): Boolean pure {{ true }}\n{clauses}"),
     )
     .unwrap_or_else(|refusal| panic!("assembly admits: {refusal:?}"));
-    declarations.check(CheckingLimits::default())
+    declarations.check(CheckMode::Linked, CheckingLimits::default())
 }
 
 /// The refusals of `clauses` as (code, cause, owner, member, locus).

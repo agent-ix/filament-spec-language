@@ -13,6 +13,7 @@ use quire_contract_model::{
     CheckedOperationEffect, CheckedOperationEffectOrigin, CheckedOperationEffectProvenance,
     CheckedPackageV2, CheckedScopedDeletion,
 };
+use quire_semantic_value::checking::CheckMode;
 
 use super::*;
 
@@ -49,7 +50,7 @@ fn compile(document: &Value, clauses: &str) -> (CheckedPackage, Vec<u8>) {
     let packages = qsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
     let graph = assemble_with_models(unit(clauses).as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (CheckedPackage::link(graph), bytes)
 }

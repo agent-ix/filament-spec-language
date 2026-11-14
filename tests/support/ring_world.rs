@@ -14,6 +14,7 @@
     reason = "each test binary uses the part of the fixture it needs"
 )]
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_eval::simulation::model::{
@@ -381,7 +382,7 @@ pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String>
     .expect("the unit assembles");
     declarations
         .with_unwritten_refinements()
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| format!("{refusals:?}"))
 }
 

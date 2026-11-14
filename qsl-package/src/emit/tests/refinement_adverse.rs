@@ -10,6 +10,7 @@
 
 use qsl_foundation::Code;
 use qsl_semantics::check::{CheckCause, CheckRefusal, ProtocolConstruct};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner as Origin};
 
 use super::admission_corpus::{protocol_rows_running, rows_refinement, MAPS, PROTOCOL_ROWS};
@@ -22,7 +23,7 @@ fn refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<CheckRefusal> {
         qsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(|_| ())
         .expect_err("the unit refuses")
 }

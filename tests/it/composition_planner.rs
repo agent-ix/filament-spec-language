@@ -5,6 +5,7 @@
 //! guarantee slot holds the FR-331 request item `qsl-route` writes for it and
 //! a result entry for it; the supplied guarantees are the pool.
 
+use quire_semantic_value::checking::CheckMode;
 use std::sync::Arc;
 
 use ix_trace_rs::trace;
@@ -96,7 +97,7 @@ fn dependency(identity: &str, clauses: &str) -> Dependency {
             .expect("the dependency assembles");
     let package = Arc::new(CheckedPackage::link(
         declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the dependency checks"),
     ));
     let emission = emit_checked(&package, EmitLimits::fixture()).expect("the dependency emits");
@@ -164,7 +165,7 @@ fn compile(
         assembled = assembled.with_composition_lattice(profile);
     }
     let graph = assembled
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals: Vec<CheckRefusal>| Failure::Check(refusals))?;
     Ok(CheckedPackage::link_with(
         graph,

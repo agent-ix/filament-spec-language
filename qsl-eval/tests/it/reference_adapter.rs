@@ -27,6 +27,7 @@ use quire_exact::{
     ScalarLimits, Value, ValueType,
 };
 use quire_semantic_value::call::InputRefusal;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner as Origin};
 
@@ -106,7 +107,7 @@ fn stand_in(name: &str) -> FunctionDeclaration {
 fn package(functions: Vec<FunctionDeclaration>) -> CheckedPackage {
     CheckedPackage::link(
         declarations(functions)
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap(),
     )
 }
@@ -255,7 +256,7 @@ fn located_dependency() -> CheckedPackage {
             declarations.functions = vec![declaration];
             declarations
         }
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap(),
     )
 }
@@ -278,7 +279,7 @@ fn registration_is_decided_from_the_packages_admitted_signature() {
         DeclaredClauseKind::Body,
     );
     let graph = declarations(vec![f(), guard])
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap();
     let guard_key = graph.function_identity("internal_guard").expect("declared");
     let root = CheckedPackage::link_with(

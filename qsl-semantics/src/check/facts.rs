@@ -36,6 +36,7 @@ use quire_exact::{CollectionType, QuantityCarrier, Value, ValueType};
 use quire_exact::{
     DecimalType, Integer, IntegerInterval, NonZeroInteger, Rational, RationalDomain,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::declaration::{EqualityOperator, FieldRef};
 use quire_semantic_value::location::ExpressionLocation as Location;
 
@@ -532,6 +533,12 @@ pub(crate) struct Definedness<'a> {
     /// body, so one table serves every path of the walk and no `let` copies
     /// the facts of the paths above it.
     aliases: BTreeMap<Slot, StablePath>,
+    /// The check mode (FR-495). Under `CheckMode::Kernel` an unproved
+    /// range, nonzero, presence, rational-range or nonempty-reduction
+    /// obligation is left to the kernel evaluation instead of refused. A
+    /// dispatch declaration refusal and a malformed Rational operand shape are
+    /// unchanged. The walk still records every reachable call.
+    mode: CheckMode,
 }
 
 impl<'a> Definedness<'a> {
@@ -548,7 +555,14 @@ impl<'a> Definedness<'a> {
             observations: None,
             components: None,
             aliases: BTreeMap::new(),
+            mode: CheckMode::Linked,
         }
+    }
+
+    /// Check under `mode`: `CheckMode::Kernel` records no unproved obligation.
+    pub(crate) fn with_check_mode(mut self, mode: CheckMode) -> Self {
+        self.mode = mode;
+        self
     }
 
     /// Treat each model read of a `hyper` atom as its own observation, the
@@ -1182,6 +1196,41 @@ impl<'a> Definedness<'a> {
     /// Discharge `node`'s own obligation, its operands walked under `facts`,
     /// and record the call sites it makes.
     fn discharge(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
+        match self.mode {
+            CheckMode::Linked => self.discharge_node(node, facts),
+            CheckMode::Kernel => {
+                if Self::rational_shape_invalid(node) {
+                    return Err(Self::refuse(node, Obligation::RationalRange));
+                }
+                match self.discharge_node(node, facts) {
+                    // FR-495: an unproved obligation is not recorded; the
+                    // evaluator meets it at run time.
+                    Err(CheckRefusal {
+                        cause: CheckCause::Unproved(_),
+                        ..
+                    }) => Ok(()),
+                    other => other,
+                }
+            }
+        }
+    }
+
+    /// Whether a Rational operation's operand is not a Rational type, which
+    /// no checked node can be and so is never left to the kernel.
+    fn rational_shape_invalid(node: CheckedNode<'_>) -> bool {
+        match node.kind() {
+            NodeKind::Rational { left, right, .. } => !matches!(
+                (node.at(*left).value_type(), node.at(*right).value_type()),
+                (ValueType::Rational(_), ValueType::Rational(_))
+            ),
+            NodeKind::RationalNegate(operand, _) => {
+                !matches!(node.at(*operand).value_type(), ValueType::Rational(_))
+            }
+            _ => false,
+        }
+    }
+
+    fn discharge_node(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
         match node.kind() {
             NodeKind::Coerce(operand, target) => {
                 let proved = self.interval(node.at(*operand), facts);
@@ -1885,3 +1934,6 @@ impl Established {
         }
     }
 }
+
+#[cfg(test)]
+mod kernel_mode_tests;

@@ -10,6 +10,7 @@ use qsl_semantics::check::{
     CheckedGraph, CheckedHybridClaim, HybridTerm, ModeIndex, PackageDeclarations,
 };
 use quire_exact::Rational;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use super::expand::Expander;
@@ -107,7 +108,7 @@ fn check(declarations: &str) -> Unit {
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{text}: the unit assembles: {refusal:?}"))
-    .check(CheckingLimits::default())
+    .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
     let claims = text
         .lines()

@@ -8,6 +8,7 @@
 //! `ix://quire/native/Clock`. The guards, resets and time invariants are
 //! the unit's own clauses, checked at S3 (FR-230).
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -310,7 +311,7 @@ fn try_world_of(
     )
     .expect("the unit assembles")
     .with_unwritten_timed_members()
-    .check(CheckingLimits::default())?;
+    .check(CheckMode::Linked, CheckingLimits::default())?;
     let header = json!({"identity": PACKAGE});
     let document = json!({
         "format": "quire.state.snapshot/v1",

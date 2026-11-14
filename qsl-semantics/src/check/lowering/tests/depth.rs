@@ -5,6 +5,7 @@
 //! thread with a 512 KiB stack, in whatever profile the suite runs in; a
 //! debug build once aborted at a 30-record chain.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeSet;
 
 use super::*;
@@ -105,7 +106,7 @@ pub(super) fn check_on_small_stack(
                     qsl_foundation::IdentityLimits::default(),
                 )
             }
-            .check(limits)
+            .check(CheckMode::Linked, limits)
         })
         .expect("the check thread spawns")
         .join()

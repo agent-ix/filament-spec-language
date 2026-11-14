@@ -6,6 +6,7 @@ use ix_trace_rs::trace;
 use qsl_semantics::check::{CheckCause, CheckRefusal};
 use qsl_semantics::model::refusal::{MemberPath, MemberRoot};
 use quire_semantic_value::call::WrongSnapshotCause;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::location::{ExpressionOwner as Origin, OperationClauseKind};
 use serde_json::json;
@@ -44,7 +45,7 @@ fn check(
     let document = config_version_document_with_operations(vec![bump]);
     admit_and_assemble_with_body(&document, UNIT_BODY)
         .expect("the package assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn bump_node() -> String {

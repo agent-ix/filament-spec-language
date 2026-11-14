@@ -4,6 +4,7 @@
 //! retained source, and its `case` arm's claim is a requested item of the
 //! emitted package.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ix_trace_rs::trace;
@@ -123,7 +124,10 @@ fn a_claim_inside_a_case_arm_is_requested_as_a_value_validity_item() {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(quire_semantic_value::checking::CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        quire_semantic_value::checking::CheckingLimits::default(),
+    )
     .expect("the unit checks");
     let items = items_from_requirements(graph.requirements(), &registry, None);
     let [item] = items.as_slice() else {

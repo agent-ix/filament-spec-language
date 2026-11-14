@@ -39,6 +39,7 @@
 //! `check_connection`/`check_allocation` -- asserting a wholly successful
 //! outcome.
 
+use quire_semantic_value::checking::CheckMode;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -2555,7 +2556,10 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
     let (a, b) = (port_document(A), port_document(B));
     let checked = crate::model_operations::assemble_units(&units, &[a.as_slice(), b.as_slice()])
         .with_unwritten_protocols()
-        .check(quire_semantic_value::checking::CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            quire_semantic_value::checking::CheckingLimits::default(),
+        )
         .unwrap_or_else(|refusals| panic!("both protocols check: {refusals:?}"));
     for (protocol, package) in [("Pa", A), ("Pb", B)] {
         let checked = checked

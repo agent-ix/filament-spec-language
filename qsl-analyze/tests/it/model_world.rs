@@ -8,6 +8,7 @@
 //! (`crate::counter`'s document) and FR-126-AC-4's `test/health`, written
 //! here.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_eval::automaton::translate;
@@ -276,7 +277,7 @@ impl World {
         };
         let unit = format!("{text}{declared}");
         let graph = declarations(&unit)
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{unit}: the unit checks: {refusals:?}"));
         let checked: Vec<CheckedTemporalClause> = graph
             .temporal_clauses()

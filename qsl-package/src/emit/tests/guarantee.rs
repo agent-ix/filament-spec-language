@@ -11,6 +11,7 @@ use qsl_semantics::check::{
     CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, ModelFamily,
     SlotBacking, SlotRole,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::fairness::{FairnessGranularity, FairnessKind, PropertyForm};
 
 use super::*;
@@ -94,7 +95,7 @@ fn compile_with(unit: &str, documents: &[Value]) -> Result<CheckedPackage, Failu
     let assembled = PackageDeclarations::assemble(raw, "pkg".to_owned(), built, models, Vec::new())
         .map_err(Failure::Assembly)?;
     assembled
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(CheckedPackage::link)
         .map_err(Failure::Check)
 }

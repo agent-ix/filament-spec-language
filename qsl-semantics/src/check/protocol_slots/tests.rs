@@ -6,6 +6,7 @@ use ix_trace_rs::trace;
 use qsl_forms::build_unit;
 use qsl_foundation::SourceIdentity;
 use quire_exact::{IllTypedCause, ValueType};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use super::{CheckedLifetime, CheckedTerminalMember};
@@ -93,7 +94,7 @@ fn assembled(text: &str) -> PackageDeclarations {
 }
 
 fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-    assembled(text).check(CheckingLimits::default())
+    assembled(text).check(CheckMode::Linked, CheckingLimits::default())
 }
 
 /// The checked graph of `text`, which must raise no refusal other than an
@@ -101,7 +102,7 @@ fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
 /// protocol's slots, and what the lowering stage emits is its own contract.
 fn checks(text: &str) -> CheckedGraph {
     let graph = assembled(text)
-        .check_with_protocol_results(CheckingLimits::default())
+        .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
     let refusals: Vec<&CheckRefusal> = graph
         .protocol_refusals()

@@ -9,6 +9,7 @@
 //! its `outcome` a Boolean `ok`. Quantity-valued probabilistic tests use a
 //! variant whose `d` parameter is typed by the declared `ms` unit.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
@@ -370,7 +371,7 @@ impl World {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckingLimits::default())?;
+        .check(CheckMode::Linked, CheckingLimits::default())?;
 
         let header = json!({"identity": model.package});
         let mut snapshots = BTreeMap::new();

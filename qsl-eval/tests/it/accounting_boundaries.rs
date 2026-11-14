@@ -118,6 +118,7 @@ fn package_of(declarations: &str) -> CheckedPackage {
     CheckedPackage::link(
         declarations
             .check(
+                CheckMode::Linked,
                 CheckingLimits::default()
                     .with_nodes(1 << 30)
                     .with_input_bytes(1 << 30)

@@ -7,6 +7,7 @@
 use ix_trace_rs::trace;
 use qsl_foundation::diagnostic::Code;
 use qsl_semantics::check::{AssemblyRefusal, CheckedGraph};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::{json, Value};
 
@@ -106,7 +107,7 @@ fn assemble(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<(Code, Opti
         }
     };
     declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| {
             refusals
                 .iter()
@@ -377,7 +378,7 @@ fn source_refusals(declarations: &str) -> Result<(), Vec<(Code, Option<String>)>
         }
     };
     declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(|_| ())
         .map_err(|refusals| {
             refusals
@@ -614,7 +615,7 @@ fn unit_name_causes(
             )
         })?;
     assembled
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(|_| ())
         .map_err(|refusals| {
             (

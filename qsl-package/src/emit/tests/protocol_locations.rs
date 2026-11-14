@@ -12,6 +12,7 @@ use super::protocol_controls::{
 use super::*;
 use crate::ViewFailure;
 use quire_contract_model::{CheckedPackageRefusalCause, CheckedPackageRefusalCode};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner as Origin};
 
 const ROWS: &str = "/checked_term_data/protocol_locations";
@@ -21,7 +22,7 @@ fn checked_and_emitted(source: &str) -> (CheckedPackage, Value) {
     let packages = qsl_semantics::model::intake::package_input([domain().as_slice()]).unwrap();
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("fixture assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("fixture checks");
     let package = CheckedPackage::link(graph);
     let emission = emit_checked(&package).expect("fixture emits");
@@ -1032,6 +1033,7 @@ fn deep_projection(
             let graph = assemble_with_models(source.as_bytes(), &packages)
                 .expect("the deep unit assembles")
                 .check(
+                    CheckMode::Linked,
                     CheckingLimits::new(u64::MAX)
                         .with_input_bytes(u64::MAX)
                         .with_work_budget(u64::MAX),

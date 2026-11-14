@@ -3,6 +3,7 @@
 //! debug in time and output linear in the graph. Independent wire IDs share
 //! their resolved operand keys through the authoritative document graph.
 
+use quire_semantic_value::checking::CheckMode;
 use std::time::{Duration, Instant};
 
 use qsl_foundation::source::provenance::{OccurrenceKey, PackageSourceMap};
@@ -130,7 +131,7 @@ fn the_checked_package_debug_output_grows_linearly_with_depth() {
                 .into_iter()
                 .map(|levels| {
                     let graph = declarations(Form::Add, levels)
-                        .check(CheckingLimits::default())
+                        .check(CheckMode::Linked, CheckingLimits::default())
                         .unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
                     let package = CheckedPackage::link(graph);
                     let mut count = ByteCount(0);
@@ -175,7 +176,7 @@ fn source_package_for_debug(body: &str) -> CheckedPackage {
     )
     .unwrap();
     let graph = declarations
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -325,7 +326,7 @@ fn canonical_record_field_debug_keeps_complete_keys_as_the_body_grows() {
             expression,
         )];
         let graph = declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
         let body = graph.function_state(0).unwrap().body.body();
         let started = Instant::now();

@@ -3,6 +3,7 @@
 //! its request item the `hybrid-dynamics` requirement, which routes it to
 //! the registered hybrid provider and never to EN-6.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeSet;
 
 use ix_trace_rs::trace;
@@ -56,7 +57,7 @@ fn graph() -> CheckedGraph {
     .expect("the model is admitted");
     PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the unit checks")
 }
 

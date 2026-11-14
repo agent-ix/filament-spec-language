@@ -4,6 +4,7 @@
 //! (TC-1051). The reference rows are TC-235 M06 run 4, M13, M14 and M16.
 
 use ix_trace_rs::trace;
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 
@@ -258,7 +259,7 @@ fn compile_parsed(unit: &str, packages: &Packages) -> Compiled {
         Vec::new(),
     )
     .expect("the unit assembles");
-    match declarations.check(CheckingLimits::default()) {
+    match declarations.check(CheckMode::Linked, CheckingLimits::default()) {
         Ok(graph) => Compiled::Checked(Box::new(graph)),
         Err(refusals) => Compiled::Refused(refusals),
     }

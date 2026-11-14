@@ -9,6 +9,7 @@
 //! FR-168-AC-9's `Fork` ([`fork_world`]); FR-168-AC-10's `Ladder`
 //! ([`ladder_world`]) and `Detour` ([`detour_world`]).
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_analyze::model_check::{StateGraphItem, StateGraphRequest};
@@ -281,7 +282,7 @@ impl World {
             .expect("the division profile admits"),
         );
         let graph = declarations
-            .check(CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let mut world = Self {

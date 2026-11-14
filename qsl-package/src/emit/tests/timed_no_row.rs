@@ -10,6 +10,7 @@
 use quire_contract_model::{
     CheckedPackageRefusalCause as Cause, CheckedPackageRefusalCode as RefusalCode,
 };
+use quire_semantic_value::checking::CheckMode;
 
 use super::temporal_clause::{node_with, target};
 use super::*;
@@ -55,7 +56,7 @@ fn checked(
     let packages = qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn evidence_for(wire: &Value) -> CheckedPackageEvidence {
