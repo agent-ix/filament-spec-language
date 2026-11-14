@@ -173,7 +173,8 @@ or `ParityRefusal`.
 ## Overlap
 
 `xtask parity` runs `run_parity` over `quire-aot`, a QSL crate, and gates the
-AOT backend on it. The driver depends on `qsl-conformance` for the CLI half of the
+AOT backend on it, constructing it with the fixture generator of `qsl-conformance` and
+the toolchain the run names (ADR-029 EB-6); the gate never calls the driver's or CG's `generate` (ADR-011 FB-11). The driver depends on `qsl-conformance` for the CLI half of the
 matrix only.
 
 ## References

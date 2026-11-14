@@ -823,7 +823,7 @@ to FR-109's `run_clause`. Three backends implement the seam:
 | Backend | Crate | `prepare` | `call` and `evaluate` |
 |---|---|---|---|
 | Interpreter | `qsl-eval` | Accepts every entry S6a accepts | S6a, `CheckedPackageEvaluation::call_supplied` and `evaluate_clause` |
-| AOT | `quire-aot` (QSL) | Builds the artifact the driver's `lower` and `generate` with the AOT target emitted, with the toolchain the caller names | Runs the built executable as a child process over PL-3 framing |
+| AOT | `quire-aot` (QSL) | Calls the injected generator (EB-6) for the checked entries, then builds the artifact it returns with the injected toolchain | Runs the built executable as a child process over PL-3 framing |
 | JIT | `qsl-jit` (QSL layer X) | Translates the checked entries to machine code in memory | Calls the generated code |
 
 **EB-2 Checked-only input.** `prepare` takes `&CheckedPackage`, which only S4
@@ -881,10 +881,17 @@ another `generate` target behind the same boundary.
 
 The AOT backend is the crate `quire-aot`, owned by QSL: it implements the seam
 (FR-294), meets the parity rules (FR-295) and is gated by the parity runner
-(FR-563). It builds the FR-331 artifact and runs it as a child process, and depends
-on no driver crate (FR-280). Lowering and generation with the AOT target stay with
-the driver, CG and the IR lane, which pass their artifact to the backend
-(amendment 2026-11-14, QSL-1942; it replaces the 2026-11-08 amendment that gave
+(FR-563). It is constructed with two values from whoever builds it: a generator, a trait
+whose one method takes the checked package and entries and returns the FR-331
+`artifacts` for the AOT target (the driver's `lower` then `generate`, behind the
+trait), and the build toolchain the caller names. `prepare` keeps FR-294's signature: it calls the
+generator, builds the artifact with the toolchain, and runs it as a child process
+in `call` and `evaluate`. `quire-aot` depends on no driver, CG or IR crate
+(FR-280, ADR-011 FB-11); the generator trait is its own. The driver supplies the
+generator and the toolchain for driver runs (driver FR-008); `xtask parity` supplies
+a QSL-side fixture generator from `qsl-conformance`, a test-only dependency,
+because an `xtask` edge to the driver's `generate` would be a QSL to CG test-time edge
+that FB-11 forbids (amendment 2026-11-14, QSL-1942; it replaces the 2026-11-08 amendment that gave
 `quire-aot` to the IR lane).
 
 **EB-7 Building the JIT.** This record fixes the seam and EB-4. `qsl-jit` is
