@@ -52,3 +52,12 @@ Checked at 6d3ffe68e.
 | FND-002 | fixed | AC-20 now runs through `SeenSetProbe.hash` on each explorer. |
 | FND-003 | fixed | AC-33 names QSL-1906 as the axis's creator and says it does not exist before then. TC-1418 places steps 1 to 4 in qsl-eval/tests/it and step 5 in qsl-bench. The observable is the smallest completing `max_candidates`, found by bisection. The charge values are wrong (base FND-007). |
 | FND-004 | fixed | FR-120 says the rule covers expansions through `ModelSystem`, FR-120's own and the FR-126 and FR-142 explorers, and excludes FR-141 (QSpec FR-378), FR-220 and FR-315. Checked against the code: FR-126's `check.rs` builds `ModelSystem::new` (check.rs:529, 697) and expands through `successors_bounded` (default `successors`, subject.rs:205) or `successors_enforced` (footprints.rs:787). Both reach `walk::expand_state`, which charges `max_candidates` (model.rs:1608, walk.rs:389). FR-142's `refine.rs` expands the concrete `ModelSystem` through `successors` (refine.rs:1865) under `simulation.expansion.max_candidates` (refine.rs:247). |
+| FND-005 | fixed | Round 2 (a905dc14f): FR-101-AC-22 is restricted to explorers whose system has checked types and states that the generic `explore_request` runs `Auto` as `Off`. TC-1417 step 7 is restricted the same way. See FND-006 for the `explore_model` case. |
+
+## New findings (disposition pass 2)
+
+Checked at a905dc14f.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | FR-101-AC-22 now names `explore_model` over `ModelSystem` as an explorer with a `PackedLayout`, and says "the generic `explore_request` over an opaque `TransitionSystem`" has none. But FR-120:134 says `explore_model` *is* FR-101's `explore_request` over the system, and `TransitionSystem` has no hook through which `explore_request` could get a layout. The FR-101 test-seam paragraph also lists `explore_request`, `explore_request_parallel` and the FR-126/FR-142 explorers but not `explore_model`. As written, the `explore_model` case of AC-22 needs a mechanism the spec does not name, for example a `TransitionSystem` layout hook, or `explore_model` keeping its own seen set. The FR-126 and FR-142 cases are unaffected. | FR-101-AC-22, FR-101:313-323, FR-120:134 |
