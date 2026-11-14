@@ -44,3 +44,21 @@ Not mergeable until FND-001 is fixed (change MAY to SHALL). FND-002 to
 FND-004 are real gaps that two implementers would trip on. The identity
 guarantees asked about hold: hash coalescing (no), packed identity
 (canonical bytes), and worker-independent stop points.
+
+## New findings (disposition pass 1)
+
+Checked at 6d3ffe68e.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | FR-126 now refuses `workers` above 1 "for a subject whose system does not meet the bounds of FR-101's `explore_request_parallel`". FR-191 does the same for "a system or subject that holds single-threaded state", and FR-126-AC-20 tests "`workers` 2 on a subject whose system is not `Sync`". `Sync` is a compile-time property of a concrete type, not of a request's subject. The spec never says which subjects or claim kinds this is, though candidates include the liveness lasso, partial-order reduction and protocol systems. Once QSL-1835 replaces the `RefCell` memos, no such fixture may exist, and the clause can never fail. Name the claim kinds or engines that are limited to `workers` 1, or require every engine to support `workers`. | FR-126:328-345, FR-191:90-95, FR-126-AC-20 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-120 now reads "The generator SHALL solve an eligible assignment", and says eligibility comes from the checked clauses and the value is deterministic, so the count no longer depends on strategy. |
+| FND-002 | fixed | Eligibility now requires `modifies` only, with no `deletes` or `creates`, and gives the reason. The field type's `=` must be decided by canonical bytes (`float64`-bearing and clock-bearing domains are excluded). A candidate is kept exactly when QSL `=` holds. AC-31 adds the `deletes Cell` ineligible case. |
+| FND-003 | fixed | FR-101 bounds the look-ahead to at most `workers` started and unmerged expansions (at most `workers - 1` beyond a stop), and FR-101:404 amends the "once per expanded state" sentence. FR-191 bounds draws the same way and recasts "before it draws" as a statement about the merge. FR-101-AC-17 and FR-191-AC-6 assert the bounds (5 + `workers` - 1 and 103). |
+| FND-004 | fixed | The new `explore_request_parallel` declares `S: TransitionSystem + Sync`, `S::State: Send + Sync`, and `Send` on `TransitionId`, `Key` and `Finding`. `poll` runs only on the calling thread. `explore_request` keeps no `workers` and runs as one worker. The design is consistent; `workers` 1 through the parallel entry equals `explore_request` (AC-16). |
+| FND-005 | fixed | The seen set may hash "an injective encoding of the key (the canonical key bytes, or the packed form)" and confirms a hit on the full encoding. |

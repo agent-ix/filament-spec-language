@@ -44,12 +44,12 @@ results, except where it says otherwise.
 6. Pack and unpack every reachable state of a finite system and compare every pair
    of 200 states, including `float64` zero and negative zero and each end of
    a declared integer range; then a state with a value outside the layout.
-7. On each explorer, `Packing::Auto` and `Packing::Off`, and replay of each run's trace against the other.
+7. On each explorer that has a `PackedLayout` (FR-101-AC-22), `Packing::Auto` and `Packing::Off`, and replay of each run's trace against the other.
 8. `check_model` over the `Counter` subject with a violated claim, a holding
    claim with a certificate and a claim stopped by `max_states` 5; with
    `max_candidates` set so the one-worker run stops at its seventh expanded
    state, with a later state made to finish first; with a delayed cancel;
-   with `workers` 0, and with `workers` 2 on a non-`Sync` subject.
+   and with `workers` 0.
 9. The statistical runs of FR-191-AC-6 (`max_samples` 1,000 and 100) with a sampler double that finishes
    higher trace indices first; a delayed cancel with `workers` 4; `workers` 0.
 

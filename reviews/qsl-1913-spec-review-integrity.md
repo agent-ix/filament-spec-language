@@ -33,3 +33,21 @@ split the FR-120 line, and delete the blank line in FR-191. FND-003 needs an
 FR-255 entry, or a statement that `workers` is a library parameter and not a
 setting. The rest of the structure is sound: IDs, relationships, TC
 frontmatter and the ADR-016 G-4 row.
+
+## New findings (disposition pass 1)
+
+Checked at 6d3ffe68e.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | Stale references to the entry points. The FR-255 worker table names the request member of `explore.workers` as "`explore_request` `workers`", but only `explore_request_parallel` takes `workers` now. FR-101:233 still says integration tests "call the two entries", though there are now three. | FR-255:320, FR-101:233 |
+| FND-006 | low | FR-255-AC-21 is verified by TC-720, an existing case on main. The diff does not amend TC-720: its scope and trace-tag list cover FR-255-AC-1 to AC-3 only, so nothing tells a coder to add the AC-21 test there. TC-720 is not a new id, and no open PR touches FR-255 or TC-720. | FR-255-AC-21, TC-720:32 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The FR-120-AC-28 row ends at `\| Test (TC-1270) \|` and AC-29 is on its own line. `quire matrix --scope .` at 6d3ffe68e lists FR-120-AC-1 to AC-33. |
+| FND-002 | fixed | The blank line in FR-191's table is gone. The matrix lists FR-191-AC-1 to AC-7. |
+| FND-003 | still-open | The new "Worker count setting names" section registers the three names and says the settings operation SHALL accept them. But Behavior 6, the rule that governs the settings operation, is unchanged. It still accepts only names "from any of the three tables" and refuses others, returns "the caller limits" (which have no worker member), and refuses value 0 as a usage refusal, not with `invalid_runtime_input`/`invalid-value`. FR-255-AC-21 says it "returns the request with `workers` 4", a return type Behavior 6 does not have. Amend Behavior 6 to cover the fourth table and say what it returns for a worker name and which refusal 0 gets. |
+| FND-004 | fixed | FR-126 names `ModelCheckRefusal::Workers`. FR-191 names `StatisticalRefusal::Workers`, and `StatisticalRequest.workers` was added to FR-189. |

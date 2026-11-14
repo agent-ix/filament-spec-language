@@ -62,3 +62,22 @@ from FND-001, the other new ACs can fail and are testable through
 FR-101-AC-16 to AC-19, FR-120-AC-30 and AC-31, and FR-191-AC-6 and AC-7 once
 FR-191's table is repaired. The hash and pack ACs need a test seam (see
 scope-boundary).
+
+## New findings (disposition pass 1)
+
+Checked at 6d3ffe68e.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | high | The charges in FR-120-AC-29, AC-30, AC-31 and AC-33 and in TC-1418 do not match qsl-eval's counting. A (candidate, result) pair is charged only when the operation declares a result (`if self.application.declaration.result().is_some() { budget.charge()?; }`, qsl-eval/src/simulation/model/frames.rs:1521-1523). So `swap` charges 2 (argument vector and candidate), not 3. The solved `step` charges 101, not 201, and its enumerated reference form 10,001, not 20,001. The review pass's FND-006 itself said 3, which was also wrong. Second, AC-30 to AC-32 are "over AC-29's model", which already contains `swap`, and the budget covers the whole expansion (one `Budget` per `expand_state`, walk.rs:389). The observed expansion charge would therefore add swap's application (101 + 2 = 103 from `a` 3, `b` 5). Fix: give each AC a model with just the one operation, correct the numbers to 2, 101 and 10,001 (AC-31's out-of-domain case stays 1), and state in FR-120 "Post-states" that an operation with no result charges no pair. Changing the code to charge a (candidate, none) pair would change existing stop points and is outside QSL-1914. | FR-120-AC-29, FR-120-AC-30, FR-120-AC-31, FR-120-AC-33, TC-1418:62-79 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-126-AC-20 now sets `max_candidates` to stop at the one-worker run's seventh expanded state, makes a later state finish first, and requires equal counts and frontier. The cancel case now requires the counts and frontier of a one-worker prefix of length `n`. Both can fail on a merge-order defect. |
+| FND-002 | fixed | FR-120-AC-30 compares successors as keyed sets and says exploration orders by state-key bytes (`b` 10 precedes `b` 2). The Invariant now says "candidate order" and that exploration order is FR-101's. |
+| FND-003 | fixed | FR-120-AC-32 now compares each case with its ineligible `... and true` reference form. |
+| FND-004 | fixed | FR-101-AC-16 no longer mentions trace order. It compares `explore_request_parallel` at 1, 2, 4 and 64 with `explore_request`. |
+| FND-005 | fixed | FR-191-AC-6 names the comparand ("equal to the one-worker run's samples at those indices") and bounds the double at 103 draws. |
+| FND-006 | fixed | FR-120-AC-29 now pins the charge and defines how it is observed (the smallest completing `max_candidates`). The pinned value is wrong; see FND-007. |

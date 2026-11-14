@@ -19,7 +19,7 @@ enumerates. Scope: FR-120-AC-29 to FR-120-AC-33.
 
 Steps 1 to 4 are integration tests in `qsl-eval/tests/it/` through
 `ModelSystem::new` and `explore_model`, over TC-471's compile path and the
-`Cell` fixture of FR-120-AC-29 (`a`, `b: Int[0, 99]`). The charge of an
+`Cell` fixture of FR-120-AC-29 (`a`, `b: Int[0, 99]`), each case a model with its one operation, because the budget counts a whole expansion. The charge of an
 expansion is read as the smallest `max_candidates` under which it
 completes, found by bisection; no counter is exposed. Step 5 is the
 `qsl-bench` smallest-size test of the `mc/frame_candidates` axis, which
@@ -41,10 +41,10 @@ Tag each test `#[trace("TC-1418", "FR-120-AC-n")]`.
 
 ## Expected Results
 
-- Step 1: one successor (`a` 5, `b` 3); charge 3: it completes with 3 and
-  stops with `MaxCandidates` with 2.
+- Step 1: one successor (`a` 5, `b` 3); charge 2: it completes with 2 and
+  stops with `MaxCandidates` with 1.
 - Step 2: 100 successors equal as key sets to the reference form's, with
-  equal identities, effects and findings; charges 201 and 20,001; equal
+  equal identities, effects and findings; charges 101 and 10,001; equal
   explorations to depth 3; the solved form completes at 300 and the
   reference stops with `MaxCandidates`.
 - Step 3: each ineligible form stops with `MaxCandidates`; the out-of-domain
@@ -52,5 +52,5 @@ Tag each test `#[trace("TC-1418", "FR-120-AC-n")]`.
 - Step 4: each result equals its reference form's: the `ContractUndetermined`
   finding with the same charge, and the `EvaluationMeter` stop naming
   `work_units`.
-- Step 5: charges 3 and 201 solved, 20,001 enumerated for each, and equal
+- Step 5: charges 2 and 101 solved, 10,001 enumerated for each, and equal
   successor sets; no timing is asserted.

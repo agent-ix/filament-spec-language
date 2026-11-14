@@ -26,3 +26,10 @@ once, as failure-domain FND-001, and is not repeated here.
 ## Verdict
 
 No blocking EARS defect beyond the MAY recorded in the failure-domain review.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The FR-126 bullet is split into six SHALL bullets (worker source, equal results, refusal, merge-order budgets, cancellation, identity exclusion), and FR-191 separates equal results from cancellation. |
+| FND-002 | fixed | Eligibility now says "In a `post` clause `self.f` names the post-state, and `pre(self.g)` names the pre-state", and `e` may read only `pre(self.g)` terms and arguments. |

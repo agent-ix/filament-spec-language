@@ -90,9 +90,8 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
 - A request SHALL carry `workers: usize` (`StatisticalRequest.workers`,
   FR-189), the number of threads that may draw samples at once, setting
   `statistical.workers`, default 1. It is not a budget and enters neither
-  the obligation identity nor the provenance. A system or subject that
-  holds single-threaded state supports `workers` 1 only, and a larger
-  count is refused as `workers` 0 is.
+  the obligation identity nor the provenance. Every sampler and subject SHALL support
+  `workers` above 1.
 - `workers` 0 SHALL return `StatisticalRefusal::Workers`, catalog code
   `invalid_runtime_input`/`invalid-value`, before any sample is drawn.
 - A sample is a function of the seed, the sampler and its trace index

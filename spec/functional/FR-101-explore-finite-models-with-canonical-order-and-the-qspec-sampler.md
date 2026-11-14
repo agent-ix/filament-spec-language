@@ -230,7 +230,7 @@ pub struct EncodingRefusal(String);
 only public entries that explore or sample: `explore`, `sample` and the `Sampler` trait are
 `pub(crate)`, so no caller skips the requires-bound check or the
 `GeneratorMismatch` check. `replay` stays public; it explores nothing new.
-Integration tests in `qsl-eval/tests/it/` call the two entries with a
+Integration tests in `qsl-eval/tests/it/` call the three entries with a
 bounded or empty `domains` set; a check that needs draw internals is an
 in-crate unit test.
 
@@ -333,9 +333,19 @@ is allowed and changes no result. `workers` 0 returns
 Only `explore_request_parallel` takes `workers`, and its bounds
 (`S: Sync`, `S::State: Send + Sync`, `S::TransitionId`, `S::Key` and
 `S::Finding: Send`) are the only ones the engine asks for; `poll` is called
-from the calling thread alone and needs no bound. A system that holds
-single-threaded state (`RefCell`, `Rc`) does not meet them and is explored
-through `explore_request`.
+from the calling thread alone and needs no bound. Every system the model
+checker and the sampler explore SHALL meet these bounds, so that every
+claim kind and engine accepts `workers` above 1.
+
+*Note (current state, not a requirement).* Single-threaded state that the
+bounds exclude today: `RefCell` memo tables and key budgets in
+`qsl-eval` `simulation::model` (`ModelSystem`, its application and
+key-budget caches), `Rc` footprints and `RefCell` in the partial-order
+system (`qsl-analyze` `model_check::ample`), `RefCell` and `Cell` in the
+liveness product and the hyper explorer (`model_check::liveness`,
+`model_check::hyper`) and `Rc<RefCell<Shared>>` in the statistical model
+sampler (`statistical::model`). The coding tickets (QSL-1835 for the memo
+tables) make them `Sync` or `Send`.
 
 The engine produces results as if it expanded states one at a time in the
 canonical order of "Canonical order": it merges each state's expansion in
@@ -472,7 +482,7 @@ repository (this repository's TC-210 is a witness-envelope case).
 | FR-101-AC-19 | A run whose poll answers `true` after a delay, with `workers` 4, returns `Outcome::Cancelled` whose stats, findings and frontier equal those of the one-worker run whose poll answers `true` after the merge of the same number `n` of states, for some `n` from 0 up to the reachable state count; no state outside the first `n` in canonical order appears in its stats, findings or frontier. | Test (TC-1417) |
 | FR-101-AC-20 | For each explorer that keeps a seen set (`explore_request`, `explore_request_parallel` and the product explorers of FR-126 and FR-142), a `SeenSetProbe` whose `hash` returns one constant for every key returns a result equal to the default probe's, over a system of 100 distinct states and over two initial states whose keys differ and whose hashes are equal (both admitted): the same `Stats.states` 100, frontier, findings and, for the model checker, verdict and counterexample. Two other hash functions give the same result. Equal full key bytes still coalesce into one state. No `StateKey`, trace, frontier, finding or certificate carries the hash. | Test (TC-1417) |
 | FR-101-AC-21 | For a system whose checked types admit a `PackedLayout`, `unpack(pack(s))` is `s` and its canonical key bytes equal those of `s`, for every reachable state of a 200-state system; two reachable states have equal packed forms exactly when their canonical key bytes are equal, checked over every pair, including `float64` zero against negative zero (two states) and an integer at each end of its declared range. A state that holds a value outside the layout's domain is explored, and coalesces with another exactly when their canonical key bytes are equal. | Test (TC-1417) |
-| FR-101-AC-22 | For each explorer of AC-20, a run with `Packing::Auto` and one with `Packing::Off` return byte-equal results: every `StateKey` in the frontier, the trace, the findings and a replay is the canonical key bytes; `replay` of a trace from one run succeeds against the other; no output holds a packed form. | Test (TC-1417) |
+| FR-101-AC-22 | For each explorer whose system has checked types and so a `PackedLayout` (`explore_model` over `ModelSystem`, and the FR-126 and FR-142 product explorers over it; not the generic `explore_request` over an opaque `TransitionSystem`, which has none and runs with `Packing::Auto` as `Off`), a run with `Packing::Auto` and one with `Packing::Off` return byte-equal results: every `StateKey` in the frontier, the trace, the findings and a replay is the canonical key bytes; `replay` of a trace from one run succeeds against the other; no output holds a packed form. | Test (TC-1417) |
 
 FR-101-AC-5 withdrawn clause: the `KeyMismatch` refusal (recorded key compared with the recomputed successor key), retired because no QSL check could fail on it.
 

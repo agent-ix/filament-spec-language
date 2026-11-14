@@ -35,3 +35,20 @@ evaluator and text_cluster, and QSL-1906 owns the `mc/*` axes.
 Mergeable on these points once FND-001 and FND-002 have a named seam (a
 pack or hash strategy parameter or test-support hook) or an FR-126 criterion.
 FND-003 and FND-004 are wording fixes.
+
+## New findings (disposition pass 1)
+
+Checked at 6d3ffe68e.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | FR-101-AC-22 covers `explore_request` and `explore_request_parallel`. Those take a generic `TransitionSystem` with no checked types, so no `PackedLayout` exists for them, and `Packing::Auto` and `Off` are the same run. The AC can only fail on the ModelSystem-based FR-126 and FR-142 explorers. Restrict it to explorers that can derive a layout, or say how a generic system offers one. | FR-101-AC-22, FR-101:313-323 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-101 names a test-support seam: `SeenSetProbe { hash, packing }` and `PackedLayout` with `pack`/`unpack`, never in a request. AC-20 and AC-22 cover `explore_request`, `explore_request_parallel` and the FR-126 and FR-142 product explorers, so QSL-1833 and QSL-1837 have criteria to tag. The seam is consistent with the result-preserving claim, and AC-20 (constant hash, 100 states) and AC-22 can fail. See FND-005 for the generic-system case. |
+| FND-002 | fixed | AC-20 now runs through `SeenSetProbe.hash` on each explorer. |
+| FND-003 | fixed | AC-33 names QSL-1906 as the axis's creator and says it does not exist before then. TC-1418 places steps 1 to 4 in qsl-eval/tests/it and step 5 in qsl-bench. The observable is the smallest completing `max_candidates`, found by bisection. The charge values are wrong (base FND-007). |
+| FND-004 | fixed | FR-120 says the rule covers expansions through `ModelSystem`, FR-120's own and the FR-126 and FR-142 explorers, and excludes FR-141 (QSpec FR-378), FR-220 and FR-315. Checked against the code: FR-126's `check.rs` builds `ModelSystem::new` (check.rs:529, 697) and expands through `successors_bounded` (default `successors`, subject.rs:205) or `successors_enforced` (footprints.rs:787). Both reach `walk::expand_state`, which charges `max_candidates` (model.rs:1608, walk.rs:389). FR-142's `refine.rs` expands the concrete `ModelSystem` through `successors` (refine.rs:1865) under `simulation.expansion.max_candidates` (refine.rs:247). |

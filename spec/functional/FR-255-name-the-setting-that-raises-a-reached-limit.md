@@ -317,7 +317,7 @@ not engine limits, and they take no row in the engine limit table:
 
 | Setting | Member | Engine | Request member | Default | Owner |
 | --- | --- | --- | --- | --- | --- |
-| `explore.workers` | `workers` | exploration | `explore_request` `workers` | 1 | FR-101 |
+| `explore.workers` | `workers` | exploration | `explore_request_parallel` `workers` | 1 | FR-101 |
 | `model_check.workers` | `workers` | EN-1 model checker | `ModelCheckRequest.workers` | 1 | FR-126 |
 | `statistical.workers` | `workers` | EN-4 | the statistical request's `workers` | 1 | FR-191 |
 
@@ -427,9 +427,13 @@ these names through the same operand grammar as the stage settings
    exposes the caller limits as `--limit <name>=<value>`, repeatable
    (ADR-029 CB-1). QSL SHALL provide the library settings operation that the
    driver CLI calls with those operands: given a list of `<name>=<value>`
-   operands, where `<name>` is a setting name from any of the three tables and `<value>` a
+   operands, where `<name>` is a setting name from any of the three tables or the
+   worker table of "Worker count setting names" and `<value>` a
    non-negative decimal integer, it SHALL return the caller limits with each
-   named limit at that value. For `format.output_bytes`, the returned caller
+   named limit at that value, and with each named worker count at that value
+   in `workers` (`WorkerCounts { explore, model_check, statistical }`, each
+   default 1, read by `explore_request_parallel`, `check_model` and
+   `check_statistical`). For `format.output_bytes`, the returned caller
    limits SHALL expose the resulting `FormatLimits` to the formatter, and
    for an engine-table name, the engine limits type that row's library field
    names (`ModelCheckLimits`, `ModelCheckRequest`'s method bounds,
@@ -438,10 +442,10 @@ these names through the same operand grammar as the stage settings
    `ScheduleLimits`, the monitor run's window limit, `hybrid.limits`,
    `InspectLimits`, `SmtEncodingLimits` or `SmtRunLimits`), with that member
    at `<value>` and every other member at its default. When
-   `<name>` is in none of the three tables, `<value>` is
+   `<name>` is in none of the three tables and not in the worker table, `<value>` is
    not a non-negative decimal integer, `<value>` is 0 for an engine row
    whose value is a positive count, or one name is given twice, it SHALL
-   return a usage refusal that names the operand, and no stage runs.
+   return a usage refusal that names the operand, and no stage runs; a worker name whose `<value>` is 0 returns that refusal with cause `invalid_runtime_input`/`invalid-value`.
 7. **Absent settings take their defaults.** When a caller does not
    configure a limit at an entry point, QSL SHALL run the stage with that
    limit at its default from the table, and a call with each accounting
@@ -504,7 +508,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-18 | For an identity-join fixture with measured charges W (work) and S (storage), limits (W, S) admit the join, (W - 1, S) refuses it as a work-budget limit naming `i2.work_units`, and (W, S - 1) refuses it as a logical-storage limit naming `i2.native_join_storage`. | Test (TC-721) |
 | FR-255-AC-19 | A refused native join returns the `stage_limit_exceeded`-class refusal with `kind`, `bound`, `actual` and `setting` of FR-255 Behavior 1; IR's `ExactTypeProjectionError` has code `exhausted_work` or `exhausted_storage` and no separate public `cause` field, and `NativeJoinBudget::first_unpaid()` reports the first denied kind and amount. | Test (TC-721) |
 | FR-255-AC-20 | Setting `emit.output_bytes` through the emit limits' builder, a replay request's `stage_limits` and the settings operation changes only `EmitLimits.output_bytes` (`PackageLimits.output_bytes` of the compile lifecycle); `EmitLimits` has no `Default`, so a limits value built without an output-byte value does not compile and a fixture states an explicit value; the outer configuration's `PackageLimits::default()` supplies 16777216; and the setting accepts 0 and `u64::MAX`. | Test (TC-721) |
-| FR-255-AC-21 | The settings operation given `explore.workers=4` returns the request with `workers` 4 and every limit at its default; likewise `model_check.workers=2` and `statistical.workers=8`. Given `explore.workers=0` it returns a usage refusal with `invalid_runtime_input`/`invalid-value`; given `explore.threads=4` it refuses an unknown setting. None of the three worker names appears in the engine limit table, and `explore.workers=2` leaves `explore.states` at 10000000. | Test (TC-720) |
+| FR-255-AC-21 | The settings operation given `explore.workers=4` returns caller limits whose `workers.explore` is 4, `workers.model_check` and `workers.statistical` are 1 and every limit is at its default; likewise `model_check.workers=2` and `statistical.workers=8`. Given `explore.workers=0` it returns a usage refusal naming the operand with cause `invalid_runtime_input`/`invalid-value`; given `explore.threads=4` it refuses an unknown setting. None of the three worker names appears in the engine limit table, and `explore.workers=2` leaves `explore.states` at 10000000. | Test (TC-720) |
 
 ## Status
 

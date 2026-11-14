@@ -34,3 +34,9 @@ it did.
 ## Verdict
 
 No blocking risk beyond the findings recorded in the other reviews.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-191-AC-6 now uses `NoFault` with `max_samples` 1,000, and TC-1417 caps statistical runs at 1,000 samples. |
