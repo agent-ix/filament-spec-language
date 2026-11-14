@@ -27,6 +27,7 @@ use qsl_eval::simulation::protocol::{
 };
 use qsl_eval::simulation::{Location, SubjectSystem, TransitionSystem};
 use qsl_eval::temporal::AtomReading;
+use qsl_foundation::diagnostic::Code;
 use qsl_foundation::source::provenance::OccurrenceKey;
 use qsl_package::CheckedPackage;
 use qsl_replay::{
@@ -38,14 +39,15 @@ use qsl_replay::{
 };
 use qsl_route::deadlock::{ItemObligation, ObligationKind};
 use qsl_route::model_request::ModelRequest;
-use qsl_semantics::check::FormulaNodeId;
+use qsl_semantics::check::{CheckCause, FormulaNodeId};
 use qsl_semantics::model::observation::DocumentRef;
 use quire_exact::{Cancel, Meter};
+use quire_semantic_value::location::ExpressionOwner;
 use serde_json::Value as Json;
 
 use crate::fill::{
-    attempt, class_of, contracts, document, instance, json_of, model_subject, package_with,
-    reachable, sc_system, source_memory, universe, v, Documents, Reached, PACKAGE,
+    attempt, check_refusals, class_of, contracts, document, instance, json_of, model_subject,
+    package_with, reachable, sc_system, source_memory, universe, v, Documents, Reached, PACKAGE,
 };
 use crate::model_settle::{envelope_at, request};
 use crate::protocol_compensation::{pay_run, refund, REFUND};
@@ -1773,7 +1775,7 @@ fn activations(system: &System<'_>, reached: &[Reached]) -> BTreeMap<String, usi
 
 /// `body` with the protocol `captures` written ahead of its roles, where the
 /// grammar puts them.
-fn with_captures(body: &str, captures: &str) -> String {
+pub(crate) fn with_captures(body: &str, captures: &str) -> String {
     body.replacen(
         "role w on M::Cell;",
         &format!("{captures}\nrole w on M::Cell;"),
@@ -1943,12 +1945,10 @@ fn a_template_reads_the_protocol_captures_and_the_activation_binder() {
     }
 }
 
-/// Not a test of FR-208-AC-6, so it cites no criterion: a role whose `until`
-/// predicate reads the protocol capture `j` of type `Reference<M::Cell>`
-/// checks, and `retire(r, o)` is enabled exactly where the predicate holds.
-/// FR-208-AC-6 itself needs `lookup` over a named population in a role
-/// predicate, which the protocol slot checker does not yet resolve (QSL-968). With
-/// `j = k` (the cell `c`) and the cells `{c, d}` both at `v = 1`, only `c` retires; with the further clause `r.v >= 2`
+/// A role whose `until` predicate reads the protocol capture `j` of type
+/// `Reference<M::Cell>` checks, and `retire(r, o)` is enabled exactly where
+/// the predicate holds. With `j = k` (the cell `c`) and the cells `{c, d}`
+/// both at `v = 1`, only `c` retires; with the further clause `r.v >= 2`
 /// nothing retires until the protocol's `inc` raises `c` to 2.
 #[test]
 fn a_retire_predicate_reads_a_protocol_capture() {
@@ -1991,6 +1991,89 @@ fn a_retire_predicate_reads_a_protocol_capture() {
         gated[1].1,
         BTreeSet::from(["c".to_owned()]),
         "retires once r.v reaches 2"
+    );
+}
+
+/// FR-208-AC-6 (TC-653 step 6) over the `test/fill` fixture, `Cell` and
+/// `cells` in place of `Job` and `jobs`, and `r.v >= 2` in place of
+/// `w.done`: the role predicate `r.v >= 2 and present(lookup<M::Cell>(M::cells,
+/// j) absent empty)`, with `j` the protocol capture `k` of type
+/// `Reference<M::Cell>`, checks. With both instances live, no `retire` is
+/// enabled while `c.v` is 1, and after the attempt raises `c.v` to 2, with
+/// `j` a member of `cells`, only `retire(r, c)` is; with the membership
+/// negated no `retire` is enabled at either of those two states. Every state
+/// here has `j` in `cells`: the fixture has no state without it. With
+/// `M::absent` in place of `M::cells` the
+/// unit refuses `missing_declaration`/`missing-name` at `absent`, naming the
+/// role `r`.
+#[trace("TC-653", "FR-208-AC-6")]
+#[test]
+fn a_retire_predicate_reads_a_named_population() {
+    let capture = "capture j: Reference<M::Cell> = k;";
+    let work = "sequence Main { attempt Bump by w on M::Cell::inc contracts [IncPre, IncPost] \
+                as (b: Boolean) { true }; }";
+    let unit_with = |membership: &str| {
+        let until = format!("until(r.v >= 2 and {membership})");
+        with_captures(&unit(ORIGIN, &role(2, &until), "", work), capture)
+    };
+    let member = "present(lookup<M::Cell>(M::cells, j) absent empty)";
+    // The retiring objects at the state where both instances are live, and
+    // after the attempt that raises `c` to 2.
+    let retire_at = |membership: &str| -> (BTreeSet<String>, BTreeSet<String>) {
+        let world = World::new(&unit_with(membership), &["c", "d"], &[1]);
+        let subject = world.subject();
+        let system = sc_system(&subject);
+        let reached = reachable(&system);
+        let both = {
+            let c = after(&system, &reached, 0, StepKind::Spawn, "c");
+            after(&system, &reached, c, StepKind::Spawn, "d")
+        };
+        let bumped = reached[both]
+            .steps
+            .iter()
+            .find(|(step, _)| step.kind() == StepKind::Attempt)
+            .map(|(_, next)| *next)
+            .expect("the attempt is enabled");
+        (
+            objects(&system, &reached, both, StepKind::Retire),
+            objects(&system, &reached, bumped, StepKind::Retire),
+        )
+    };
+    let (before, raised) = retire_at(member);
+    assert!(before.is_empty(), "c.v is 1 before the attempt");
+    assert_eq!(
+        raised,
+        BTreeSet::from(["c".to_owned()]),
+        "c retires once c.v is 2 and j is a member of cells"
+    );
+    let (before, raised) = retire_at(&format!("not {member}"));
+    assert!(
+        before.is_empty() && raised.is_empty(),
+        "j is a member of cells, so its negation does not hold at either state"
+    );
+
+    let refusals = check_refusals(&unit_with(
+        "present(lookup<M::Cell>(M::absent, j) absent empty)",
+    ));
+    let [(refusal, at)] = refusals.as_slice() else {
+        panic!("one refusal: {refusals:?}");
+    };
+    assert_eq!(
+        (refusal.cause.code(), refusal.cause.cause()),
+        (Code::MissingDeclaration, Some("missing-name")),
+        "{refusal:?}"
+    );
+    assert_eq!(at.as_deref(), Some("absent"), "located at `absent`");
+    let CheckCause::MissingSegment { name, .. } = &refusal.cause else {
+        panic!("a missing population segment: {refusal:?}");
+    };
+    assert_eq!(name, "M::absent", "the refusal retains the name");
+    let ExpressionOwner::TypeDeclaration { name: owner } = &refusal.location.origin else {
+        panic!("located in the role's `until`: {refusal:?}");
+    };
+    assert_eq!(
+        owner, "protocol R role r until",
+        "the refusal retains the role"
     );
 }
 
