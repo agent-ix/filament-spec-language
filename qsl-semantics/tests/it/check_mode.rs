@@ -71,6 +71,7 @@ fn kernel_drops(declarations: &str, obligation: impl Fn(&Obligation) -> bool) {
 /// FR-562-AC-6 (checker half): a result bound the addition's interval does
 /// not prove is `unproved-range` under `Linked` and a run-time obligation
 /// under `Kernel`; a proved bound checks under both.
+#[trace("FR-562-AC-6", "TC-1384")]
 #[test]
 fn an_unproved_result_bound_checks_only_under_kernel() {
     kernel_drops(
@@ -84,6 +85,7 @@ fn an_unproved_result_bound_checks_only_under_kernel() {
 
 /// FR-495-AC-3 (checker half): a decimal division by a literal zero is
 /// `unproved-nonzero` under `Linked` and checks under `Kernel`.
+#[trace("FR-495-AC-3", "TC-1284")]
 #[test]
 fn an_unproved_nonzero_divisor_checks_only_under_kernel() {
     kernel_drops(
@@ -250,13 +252,13 @@ fn a_call_exposes_the_key_of_its_application_node() {
 /// obligation inside `decreases(..)` is refused in both modes.
 #[test]
 fn kernel_mode_still_proves_a_termination_measure() {
-    let source = "function w using v(a: Int[0, 9], b: Int[0, 9]): Int[0, 9] pure \
-                  decreases(a div b) { 0 }";
+    let source = "function w using v(x: Option<Integer>): Int[0, 9] pure \
+                  decreases(value(x)) { 0 }";
     for mode in [CheckMode::Linked, CheckMode::Kernel] {
         assert!(
             matches!(
                 refusal(source, mode).cause,
-                CheckCause::Unproved(Obligation::Nonzero)
+                CheckCause::Unproved(Obligation::Presence)
             ),
             "{mode:?}"
         );
