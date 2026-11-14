@@ -36,8 +36,8 @@ their own records.
 
 The crates above the core are QSL's `qsl-analyze` (layer A), `qsl-inspect`
 (layer P), `qsl-jit` (layer X) and `qsl-command` (the FR-027 and FR-100
-request-file adapter), and the driver's `quire-plugin-host`,
-`quire-aot` and `quire-cli` (ADR-029 CB-3 item 3). Each may
+request-file adapter), `quire-aot` (the AOT backend), and the driver's `quire-plugin-host`
+and `quire-cli` (ADR-029 CB-3 item 3). Each may
 depend on the core. No core crate depends on any of them.
 
 Separability lets a qualified binary be a thin frontend over the core with
@@ -61,8 +61,8 @@ dependency) pair.
   dependencies, on:
   - a QSL workspace crate outside the core set;
   - a crate above the core: `qsl-analyze`, `qsl-inspect`, `qsl-jit`,
-    `qsl-command`, or the
-    driver's `quire-driver`, `quire-plugin-host`, `quire-aot`
+    `qsl-command`, `quire-aot`, or the
+    driver's `quire-driver`, `quire-plugin-host`
     or `quire-cli`;
   - a CG or RT crate;
   - an argument parser, a terminal or colour crate, a renderer other than

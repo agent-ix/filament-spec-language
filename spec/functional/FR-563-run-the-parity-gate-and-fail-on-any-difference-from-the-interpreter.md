@@ -52,7 +52,7 @@ the interpreter: a test may substitute a reference only through
 `run_parity_with_reference`, which exists only under `qsl-conformance`'s
 `test-support` feature, and `make parity` never enables it. `BackendCoverage`
 is the seam type FR-560 defines in `qsl-eval`, and `qsl-conformance` does not
-depend on `qsl-jit`. The driver runs the same operation over `quire-aot`
+depend on `qsl-jit`. `make parity` runs the same operation over `quire-aot`, a QSL crate
 (Overlap). `make parity` runs `cargo xtask parity`, which links every
 non-interpreter backend the QSL workspace has and calls `run_parity` with the
 defaults.
@@ -172,8 +172,10 @@ or `ParityRefusal`.
 
 ## Overlap
 
-The driver repository runs `run_parity` over `quire-aot`, depending on
-`qsl-conformance`, and gates the AOT backend on it.
+`xtask parity` runs `run_parity` over `quire-aot`, a QSL crate, and gates the
+AOT backend on it, constructing it with the fixture generator of `qsl-conformance` and
+the toolchain the run names (ADR-029 EB-6); the gate never calls the driver's or CG's `generate` (ADR-011 FB-11). The driver depends on `qsl-conformance` for the CLI half of the
+matrix and for the real-generator AOT parity run: the driver repository owns that run, composing `quire-aot` with its real generator and comparing it with the interpreter over the same parity cases (the driver's requirement tracked as IR-1540). QSL's own run, with the fixture generator, qualifies the backend's build-and-run harness, and the two runs together satisfy FR-295 and ADR-029 EB-5 for AOT.
 
 ## References
 

@@ -116,7 +116,7 @@ The FR-352 report with the three parts and the verdict; the exit code.
 ## Overlap
 
 The driver repository qualifies its own half of the path: its CLI half of
-the matrix (FR-565) and the parity of `quire-aot` (FR-563).
+the matrix (FR-565). QSL qualifies the parity of `quire-aot`'s build-and-run harness (FR-563), and the driver repository runs the real-generator AOT parity run.
 
 ## References
 
