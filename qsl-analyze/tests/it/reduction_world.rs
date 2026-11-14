@@ -11,6 +11,7 @@
 //! clauses' `holds` atoms are read through the test's own letters, as
 //! `crate::model_world` notes.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
@@ -274,10 +275,7 @@ impl World {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
         let checked: Vec<CheckedTemporalClause> = graph
             .temporal_clauses()

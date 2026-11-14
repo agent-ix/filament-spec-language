@@ -7,6 +7,7 @@ use ix_trace_rs::trace;
 use qsl_foundation::diagnostic::Code;
 use qsl_semantics::check::{AssemblyCause, CheckCause, TemporalCause, TimedConstruct};
 use qsl_semantics::value::HeaderLayer;
+use quire_semantic_value::checking::CheckMode;
 use serde_json::json;
 
 use crate::model_operations::{
@@ -119,7 +120,7 @@ fn a_package_clock_field_is_admitted_beside_a_checked_time_source() {
     let checked = declarations
         .with_unwritten_timed_members()
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("the time source checks beside the Clock field");
@@ -142,7 +143,7 @@ fn package_time_units_reach_s3_with_their_model_owner() {
     .expect("FCD admits package dimensions and units");
     let checked = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("S3 resolves the package-owned Time unit");
@@ -162,7 +163,7 @@ fn dense_source_resolves_a_time_unit_at_s3() {
         .expect("S2 retains the unit and time forms");
         let checked = declarations
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 quire_semantic_value::checking::CheckingLimits::default(),
             )
             .expect("a dense source with a Time unit checks");
@@ -183,7 +184,7 @@ fn unknown_time_unit_refuses_at_the_written_name() {
     .expect("S2 does not resolve the unit");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 resolves the time unit");
@@ -205,7 +206,7 @@ fn a_length_unit_cannot_be_the_time_source() {
     .expect("S2 retains the wrong dimension");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 requires the Time dimension");
@@ -224,7 +225,7 @@ fn a_source_without_base_time_refuses_before_looking_up_the_unit() {
     .expect("S2 retains the time declaration");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 requires a base Time node");
@@ -243,7 +244,7 @@ fn derived_duration_is_not_the_base_time_dimension() {
     .expect("S2 retains the derived dimension");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("Duration and Time have distinct nodes");
@@ -262,7 +263,7 @@ fn affine_time_unit_cannot_be_a_model_time_source() {
     .expect("S2 retains the affine unit");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 rejects a nonzero composed offset");
@@ -294,7 +295,7 @@ fn time_source_names_an_admitted_model() {
     .expect("S2 retains the unresolved alias");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 resolves the model alias");
@@ -312,7 +313,7 @@ fn urgent_when_without_a_time_source_refuses_as_a_missing_binding() {
     .expect("S2 retains the urgency condition");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("urgency needs a timed model");
@@ -332,7 +333,7 @@ fn qualified_package_unit_resolves_even_when_a_local_unit_has_the_same_name() {
     .expect("S2 keeps the qualified package unit name");
     let checked = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("S3 resolves the selected package's unit rather than the local ms");
@@ -351,7 +352,7 @@ fn duplicate_time_source_refuses_at_the_second_declaration() {
     .expect("S2 retains both declarations");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("one model has one time source");
@@ -373,7 +374,7 @@ fn tick_source_resolves_its_operation_and_exact_period() {
     .expect("S2 retains the tick form");
     let checked = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("the operation and positive period check");
@@ -396,7 +397,7 @@ fn unqualified_tick_operation_resolves_to_its_declaration_identity() {
     .expect("S2 retains the unqualified operation");
     let checked = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("a unique model operation resolves");
@@ -418,7 +419,7 @@ fn a_model_with_multiple_object_nodes_refuses_a_tick_source_on_a_derived_object(
     .expect("S2 keeps the derived owner name");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("the model alias has multiple semantic nodes");
@@ -440,7 +441,7 @@ fn tick_period_converts_exactly_to_the_model_unit() {
     .expect("S2 retains both unit names");
     let checked = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("S3 converts the period exactly");
@@ -462,7 +463,7 @@ fn a_ten_to_fortieth_tick_period_is_checked_exactly() {
     .expect("S2 retains the large exact period");
     let checked = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("a 10^40 period is representable");
@@ -483,7 +484,7 @@ fn tick_period_respects_the_s3_rational_bit_limit() {
     .expect("S2 does not impose the S3 ceiling");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default().with_rational_bits(32),
         )
         .expect_err("the configured S3 ceiling stops the exact reduction");
@@ -502,7 +503,7 @@ fn zero_tick_period_refuses_at_the_period() {
     .expect("S2 retains the zero period");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("tick period must be positive");
@@ -526,7 +527,7 @@ fn tick_sources_check_and_refuse_at_their_spans() {
     let checked = admit_and_assemble_with_profiles(&document(), temporal, &body)
         .expect("S2 retains the tick form")
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("the tick source checks");
@@ -557,7 +558,7 @@ fn tick_sources_check_and_refuse_at_their_spans() {
         let refusals = admit_and_assemble_with_profiles(&document(), temporal, &body)
             .expect("S2 retains the form")
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 quire_semantic_value::checking::CheckingLimits::default(),
             )
             .expect_err("S3 refuses the tick source");
@@ -589,7 +590,7 @@ fn a_tick_period_with_zero_denominator_refuses_at_the_magnitude() {
     .expect("S2 retains an exact value without resolving it");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 refuses an undefined rational");
@@ -608,7 +609,7 @@ fn missing_tick_operation_refuses_at_its_name() {
     .expect("S2 retains the unresolved operation name");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 resolves the operation");
@@ -644,7 +645,7 @@ fn tick_over(
     )
     .expect("S2 retains the tick form")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .map(|checked| checked.time_sources().to_vec())
@@ -678,7 +679,7 @@ fn tick_operation_cannot_resolve_through_another_model_alias() {
     .expect("S2 retains the qualified operation name");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("an unrelated qualifier does not resolve");
@@ -709,7 +710,7 @@ fn each_timed_declaration_reaches_the_s3_facet_gate() {
             .expect("S2 retains a grammar-valid timed declaration");
         let refusals = declarations
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 quire_semantic_value::checking::CheckingLimits::default(),
             )
             .expect_err("S3 requires the temporal facet");
@@ -810,7 +811,7 @@ fn a_unit_selecting_the_timed_facet_passes_the_gate() {
     declarations
         .with_unwritten_timed_members()
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("the facet admits every timed member: {refusals:?}"));
@@ -834,7 +835,7 @@ fn a_unit_without_the_timed_facet_refuses_every_timed_construct() {
         .expect("S2 retains every grammar-valid timed form");
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("S3 requires the temporal facet");
@@ -898,7 +899,7 @@ fn a_unit_without_the_timed_facet_refuses_every_timed_construct() {
     )
     .expect("the assembler retains each Clock for S3's gate")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .expect_err("S3 requires the temporal facet");
@@ -952,7 +953,7 @@ fn a_clock_bearing_value_inside_an_expression_refuses_by_its_use() {
     )
     .expect("the assembler retains each clock-bearing use for S3")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .expect_err("no clock rule admits these uses");
@@ -1018,7 +1019,7 @@ fn check_delays_under(
     )
     .expect("S2 retains the delay declaration")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
 }
@@ -1427,7 +1428,7 @@ fn check_selected(
         .unwrap_or_else(|refusal| panic!("the unit assembles: {refusal:?}"))
         .with_unwritten_timed_members()
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         );
     (text, checked)

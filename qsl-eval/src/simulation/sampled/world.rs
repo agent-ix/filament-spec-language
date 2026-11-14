@@ -9,6 +9,7 @@
 //! `Phase = Int[0, 2]` (`0` Idle, `1` Busy, `2` Done), `d` is
 //! `Millis = Int[1, 12]`, and `outcome` is `ok: Boolean` (`Ok` is `true`).
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_package::CheckedPackage;
@@ -265,10 +266,7 @@ impl World {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"));
 
         let header = json!({"identity": model.package});

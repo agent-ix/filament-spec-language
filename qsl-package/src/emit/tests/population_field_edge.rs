@@ -8,6 +8,7 @@
 
 use qsl_semantics::check::CheckedGraph;
 use qsl_semantics::family::ClaimExtent;
+use quire_semantic_value::checking::CheckMode;
 
 use super::population_bound::{self, assert_population_node, population_nodes, type_occurrences};
 use super::reachability::{applications, lower_over, model_node, Lowered};
@@ -122,10 +123,7 @@ fn check(
     );
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn checked(populations: &Populations, clauses: &str) -> CheckedGraph {

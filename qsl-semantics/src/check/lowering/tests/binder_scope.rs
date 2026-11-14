@@ -7,6 +7,7 @@
 //! that only one `if` branch holds.
 
 use qsl_forms::Accumulation;
+use quire_semantic_value::checking::CheckMode;
 
 use super::*;
 use crate::check::Obligation;
@@ -139,10 +140,7 @@ fn check_body(result: TypeForm, body: Expression) -> Result<CheckedGraph, Vec<Ch
             qsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 /// A `let`, `count`, `sum`, query or `fold` binder read after the form's

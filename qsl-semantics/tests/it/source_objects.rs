@@ -12,6 +12,7 @@ use qsl_semantics::model::accounting::ModelNormalizationLimits;
 use qsl_semantics::model::domain_package::DomainPackage;
 use qsl_semantics::model::intake::SelectedModels;
 use qsl_semantics::model::normalize::ModelRefusalCause;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 /// TC-1408 fixture S's header.
@@ -119,10 +120,7 @@ fn finish(
 ) -> Result<CheckedGraph, Vec<qsl_semantics::check::CheckRefusal>> {
     let pending = declarations.link_dispatch(ModelNormalizationLimits::default())?;
     declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| pending.report(refusals))
 }
 

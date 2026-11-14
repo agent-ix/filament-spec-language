@@ -11,6 +11,7 @@
 //! each child, then visit each child), never read back from the code under
 //! test.
 
+use quire_semantic_value::checking::CheckMode;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -80,10 +81,7 @@ fn package() -> CheckedPackage {
     .expect("the assembler builds the package declarations");
     CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the package checks"),
     )
 }

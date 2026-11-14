@@ -45,6 +45,7 @@
 
 use qsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use quire_checked::node::{NodeKind, OrderedKind};
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
@@ -2027,7 +2028,7 @@ pub struct ValueDeclarations<'a> {
     pub(crate) checking_limits: CheckingLimits,
     pub(crate) complete_value: bool,
     /// The check mode (FR-495): `Kernel` records no definedness obligation.
-    pub(crate) mode: quire_semantic_value::checking::CheckMode,
+    pub(crate) mode: CheckMode,
     /// The derived StateModel body family and its population-name scope.
     /// `None` for a value-only function body.
     pub(crate) model_scope: Option<super::check::NamedScope>,
@@ -2545,7 +2546,7 @@ pub mod fixtures {
             dispatch_tables,
             checking_limits,
             complete_value: false,
-            mode: quire_semantic_value::checking::CheckMode::Linked,
+            mode: CheckMode::Linked,
             model_scope: None,
             derived_model_family: false,
             location,
@@ -3893,10 +3894,7 @@ pub(crate) mod checking_tests {
                     qsl_foundation::IdentityLimits::default(),
                 )
             }
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the fixture checks")
             .function_identity(name)
             .expect("the fixture declares its function")
@@ -4016,10 +4014,7 @@ pub(crate) mod checking_tests {
                 qsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("repeated names are refused");
         let at = |index: usize| {
             BodyLocation::root(BodyOrigin::Body {
@@ -4246,10 +4241,7 @@ mod locus_tests {
         assert_eq!(&text[start..end], "1", "the node whose entry failed");
         let (unit, _) = sum_unit();
         assert!(unit
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::new(5_000)
-            )
+            .check(CheckMode::Linked, CheckingLimits::new(5_000))
             .is_ok());
     }
 
@@ -4375,7 +4367,7 @@ mod locus_tests {
     ) -> (StageLimitCause, Option<SourceRegion>) {
         let regions = unit.regions();
         let refusals = unit
-            .check(quire_semantic_value::checking::CheckMode::Linked, limits)
+            .check(CheckMode::Linked, limits)
             .expect_err("the limit stops package checking");
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");

@@ -7,6 +7,7 @@
 //! that selects it as `M` with their contracts, protocols over it, and the
 //! snapshots and protocol subjects the protocol tests build from it.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
@@ -439,10 +440,7 @@ pub(crate) fn package_over(
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -491,10 +489,7 @@ pub(crate) fn package_without_protocol_profile_selection(body: &str) -> CheckedP
     declarations.protocol_profile = None;
     let graph = declarations
         .with_unwritten_refinements()
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }

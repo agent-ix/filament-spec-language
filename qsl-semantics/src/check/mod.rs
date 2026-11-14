@@ -823,10 +823,6 @@ pub struct CheckedGraph {
         ),
         ir::DispatchProducerDecision,
     >,
-    /// FR-093: the structural id of the application node each checked
-    /// operation lowered to, by the operation's location.
-    operation_keys:
-        BTreeMap<quire_semantic_value::location::ExpressionLocation, quire_exact::NodeKey>,
     /// NFR-011: the ceilings this package was checked under.
     effective_limits: CheckingLimits,
     /// FR-096: each function's form spans, by declaration index, so a
@@ -1061,7 +1057,6 @@ impl DebugWith for CheckedGraph {
             equality_producer_data,
             equality_producer_identities,
             dispatch_producer_decisions,
-            operation_keys,
             effective_limits,
             form_spans,
             type_spans,
@@ -1172,13 +1167,6 @@ impl DebugWith for CheckedGraph {
             )
             .field("equality_producer_identities", equality_producer_identities)
             .field("dispatch_producer_decisions", dispatch_producer_decisions)
-            .field(
-                "operation_keys",
-                &operation_keys
-                    .iter()
-                    .map(|(location, key)| (location, NodeKeyDebug(key, table)))
-                    .collect::<Vec<_>>(),
-            )
             .field("effective_limits", &effective_limits)
             .field("form_spans", &form_spans)
             .field("type_spans", &type_spans)
@@ -6246,7 +6234,6 @@ impl PackageDeclarations {
             equality_producer_data,
             equality_producer_identities,
             dispatch_producer_decisions,
-            operation_keys,
             model_correspondence,
             identities,
             binders,
@@ -6257,7 +6244,6 @@ impl PackageDeclarations {
             lowered.equality_producer_data,
             lowered.equality_producer_identities,
             lowered.dispatch_producer_decisions,
-            lowered.operation_keys,
             lowered.correspondence,
             lowered.functions,
             lowered.binders,
@@ -7402,7 +7388,6 @@ impl PackageDeclarations {
             equality_producer_data,
             equality_producer_identities,
             dispatch_producer_decisions,
-            operation_keys,
             effective_limits: limits,
             form_spans,
             type_spans,
@@ -8192,21 +8177,6 @@ impl CheckedGraph {
         ir::DispatchProducerDecision,
     > {
         &self.dispatch_producer_decisions
-    }
-
-    /// FR-093: the `NodeKey`, the structural id of the FR-322 node, that
-    /// `check` lowered the checked operation at `location` to, or `None`
-    /// where `location` is no operation (a literal operand of an integer
-    /// operator, a local read and a `Coerce` that builds no narrow lower to
-    /// no node of their own). The key beside the [`Location`] of the
-    /// operation a backend names when it does not translate it (FR-560
-    /// `Operation(k)`); only `check` constructs it. Two structurally equal
-    /// operations share one key, and their locations tell their sites apart.
-    pub fn operation_key(
-        &self,
-        location: &quire_semantic_value::location::ExpressionLocation,
-    ) -> Option<&quire_exact::NodeKey> {
-        self.operation_keys.get(location)
     }
 
     /// Checked time sources of this package, in declaration order.
@@ -9507,10 +9477,7 @@ mod tests {
     fn protocol_population_types_debug_joins_the_shared_node_table() {
         use quire_exact::{NodeKey, PathSegment};
         let mut graph = depth_forms::declarations(depth_forms::Form::Add, 2)
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap();
         let leaf = NodeKey::new(
             "population_scope",
@@ -9646,10 +9613,7 @@ mod tests {
                 qsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("one record declaration checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -9708,10 +9672,7 @@ mod tests {
                 qsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("a package-qualified declared name checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -9814,10 +9775,7 @@ mod tests {
                 qsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("one enum declaration checks cleanly");
 
         let mut checked_nodes = 0;
@@ -9900,10 +9858,7 @@ mod tests {
             literal_function("caller_one", call_helper()),
             literal_function("caller_two", call_helper()),
         ])
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("two callers of one no-argument function check cleanly");
 
         // Steps 2-3: both call sites mint the same identity, but distinct
@@ -9956,10 +9911,7 @@ mod tests {
             literal_function("renamed_caller_one", call_helper()),
             literal_function("renamed_caller_two", call_helper()),
         ])
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("renaming the callers changes no checking outcome");
         assert!(
             renamed.occurrence(call_identity.clone(), &first).is_some(),
@@ -10009,10 +9961,7 @@ mod tests {
                 ),
             ),
         ])
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("a caller of a one-parameter function checks");
         let mut nodes = 0;
         for node in graph.semantic_graph().nodes() {
@@ -10041,10 +9990,7 @@ mod tests {
                 qsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("index 0 names no function");
         assert!(matches!(
             refusals.as_slice(),

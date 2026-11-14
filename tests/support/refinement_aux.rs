@@ -14,6 +14,7 @@
     reason = "each test binary uses the part of the fixture it needs"
 )]
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_eval::simulation::model::{
@@ -549,10 +550,7 @@ impl Unit {
         .with_unwritten_refinements();
         let regions = declarations.regions();
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .map_err(|refusals| {
                 refusals
                     .into_iter()

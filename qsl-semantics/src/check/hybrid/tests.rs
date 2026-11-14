@@ -7,6 +7,7 @@ use ix_trace_rs::trace;
 use qsl_foundation::diagnostic::Code;
 use qsl_foundation::SourceIdentity;
 use quire_exact::Rational;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use crate::check::{
@@ -84,10 +85,7 @@ fn check(declarations: &str) -> Result<CheckedGraph, Refusals> {
     let (text, package) = assemble(declarations);
     let regions = package.regions();
     package
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| {
             refusals
                 .into_iter()

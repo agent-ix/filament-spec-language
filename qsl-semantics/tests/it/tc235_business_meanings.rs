@@ -18,6 +18,7 @@ use qsl_semantics::model::normalize::{
     NormalizeOutcome,
 };
 use quire_checked::key::DeclarationKey;
+use quire_semantic_value::checking::CheckMode;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1396,7 +1397,7 @@ fn tc235_record_subtype_value_conforms_to_parent_typed_parameter() {
     );
     assert!(declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default()
         )
         .is_ok());
@@ -1413,7 +1414,7 @@ fn tc235_record_parent_value_is_refused_at_child_typed_parameter() {
     );
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("a parent value does not conform to its child");

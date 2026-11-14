@@ -6,6 +6,7 @@
 
 use quire_contract_model::CheckedPackageRefusalCode;
 use quire_exact::Origin;
+use quire_semantic_value::checking::CheckMode;
 
 use super::admission_corpus::config_version_unit;
 use super::*;
@@ -56,10 +57,7 @@ pub(super) fn compile(unit: &str) -> Compiled {
     let packages = qsl_semantics::model::intake::package_input([document()]).unwrap();
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);

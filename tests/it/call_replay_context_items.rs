@@ -4,6 +4,7 @@
 //! item `items_from_requirements` writes for that member (FR-075). These
 //! need `qsl-route`, which only the root crate's tests hold.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -73,10 +74,7 @@ fn a_members_item_bounds_build_a_request_that_replays() {
     .expect("the model is admitted");
     let graph = PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the unit checks");
     let items = items_from_requirements(graph.requirements(), &Registry::new(), None);
 

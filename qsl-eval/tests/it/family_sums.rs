@@ -11,6 +11,7 @@ use qsl_semantics::model::object_environment::ObjectEnvironment;
 use qsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use quire_eval::FamilyOutcome;
 use quire_exact::{IllTypedCause, Meter, Outcome, Value};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::loss::{LocatedLoss, ValueLoss};
 
@@ -55,10 +56,7 @@ fn evaluation(functions: &str) -> (Outcome<Value>, Vec<LocatedLoss>) {
         Some(admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[]).unwrap());
     let package = CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusal| panic!("{functions}: {refusal:?}")),
     );
     let evaluation = package

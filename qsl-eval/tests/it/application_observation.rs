@@ -14,6 +14,7 @@ use quire_exact::{
     Charge, ChargeAdmission, ChargeEvent, ChargePoint, IeeeValue, Integer, LimitKind, Meter,
     Outcome, ScalarLimits, Value,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner as Origin};
 
@@ -71,7 +72,7 @@ fn package_with(
     CheckedPackage::link(
         declarations
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 CheckingLimits::default()
                     .with_nodes(1 << 30)
                     .with_input_bytes(1 << 30)

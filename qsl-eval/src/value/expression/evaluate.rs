@@ -5178,10 +5178,7 @@ mod tests {
             .unwrap();
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap();
         let package = qsl_package::CheckedPackage::link(graph);
         let field = || Expression::field(Expression::deref(Expression::name("self")), "items");
@@ -5407,10 +5404,7 @@ mod tests {
             )];
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("F(p: Population<M::A>[3]): Integer = size(allInstances<M::A>(p)) checks cleanly");
         let identity = graph
             .function_identity("F")
@@ -5701,10 +5695,7 @@ mod tests {
             declarations.models = vec![model];
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("one type with one field checks cleanly");
 
         let expression = graph
@@ -5817,10 +5808,7 @@ mod tests {
             declarations.models = vec![model];
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("one type with one field checks cleanly");
 
         let expression = graph
@@ -5933,10 +5921,7 @@ mod tests {
             declarations.types = TypeEnvironment::new([record], []).expect("one record admits");
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the record checks");
         let package = qsl_package::CheckedPackage::link(graph);
         let objects = ObjectEnvironment::default();
@@ -6126,10 +6111,7 @@ mod tests {
                 );
                 declarations
             }
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap(),
         );
         let double = ValueType::Float(FloatType::exact(IeeeWidth::Binary64));
@@ -6225,10 +6207,7 @@ mod tests {
                 "fixture".to_owned(),
                 qsl_foundation::IdentityLimits::default(),
             )
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap(),
         );
         let decision = |origin| {

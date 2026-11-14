@@ -10,6 +10,7 @@ use ix_trace_rs::trace;
 use qsl_forms::build_unit;
 use qsl_foundation::diagnostic::Code;
 use qsl_foundation::SourceIdentity;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 
@@ -221,10 +222,7 @@ fn check_with_internals(
     }
     let regions = assembled.regions();
     assembled
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| {
             refusals
                 .into_iter()
@@ -2104,10 +2102,7 @@ fn check_written(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     )
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
     .with_unwritten_refinements()
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 /// A refinement whose rows select a protocol with an `attempt` adds no

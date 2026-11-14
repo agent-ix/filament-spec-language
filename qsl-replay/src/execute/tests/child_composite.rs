@@ -10,6 +10,7 @@ use qsl_package::CheckedPackage;
 use quire_exact::{
     CardinalityBound, CollectionKind, CollectionType, Integer, NodeKey, Presence, Value, ValueType,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
@@ -66,10 +67,7 @@ fn package() -> CheckedPackage {
     declarations.types = types;
     CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the package checks"),
     )
 }

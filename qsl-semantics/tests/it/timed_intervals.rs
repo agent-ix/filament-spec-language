@@ -20,6 +20,7 @@ use qsl_semantics::check::{
 };
 use qsl_semantics::family::{FamilyContract, UnsupportedItem};
 use quire_exact::{Integer, Rational};
+use quire_semantic_value::checking::CheckMode;
 use serde_json::json;
 
 use crate::model_operations::{
@@ -498,7 +499,7 @@ fn a_checked_timed_clause_reaches_package_check() {
     assert!(outcome.is_ok(), "{outcome:?}");
     package
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("FR-370 carries the checked timed interval through S4");

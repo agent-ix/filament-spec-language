@@ -3,6 +3,7 @@
 //! entries generated as complete-V1 source are checked by the one checker and
 //! run by `qsl-eval`'s function evaluator against the tick-trace reference.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -68,10 +69,7 @@ pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
     .expect("the assembler builds the package declarations");
     CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}\n{text}")),
     )
 }

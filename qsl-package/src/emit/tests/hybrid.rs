@@ -3,6 +3,7 @@
 //! claims emit as `hybrid` nodes and `temporal_clause` nodes, and QSL's I2
 //! read admits them.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use qsl_semantics::check::{CheckedHybridClaim, CheckedHybridModel, HybridHorizon};
@@ -110,10 +111,7 @@ fn compile_checked(declarations: &str) -> (Emission, Value, Checked) {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let selections = graph
         .temporal_clauses()

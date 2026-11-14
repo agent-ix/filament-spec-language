@@ -12,6 +12,7 @@
 use ix_trace_rs::trace;
 use qsl_forms::build_unit;
 use qsl_foundation::SourceIdentity;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use crate::check::{
@@ -60,7 +61,7 @@ fn check(text: &str, limits: CheckingLimits) -> Result<CheckedGraph, Vec<CheckRe
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
-    .check(quire_semantic_value::checking::CheckMode::Linked, limits)
+    .check(CheckMode::Linked, limits)
 }
 
 /// Builds the limits that cap one dimension at a value.

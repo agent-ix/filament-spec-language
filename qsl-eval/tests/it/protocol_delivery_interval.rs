@@ -18,6 +18,7 @@ use qsl_semantics::model::observation::{
     document_reference, DocumentProvision, DocumentRef, ObservationLimits,
 };
 use quire_exact::ScalarLimits;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -108,10 +109,7 @@ fn fixture(delivery: &str, capacity: u64, overflow: &str, run: &str) -> Fixture 
             Vec::new(),
         )
         .expect("unit assembled")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("protocol checks: {refusals:?}")),
     );
 

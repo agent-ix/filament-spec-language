@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::check::ir::CheckedNode;
+use quire_semantic_value::checking::CheckMode;
 
 fn source(text: &str) -> CheckedGraph {
     let text = format!(
@@ -26,10 +27,7 @@ fn source(text: &str) -> CheckedGraph {
         Vec::new(),
     )
     .expect("the source assembles")
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
     .expect("the source checks")
 }
 

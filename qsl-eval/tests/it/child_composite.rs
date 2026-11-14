@@ -8,6 +8,7 @@
 //! slot (item 1), a field is read by identity (item 2), and equality over a
 //! child at a parent-typed slot is a Boolean (item 4).
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -54,10 +55,7 @@ fn package_from(document: &serde_json::Value, declarations: &str) -> CheckedPack
 fn package_over(document: &serde_json::Value, alias: &str, declarations: &str) -> CheckedPackage {
     CheckedPackage::link(
         declarations_over(document, alias, declarations)
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}")),
     )
 }
@@ -254,10 +252,7 @@ fn linked_ledger_clause(trace: &str) -> (CheckedPackage, qsl_semantics::check::C
         "M",
         "function noop using v(): Boolean pure { true }\n",
     )
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("the linked-reference unit checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     let [Ok(CheckedHyper::Behaviours(clause))] = checked.as_slice() else {

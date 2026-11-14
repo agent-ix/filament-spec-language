@@ -14,6 +14,7 @@ use qsl_semantics::check::{PackageDeclarations, SCALAR_LIMITS_UNLIMITED};
 use qsl_semantics::library::LibraryName;
 use qsl_semantics::model::intake::{package_input, SelectedModels};
 use quire_exact::{Integer, Meter, Rational, ScalarLimits, Undefined};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::json;
 
@@ -54,10 +55,7 @@ fn with_routes<R>(
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the aggregate clause checks");
     let selection = graph
         .temporal_clauses()

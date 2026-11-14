@@ -2,6 +2,7 @@
 //! FR-003: actual checked identities through S1, S2, S3 and S4.
 
 use qsl_package::EmitLimits;
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -90,7 +91,7 @@ fn private_state_source_identity(document: Vec<u8>, body: &str) {
         .expect("the original private TC465 fixture assembles");
     let graph = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("original private TC465 S3: {refusals:?}"));
@@ -196,7 +197,7 @@ fn protocol_attempt_identity(declarations: &str) {
         .expect("the actual original SelectedModel resolves the protocol");
         let graph = declarations
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 quire_semantic_value::checking::CheckingLimits::default(),
             )
             .unwrap_or_else(|refusals| panic!("{revision}: protocol S3 refuses: {refusals:?}"));
@@ -422,7 +423,7 @@ fn state_fixture_identity(case: usize) {
     let graph = semantic_models::admit_and_assemble_with_body(&document, &body)
         .expect("the owning original state fixture assembles")
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("state fixture {case}: original S3: {refusals:?}"));
@@ -638,7 +639,7 @@ fn state_generated_occurrences_have_authored_regions() {
     let graph = semantic_models::admit_and_assemble_with_body(&document, &body)
         .unwrap()
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("the original three clauses check before emission");
@@ -898,7 +899,7 @@ fn ieee_fixture_identity(text: &str) {
         declarations.ieee_profile = Some(admit_ieee_profile(&[definition], &[]).unwrap());
         let graph = declarations
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 quire_semantic_value::checking::CheckingLimits::default(),
             )
             .expect("the owning IEEE profile admits the fixture");

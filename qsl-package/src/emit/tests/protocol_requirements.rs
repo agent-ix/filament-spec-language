@@ -3,6 +3,7 @@
 //! temporal clause nodes, deduplicated and sorted by canonical node identity.
 
 use qsl_semantics::check::CheckCause;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use super::owner_model::verdict;
@@ -878,10 +879,8 @@ fn refusals_of(profiles: &str, clauses: &str) -> Vec<qsl_semantics::check::Check
     );
     match assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        ) {
+        .check(CheckMode::Linked, CheckingLimits::default())
+    {
         Ok(_) => Vec::new(),
         Err(refusals) => refusals,
     }

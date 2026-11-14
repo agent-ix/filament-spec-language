@@ -36,6 +36,7 @@ use quire_contract_model::{
     CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageV2, CompleteLoweringProfileV2,
     CompleteLoweringRecordV2,
 };
+use quire_semantic_value::checking::CheckMode;
 use serde_json::{json, Value};
 
 use ix_trace_rs::trace;
@@ -168,10 +169,7 @@ pub(super) fn package_declaring(types: TypeEnvironment) -> CheckedPackage {
     declarations.types = types;
     CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the fixture records check"),
     )
 }
@@ -681,10 +679,7 @@ fn emit_text(declarations: &str) -> (CheckedPackage, Value, Box<CheckedPackageV2
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}")),
     );
     let emission = emit_checked(&package, crate::EmitLimits::fixture()).expect("the package emits");

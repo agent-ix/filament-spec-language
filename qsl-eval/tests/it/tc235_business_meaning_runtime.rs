@@ -5,6 +5,7 @@
 //! exercise the evaluator boundary with the same record, event and lifecycle
 //! meanings, keeping the runtime oracle independent of the binder's JSON walk.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -241,10 +242,7 @@ fn model_package_with(
         Vec::new(),
     )
     .expect("M15 source assembles");
-    let graph = declarations.check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )?;
+    let graph = declarations.check(CheckMode::Linked, CheckingLimits::default())?;
     Ok((CheckedPackage::link(graph), view, packages))
 }
 
@@ -549,10 +547,7 @@ fn package_with_types(
             declarations.function_selections = function_selections;
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap(),
     )
 }
@@ -834,10 +829,7 @@ fn unresolved_object_reference_refuses_at_input_admission() {
             declarations.types = types;
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap(),
     );
     let reference = ObjectReference::new(
@@ -856,7 +848,7 @@ fn unresolved_object_reference_refuses_at_input_admission() {
             ),
             None,
             ClauseKind::Invariant,
-            quire_semantic_value::checking::CheckMode::Kernel,
+            CheckMode::Kernel,
             CheckingLimits::default(),
         )
         .unwrap();
@@ -1269,10 +1261,7 @@ fn lifecycle_receiver_and_parameter_boolean_components() {
             declarations.types = types;
             declarations
         }
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap(),
     );
     let receiver = ObjectReference::new(
@@ -1312,7 +1301,7 @@ fn lifecycle_receiver_and_parameter_boolean_components() {
             )),
             None,
             ClauseKind::Invariant,
-            quire_semantic_value::checking::CheckMode::Kernel,
+            CheckMode::Kernel,
             CheckingLimits::default(),
         )
         .unwrap();

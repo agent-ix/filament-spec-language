@@ -16,6 +16,7 @@ use qsl_eval::temporal::{
 };
 use qsl_semantics::check::FormulaNodeId;
 use quire_exact::{Integer, Meter, Rational};
+use quire_semantic_value::checking::CheckMode;
 
 use crate::temporal_trace::{fixture, EVENT};
 
@@ -92,7 +93,7 @@ fn timestamped<R>(
     )
     .expect("the unit assembles")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .unwrap_or_else(|refusals| panic!("{body}: {refusals:?}"));
@@ -537,7 +538,7 @@ fn event_clause<R>(
     )
     .expect("the unit assembles")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .unwrap_or_else(|refusals| panic!("{body}: {refusals:?}"));

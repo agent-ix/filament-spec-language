@@ -7,6 +7,7 @@
 //! expected value is the TC-1047 row's.
 
 use super::*;
+use quire_semantic_value::checking::CheckMode;
 
 fn multiplicity() -> Value {
     json!({"lower": 0, "upper": 1, "ordered": false, "unique": true})
@@ -172,10 +173,7 @@ pub(super) fn lower_package(
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{clauses}: {refusals:?}"));
     let claim_domains = graph
         .requirements()

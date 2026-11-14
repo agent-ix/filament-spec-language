@@ -7,6 +7,7 @@
 
 use quire_contract_model::CheckedPackageRefusalCode;
 use quire_exact::Origin;
+use quire_semantic_value::checking::CheckMode;
 
 use super::admission_corpus::config_version_unit;
 use super::*;
@@ -211,10 +212,7 @@ pub(super) fn check_graph(unit: &str) -> qsl_semantics::check::CheckedGraph {
     let packages = qsl_semantics::model::intake::package_input([document()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"))
 }
 
@@ -226,7 +224,7 @@ fn check_graph_with_s3_input_limit(
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             CheckingLimits::default().with_input_bytes(input_bytes),
         )
 }
@@ -1556,10 +1554,7 @@ fn record_of(
     let packages = qsl_semantics::model::intake::package_input([document()]).unwrap();
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let [checked] = graph.temporal_clauses() else {
         panic!("one emitted clause");
@@ -1705,10 +1700,7 @@ fn an_on_each_clause_emits_its_trigger_and_guard() {
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let at = u64::try_from(text.find("(q:").unwrap() + 1).unwrap();
     let located = |wire_key: &Value, role: &str| -> Vec<u64> {
@@ -1748,10 +1740,7 @@ fn an_on_each_clause_emits_its_trigger_and_guard() {
         assemble_with_models(truth_text.as_bytes(), &truth_packages).expect("assembles");
     let truth_regions = truth_declarations.regions();
     let truth_graph = truth_declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let guard_key = node_key(truth_wire, &truth_guard["node_id"]);
     let guard_at: Vec<_> = truth_graph
@@ -1787,10 +1776,7 @@ fn refused_on(activation: &str, body: &str) -> (Code, Option<&'static str>, u64,
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
     let refusals = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the clause is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
@@ -1909,10 +1895,7 @@ fn refusal_of(activation: &str, body: &str) -> (qsl_semantics::check::CheckRefus
     let packages = qsl_semantics::model::intake::package_input([document()]).unwrap();
     let refusals = assemble_with_models(text.as_bytes(), &packages)
         .expect("assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the clause is refused");
     let [refusal] = <[_; 1]>::try_from(refusals).unwrap_or_else(|refusals| {
         panic!("one refusal: {refusals:?}");
@@ -2252,10 +2235,7 @@ fn the_captures_aggregate_and_nodes_are_emitted() {
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let located = |wire_key: &Value, role: &str| -> Vec<u64> {
         let sought = node_key(wire, wire_key);

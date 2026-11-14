@@ -5,6 +5,7 @@
 //! fixture (FR-333, FR-334, FR-335). The population half of TC-844 and the
 //! S6a half of TC-845 are in `qsl-eval`'s tests.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -139,7 +140,7 @@ fn config_graph(declaration: &str) -> CheckedGraph {
     PackageDeclarations::assemble(raw, "std610".to_string(), unit, models, Vec::new())
         .expect("the model type unit assembles")
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("{declaration}: {refusals:?}"))

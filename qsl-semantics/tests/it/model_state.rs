@@ -5,6 +5,7 @@
 //! (`StateModel::observation`) and the public frame decision
 //! (`population::decide_frame`) over a state's own objects.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use qsl_foundation::diagnostic::Code;
@@ -81,10 +82,7 @@ fn fixture_with(relationships: serde_json::Value) -> Fixture {
     let graph =
         admit_and_assemble_with_body(&document, "function noop using v(): Boolean pure { true }")
             .expect("assemble model")
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("check model");
     let model = StateModel::new(
         graph.model_selections(),

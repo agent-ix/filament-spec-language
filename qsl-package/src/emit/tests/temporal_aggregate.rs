@@ -12,6 +12,7 @@ use super::temporal_clause::{
     target, unit, EVENT,
 };
 use super::*;
+use quire_semantic_value::checking::CheckMode;
 
 const TIMESTAMPED: &str = "quire.temporal.timestamped-event.finite-window/v1";
 
@@ -284,10 +285,7 @@ fn the_aggregate_spans_resolve_through_the_source_map() {
     let declarations = assemble_with_models(text.as_bytes(), &packages).expect("assembles");
     let regions = declarations.regions();
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let located = |id: &Value| -> Vec<(u64, u64)> {
         let sought = node_key(wire, id);
@@ -341,10 +339,7 @@ fn emit_with_clock(
     let assembled =
         || assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
     let probe = assembled()
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the clause checks without a clock: {refusals:?}"));
     let [temporal] = probe.temporal_clauses() else {
         panic!("one clause");
@@ -355,10 +350,7 @@ fn emit_with_clock(
             declaration_span: span,
             timestamp_unit: timestamp_unit.to_owned(),
         }])
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )?;
+        .check(CheckMode::Linked, CheckingLimits::default())?;
     let selections = [crate::emit::TemporalClockSelection::new(
         graph.source().clone(),
         span,

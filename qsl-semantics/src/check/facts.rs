@@ -533,12 +533,12 @@ pub(crate) struct Definedness<'a> {
     /// body, so one table serves every path of the walk and no `let` copies
     /// the facts of the paths above it.
     aliases: BTreeMap<Slot, StablePath>,
-    /// Whether the check mode is `CheckMode::Kernel` (FR-495): an unproved
+    /// The check mode (FR-495). Under `CheckMode::Kernel` an unproved
     /// range, nonzero, presence, rational-range or nonempty-reduction
     /// obligation is left to the kernel evaluation instead of refused. A
     /// dispatch declaration refusal and a malformed Rational operand shape are
     /// unchanged. The walk still records every reachable call.
-    kernel: bool,
+    mode: CheckMode,
 }
 
 impl<'a> Definedness<'a> {
@@ -555,13 +555,13 @@ impl<'a> Definedness<'a> {
             observations: None,
             components: None,
             aliases: BTreeMap::new(),
-            kernel: false,
+            mode: CheckMode::Linked,
         }
     }
 
     /// Check under `mode`: `CheckMode::Kernel` records no unproved obligation.
     pub(crate) fn with_check_mode(mut self, mode: CheckMode) -> Self {
-        self.kernel = mode == CheckMode::Kernel;
+        self.mode = mode;
         self
     }
 
@@ -1196,17 +1196,22 @@ impl<'a> Definedness<'a> {
     /// Discharge `node`'s own obligation, its operands walked under `facts`,
     /// and record the call sites it makes.
     fn discharge(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
-        if self.kernel && Self::rational_shape_invalid(node) {
-            return Err(Self::refuse(node, Obligation::RationalRange));
-        }
-        match self.discharge_node(node, facts) {
-            // FR-495: under `CheckMode::Kernel` an unproved obligation is not
-            // recorded; the evaluator meets it at run time.
-            Err(CheckRefusal {
-                cause: CheckCause::Unproved(_),
-                ..
-            }) if self.kernel => Ok(()),
-            other => other,
+        match self.mode {
+            CheckMode::Linked => self.discharge_node(node, facts),
+            CheckMode::Kernel => {
+                if Self::rational_shape_invalid(node) {
+                    return Err(Self::refuse(node, Obligation::RationalRange));
+                }
+                match self.discharge_node(node, facts) {
+                    // FR-495: an unproved obligation is not recorded; the
+                    // evaluator meets it at run time.
+                    Err(CheckRefusal {
+                        cause: CheckCause::Unproved(_),
+                        ..
+                    }) => Ok(()),
+                    other => other,
+                }
+            }
         }
     }
 
@@ -1929,3 +1934,6 @@ impl Established {
         }
     }
 }
+
+#[cfg(test)]
+mod kernel_mode_tests;

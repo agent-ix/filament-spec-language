@@ -11,6 +11,7 @@ use qsl_semantics::check::{ModelTimeSource, PackageDeclarations, TemporalProfile
 use qsl_semantics::model::accounting::ModelNormalizationLimits;
 use qsl_semantics::model::intake::admit_unit;
 use quire_exact::{Integer, Rational};
+use quire_semantic_value::checking::CheckMode;
 
 use crate::units::Domain;
 
@@ -131,7 +132,7 @@ pub(crate) fn checked_clause_on(
     }
     let graph = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("S3: {refusals:?}"));

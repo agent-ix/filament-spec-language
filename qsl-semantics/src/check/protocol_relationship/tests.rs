@@ -7,6 +7,7 @@ use ix_trace_rs::trace;
 use qsl_forms::build_unit;
 use qsl_foundation::SourceIdentity;
 use quire_exact::ValueType;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use crate::check::refusal::{
@@ -132,10 +133,7 @@ fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn checks(text: &str) -> CheckedGraph {

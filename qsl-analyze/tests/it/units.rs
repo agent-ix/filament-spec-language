@@ -5,6 +5,7 @@
 //! written here. Each is compiled through S1 to S4 as `crate::counter`'s
 //! units are, and read through the test's own letters.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_eval::automaton::translate;
@@ -155,10 +156,7 @@ pub(crate) fn checked(domain: &Domain, text: &str) -> (CheckedPackage, Vec<Check
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
     let clauses = graph
         .temporal_clauses()

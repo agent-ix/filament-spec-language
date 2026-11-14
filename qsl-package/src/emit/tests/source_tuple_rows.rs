@@ -8,6 +8,7 @@
 use quire_contract_model::{
     ExactTypeProjectionErrorCode, SelectedExactIdentities, SelectedSourceTupleRow,
 };
+use quire_semantic_value::checking::CheckMode;
 
 use super::source_enum_rows::node_with_id;
 use super::source_union_rows::admit_bytes;
@@ -796,10 +797,7 @@ pub(super) fn map_record_package() -> CheckedPackage {
     declarations.package_name = "pkg".to_owned();
     declarations.types = TypeEnvironment::new([record], []).expect("R is admitted");
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }

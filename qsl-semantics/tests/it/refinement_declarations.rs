@@ -8,6 +8,7 @@
 //! tell from `Int[0, 2]`: what they decide is which names resolve, which
 //! types conform and which rows exist.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -596,10 +597,7 @@ fn check_declarations(
     let declarations = declarations.with_unwritten_refinements();
     let regions = declarations.regions();
     declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| {
             refusals
                 .into_iter()
@@ -1760,10 +1758,7 @@ fn a_checked_refinement_refuses_not_emitted_at_package_build() {
     );
     let refusals = declarations
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("a refinement is not emitted yet");
     assert_eq!(
         refusals
@@ -1921,10 +1916,7 @@ fn an_object_type_only_refinement_subject_checks_and_is_emittable() {
     );
     let graph = declarations
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the refinement checks: {refusals:?}"));
     assert!(only_refinement(&graph).v2_emittable());
 }
@@ -1946,10 +1938,7 @@ fn several_state_machines_are_not_an_ambiguous_refinement_subject() {
     let (_, declarations) = assemble("", &[("Spec", SPEC, &spec), ("Impl", CAS, &cas)], &one);
     declarations
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the refinement checks: {refusals:?}"));
     let twice = with_machine_fields(&spec, SPEC, "SpecMachineToo", &[("value", INTEGER)]);
     let two = with_refinement_rows(
@@ -1961,10 +1950,7 @@ fn several_state_machines_are_not_an_ambiguous_refinement_subject() {
     // Machine multiplicity is not a subject refusal.
     declarations
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the refinement checks: {refusals:?}"));
 }
 
@@ -2072,10 +2058,7 @@ fn only_the_refinement_beside_a_terminal_is_refused() {
     let (_, declarations) = assemble("", &[("Spec", SPEC, &spec), ("Impl", CAS, &cas)], &body);
     let refusals = declarations
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the refinement is not emitted yet");
     assert!(
         matches!(refusals[0].cause, CheckCause::RefinementNotEmitted { .. }),
@@ -2154,10 +2137,7 @@ fn a_refinements_models_are_its_own_units_packages() {
         &[spec.as_slice(), cas.as_slice(), sub.as_slice()],
     )
     .with_unwritten_refinements()
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("b's refinement checks: {refusals:?}"));
     let refinement = only_refinement(&graph);
     assert_eq!(refinement.abstract_model_selection().identity, SPEC);

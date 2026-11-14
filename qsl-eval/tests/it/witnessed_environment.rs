@@ -193,10 +193,7 @@ fn package() -> CheckedPackage {
     .expect("assembly succeeds");
     CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}")),
     )
 }

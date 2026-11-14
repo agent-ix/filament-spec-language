@@ -3,6 +3,7 @@
 //! item per requirement record of a checked package, with no
 //! caller-supplied item list.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ix_trace_rs::trace;
@@ -73,10 +74,7 @@ pub(super) fn check(declarations: &str) -> CheckedGraph {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"))
 }
 
@@ -424,10 +422,7 @@ fn division_package(
         Some(admit_integer_division(&[role.reference()], None).expect("a closed law"));
     let package = CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{operator}: {refusals:?}")),
     );
     let graph = package.graph();

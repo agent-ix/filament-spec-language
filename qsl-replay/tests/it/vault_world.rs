@@ -6,6 +6,7 @@
 //! alias `N`, and a unit that declares one hyper clause.
 
 use quire_exact::NodeKey;
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 fn fixture_node(fill: u8) -> NodeKey {
@@ -454,10 +455,7 @@ impl World {
             .next()
             .map(|checked| checked.expect("the temporal clause checks"));
         let graph = assembled
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let unassembled = match check_hyper_clauses(&declarations(&documents, &text))

@@ -7,6 +7,7 @@
 //! default limits: no limit names a depth.
 
 use quire_semantic_value::absence::AbsenceMode;
+use quire_semantic_value::checking::CheckMode;
 
 use super::*;
 
@@ -102,7 +103,7 @@ impl ModelForm {
             .stack_size(STACK)
             .spawn(move || {
                 self.declarations(levels)
-                    .check(quire_semantic_value::checking::CheckMode::Linked, limits)
+                    .check(CheckMode::Linked, limits)
                     .map(drop)
             })
             .expect("the check thread spawns")

@@ -14,6 +14,7 @@ use qsl_semantics::check::{
 use qsl_semantics::model::intake::meaning;
 use quire_checked::node::NodeKind;
 use quire_exact::{Integer, Rational, ValueType};
+use quire_semantic_value::checking::CheckMode;
 use serde_json::{json, Value};
 
 use crate::model_operations::{
@@ -163,7 +164,7 @@ pub(super) fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<Che
         .expect("S2 builds every timed form")
         .with_unwritten_timed_members()
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
 }
@@ -364,7 +365,7 @@ fn check_with_other(body: &str) -> (String, Result<CheckedGraph, Vec<CheckRefusa
     .expect("the unit assembles")
     .with_unwritten_timed_members()
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     );
     (unit, checked)
@@ -1223,7 +1224,7 @@ fn a_clock_reading_call_elsewhere_reads_a_clock_outside_a_constraint() {
             .expect("S2 builds every form")
             .with_unwritten_timed_members()
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 quire_semantic_value::checking::CheckingLimits::default(),
             )
             .expect_err("the call is refused");
@@ -1286,7 +1287,7 @@ fn a_place_selected_by_a_clock_or_a_recursive_expansion_refuses() {
     let regions = declarations.regions();
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("a recursive declaration needs a measure");
@@ -1392,7 +1393,7 @@ fn a_later_units_timed_predicate_names_types_through_its_own_alias() {
     .unwrap_or_else(|refusal| panic!("both units assemble: {refusal:?}"))
     .with_unwritten_timed_members()
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .unwrap_or_else(|refusals| panic!("b's Config::Call resolves through b: {refusals:?}"));
@@ -1479,7 +1480,7 @@ fn a_clock_reading_parameter_names_its_own_units_package() {
     .unwrap_or_else(|refusal| panic!("both units assemble: {refusal:?}"))
     .with_unwritten_timed_members()
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .unwrap_or_else(|refusals| panic!("b's o.x is a clock of b's package: {refusals:?}"));
@@ -1514,7 +1515,7 @@ fn check_units(
     crate::model_operations::assemble_units(&units, documents)
         .with_unwritten_timed_members()
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
 }

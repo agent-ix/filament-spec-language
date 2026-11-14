@@ -2,6 +2,7 @@
 //! FR-120 (TC-471, TC-472, TC-473): `ModelSystem`, the transition system of a
 //! checked package's state family, over the `test/counters` fixture.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -364,10 +365,7 @@ fn build_world_document(
         Vec::new(),
     )
     .expect("the unit assembles");
-    let graph = declarations.check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )?;
+    let graph = declarations.check(CheckMode::Linked, CheckingLimits::default())?;
     Ok(World {
         extras,
         enum_mode,

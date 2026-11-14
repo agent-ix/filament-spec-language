@@ -6,6 +6,7 @@
 //! value counting. Every expected result is the spec table's; assertions
 //! compare typed code, cause, path, member and class, never rendered text.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 
@@ -178,10 +179,7 @@ fn replay_with(document: Value, base: Vec<(String, Value)>, declarations: &str) 
     };
     let declarations = assemble();
     let graph = assemble()
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let model = json!({
         "identity": fixture::PACKAGE, "version": "1",

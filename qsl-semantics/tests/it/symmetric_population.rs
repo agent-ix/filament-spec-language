@@ -17,6 +17,7 @@ use qsl_semantics::check::{
 use qsl_semantics::model::domain_package::DomainPackageRecord;
 use qsl_semantics::model::intake::{read_records, PackageDocument};
 use qsl_semantics::model::refusal::{MemberSegment, ModelRefusalCause};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use serde_json::json;
 
@@ -100,10 +101,7 @@ fn with_peer_collection(document: &[u8], unique: bool) -> Vec<u8> {
 fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     admit_and_assemble_with_body(document, body)
         .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"))
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn span_of(text: &str, needle: &str) -> Span {

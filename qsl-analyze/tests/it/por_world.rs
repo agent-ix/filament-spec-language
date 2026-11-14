@@ -12,6 +12,7 @@
 //! atom's formula one way and its closure another disagrees with itself, not
 //! with the engine.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use qsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
@@ -327,10 +328,7 @@ impl Fixture {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
         let checked: Vec<CheckedTemporalClause> = graph
             .temporal_clauses()

@@ -10,6 +10,7 @@ use qsl_semantics::check::{CheckCause, CheckRefusal, MeasureObligation, PackageD
 use qsl_semantics::model::object_environment::ObjectEnvironment;
 use quire_eval::FamilyOutcome;
 use quire_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -51,10 +52,7 @@ fn check(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     )
     .expect("the unit assembles");
     declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(CheckedPackage::link)
 }
 

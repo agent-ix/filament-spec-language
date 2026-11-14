@@ -6,6 +6,7 @@
 //! The model is the TC-1033 `orders` shape: `Pump` and `Tank` joined by the
 //! one-to-one `home`/`pump` relationship, with `Tank.level` an `Int[0, 100]`.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -131,10 +132,7 @@ fn orders_package() -> CheckedPackage {
     .expect("the model assembles");
     CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the orders model checks"),
     )
 }

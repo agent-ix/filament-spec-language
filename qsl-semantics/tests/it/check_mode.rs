@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! `CheckMode` on `PackageDeclarations::check` (FR-495): `Linked` proves each
 //! definedness obligation at check, `Kernel` records none and leaves it to
-//! the evaluator; and the FR-093 `NodeKey` accessor. Every assertion compares typed causes and locations.
+//! the evaluator. Every assertion compares typed causes and locations.
 
 use ix_trace_rs::trace;
 use qsl_forms::build_unit;
 use qsl_foundation::SourceIdentity;
 use qsl_semantics::check::{
-    BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode, MeasureObligation, Obligation,
-    PackageDeclarations,
+    CheckCause, CheckRefusal, CheckedGraph, MeasureObligation, Obligation, PackageDeclarations,
 };
 use qsl_semantics::model::intake::SelectedModels;
 use qsl_semantics::value::{admit_integer_division, DefinitionRole};
@@ -97,6 +96,7 @@ fn an_unproved_nonzero_divisor_checks_only_under_kernel() {
 
 /// `value(x)` with no proved `present(x)` is `unproved-presence` under
 /// `Linked`; `Kernel` leaves it to the evaluator.
+#[trace("FR-495-AC-10", "TC-1419")]
 #[test]
 fn an_unproved_presence_checks_only_under_kernel() {
     kernel_drops(
@@ -107,6 +107,7 @@ fn an_unproved_presence_checks_only_under_kernel() {
 
 /// FR-104 "Definedness facts": `Kernel` reaches function bodies only, so a
 /// state clause still refuses its unproved obligation.
+#[trace("FR-495-AC-11", "TC-1419")]
 #[test]
 fn a_state_clause_still_refuses_its_obligation_under_kernel() {
     let clause = "invariant NoGuard using v on Config::ConfigVersion at current { \
@@ -137,6 +138,7 @@ fn a_state_clause_still_refuses_its_obligation_under_kernel() {
 /// is refused `missing-measure` at its call in both modes, and a body whose
 /// result bound `Linked` refuses first still reaches that refusal under
 /// `Kernel`.
+#[trace("FR-495-AC-12", "TC-1419")]
 #[test]
 fn kernel_mode_still_refuses_a_nonterminating_recursion() {
     let missing = |refusal: &CheckRefusal, path: &[usize]| {
@@ -166,90 +168,10 @@ fn kernel_mode_still_refuses_a_nonterminating_recursion() {
     missing(&refusal(source, CheckMode::Kernel), &[0]);
 }
 
-/// The identity of the application `graph` keys at `node`'s location.
-fn application(graph: &CheckedGraph, node: CheckedNode<'_>) -> (quire_exact::NodeKey, String) {
-    let key = graph
-        .operation_key(node.location())
-        .unwrap_or_else(|| panic!("{:?} lowers to a node", node.kind()))
-        .clone();
-    match graph
-        .semantic_graph()
-        .node(key.clone())
-        .expect("keyed")
-        .body()
-    {
-        BodyTerm::Application(term) => (key, term.operation.identity().to_owned()),
-        other => panic!("not an application: {other:?}"),
-    }
-}
-
-/// FR-093-AC-62: the accessor returns the multiplication's key and, for both
-/// `a + b`, one key at two locations; `a * b` has a fourth key; a local read
-/// is no node.
-#[trace("FR-093-AC-62", "TC-415")]
-#[test]
-fn a_checked_operation_exposes_its_node_key() {
-    let graph = check(
-        "function w using v(a: Integer, b: Integer): Integer pure { (a + b) * (a + b) }\n\
-         function m using v(a: Integer, b: Integer): Integer pure { a * b }",
-        CheckMode::Linked,
-    )
-    .expect("the functions check");
-    let root = graph.function_state(0).expect("w is declared").body;
-    let [left, right] = root.children()[..] else {
-        panic!("a product has two operands");
-    };
-    assert_ne!(left.location(), right.location());
-    let (product, identity) = application(&graph, root);
-    assert_eq!(identity, "quire.op.integer.mul");
-    let (sum, identity) = application(&graph, left);
-    assert_eq!(identity, "quire.op.integer.add");
-    assert_eq!(application(&graph, right).0, sum);
-    let other = graph.function_state(1).expect("m is declared").body;
-    let (other, identity) = application(&graph, other);
-    assert_eq!(identity, "quire.op.integer.mul");
-    assert!(other != product && other != sum);
-    for read in left.children() {
-        assert_eq!(graph.operation_key(read.location()), None);
-    }
-}
-
-/// FR-560 `Operation(k)`: the key of a `call` is its application node's,
-/// including a call that lowers through a draft because its callee is in the
-/// same recursion group.
-#[test]
-fn a_call_exposes_the_key_of_its_application_node() {
-    let call_key = |source: &str, caller: usize| {
-        let graph = check(source, CheckMode::Linked).expect("the functions check");
-        let mut pending = vec![graph.function_state(caller).expect("declared").body];
-        let call = loop {
-            let node = pending.pop().expect("the body holds a call");
-            if graph.operation_key(node.location()).is_some()
-                && application(&graph, node).1 == "quire.op.function.call"
-            {
-                break node;
-            }
-            pending.extend(node.children());
-        };
-        let (key, identity) = application(&graph, call);
-        assert_eq!(identity, "quire.op.function.call");
-        key
-    };
-    call_key(
-        "function late using v(a: Int[0, 9]): Int[0, 9] pure { early(a) }\n\
-         function early using v(a: Int[0, 9]): Int[0, 9] pure { a }",
-        0,
-    );
-    call_key(
-        "function walk using v(n: Int[0, 9]): Int[0, 9] pure decreases(n) \
-         { if n > 0 then walk(n - 1) else 0 }",
-        0,
-    );
-}
-
 /// FR-495: `Kernel` leaves a function body's obligation to the evaluator
 /// but a termination measure is checked as under `Linked`, so an unproved
 /// obligation inside `decreases(..)` is refused in both modes.
+#[trace("FR-495-AC-12", "TC-1419")]
 #[test]
 fn kernel_mode_still_proves_a_termination_measure() {
     let source = "function w using v(x: Option<Integer>): Int[0, 9] pure \
@@ -263,4 +185,38 @@ fn kernel_mode_still_proves_a_termination_measure() {
             "{mode:?}"
         );
     }
+}
+
+/// A rational result outside its declared domain is `unproved-range` under
+/// `Linked`; `Kernel` leaves the bound to the evaluator.
+#[test]
+fn an_unproved_rational_range_checks_only_under_kernel() {
+    kernel_drops(
+        "function r using v(a: Rational[0, 1; 1, 2], b: Rational[0, 1; 1, 2]): \
+         Rational[0, 1; 1, 2] pure { a + b }",
+        |found| matches!(found, Obligation::RationalRange),
+    );
+}
+
+/// A rational `/` whose divisor may be zero is `unproved-nonzero` under
+/// `Linked`; `Kernel` leaves the divisor to the evaluator.
+#[test]
+fn an_unproved_rational_divisor_checks_only_under_kernel() {
+    kernel_drops(
+        "function q using v(a: Rational[0, 1; 1, 2], b: Rational[0, 1; 1, 2]): \
+         Rational[0, 100; 1, 100] pure { a / b }",
+        |found| matches!(found, Obligation::Nonzero),
+    );
+}
+
+/// A reduction with no identity over a possibly empty source is
+/// `unproved-range` under `Linked`; `Kernel` leaves the emptiness to the
+/// evaluator.
+#[test]
+fn an_unproved_nonempty_reduction_checks_only_under_kernel() {
+    kernel_drops(
+        "type S = Int[0, 3];\n\
+         function m using v(q: Sequence<S>[0, 2]): S pure { reduce<S>(acc, x in q: acc) }",
+        |found| matches!(found, Obligation::NonemptyReduction { .. }),
+    );
 }

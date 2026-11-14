@@ -12,6 +12,7 @@
 //! (`holds(v.l @ x = v.l @ y)`, `holds(v.l @ x = k)`) and `CheckedStepMatch`
 //! for the conjuncts.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use qsl_analyze::model_check::{
@@ -597,10 +598,7 @@ impl World {
             };
         let base = unit_text(other, vault, reset, &ieee_package_clause);
         let graph = declarations(&documents, &base)
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{base}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let text = unit_text(other, vault, reset, &format!("{declaration}\n"));

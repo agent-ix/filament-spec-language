@@ -3,6 +3,7 @@
 //! abstraction relation (FR-304, FR-305) and its per-item export (FR-307),
 //! over relations built in the test from checked packages.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -61,10 +62,7 @@ fn package(clauses: &str) -> CheckedPackage {
     .expect("the package admits");
     let graph = PackageDeclarations::assemble(raw, "pkg".to_owned(), built, models, Vec::new())
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }

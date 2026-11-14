@@ -13,6 +13,7 @@ use qsl_semantics::check::{
 use qsl_semantics::family::ClaimExtent;
 use qsl_semantics::model::accounting::ModelNormalizationLimits;
 use qsl_semantics::model::intake::SelectedModels;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use crate::relationship_navigation::assert_refusal;
@@ -71,10 +72,9 @@ fn check_with(
     declarations: &str,
 ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     let (_, assembled) = unit(extra, declarations);
-    assembled.expect("the unit assembles").check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    assembled
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
 }
 
 fn checked(declarations: &str) -> CheckedGraph {

@@ -14,6 +14,7 @@ use qsl_foundation::diagnostic::Code;
 use qsl_foundation::SourceIdentity;
 use quire_checked::node::NodeKind;
 use quire_exact::{Identifier, IllTypedCause, NodeKey, UnionMember, ValueType};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
@@ -426,7 +427,7 @@ fn nesting_is_bounded_only_by_the_node_ceiling() {
     let refusals = unit
         .package
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             CheckingLimits::default().with_nodes(needed - 1),
         )
         .expect_err("one node short");

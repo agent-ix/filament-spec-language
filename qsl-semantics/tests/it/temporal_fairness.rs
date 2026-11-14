@@ -16,6 +16,7 @@ use qsl_semantics::check::{
     TemporalCause, TemporalProfile, TemporalTraceFamily,
 };
 use qsl_semantics::family::{ClaimExtent, FamilyContract};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, PropertyForm,
 };
@@ -90,7 +91,7 @@ fn node_identity(body: &str) -> quire_exact::NodeKey {
     .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"));
     let graph = package
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("{body}: the package checks: {refusals:?}"));

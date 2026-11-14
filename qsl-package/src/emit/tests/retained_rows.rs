@@ -8,6 +8,7 @@
 use quire_contract_model::{
     CheckedNodeId, ClockConfiguration, SelectedTupleDeclarationRow, TemporalBinding,
 };
+use quire_semantic_value::checking::CheckMode;
 
 use super::converted_equality::emitted as emitted_quantities;
 use super::state_transition::{operation_member_rows, operation_unit};
@@ -555,10 +556,7 @@ fn the_writers_renames_reach_the_rows_it_carries() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     let mut emission = emit_checked(&package).expect("the package emits");

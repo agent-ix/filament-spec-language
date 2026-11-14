@@ -3,6 +3,7 @@
 //! of model transitions, derived from checked clauses and frames, decided
 //! independent or dependent, and enforced against what a step reads.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ix_trace_rs::trace;
@@ -242,10 +243,7 @@ fn subject(document: Vec<u8>, clauses: &[&str]) -> Subject {
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     Subject {
         package: CheckedPackage::link(graph),

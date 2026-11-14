@@ -13,6 +13,7 @@ use qsl_forms::build_unit;
 use qsl_foundation::diagnostic::Code;
 use qsl_foundation::{SourceIdentity, Span};
 use quire_exact::ValueType;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use super::{
@@ -131,10 +132,7 @@ fn assemble_with(
 /// checks.
 fn refusals(declarations: &str) -> (String, Vec<CheckRefusal>) {
     let (text, assembled) = assemble(declarations);
-    match assembled.check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    ) {
+    match assembled.check(CheckMode::Linked, CheckingLimits::default()) {
         Err(refusals) => (text, refusals),
         Ok(_) => (text, Vec::new()),
     }
@@ -144,10 +142,7 @@ fn refusals(declarations: &str) -> (String, Vec<CheckRefusal>) {
 fn checked(declarations: &str) -> CheckedGraph {
     let (_, assembled) = assemble(declarations);
     assembled
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"))
 }
 
@@ -1222,10 +1217,7 @@ fn a_compensation_with_each_guard_and_capture_checks_as_a_template() {
         false,
     );
     let graph = assembled
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the compensation and its protocol check");
     let protocol = &graph.protocols()[0];
     assert_eq!(protocol.name, "Refunds");

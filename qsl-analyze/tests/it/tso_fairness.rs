@@ -9,6 +9,7 @@
 //! operations return no value, so the loop guard is `true` in place of the
 //! load's binder reading 0; the lasso of the AC is the same.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -852,7 +853,7 @@ fn refusal_of(fairness: &str) -> qsl_semantics::check::CheckRefusal {
     )
     .expect("the unit assembles")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .expect_err("the unit refuses");

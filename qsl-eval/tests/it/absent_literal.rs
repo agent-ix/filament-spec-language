@@ -10,6 +10,7 @@ use qsl_semantics::check::{CheckRefusal, PackageDeclarations};
 use qsl_semantics::model::object_environment::ObjectEnvironment;
 use quire_eval::FamilyOutcome;
 use quire_exact::{Integer, Meter, OptionValue, Outcome, ScalarLimits, Value, ValueType};
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -52,10 +53,7 @@ fn compile(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     )
     .expect("the assembler admits the declarations");
     declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(CheckedPackage::link)
 }
 

@@ -8,6 +8,7 @@ use qsl_forms::build_unit;
 use qsl_foundation::SourceIdentity;
 use quire_checked::node::NodeKind;
 use quire_exact::{Integer, RationalDomain, Role};
+use quire_semantic_value::checking::CheckMode;
 
 use super::*;
 use crate::check::ir::{BodyBuilder, Node};
@@ -43,10 +44,7 @@ fn check(declarations: &str) -> Checked {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"));
     Checked { text, graph }
 }

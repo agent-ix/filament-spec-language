@@ -14,6 +14,7 @@ use quire_exact::{
     admit_text, IllTypedCause, Integer, Meter, Outcome, ScalarLimits, TextPayload, TextProfile,
     TextType, Value,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -56,10 +57,7 @@ fn compile(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     declarations.ieee_profile =
         Some(admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[]).unwrap());
     declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map(CheckedPackage::link)
 }
 

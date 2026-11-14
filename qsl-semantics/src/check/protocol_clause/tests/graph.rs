@@ -5,6 +5,7 @@
 
 use ix_trace_rs::trace;
 use qsl_forms::ProtocolNodeKind;
+use quire_semantic_value::checking::CheckMode;
 
 use super::{assemble, assemble_with, checks, protocol_causes, refusals, HEADER};
 use crate::check::protocol_clause::{CausalEdge, EdgeKind, Port, PortRef, ProtocolNodeId};
@@ -503,7 +504,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
     let (text, assembled) = assemble_with(&header, &source);
     let found = assembled
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("an await under no temporal profile refuses");

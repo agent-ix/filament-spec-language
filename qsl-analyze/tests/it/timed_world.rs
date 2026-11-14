@@ -5,6 +5,7 @@
 //! names; and a unit over it whose body states the guards, resets, time
 //! invariants and claims (ADR-026 §11's `Rpc` and the other FR-239 models).
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use qsl_eval::simulation::model::{
@@ -407,10 +408,7 @@ fn world_built_in_with_protocol_selection(
     }
     let graph = declarations
         .with_unwritten_timed_members()
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let header = json!({"identity": package});
     let mut fields = json!({"phase": {"integer": "0"}, "inflight": {"boolean": false},
@@ -580,10 +578,7 @@ pub(crate) fn refining_from(
     .with_unwritten_refinements();
     let regions = declarations.regions();
     let graph = declarations
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .map_err(|refusals| {
             refusals
                 .into_iter()

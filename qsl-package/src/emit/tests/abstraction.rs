@@ -12,6 +12,7 @@ use qsl_semantics::check::{
 };
 use quire_checked::key::DeclarationKey;
 use quire_exact::Identifier;
+use quire_semantic_value::checking::CheckMode;
 
 use super::*;
 
@@ -102,10 +103,7 @@ fn linked() -> (Vec<u8>, CheckedPackage) {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(
-            quire_semantic_value::checking::CheckMode::Linked,
-            CheckingLimits::default(),
-        )
+        .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (document, CheckedPackage::link(graph))
 }

@@ -7,6 +7,7 @@ use ix_trace_rs::trace;
 use qsl_forms::build_unit;
 use qsl_foundation::{Setting, SourceIdentity};
 use quire_exact::ValueType;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 use super::CheckedOrdering;
@@ -66,11 +67,10 @@ fn check_with_limits(
     // lowering stage, whose contract is its own. Any other refusal is the
     // check's answer; when emission refusals are all there are, the graph
     // is read through the per-protocol results.
-    let refusals =
-        match assembled().check(quire_semantic_value::checking::CheckMode::Linked, limits) {
-            Ok(graph) => return Ok(graph),
-            Err(refusals) => refusals,
-        };
+    let refusals = match assembled().check(CheckMode::Linked, limits) {
+        Ok(graph) => return Ok(graph),
+        Err(refusals) => refusals,
+    };
     let checked: Vec<CheckRefusal> = refusals
         .into_iter()
         .filter(|refusal| {
@@ -84,8 +84,7 @@ fn check_with_limits(
     if !checked.is_empty() {
         return Err(checked);
     }
-    assembled()
-        .check_with_protocol_results(quire_semantic_value::checking::CheckMode::Linked, limits)
+    assembled().check_with_protocol_results(CheckMode::Linked, limits)
 }
 
 /// The one channel's checked ordering.

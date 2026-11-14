@@ -3,6 +3,7 @@
 //! model subject's transition relation and of a temporal item's proof
 //! queries, over the `Counter` and `Slot` subjects.
 
+use quire_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
@@ -230,10 +231,7 @@ fn world(
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("{unit}: the unit checks: {refusals:?}"));
     let clauses: Vec<CheckedTemporalClause> = graph
         .temporal_clauses()

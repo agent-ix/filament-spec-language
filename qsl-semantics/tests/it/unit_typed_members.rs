@@ -12,6 +12,7 @@ use qsl_semantics::model::accounting::ModelNormalizationLimits;
 use qsl_semantics::model::intake::admit_unit;
 use quire_checked::key::DeclarationKey;
 use quire_exact::{IllTypedCause, NodeKey, ValueType};
+use quire_semantic_value::checking::CheckMode;
 use serde_json::{json, Value};
 
 use crate::model_operations::{
@@ -132,7 +133,7 @@ fn quantity_types_check_in_every_position_over_the_one_unit_node() {
     let graph = admit_and_assemble_with_body(&document, &body)
         .expect("every position assembles")
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("every position checks");
@@ -231,7 +232,7 @@ fn quantity_types_check_in_every_position_over_the_one_unit_node() {
     let (text, _) = config_unit_with_profiles(&document, "", &mismatched);
     let refusals = declarations
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("3 s is not a Quantity<ms>");
@@ -346,7 +347,7 @@ fn source_model_alias_names_preserve_nominal_units_and_member_bounds() {
     )
     .expect("the admitted model alias resolves in both type positions")
     .check(
-        quire_semantic_value::checking::CheckMode::Linked,
+        CheckMode::Linked,
         quire_semantic_value::checking::CheckingLimits::default(),
     )
     .expect("the function checks with the alias's admitted target");
@@ -443,7 +444,7 @@ fn unit_bounds_bound_the_members_of_their_unit_or_alias() {
     let graph = admit_and_assemble_with_body(&admitted, UNITS)
         .expect("assembles")
         .check(
-            quire_semantic_value::checking::CheckMode::Linked,
+            CheckMode::Linked,
             quire_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("checks");
@@ -645,7 +646,7 @@ fn unit_bounds_reach_records_aliases_of_aliases_and_every_node() {
         let graph = admit_and_assemble_with_body(document, UNITS)
             .expect("assembles")
             .check(
-                quire_semantic_value::checking::CheckMode::Linked,
+                CheckMode::Linked,
                 quire_semantic_value::checking::CheckingLimits::default(),
             )
             .expect("checks");

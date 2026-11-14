@@ -23,6 +23,7 @@ use quire_exact::{
     CardinalityBound, CollectionKind, CollectionType, EffectiveId, IllTypedCause, Presence,
     ValueType,
 };
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 use quire_semantic_value::declaration::FieldRef;
 
@@ -301,10 +302,7 @@ pub(crate) fn check_declarations(
         vec![],
     )
     .expect("the model assembles");
-    declarations.check(
-        quire_semantic_value::checking::CheckMode::Linked,
-        CheckingLimits::default(),
-    )
+    declarations.check(CheckMode::Linked, CheckingLimits::default())
 }
 
 pub(crate) fn descendants(root: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {

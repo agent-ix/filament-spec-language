@@ -20,6 +20,7 @@ use qsl_semantics::check::{BodyTerm, Capability, PackageDeclarations};
 use qsl_semantics::model::intake::SelectedModels;
 use qsl_semantics::value::{admit_integer_division, DefinitionRole};
 use quire_exact::Cancel;
+use quire_semantic_value::checking::CheckMode;
 use quire_semantic_value::checking::CheckingLimits;
 
 const PLUGIN: &str = "qsl.test-plugin";
@@ -158,10 +159,7 @@ fn guarded_package() -> CheckedPackage {
     );
     CheckedPackage::link(
         declarations
-            .check(
-                quire_semantic_value::checking::CheckMode::Linked,
-                CheckingLimits::default(),
-            )
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the package checks"),
     )
 }

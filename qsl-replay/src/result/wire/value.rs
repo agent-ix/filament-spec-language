@@ -41,6 +41,7 @@ use super::{malformed, present, spelled, CauseCodecError};
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+    use quire_semantic_value::checking::CheckMode;
     use quire_semantic_value::declaration::EnvironmentFailure;
 
     fn package() -> CheckedPackage {
@@ -52,7 +53,7 @@ mod tests {
         CheckedPackage::link(
             declarations
                 .check(
-                    quire_semantic_value::checking::CheckMode::Linked,
+                    CheckMode::Linked,
                     quire_semantic_value::checking::CheckingLimits::default(),
                 )
                 .expect("the empty fixture package checks"),
@@ -184,7 +185,7 @@ mod tests {
         let package = CheckedPackage::link(
             declarations
                 .check(
-                    quire_semantic_value::checking::CheckMode::Linked,
+                    CheckMode::Linked,
                     quire_semantic_value::checking::CheckingLimits::default(),
                 )
                 .expect("the package checks"),
