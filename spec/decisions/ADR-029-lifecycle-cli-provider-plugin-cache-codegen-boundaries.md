@@ -246,8 +246,8 @@ their dependency closure:
      conformance matrix cases (FR-564, FR-565) and the parity runner with
      its program generator (FR-295, FR-563). It does not depend on
      `qsl-jit`; `cargo xtask parity` links both. The driver depends on it for
-     the CLI half of the matrix and for `quire-aot`'s parity
-     (amendment 2026-11-08).
+     the CLI half of the matrix; `quire-aot` is a QSL crate that
+     `cargo xtask parity` links (amendment 2026-11-08, 2026-11-14).
    - Driver repository: `quire-plugin-host` (§5),
      `quire-aot` (§7) and the binary crate `quire-cli`.
 
@@ -824,7 +824,7 @@ to FR-109's `run_clause`. Three backends implement the seam:
 | Backend | Crate | `prepare` | `call` and `evaluate` |
 |---|---|---|---|
 | Interpreter | `qsl-eval` | Accepts every entry S6a accepts | S6a, `CheckedPackageEvaluation::call_supplied` and `evaluate_clause` |
-| AOT | `quire-aot` (driver repository, IR lane) | `lower`, then `generate` with the AOT target, then a build with the toolchain the caller names | Runs the built executable as a child process over PL-3 framing |
+| AOT | `quire-aot` (QSL) | Builds the artifact the driver's `lower` and `generate` with the AOT target emitted, with the toolchain the caller names | Runs the built executable as a child process over PL-3 framing |
 | JIT | `qsl-jit` (QSL layer X) | Translates the checked entries to machine code in memory | Calls the generated code |
 
 **EB-2 Checked-only input.** `prepare` takes `&CheckedPackage`, which only S4
@@ -880,10 +880,13 @@ generated artifact is FR-331 `artifacts` bytes with a source map keyed by
 occurrence key. QSL emits no target-specific code. A runtime monitor is
 another `generate` target behind the same boundary.
 
-The AOT backend is the crate `quire-aot` in the driver repository, owned by
-the IR lane, not a QSL crate. QSL's part of AOT is the seam (FR-294), the
-parity rules (FR-295) and the parity runner the driver runs over it (FR-563)
-(amendment 2026-11-08).
+The AOT backend is the crate `quire-aot`, owned by QSL: it implements the seam
+(FR-294), meets the parity rules (FR-295) and is gated by the parity runner
+(FR-563). It builds the FR-331 artifact and runs it as a child process, and depends
+on no driver crate (FR-280). Lowering and generation with the AOT target stay with
+the driver, CG and the IR lane, which pass their artifact to the backend
+(amendment 2026-11-14, QSL-1942; it replaces the 2026-11-08 amendment that gave
+`quire-aot` to the IR lane).
 
 **EB-7 Building the JIT.** This record fixes the seam and EB-4. `qsl-jit` is
 built after the engines stabilize. Its code generator is Cranelift, for now,

@@ -57,7 +57,9 @@ The outcome carries no member naming the backend that ran.
 
 Each non-interpreter backend runs the conformance corpus and generated
 programs against the interpreter, and any difference fails the gate (ADR-029
-EB-5, QSpec FR-306-AC-1).
+EB-5, QSpec FR-306-AC-1). The conformance corpus is the set of run vectors
+FR-563 selects as parity cases (the `runtime`/`run` vectors it reads in place
+through FR-350), each with its one decoded argument assignment.
 
 ### The parity program generator
 
@@ -71,7 +73,7 @@ tuples. The gate's default seed is `0x51534C2D4A495431` (the ASCII bytes
   literals, operators, `let`, `if`, calls, records, collections and function
   declarations.
 - **Types.** Parameters and results range over `Boolean`, bounded `Int`,
-  `Rational`, `Decimal` and `Text`, and records and collections of them.
+  bounded `Rational`, `Decimal` and bounded `Text`, and records and collections of them.
 - **Size.** A unit holds 1 to 8 `pure` functions, each with 0 to 4
   parameters and a body of at most 64 expression nodes. A body calls only
   functions declared earlier in the unit, so no unit recurses.
@@ -85,7 +87,9 @@ tuples. The gate's default seed is `0x51534C2D4A495431` (the ASCII bytes
   source bytes, the entry, the arguments and both outcomes; running the
   generator with that seed and taking that index reproduces the unit.
 
-QSL's code-generation boundary for AOT is the v2 package (ADR-029 EB-6). CG
+QSL owns the AOT backend, the crate `quire-aot` (ADR-029 EB-6), which builds
+and runs the generated artifact and meets every rule above. QSL's
+code-generation boundary for AOT is the v2 package (ADR-029 EB-6). CG
 generates from S5 IR, negotiated per item before emission. An item not
 settled `supported` emits nothing (QSpec FR-331-AC-2). The generated artifact
 is FR-331 `artifacts` bytes with a source map keyed by occurrence key. A
@@ -136,7 +140,7 @@ from `prepare`.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-295-AC-1 | Over the conformance corpus and the 10,000 programs the parity program generator yields at the gate's default seed, with their arguments, each backend's outcome, cause, `Location` and loss records equal the interpreter's; a deliberately wrong backend that rounds one decimal operation fails the gate, naming the program and both outcomes. | Test (TC-779) |
+| FR-295-AC-1 | Over the conformance corpus (FR-563's run vectors, each as one case with its one argument tuple) and the 10,000 programs the parity program generator yields at the gate's default seed, with their arguments, each backend's outcome, cause, `Location` and loss records equal the interpreter's; a deliberately wrong backend that rounds one decimal operation fails the gate, naming the program and both outcomes. | Test (TC-779) |
 | FR-295-AC-2 | For FR-100-AC-6's `seven` with `work_units` 0 to 5, and for the first 1,000 generated programs at the default seed, each call run with `work_units` drawn by the same seed from 0 to the interpreter's measured spend for that call, each backend's `Incomplete` names the same limit at the same charge point as the interpreter's. | Test (TC-780) |
 | FR-295-AC-3 | FR-262-AC-1's `count` called with `100000`, on a thread with a 512 KiB stack, returns the interpreter's outcome on each backend, both with `work_units` sized for it and with `work_units` one below the run's measured spend; `prepare.code_bytes` set to 1 makes `prepare` return `PrepareFailure::Limit(LimitExceeded)` naming `prepare.code_bytes`, and `prepare.compile_work_units` set to 0 makes it return the same failure naming `prepare.compile_work_units`. | Test (TC-780) |
 | FR-295-AC-4 | A backend made to hit an injected internal error returns `Fault`, exit 30, and no value. The JSON outcome documents (FR-286) of one call on the interpreter and on each other backend are byte-equal. | Test (TC-780) |
@@ -153,7 +157,7 @@ from `prepare`.
 
 ## Overlap
 
-The driver repository owns `quire-aot` and the AOT target with CG. The JIT's
+QSL owns the AOT backend, the crate `quire-aot` (ADR-029 EB-6); the driver and CG own lowering and generation with the AOT target. The JIT's
 code generator is Cranelift (ADR-035); these rules bind any generator.
 
 ## References

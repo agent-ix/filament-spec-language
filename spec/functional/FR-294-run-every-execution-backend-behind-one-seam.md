@@ -98,8 +98,7 @@ that would exceed its bound is not admitted and returns
 `prepare` that stops returns no prepared value.
 
 Three backends implement the seam: the interpreter in `qsl-eval`, which
-accepts every entry S6a accepts and runs S6a; AOT in the driver's
-`quire-aot`; and JIT in QSL's `qsl-jit` (layer X).
+accepts every entry S6a accepts and runs S6a; AOT in QSL's `quire-aot`; and JIT in QSL's `qsl-jit` (layer X).
 
 The interpreter is the reference: S6a defines what a checked package means,
 and replay runs only through S6a (ADR-029 EB-3, ADR-011 FB-07).
@@ -182,8 +181,9 @@ As the trait signatures state.
 
 ## Overlap
 
-The driver repository owns `quire-aot`: lowering, generation with the AOT
-target, the toolchain build and the child-process run.
+QSL owns the AOT backend, the crate `quire-aot` (ADR-029 EB-6): the
+toolchain build of the artifact `generate` emitted and the child-process run.
+Lowering and generation with the AOT target stay with the driver and CG.
 
 ## References
 
