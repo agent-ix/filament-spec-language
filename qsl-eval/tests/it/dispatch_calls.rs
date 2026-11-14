@@ -3263,26 +3263,14 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
             .check(mode, CheckingLimits::default())
             .expect_err("the malformed dispatch declaration is refused")
     };
-    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+    let table_out_of_range = || {
         let mut declarations = package();
         declarations.dispatch_tables.clear();
-        let refusals = refusals_of(declarations, mode);
-        assert!(
-            matches!(
-                refusals.as_slice(),
-                [CheckRefusal {
-                    cause: CheckCause::InvalidDispatchDeclaration(detail),
-                    ..
-                }] if matches!(
-                    **detail,
-                    InvalidDispatchDeclaration::TableOutOfRange { table: 0, .. }
-                )
-            ),
-            "{mode:?}: {refusals:?}"
-        );
-
+        declarations
+    };
+    let functions = package().functions.len();
+    let function_out_of_range = || {
         let mut declarations = package();
-        let functions = declarations.functions.len();
         declarations.dispatch_tables[0] = DispatchTable::new(
             vec![(
                 receiver_type.clone(),
@@ -3294,20 +3282,42 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
             )],
             1,
         );
-        let refusals = refusals_of(declarations, mode);
-        assert!(
-            refusals.iter().any(|refusal| matches!(
-                &refusal.cause,
-                CheckCause::InvalidDispatchDeclaration(detail)
-                    if matches!(
-                        **detail,
-                        InvalidDispatchDeclaration::FunctionOutOfRange {
-                            role: DispatchFunctionRole::Body,
-                            index,
-                        } if index == functions
-                    )
-            )),
-            "{mode:?}: {refusals:?}"
-        );
-    }
+        declarations
+    };
+    let linked = refusals_of(table_out_of_range(), CheckMode::Linked);
+    let kernel = refusals_of(table_out_of_range(), CheckMode::Kernel);
+    assert_eq!(linked, kernel, "the table refusal is mode-independent");
+    assert!(
+        matches!(
+            linked.as_slice(),
+            [CheckRefusal {
+                cause: CheckCause::InvalidDispatchDeclaration(detail),
+                ..
+            }] if matches!(
+                **detail,
+                InvalidDispatchDeclaration::TableOutOfRange { table: 0, .. }
+            )
+        ),
+        "{linked:?}"
+    );
+
+    let linked = refusals_of(function_out_of_range(), CheckMode::Linked);
+    let kernel = refusals_of(function_out_of_range(), CheckMode::Kernel);
+    assert_eq!(linked, kernel, "the function refusal is mode-independent");
+    assert!(
+        matches!(
+            linked.as_slice(),
+            [CheckRefusal {
+                cause: CheckCause::InvalidDispatchDeclaration(detail),
+                ..
+            }] if matches!(
+                **detail,
+                InvalidDispatchDeclaration::FunctionOutOfRange {
+                    role: DispatchFunctionRole::Body,
+                    index,
+                } if index == functions
+            )
+        ),
+        "{linked:?}"
+    );
 }

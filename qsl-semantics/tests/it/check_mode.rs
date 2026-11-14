@@ -103,6 +103,11 @@ fn an_unproved_presence_checks_only_under_kernel() {
         "function p using v(x: Option<Integer>): Integer pure { value(x) }",
         |found| matches!(found, Obligation::Presence),
     );
+    let guarded = "function g using v(x: Option<Integer>): Integer pure \
+                   { if present(x) then value(x) else 0 }";
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        check(guarded, mode).unwrap_or_else(|refusals| panic!("{mode:?}: {refusals:?}"));
+    }
 }
 
 /// FR-104 "Definedness facts": `Kernel` reaches function bodies only, so a
@@ -112,6 +117,19 @@ fn an_unproved_presence_checks_only_under_kernel() {
 fn a_state_clause_still_refuses_its_obligation_under_kernel() {
     let clause = "invariant NoGuard using v on Config::ConfigVersion at current { \
                   deref(value(self.parent)).versionNumber < self.versionNumber }\n";
+    let guarded = "invariant ParentOrder using v on Config::ConfigVersion at current { \
+                   present(self.parent) implies deref(value(self.parent)).versionNumber \
+                   < self.versionNumber }\n";
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        let graph = crate::model_operations::admit_and_assemble_with_body(
+            &crate::model_operations::tc465_document(),
+            guarded,
+        )
+        .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
+        .check(mode, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{mode:?}: the guarded clause checks: {refusals:?}"));
+        assert!(graph.state_clause("ParentOrder").is_some(), "{mode:?}");
+    }
     for mode in [CheckMode::Linked, CheckMode::Kernel] {
         let declarations = crate::model_operations::admit_and_assemble_with_body(
             &crate::model_operations::tc465_document(),
@@ -209,8 +227,8 @@ fn an_unproved_rational_divisor_checks_only_under_kernel() {
     );
 }
 
-/// A reduction with no identity over a possibly empty source is
-/// `unproved-range` under `Linked`; `Kernel` leaves the emptiness to the
+/// A reduction with no identity over a possibly empty source is refused as
+/// an unproved nonempty-reduction obligation under `Linked`; `Kernel` leaves the emptiness to the
 /// evaluator.
 #[test]
 fn an_unproved_nonempty_reduction_checks_only_under_kernel() {
