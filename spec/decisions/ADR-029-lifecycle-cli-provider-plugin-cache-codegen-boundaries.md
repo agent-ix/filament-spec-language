@@ -248,8 +248,7 @@ their dependency closure:
      `qsl-jit`; `cargo xtask parity` links both. The driver depends on it for
      the CLI half of the matrix; `quire-aot` is a QSL crate that
      `cargo xtask parity` links (amendment 2026-11-08, 2026-11-14).
-   - Driver repository: `quire-plugin-host` (§5),
-     `quire-aot` (§7) and the binary crate `quire-cli`.
+   - Driver repository: `quire-plugin-host` (§5) and the binary crate `quire-cli`; `quire-aot` (§7) is a QSL crate.
 
    Nothing in CB-2 depends on any of them.
 4. **A second binary costs no core change.** A qualified binary is a thin

@@ -11,6 +11,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/quire-spec-language/FR-277
     type: depends_on
+  - target: ix://agent-ix/quire-spec-language/FR-563
+    type: references
   - target: "ix://agent-ix/quire-specification/FR-306"
     type: depends_on
   - target: "ix://agent-ix/quire-specification/FR-331"
@@ -73,7 +75,7 @@ tuples. The gate's default seed is `0x51534C2D4A495431` (the ASCII bytes
   literals, operators, `let`, `if`, calls, records, collections and function
   declarations.
 - **Types.** Parameters and results range over `Boolean`, bounded `Int`,
-  bounded `Rational`, `Decimal` and bounded `Text`, and records and collections of them.
+  bounded `Rational`, bounded `Decimal` and bounded `Text`, and records and collections of them.
 - **Size.** A unit holds 1 to 8 `pure` functions, each with 0 to 4
   parameters and a body of at most 64 expression nodes. A body calls only
   functions declared earlier in the unit, so no unit recurses.
