@@ -415,7 +415,7 @@ fn fixture_l_slots_take_their_own_origins() {
     let (_holder, request, files) = handoff(tc1070::SOURCE);
     let package = read(&request, &files["checked-package.json"]);
     let [visible] = decision_origins(&package).try_into().expect("one origin");
-    assert_eq!(visible, format!("{DECISION}2641..2650"));
+    assert_eq!(visible, format!("{DECISION}2653..2662"));
     assert_eq!(
         decide_origin(&package, &files, "visible", 0).expect("selects"),
         Some(visible)

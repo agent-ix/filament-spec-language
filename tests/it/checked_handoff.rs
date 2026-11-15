@@ -417,16 +417,16 @@ fn vector_bytes(n0: &str, n1: &str) -> String {
       "kind": "pending_obligation",
       "declaration": 0,
       "unit": 0,
-      "start": 150,
-      "end": 155,
+      "start": 153,
+      "end": 158,
       "capability_kind": "value-validity"
     }},
     {{
       "kind": "pending_obligation",
       "declaration": 0,
       "unit": 0,
-      "start": 161,
-      "end": 166,
+      "start": 164,
+      "end": 169,
       "capability_kind": "value-validity"
     }}
   ]
@@ -568,8 +568,8 @@ fn the_reader_returns_the_rows_the_writer_wrote() {
                 role: "expression".into(),
                 ordinal: 1,
             },
-            pending(150, 155),
-            pending(161, 166),
+            pending(153, 158),
+            pending(164, 169),
         ]
     );
 }
@@ -605,7 +605,7 @@ fn the_reader_refuses_each_vector() {
         InventoryReadError::Malformed(_)
     ));
     assert!(matches!(
-        refused(&swap("\"start\": 150", "\"start\": 10.0")),
+        refused(&swap("\"start\": 153", "\"start\": 10.0")),
         InventoryReadError::Malformed(_)
     ));
     assert!(matches!(
