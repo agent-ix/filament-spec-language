@@ -147,9 +147,10 @@ through the sidecar's reader, the compiler and Contract IR's reader.
   returns `Error::ReadBackDiffers` and no package.
 - The package is read with `read_checked_package` and the evidence `write`
   assembles, and compared with the sidecar by `Selection::check`.
-- A sidecar file path that is empty or leaves the directory, or a source label
-  other than `source:` for the unit and `library:` for a library, is
-  `Error::Label`; a file that cannot be read, or is over its ceiling (the
+- A sidecar file path that is empty or leaves the directory, that passes
+  through a symbolic link or names anything but a regular file (a symbolic
+  link, a FIFO, a device), or a source label other than `source:` for the unit
+  and `library:` for a library, is `Error::Label`; a file that cannot be read, or is over its ceiling (the
   reader's byte limit for `selection.json` and `checked-package.json`, the
   source ceiling for the others), is `Error::Read`; a sidecar that does not parse
   is `Error::Sidecar`.
@@ -412,7 +413,7 @@ the three directories. The packages hold:
 | FR-517-AC-21 | The handoff directory written for TC-1070 fixture E contains `equality.json`, whose bytes equal the encoding FR-531 states of the rows of the in-process unit, with the three row lists non-empty (the unit holds integer `=` applications) and each row's node members naming nodes of `checked-package.json`; the directory written for the unit of the inventory vector (`unit.native`, which holds no `==` or `!=` application) contains `equality.json` with the three lists empty; two writes of equal requests give byte-identical files. | Test (TC-1312) |
 | FR-517-AC-22 | A writer given a unit whose equality rows name a node the package does not hold returns `Error::Unnameable` and writes nothing, as for `inventory.json`; the written file holds no source text, no digest and no member the encoding of FR-531 does not list. | Test (TC-1312) |
 | FR-517-AC-23 | The writer emits the required `identities/4` source-record, source-union, source-operation and source-object lists from the same final emission as the package: original opaque keys, final structural/type references, original member identities and order round-trip through native joins. The reader requires all four lists and refuses the old format or an omitted list; a `identities/3` document is the old format and is refused; no optional compatibility path or source fallback supplies them. | Test (TC-1312) |
-| FR-517-AC-24 | `compile` over a directory `write` wrote returns a `CompiledHandoff` whose checked package emits the bytes of `checked-package.json` and whose admitted package passes `Selection::check`; the sidecar names the package name, the unit's file and the execution points the request gave. A directory whose `checked-package.json` is edited to other bytes the reader admits returns `Error::ReadBackDiffers`, one whose sidecar `unit` leaves the directory returns `Error::Label`, and one whose sidecar is removed returns `Error::Read`; none returns a package. | Test (TC-1312) |
+| FR-517-AC-24 | `compile` over a directory `write` wrote returns a `CompiledHandoff` whose checked package emits the bytes of `checked-package.json` and whose admitted package passes `Selection::check`; the sidecar names the package name, the unit's file and the execution points the request gave. A directory whose `checked-package.json` is edited to other bytes the reader admits returns `Error::ReadBackDiffers`, one whose sidecar `unit` leaves the directory, and one whose `models/0.json` is a symbolic link to a file outside it, return `Error::Label`, and one whose sidecar is removed returns `Error::Read`; none returns a package. | Test (TC-1312) |
 
 ## Dependencies
 

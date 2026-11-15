@@ -2913,6 +2913,17 @@ fn a_written_directory_compiles_back_and_a_changed_one_refuses() {
         Error::Label { label } if label == "sources/../x"
     ));
 
+    // A model file that is a symbolic link to a file outside the directory,
+    // with the same bytes.
+    let (_link_holder, linked) = written("event_position", Corpus::None, &Double::default());
+    let outside = linked.parent().unwrap().join("outside.json");
+    std::fs::rename(linked.join("models/0.json"), &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, linked.join("models/0.json")).unwrap();
+    assert!(matches!(
+        compile(&linked).unwrap_err(),
+        Error::Label { label } if label == "models/0.json"
+    ));
+
     // No sidecar.
     let (_bare_holder, bare) = written("event_position", Corpus::None, &Double::default());
     std::fs::remove_file(bare.join("selection.json")).unwrap();

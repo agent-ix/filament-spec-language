@@ -15,7 +15,7 @@ relationships:
 Verify the strategy witness and its replay gate, both refutation forms,
 the premise rules and the environment quantification.
 
-Scope: FR-571-AC-1 to FR-571-AC-7; FSpec FR-175-AC-1 to AC-5.
+Scope: FR-571-AC-1 to FR-571-AC-8; FSpec FR-175-AC-1 to AC-5.
 
 ## Test Procedure
 
@@ -40,6 +40,8 @@ Scope: FR-571-AC-1 to FR-571-AC-7; FSpec FR-175-AC-1 to AC-5.
    it back with `checked_handoff::compile`, build the subject with
    `protocol_subject` and dispatch `realizability_item` through the
    registered engines.
+8. Build the step 7 subject with the protocol name `Other`, then with a
+   memory selection naming `Flow::Nope`.
 
 Tag the tests `#[trace("TC-1411", "FR-571-AC-n")]`.
 
@@ -59,3 +61,5 @@ Tag the tests `#[trace("TC-1411", "FR-571-AC-n")]`.
   is not refuted.
 - Step 7: `proved`, exhaustive and uncertified, as for the in-process
   package.
+- Step 8: `SubjectRefusal::UnknownProtocol("Other")`; `SubjectRefusal::Memory`
+  with `NotAParallel` for entry 0, `Flow::Nope`; no subject either time.

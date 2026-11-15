@@ -18,9 +18,12 @@ use filament_spec_language::emit_checked_v2::Request;
 use fsl_analyze::analyze::{analyze_items, Engines};
 use fsl_analyze::protocol_analysis::{
     protocol_subject, realizability_item, RealizabilityRequest, SubjectBindings, SubjectPackage,
+    SubjectRefusal,
 };
 use fsl_eval::model_subject::{ModelInstance, RoleBinding};
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
+use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal};
+use fsl_foundation::MemoryModelName;
 use fsl_foundation::RequestIndex;
 use fsl_replay::protocol_analysis::{AssessedRootDraft, BoundsDraft, RunBudget};
 use fsl_replay::{
@@ -355,22 +358,22 @@ fn a_package_that_arrives_only_as_a_handoff_reaches_realizability() {
     );
 }
 
-/// FR-571 "The protocol subject": a protocol the package does not declare
-/// builds no subject.
-#[trace("TC-1411", "FR-571-AC-7")]
-#[test]
-fn an_undeclared_protocol_builds_no_subject() {
-    let holder = tempfile::tempdir().expect("a temporary directory");
-    let handoff = checked_handoff::compile(&written(holder.path())).expect("compiles back");
+/// The refusal `protocol_subject` gives over `handoff` for the protocol
+/// `protocol` with the memory selection `memory`.
+fn refusal(
+    handoff: &CompiledHandoff,
+    protocol: &str,
+    memory: Vec<MemorySelection>,
+) -> Option<SubjectRefusal> {
     let (snapshots, initial) = snapshots();
-    let refused = protocol_subject(
+    protocol_subject(
         SubjectPackage {
             package: handoff.checked(),
             packages: handoff.packages(),
             snapshots: &snapshots,
         },
         SubjectBindings {
-            protocol: "Other".to_owned(),
+            protocol: protocol.to_owned(),
             over: ModelInstance {
                 population: DeclarationKey {
                     package: PACKAGE.to_owned(),
@@ -379,7 +382,7 @@ fn an_undeclared_protocol_builds_no_subject() {
                 key: "c".to_owned(),
             },
             roles: Vec::new(),
-            memory: Vec::new(),
+            memory,
             initial: vec![initial],
             universes: Vec::new(),
             normalization: ModelNormalizationLimits::default(),
@@ -389,9 +392,35 @@ fn an_undeclared_protocol_builds_no_subject() {
             emit: handoff.emit_limits(),
         },
     )
-    .err();
+    .err()
+}
+
+/// FR-571-AC-8: a protocol the package does not declare, and a memory
+/// selection that names no outermost `parallel` of the protocol, build no
+/// subject.
+#[trace("TC-1411", "FR-571-AC-8")]
+#[test]
+fn an_undeclared_protocol_or_an_unresolved_memory_selection_builds_no_subject() {
+    let holder = tempfile::tempdir().expect("a temporary directory");
+    let handoff = checked_handoff::compile(&written(holder.path())).expect("compiles back");
     assert_eq!(
-        refused,
-        Some(fsl_analyze::protocol_analysis::SubjectRefusal::UnknownProtocol("Other".to_owned()))
+        refusal(&handoff, "Other", Vec::new()),
+        Some(SubjectRefusal::UnknownProtocol("Other".to_owned()))
+    );
+    assert_eq!(
+        refusal(
+            &handoff,
+            "Flow",
+            vec![MemorySelection {
+                parallel: "Flow::Nope".to_owned(),
+                model: MemoryModelName::Tso,
+            }]
+        ),
+        Some(SubjectRefusal::Memory(
+            MemorySelectionRefusal::NotAParallel {
+                entry: 0,
+                parallel: "Flow::Nope".to_owned(),
+            }
+        ))
     );
 }

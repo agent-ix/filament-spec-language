@@ -45,12 +45,34 @@ fn inside(path: &str) -> Result<(), Error> {
 }
 
 /// The bytes of the file at the relative `path` inside `root`, at most
-/// `ceiling` of them: a longer file is refused, not truncated.
+/// `ceiling` of them: a longer file is refused, not truncated. Every
+/// directory on the way must be a real directory and the file a regular
+/// file, so a symbolic link cannot reach outside `root` and a FIFO or device
+/// cannot block the read; anything else is [`Error::Label`].
 pub(super) fn read(root: &Path, path: &str, ceiling: usize) -> Result<Vec<u8>, Error> {
     use std::io::Read as _;
     inside(path)?;
     let target = root.join(path);
     let failed = io_read(&target);
+    let label = || Error::Label {
+        label: path.to_owned(),
+    };
+    let mut reached = root.to_path_buf();
+    let mut components = Path::new(path).components().peekable();
+    while let Some(component) = components.next() {
+        reached.push(component);
+        let kind = std::fs::symlink_metadata(&reached)
+            .map_err(&failed)?
+            .file_type();
+        let expected = if components.peek().is_some() {
+            kind.is_dir()
+        } else {
+            kind.is_file()
+        };
+        if !expected {
+            return Err(label());
+        }
+    }
     let file = std::fs::File::open(&target).map_err(&failed)?;
     let limit = u64::try_from(ceiling).unwrap_or(u64::MAX);
     let mut bytes = Vec::new();
