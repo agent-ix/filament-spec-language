@@ -2,22 +2,22 @@
 //! FR-097 and FR-075 (ADR-014 §4 "Bounded request"): a requirement item
 //! read from a checked package carries no proof bound, and its bounded
 //! follow-up is the single item of its own request, at the original
-//! occurrence, carrying the substituted proof bounds with QSL's domain
-//! kinds (QSpec FR-331 `extent.bounds`); a temporal item's subject proof
+//! occurrence, carrying the substituted proof bounds with FSL's domain
+//! kinds (FSpec FR-331 `extent.bounds`); a temporal item's subject proof
 //! bounds are separate (`temporal.subject.proof_bounds`).
 
 use std::collections::BTreeMap;
 
-use ix_trace_rs::trace;
-use qsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, FiniteBoundKind, ProofBound};
-use qsl_foundation::RequestIndex;
-use qsl_route::request::{
+use filament_exact::{Integer, NodeKey, PathSegment};
+use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
+use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, FiniteBoundKind, ProofBound};
+use fsl_foundation::RequestIndex;
+use fsl_route::request::{
     items_from_requirements, BoundRefusal, ExtentClassification, RequirementItem,
 };
-use qsl_route::Registry;
-use qsl_semantics::check::Capability;
-use quire_exact::{Integer, NodeKey, PathSegment};
-use quire_semantic_value::catalog::{CatalogCode, CatalogCoded};
+use fsl_route::Registry;
+use fsl_semantics::check::Capability;
+use ix_trace_rs::trace;
 
 use super::request_builder::package;
 
@@ -41,7 +41,7 @@ fn range(lower: i64, upper: i64) -> FiniteBound {
 }
 
 /// The bounded follow-up of `item` with `bound` for its one unbounded
-/// domain, and that domain with the kind QSL classified for it.
+/// domain, and that domain with the kind FSL classified for it.
 fn bounded(item: &RequirementItem, bound: FiniteBound) -> (RequirementItem, ProofBound) {
     let [(domain, kind)] = item.unbounded() else {
         panic!("one unbounded domain: {:?}", item.unbounded());
@@ -142,7 +142,7 @@ fn a_follow_up_from_a_later_record_has_its_own_index_and_the_original_occurrence
 #[test]
 fn a_temporal_follow_up_carries_its_extent_bounds_at_its_occurrence() {
     let item = item(
-        "profile t = \"quire.temporal.event-position.false-extension/v1\";\n\
+        "profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
          record Loose { n: Integer; }\n\
          temporal C using t over (c: Loose) clock \"model-steps\" on origin \
          { eventually[0, 3] holds(c.n = 2) }",
@@ -173,7 +173,7 @@ fn a_temporal_follow_up_carries_its_extent_bounds_at_its_occurrence() {
 }
 
 /// FR-097-AC-10: a model-subject temporal item's subject proof bounds are
-/// supplied by the caller as population cardinalities, written with QSL's
+/// supplied by the caller as population cardinalities, written with FSL's
 /// `population` kind in key order, and independent of the extent. A
 /// supplied-trace item and a non-temporal item have none and refuse; so do a
 /// non-population key and a non-cardinality bound, each with the
@@ -215,7 +215,7 @@ fn subject_proof_bounds_are_independent_of_the_extent() {
     assert!(with.proof_bounds().is_empty());
 
     let trace = item(
-        "profile t = \"quire.temporal.infinite-trace/v1\";\n\
+        "profile t = \"filament.temporal.infinite-trace/v1\";\n\
          record Counter { level: Int[0, 9]; }\n\
          temporal C using t over (c: Counter) clock \"model-steps\" on origin \
          { eventually holds(c.level = 2) }",
@@ -278,7 +278,7 @@ fn bounded_refuses_a_bounded_item_and_an_infinite_trace_item() {
     assert_eq!(again, BoundRefusal::NoUnboundedDomain);
 
     let temporal = item(
-        "profile t = \"quire.temporal.infinite-trace/v1\";\n\
+        "profile t = \"filament.temporal.infinite-trace/v1\";\n\
          record Counter { level: Int[0, 9]; }\n\
          temporal C using t over (c: Counter) clock \"model-steps\" on origin \
          { eventually holds(c.level = 2) }",

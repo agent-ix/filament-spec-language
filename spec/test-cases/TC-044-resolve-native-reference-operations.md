@@ -3,7 +3,7 @@ id: TC-044
 title: "Resolve explicit references and operation declarations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: verifies
 ---
 # TC-044: Resolve explicit references and operation declarations

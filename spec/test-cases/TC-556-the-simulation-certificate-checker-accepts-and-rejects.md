@@ -3,9 +3,9 @@ id: TC-556
 title: "The simulation certificate checker accepts a true relation and rejects a false one"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-149
+  - target: ix://agent-ix/filament-spec-language/FR-149
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: verifies
 ---
 # TC-556: The simulation certificate checker accepts a true relation and rejects a false one

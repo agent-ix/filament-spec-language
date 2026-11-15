@@ -3,7 +3,7 @@ id: TC-543
 title: "History fields check at S3 and compute along a behaviour without changing the concrete model"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-138
+  - target: ix://agent-ix/filament-spec-language/FR-138
     type: verifies
 ---
 # TC-543: History fields check at S3 and compute along a behaviour without changing the concrete model

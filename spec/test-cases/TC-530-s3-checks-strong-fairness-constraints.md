@@ -3,7 +3,7 @@ id: TC-530
 title: "S3 checks strong fairness constraints and the unmarked fairness kind"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-129
+  - target: ix://agent-ix/filament-spec-language/FR-129
     type: verifies
 ---
 # TC-530: S3 checks strong fairness constraints and the unmarked fairness kind

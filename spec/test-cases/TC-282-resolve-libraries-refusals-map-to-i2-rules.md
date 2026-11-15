@@ -3,7 +3,7 @@ id: TC-282
 title: "Every resolve_libraries refusal classifies to an I2 rule, a §4 condition, E3 resolution, "
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-282: Every resolve_libraries refusal classifies to an I2 rule, a §4 condition, E3 resolution, 

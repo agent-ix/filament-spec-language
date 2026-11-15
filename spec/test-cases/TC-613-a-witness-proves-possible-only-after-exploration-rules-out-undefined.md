@@ -3,11 +3,11 @@ id: TC-613
 title: "A witness proves possible only after exploration rules out an undefined evaluation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-168
+  - target: ix://agent-ix/filament-spec-language/FR-168
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
 ---
 # TC-613: A witness proves possible only after exploration rules out an undefined evaluation

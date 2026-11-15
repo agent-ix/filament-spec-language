@@ -3,7 +3,7 @@ id: TC-512
 title: "S3 refuses ambiguous, shadowing, wrong-kind and wrong-channel names, in builder order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-113
+  - target: ix://agent-ix/filament-spec-language/FR-113
     type: verifies
 ---
 # TC-512: S3 refuses ambiguous, shadowing, wrong-kind and wrong-channel names, in builder order

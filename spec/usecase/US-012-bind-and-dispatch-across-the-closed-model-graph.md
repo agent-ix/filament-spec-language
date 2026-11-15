@@ -3,29 +3,29 @@ id: US-012
 title: "Bind and dispatch across the closed model graph"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-083
+  - target: ix://agent-ix/filament-spec-language/FR-083
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-300
+  - target: ix://agent-ix/filament-spec-language/FR-300
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-301
+  - target: ix://agent-ix/filament-spec-language/FR-301
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-303
+  - target: ix://agent-ix/filament-spec-language/FR-303
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: references
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-012: Bind and dispatch across the closed model graph
@@ -101,7 +101,7 @@ downstream proof that assumes deterministic replay.
 
 Upstream: domain-package admission
 ([FR-056](../functional/FR-056-admit-domain-package-model-declarations.md)),
-the shared model-graph vocabulary quire-specification owns (AD-006,
+the shared model-graph vocabulary filament-specification owns (AD-006,
 FR-150–153, interfaces I03–I05). Downstream: state and graph evaluation
 ([FR-047](../functional/FR-047-evaluate-finite-object-reference-graphs.md))
 consumes the bound graph's identities and closed populations as its own

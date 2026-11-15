@@ -3,7 +3,7 @@ id: TC-665
 title: "S3 checks orderings and fences and records access orderings; EN-1 classifies accesses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: verifies
 ---
 # TC-665: S3 checks orderings and fences and records access orderings; EN-1 classifies accesses
@@ -67,7 +67,7 @@ Tag the tests `#[trace("TC-665", "FR-220-AC-n")]`.
 - Step 4: 16 states and `proved` both times.
 - Step 5: `WeakAccessShape.failures` contains an entry with
   `MultiLocation{locations}` naming both locations and an entry with
-  `JoinPolicy`; each shape serializes as QSpec FR-439 specifies, and both use
+  `JoinPolicy`; each shape serializes as FSpec FR-439 specifies, and both use
   the common entry form and canonical ordering.
 - Step 6: no refusal; both attempts atomic with ordering `relaxed`; no class recorded.
 - Step 7: no refusal; no class recorded.

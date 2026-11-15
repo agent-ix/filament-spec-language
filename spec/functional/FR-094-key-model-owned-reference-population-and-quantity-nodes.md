@@ -3,21 +3,21 @@ id: FR-094
 title: "Key model-owned, reference, population, clause-function and quantity type nodes"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: traces_to
 ---
 # FR-094: Key model-owned, reference, population, clause-function and quantity type nodes
@@ -39,15 +39,15 @@ requirements reference get their keys here:
    operation clauses (`check::checked_dispatch`, FR-151 dispatch);
 4. the type node of a quantity, for a declared unit and for a compound unit.
 
-Every node here is identified by QSpec FR-322's structural node id
+Every node here is identified by FSpec FR-322's structural node id
 `{package, path, ordinal}` ("Structural node identity"), compared
 componentwise by its derived `Ord` and never hashed. A node that stands for a
-domain package's declaration carries QSpec's `ModelOwner` as its `owner`
+domain package's declaration carries FSpec's `ModelOwner` as its `owner`
 relation, as ADR-013 O-04 and C-02 decide, and the owner is no part of the
 node id. The producer (`check`) assigns every `ordinal`, which is `0` unless
 two nodes share one `package` and `path`; a reader derives none. The node
 shapes, the `model_population` and `compound_unit` shapes and the `clause`
-binding are QSL proposals to QSpec (ADR-013 QC-25, QC-26). QSpec references (`ix://agent-ix/quire-specification`, cited by
+binding are FSL proposals to FSpec (ADR-013 QC-25, QC-26). FSpec references (`ix://agent-ix/filament-specification`, cited by
 reference, never copied): FR-322, `proposals/checked-package-v2/schema.json`,
 `operation-catalog.json` and the positive fixtures.
 
@@ -56,7 +56,7 @@ reference, never copied): FR-322, `proposals/checked-package-v2/schema.json`,
 - For each admitted domain package: its model selection's
   `DomainPackageRef` identity and its effective view, whose
   `type_identities` map each top-level `DeclarationKey{package, node}` to its
-  `EffectiveId` (`qsl-semantics/src/model/normalize.rs`, ADR-013 O-03, O-05).
+  `EffectiveId` (`fsl-semantics/src/model/normalize.rs`, ADR-013 O-03, O-05).
 - The checked types: `ValueType::Reference(EffectiveId)`, the resolved type
   form of a `Population<T>[N]` parameter (its object type `T` and its maximum
   `N`), and `ValueType::Quantity(UnitId)` with the package's unit table.
@@ -85,14 +85,14 @@ the FR-322 structural id with these members:
 - `ordinal`: `0`, no two model declaration nodes sharing a `package` and
   `path`.
 
-Its `owner` is QSpec's content-only `ModelOwner`, `{kind: "model", identity,
-node}`, with no `version` member (QSpec FR-322-AC-28), the same `identity` and
+Its `owner` is FSpec's content-only `ModelOwner`, `{kind: "model", identity,
+node}`, with no `version` member (FSpec FR-322-AC-28), the same `identity` and
 `node`; it is a relation to the declaring domain package and no part of the id.
 The node has no `declaration`: its name belongs to the domain package, not to
-a QSL source declaration (FR-322 `declaration`).
+an FSL source declaration (FR-322 `declaration`).
 
 A domain package selects one version of an identity per check (ADR-013 O-01,
-QSpec FR-321), so within one check `package` and `node` name exactly one
+FSpec FR-321), so within one check `package` and `node` name exactly one
 declaration. A domain package's version is no part of the id, so a change of
 the domain package that leaves a node's content unchanged yields the same
 model-owned node ids. The v2 emission writes a model-owned node's `ModelOwner`
@@ -143,7 +143,7 @@ role it also plays, because a checked node names it only through a
 `relationship_end` member.
 
 The body is empty because the owner already determines the declaration's
-content: intake admits one selection of an identity per check (QSpec FR-321).
+content: intake admits one selection of an identity per check (FSpec FR-321).
 Across checks, the node id is the same for every version selected under one
 `identity`. An empty body also keeps model declaration
 nodes out of recursion groups, so two object types that reference each other
@@ -181,7 +181,7 @@ unreferenced model fixture is emitted from the `M` alias declaration site
 even when the fixture has no function that names it.
 
 An [FR-496](./FR-496-emit-model-operation-effects-into-checked-packages.md)
-`operation_effects` row is a further root of that reachability rule. QSpec
+`operation_effects` row is a further root of that reachability rule. FSpec
 FR-322-AC-303's reader refuses a row whose `declaring` node or effect subject
 has no node (`missing_declaration`/`missing-name`), so for each operation that
 has a row, `check` builds the node of its declaring owner, of the declaring
@@ -202,7 +202,7 @@ environment are exactly the admitted effective views' `type_identities`
 values, so every admitted `Reference<T>` maps to one `DeclarationKey`.
 
 A model declaration node's body names no member, so the type of a `field` or
-`operation` member is not in the graph. ADR-013 QC-25 asks QSpec how a
+`operation` member is not in the graph. ADR-013 QC-25 asks FSpec how a
 reader derives it for FR-322's `member` result form and `member_of`
 constraint. The `Attribute` projection over a `deref` result is QC-24's.
 
@@ -246,8 +246,8 @@ A population the domain package declares and a state clause names as `M::P`
 (FR-391) is not a `Population<T>[N]` type node. Its reference is a separate
 node keyed by the population's declaration key alone, with no `N`, whose
 id is the model node id of that key and whose
-`owner` is the model owner of that key (QSpec FR-322): two populations of one
-member type are two nodes, and the same population read twice is one node. QSpec FR-322 ("Population references")
+`owner` is the model owner of that key (FSpec FR-322): two populations of one
+member type are two nodes, and the same population read twice is one node. FSpec FR-322 ("Population references")
 defines that node, and FR-391 states how `check` emits it.
 
 ### Clause function nodes
@@ -308,7 +308,7 @@ operation and as a candidate of the operation it redefines, and `check`
 yields one node for each clause, with one node id each time.
 
 A clause function carries `ModelOwner`, not `SourceOwner` or
-`DefinitionOwner`, because the domain package declares its clause, not a QSL
+`DefinitionOwner`, because the domain package declares its clause, not an FSL
 source unit and not a definition document. The owner names one
 member of one domain package identity, and the `clause` binding tells one
 member's precondition and body apart. A `dispatch_call` reaches its
@@ -329,13 +329,13 @@ units that no selected model type names do not become roots by this rule.
 `check` SHALL build the type node of a `Quantity(UnitId)` by the `UnitId`'s
 domain:
 
-- **Declared unit.** The type node is the unit's QSpec nominal node
+- **Declared unit.** The type node is the unit's FSpec nominal node
   (`scalar_type` / `unit`, FR-092). It is the
   quantity's `semantic_type`, `result_type` and literal `type` directly. No
   other node stands for the quantity type. `check` builds it, and every
   dimension and unit node it names (its dimension, that dimension's base
   dimensions, its target units), from the admitted node the unit table
-  holds for each, as QSpec's nominal fixtures spell them (a dimension or unit
+  holds for each, as FSpec's nominal fixtures spell them (a dimension or unit
   a domain package declares has the id `{package, [scalar_type, form, FCD
   identity], 0}`): the qualified
   name as `declaration`, with a `declaration` occurrence at the declared
@@ -346,7 +346,7 @@ domain:
 - **Compound unit.** The type node is `scalar_type` / `compound_unit`, its own
   semantic type, with no `declaration` and no `owner`. Its body is an
   `aggregate` of one term per compound-unit term, in ascending root-unit node key
-  (the derived `Ord` of the structural node id, QSpec FR-322). A
+  (the derived `Ord` of the structural node id, FSpec FR-322). A
   term is `aggregate{[binding "unit" = reference(the root unit's node),
   binding "exponent" = the exponent as an integer literal typed at the
   `Integer` node]}`. The dimensionless unit's body is `aggregate{[]}`.
@@ -366,7 +366,7 @@ they have different type nodes.
 A function body that divides by a quantity literal of nonzero magnitude, or
 by one or more unary negations rooted directly in such a literal, is admitted
 ([FR-093](FR-093-lower-checked-value-expressions-to-fr-322-terms.md#quantity-literals),
-QSpec FR-146-AC-9). The literal and its exact negations are nonzero facts for
+FSpec FR-146-AC-9). The literal and its exact negations are nonzero facts for
 the division. A body that divides by any other quantity refuses with
 `undefined_expression`/`unproved-nonzero`: a checked quantity type carries no
 value interval, so no guard proves a divisor that is not a literal nonzero or
@@ -381,7 +381,7 @@ FR-094-AC-11 identifies the quotient of a division by a literal.
 - **Dimension equivalence.** The unit table holds each dimension equivalence the
   unit declares (FR-091). `check` builds one
   `scalar_type`/`dimension_equivalence` node for each, in source order, as
-  QSpec FR-322 spells it (FR-322-AC-118): self-typed, with no
+  FSpec FR-322 spells it (FR-322-AC-118): self-typed, with no
   `declaration`, relating the two dimension nodes in ascending node-key order
   (the derived `Ord`), with the root ratio the unit table holds (FR-091
   step 6) as `root_scale`, stated for the node listed first, depending on
@@ -400,7 +400,7 @@ use these unit type nodes. A quantity literal in a value expression
 is a `value`/`literal` node of `value_kind` `quantity` whose `semantic_type`
 and literal `type` are its declared unit's node, so it introduces no second
 quantity type and no new type node: its unit's node is the one a
-`Quantity<u>` parameter of that unit names (QSpec FR-322-AC-79).
+`Quantity<u>` parameter of that unit names (FSpec FR-322-AC-79).
 
 ### Refusals
 
@@ -440,7 +440,7 @@ redefines `scaled` as `scaled(m: Integer)`; and relationship
 object types. A model declaration node's id is `{package: acme/orders, path:
 [model, object_type, <node>], ordinal: 0}`, and `[relation, relationship,
 <node>]` for the relationship. The root units of the compound units below are
-QSpec's `unit-metre` and `unit-second` nominal nodes.
+FSpec's `unit-metre` and `unit-second` nominal nodes.
 
 ## Constraints
 
@@ -458,12 +458,12 @@ QSpec's `unit-metre` and `unit-second` nominal nodes.
 | FR-094-AC-3 | In functions over the parameters `p: Population<M::Order>[3]` and `r: Reference<M::Order>`, in that order, `p`'s type node has id path `[bounded_domain, model_population, <Order's node id>, "3"]` and `semantic_type` the `Set<Reference<Order>>` node, and `r`'s type is the reference node of AC-1. `allInstances<M::Order>(p)` has `result_type` the `Set<Reference<Order>>[0, 3]` node, `lookup<M::Order>(p, r) absent undefined` has `result_type` the reference node, and `lookup<M::Order>(p, r) absent empty` has `result_type` the `Option<Reference<Order>>` node. `p: Population<M::Order>[5]` has a type node with a different id from the `[3]` one, and `Population<M::Invoice>[3]` has a different id from `Population<M::Order>[3]`. | Test (TC-417) |
 | FR-094-AC-4 | With `r: Reference<M::Order>` at level 1, `deref(r).total` has a `field` member naming `Order`'s model node and `total`, and `r.size()` has an `operation` member naming `Order`'s model node and `size`. `deref(s).total` and `s.size()` over `s: Reference<M::Sub>` name `Sub`'s model node, not `Order`'s. | Test (TC-417) |
 | FR-094-AC-5 | `checked_dispatch_operation` for `Order.size` with the authored precondition `true` and the body `7`, and receiver parameter `self: Reference<M::Order>`, builds two clause functions, one `precondition` and one `body`, each with `owner` `ModelOwner` of `ix://acme/orders/Order/size` and `declaration` `null`. Under `acme/orders` `2.0.0`, the same receiver parameter and the same clause functions are built, with the same ids. The same precondition authored on `Order.count` is a different node. When `Sub.size` redefines `Order.size` with the authored precondition `false` and receiver `self: Reference<M::Sub>`, its authored precondition and its effective precondition `false or true` are two nodes whose owner is `Sub.size`, while `Order.size`'s authored function is unchanged. Rebuilding with a different synthesized label gives the same ids, and building `Sub.size`'s clauses from both dispatch operations yields one node for each clause. | Test (TC-418) |
-| FR-094-AC-6 | With `a` a quantity of QSpec's declared unit `metre` and `t` one of `second`, `a`'s parameter has semantic type the QSpec `unit-metre` node, and the graph holds no `compound_unit` node for it. In a function body, the result type of `a * a` is a `compound_unit` node of `metre^2`. The compound units that `value::quantity::result_unit` forms for `a / t`, `a / a` and `(a * a) / a`, held in the check stage's unit scope, are the `compound_unit` nodes of `metre^1 second^-1`, the dimensionless unit and `metre^1`. The first term of the first names metre, and the `metre^1` node differs from the `metre` unit node. | Test (TC-419) |
+| FR-094-AC-6 | With `a` a quantity of FSpec's declared unit `metre` and `t` one of `second`, `a`'s parameter has semantic type the FSpec `unit-metre` node, and the graph holds no `compound_unit` node for it. In a function body, the result type of `a * a` is a `compound_unit` node of `metre^2`. The compound units that `value::quantity::result_unit` forms for `a / t`, `a / a` and `(a * a) / a`, held in the check stage's unit scope, are the `compound_unit` nodes of `metre^1 second^-1`, the dimensionless unit and `metre^1`. The first term of the first names metre, and the `metre^1` node differs from the `metre` unit node. | Test (TC-419) |
 | FR-094-AC-7 | Keying a `Reference` whose `EffectiveId` is no `type_identities` value, a `DeclarationKey` whose `package` is no admitted identity, a `DeclarationKey` whose `node` is empty, a compound `UnitId` the unit scope does not hold, a declared unit for which the unit table holds no admitted node (a table built from the graph's units without `UnitTable::declared`), and a field member record reaching the record-kind `match` each refuses as an internal fault naming that value, and yields no key. | Test (TC-417, TC-419) |
 | FR-094-AC-8 | Under a unit graph its own source declares, with base dimensions `Length` and `Time`, the derived dimension `Velocity = Length / Time`, root units `metre`, `second` and `mps` (of `Velocity`) and `km = 1000 × metre`, a record `Trip{d: km, v: mps}` is emitted with no node omitted. The `km` node depends on `Length` and `metre` and it targets `metre` with scale `1000`; the `Velocity` node depends on `Length` and `Time` and holds both terms; `mps` is typed by `Velocity`; and IR's checked-package/v2 reader admits the package. | Test (TC-419) |
 | FR-094-AC-9 | For the unreferenced `billedTo` relationship selected through model alias `M`, `check` emits its `relation`/`relationship` node and records one `generated` occurrence at `M`'s declaration-site/source span, regardless of function or frame reachability; fallback `generated_location` and `UnlocatedOccurrence` are forbidden. | Test (TC-417) |
 | FR-094-AC-11 | With FR-093-AC-36's units, the quotient `a / 3 ms` over `a: Quantity<m>` has one `scalar_type`/`compound_unit` node, with no `declaration` and no `owner`, whose body is an `aggregate` of two terms in ascending root-unit node-key order: `unit` the `m` node with `exponent` the integer literal `1`, and `unit` the `s` node with `exponent` the integer literal `-1`. The quotient `d / 3 ms` over `d: Quantity<ms>` has a `compound_unit` node whose body is `aggregate{[]}`, and `d / 3 s` and `d / rational(-3, 1) ms` have that same node, and `a / rational(-3, 1) ms` has the node of `a / 3 ms`. Neither node is the `m` unit node, and the node of `a / 3 ms` is the node of `a / 0.5 s`. | Test (TC-419) |
-| FR-094-AC-12 | **Withdrawn.** The fixed QSpec vector key and `nominal_identity_preimage` oracle for the dimension-equivalence node was superseded by QSpec FR-322 structural node identity; the node's non-identity behavior is retained in FR-094-AC-13. | Withdrawn |
+| FR-094-AC-12 | **Withdrawn.** The fixed FSpec vector key and `nominal_identity_preimage` oracle for the dimension-equivalence node was superseded by FSpec FR-322 structural node identity; the node's non-identity behavior is retained in FR-094-AC-13. | Withdrawn |
 | FR-094-AC-13 | With a unit declaring `model R = "acme/rpc" …` and `model F = "acme/flow" …`, each package declaring base dimension `Time` and a root unit of it (`s`; flow's `ms` is `1/1000` of its root), and `dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;`, the checked graph holds one `scalar_type`/`dimension_equivalence` node with no `declaration`, self-typed, relating the two package `Time` nodes in ascending node-key order with `root_scale` `1/1`, whose `dependencies` are exactly those two nodes and whose one occurrence has role `anchor` and ordinal 0; `dimension F::Time ~ R::Time by 1000 F::ms = 1 R::s;` in its place gives the same node; with `acme/clock` as a third package (root `ms`), `dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;` gives the node with `root_scale` `1000/1` and `dimension G::Time ~ R::Time by 1000 G::ms = 1 R::s;` the same node; a second declaration `dimension R::Time ~ Time by 1 R::s = 1 s;` over a source `Time` gives a second node with ordinal 1; the package `Time` nodes are the nodes they are with no equivalence; the equivalence node is emitted though no quantity type names either dimension; and IR's checked-package/v2 reader admits the package and derives the classes the declarations give, refusing `invalid_semantic_graph` the same package with a `root_scale` of `0/1`, `-1/1`, `2000/2` or none, or with the ratios of its base pairs not multiplying to one. | Test (TC-419) |
 | FR-094-AC-14 | With TC-1070's standard E and E-P documents selected, the normal handoff emits each ordinary object declaration exactly once with its original effective identity, model owner, correspondence and a generated occurrence at the selecting alias. E-P includes Node, Other and Elsewhere even though Elsewhere is used only by an unused population. Strict read and the public native selected-type projection succeed for both documents, preserving their complete record/object facts. Omitting or foreigning a real object declaration witness returns a typed native refusal without a partial projection. The identities file uses the required existing handoff version and no additional format. | Test (TC-417) |
 | FR-094-AC-15 | A selected model names source unit `U` in exactly one otherwise unused type position: a field, tuple position, sequence item, option inner type, alias target, operation parameter, operation result or Rational scalar unit. For each position independently, with no expression naming `U`, check and handoff emit its source-owned unit node, its dimension and its target-unit dependency closure; the unit is typed by its dimension and has exactly the declared nominal dependencies. An unrelated declared unit is omitted. The normal checked-package/v2 reader admits each emitted package. Separately, synthetic contract fixtures normalized through the production normalizer independently cover a Variant payload and a Map value naming a unit: lowering emits that unit and exactly its nominal closure. This defensive record-arm coverage does not claim public admission of those forms; unit variant payloads remain refused under FR-056-AC-25, and the current Map original-provenance intake refusal remains outside this criterion. The Rational fixture declares its unit in the model namespace as required by TypeDefinition.unit. | Test (TC-419) |
@@ -484,15 +484,15 @@ identity refuses as an internal fault.
   and the two-domain `UnitId`.
 - [ADR-013](../decisions/ADR-013-canonical-type-package-conversion-ownership.md)
   O-01, O-03, O-04, O-05, O-06, O-08, C-02, OQ-B, OQ-G, T-4, QC-24 (the
-  `Attribute` projection over `deref`), and QC-25 and QC-26, the QSpec
+  `Attribute` projection over `deref`), and QC-25 and QC-26, the FSpec
   requests this requirement makes.
 - [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
   §3 FB-13: only `check` mints a `NodeKey`.
 - [ADR-012](../decisions/ADR-012-semantic-family-extension-contracts.md)
   §5.1: no catch-all arm.
-- QSpec: `ModelOwner` (FR-322-AC-28; ADR-013 QC-3), the
+- FSpec: `ModelOwner` (FR-322-AC-28; ADR-013 QC-3), the
   `reference` composite form and the `model_population` domain form of
   `schema.json`, and the model operation entries of `operation-catalog.json`.
   The `compound_unit` form, the
   `model_population` body and family, the `clause` binding and the v2
-  correspondence spelling are QSL proposals (QC-25, QC-26).
+  correspondence spelling are FSL proposals (QC-25, QC-26).

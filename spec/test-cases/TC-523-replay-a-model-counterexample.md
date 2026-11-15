@@ -3,7 +3,7 @@ id: TC-523
 title: "The replay facade replays a model counterexample through ModelSystem"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: verifies
 ---
 # TC-523: The replay facade replays a model counterexample through ModelSystem

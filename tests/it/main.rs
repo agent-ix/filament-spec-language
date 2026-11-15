@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Single integration-test binary. Every module below was
 //! formerly its own `tests/<name>.rs` cargo test target, statically linking
-//! the whole `quire-spec-language` crate plus its dependencies on its own
+//! the whole `filament-spec-language` crate plus its dependencies on its own
 //! (measured, #306: 426 test executables across 109 targets took 106.6 GiB
 //! in one worktree's target dir, against 2.7 GiB for every compiled
 //! library). Each is now a `mod` of this one `it` target instead, so
@@ -11,12 +11,12 @@
 //! `crate::support::<name>` from any module below (see `tests/support/
 //! mod.rs`). `tests/fixtures/` is unchanged.
 //!
-//! Modules that call `qsl-semantics`' test-only fixtures
+//! Modules that call `fsl-semantics`' test-only fixtures
 //! (`DeclarationKey::fixture`, `ReaderAuthority::fixture` and friends) reach
-//! them through this crate's `qsl-semantics` dev-dependency, which enables
+//! them through this crate's `fsl-semantics` dev-dependency, which enables
 //! that crate's `test-support` feature in every test build, so no
 //! `mod` line here is feature-gated. The integration tests that exercise
-//! only layer 3 live in `qsl-semantics/tests/it/`.
+//! only layer 3 live in `fsl-semantics/tests/it/`.
 //!
 //! No test here needs its own process. There is no `trybuild` compile-fail
 //! test, no process-wide `std::env::set_var`/`remove_var`, and no `harness =

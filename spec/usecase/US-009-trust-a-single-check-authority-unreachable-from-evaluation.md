@@ -3,18 +3,18 @@ id: US-009
 title: "Trust a single check authority, unreachable from evaluation"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-068
+  - target: ix://agent-ix/filament-spec-language/FR-068
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-270
+  - target: ix://agent-ix/filament-spec-language/FR-270
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-009: Trust a single check authority, unreachable from evaluation
 
 ## Story
 
-**As a** QSL contributor implementing or reviewing a semantic family's
+**As a** FSL contributor implementing or reviewing a semantic family's
 checking or evaluation code
 **I want** the checking half of `value::expression` and its evaluation half
 in two modules that cannot reach into each other's private state, with the
@@ -68,8 +68,8 @@ stage boundary in this ADR already uses (§4).
 - **Given** the split has landed.
 - **When** I call `CheckedPackage::call` with `CheckedPackageEvaluation`
   in scope.
-- **Then** it resolves to one type, `qsl_package::CheckedPackage`, defined
-  once in layer-4 `package` (the crate `qsl-package`) and named by callers
+- **Then** it resolves to one type, `fsl_package::CheckedPackage`, defined
+  once in layer-4 `package` (the crate `fsl-package`) and named by callers
   at that path, as ADR-011 §4 (amended) establishes — not a
   second, independently-defined `CheckedPackage` living in
   `value::expression`.

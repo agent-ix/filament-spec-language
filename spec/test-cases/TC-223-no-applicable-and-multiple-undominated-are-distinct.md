@@ -3,7 +3,7 @@ id: TC-223
 title: "No-applicable-candidate and multiple-undominated-candidates are named separately"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-083
+  - target: ix://agent-ix/filament-spec-language/FR-083
     type: verifies
 ---
 # TC-223: No-applicable-candidate and multiple-undominated-candidates are named separately

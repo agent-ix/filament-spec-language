@@ -3,7 +3,7 @@ id: TC-863
 title: "The versioning comparison returns the table's result for every class pair"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-343
+  - target: ix://agent-ix/filament-spec-language/FR-343
     type: verifies
 ---
 # TC-863: The versioning comparison returns the table's result for every class pair

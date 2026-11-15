@@ -3,23 +3,23 @@ id: FR-149
 title: "Check a refinement's simulation certificate in the qualified core"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
 ---
 # FR-149: Check a refinement's simulation certificate in the qualified core
@@ -27,8 +27,8 @@ relationships:
 ## Description
 
 When the explicit-state product proves a refinement's safety half (FR-142),
-QSL's layer-A engine SHALL hand over the simulation relation it found as a
-`SimulationCertificate`, and QSL's layer-6 crate `qsl-replay` SHALL hold
+FSL's layer-A engine SHALL hand over the simulation relation it found as a
+`SimulationCertificate`, and FSL's layer-6 crate `fsl-replay` SHALL hold
 `check_simulation_certificate`, which accepts the certificate only when the
 relation holds the concrete initial states and is closed under the concrete
 successor relation with every step passing `check_step` (ADR-020 CT-1 to
@@ -62,7 +62,7 @@ pub struct SimulationCertificate {
 
 pub struct CertifiedPosition {
     pub concrete: StateKey,
-    pub history: HistoryValues,             // QSpec FR-378's encoding
+    pub history: HistoryValues,             // FSpec FR-378's encoding
     pub abstract_states: Vec<StateKey>,     // sorted
 }
 
@@ -116,17 +116,17 @@ limit is the evaluation meter.
 **Wire form.** The terminal record writes the locus as `{"position": "<n>",
 "edge": "<n>" or null, "verdict": <verdict> or null}`, with unsigned integers
 as decimal strings; `verdict` is `null` for every rule but `StepFails`. A
-verdict is an object whose `kind` is one of QSpec FR-379's `refinement_failure`
+verdict is an object whose `kind` is one of FSpec FR-379's `refinement_failure`
 names, plus `UndefinedEvaluation` and `Undetermined`, and whose other members are the verdict's own:
 
 | `kind` | Members |
 | --- | --- |
 | `InitialNotAbstract` | `initial` (decimal string, the concrete initial state's index) |
 | `StutterChanged` | `position` |
-| `AbstractStepRejected` | `position`, `transition` (the transition identity encoding of QSpec FR-364, from FR-181), `cause` |
+| `AbstractStepRejected` | `position`, `transition` (the transition identity encoding of FSpec FR-364, from FR-181), `cause` |
 | `NoAbstractMatch` | `position` |
-| `UndefinedEvaluation` | `where` and `cause` (FR-127's `UndefinedEvaluation` encoding), the step verdict `Undefined`; QSpec FR-379's `Undefined{position, row}` is the same failure as the engine writes it, and `check_step` never returns that form |
-| `Undetermined` | `cause` (`MappingUndetermined` or `UndecidedSuccessor`) and `evaluation` (`{"outcome": "refused"}` or `{"outcome": "incomplete", "limit": <limit spelling>}`, where the limit spelling is `evaluation-meter` for the evaluation meter (the `ModelCheckLimit` wire spelling) and quire-exact's `LimitKind` name for another counter of the evaluation, in snake case such as `integer_bits`) |
+| `UndefinedEvaluation` | `where` and `cause` (FR-127's `UndefinedEvaluation` encoding), the step verdict `Undefined`; FSpec FR-379's `Undefined{position, row}` is the same failure as the engine writes it, and `check_step` never returns that form |
+| `Undetermined` | `cause` (`MappingUndetermined` or `UndecidedSuccessor`) and `evaluation` (`{"outcome": "refused"}` or `{"outcome": "incomplete", "limit": <limit spelling>}`, where the limit spelling is `evaluation-meter` for the evaluation meter (the `ModelCheckLimit` wire spelling) and filament-exact's `LimitKind` name for another counter of the evaluation, in snake case such as `integer_bits`) |
 
 `position` inside a verdict is the refinement position FR-141 names and need
 not equal the locus `position`. A `cause` is `{"kind": "Precondition",
@@ -243,7 +243,7 @@ not equal the locus `position`. A `cause` is `{"kind": "Precondition",
   ADR-029 CB-2 and RU-2.
 - [FR-338](FR-338-check-an-en-1-closure-certificate.md) and
   [FR-339](FR-339-check-an-en-1-component-certificate.md), EN-1's closure
-  and component checkers, beside which this checker sits in `qsl-replay`.
+  and component checkers, beside which this checker sits in `fsl-replay`.
 - [FR-141](FR-141-decide-one-concrete-step-against-the-abstract-model.md)
   (`check_initial`, `check_step`),
   [FR-142](FR-142-check-a-refinement-s-safety-half-on-the-explicit-state-product.md)
@@ -252,13 +252,13 @@ not equal the locus `position`. A `cause` is `{"kind": "Precondition",
   (`ModelSystem`), [FR-098](FR-098-execute-a-replay-request.md) (recompile),
   [FR-144](FR-144-request-and-settle-a-refinement-item.md) (settlement).
 - ADR-018 PC-1 and PC-2 give the certification label and the
-  `CertificateRejected` cause; QSpec carries them on the terminal record
+  `CertificateRejected` cause; FSpec carries them on the terminal record
   (ADR-020 QS-12).
 
 ## References
 
-- ADR-020. QSpec half: QSpec FR-379 (Linear STD-133; ADR-020 QS-12), whose
+- ADR-020. FSpec half: FSpec FR-379 (Linear STD-133; ADR-020 QS-12), whose
   `refinement_failure` kind names the wire form above reuses; the
   `SimulationStep` locus and the `Undetermined` verdict are not yet stated on
-  the QSpec half (FR-331's `at` for this checker). The
+  the FSpec half (FR-331's `at` for this checker). The
   certified-proof ruling is recorded on Linear QSL-390.

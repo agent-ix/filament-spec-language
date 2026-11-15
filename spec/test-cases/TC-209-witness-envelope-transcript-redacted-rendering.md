@@ -3,7 +3,7 @@ id: TC-209
 title: "The witness envelope's Debug and Display rendering never reproduces the full transcript"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-073
+  - target: ix://agent-ix/filament-spec-language/FR-073
     type: verifies
 ---
 # TC-209: The witness envelope's Debug and Display rendering never reproduces the full transcript

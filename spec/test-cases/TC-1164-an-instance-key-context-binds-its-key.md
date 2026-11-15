@@ -3,7 +3,7 @@ id: TC-1164
 title: "An instance's automaton-state key context binds its key"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: verifies
 ---
 # TC-1164: An instance's automaton-state key context binds its key

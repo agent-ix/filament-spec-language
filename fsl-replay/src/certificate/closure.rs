@@ -1,0 +1,1725 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-338 (ADR-018 PC-3, PC-5, LA-3): the closure certificate EN-1 returns
+//! with a safety proof, and [`check_closure`], the core's checker of it.
+//!
+//! The checker reads nothing from the engine but the certificate. It
+//! re-admits the request's subject through `ModelSystem` (FR-120), rebuilds
+//! each instance's canonical safety translation with `fsl-eval`'s code, and
+//! recomputes every successor itself. It accepts exactly when, for every
+//! instance of the item:
+//!
+//! - every initial product state is in the certificate (`InitialMissing`);
+//! - every successor of a reached product state is in it
+//!   (`SuccessorMissing`), so the reached set is closed under expansion;
+//! - no reached product state is bad (`BadState`): its monitor state rejects,
+//!   its letter is undefined, its expansion records `ContractUndetermined`,
+//!   or, for the deadlock-freedom item alone, it is deadlocked (ADR-018
+//!   DL-6), or, for the race-freedom item alone, a step into it completes a
+//!   data race (FR-224).
+//!
+//! A subject with no initial state is refused: no behaviour is examined, so
+//! no certificate of it is accepted. Admission polls the cancel handle at
+//! every certificate entry and reads at most `max_states` entries per
+//! instance. Before any key is used for membership, each certificate
+//! state's key is admitted against one instance's context; a key no
+//! instance admits (malformed, non-canonical, another item's, profile's or
+//! activation's) rejects the whole certificate `ShapeMismatch` at the least
+//! refused state, by model-state key octets then key octets. The checker
+//! expands only model states the certificate holds, so its work is bounded
+//! by the certificate. A budget or a cancellation stops it with the typed
+//! `Stopped` cause, which is never an acceptance.
+//!
+//! Over a protocol subject whose memory model runs under a bound (ADR-025
+//! MB-2), the checker expands under the request's bound. When a reached
+//! state's expansion cut a step at it (MB-3), the reached set is closed
+//! only under the bound: a check that otherwise passes returns
+//! `MemoryBoundReached` with the distinct bound-limited model states, never
+//! an acceptance (MB-4), and a state whose only steps were cut is a
+//! boundary state, never a deadlock.
+//!
+//! Over an `activation on each` protocol the checker expands under the
+//! request's `max_live_instances` (ADR-027 AE-4) alike: a reached state that
+//! left an `activate` step unexpanded makes the reached set closed only
+//! under the instance bound, and a check that otherwise passes returns
+//! `InstanceBoundReached` with the distinct instance-limited model states
+//! (after `MemoryBoundReached`), never an acceptance.
+//!
+//! TP-1 and deadlock freedom have no future interval, so FR-338's
+//! non-progress acceptance check does not apply: they keep pure bad-prefix
+//! closure. A bounded `eventually[0,u]` clause (TP-2) is closed over its
+//! bounded monitor's states and counted distance. Over a protocol subject the
+//! steps that do not count are recorded between the product states that hold
+//! its debt open, and a component of them with a cycle fair under the
+//! subject's scheduler constraints and the clause's own rejects the
+//! certificate `WitnessFails` at the least product state of any fair
+//! component, since that cycle is a behaviour that never meets the interval.
+//! The search reads each state's enabled steps from the expansion the run
+//! already charged and adds no state or edge of its own; the fairness
+//! kernels poll `cancel`. Remaining work: QSL-878 gives that search its own
+//! typed auxiliary-exhaustion limit (FR-338-AC-6).
+
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+use filament_exact::{Cancel, Meter, ScalarLimits};
+use filament_semantic_value::catalog::InternalFault;
+use fsl_eval::automaton::{
+    Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter, SafetyItem,
+    SafetyState, SafetyTranslation, StateId, SubjectKind,
+};
+use fsl_eval::model_subject::{
+    refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
+};
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
+use fsl_eval::simulation::protocol::{
+    activates_on_each, check_protocol_bounds, live_instance_bound, ProtocolFairnessError,
+    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory,
+};
+use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::{
+    ConstraintError, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated, SubjectSystem,
+    SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError, BOUND_POSITIONS,
+};
+use fsl_eval::temporal::{AtomReading, CaptureReading};
+use fsl_semantics::model::observation::AdmissionFailure;
+use serde::{ser::SerializeStruct, Serialize, Serializer};
+
+use crate::certificate::check::{
+    admit, expansion_halt, finish, poll, stopped, widen, Budgets, Checker, Halt, Step,
+};
+use crate::certificate::recording::Recording;
+use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
+use crate::certificate::{CertificateLocus, CertificateRule};
+use crate::model_check::identity::ClauseRootRefusal;
+use crate::model_check::item::{
+    Instance, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
+};
+use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits};
+use crate::proof_result::{IncompleteCause, InstanceBound, MemoryBound, MemoryBoundMember};
+use fsl_eval::smt::SmtEncodingLimits;
+use fsl_package::TemporalClockSelection;
+
+/// One product state of a certificate: its model state's
+/// `filament.simulation.state-key/v1` state key and its automaton state's
+/// canonical key.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ProductStateRef {
+    /// The model state's complete canonical key bytes.
+    pub model_state: StateKey,
+    /// The translation's canonical key of the automaton state.
+    pub automaton_state: AutomatonStateKey,
+}
+
+impl Serialize for ProductStateRef {
+    /// `{"model_state": <base64url key octets>, "automaton_state": <base64url
+    /// key octets>}`; base64url is FR-331's transport of the octets.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use base64::Engine as _;
+        let mut object = serializer.serialize_struct("ProductStateRef", 2)?;
+        let model_state =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.model_state.as_bytes());
+        object.serialize_field("model_state", &model_state)?;
+        let octets = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(self.automaton_state.as_bytes());
+        object.serialize_field("automaton_state", &octets)?;
+        object.end()
+    }
+}
+
+/// FR-338's closure certificate: the product states EN-1 explored.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClosureCertificate {
+    /// The product states, in any order.
+    pub states: Vec<ProductStateRef>,
+}
+
+/// A certificate rule that failed and where (wire `certificate-rejected{rule,
+/// at}`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertificateRejection {
+    /// The failed rule.
+    pub rule: CertificateRule,
+    /// Where it failed.
+    pub at: CertificateLocus,
+}
+
+/// What a temporal certificate checker returns (FR-338 Outputs).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TemporalCertificateCheck {
+    /// Every required check completed and passed.
+    Accepted,
+    /// A certificate rule failed.
+    Rejected(CertificateRejection),
+    /// A budget or a cancellation stopped the check before it completed:
+    /// `LimitReached{limit, value}` or `Cancelled{source}`.
+    Stopped(IncompleteCause),
+    /// The check closed, but at `states` distinct reached model states the
+    /// memory model cut a step at `bound` (ADR-025 MB-3, MB-4): the reached
+    /// set is closed only under the bound, so it is never an acceptance.
+    MemoryBoundReached {
+        /// The bound the subject's memory model ran under.
+        bound: MemoryBound,
+        /// The distinct bound-limited model states the check reached.
+        states: u64,
+    },
+    /// The check closed, but at `states` distinct reached model states an
+    /// `activate` step stayed unexpanded at `bound` (ADR-027 AE-4): the
+    /// reached set is closed only under the instance bound, so it is never
+    /// an acceptance.
+    InstanceBoundReached {
+        /// The instance bound the subject ran under.
+        bound: InstanceBound,
+        /// The distinct instance-limited model states the check reached.
+        states: u64,
+    },
+}
+
+/// FR-338's certificate request: the model subject, re-admitted by the
+/// checker itself, and the item.
+pub struct CertificateRequest<'a> {
+    /// The model subject (FR-125).
+    pub subject: ModelSubject<'a>,
+    /// Explicit clock configurations selected for this subject's checked
+    /// temporal declarations. The subject's package was checked with these
+    /// same selections ([`crate::model_check::identity::ClauseIdentity::resolve`]).
+    pub temporal_clock_selections: &'a [TemporalClockSelection],
+    /// The item.
+    pub item: ModelCheckItem<'a>,
+    /// The encoding limits used by the backend for this item's queries
+    /// (FR-315); certificate checks rebuild queries under these same limits.
+    pub smt_encoding: SmtEncodingLimits,
+}
+
+/// Why [`check_closure`] checked nothing: the request, not the certificate,
+/// is at fault.
+#[derive(Debug, thiserror::Error)]
+pub enum ClosureRefusal {
+    /// FR-106's admission of the subject's `ModelSystem` failed.
+    #[error("the subject's model system did not admit: {0:?}")]
+    Admission(Box<AdmissionFailure>),
+    /// A root of the subject is unbounded, or its extent is unclassified.
+    #[error(transparent)]
+    NotSimulated(Box<NotSimulated>),
+    /// The item has no canonical translation.
+    #[error(transparent)]
+    Item(#[from] ItemRefusal),
+    /// The item has no instance (FR-125), so there is nothing to certify.
+    #[error("the item has no instance")]
+    NoInstance,
+    /// A component certificate was offered for an item that is not a TP-4
+    /// clause, which has no components (FR-339).
+    #[error("the item is not a TP-4 clause, so it has no component certificate")]
+    NotLiveness,
+    /// A closure certificate alone was offered for a TP-4 clause. A liveness
+    /// proof is a component certificate (FR-339): a closure says nothing of
+    /// acceptance, so it never proves one.
+    #[error("a TP-4 clause is proved by a component certificate, not a closure")]
+    LivenessNeedsComponents,
+    /// The subject has no initial state (ADR-016 EX-10), so no behaviour is
+    /// examined and there is nothing to certify.
+    #[error("the subject has no initial state")]
+    NoInitialState,
+    /// A state identity or an automaton key has no canonical encoding.
+    #[error("a state or automaton key has no canonical encoding")]
+    Encoding,
+    /// The subject's protocol system does not build (FR-205).
+    #[error(transparent)]
+    Protocol(ProtocolRefusal),
+    /// The refinement's concrete subject is a protocol, whose refinement
+    /// check is not built yet (FR-142, FR-145).
+    #[error("a refinement over a concrete protocol is not checked yet")]
+    ProtocolRefinement,
+    /// A fairness constraint of the item names an operation the subject does
+    /// not admit.
+    #[error(transparent)]
+    Fairness(ProtocolFairnessError),
+    /// A refinement whose abstract side is a protocol clause: no abstract
+    /// protocol step is decided yet (FR-148)
+    /// (`unsupported_construct/not-yet-implemented`).
+    #[error("unsupported_construct/not-yet-implemented: a refinement over an abstract protocol subject is not decided yet")]
+    ProtocolAbstractSide,
+    /// An invariant of the subject broke.
+    #[error("the closure check broke invariant {0:?}")]
+    Fault(InternalFault),
+}
+
+impl From<EncodingRefusal> for ClosureRefusal {
+    fn from(_: EncodingRefusal) -> Self {
+        Self::Encoding
+    }
+}
+
+/// What a check reads of a certificate: the closure of every proof and, for
+/// a liveness proof, the components that partition it (FR-339).
+#[derive(Clone, Copy)]
+struct Proof<'c> {
+    closure: &'c ClosureCertificate,
+    components: Option<&'c [Component]>,
+}
+
+impl<'c> Proof<'c> {
+    const fn closure(closure: &'c ClosureCertificate) -> Self {
+        Self {
+            closure,
+            components: None,
+        }
+    }
+
+    const fn components(certificate: &'c ComponentCertificate) -> Self {
+        Self {
+            closure: &certificate.closure,
+            components: Some(certificate.components.as_slice()),
+        }
+    }
+}
+
+/// FR-338: check `certificate` for `request`'s item, under `limits` and the
+/// subject's own evaluation meter and candidate bound, polling `cancel` at
+/// every charge.
+///
+/// # Errors
+///
+/// [`ClosureRefusal`] when the subject does not admit, a root is unbounded,
+/// the item has no translation or no instance, or a state cannot be
+/// encoded. A refusal is never an acceptance.
+pub fn check_closure(
+    request: &CertificateRequest<'_>,
+    certificate: &ClosureCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    check_model(request, Proof::closure(certificate), limits, cancel)
+}
+
+/// FR-339: check `certificate`, a liveness (TP-4) proof's component
+/// certificate, for `request`'s item: FR-338's check of its closure, then
+/// the partition of the reached product states into components and each
+/// component's witness.
+///
+/// # Errors
+///
+/// [`ClosureRefusal`] as [`check_closure`] returns it, and
+/// [`ClosureRefusal::NotLiveness`] when the item is not a TP-4 clause. A
+/// refusal is never an acceptance.
+pub fn check_components(
+    request: &CertificateRequest<'_>,
+    certificate: &ComponentCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    check_model(request, Proof::components(certificate), limits, cancel)
+}
+
+fn check_model(
+    request: &CertificateRequest<'_>,
+    proof: Proof<'_>,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    let simulation = request.subject.simulation.clone();
+    let system = admit(simulation)?;
+    check_system(
+        &system,
+        &system,
+        Bounds::default(),
+        SubjectKind::Ordinary,
+        &request.subject,
+        &request.item,
+        request.temporal_clock_selections,
+        proof,
+        limits,
+        cancel,
+    )
+}
+
+/// FR-338's certificate request over a protocol subject (FR-215, ADR-027
+/// TS-6): the protocol subject, re-admitted by the checker itself, and the
+/// item.
+pub struct ProtocolCertificateRequest<'a> {
+    /// The protocol subject (FR-205).
+    pub subject: ProtocolSubject<'a>,
+    /// Explicit clock configurations selected for this subject's checked
+    /// temporal declarations. The subject's package was checked with these
+    /// same selections ([`crate::model_check::identity::ClauseIdentity::resolve`]).
+    pub temporal_clock_selections: &'a [TemporalClockSelection],
+    /// The item.
+    pub item: ModelCheckItem<'a>,
+    /// The `max_store_buffer` the run used; `None` for the default 4
+    /// (FR-225).
+    pub max_store_buffer: Option<u64>,
+    /// The `max_messages` the run used; `None` runs with the default 4
+    /// (FR-225).
+    pub max_messages: Option<u64>,
+    /// The `max_live_instances` the run used; `None` for the default 3
+    /// (ADR-027 AE-4).
+    pub max_live_instances: Option<u64>,
+}
+
+/// FR-338 over a protocol subject: [`check_closure`]'s check, with the
+/// successors and terminal classes recomputed by the subject's own
+/// protocol system under its resolved memory models (FR-219).
+///
+/// # Errors
+///
+/// [`ClosureRefusal`] as [`check_closure`] returns it, and
+/// [`ClosureRefusal::Protocol`] when the protocol system does not build.
+pub fn check_protocol_closure(
+    request: &ProtocolCertificateRequest<'_>,
+    certificate: &ClosureCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    check_protocol(request, Proof::closure(certificate), limits, cancel)
+}
+
+/// FR-339 over a protocol subject: [`check_components`]'s check, with the
+/// closure checked by [`check_protocol_closure`] and the resolved constraints
+/// and enabled sets read from the subject's fairness set and protocol system
+/// ("Protocol subjects").
+///
+/// # Errors
+///
+/// [`ClosureRefusal`] as [`check_protocol_closure`] and [`check_components`]
+/// return it.
+pub fn check_protocol_components(
+    request: &ProtocolCertificateRequest<'_>,
+    certificate: &ComponentCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    check_protocol(request, Proof::components(certificate), limits, cancel)
+}
+
+fn check_protocol(
+    request: &ProtocolCertificateRequest<'_>,
+    proof: Proof<'_>,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    let model = admit(request.subject.model.simulation.clone())?;
+    let graph = request.subject.model.simulation.package.graph();
+    let protocol = graph.protocol(&request.subject.protocol).ok_or_else(|| {
+        ClosureRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
+            protocol: request.subject.protocol.clone(),
+        })
+    })?;
+    check_protocol_bounds(&model, protocol, graph, BOUND_POSITIONS)
+        .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
+    let subject = &request.subject;
+    let live_instances = live_instance_bound(request.max_live_instances);
+    let instance = activates_on_each(protocol).then_some(InstanceBound {
+        value: live_instances,
+    });
+    match SubjectMemory::of(
+        &subject.memory,
+        request.max_store_buffer,
+        request.max_messages,
+    ) {
+        SubjectMemory::Sc => {
+            let system = ProtocolSystem::new(model, subject, Sc)
+                .map_err(ClosureRefusal::Protocol)?
+                .with_max_live_instances(live_instances);
+            check_protocol_system(
+                &system,
+                system.model(),
+                Bounds {
+                    memory: None,
+                    instance,
+                },
+                request,
+                proof,
+                limits,
+                cancel,
+            )
+        }
+        SubjectMemory::Tso(tso) => {
+            let bound = MemoryBound {
+                member: MemoryBoundMember::MaxStoreBuffer,
+                value: tso.max_store_buffer(),
+            };
+            let system = ProtocolSystem::new(model, subject, tso)
+                .map_err(ClosureRefusal::Protocol)?
+                .with_max_live_instances(live_instances);
+            check_protocol_system(
+                &system,
+                system.model(),
+                Bounds {
+                    memory: Some(bound),
+                    instance,
+                },
+                request,
+                proof,
+                limits,
+                cancel,
+            )
+        }
+        SubjectMemory::Ra(ra) => {
+            let bound = MemoryBound {
+                member: MemoryBoundMember::MaxMessages,
+                value: ra.max_messages(),
+            };
+            let system = ProtocolSystem::new(model, subject, ra)
+                .map_err(ClosureRefusal::Protocol)?
+                .with_max_live_instances(live_instances);
+            check_protocol_system(
+                &system,
+                system.model(),
+                Bounds {
+                    memory: Some(bound),
+                    instance,
+                },
+                request,
+                proof,
+                limits,
+                cancel,
+            )
+        }
+    }
+}
+
+/// [`check_system`] over a protocol `system` of `request`: the one place the
+/// request's clock selections reach the clause-identity re-emit of a protocol
+/// certificate check, whatever the memory model.
+fn check_protocol_system<S: SubjectSystem>(
+    system: &S,
+    model: &ModelSystem<'_>,
+    bounds: Bounds,
+    request: &ProtocolCertificateRequest<'_>,
+    proof: Proof<'_>,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    check_system(
+        system,
+        model,
+        bounds,
+        SubjectKind::Protocol,
+        &request.subject.model,
+        &request.item,
+        request.temporal_clock_selections,
+        proof,
+        limits,
+        cancel,
+    )
+}
+
+/// The method bounds a checked subject runs under (ADR-025 MB-2, ADR-027
+/// AE-4); `None` for a bound the subject has none of.
+#[derive(Clone, Copy, Default)]
+struct Bounds {
+    memory: Option<MemoryBound>,
+    instance: Option<InstanceBound>,
+}
+
+/// [`check_closure`] over `system`, whose model is `model` and whose memory
+/// and instance bounds are `bounds`.
+#[allow(clippy::too_many_arguments)]
+fn check_system<S: SubjectSystem>(
+    system: &S,
+    model: &ModelSystem<'_>,
+    bounds: Bounds,
+    subject_kind: SubjectKind,
+    subject: &ModelSubject<'_>,
+    item: &ModelCheckItem<'_>,
+    temporal_clock_selections: &[TemporalClockSelection],
+    proof: Proof<'_>,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    let meter = subject.simulation.meter;
+    let budgets = Budgets::of(&subject.simulation);
+    let mut instances = match item.instances_for(
+        subject,
+        model,
+        temporal_clock_selections,
+        cancel,
+        subject_kind,
+        limits.max_automaton_states,
+    ) {
+        Ok(instances) => instances,
+        Err(ItemRefusal::ClauseRoot(ClauseRootRefusal::Cancelled(cause))) => {
+            return Ok(TemporalCertificateCheck::Stopped(
+                IncompleteCause::Cancelled { source: cause },
+            ));
+        }
+        Err(ItemRefusal::Unbounded(refusal)) => {
+            return Err(ClosureRefusal::NotSimulated(Box::new(refusal)))
+        }
+        Err(refusal) => return Err(refusal.into()),
+    };
+    if instances.is_empty() {
+        return Err(ClosureRefusal::NoInstance);
+    }
+    let liveness = |instance: &Instance| matches!(instance.translation, Translation::Liveness(_));
+    if proof.components.is_some() && !instances.iter().all(liveness) {
+        return Err(ClosureRefusal::NotLiveness);
+    }
+    if proof.components.is_none() && instances.iter().any(liveness) {
+        return Err(ClosureRefusal::LivenessNeedsComponents);
+    }
+    if system.initial().is_empty() {
+        return Err(ClosureRefusal::NoInitialState);
+    }
+
+    // Admission reads at most one entry per product state the state budget
+    // admits for each instance, and polls the handle at every entry.
+    let entries = limits.limits.max_states.saturating_mul(instances.len());
+    let mut members = BTreeSet::new();
+    let mut models = BTreeSet::new();
+    let mut refused: Option<ProductStateRef> = None;
+    for (read, state) in proof.closure.states.iter().enumerate() {
+        if let Err(halt) = poll(cancel) {
+            return finish(Err(halt));
+        }
+        if read >= entries {
+            return finish(Err(stopped(
+                ModelCheckLimit::MaxStates,
+                widen(limits.limits.max_states),
+            )));
+        }
+        let admitted = instances.iter().any(|instance| {
+            instance
+                .translation
+                .admits(state.automaton_state.as_bytes())
+        });
+        if !admitted {
+            let order = |state: &ProductStateRef| {
+                (
+                    state.model_state.as_bytes().to_vec(),
+                    state.automaton_state.as_bytes().to_vec(),
+                )
+            };
+            if refused
+                .as_ref()
+                .is_none_or(|least: &ProductStateRef| order(state) < order(least))
+            {
+                refused = Some(state.clone());
+            }
+            continue;
+        }
+        members.insert(state.clone());
+        models.insert(state.model_state.clone());
+    }
+    // FR-338: one refused key rejects the whole certificate, at the least
+    // refused state by model-state key octets then key octets, so the
+    // locus does not depend on the order of `states`.
+    if let Some(least) = refused {
+        return Ok(rejected(CertificateRule::ShapeMismatch, least));
+    }
+
+    let mut check = Check {
+        system,
+        item,
+        limits,
+        meter,
+        budgets,
+        cancel,
+        members: &members,
+        models: &models,
+        reached: 0,
+        edges: 0,
+        keys: BTreeSet::new(),
+        limited: BTreeSet::new(),
+        instance_limited: BTreeSet::new(),
+        recording: proof.components.map(|_| Recording::new()),
+    };
+    let run = check.run(&mut instances);
+    // ADR-025 MB-4: a reached set closed only because the memory bound cut
+    // steps is never accepted, so the item never settles `proved` over it.
+    if run.is_ok() && !check.limited.is_empty() {
+        return match bounds.memory {
+            Some(bound) => Ok(TemporalCertificateCheck::MemoryBoundReached {
+                bound,
+                states: widen(check.limited.len()),
+            }),
+            None => Err(fault("memory-bound-cut-without-bound")),
+        };
+    }
+    // ADR-027 AE-4, after the memory bound's: likewise for the instance
+    // bound.
+    if run.is_ok() && !check.instance_limited.is_empty() {
+        return match bounds.instance {
+            Some(bound) => Ok(TemporalCertificateCheck::InstanceBoundReached {
+                bound,
+                states: widen(check.instance_limited.len()),
+            }),
+            None => Err(fault("instance-bound-cut-without-bound")),
+        };
+    }
+    match (finish(run)?, proof.components, check.recording.take()) {
+        (TemporalCertificateCheck::Accepted, Some(components), Some(recording)) => {
+            check.components(recording, components)
+        }
+        (closure, _, _) => Ok(closure),
+    }
+}
+
+fn rejected(rule: CertificateRule, at: ProductStateRef) -> TemporalCertificateCheck {
+    TemporalCertificateCheck::Rejected(CertificateRejection {
+        rule,
+        at: CertificateLocus::ProductState(at),
+    })
+}
+
+/// A reached product state waiting to be expanded.
+struct Pending<S: SubjectSystem> {
+    state: S::State,
+    at: ProductStateRef,
+    expansion: Option<SubjectExpansion<S>>,
+}
+
+/// An initial state of the subject: its key bytes, its position in the
+/// subject's list, its state key and the state.
+type Initial<S> = (Vec<u8>, usize, StateKey, <S as TransitionSystem>::State);
+
+/// A reached product state of a bounded instance waiting to be expanded.
+struct BoundedPending<S: SubjectSystem> {
+    state: S::State,
+    at: ProductStateRef,
+    automaton: BoundedState,
+    /// The counted distance from position 0, held at one past the horizon
+    /// once it is passed.
+    distance: u64,
+}
+
+/// A reached TP-4 product state waiting to expand its model component.
+struct LivenessPending<S: SubjectSystem> {
+    state: S::State,
+    at: ProductStateRef,
+    automaton: StateId,
+    /// The state's place in the recording of the product graph.
+    index: usize,
+}
+
+/// The reached product states of one TP-4 instance, with the recording
+/// index each has.
+type Reached = BTreeMap<(StateKey, StateId), usize>;
+
+/// A product state of a bounded instance, as the run tells two apart.
+type BoundedKey = (StateKey, BoundedState, u64);
+
+/// A successor of an expansion with its state key.
+type Keyed<S> = (
+    <S as TransitionSystem>::TransitionId,
+    StateKey,
+    <S as TransitionSystem>::State,
+);
+
+/// The steps that do not count between the product states of a bounded
+/// instance that hold an `eventually` debt open (FR-338 "Protocol
+/// non-progress acceptance"), with the model state of each end.
+struct ZeroEdges<S: SubjectSystem> {
+    /// The transitions each such state enables, from the expansion the run
+    /// already charged.
+    enabled: BTreeMap<BoundedKey, Vec<S::TransitionId>>,
+    edges: Vec<(BoundedKey, BoundedKey, S::TransitionId)>,
+}
+
+/// What a bounded instance's run keeps: its translation, its `holds` atom's
+/// binding and the product states it has reached.
+struct BoundedRun<'i> {
+    translation: &'i BoundedTranslation,
+    letters: &'i dyn ModelLetters,
+    binding: &'i fsl_eval::model_subject::ModelInstance,
+    visited: BTreeSet<BoundedKey>,
+    /// The atom at each model state read so far; `None` is undefined.
+    readings: BTreeMap<StateKey, Option<bool>>,
+}
+
+/// One expansion of a subject's state, and what a method bound left of it
+/// unexpanded.
+type SubjectExpansion<S> = (
+    Expansion<<S as TransitionSystem>::TransitionId, <S as TransitionSystem>::State, ModelFinding>,
+    Cut,
+);
+
+struct Check<'c, S: SubjectSystem> {
+    system: &'c S,
+    item: &'c ModelCheckItem<'c>,
+    limits: &'c ModelCheckLimits,
+    meter: ScalarLimits,
+    budgets: Budgets,
+    cancel: &'c Cancel,
+    members: &'c BTreeSet<ProductStateRef>,
+    models: &'c BTreeSet<StateKey>,
+    reached: usize,
+    edges: usize,
+    keys: BTreeSet<AutomatonStateKey>,
+    /// The reached model states whose expansion cut a step at the memory
+    /// bound (ADR-025 MB-3).
+    limited: BTreeSet<StateKey>,
+    /// The reached model states whose expansion left an `activate` step
+    /// unexpanded at the instance bound (ADR-027 AE-4).
+    instance_limited: BTreeSet<StateKey>,
+    /// The product graph a component check partitions (FR-339): the reached
+    /// states, the edges computed between them and each state's enabled
+    /// transitions. Only a component certificate's check records it.
+    recording: Option<Recording<S>>,
+}
+
+impl<S: SubjectSystem> Check<'_, S> {
+    fn reject(rule: CertificateRule, at: ProductStateRef) -> Halt {
+        Halt::Check(rejected(rule, at))
+    }
+
+    fn poll(&self) -> Step<()> {
+        poll(self.cancel)
+    }
+
+    /// FR-339: the partition `components` of the closure the run accepted,
+    /// checked over the product graph the run recorded and the clause's
+    /// resolved constraints. It reads no fact but the recorded ones.
+    fn components(
+        &self,
+        recording: Recording<S>,
+        components: &[Component],
+    ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+        let ModelCheckItem::Clause { clause, .. } = self.item else {
+            return Err(fault("tp4-clause-item"));
+        };
+        let recorded = recording
+            .finish()
+            .map_err(|_| fault("the-recorded-product-graph-is-well-formed"))?;
+        let constraints = self
+            .system
+            .clause_constraints(clause.fairness(), &recorded.transitions, &|transition| {
+                recorded.identity(self.system, transition)
+            })
+            .map_err(|error| match error {
+                ConstraintError::UnknownOperation { name } => {
+                    ClosureRefusal::Fairness(ProtocolFairnessError::UnknownOperation { name })
+                }
+                ConstraintError::Protocol(error) => ClosureRefusal::Fairness(error),
+                ConstraintError::Unnumbered => fault("every-recorded-transition-is-numbered"),
+            })?;
+        check_partition(&recorded.graph, components, &constraints, self.cancel)
+            .map_err(|_| fault("a-reached-closure-holds-an-initial-state"))
+    }
+
+    fn run(&mut self, instances: &mut [Instance]) -> Step<()> {
+        self.poll()?;
+        let mut initial = Vec::new();
+        for (index, state) in self.system.initial().into_iter().enumerate() {
+            let (key, _) = self.system.state_key(&state)?;
+            let state_key = StateKey::from_canonical_bytes(key.clone());
+            initial.push((key, index, state_key, state));
+        }
+        initial.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+        initial.dedup_by(|later, earlier| later.0 == earlier.0);
+        for instance in instances {
+            let binding = instance.binding.as_ref();
+            match &mut instance.translation {
+                Translation::Safety(translation) => {
+                    self.run_safety(binding, translation, &initial)?;
+                }
+                Translation::Bounded(translation) => {
+                    self.run_bounded(binding, translation, &initial)?;
+                }
+                Translation::Liveness(translation) => {
+                    self.run_liveness(binding, translation, &initial)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The closure of a safety item's instance: every reached model state
+    /// stays under the carried root.
+    fn run_safety(
+        &mut self,
+        binding: Option<&fsl_eval::model_subject::ModelInstance>,
+        translation: &SafetyTranslation,
+        initial: &[Initial<S>],
+    ) -> Step<()> {
+        let mut visited = BTreeSet::new();
+        let mut queue = VecDeque::new();
+        for (_, _, state_key, state) in initial {
+            let before = None;
+            if let Some(pending) = self.reach(
+                binding,
+                translation,
+                state.clone(),
+                state_key.clone(),
+                before,
+                CertificateRule::InitialMissing,
+                &mut visited,
+            )? {
+                queue.push_back(pending);
+            }
+        }
+        while let Some(pending) = queue.pop_front() {
+            self.poll()?;
+            let (expansion, _) = match pending.expansion {
+                Some(expansion) => expansion,
+                None => self.expand(&pending.state, &pending.at)?,
+            };
+            for (transition, state_key, state) in self.ordered(expansion.successors)? {
+                self.poll()?;
+                self.charge_edge()?;
+                // FR-224: the race-freedom item is bad at the post-state of a
+                // step that completes a data race, whichever state it reaches.
+                if translation.item() == SafetyItem::RaceFreedom && transition.race().is_some() {
+                    let at = self.product(translation, state_key, SafetyState::Rejected)?;
+                    return Err(Self::reject(CertificateRule::BadState, at));
+                }
+                if let Some(next) = self.reach(
+                    binding,
+                    translation,
+                    state,
+                    state_key,
+                    Some(SafetyState::Carried),
+                    CertificateRule::SuccessorMissing,
+                    &mut visited,
+                )? {
+                    queue.push_back(next);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The closure of a TP-4 instance's product of model states and the
+    /// clause's nondeterministic Büchi states.
+    fn run_liveness(
+        &mut self,
+        binding: Option<&fsl_eval::model_subject::ModelInstance>,
+        translation: &mut LivenessTranslation,
+        initial: &[Initial<S>],
+    ) -> Step<()> {
+        let ModelCheckItem::Clause { letters, clause } = self.item else {
+            return Err(fault("tp4-clause-item").into());
+        };
+        let binding = binding.ok_or_else(|| fault("tp4-clause-binding"))?;
+        let start = translation
+            .automaton
+            .initial()
+            .map_err(|error| self.automaton_error(error))?;
+        if let Some(recording) = &mut self.recording {
+            recording.begin_instance();
+        }
+        let mut visited = Reached::new();
+        let mut queue = VecDeque::new();
+        for (_, _, state_key, state) in initial {
+            self.poll()?;
+            let Some(letter) =
+                self.liveness_letter(translation, *letters, clause, binding, state, true, true)?
+            else {
+                let at = self.product_liveness(translation, state_key.clone(), start)?;
+                return Err(Self::reject(CertificateRule::BadState, at));
+            };
+            let successors = translation
+                .automaton
+                .successors(start, letter)
+                .map_err(|error| self.automaton_error(error))?;
+            for automaton in successors {
+                let (_, pending) = self.reach_liveness(
+                    translation,
+                    state.clone(),
+                    state_key.clone(),
+                    automaton,
+                    CertificateRule::InitialMissing,
+                    &mut visited,
+                )?;
+                queue.extend(pending);
+            }
+        }
+        while let Some(pending) = queue.pop_front() {
+            self.poll()?;
+            let (expansion, cut) = self.expand(&pending.state, &pending.at)?;
+            if expansion.findings.iter().any(|finding| {
+                matches!(
+                    finding,
+                    ModelFinding::ContractUndetermined { .. }
+                        | ModelFinding::ProtocolExpressionUndetermined { .. }
+                )
+            }) {
+                return Err(Self::reject(CertificateRule::BadState, pending.at));
+            }
+            if let Some(recording) = &mut self.recording {
+                let enabled: Vec<&S::TransitionId> = expansion
+                    .successors
+                    .iter()
+                    .map(|(transition, _)| transition)
+                    .collect();
+                recording.enable(self.system, pending.index, &enabled)?;
+            }
+            // ADR-018 SM-4: a model state with no step continues along its
+            // stutter edge, unless a method bound cut its steps (ADR-025
+            // MB-3, ADR-027 AE-4): a boundary state is never stuttered.
+            if expansion.successors.is_empty() && !(cut.memory || cut.instances) {
+                let letter = self.liveness_letter(
+                    translation,
+                    *letters,
+                    clause,
+                    binding,
+                    &pending.state,
+                    true,
+                    false,
+                )?;
+                let Some(letter) = letter else {
+                    let at = self.product_liveness(
+                        translation,
+                        pending.at.model_state.clone(),
+                        pending.automaton,
+                    )?;
+                    return Err(Self::reject(CertificateRule::BadState, at));
+                };
+                let successors = translation
+                    .automaton
+                    .successors(pending.automaton, letter)
+                    .map_err(|error| self.automaton_error(error))?;
+                for automaton in successors {
+                    self.poll()?;
+                    self.charge_edge()?;
+                    let (to, next) = self.reach_liveness(
+                        translation,
+                        pending.state.clone(),
+                        pending.at.model_state.clone(),
+                        automaton,
+                        CertificateRule::SuccessorMissing,
+                        &mut visited,
+                    )?;
+                    if let Some(recording) = &mut self.recording {
+                        recording.edge(self.system, pending.index, to, None)?;
+                    }
+                    queue.extend(next);
+                }
+                continue;
+            }
+            for (transition, state_key, state) in self.ordered(expansion.successors)? {
+                self.poll()?;
+                let counted = self.system.counts_step(&transition);
+                let Some(letter) = self.liveness_letter(
+                    translation,
+                    *letters,
+                    clause,
+                    binding,
+                    &state,
+                    counted,
+                    false,
+                )?
+                else {
+                    let at = self.product_liveness(translation, state_key, pending.automaton)?;
+                    return Err(Self::reject(CertificateRule::BadState, at));
+                };
+                let successors = translation
+                    .automaton
+                    .successors(pending.automaton, letter)
+                    .map_err(|error| self.automaton_error(error))?;
+                for automaton in successors {
+                    self.charge_edge()?;
+                    let (to, next) = self.reach_liveness(
+                        translation,
+                        state.clone(),
+                        state_key.clone(),
+                        automaton,
+                        CertificateRule::SuccessorMissing,
+                        &mut visited,
+                    )?;
+                    if let Some(recording) = &mut self.recording {
+                        recording.edge(self.system, pending.index, to, Some(&transition))?;
+                    }
+                    queue.extend(next);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Read a TP-4 clause's letter, activation and captures at one model
+    /// state. `counted` describes the step into this position.
+    #[allow(clippy::too_many_arguments)]
+    fn liveness_letter(
+        &self,
+        translation: &LivenessTranslation,
+        letters: &dyn ModelLetters,
+        clause: &fsl_semantics::check::CheckedTemporalClause,
+        binding: &fsl_eval::model_subject::ModelInstance,
+        state: &S::State,
+        counted: bool,
+        initial: bool,
+    ) -> Step<Option<Letter>> {
+        let state = self.system.atom_state(state);
+        let state = state.as_ref();
+        let mut letter = Letter::default();
+        let when = translation.automaton.when();
+        let active = if let Some(when) = when {
+            self.poll()?;
+            let mut meter = Meter::new(self.meter);
+            match letters.activation(binding, state, &mut meter) {
+                Ok(AtomReading::True) => {
+                    letter = letter.with(when);
+                    true
+                }
+                Ok(AtomReading::False) => false,
+                Ok(AtomReading::Undefined(_)) => return Ok(None),
+                Err(AtomStop::Incomplete(incomplete)) => {
+                    return Err(stopped(
+                        ModelCheckLimit::EvaluationMeter {
+                            counter: incomplete.limit_kind,
+                        },
+                        crate::meter_bound(&self.meter, incomplete.limit_kind),
+                    ))
+                }
+                Err(AtomStop::Fault(internal)) => {
+                    return Err(ClosureRefusal::Fault(internal).into())
+                }
+                Err(AtomStop::Refused(outcome)) => {
+                    return Err(fault(refused_invariant(&outcome)).into())
+                }
+                Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
+            }
+        } else {
+            true
+        };
+        let captures_at_position = match clause.activation() {
+            fsl_semantics::check::Activation::Origin => initial,
+            fsl_semantics::check::Activation::Each { .. } => active,
+        };
+        if captures_at_position && clause.captures().len() > 0 {
+            self.poll()?;
+            let mut meter = Meter::new(self.meter);
+            match letters.captures(binding, state, &mut meter) {
+                Ok(CaptureReading::Fixed) => {}
+                Ok(CaptureReading::Undefined { .. }) => return Ok(None),
+                Err(AtomStop::Incomplete(incomplete)) => {
+                    return Err(stopped(
+                        ModelCheckLimit::EvaluationMeter {
+                            counter: incomplete.limit_kind,
+                        },
+                        crate::meter_bound(&self.meter, incomplete.limit_kind),
+                    ))
+                }
+                Err(AtomStop::Fault(internal)) => {
+                    return Err(ClosureRefusal::Fault(internal).into())
+                }
+                Err(AtomStop::Refused(outcome)) => {
+                    return Err(fault(refused_invariant(&outcome)).into())
+                }
+                Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
+            }
+        }
+        for (index, atom) in translation.automaton.atoms().iter().enumerate() {
+            let Some(holds) = self.atom(letters, *atom, binding, state)? else {
+                return Ok(None);
+            };
+            if holds {
+                let atom = Atom::new(index).map_err(|_| fault("tp4-atom-in-range"))?;
+                letter = letter.with(atom);
+            }
+        }
+        if !counted {
+            if let Some(uncounted) = translation.automaton.uncounted() {
+                letter = letter.with(uncounted);
+            }
+        }
+        Ok(Some(letter))
+    }
+
+    /// Reach `state` by its state key `state_key` in the automaton state
+    /// `automaton`: require it in the certificate under `missing`. The state
+    /// is pending unless this instance reached it before; its recording
+    /// index comes back either way.
+    fn reach_liveness(
+        &mut self,
+        translation: &LivenessTranslation,
+        state: S::State,
+        state_key: StateKey,
+        automaton: StateId,
+        missing: CertificateRule,
+        visited: &mut Reached,
+    ) -> Step<(usize, Option<LivenessPending<S>>)> {
+        if let Some(index) = visited.get(&(state_key.clone(), automaton)) {
+            return Ok((*index, None));
+        }
+        let at = self.product_liveness(translation, state_key.clone(), automaton)?;
+        if self.reached >= self.limits.limits.max_states {
+            return Err(stopped(
+                ModelCheckLimit::MaxStates,
+                widen(self.limits.limits.max_states),
+            ));
+        }
+        self.reached += 1;
+        if !self.members.contains(&at) {
+            return Err(Self::reject(missing, at));
+        }
+        let index = match &mut self.recording {
+            Some(recording) => {
+                let accepting: Vec<bool> = (0..translation.automaton.acceptance_set_count())
+                    .map(|set| translation.automaton.is_accepting_in(set, automaton))
+                    .collect();
+                recording
+                    .reach(&at, &accepting)
+                    .ok_or_else(|| fault("tp4-instances-share-acceptance-sets"))?
+            }
+            None => 0,
+        };
+        visited.insert((state_key, automaton), index);
+        Ok((
+            index,
+            Some(LivenessPending {
+                state,
+                at,
+                automaton,
+                index,
+            }),
+        ))
+    }
+
+    fn product_liveness(
+        &mut self,
+        translation: &LivenessTranslation,
+        state_key: StateKey,
+        state: StateId,
+    ) -> Step<ProductStateRef> {
+        let buchi = match translation
+            .automaton
+            .buchi_state(state, translation.keys.max_key_bytes())
+        {
+            Ok(buchi) => buchi,
+            Err(fsl_eval::automaton::AutomatonError::KeyEncodingLimit { .. }) => {
+                return Err(ClosureRefusal::Encoding.into())
+            }
+            Err(_) => return Err(fault("tp4-state-key-bridge").into()),
+        };
+        let key = translation
+            .keys
+            .key(&buchi)
+            .map_err(|_| ClosureRefusal::Encoding)?;
+        self.product_of(state_key, key)
+    }
+
+    fn automaton_error(&self, error: fsl_eval::automaton::AutomatonError) -> Halt {
+        match error {
+            fsl_eval::automaton::AutomatonError::StateLimit { limit } => {
+                stopped(ModelCheckLimit::MaxAutomatonStates, limit)
+            }
+            _ => fault("tp4-automaton-transition").into(),
+        }
+    }
+
+    /// The closure of a bounded instance (TP-2): every product state of a
+    /// model state, its bounded monitor state and, up to one past the
+    /// horizon, its counted distance, from the initial states.
+    fn run_bounded(
+        &mut self,
+        binding: Option<&fsl_eval::model_subject::ModelInstance>,
+        translation: &BoundedTranslation,
+        initial: &[Initial<S>],
+    ) -> Step<()> {
+        let ModelCheckItem::Clause { letters, .. } = self.item else {
+            return Err(fault("clause-item-translation").into());
+        };
+        let binding = binding.ok_or_else(|| fault("clause-instance-binding"))?;
+        let mut run = BoundedRun {
+            translation,
+            letters: *letters,
+            binding,
+            visited: BTreeSet::new(),
+            readings: BTreeMap::new(),
+        };
+        let mut queue = VecDeque::new();
+        let mut zero = ZeroEdges::<S> {
+            enabled: BTreeMap::new(),
+            edges: Vec::new(),
+        };
+        for (_, _, state_key, state) in initial {
+            let (pending, _, _) = self.reach_bounded(
+                &mut run,
+                state.clone(),
+                state_key.clone(),
+                None,
+                CertificateRule::InitialMissing,
+            )?;
+            queue.extend(pending);
+        }
+        // Only an `eventually` debt can stay open on a loop of steps that
+        // do not count: a surviving `always` obligation discharges at its
+        // closed boundary and fails on no letter the loop reads twice.
+        let owes = translation.kind() == BoundedKind::Eventually;
+        while let Some(pending) = queue.pop_front() {
+            self.poll()?;
+            let (expansion, cut) = self.expand(&pending.state, &pending.at)?;
+            if owes && matches!(pending.automaton, BoundedState::Open { .. }) {
+                let key = (
+                    pending.at.model_state.clone(),
+                    pending.automaton,
+                    pending.distance,
+                );
+                let enabled = expansion
+                    .successors
+                    .iter()
+                    .map(|(transition, _)| transition.clone())
+                    .collect();
+                zero.enabled.insert(key, enabled);
+            }
+            if expansion.successors.is_empty() {
+                // A state whose every step the memory or instance bound cut
+                // is a boundary state, never closed (ADR-025 MB-3, ADR-027
+                // AE-4); any other terminal state closes the monitor by the
+                // bounded profile's closed-boundary rule (FSpec FR-091).
+                if !(cut.memory || cut.instances)
+                    && translation.terminal(pending.automaton).is_rejecting()
+                {
+                    return Err(Self::reject(CertificateRule::BadState, pending.at));
+                }
+                continue;
+            }
+            for (transition, state_key, state) in self.ordered(expansion.successors)? {
+                self.poll()?;
+                self.charge_edge()?;
+                let counted = self.system.counts_step(&transition);
+                let holds_open =
+                    owes && !counted && matches!(pending.automaton, BoundedState::Open { .. });
+                let (next, after, distance) = self.reach_bounded(
+                    &mut run,
+                    state,
+                    state_key.clone(),
+                    Some((pending.automaton, pending.distance, counted)),
+                    CertificateRule::SuccessorMissing,
+                )?;
+                queue.extend(next);
+                if holds_open && matches!(after, BoundedState::Open { .. }) {
+                    let from = (
+                        pending.at.model_state.clone(),
+                        pending.automaton,
+                        pending.distance,
+                    );
+                    zero.edges
+                        .push((from, (state_key, after, distance), transition));
+                }
+            }
+        }
+        if let Some(at) = self.zero_progress(&run, zero)? {
+            return Err(Self::reject(CertificateRule::WitnessFails, at));
+        }
+        Ok(())
+    }
+
+    /// FR-338 "Protocol non-progress acceptance": a cycle of steps that do
+    /// not count among the product states that hold an `eventually` debt
+    /// open, fair under the subject's scheduler constraints and the item's
+    /// own (ADR-019), is a behaviour that never meets the interval, so the
+    /// closure is no proof. The product state of the least state of the
+    /// first such component, by product state, is where the check fails.
+    fn zero_progress(
+        &mut self,
+        run: &BoundedRun<'_>,
+        zero: ZeroEdges<S>,
+    ) -> Step<Option<ProductStateRef>> {
+        if zero.edges.is_empty() {
+            return Ok(None);
+        }
+        let ModelCheckItem::Clause { clause, .. } = self.item else {
+            return Err(fault("clause-item-translation").into());
+        };
+        let mut graph = ZeroProgress::<S>::new();
+        let mut vertex_of = BTreeMap::new();
+        let mut keys = Vec::with_capacity(zero.enabled.len());
+        for (key, enabled) in &zero.enabled {
+            vertex_of.insert(key.clone(), graph.vertex(self.system, enabled)?);
+            keys.push(key.clone());
+        }
+        for (from, to, transition) in &zero.edges {
+            let (Some(from), Some(to)) = (vertex_of.get(from), vertex_of.get(to)) else {
+                return Err(fault("an-edge-joins-two-states").into());
+            };
+            graph.edge(self.system, *from, *to, transition)?;
+        }
+        let found = match graph.fair_loop(self.system, clause.fairness(), self.cancel) {
+            Ok(found) => found,
+            Err(ZeroProgressError::Cancelled) => {
+                self.poll()?;
+                return Err(fault("a-cancelled-run-has-a-cause").into());
+            }
+            Err(ZeroProgressError::Encoding(refusal)) => return Err(refusal.into()),
+            Err(ZeroProgressError::Fairness(error)) => {
+                return Err(ClosureRefusal::Fairness(error).into())
+            }
+            Err(ZeroProgressError::Graph) => {
+                return Err(fault("the-zero-progress-graph-is-built-from-states").into())
+            }
+        };
+        let Some(found) = found else {
+            return Ok(None);
+        };
+        // FR-338: the first fair component by product-state order, which is
+        // the least product state of any fair component.
+        let mut least: Option<ProductStateRef> = None;
+        for vertex in &found.fair_vertices {
+            let key = keys
+                .get(vertex.index())
+                .ok_or_else(|| fault("a-vertex-is-a-state"))?;
+            let at = self.bounded_ref(run, key)?;
+            if least.as_ref().is_none_or(|held| at < *held) {
+                least = Some(at);
+            }
+        }
+        Ok(least)
+    }
+
+    /// The certificate's reference to the bounded product state `key`.
+    fn bounded_ref(&mut self, run: &BoundedRun<'_>, key: &BoundedKey) -> Step<ProductStateRef> {
+        let automaton = run
+            .translation
+            .key(key.1)
+            .map_err(|_| ClosureRefusal::Encoding)?;
+        self.product_of(key.0.clone(), automaton)
+    }
+
+    /// Reach `state` by its state key `state_key` from the monitor state and
+    /// counted distance `before` (`None` at position zero) by a step that
+    /// counts or not: read its letter when the claim reads its distance,
+    /// reject a bad state, then require it in the certificate under
+    /// `missing`. The state is pending unless this instance reached it
+    /// before; the monitor state and counted distance it was read to come
+    /// back either way.
+    fn reach_bounded(
+        &mut self,
+        run: &mut BoundedRun<'_>,
+        state: S::State,
+        state_key: StateKey,
+        before: Option<(BoundedState, u64, bool)>,
+        missing: CertificateRule,
+    ) -> Step<(Option<BoundedPending<S>>, BoundedState, u64)> {
+        let horizon = run.translation.horizon();
+        let distance = match before {
+            None => 0,
+            Some((_, distance, counted)) => distance
+                .saturating_add(u64::from(counted))
+                .min(horizon.saturating_add(1)),
+        };
+        // A position past the horizon is never read (ADR-018 UE-1), and a
+        // step that counts out of the window closes it before its letter.
+        let holds = if distance <= horizon {
+            if !self.captured(
+                run.letters,
+                run.binding,
+                &self.system.atom_state(&state),
+                before.is_none(),
+            )? {
+                let key = run
+                    .translation
+                    .key(BoundedState::Reject)
+                    .map_err(|_| ClosureRefusal::Encoding)?;
+                let at = self.product_of(state_key.clone(), key)?;
+                return Err(Self::reject(CertificateRule::BadState, at));
+            }
+            let reading = match run.readings.get(&state_key) {
+                Some(reading) => *reading,
+                None => {
+                    let reading = self.atom(
+                        run.letters,
+                        run.translation.atom(),
+                        run.binding,
+                        &self.system.atom_state(&state),
+                    )?;
+                    run.readings.insert(state_key.clone(), reading);
+                    reading
+                }
+            };
+            match reading {
+                Some(holds) => holds,
+                None => {
+                    let key = run
+                        .translation
+                        .key(BoundedState::Reject)
+                        .map_err(|_| ClosureRefusal::Encoding)?;
+                    let at = self.product_of(state_key.clone(), key)?;
+                    return Err(Self::reject(CertificateRule::BadState, at));
+                }
+            }
+        } else {
+            false
+        };
+        let after = match before {
+            None => run.translation.start(holds),
+            Some((monitor, _, counted)) => run.translation.step(monitor, counted, holds),
+        };
+        let key = run
+            .translation
+            .key(after)
+            .map_err(|_| ClosureRefusal::Encoding)?;
+        let at = self.product_of(state_key.clone(), key)?;
+        if after.is_rejecting() {
+            return Err(Self::reject(CertificateRule::BadState, at));
+        }
+        if run.visited.contains(&(state_key.clone(), after, distance)) {
+            return Ok((None, after, distance));
+        }
+        if self.reached >= self.limits.limits.max_states {
+            return Err(stopped(
+                ModelCheckLimit::MaxStates,
+                widen(self.limits.limits.max_states),
+            ));
+        }
+        self.reached += 1;
+        run.visited.insert((state_key.clone(), after, distance));
+        if !self.members.contains(&at) {
+            return Err(Self::reject(missing, at));
+        }
+        let pending = BoundedPending {
+            state,
+            at,
+            automaton: after,
+            distance,
+        };
+        Ok((Some(pending), after, distance))
+    }
+
+    /// The successors of an expansion in FR-101's canonical order, each
+    /// with its state key.
+    fn ordered(&self, successors: Vec<(S::TransitionId, S::State)>) -> Step<Vec<Keyed<S>>> {
+        let mut keyed = Vec::with_capacity(successors.len());
+        for (transition, state) in successors {
+            let order = self.system.transition_key(&transition)?;
+            let (key, _) = self.system.state_key(&state)?;
+            let state_key = StateKey::from_canonical_bytes(key);
+            keyed.push((order, state_key, transition, state));
+        }
+        keyed.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+        Ok(keyed
+            .into_iter()
+            .map(|(_, state_key, transition, state)| (transition, state_key, state))
+            .collect())
+    }
+
+    /// Charge one newly materialized edge against `max_transitions`.
+    fn charge_edge(&mut self) -> Step<()> {
+        if self.edges >= self.limits.limits.max_transitions {
+            return Err(stopped(
+                ModelCheckLimit::MaxTransitions,
+                widen(self.limits.limits.max_transitions),
+            ));
+        }
+        self.edges += 1;
+        Ok(())
+    }
+
+    /// Reach `state` by its state key `state_key` from the automaton state
+    /// `before` (`None` at position zero): read its letter, reject a bad
+    /// state, then require it in the certificate under `missing`. `None`
+    /// when this instance reached it before.
+    #[allow(clippy::too_many_arguments)]
+    fn reach(
+        &mut self,
+        binding: Option<&fsl_eval::model_subject::ModelInstance>,
+        translation: &SafetyTranslation,
+        state: S::State,
+        state_key: StateKey,
+        before: Option<SafetyState>,
+        missing: CertificateRule,
+        visited: &mut BTreeSet<StateKey>,
+    ) -> Step<Option<Pending<S>>> {
+        if visited.contains(&state_key) {
+            return Ok(None);
+        }
+        let (after, expansion) = match translation.item() {
+            SafetyItem::ReachableInvariant { atom } => {
+                let ModelCheckItem::Clause { letters, .. } = self.item else {
+                    return Err(fault("clause-item-translation").into());
+                };
+                let bound = binding.ok_or_else(|| fault("clause-instance-binding"))?;
+                if !self.captured(
+                    *letters,
+                    bound,
+                    &self.system.atom_state(&state),
+                    before.is_none(),
+                )? {
+                    let at = self.product(translation, state_key, SafetyState::Rejected)?;
+                    return Err(Self::reject(CertificateRule::BadState, at));
+                }
+                match self.atom(*letters, atom, bound, &self.system.atom_state(&state))? {
+                    Some(holds) => (translation.read(before, holds), None),
+                    None => {
+                        let at = self.product(translation, state_key, SafetyState::Rejected)?;
+                        return Err(Self::reject(CertificateRule::BadState, at));
+                    }
+                }
+            }
+            SafetyItem::RaceFreedom => (translation.read(before, true), None),
+            SafetyItem::DeadlockFreedom => {
+                if !self.models.contains(&state_key) {
+                    let at = self.product(translation, state_key.clone(), SafetyState::Carried)?;
+                    return Err(Self::reject(missing, at));
+                }
+                let carried = self.product(translation, state_key.clone(), SafetyState::Carried)?;
+                let (expansion, cut) = self.expand(&state, &carried)?;
+                // ADR-025 MB-3: a state whose only enabled steps were cut at
+                // the memory bound is a boundary state, never a deadlock; the
+                // check then settles `MemoryBoundReached`.
+                let boundary = expansion.successors.is_empty() && self.limited.contains(&state_key);
+                let class = if boundary {
+                    TerminalClass::NotTerminal
+                } else {
+                    self.system
+                        .terminal_class(&state, &expansion, cut)
+                        .map_err(|stop| self.expansion_stop(stop))?
+                };
+                let holds = match class {
+                    TerminalClass::NotTerminal | TerminalClass::Intended => true,
+                    TerminalClass::Deadlocked => false,
+                    TerminalClass::Undefined { .. } | TerminalClass::Undecided { .. } => {
+                        let at = self.product(translation, state_key, SafetyState::Rejected)?;
+                        return Err(Self::reject(CertificateRule::BadState, at));
+                    }
+                };
+                (translation.read(before, holds), Some((expansion, cut)))
+            }
+        };
+        let at = self.product(translation, state_key.clone(), after)?;
+        if after.is_rejecting() {
+            return Err(Self::reject(CertificateRule::BadState, at));
+        }
+        if self.reached >= self.limits.limits.max_states {
+            return Err(stopped(
+                ModelCheckLimit::MaxStates,
+                widen(self.limits.limits.max_states),
+            ));
+        }
+        self.reached += 1;
+        visited.insert(state_key);
+        if !self.members.contains(&at) {
+            return Err(Self::reject(missing, at));
+        }
+        Ok(Some(Pending {
+            state,
+            at,
+            expansion,
+        }))
+    }
+
+    /// Expand the reached product state `at`: a contract conjunction the
+    /// expansion could not determine makes it bad (ADR-018 UE-6, V-6). A
+    /// step the memory model cut at its bound records `at`'s model state as
+    /// bound-limited (ADR-025 MB-3), and one the instance bound left an
+    /// `activate` step of unexpanded as instance-limited (ADR-027 AE-4).
+    fn expand(&mut self, state: &S::State, at: &ProductStateRef) -> Step<SubjectExpansion<S>> {
+        self.poll()?;
+        let (expansion, cut) = self
+            .system
+            .successors_bounded(state)
+            .map_err(|stop| self.expansion_stop(stop))?;
+        if cut.memory {
+            self.limited.insert(at.model_state.clone());
+        }
+        if cut.instances {
+            self.instance_limited.insert(at.model_state.clone());
+        }
+        if expansion.findings.iter().any(|finding| {
+            matches!(
+                finding,
+                ModelFinding::ContractUndetermined { .. }
+                    | ModelFinding::ProtocolExpressionUndetermined { .. }
+            )
+        }) {
+            return Err(Self::reject(CertificateRule::BadState, at.clone()));
+        }
+        Ok((expansion, cut))
+    }
+
+    /// The product state of `state_key` and `state` under `instance`'s
+    /// context, charging a newly materialized automaton key.
+    fn product(
+        &mut self,
+        translation: &SafetyTranslation,
+        state_key: StateKey,
+        state: SafetyState,
+    ) -> Step<ProductStateRef> {
+        let key = translation
+            .key(state)
+            .map_err(|_| ClosureRefusal::Encoding)?;
+        self.product_of(state_key, key)
+    }
+
+    /// The product state of `state_key` and the automaton key `key`, charging
+    /// a newly materialized key.
+    fn product_of(&mut self, state_key: StateKey, key: AutomatonStateKey) -> Step<ProductStateRef> {
+        if !self.keys.contains(&key) {
+            let count = widen(self.keys.len());
+            if count >= self.limits.max_automaton_states {
+                return Err(stopped(
+                    ModelCheckLimit::MaxAutomatonStates,
+                    self.limits.max_automaton_states,
+                ));
+            }
+            self.keys.insert(key.clone());
+        }
+        Ok(ProductStateRef {
+            model_state: state_key,
+            automaton_state: key,
+        })
+    }
+
+    /// The `holds` atom `atom` for the bound `instance` at `state`: `None`
+    /// when it is undefined.
+    fn atom(
+        &self,
+        letters: &dyn ModelLetters,
+        atom: fsl_semantics::check::FormulaNodeId,
+        instance: &fsl_eval::model_subject::ModelInstance,
+        state: &ModelSimState,
+    ) -> Step<Option<bool>> {
+        self.poll()?;
+        let mut meter = Meter::new(self.meter);
+        match letters.atom(atom, instance, state, &mut meter) {
+            Ok(AtomReading::True) => Ok(Some(true)),
+            Ok(AtomReading::False) => Ok(Some(false)),
+            Ok(AtomReading::Undefined(_)) => Ok(None),
+            Err(AtomStop::Incomplete(incomplete)) => Err(stopped(
+                ModelCheckLimit::EvaluationMeter {
+                    counter: incomplete.limit_kind,
+                },
+                crate::meter_bound(&self.meter, incomplete.limit_kind),
+            )),
+            Err(AtomStop::Fault(internal)) => Err(ClosureRefusal::Fault(internal).into()),
+            Err(AtomStop::Refused(outcome)) => Err(fault(refused_invariant(&outcome)).into()),
+            Err(AtomStop::Unobservable(stop)) => Err(self.expansion_stop(stop)),
+        }
+    }
+
+    /// FR-337 "Capture observation": whether the clause's captures have a
+    /// value at `state`, where the clause fixes them: position 0 of an `on
+    /// origin` clause (`initial`), each position of an `on each` clause. A
+    /// capture with no value is a bad state, as an undefined atom is.
+    fn captured(
+        &self,
+        letters: &dyn ModelLetters,
+        instance: &fsl_eval::model_subject::ModelInstance,
+        state: &ModelSimState,
+        initial: bool,
+    ) -> Step<bool> {
+        let ModelCheckItem::Clause { clause, .. } = self.item else {
+            return Ok(true);
+        };
+        let fixes = match clause.activation() {
+            fsl_semantics::check::Activation::Origin => initial,
+            fsl_semantics::check::Activation::Each { .. } => true,
+        };
+        if !fixes || clause.captures().len() == 0 {
+            return Ok(true);
+        }
+        self.poll()?;
+        let mut meter = Meter::new(self.meter);
+        match letters.captures(instance, state, &mut meter) {
+            Ok(CaptureReading::Fixed) => Ok(true),
+            Ok(CaptureReading::Undefined { .. }) => Ok(false),
+            Err(AtomStop::Incomplete(incomplete)) => Err(stopped(
+                ModelCheckLimit::EvaluationMeter {
+                    counter: incomplete.limit_kind,
+                },
+                crate::meter_bound(&self.meter, incomplete.limit_kind),
+            )),
+            Err(AtomStop::Fault(internal)) => Err(ClosureRefusal::Fault(internal).into()),
+            Err(AtomStop::Refused(outcome)) => Err(fault(refused_invariant(&outcome)).into()),
+            Err(AtomStop::Unobservable(stop)) => Err(self.expansion_stop(stop)),
+        }
+    }
+
+    fn expansion_stop(&self, stop: ExpansionStop) -> Halt {
+        expansion_halt(&stop, self.budgets, Checker::Closure)
+    }
+}
+
+fn fault(invariant: &'static str) -> ClosureRefusal {
+    Checker::Closure.fault(invariant)
+}

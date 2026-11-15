@@ -1,12 +1,12 @@
 ---
 id: TC-1338
-title: "QSL application observation captures admitted charge requests at the call boundary"
+title: "FSL application observation captures admitted charge requests at the call boundary"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
-# TC-1338: QSL application observation captures admitted charge requests at the call boundary
+# TC-1338: FSL application observation captures admitted charge requests at the call boundary
 
 ## Description
 
@@ -54,7 +54,7 @@ AC-24 for bounded capture, AC-25 for displaced ownership and AC-26 for cleanup.
   exactly the admitted prefix, has no row for the refused request, and its ten
   totals equal the meter's final totals. If the meter admits no request, the
   ledger is empty.
-- In every step, the ledger records are captured by QSL at the actual
+- In every step, the ledger records are captured by FSL at the actual
   `Meter::charge` call boundary; the test-support log's capacity or contents
   do not determine the result.
 - Capacity exhaustion returns a typed partial ledger, preserves whole events,

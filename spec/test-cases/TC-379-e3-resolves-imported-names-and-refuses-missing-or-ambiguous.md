@@ -3,7 +3,7 @@ id: TC-379
 title: "E3 resolves an imported name to its structural NodeKey and refuses a missing or ambiguous one"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-379: E3 resolves an imported name to its structural NodeKey and refuses a missing or ambiguous one

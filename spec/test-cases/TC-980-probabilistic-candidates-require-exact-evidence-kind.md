@@ -3,7 +3,7 @@ id: TC-980
 title: "Probabilistic candidates require the exact requested evidence kind"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-980: Probabilistic candidates require the exact requested evidence kind

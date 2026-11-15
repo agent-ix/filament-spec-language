@@ -1,0 +1,1316 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-338 and FR-127 over the Counter subject (`crate::counter`): EN-1's
+//! safety proof carries a closure certificate, `fsl-replay`'s core checker
+//! accepts or rejects it, and the settlement map settles `Certified` only on
+//! the checker's acceptance.
+//!
+//! Every certificate offered here is built from the engine's own output or
+//! from the subject's states read through `ModelSystem`; the expected
+//! rejection loci are computed from the Counter arithmetic, not from the
+//! checker.
+//!
+//! Not covered: ADR-018 §6's `ConfigVersion` subject, which has no
+//! model-check fixture; the Counter subject stands in for it, so the
+//! FR-338-AC-1 vectors, and the AC-2 vector over `ConfigVersion`, are not
+//! verified as written. The deadlock test below tags AC-2 for its deadlock
+//! vector alone; the missing-state rejections are checked over the Counter
+//! and carry no AC-2 tag.
+
+use filament_exact::{Cancel, CancelCause, ObjectReference, ScalarLimits};
+use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
+use fsl_eval::automaton::{SafetyState, SafetyTranslation, StateContext};
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
+use fsl_package::CheckedPackage;
+use fsl_package::EmitLimits;
+use fsl_replay::{
+    check_closure, settle_model_check, CertificateLocus, CertificateRejection, CertificateRequest,
+    CertificateRule, Certification, ClauseIdentity, ClauseRootRefusal, ClosureCertificate,
+    ClosureRefusal, Execution, IncompleteCause, InconclusiveCause, ItemRefusal, ModelCheckItem,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProductStateRef, ProofBasis,
+    ProofCertificate, ReachedLimit, ResultLabel, SettlementBasis, TemporalCertificateCheck,
+    TerminalValue, UndecidedCause,
+};
+use fsl_semantics::check::CheckedTemporalClause;
+use fsl_semantics::model::observation::DocumentRef;
+use ix_trace_rs::trace;
+
+use crate::counter::{
+    document, package, package_with_clauses, reference, subject, value, Documents, Letters,
+    CONTRACT, UNLIMITED, ZERO,
+};
+use crate::fill::tcb_01_event_position_selection;
+
+const GUARDED: &str = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
+                       post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
+
+/// A Counter subject over the counters `keys`, from one initial snapshot.
+pub(crate) struct World {
+    body: String,
+    package: CheckedPackage,
+    documents: Documents,
+    initial: Vec<DocumentRef>,
+    keys: Vec<&'static str>,
+}
+
+pub(crate) fn world(body: &str, start: &[(&'static str, i64)]) -> World {
+    let document = document(false);
+    let package = package(&document, body);
+    let mut documents = Documents::new(document);
+    let initial = vec![documents.start("s0", start)];
+    World {
+        body: body.to_owned(),
+        package,
+        documents,
+        initial,
+        keys: start.iter().map(|(key, _)| *key).collect(),
+    }
+}
+
+/// A TP-1 clause with its letters, declared in a package of its own: the
+/// clause is a declaration of that package.
+pub(crate) struct Invariant {
+    package: CheckedPackage,
+    clause: CheckedTemporalClause,
+    letters: Letters,
+    identity: ClauseIdentity,
+}
+
+impl World {
+    pub(crate) fn invariant(&self, formula: &str, atom: fn(i64) -> Option<bool>) -> Invariant {
+        let declared = [("C", "", formula)];
+        let (package, mut clauses) =
+            package_with_clauses(&self.documents.document, &self.body, &declared);
+        self.declared(package, clauses.remove(0), atom)
+    }
+
+    /// `clause`, declared by `package`, with letters over this world's
+    /// objects.
+    fn declared(
+        &self,
+        package: CheckedPackage,
+        clause: CheckedTemporalClause,
+        atom: fn(i64) -> Option<bool>,
+    ) -> Invariant {
+        let identity = ClauseIdentity::resolve(
+            &package,
+            &self.documents.packages,
+            &clause,
+            &[],
+            &Cancel::new(),
+            EmitLimits::fixture(),
+        )
+        .expect("the package declares the clause");
+        Invariant {
+            package,
+            clause,
+            letters: Letters { atom },
+            identity,
+        }
+    }
+
+    fn objects(&self) -> Vec<ObjectReference> {
+        self.keys
+            .iter()
+            .map(|key| reference(&self.package, &self.documents, key))
+            .collect()
+    }
+
+    fn request<'w>(
+        &'w self,
+        item: ModelCheckItem<'w>,
+        meter: ScalarLimits,
+    ) -> CertificateRequest<'w> {
+        self.request_in(&self.package, item, meter)
+    }
+
+    /// [`World::request`] over `package`, the world's with a clause declared.
+    fn request_in<'w>(
+        &'w self,
+        package: &'w CheckedPackage,
+        item: ModelCheckItem<'w>,
+        meter: ScalarLimits,
+    ) -> CertificateRequest<'w> {
+        CertificateRequest {
+            temporal_clock_selections: &[],
+            subject: subject(
+                package,
+                &self.documents,
+                self.initial.clone(),
+                &self.keys,
+                meter,
+            ),
+            item,
+            smt_encoding: fsl_replay::SmtEncodingLimits::default(),
+        }
+    }
+
+    fn system(&self) -> ModelSystem<'_> {
+        ModelSystem::new(
+            self.request(ModelCheckItem::DeadlockFreedom, UNLIMITED)
+                .subject
+                .simulation,
+        )
+        .expect("the subject admits")
+    }
+
+    /// Every reachable model state, by breadth-first enumeration through
+    /// `ModelSystem`, with each counter's value.
+    fn reachable(&self) -> Vec<(fsl_eval::simulation::StateKey, Vec<i64>)> {
+        let system = self.system();
+        let mut seen: Vec<(fsl_eval::simulation::StateKey, Vec<i64>)> = Vec::new();
+        let mut queue: Vec<ModelSimState> = system.initial();
+        while let Some(state) = queue.pop() {
+            let (bytes, _) = system.state_key(&state).expect("encodes");
+            let state_key = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
+            if seen.iter().any(|(known, _)| known == &state_key) {
+                continue;
+            }
+            seen.push((
+                state_key,
+                self.keys.iter().map(|key| value(&state, key)).collect(),
+            ));
+            let expansion = system.successors(&state).expect("expands");
+            queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+        }
+        seen
+    }
+
+    /// The model state with these counter values.
+    fn state_key(&self, values: &[i64]) -> fsl_eval::simulation::StateKey {
+        self.reachable()
+            .into_iter()
+            .find(|(_, at)| at == values)
+            .map(|(state_key, _)| state_key)
+            .unwrap_or_else(|| panic!("{values:?} is reachable"))
+    }
+
+    /// The run of `item` over `package`.
+    fn run_in(&self, package: &CheckedPackage, item: ModelCheckItem<'_>) -> ModelCheckOutcome {
+        check_model(
+            ModelCheckRequest {
+                temporal_clock_selections: &[],
+                subject: subject(
+                    package,
+                    &self.documents,
+                    self.initial.clone(),
+                    &self.keys,
+                    UNLIMITED,
+                ),
+                item,
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                reductions: Default::default(),
+            },
+            &Cancel::new(),
+        )
+        .expect("checked")
+    }
+}
+
+impl Invariant {
+    /// The EN-1 item `analyze` runs for this clause under `limits`
+    /// (FR-281): the run, its closure checker's request, and `replay` for a
+    /// counterexample.
+    pub(crate) fn model_item<'w>(
+        &'w self,
+        world: &'w World,
+        limits: ModelCheckLimits,
+        replay: impl FnOnce(
+                &fsl_replay::TemporalCounterexample,
+            )
+                -> Result<fsl_replay::ModelTraceReplayResult, fsl_replay::ReplayRefusal>
+            + 'w,
+    ) -> fsl_analyze::analyze::ModelItem<'w> {
+        fsl_analyze::analyze::ModelItem {
+            request: ModelCheckRequest {
+                temporal_clock_selections: &[],
+                subject: subject(
+                    &self.package,
+                    &world.documents,
+                    world.initial.clone(),
+                    &world.keys,
+                    UNLIMITED,
+                ),
+                item: self.item(),
+                max_depth: None,
+                limits,
+                reductions: Default::default(),
+            },
+            certificate: self.request(world, UNLIMITED),
+            replay: Box::new(replay),
+        }
+    }
+
+    fn item(&self) -> ModelCheckItem<'_> {
+        ModelCheckItem::Clause {
+            clause: &self.clause,
+            letters: &self.letters,
+        }
+    }
+
+    fn request<'w>(&'w self, world: &'w World, meter: ScalarLimits) -> CertificateRequest<'w> {
+        self.request_with(world, self.item(), meter)
+    }
+
+    /// A request for `item` over this clause's package.
+    pub(crate) fn request_with<'w>(
+        &'w self,
+        world: &'w World,
+        item: ModelCheckItem<'w>,
+        meter: ScalarLimits,
+    ) -> CertificateRequest<'w> {
+        world.request_in(&self.package, item, meter)
+    }
+
+    fn run(&self, world: &World) -> ModelCheckOutcome {
+        world.run_in(&self.package, self.item())
+    }
+
+    /// The translation of the instance bound to `object`.
+    fn translation(&self, object: &ObjectReference) -> SafetyTranslation {
+        let binding = vec![fsl_eval::automaton::ContextBinding::instance(
+            self.identity.over().expect("an over node"),
+            object.object().as_str(),
+        )];
+        let context =
+            StateContext::clause(&self.clause, self.identity.occurrence().clone(), binding);
+        SafetyTranslation::reachable_invariant(&self.clause, &context).expect("translates")
+    }
+}
+
+fn certificate(outcome: &ModelCheckOutcome) -> ClosureCertificate {
+    match outcome {
+        ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Closure(certificate),
+            ..
+        } => certificate.clone(),
+        other => panic!("expected Holds, got {other:?}"),
+    }
+}
+
+fn closure_proof(certificate: &ProofCertificate) -> &ClosureCertificate {
+    match certificate {
+        ProofCertificate::Closure(closure) => closure,
+        ProofCertificate::Component(_) => panic!("expected a closure certificate"),
+    }
+}
+
+fn check(
+    request: &CertificateRequest<'_>,
+    certificate: &ClosureCertificate,
+) -> TemporalCertificateCheck {
+    check_closure(
+        request,
+        certificate,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the request is checked")
+}
+
+fn rejected(rule: CertificateRule, at: ProductStateRef) -> TemporalCertificateCheck {
+    TemporalCertificateCheck::Rejected(CertificateRejection {
+        rule,
+        at: CertificateLocus::ProductState(at),
+    })
+}
+
+/// The least of `states` by model-state key octets then key octets.
+fn least(states: &[ProductStateRef]) -> ProductStateRef {
+    states
+        .iter()
+        .min_by(|left, right| {
+            (left.model_state.as_bytes(), left.automaton_state.as_bytes()).cmp(&(
+                right.model_state.as_bytes(),
+                right.automaton_state.as_bytes(),
+            ))
+        })
+        .cloned()
+        .expect("a state")
+}
+
+/// Every state of `states` under `translation`'s `state`.
+fn closure(
+    states: &[(fsl_eval::simulation::StateKey, Vec<i64>)],
+    translation: &SafetyTranslation,
+) -> ClosureCertificate {
+    let key = translation.key(SafetyState::Carried).expect("encodes");
+    ClosureCertificate {
+        states: states
+            .iter()
+            .map(|(state_key, _)| ProductStateRef {
+                model_state: state_key.clone(),
+                automaton_state: key.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// FR-338's accepted vector on the two-counter Counter subject from (0, 0):
+/// `always holds(c.value <= 3)` over `{a, b}` holds and its certificate
+/// holds every one of the 16 reachable model states under each of the two
+/// instances' carried root, and the core checker accepts it.
+#[trace("TC-525")]
+#[test]
+fn a_proved_invariant_carries_a_certificate_the_core_accepts() {
+    let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let certificate = certificate(&invariant.run(&world));
+    let reachable = world.reachable();
+    assert_eq!(reachable.len(), 16);
+    let mut expected = Vec::new();
+    for object in world.objects() {
+        expected.extend(closure(&reachable, &invariant.translation(&object)).states);
+    }
+    expected.sort();
+    assert_eq!(certificate.states, expected);
+    assert_eq!(
+        check(&invariant.request(&world, UNLIMITED), &certificate),
+        TemporalCertificateCheck::Accepted
+    );
+}
+
+/// FR-338's rejected vectors on the two-counter subject: the certificate
+/// with model state (1, 0) removed for instance `a` is rejected
+/// `SuccessorMissing` at that product state, and with the initial (0, 0)
+/// removed, `InitialMissing` at it.
+#[trace("TC-525")]
+#[test]
+fn a_certificate_missing_a_reached_state_is_rejected_at_it() {
+    let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let full = certificate(&invariant.run(&world));
+    let a = invariant.translation(&world.objects()[0]);
+    let without = |values: &[i64]| {
+        let at = ProductStateRef {
+            model_state: world.state_key(values),
+            automaton_state: a.key(SafetyState::Carried).expect("encodes"),
+        };
+        let mut certificate = full.clone();
+        certificate.states.retain(|state| *state != at);
+        assert_eq!(certificate.states.len(), full.states.len() - 1);
+        (certificate, at)
+    };
+    let request = invariant.request(&world, UNLIMITED);
+    let (successor, at) = without(&[1, 0]);
+    assert_eq!(
+        check(&request, &successor),
+        rejected(CertificateRule::SuccessorMissing, at)
+    );
+    let (initial, at) = without(&[0, 0]);
+    assert_eq!(
+        check(&request, &initial),
+        rejected(CertificateRule::InitialMissing, at)
+    );
+}
+
+/// FR-338's deadlock vector over the Counter subject with no `terminal`
+/// declaration: a certificate holding every reachable state (values 0 to 3)
+/// under the deadlock-freedom item's carried root is rejected `BadState` at
+/// value 3, the deadlock, under the rejecting state; the same states under
+/// `always holds(c.value <= 3)`'s carried root are accepted, since the
+/// deadlock changes no authored claim (ADR-018 DL-6).
+#[trace("TC-525", "FR-338-AC-2")]
+#[test]
+fn a_deadlock_is_bad_for_the_deadlock_item_alone() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let reachable = world.reachable();
+    assert_eq!(reachable.len(), 4);
+    let deadlock = SafetyTranslation::deadlock_freedom().expect("translates");
+    let request = world.request(ModelCheckItem::DeadlockFreedom, UNLIMITED);
+    assert_eq!(
+        check(&request, &closure(&reachable, &deadlock),),
+        rejected(
+            CertificateRule::BadState,
+            ProductStateRef {
+                model_state: world.state_key(&[3]),
+                automaton_state: deadlock.key(SafetyState::Rejected).expect("encodes"),
+            }
+        )
+    );
+
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let translation = invariant.translation(&world.objects()[0]);
+    assert_eq!(
+        check(
+            &invariant.request(&world, UNLIMITED),
+            &closure(&reachable, &translation)
+        ),
+        TemporalCertificateCheck::Accepted
+    );
+}
+
+/// FR-338-AC-3's `ContractUndetermined` vector, over the Counter subject with
+/// `pre CanInc { 6 mod (2 - self.value) >= 0 }`: a certificate for `always holds(true)` holding values 0
+/// to 2 is rejected `BadState` at value 2, whose expansion evaluates the
+/// precondition undefined. An atom that is undefined or false at a reached
+/// state is `BadState` there under the rejecting state.
+#[trace("TC-525", "FR-338-AC-3")]
+#[test]
+fn an_undetermined_contract_or_a_failing_atom_is_a_bad_state() {
+    let world = world(GUARDED, &[("c", 0)]);
+    let reachable = world.reachable();
+    assert_eq!(reachable.iter().map(|(_, values)| values[0]).max(), Some(2));
+    let truth = world.invariant("always holds(true)", |_| Some(true));
+    let translation = truth.translation(&world.objects()[0]);
+    assert_eq!(
+        check(
+            &truth.request(&world, UNLIMITED),
+            &closure(&reachable, &translation)
+        ),
+        rejected(
+            CertificateRule::BadState,
+            ProductStateRef {
+                model_state: world.state_key(&[2]),
+                automaton_state: translation.key(SafetyState::Carried).expect("encodes"),
+            }
+        )
+    );
+
+    let world = self::world(CONTRACT, &[("c", 0)]);
+    let reachable = world.reachable();
+    for (formula, atom) in [
+        (
+            "always holds(c.value != 2)",
+            (|v| Some(v != 2)) as fn(i64) -> Option<bool>,
+        ),
+        ("always holds(6 mod (2 - c.value) >= 0)", |v| {
+            (v != 2).then(|| 6 % (2 - v) >= 0)
+        }),
+    ] {
+        let invariant = world.invariant(formula, atom);
+        let translation = invariant.translation(&world.objects()[0]);
+        assert_eq!(
+            check(
+                &invariant.request(&world, UNLIMITED),
+                &closure(&reachable, &translation)
+            ),
+            rejected(
+                CertificateRule::BadState,
+                ProductStateRef {
+                    model_state: world.state_key(&[2]),
+                    automaton_state: translation.key(SafetyState::Rejected).expect("encodes"),
+                }
+            ),
+            "{formula}"
+        );
+    }
+}
+
+/// The certificate is checked against the request's own item: the
+/// deadlock-freedom item's certificate offered for a clause is rejected
+/// `ShapeMismatch`, before any key is used for membership; a model state
+/// state key of another domain is rejected the same way. Every key refused, the
+/// locus is the least refused state.
+#[trace("TC-525")]
+#[test]
+fn a_certificate_of_another_item_is_not_admitted() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let reachable = world.reachable();
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let deadlock = closure(
+        &reachable,
+        &SafetyTranslation::deadlock_freedom().expect("translates"),
+    );
+    assert_eq!(
+        check(&invariant.request(&world, UNLIMITED), &deadlock),
+        rejected(CertificateRule::ShapeMismatch, least(&deadlock.states))
+    );
+}
+
+/// TC-1079: the checker takes a clause's identity from the package alone.
+/// Two structurally identical clauses `C` and `D` share one node and are two
+/// `claim` occurrences of it; the identity each is checked under is the
+/// node, ordinal and `over` node of its own declaration in the package, and
+/// `C`'s certificate offered for `D` is rejected `ShapeMismatch`, since the
+/// two key contexts differ in the occurrence.
+#[trace("TC-1079")]
+#[test]
+fn the_checker_resolves_each_clause_s_identity_from_the_package() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let formula = "always holds(c.value <= 3)";
+    let (package, clauses) = package_with_clauses(
+        &world.documents.document,
+        &world.body,
+        &[("C", "", formula), ("D", "", formula)],
+    );
+    let [c, d] = clauses.as_slice() else {
+        panic!("two declared clauses");
+    };
+    let nodes = package.graph().temporal_clauses();
+    let [node_c, node_d] = nodes else {
+        panic!("two clause declarations");
+    };
+    assert_eq!(node_c.identity(), node_d.identity(), "one shared node");
+    let at = |clause: &CheckedTemporalClause| {
+        ClauseIdentity::resolve(
+            &package,
+            &world.documents.packages,
+            clause,
+            &[],
+            &Cancel::new(),
+            EmitLimits::fixture(),
+        )
+        .expect("the package declares the clause")
+    };
+    for (identity, node) in [(at(c), node_c), (at(d), node_d)] {
+        assert_eq!(*identity.occurrence().node(), node.identity());
+        assert_eq!(identity.occurrence().origin(), node.claim());
+        assert_eq!(identity.occurrence().origin().role().as_str(), "claim");
+        assert_eq!(identity.over(), Some(node.over().clone()));
+    }
+    assert_ne!(
+        at(c).occurrence().origin().ordinal(),
+        at(d).occurrence().origin().ordinal()
+    );
+
+    let c = world.declared(package, c.clone(), |v| Some(v <= 3));
+    let (package, _) = package_with_clauses(
+        &world.documents.document,
+        &world.body,
+        &[("C", "", formula), ("D", "", formula)],
+    );
+    let d = world.declared(package, d.clone(), |v| Some(v <= 3));
+    let own = certificate(&c.run(&world));
+    let reachable = world.reachable();
+    let mut expected = closure(&reachable, &c.translation(&world.objects()[0])).states;
+    expected.sort();
+    assert_eq!(own.states, expected);
+    assert_eq!(
+        check(&c.request(&world, UNLIMITED), &own),
+        TemporalCertificateCheck::Accepted
+    );
+    assert_eq!(
+        check(&d.request(&world, UNLIMITED), &own),
+        rejected(CertificateRule::ShapeMismatch, least(&own.states))
+    );
+}
+
+/// TC-1080 (the unresolved-root half of FR-338-AC-8): a request whose clause
+/// the request's package does not declare has no root. The core refuses it,
+/// it does not reject a certificate, and the settlement is `Failed`: not
+/// `Certified`, not `Inconclusive`. The engine refuses it too, before any
+/// state is explored.
+#[trace("TC-1080", "FR-338-AC-8")]
+#[test]
+fn a_request_whose_clause_root_does_not_resolve_settles_failed() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let outcome = invariant.run(&world);
+    let certificate = certificate(&outcome);
+    assert_eq!(
+        check(&invariant.request(&world, UNLIMITED), &certificate),
+        TemporalCertificateCheck::Accepted
+    );
+
+    // A clause the request's package does not declare.
+    let (_, mut others) = package_with_clauses(
+        &world.documents.document,
+        &world.body,
+        &[("Other", "", "always holds(c.value <= 3)")],
+    );
+    let other = others.remove(0);
+    let foreign = ModelCheckItem::Clause {
+        clause: &other,
+        letters: &invariant.letters,
+    };
+    let request = invariant.request_with(&world, foreign, UNLIMITED);
+    let unresolved = ClauseRootRefusal::Undeclared {
+        name: "Other".to_owned(),
+    };
+    match check_closure(
+        &request,
+        &certificate,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    ) {
+        Err(ClosureRefusal::Item(ItemRefusal::ClauseRoot(refusal))) => {
+            assert_eq!(refusal, unresolved);
+        }
+        other => panic!("expected the clause-root-unresolved refusal, got {other:?}"),
+    }
+    let refused = check_model(
+        ModelCheckRequest {
+            temporal_clock_selections: &[],
+            subject: request.subject,
+            item: foreign,
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            reductions: Default::default(),
+        },
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(&refused, Err(ModelCheckRefusal::Item(ItemRefusal::ClauseRoot(refusal))) if *refusal == unresolved),
+        "{refused:?}"
+    );
+
+    let request = invariant.request_with(&world, foreign, UNLIMITED);
+    let record = settle_model_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    assert_eq!(record.value, TerminalValue::Failed);
+    assert_eq!(record.label, ResultLabel::Failed);
+    assert_eq!(record.execution, Execution::Failed);
+}
+
+/// A TP-3 proof has no canonical closure certificate until its translation
+/// states have FR-338 keys (QSL-878): over the Counter subject,
+/// `always eventually[0,1] holds(c.value <= 3)` under infinite-trace holds
+/// with an empty certificate, which settles `Failed`, never `Proved`.
+#[test]
+fn a_safety_proof_with_an_empty_certificate_settles_failed_never_proved() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let claim = world.invariant("always eventually[0,1] holds(c.value <= 3)", |v| {
+        Some(v <= 3)
+    });
+    let outcome = claim.run(&world);
+    assert!(certificate(&outcome).states.is_empty());
+    let record = settle_model_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &claim.request(&world, UNLIMITED),
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    assert_eq!(record.value, TerminalValue::Failed);
+    assert_eq!(
+        (record.label, record.execution),
+        (ResultLabel::Failed, Execution::Failed)
+    );
+}
+
+/// FR-127's certificate rows: the settlement map runs the core checker on
+/// a `Holds` outcome's certificate itself, over the request's own package. The engine's certificate settles
+/// `proved`, `closed-scope`, `Proved{Exhaustive, Certified}`; the same
+/// outcome with a state removed settles `inconclusive`, `unsettled`,
+/// `CertificateRejected{SuccessorMissing, at}`, never `proved`.
+#[trace("TC-525", "FR-127-AC-1")]
+#[test]
+fn a_proof_settles_certified_only_when_its_certificate_is_accepted() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let outcome = invariant.run(&world);
+    let request = invariant.request(&world, UNLIMITED);
+    let settle = |outcome: &ModelCheckOutcome, cancel: &Cancel| {
+        settle_model_check(
+            outcome,
+            &ModelCheckLimits::default(),
+            &request,
+            cancel,
+            |_| panic!("a proof replays nothing"),
+        )
+    };
+    let proved = settle(&outcome, &Cancel::new());
+    assert_eq!(
+        proved.value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+    assert_eq!(
+        (proved.label, proved.basis, proved.execution),
+        (
+            ResultLabel::Proved,
+            SettlementBasis::ClosedScope,
+            Execution::Completed
+        )
+    );
+
+    let ModelCheckOutcome::Holds { certificate, stats } = outcome else {
+        panic!("a proof");
+    };
+    let mut tampered = closure_proof(&certificate).clone();
+    let one = world.state_key(&[1]);
+    let index = tampered
+        .states
+        .iter()
+        .position(|state| state.model_state == one)
+        .expect("value 1 is certified");
+    let at = tampered.states.remove(index);
+    let record = settle(
+        &ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Closure(tampered),
+            stats,
+        },
+        &Cancel::new(),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::SuccessorMissing,
+            at: CertificateLocus::ProductState(at),
+        })
+    );
+    assert_eq!(
+        (record.label, record.basis),
+        (ResultLabel::Inconclusive, SettlementBasis::Unsettled)
+    );
+
+    let cancel = Cancel::new();
+    cancel.cancel(CancelCause::Deadline);
+    let stopped = settle(&ModelCheckOutcome::Holds { certificate, stats }, &cancel);
+    assert_eq!(
+        stopped.value,
+        TerminalValue::Incomplete(IncompleteCause::Cancelled {
+            source: CancelCause::Deadline
+        })
+    );
+    assert_eq!(stopped.execution, Execution::ResourceIncomplete);
+}
+
+/// FR-127-AC-7 end to end through the settlement map, on FR-338's two-counter
+/// `{a, b}` vector. The accepted TP-1 certificate settles `proved`,
+/// `closed-scope`, `Proved{Exhaustive, Certified}`; the certificate with
+/// model state (1, 0) removed for instance `a` settles `inconclusive`,
+/// `unsettled`, `CertificateRejected{SuccessorMissing, (1, 0)}`. A graph
+/// budget of 2 states settles `Incomplete(LimitReached{max_states, 2})` whose
+/// record names `model_check.max_states`; a zero `work_units` meter settles
+/// `LimitReached{work_units, 0}` naming `accounting.work_units`; a requested
+/// and a deadline cancellation keep their source. None of the stops settles
+/// `CertificateRejected` (of any rule, `WitnessFails` included).
+#[trace("TC-522", "FR-127-AC-7")]
+#[test]
+fn a_certificate_check_settles_accepted_rejected_or_stopped_with_the_named_setting() {
+    let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let outcome = invariant.run(&world);
+    let settle =
+        |outcome: &ModelCheckOutcome, limits: &ModelCheckLimits, meter, cancel: &Cancel| {
+            settle_model_check(
+                outcome,
+                limits,
+                &invariant.request(&world, meter),
+                cancel,
+                |_| panic!("a proof replays nothing"),
+            )
+        };
+    let defaults = ModelCheckLimits::default();
+
+    let accepted = settle(&outcome, &defaults, UNLIMITED, &Cancel::new());
+    assert_eq!(
+        accepted.value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+    assert_eq!(
+        (accepted.label, accepted.basis),
+        (ResultLabel::Proved, SettlementBasis::ClosedScope)
+    );
+
+    let ModelCheckOutcome::Holds { certificate, stats } = &outcome else {
+        panic!("a proof");
+    };
+    let a = invariant.translation(&world.objects()[0]);
+    let at = ProductStateRef {
+        model_state: world.state_key(&[1, 0]),
+        automaton_state: a.key(SafetyState::Carried).expect("encodes"),
+    };
+    let mut tampered = closure_proof(certificate).clone();
+    tampered.states.retain(|state| *state != at);
+    assert_eq!(
+        tampered.states.len(),
+        closure_proof(certificate).states.len() - 1
+    );
+    let rejected = settle(
+        &ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Closure(tampered),
+            stats: *stats,
+        },
+        &defaults,
+        UNLIMITED,
+        &Cancel::new(),
+    );
+    assert_eq!(
+        rejected.value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::SuccessorMissing,
+            at: CertificateLocus::ProductState(at),
+        })
+    );
+    assert_eq!(
+        (rejected.label, rejected.basis),
+        (ResultLabel::Inconclusive, SettlementBasis::Unsettled)
+    );
+
+    let mut small = defaults;
+    small.limits.max_states = 2;
+    let max_states = settle(&outcome, &small, UNLIMITED, &Cancel::new());
+    let work_units = settle(&outcome, &defaults, ZERO, &Cancel::new());
+    let requested = Cancel::new();
+    requested.cancel(CancelCause::Requested);
+    let deadline = Cancel::new();
+    deadline.cancel(CancelCause::Deadline);
+    let cancelled_requested = settle(&outcome, &defaults, UNLIMITED, &requested);
+    let cancelled_deadline = settle(&outcome, &defaults, UNLIMITED, &deadline);
+
+    let meter = ModelCheckLimit::EvaluationMeter {
+        counter: filament_exact::LimitKind::ValueOccurrences,
+    };
+    let limit_stops = [
+        (
+            &max_states,
+            ModelCheckLimit::MaxStates,
+            2,
+            "model_check.max_states",
+        ),
+        (&work_units, meter, 0, "accounting.value_occurrences"),
+    ];
+    for (record, limit, value, setting) in limit_stops {
+        assert_eq!(
+            record.value,
+            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value })
+        );
+        assert_eq!(record.limit_reached, Some(ReachedLimit { limit, value }));
+        assert_eq!(limit.setting(), setting);
+    }
+    for (record, source) in [
+        (&cancelled_requested, CancelCause::Requested),
+        (&cancelled_deadline, CancelCause::Deadline),
+    ] {
+        assert_eq!(
+            record.value,
+            TerminalValue::Incomplete(IncompleteCause::Cancelled { source })
+        );
+        assert_eq!(record.limit_reached, None);
+    }
+    for stopped in [
+        &max_states,
+        &work_units,
+        &cancelled_requested,
+        &cancelled_deadline,
+    ] {
+        assert_eq!(stopped.execution, Execution::ResourceIncomplete);
+        assert!(!matches!(
+            stopped.value,
+            TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected { .. })
+        ));
+    }
+}
+
+/// A cancellation that arrives after the package is bound, during the
+/// certificate check itself, settles `Incomplete(Cancelled{source})` with no
+/// limit and never `CertificateRejected`. The handle is cancelled from its
+/// observer at the last meter charge of the settlement, which the package
+/// emission alone does not reach.
+#[trace("TC-522")]
+#[test]
+fn a_cancellation_during_the_certificate_check_settles_cancelled() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let outcome = invariant.run(&world);
+    let request = invariant.request(&world, UNLIMITED);
+    let clock_selections = tcb_01_event_position_selection(request.subject.simulation.package);
+    let settle = |cancel: &Cancel| {
+        settle_model_check(
+            &outcome,
+            &ModelCheckLimits::default(),
+            &request,
+            cancel,
+            |_| panic!("a proof replays nothing"),
+        )
+    };
+    let counted = |run: &dyn Fn(&Cancel)| {
+        let polls = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&polls);
+        run(&Cancel::observing(move || {
+            seen.fetch_add(1, Ordering::Relaxed);
+        }));
+        polls.load(Ordering::Relaxed)
+    };
+    let emission = counted(&|cancel| {
+        fsl_package::emit_checked_with_temporal_selections_and_cancel(
+            request.subject.simulation.package,
+            &clock_selections,
+            cancel,
+            EmitLimits::fixture(),
+        )
+        .expect("emits with the fixture's selected temporal clock");
+    });
+    let total = counted(&|cancel| {
+        settle(cancel);
+    });
+    assert!(
+        total > emission,
+        "the check charges the meter after binding"
+    );
+
+    for source in [CancelCause::Requested, CancelCause::Deadline] {
+        let polls = Arc::new(AtomicU32::new(0));
+        let handle: Arc<OnceLock<Cancel>> = Arc::new(OnceLock::new());
+        let (seen, target) = (Arc::clone(&polls), Arc::clone(&handle));
+        let cancel = Cancel::observing(move || {
+            if seen.fetch_add(1, Ordering::Relaxed) + 1 == total {
+                if let Some(cancel) = target.get() {
+                    cancel.cancel(source);
+                }
+            }
+        });
+        assert!(handle.set(cancel.clone()).is_ok());
+        let record = settle(&cancel);
+        assert_eq!(cancel.cause(), Some(source));
+        assert_eq!(
+            record.value,
+            TerminalValue::Incomplete(IncompleteCause::Cancelled { source })
+        );
+        assert_eq!(record.limit_reached, None);
+    }
+}
+
+/// A budget or a cancellation stops the checker with the typed cause and
+/// never accepts: `max_states` 2, `max_transitions` 1 and
+/// `max_automaton_states` 0 name their limit and value, a zero evaluation
+/// meter names the meter, and a cancelled handle names its source. The
+/// map settles a stopped check `Incomplete` with the same cause and limit.
+#[trace("TC-525")]
+#[test]
+fn a_stopped_check_names_what_stopped_it() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let outcome = invariant.run(&world);
+    let certificate = certificate(&outcome);
+    let request = invariant.request(&world, UNLIMITED);
+    let defaults = ModelCheckLimits::default();
+    let stop = |limit, value| {
+        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value })
+    };
+    let mut states = defaults;
+    states.limits.max_states = 2;
+    let mut transitions = defaults;
+    transitions.limits.max_transitions = 1;
+    let automaton = ModelCheckLimits {
+        max_automaton_states: 0,
+        ..defaults
+    };
+    for (limits, expected) in [
+        (states, stop(ModelCheckLimit::MaxStates, 2)),
+        (transitions, stop(ModelCheckLimit::MaxTransitions, 1)),
+        (automaton, stop(ModelCheckLimit::MaxAutomatonStates, 0)),
+    ] {
+        assert_eq!(
+            check_closure(&request, &certificate, &limits, &Cancel::new()).expect("checked"),
+            expected
+        );
+    }
+    assert_eq!(
+        check_closure(
+            &invariant.request(&world, ZERO),
+            &certificate,
+            &defaults,
+            &Cancel::new()
+        )
+        .expect("checked"),
+        stop(
+            ModelCheckLimit::EvaluationMeter {
+                counter: filament_exact::LimitKind::ValueOccurrences
+            },
+            0
+        )
+    );
+    for source in [CancelCause::Requested, CancelCause::Deadline] {
+        let cancel = Cancel::new();
+        cancel.cancel(source);
+        assert_eq!(
+            check_closure(&request, &certificate, &defaults, &cancel).expect("checked"),
+            TemporalCertificateCheck::Stopped(IncompleteCause::Cancelled { source })
+        );
+    }
+
+    let record = settle_model_check(&outcome, &states, &request, &Cancel::new(), |_| {
+        panic!("a proof replays nothing")
+    });
+    assert_eq!(
+        record.value,
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxStates,
+            value: 2
+        })
+    );
+    assert_eq!(
+        record.limit_reached,
+        Some(ReachedLimit {
+            limit: ModelCheckLimit::MaxStates,
+            value: 2
+        })
+    );
+    assert_eq!(record.execution, Execution::ResourceIncomplete);
+}
+
+/// FR-125: a clause whose subject's universe is empty has no instance and
+/// is `Undecided(NoInstance)` before any state is explored, and the checker refuses to certify it: an empty
+/// certificate is never an acceptance.
+#[trace("TC-525")]
+#[test]
+fn a_clause_with_no_instance_is_never_certified() {
+    let world = world(CONTRACT, &[]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    assert!(matches!(
+        invariant.run(&world),
+        ModelCheckOutcome::Undecided {
+            cause: UndecidedCause::NoInstance,
+            stats,
+        } if stats.product_states == 0
+    ));
+    assert!(matches!(
+        check_closure(
+            &invariant.request(&world, UNLIMITED),
+            &ClosureCertificate { states: Vec::new() },
+            &ModelCheckLimits::default(),
+            &Cancel::new()
+        ),
+        Err(ClosureRefusal::NoInstance)
+    ));
+}
+
+/// FSpec FR-361-AC-8 (FSpec TC-294) and FR-127: a clause
+/// whose empty universe gives it zero instances settles `inconclusive` with
+/// the wire cause `no-instance` and basis `unsettled`, never `proved` or
+/// `refuted`. The zero instances come from the subject's empty universe of
+/// `counters`.
+#[trace("TC-520", "FSpec-FR-361-AC-8")]
+#[test]
+fn a_clause_with_no_instance_settles_inconclusive_never_proved_or_refuted() {
+    let world = world(CONTRACT, &[]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let outcome = invariant.run(&world);
+    assert!(matches!(
+        outcome,
+        ModelCheckOutcome::Undecided {
+            cause: UndecidedCause::NoInstance,
+            stats,
+        } if stats.product_states == 0
+    ));
+    let request = world.request(invariant.item(), UNLIMITED);
+    let record = settle_model_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("no instance replays nothing"),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::NoInstance)
+    );
+    assert_eq!(InconclusiveCause::NoInstance.as_str(), "no-instance");
+    assert_eq!(record.label, ResultLabel::Inconclusive);
+    assert_eq!(record.basis, SettlementBasis::Unsettled);
+    assert_eq!(record.execution, Execution::Completed);
+    assert!(record.counterexample.is_none());
+}
+
+/// ADR-016 EX-10: a subject with no initial state examines no behaviour, so
+/// the checker refuses it and an empty certificate offered with a `Holds`
+/// settles `inconclusive`, `NoInitialState`, never `Certified`.
+#[trace("TC-525")]
+#[test]
+fn a_subject_with_no_initial_state_is_never_certified() {
+    let mut world = world(CONTRACT, &[("c", 0)]);
+    world.initial.clear();
+    let request = world.request(ModelCheckItem::DeadlockFreedom, UNLIMITED);
+    let empty = ClosureCertificate { states: Vec::new() };
+    assert!(matches!(
+        check_closure(
+            &request,
+            &empty,
+            &ModelCheckLimits::default(),
+            &Cancel::new()
+        ),
+        Err(ClosureRefusal::NoInitialState)
+    ));
+    let record = settle_model_check(
+        &ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Closure(empty),
+            stats: fsl_replay::RunStats::default(),
+        },
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
+    );
+    assert_eq!(record.label, ResultLabel::Inconclusive);
+}
+
+/// Key admission is bounded and cancellable before any state is explored:
+/// a certificate padded past `max_states` entries per instance stops at
+/// that limit before its padding is read, and a cancelled handle stops it
+/// before a malformed first entry is examined.
+#[trace("TC-525")]
+#[test]
+fn key_admission_is_bounded_and_cancellable() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let mut certificate = certificate(&invariant.run(&world));
+    let padding = certificate.states[0].clone();
+    certificate.states.extend(std::iter::repeat_n(
+        ProductStateRef {
+            automaton_state: fsl_eval::automaton::AutomatonStateKey::imported(b"[".to_vec()),
+            ..padding
+        },
+        10,
+    ));
+    let request = invariant.request(&world, UNLIMITED);
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 4;
+    assert_eq!(
+        check_closure(&request, &certificate, &limits, &Cancel::new()).expect("checked"),
+        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxStates,
+            value: 4
+        })
+    );
+    certificate.states.reverse();
+    let cancel = Cancel::new();
+    cancel.cancel(CancelCause::Requested);
+    assert_eq!(
+        check_closure(
+            &request,
+            &certificate,
+            &ModelCheckLimits::default(),
+            &cancel
+        )
+        .expect("checked"),
+        TemporalCertificateCheck::Stopped(IncompleteCause::Cancelled {
+            source: CancelCause::Requested
+        })
+    );
+}
+
+/// FR-338's admission negatives reach the checker as imported octets: a
+/// malformed key, a non-canonical decimal path and a reordered set are each
+/// refused before membership, rejecting the certificate `ShapeMismatch` at
+/// that entry rather than reading it as a missing or member state.
+#[trace("TC-525")]
+#[test]
+fn a_malformed_key_in_a_certificate_is_refused_before_membership() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let reachable = world.reachable();
+    let deadlock = SafetyTranslation::deadlock_freedom().expect("translates");
+    let request = world.request(ModelCheckItem::DeadlockFreedom, UNLIMITED);
+    let carried = String::from_utf8(
+        deadlock
+            .key(SafetyState::Carried)
+            .expect("encodes")
+            .as_bytes()
+            .to_vec(),
+    )
+    .expect("UTF-8");
+    for octets in [
+        "[".to_owned(),
+        carried.replace(r#"[[],"positive"]"#, r#"[["01"],"positive"]"#),
+        carried.replace(",", ", "),
+    ] {
+        let mut certificate = closure(&reachable, &deadlock);
+        let at = ProductStateRef {
+            automaton_state: fsl_eval::automaton::AutomatonStateKey::imported(
+                octets.clone().into_bytes(),
+            ),
+            ..certificate.states[0].clone()
+        };
+        certificate.states.insert(0, at.clone());
+        assert_eq!(
+            check(&request, &certificate),
+            rejected(CertificateRule::ShapeMismatch, at),
+            "{octets}"
+        );
+    }
+}
+
+/// FR-338's refused-key outcome on the two-counter Counter subject standing
+/// in for ADR-018 §6's: the engine's certificate with one state's key
+/// replaced in turn by a foreign-context key, a non-canonical encoding and
+/// an unsorted set is rejected `ShapeMismatch` at that state, carrying the
+/// refused key and its model state, and settles `CertificateRejected`, not
+/// `proved`; restored, it is accepted. With two states' keys refused, both
+/// orderings of `states` report the least refused `ProductStateRef`.
+#[trace("TC-1080", "FR-338-AC-8")]
+#[test]
+fn a_refused_key_rejects_the_certificate_at_the_least_refused_state() {
+    let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let outcome = invariant.run(&world);
+    let full = certificate(&outcome);
+    let request = invariant.request(&world, UNLIMITED);
+    let imported =
+        |octets: String| fsl_eval::automaton::AutomatonStateKey::imported(octets.into_bytes());
+    let valid =
+        String::from_utf8(full.states[5].automaton_state.as_bytes().to_vec()).expect("UTF-8");
+    let carried_body = r#"["safety",[[[[[],"positive"]],[],[],[]]]]"#;
+    assert!(valid.ends_with(&format!("{carried_body}]")), "{valid}");
+    let deadlock = SafetyTranslation::deadlock_freedom()
+        .expect("translates")
+        .key(SafetyState::Carried)
+        .expect("encodes");
+    for refused_key in [
+        deadlock,
+        imported(valid.replacen(",", ", ", 1)),
+        imported(valid.replace(
+            carried_body,
+            r#"["safety",[[[],[],[],[]],[[[[],"positive"]],[],[],[]]]]"#,
+        )),
+    ] {
+        let mut certificate = full.clone();
+        certificate.states[5].automaton_state = refused_key;
+        let at = certificate.states[5].clone();
+        assert_eq!(
+            check(&request, &certificate),
+            rejected(CertificateRule::ShapeMismatch, at.clone())
+        );
+        let record = settle_model_check(
+            &ModelCheckOutcome::Holds {
+                certificate: ProofCertificate::Closure(certificate),
+                stats: outcome.stats(),
+            },
+            &ModelCheckLimits::default(),
+            &request,
+            &Cancel::new(),
+            |_| panic!("a proof replays nothing"),
+        );
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::ShapeMismatch,
+                at: CertificateLocus::ProductState(at),
+            })
+        );
+    }
+    assert_eq!(check(&request, &full), TemporalCertificateCheck::Accepted);
+
+    let mut two = full.clone();
+    for index in [3, 11] {
+        two.states[index].automaton_state = imported(valid.replacen(",", ", ", 1));
+    }
+    let least = [two.states[3].clone(), two.states[11].clone()]
+        .into_iter()
+        .min_by(|left, right| {
+            (left.model_state.as_bytes(), left.automaton_state.as_bytes()).cmp(&(
+                right.model_state.as_bytes(),
+                right.automaton_state.as_bytes(),
+            ))
+        })
+        .expect("two refused states");
+    assert_eq!(
+        check(&request, &two),
+        rejected(CertificateRule::ShapeMismatch, least.clone())
+    );
+    two.states.reverse();
+    assert_eq!(
+        check(&request, &two),
+        rejected(CertificateRule::ShapeMismatch, least)
+    );
+}

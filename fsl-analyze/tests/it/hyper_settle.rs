@@ -1,0 +1,820 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-182 (TC-607, TC-609): the settlement of a hyper run's outcome as a
+//! terminal record, on the vault of `crate::hyper_world`.
+//!
+//! The outcomes are the engine's own, settled through the replay that gates
+//! each refutation, or built by hand where a row has no engine run.
+//!
+//! Not claimed here: FR-182-AC-1, AC-2 and AC-7, whose `proved` rows need
+//! FR-163's product-closure certificate and checker and the SMT `k`-induction
+//! row; AC-3, whose HP-4 half is asserted below and whose other halves
+//! (the vacuous match, the witness-set and tuple limits) belong to other
+//! tests; AC-4 to AC-6, which are HP-1's; and the "published defaults"
+//! marking of a `proved` record in FR-184-AC-1. Nothing in production calls
+//! `settle_hyper_form` yet: the negotiation wiring in the CG repository and
+//! `fsl-route` is tracked by QSL-1046, "Wire settle_hyper_form into
+//! negotiation (CG) and fsl-route".
+
+use filament_exact::{Cancel, Origin, Role, Undefined};
+use filament_semantic_value::catalog::Category;
+use filament_semantic_value::catalog::InternalFault;
+use fsl_analyze::analyze::{analyze_items, hyper_form_item, DispositionKind, Engines, Settlement};
+use fsl_analyze::model_check::ModelCheckRefusal;
+use fsl_eval::temporal::UndefinedCause;
+use fsl_foundation::bound::{DomainKey, DomainKind};
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::ReductionKind;
+use fsl_foundation::{BackendId, RequestIndex};
+use fsl_replay::{
+    settle_hyper_check, settle_hyper_form, BoundCovers, Code, DisagreementCause, Execution,
+    HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperRecord, HyperReductionCause,
+    HyperSettleRefusal, IncompleteCause, InconclusiveCause, LimitOrigin, ModelCheckLimit,
+    ModelCheckLimits, ModelTraceSettlement, ReachedLimit, ReplayRefusal, ResultLabel, RunStats,
+    SettlementBasis, TerminalValue, Truth, UnavailabilityCause, UndecidedCause, EXPLICIT_STATE,
+};
+use fsl_route::reductions::Reductions;
+use fsl_route::request::items_from_requirements;
+use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, Registry};
+use fsl_semantics::check::{Capability, HyperForm, HyperUnsupported, RequirementRecord};
+use fsl_semantics::family::{ClaimExtent, Requirements, UnsupportedItem};
+use ix_trace_rs::trace;
+
+use crate::hyper::refuted;
+use crate::hyper_projected::{aligned, IDLE, MID_OPERATION};
+use crate::hyper_witness::ExhaustedExistential;
+use crate::hyper_world::{non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
+
+/// `outcome` settled with `world`'s own replay under the default limits.
+fn settle(world: &World, outcome: &HyperOutcome) -> HyperRecord {
+    settle_under(world, outcome, &ModelCheckLimits::default(), &[])
+}
+
+fn settle_under(
+    world: &World,
+    outcome: &HyperOutcome,
+    limits: &ModelCheckLimits,
+    requested: &[ModelCheckLimit],
+) -> HyperRecord {
+    settle_hyper_check(outcome, limits, requested, |counterexample| {
+        world.replay_under(counterexample, limits.max_witness_set)
+    })
+    .expect("the outcome settles")
+}
+
+fn run(world: &World, limits: ModelCheckLimits) -> HyperOutcome {
+    world
+        .run(limits, &Cancel::new())
+        .expect("the run is not refused")
+}
+
+fn leaky_lockstep() -> World {
+    World::new(
+        Vault::Leaky,
+        false,
+        &STARTS,
+        &non_interference(EQUAL_INPUTS),
+    )
+}
+
+fn leaky_opaque() -> World {
+    World::new(Vault::Leaky, false, &STARTS, &opaque(""))
+}
+
+/// The columns of a record that make up its row of FR-182's table.
+fn row(record: &HyperRecord) -> (ResultLabel, SettlementBasis, Execution, Truth, Category) {
+    (
+        record.label,
+        record.basis,
+        record.execution,
+        record.truth,
+        record.value.category(),
+    )
+}
+
+/// ADR-023 section 8.1's leaky refutation and section 8.2's leaky `Opaque`
+/// refutation each settle `refuted`, `decisive-counterexample`, category
+/// violation, only because their counterexample replays, and the record
+/// carries it. The record names the method and no horizon.
+#[trace("TC-607")]
+#[test]
+fn a_counterexample_that_replays_settles_refuted_and_is_carried() {
+    for world in [leaky_lockstep(), leaky_opaque()] {
+        let outcome = run(&world, ModelCheckLimits::default());
+        let counterexample = refuted(outcome.clone());
+        let record = settle(&world, &outcome);
+        assert_eq!(record.value, TerminalValue::Refuted);
+        assert_eq!(
+            row(&record),
+            (
+                ResultLabel::Refuted,
+                SettlementBasis::DecisiveCounterexample,
+                Execution::Completed,
+                Truth::Violated,
+                Category::Violation
+            )
+        );
+        assert_eq!(record.counterexample, Some(counterexample));
+        assert_eq!(record.method, EXPLICIT_STATE);
+        assert_eq!(
+            (record.depth, record.covers, record.limit_reached),
+            (None, None, None)
+        );
+    }
+}
+
+/// A refutation settles only through its replay: a replay that disagrees
+/// settles `inconclusive` by `ReplayParity` and carries no counterexample; one
+/// that a limit stopped settles `incomplete` naming it; a refused one settles
+/// `inconclusive` by `ReplayRefused` with its code, and a fault `failed`, each
+/// with no counterexample and no half value.
+#[trace("TC-607")]
+#[test]
+fn a_refutation_that_does_not_replay_settles_with_no_counterexample() {
+    let world = leaky_opaque();
+    let outcome = run(&world, ModelCheckLimits::default());
+
+    // The secure vault does not empty the set: the replay disagrees.
+    let secure = World::new(Vault::Secure, false, &STARTS, &opaque(""));
+    let parity = settle(&secure, &outcome);
+    assert!(matches!(
+        parity.value,
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+            DisagreementCause::Verdicts { .. }
+        ))
+    ));
+    assert_eq!(
+        row(&parity),
+        (
+            ResultLabel::Inconclusive,
+            SettlementBasis::Unsettled,
+            Execution::Completed,
+            Truth::Pending,
+            Category::Inconclusive
+        )
+    );
+    assert_eq!(parity.counterexample, None);
+
+    let tight = ModelCheckLimits {
+        max_witness_set: 0,
+        ..ModelCheckLimits::default()
+    };
+    let stopped = settle_under(&world, &outcome, &tight, &[ModelCheckLimit::MaxWitnessSet]);
+    let reached = ReachedLimit {
+        limit: ModelCheckLimit::MaxWitnessSet,
+        value: 0,
+    };
+    assert_eq!(
+        stopped.value,
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxWitnessSet,
+            value: 0
+        })
+    );
+    assert_eq!(stopped.limit_reached, Some(reached));
+    // The replay's set would have held one member past the budget (FR-184).
+    assert_eq!(stopped.count, Some(1));
+    assert_eq!(stopped.execution, Execution::ResourceIncomplete);
+    assert_eq!(stopped.counterexample, None);
+
+    // A counterexample of one trace more than the clause has is refused.
+    let mut extra = refuted(outcome.clone());
+    extra.traces.push(extra.traces[0].clone());
+    let refused = settle_hyper_check(
+        &HyperOutcome::Violated {
+            counterexample: Box::new(extra),
+            stats: RunStats::default(),
+        },
+        &ModelCheckLimits::default(),
+        &[],
+        |counterexample| world.replay(counterexample),
+    )
+    .expect("settles");
+    assert_eq!(
+        refused.value,
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(Code::InvalidRuntimeInput))
+    );
+    assert_eq!(refused.counterexample, None);
+
+    let failed = settle_hyper_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &[],
+        |_: &HyperCounterexample| -> Result<ModelTraceSettlement, ReplayRefusal> {
+            Err(ReplayRefusal::Fault(InternalFault::new(
+                "test",
+                "replay-faults",
+            )))
+        },
+    )
+    .expect("settles");
+    assert_eq!(failed.value, TerminalValue::Failed);
+    assert_eq!(failed.label, ResultLabel::Failed);
+    assert_eq!(failed.value.category(), Category::InternalFailure);
+    assert_eq!(failed.counterexample, None);
+}
+
+/// The outcome of an HP-3 clause whose existential `match` divides by zero
+/// (FR-177-AC-5) settles `refuted`, `decisive-counterexample`, with the
+/// `Undefined` counterexample that names `a` and `b` and the division-by-zero
+/// cause, after its replay reproduces it; the outcomes of a `match` whose
+/// reading is incomplete (FR-177-AC-6, FR-178-AC-6) settle `inconclusive`,
+/// `MatchUndetermined`.
+#[trace("TC-607", "FR-182-AC-8")]
+#[test]
+fn an_undefined_tuple_refutes_and_an_undetermined_match_is_inconclusive() {
+    let divided = " and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) \
+                   else 0) = 0";
+    let world = World::new(Vault::Secure, false, &STARTS, &opaque(divided));
+    let record = settle(&world, &run(&world, ModelCheckLimits::default()));
+    assert_eq!(record.value, TerminalValue::Refuted);
+    assert_eq!(
+        row(&record),
+        (
+            ResultLabel::Refuted,
+            SettlementBasis::DecisiveCounterexample,
+            Execution::Completed,
+            Truth::Violated,
+            Category::Violation
+        )
+    );
+    let Some(HyperCounterexample {
+        kind: HyperCounterexampleKind::Undefined(undefined),
+        ..
+    }) = &record.counterexample
+    else {
+        panic!("the record carries the undefined-evaluation counterexample");
+    };
+    assert_eq!(
+        undefined.cause,
+        UndefinedCause::Kernel(Undefined::DivisionByZero)
+    );
+    let named: Vec<&str> = undefined
+        .variables
+        .iter()
+        .map(|(variable, _)| variable.as_str())
+        .collect();
+    assert_eq!(named, ["a", "b"]);
+
+    let secure = World::new(Vault::Secure, false, &STARTS, &opaque(""));
+    let existential = secure
+        .run_through(
+            &secure.seams(),
+            &ExhaustedExistential(secure.seams()),
+            ModelCheckLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the run is not refused");
+    let projected = World::busy(Vault::Busy, &IDLE, &aligned(&[]));
+    let projected_outcome = projected
+        .run_through(
+            &projected.seams(),
+            &crate::hyper::Exhausted,
+            ModelCheckLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the run is not refused");
+    for (world, outcome) in [(&secure, existential), (&projected, projected_outcome)] {
+        let record = settle(world, &outcome);
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::MatchUndetermined)
+        );
+        assert_eq!(
+            row(&record),
+            (
+                ResultLabel::Inconclusive,
+                SettlementBasis::Unsettled,
+                Execution::Completed,
+                Truth::Pending,
+                Category::Inconclusive
+            )
+        );
+        assert_eq!(record.counterexample, None);
+    }
+}
+
+/// The causes of a run that decided nothing settle `inconclusive`,
+/// `unsettled`, completed and pending, each by its own cause, and none carries
+/// a counterexample.
+#[trace("TC-607")]
+#[test]
+fn a_run_that_decided_nothing_settles_by_its_cause() {
+    let world = leaky_lockstep();
+    for (cause, expected) in [
+        (
+            UndecidedCause::VacuousMatch,
+            InconclusiveCause::VacuousMatch,
+        ),
+        (UndecidedCause::NoInstance, InconclusiveCause::NoInstance),
+        (
+            UndecidedCause::NoInitialState,
+            InconclusiveCause::NoInitialState,
+        ),
+        (
+            UndecidedCause::UndecidedSuccessor,
+            InconclusiveCause::UndecidedSuccessor,
+        ),
+    ] {
+        let record = settle(
+            &world,
+            &HyperOutcome::Undecided {
+                cause,
+                stats: RunStats::default(),
+            },
+        );
+        assert_eq!(record.value, TerminalValue::Inconclusive(expected));
+        assert_eq!(
+            (record.label, record.basis, record.execution, record.truth),
+            (
+                ResultLabel::Inconclusive,
+                SettlementBasis::Unsettled,
+                Execution::Completed,
+                Truth::Pending
+            )
+        );
+        assert_eq!(record.counterexample, None);
+    }
+}
+
+/// `Opaque` over the leaky vault with `max_witness_set` 0 stops the run, and
+/// the record is `failed` with execution `resource-incomplete`, naming the
+/// limit, its value and the count one past it, and carrying no counterexample.
+/// A cancelled run keeps its cancellation and names no limit.
+#[trace("TC-607")]
+#[test]
+fn a_stopped_run_names_its_limit_its_value_and_its_count() {
+    let world = leaky_opaque();
+    let limits = ModelCheckLimits {
+        max_witness_set: 0,
+        ..ModelCheckLimits::default()
+    };
+    let record = settle_under(
+        &world,
+        &run(&world, limits),
+        &limits,
+        &[ModelCheckLimit::MaxWitnessSet],
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxWitnessSet,
+            value: 0
+        })
+    );
+    assert_eq!(
+        row(&record),
+        (
+            ResultLabel::Failed,
+            SettlementBasis::Unavailable,
+            Execution::ResourceIncomplete,
+            Truth::Unavailable,
+            Category::Incomplete
+        )
+    );
+    assert_eq!(record.count, Some(1));
+    assert_eq!(
+        record.limit_reached,
+        Some(ReachedLimit {
+            limit: ModelCheckLimit::MaxWitnessSet,
+            value: 0
+        })
+    );
+    assert_eq!(record.counterexample, None);
+
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    let cancelled = settle(
+        &world,
+        &world
+            .run(ModelCheckLimits::default(), &cancel)
+            .expect("the run is not refused"),
+    );
+    assert!(matches!(
+        cancelled.value,
+        TerminalValue::Incomplete(IncompleteCause::Cancelled { .. })
+    ));
+    assert_eq!((cancelled.limit_reached, cancelled.count), (None, None));
+}
+
+/// A search horizon settles `inconclusive`, `BoundReached{depth}`, completed
+/// and pending, and the record states what the bound covers: lasso joint steps
+/// for an HP-2 item, the product depth explored for an HP-3 item (its rotated
+/// lasso can be shorter than the depth it was found at), moves for an HP-6
+/// item.
+#[trace("TC-607")]
+#[test]
+fn a_horizon_settles_inconclusive_and_the_record_states_what_it_covers() {
+    let mut lockstep = leaky_lockstep();
+    lockstep.max_depth = Some(1);
+    let mut witness = leaky_opaque();
+    witness.max_depth = Some(1);
+    let mut projected = World::busy(Vault::BusyLeaky, &MID_OPERATION, &aligned(&[]));
+    projected.max_depth = Some(1);
+    for (world, covers) in [
+        (&lockstep, BoundCovers::JointSteps),
+        (&witness, BoundCovers::ProductDepth),
+        (&projected, BoundCovers::Moves),
+    ] {
+        let record = settle(world, &run(world, ModelCheckLimits::default()));
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::BoundReached { depth: 1 })
+        );
+        assert_eq!(
+            row(&record),
+            (
+                ResultLabel::Inconclusive,
+                SettlementBasis::Unsettled,
+                Execution::Completed,
+                Truth::Pending,
+                Category::Inconclusive
+            )
+        );
+        assert_eq!((record.depth, record.covers), (Some(1), Some(covers)));
+    }
+}
+
+/// Every record, a refuted one and a stopped one alike, states the value of
+/// each model-check limit it used, FR-126's and FR-184's, marked as the
+/// request's when the request set it and as the published default when not.
+#[trace("TC-609")]
+#[test]
+fn a_record_states_each_limit_with_where_its_value_came_from() {
+    let world = leaky_opaque();
+    let defaults = ModelCheckLimits::default();
+    let refuted_record = settle(&world, &run(&world, defaults));
+    let tight = ModelCheckLimits {
+        max_witness_set: 0,
+        ..defaults
+    };
+    let stopped_record = settle_under(
+        &world,
+        &run(&world, tight),
+        &tight,
+        &[ModelCheckLimit::MaxWitnessSet],
+    );
+    let seen = |record: &HyperRecord| {
+        record
+            .limits
+            .iter()
+            .map(|used| (used.limit, used.value, used.origin))
+            .collect::<Vec<_>>()
+    };
+    let expected = |witness: u64, origin: LimitOrigin| {
+        vec![
+            (
+                ModelCheckLimit::MaxStates,
+                defaults.limits.max_states as u64,
+                LimitOrigin::PublishedDefault,
+            ),
+            (
+                ModelCheckLimit::MaxTransitions,
+                defaults.limits.max_transitions as u64,
+                LimitOrigin::PublishedDefault,
+            ),
+            (
+                ModelCheckLimit::MaxAutomatonStates,
+                defaults.max_automaton_states,
+                LimitOrigin::PublishedDefault,
+            ),
+            (ModelCheckLimit::MaxWitnessSet, witness, origin),
+            (
+                ModelCheckLimit::MaxRelationTuples,
+                defaults.max_relation_tuples,
+                LimitOrigin::PublishedDefault,
+            ),
+        ]
+    };
+    assert_eq!(
+        seen(&refuted_record),
+        expected(defaults.max_witness_set, LimitOrigin::PublishedDefault)
+    );
+    assert_eq!(seen(&stopped_record), expected(0, LimitOrigin::Requested));
+}
+
+/// A `Holds` outcome settles no record: it would settle `proved` only after
+/// FR-163's product-closure certificate checker accepts its certificate, and
+/// the certificate and the checker are not built.
+#[trace("TC-607")]
+#[test]
+fn a_holds_outcome_settles_no_record_until_the_product_closure_checker_exists() {
+    let secure = World::new(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &non_interference(EQUAL_INPUTS),
+    );
+    let outcome = run(&secure, ModelCheckLimits::default());
+    // FR-174-AC-7: a run that proves its claim reports `HoldsReduced`.
+    assert!(matches!(outcome, HyperOutcome::HoldsReduced { .. }));
+    let result = settle_hyper_check(&outcome, &ModelCheckLimits::default(), &[], |_| {
+        panic!("a holds outcome replays nothing")
+    });
+    assert_eq!(
+        result,
+        Err(fsl_replay::HyperSettleRefusal::ProductClosureCheckerNotBuilt)
+    );
+}
+
+/// A plain `Holds` outcome waits for the same checker as `HoldsReduced`.
+#[trace("TC-607")]
+#[test]
+fn a_plain_holds_outcome_settles_no_record_until_the_product_closure_checker_exists() {
+    let outcome = HyperOutcome::Holds {
+        stats: RunStats::default(),
+    };
+    let result = settle_hyper_check(&outcome, &ModelCheckLimits::default(), &[], |_| {
+        panic!("a holds outcome replays nothing")
+    });
+    assert_eq!(
+        result,
+        Err(fsl_replay::HyperSettleRefusal::ProductClosureCheckerNotBuilt)
+    );
+}
+
+/// A reduction a hyper item's run settled before expanding a state: one the
+/// engine does not offer settles `unsupported` naming it, and one whose
+/// preservation row reads "no" names a hyper form that the cause's
+/// `PropertyForm` member cannot hold, so it settles no record. A run that
+/// proved its claim on the copy-swap quotient is a `Holds` and waits for the
+/// same certificate checker.
+#[trace("TC-607")]
+#[test]
+fn a_reduction_outcome_settles_by_its_cause_and_a_reduced_hold_waits_for_the_checker() {
+    let settle = |outcome: &HyperOutcome| {
+        settle_hyper_check(outcome, &ModelCheckLimits::default(), &[], |_| {
+            panic!("a reduction outcome replays nothing")
+        })
+    };
+    let record = settle(&HyperOutcome::Reduction {
+        cause: HyperReductionCause::Unsupported {
+            reduction: ReductionKind::StateConstraint,
+        },
+        stats: RunStats::default(),
+    })
+    .expect("settles");
+    assert_eq!(
+        record.value,
+        TerminalValue::Unsupported(UnavailabilityCause::UnsupportedReduction {
+            reduction: ReductionKind::StateConstraint
+        })
+    );
+    assert_eq!(record.counterexample, None);
+
+    let refused = settle(&HyperOutcome::Reduction {
+        cause: HyperReductionCause::NotPreserving {
+            reduction: ReductionKind::PartialOrder,
+            form: fsl_semantics::check::HyperForm::ProjectionAligned,
+        },
+        stats: RunStats::default(),
+    });
+    assert_eq!(
+        refused,
+        Err(HyperSettleRefusal::ReductionFormNotRepresentable)
+    );
+
+    let reduced = settle(&HyperOutcome::HoldsReduced {
+        reductions: Vec::new(),
+        stats: RunStats::default(),
+    });
+    assert_eq!(
+        reduced,
+        Err(HyperSettleRefusal::ProductClosureCheckerNotBuilt)
+    );
+}
+
+/// Each clause S3 classifies `Other` settles `unsupported`,
+/// `unsupported-requested-capability`, naming its rule, from its form alone:
+/// `settle_hyper_form` reads the classification and no run, and an admitted
+/// form settles nothing there. The call is made directly; that negotiation
+/// calls it for every item is tracked by QSL-1046, "Wire settle_hyper_form
+/// into negotiation (CG) and fsl-route".
+#[trace("TC-598")]
+#[test]
+fn an_other_clause_settles_unsupported_at_negotiation_with_no_run() {
+    let safe = "holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b)";
+    let clause = |prefix: &str, body: &str| {
+        format!(
+            "hyper H using inf over behaviours (v: V::Vault) {prefix} \
+             match {{ a.step.Vault::step.i = b.step.Vault::step.i }} {{ {body} }}"
+        )
+    };
+    let flat = |declaration: &str| World::new(Vault::Secure, false, &STARTS, declaration);
+    let projected = World::busy(
+        Vault::Busy,
+        &IDLE,
+        &clause(
+            "forall trace a of V exists trace b of V align skip { V::Vault::mix }",
+            safe,
+        ),
+    );
+    for (world, reason) in [
+        (
+            flat(&clause("exists trace b of V forall trace a of V", safe)),
+            HyperUnsupported::ExistentialBeforeUniversal,
+        ),
+        (
+            flat(&clause(
+                "forall trace a of V exists trace b of V",
+                "always eventually holds(v.l @ a = v.l @ b)",
+            )),
+            HyperUnsupported::ExistentialOutsideSafety,
+        ),
+        (
+            flat(&clause(
+                "forall trace a of V exists trace b of V fair weak V::Vault::step;",
+                safe,
+            )),
+            HyperUnsupported::ExistentialOutsideSafety,
+        ),
+        (projected, HyperUnsupported::ProjectionOutsideSafety),
+    ] {
+        let form = world.clause.form().expect("the clause has a form");
+        assert_eq!(form, &HyperForm::Other { reason }, "{}", world.text);
+        let Some(TerminalValue::Unsupported(cause)) = settle_hyper_form(form) else {
+            panic!("an HP-4 clause settles unsupported");
+        };
+        assert_eq!(cause, UnavailabilityCause::UnsupportedHyperForm { reason });
+        assert_eq!(cause.as_str(), "unsupported-requested-capability");
+        assert_eq!(cause.code(), Some("unsupported_projection"));
+    }
+    let admitted = World::new(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &non_interference(EQUAL_INPUTS),
+    );
+    assert_eq!(admitted.clause.form(), Some(&HyperForm::Universal));
+    assert_eq!(
+        settle_hyper_form(admitted.clause.form().expect("a form")),
+        None
+    );
+}
+
+/// FR-396-AC-2: the HP-4 request goes through fsl-route, whose typed
+/// unsupported cause removes the registered EN-1 candidate. Negotiation then
+/// calls `settle_hyper_form` and analyze writes unsupported-requested-capability
+/// without running an engine.
+#[trace("FSpec-TC-342", "FSpec-FR-396-AC-2")]
+#[test]
+fn routed_hp4_hyper_item_settles_unsupported_requested_capability() {
+    let reason = HyperUnsupported::ExistentialBeforeUniversal;
+    let form = HyperForm::Other { reason };
+    // The request names the world's real `claim`/`hyperproperty` node: the
+    // item's family is read from the checked package (FR-507).
+    let world = crate::graph_world::temporal_config_world();
+    let node = world
+        .package
+        .graph()
+        .semantic_graph()
+        .nodes()
+        .find(|node| node.semantic_form() == "hyperproperty")
+        .expect("the world holds a hyper clause node")
+        .key();
+    let occurrence = OccurrenceKey::new(node.clone(), Origin::new(Role::new("claim"), 0));
+    let extent = ClaimExtent::from_domains(
+        [(
+            DomainKey::Node {
+                node,
+                path: Vec::new(),
+            },
+            DomainKind::InfiniteTrace,
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let requirements = Requirements::hyper_form(extent, &form);
+    assert_eq!(
+        requirements.unsupported(),
+        Some(&UnsupportedItem::HyperForm { reason })
+    );
+    let record = RequirementRecord::model_claim(requirements, crate::fixture_ids::node_key([18]));
+    let records = [(occurrence, record)].into_iter().collect();
+    let mut registry = Registry::new();
+    registry
+        .register(
+            BackendDescriptor::new(
+                Candidate::new(BackendId::new("en1")),
+                ProviderOrigin::Linked,
+                [(Capability::TemporalSatisfaction, Mode::Unbounded)],
+                None,
+                None,
+            )
+            .expect("valid EN-1 descriptor"),
+        )
+        .expect("registered EN-1");
+    let items = items_from_requirements(&records, &registry, None);
+    let [item] = items.as_slice() else {
+        panic!("one routed hyper item");
+    };
+    assert_eq!(
+        item.unsupported(),
+        Some(&UnsupportedItem::HyperForm { reason })
+    );
+    assert!(matches!(
+        item.candidates(),
+        fsl_route::CandidateOutcome::Candidates(set) if set.candidates().is_empty()
+    ));
+
+    let analyze_item =
+        hyper_form_item(&world.package, item, &form).expect("HP-4 settles at negotiation");
+    let results = analyze_items(&Engines::default(), vec![analyze_item], &Cancel::new());
+    let [result] = results.as_slice() else {
+        panic!("one analysis result");
+    };
+    let Settlement::Disposed(disposed) = &result.settlement else {
+        panic!("HP-4 has a disposition, not an engine record");
+    };
+    assert_eq!(result.request_index, RequestIndex::new(0));
+    assert!(
+        result.model_check.is_none(),
+        "no engine record was produced"
+    );
+    assert_eq!(disposed.kind, DispositionKind::Unsupported);
+    assert_eq!(
+        disposed
+            .diagnostic
+            .as_ref()
+            .expect("unsupported diagnostic")
+            .code
+            .to_string(),
+        "unsupported_projection/unsupported-requested-capability"
+    );
+}
+
+/// FR-182-AC-9: `NonInterference` over an empty `Vault` universe settles
+/// `inconclusive`, `NoInstance`, basis `unsettled`, before any state is
+/// explored. `SavesPower` over `(d: V::Vault, e: N::Vault)` settles the same
+/// way with either universe empty and the other not, and with both empty. The
+/// same clause over a population with no universe refuses `RequiresBound`
+/// and settles nothing.
+#[trace("TC-607", "FR-182-AC-9")]
+#[test]
+fn an_empty_universe_settles_no_instance_and_a_missing_one_requires_a_bound() {
+    let unsettled = |world: &World| {
+        let outcome = world
+            .run_selecting(Reductions::default())
+            .expect("the run is not refused");
+        let record = settle(world, &outcome);
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::NoInstance)
+        );
+        assert_eq!(
+            row(&record),
+            (
+                ResultLabel::Inconclusive,
+                SettlementBasis::Unsettled,
+                Execution::Completed,
+                Truth::Pending,
+                Category::Inconclusive
+            )
+        );
+        assert_eq!(record.counterexample, None);
+        assert_eq!(outcome.stats().product_states, 0);
+    };
+    let mut empty = World::started(
+        Vault::Secure,
+        false,
+        &[None],
+        &non_interference(EQUAL_INPUTS),
+    );
+    empty.universe = Vec::new();
+    unsettled(&empty);
+
+    let saves_power = "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
+         forall trace s of V forall trace n of N \
+         match { s.step.Vault::step.i = n.step.Vault::step.i } \
+         { always holds(d.l @ s = e.l @ n) }";
+    let vault = [("v", (0, 0))];
+    for (first, second) in [
+        (&vault[..], &[][..]),
+        (&[][..], &vault[..]),
+        (&[][..], &[][..]),
+    ] {
+        unsettled(&World::with_second_vaults(
+            Vault::Secure,
+            first,
+            second,
+            saves_power,
+        ));
+    }
+
+    // The same clauses over a population with no universe.
+    let mut unbounded = World::with_vaults(
+        Vault::Secure,
+        &[("v", (0, 0))],
+        &non_interference(EQUAL_INPUTS),
+    );
+    unbounded.bounded = false;
+    assert!(matches!(
+        unbounded.run(ModelCheckLimits::default(), &Cancel::new()),
+        Err(ModelCheckRefusal::RequiresBound(_))
+    ));
+    let mut power = World::with_second_vaults(Vault::Secure, &vault, &vault, saves_power);
+    power.other_universe = None;
+    assert!(matches!(
+        power.run_selecting(Reductions::default()),
+        Err(ModelCheckRefusal::RequiresBound(_))
+    ));
+}

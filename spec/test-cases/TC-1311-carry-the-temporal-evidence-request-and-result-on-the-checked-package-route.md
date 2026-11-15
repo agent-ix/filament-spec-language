@@ -3,7 +3,7 @@ id: TC-1311
 title: "Carry the temporal evidence request and result on the checked-package route"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: verifies
 ---
 # TC-1311: Carry the temporal evidence request and result on the checked-package route
@@ -11,14 +11,14 @@ relationships:
 ## Description
 
 Verify the typed request and result of the temporal evidence route. Scope:
-FR-516-AC-1 to FR-516-AC-46. The numeric vectors are the QSpec FR-370 and
+FR-516-AC-1 to FR-516-AC-46. The numeric vectors are the FSpec FR-370 and
 FR-043 cases and TC-144; they are referenced, never copied.
 
 ## Test Procedure
 
 | Row | AC | Input | Expected |
 | --- | --- | --- | --- |
-| 1 | 1 | compile-fail: set `truth`, `settlement`, `support`, `instance` on `EvidenceRequest` | does not compile; no document or QSL-computed digest member |
+| 1 | 1 | compile-fail: set `truth`, `settlement`, `support`, `instance` on `EvidenceRequest` | does not compile; no document or FSL-computed digest member |
 | 2 | 2 | **R** event-position clause: closed complete scope and no delivery; open scope; one admitted delivery; a delivery with a missing capture; anchor withdrawn; a clause the package does not hold | `Inactive`/`Inactive`/no truth; `Unknown`/`ActivationUnknown`; `Active` with a truth; `Unavailable` with a `Missing` non-value naming the capture; `Unavailable`; `Err(CallFailure::Admission)`, empty charge log |
 | 3 | 3 | the Active request with the decision closure withdrawn; with the completeness record withdrawn; with one support fact withdrawn | FR-043 values of the remaining evidence and a `Missing` non-value for each withdrawn fact; no default value in any field |
 | 4 | 4 | trigger id `t1` vs `t1` with one byte changed; empty id | different `result_identity`; refused at construction |

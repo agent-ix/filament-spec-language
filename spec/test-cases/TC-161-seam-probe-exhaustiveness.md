@@ -3,26 +3,26 @@ id: TC-161
 title: "The seam probe demonstrates exhaustiveness at every S1-S4 seam"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-063
+  - target: ix://agent-ix/filament-spec-language/FR-063
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: verifies
 ---
 # TC-161: The seam probe demonstrates exhaustiveness at every S1-S4 seam
 
 ## Description
 
-Verify that the six probe builds -- `qsl-forms` under
-`RUSTFLAGS=--cfg seam_probe_forms`, `qsl-semantics` under
-`RUSTFLAGS=--cfg seam_probe`, then the root crate, `qsl-route`, `qsl-eval`
-and `qsl-replay` each under `RUSTFLAGS=--cfg seam_probe --cfg
+Verify that the six probe builds -- `fsl-forms` under
+`RUSTFLAGS=--cfg seam_probe_forms`, `fsl-semantics` under
+`RUSTFLAGS=--cfg seam_probe`, then the root crate, `fsl-route`, `fsl-eval`
+and `fsl-replay` each under `RUSTFLAGS=--cfg seam_probe --cfg
 seam_probe_downstream`, with the layered downstream cfgs FR-063 names for
-the root crate and `qsl-replay` -- each fail to compile, together
+the root crate and `fsl-replay` -- each fail to compile, together
 with exactly the checked-in set of seam-function locations (and with rustc
 error code `E0004` specifically at each), that the three normal builds (the
-root crate, `qsl-route` and `qsl-eval`, no `seam_probe` set) succeed with none, that removing a checked-in entry or removing an
+root crate, `fsl-route` and `fsl-eval`, no `seam_probe` set) succeed with none, that removing a checked-in entry or removing an
 actual compiler error each causes `xtask seam-probe` to report a mismatch,
 that nothing in the repository sets `seam_probe` outside the probe builds'
 own invocations, that the tool's exit code reflects set equality, that the
@@ -45,20 +45,20 @@ restatement.
 FR-062-AC-8 and FR-063-AC-6's `Cause`-enum category (S4) is now checked in:
 `Value`'s function family has a real typed refusal cause (`CheckCause`),
 and FR-063's S4 seam probe is wired onto its `catalog_code()`
-mapping, `CheckCause::code` (`qsl-semantics/src/check/refusal.rs`), the same
+mapping, `CheckCause::code` (`fsl-semantics/src/check/refusal.rs`), the same
 shape `FamilyKind::catalog_code_prefix`'s S1 probe uses.
 FR-063-AC-6's S2 category (the
 check seam over the parsed form enum, `Typer::infer_form` matching
-`qsl-forms::Expression`) and S3 category (the checked-node-enum's evaluator,
-`Machine::apply` in `qsl-eval`, and its identity-lowering pass,
-`Lowering::lower_node` in `qsl-semantics`, both matching
-`qsl-semantics::check::ir::NodeKind`) are delivered:
+`fsl-forms::Expression`) and S3 category (the checked-node-enum's evaluator,
+`Machine::apply` in `fsl-eval`, and its identity-lowering pass,
+`Lowering::lower_node` in `fsl-semantics`, both matching
+`fsl-semantics::check::ir::NodeKind`) are delivered:
 both enums carry the
 same `#[cfg(seam_probe)]` probe-variant treatment as `FamilyKind`, with a
 protective arm at every other production `match` site the variant would
 otherwise break. The parser's leading-token-kind entry table
-(`qsl-forms::dispatch::dispatch`, S2's other named location) is delivered:
-`qsl-forms` has its own
+(`fsl-forms::dispatch::dispatch`, S2's other named location) is delivered:
+`fsl-forms` has its own
 probe build under `--cfg seam_probe_forms`, so its no-arm treatment does not
 hide any other seam. This test case's checked-in list therefore covers the
 `FamilyKind`, S6a/S7, S2, S3 and S4 categories -- all five categories
@@ -66,14 +66,14 @@ FR-063-AC-6 names -- and step 8 below exercises each of the five in turn.
 
 ## Test Procedure
 
-1. Run `cargo build -p qsl-forms --lib` with `RUSTFLAGS=--cfg
-   seam_probe_forms`, `cargo build -p qsl-semantics --lib` with
-   `RUSTFLAGS=--cfg seam_probe`, then `cargo build -p quire-spec-language
+1. Run `cargo build -p fsl-forms --lib` with `RUSTFLAGS=--cfg
+   seam_probe_forms`, `cargo build -p fsl-semantics --lib` with
+   `RUSTFLAGS=--cfg seam_probe`, then `cargo build -p filament-spec-language
    --lib` (with `--cfg seam_probe --cfg seam_probe_downstream --cfg
    seam_probe_eval_downstream --cfg seam_probe_replay_downstream`),
-   `cargo build -p qsl-route --lib` and `cargo build -p qsl-eval --lib`
+   `cargo build -p fsl-route --lib` and `cargo build -p fsl-eval --lib`
    (each with `--cfg seam_probe --cfg seam_probe_downstream`) and `cargo
-   build -p qsl-replay --lib` (with `--cfg seam_probe --cfg
+   build -p fsl-replay --lib` (with `--cfg seam_probe --cfg
    seam_probe_downstream --cfg seam_probe_eval_downstream`); confirm each
    fails, and collect the union of their `E0004` diagnostic locations
    (via `--message-format=json`, filtering `compiler-message` entries whose
@@ -86,7 +86,7 @@ FR-063-AC-6 names -- and step 8 below exercises each of the five in turn.
 4. Add a match arm for the probe variant at exactly one seam function in the
    source (leaving the checked-in list unchanged) and re-run
    `xtask seam-probe`.
-5. Build the root crate's, `qsl-route`'s and `qsl-eval`'s `--lib` targets
+5. Build the root crate's, `fsl-route`'s and `fsl-eval`'s `--lib` targets
    with no `RUSTFLAGS=--cfg seam_probe` set (the three normal builds) and
    confirm each succeeds with zero `E0004` locations (`xtask seam-probe`
    performs these builds itself and fails if one does not succeed or reports
@@ -111,7 +111,7 @@ FR-063-AC-6 names -- and step 8 below exercises each of the five in turn.
    succeeding one does not.
 8. Inspect the checked-in seam-function list and confirm it names each of
    the five categories this ticket's tree delivers -- `FamilyKind`'s prefix
-   arm (S1), the S6a/S7 matches, `qsl-forms::dispatch::dispatch` and
+   arm (S1), the S6a/S7 matches, `fsl-forms::dispatch::dispatch` and
    `Typer::infer_form` (S2),
    `Machine::apply`/`Lowering::lower_node` (S3), and `CheckCause::code`
    (S4); remove the entry for one category at a time and re-run
@@ -123,18 +123,18 @@ FR-063-AC-6 names -- and step 8 below exercises each of the five in turn.
 10. Inspect the definitions of `FamilyKind`, the parsed form enum
     (`Expression`), the checked node enum (`NodeKind`), `CheckCause` (the
     S4 cause-bearing type) and `WrongSnapshotCause` (the
-    S4-shaped, not family-`Cause`, type; defined in `quire-semantic-value`'s
+    S4-shaped, not family-`Cause`, type; defined in `filament-semantic-value`'s
     `call` module, read from the dependency `cargo metadata` resolves) for
     `#[non_exhaustive]`.
 
 ## Expected Results
 
 - Step 1: the collected `E0004` location set matches the checked-in list
-  -- the `FamilyKind` prefix arm (S1), the S6a/S7 matches, `qsl-forms::dispatch::dispatch`, `Typer::
+  -- the `FamilyKind` prefix arm (S1), the S6a/S7 matches, `fsl-forms::dispatch::dispatch`, `Typer::
   infer_form` (S2), `Machine::apply`/`Lowering::lower_node` (S3), and
   `CheckCause::code` (S4). The parser's leading-token-kind entry table
-  (`qsl-forms::dispatch::dispatch`, S2's other named location) is in this
-  list, reported by the `qsl-forms` probe build.
+  (`fsl-forms::dispatch::dispatch`, S2's other named location) is in this
+  list, reported by the `fsl-forms` probe build.
 - Step 2: `xtask seam-probe` exits zero and reports no mismatch when the sets
   are equal.
 - Step 3: `xtask seam-probe` exits non-zero, naming the removed entry's

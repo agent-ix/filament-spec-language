@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! `fsl-route`'s integration tests: the ones that exercise only ADR-011 §6.1
+//! layer R, moved from the root crate's `tests/it/`. One binary,
+//! the same shape as the root crate's `it` target.
+
+mod evidence_kinds;
+mod fairness_kinds;
+mod memory_models;
+mod negotiation_cause;
+mod provider_origin;
+mod route_registry;
+mod routing;

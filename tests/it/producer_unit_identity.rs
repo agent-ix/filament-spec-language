@@ -4,23 +4,23 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use ix_trace_rs::trace;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::{AdmittedCompilation, CompileUnit, ReplayLimits, StageLimits};
-use quire_exact::{Integer, Meter, Outcome, Quantity, Rational, ScalarLimits, UnitDomain};
-use quire_semantic_value::quantity::{
+use filament_exact::{Integer, Meter, Outcome, Quantity, Rational, ScalarLimits, UnitDomain};
+use filament_semantic_value::quantity::{
     convert_quantity, evaluate_quantity_unit, HandoffRefusal, QuantityOperation, QuantityTarget,
     QuantityUnit, UnitScope,
 };
-use quire_semantic_value::semantic_node::IdentityRefusal;
-use quire_semantic_value::unit::{DimensionNode, NominalUnitForm, UnitGraph, UnitNode};
+use filament_semantic_value::semantic_node::IdentityRefusal;
+use filament_semantic_value::unit::{DimensionNode, NominalUnitForm, UnitGraph, UnitNode};
+use fsl_foundation::SourceIdentity;
+use fsl_replay::{AdmittedCompilation, CompileUnit, ReplayLimits, StageLimits};
+use ix_trace_rs::trace;
 
 const ROOTS: usize = 32;
 
 fn source(roots: usize, expose_roots: bool) -> String {
     let mut source = String::from(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
          dimension Length;\n\
          unit base : Length = rational(1, 1);\n",
     );
@@ -41,7 +41,7 @@ fn source(roots: usize, expose_roots: bool) -> String {
 
 fn compile(package_name: String, roots: usize, expose_roots: bool) -> AdmittedCompilation {
     let source = source(roots, expose_roots);
-    qsl_replay::compile_admitted(
+    fsl_replay::compile_admitted(
         CompileUnit {
             source: SourceIdentity::new("test", "producer-unit-identity"),
             package_name,
@@ -49,15 +49,15 @@ fn compile(package_name: String, roots: usize, expose_roots: bool) -> AdmittedCo
             bytes: source.as_bytes(),
         },
         [],
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_replay::spine::DependencyInput::default(),
         StageLimits::default(),
         ReplayLimits::default(),
     )
     .expect("the authentic root-unit source compiles")
 }
 
-/// Re-admit the producer's retained nominal facts through QSV's public graph
-/// owner. Every key and original declaration comes from the same QSL context.
+/// Re-admit the producer's retained nominal facts through FSV's public graph
+/// owner. Every key and original declaration comes from the same FSL context.
 fn graph(compiled: &AdmittedCompilation) -> UnitGraph {
     let context = compiled.context();
     let table = context.unit_table();
@@ -262,7 +262,7 @@ fn small_admitted_root_family_completes_exact_handoff() {
             .last()
             .is_some_and(|name| name.as_str().starts_with('r'))
     }) {
-        let id = qsl_semantics::check::wire_id::structural_id(root.node());
+        let id = fsl_semantics::check::wire_id::structural_id(root.node());
         assert!(
             admitted
                 .resolved_graph()
@@ -279,7 +279,7 @@ fn small_admitted_root_family_completes_exact_handoff() {
         .collect();
     let exponent = Integer::one();
     let Err(IdentityRefusal::InputBytes { bound, required }) =
-        quire_semantic_value::unit::compound_unit_id(
+        filament_semantic_value::unit::compound_unit_id(
             roots.iter().map(|root| (root, &exponent)),
             quire_canonical::Limits::new(64),
         )

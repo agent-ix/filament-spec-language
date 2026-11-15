@@ -3,7 +3,7 @@ id: TC-1289
 title: "Evaluate native String, UUID and Timestamp values through protocol slots"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-1289: Evaluate native String, UUID and Timestamp values through protocol slots

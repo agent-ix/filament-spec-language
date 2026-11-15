@@ -3,7 +3,7 @@ id: TC-757
 title: "A cancelled operation stops within one charge and emits nothing"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: verifies
 ---
 # TC-757: A cancelled operation stops within one charge and emits nothing

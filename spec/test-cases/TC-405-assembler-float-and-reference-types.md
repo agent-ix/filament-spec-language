@@ -3,9 +3,9 @@ id: TC-405
 title: "The assembler resolves floating types and refuses unsupported model fields and unresolved references"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-405: The assembler resolves floating types and refuses unsupported model fields and unresolved references
@@ -15,9 +15,9 @@ relationships:
 Verify the explicit resolution arms for `Float32`/`Float64` and
 `Reference<Q>`. A floating type in a function signature is admitted and
 carries its rounding mode (FR-091-OQ-4, ADR-013 R-07), and a floating type
-written without a mode is admitted by S1 and read as mode `exact` (QSpec
+written without a mode is admitted by S1 and read as mode `exact` (FSpec
 FR-148). A native floating model field assembles to a field of that width
-with rounding mode `exact` (FR-056-AC-20, QSpec FR-322 "Model-owned members"). A model
+with rounding mode `exact` (FR-056-AC-20, FSpec FR-322 "Model-owned members"). A model
 reference with no admitted domain package is an unresolved name.
 
 Scope: FR-091-AC-19, FR-091-AC-23, FR-056-AC-20.
@@ -37,8 +37,8 @@ alias is `v`.
 4. Spine-compile, with no library supplied, a unit that declares
    `import "test/units" as u;`
    (FR-091-AC-24).
-5. For each of `ix://quire/native/Float32` and
-   `ix://quire/native/Float64`, assemble a unit selecting an otherwise
+5. For each of `ix://filament/native/Float32` and
+   `ix://filament/native/Float64`, assemble a unit selecting an otherwise
    admitted package whose `Gauge` object has a `[1, 1]` field `reading` of
    that native type.
 

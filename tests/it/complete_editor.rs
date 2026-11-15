@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Complete-V1 document analysis and canonical-format round-tripping.
-use ix_trace_rs::trace;
-use qsl_cst::{
-    parse, CompleteCause, CompleteCode, CompleteDiagnostic, HostCause, Limits, TokenClass,
-};
-use qsl_foundation::diagnostic::LimitKind;
-use qsl_foundation::selection::ProfileCatalog;
-use qsl_foundation::{SourceIdentity, Span};
-use qsl_semantics::value::{DefinitionRole, HeaderLayer};
-use quire_spec_language::complete::{
+use filament_spec_language::complete::{
     self, analyze_document, format_document, DocumentBinding, SourceEdit,
 };
+use fsl_cst::{
+    parse, CompleteCause, CompleteCode, CompleteDiagnostic, HostCause, Limits, TokenClass,
+};
+use fsl_foundation::diagnostic::LimitKind;
+use fsl_foundation::selection::ProfileCatalog;
+use fsl_foundation::{SourceIdentity, Span};
+use fsl_semantics::value::{DefinitionRole, HeaderLayer};
+use ix_trace_rs::trace;
 
 fn ugly(profile: &str) -> String {
     format!(
@@ -33,7 +33,7 @@ fn binding(profile: &str) -> DocumentBinding {
 }
 
 fn catalog() -> (ProfileCatalog, String) {
-    let selected = "quire.value.complete/v1".to_owned();
+    let selected = "filament.value.complete/v1".to_owned();
     (ProfileCatalog::new([selected.clone()]).unwrap(), selected)
 }
 
@@ -51,7 +51,7 @@ fn the_header_profile_catalog_admits_the_temporal_layer() {
 
     let source = concat!(
         "language \"ix:native\" edition \"1-draft\";\n",
-        "profile t = \"quire.temporal.complete/v1\";\n",
+        "profile t = \"filament.temporal.complete/v1\";\n",
         "record Reading { datum: Integer; }\n",
     )
     .as_bytes();
@@ -66,7 +66,7 @@ fn the_header_profile_catalog_admits_the_temporal_layer() {
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-1")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-1")]
 #[test]
 fn formatting_is_idempotent_and_preserves_semantic_tokens() {
     let (catalog, profile) = catalog();
@@ -93,7 +93,7 @@ fn formatting_is_idempotent_and_preserves_semantic_tokens() {
     assert!(second.edits.is_empty());
 }
 
-#[trace("QSpec-TC-184", "QSpec-FR-134-AC-1")]
+#[trace("FSpec-TC-184", "FSpec-FR-134-AC-1")]
 #[test]
 fn lf_crlf_and_absent_final_newline_retain_format_correspondence() {
     let (catalog, profile) = catalog();
@@ -134,7 +134,7 @@ fn lf_crlf_and_absent_final_newline_retain_format_correspondence() {
     }
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-2")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
 #[test]
 fn incremental_and_full_reparse_publish_identical_language_outputs() {
     let (catalog, profile) = catalog();
@@ -184,7 +184,7 @@ fn incremental_and_full_reparse_publish_identical_language_outputs() {
         .any(|item| item.spelling == "Complete"));
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-2")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
 #[test]
 fn non_lexical_whitespace_falls_back_and_matches_full_reparse() {
     let (catalog, profile) = catalog();
@@ -226,7 +226,7 @@ fn non_lexical_whitespace_falls_back_and_matches_full_reparse() {
     }
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-2")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
 #[test]
 fn lowered_parse_limits_force_full_incremental_validation() {
     let (_, profile) = catalog();

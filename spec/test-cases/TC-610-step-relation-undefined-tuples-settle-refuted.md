@@ -3,11 +3,11 @@ id: TC-610
 title: "An HP-1 relation whose first refuting tuple is undefined settles refuted with UndefinedEvaluation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-179
+  - target: ix://agent-ix/filament-spec-language/FR-179
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-183
+  - target: ix://agent-ix/filament-spec-language/FR-183
     type: verifies
 ---
 # TC-610: An HP-1 relation whose first refuting tuple is undefined settles refuted with UndefinedEvaluation

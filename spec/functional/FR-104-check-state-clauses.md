@@ -3,41 +3,41 @@ id: FR-104
 title: "Check state clauses at S3 and record their requirements"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-102
+  - target: ix://agent-ix/filament-spec-language/FR-102
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-380
+  - target: ix://agent-ix/filament-spec-language/FR-380
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-577
+  - target: ix://agent-ix/filament-spec-language/FR-577
     type: references
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-149
+  - target: ix://agent-ix/filament-specification/FR-149
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-043
+  - target: ix://agent-ix/filament-specification/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-010
+  - target: ix://agent-ix/filament-specification/FR-010
     type: references
-  - target: ix://agent-ix/quire-specification/FR-341
+  - target: ix://agent-ix/filament-specification/FR-341
     type: references
 ---
 # FR-104: Check state clauses at S3 and record their requirements
@@ -49,7 +49,7 @@ resolve its profile alias, context type, operation for a `pre` or `post`
 clause, and population domains. It SHALL refuse an unresolved or ambiguous
 name at its span (see "Resolution"). The `ProtocolClause` family SHALL type
 the body as a Boolean under its clause kind. It SHALL bind `self`, `result`,
-the operation's parameters and `pre(e)` as QSpec's state contract states, and
+the operation's parameters and `pre(e)` as FSpec's state contract states, and
 qualify every model read by its observation. It SHALL produce one checked
 state clause with its identity or a refusal with a catalog code. Its
 `requirements` hook SHALL return one `operation-contract` record per clause
@@ -59,8 +59,8 @@ and per frame (ADR-012 §2, §15.7; FR-057).
 
 - A `StateClauseForm`; the assembled `PackageDeclarations` with the
   operations FR-103 admits; `CheckContext` (ADR-012 §2).
-- `qsl_replay::spine::check_with_execution_points` accepts a
-  `StateClauseExecutionPoints` (`BTreeMap<String, quire_contract_model::ExecutionPoint>`) keyed by each authored QSL state
+- `fsl_replay::spine::check_with_execution_points` accepts a
+  `StateClauseExecutionPoints` (`BTreeMap<String, filament_contract_model::ExecutionPoint>`) keyed by each authored FSL state
   clause's exact declared name. Its values are the accepted points from
   `ClauseBinding.execution_point`; FR-105 defines their existing V2 carrier.
   The ordinary `spine::check` entry point supplies an empty map.
@@ -69,10 +69,10 @@ and per frame (ADR-012 §2, §15.7; FR-057).
   the accepted `ClauseBinding.execution_point` carrier and TC-049 exercises
   the native mapping. After that route validates its `Vec<ClauseBinding>`, the
   adapter selects the binding whose exact `name`
-  matches each QSL `StateClauseForm.name` and projects its
+  matches each FSL `StateClauseForm.name` and projects its
   `execution_point` into `StateClauseExecutionPoints`; it does not weaken or
   replace native completeness validation. The map is partial only relative to
-  QSL state clauses with no accepted native binding.
+  FSL state clauses with no accepted native binding.
 
 ## Outputs
 
@@ -116,8 +116,8 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   `on M::T::op`, after that member resolves to the operation declaration. Any
   inapplicable variant or mismatched operation name SHALL refuse
   `invalid_model_binding`/`malformed-declaration` at the authored clause
-  name's span, with no checked clause or node identity (QSpec FR-341 step 4).
-  This input does not alter QSpec's accepted `ExecutionPoint` contract or its
+  name's span, with no checked clause or node identity (FSpec FR-341 step 4).
+  This input does not alter FSpec's accepted `ExecutionPoint` contract or its
   V2 carrier in FR-105.
 - A point-bearing `pre` or `post` clause SHALL not be eligible for a derived
   state-transition node; a clause without a supplied point retains the
@@ -137,7 +137,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   context and operation as written for `M::T` and `M::T::op`.
 - The context `M::T` of a clause is the declaration `T` names, whichever of
   the three it is, and a process is a context as an object type is. The
-  `self` of a clause on a process is one run of it (QSpec FR-208): a
+  `self` of a clause on a process is one run of it (FSpec FR-208): a
   `Reference<M::T>` to the run, whose declared object identity roots the
   clause's receiver path (FR-107), so an invariant on a process holds for
   every run of its population at `current` and a `pre` or `post` clause of a
@@ -171,7 +171,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   function of the unit, then the checker SHALL refuse
   `ambiguous_declaration`/`ambiguous-name` at every declaration of that name,
   as it refuses two functions of one name today
-  (`qsl-semantics/src/check/mod.rs:557-572`). Clauses and functions share one
+  (`fsl-semantics/src/check/mod.rs:557-572`). Clauses and functions share one
   selection namespace (FR-109).
 
 ### Typing
@@ -201,7 +201,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   into an invariant's scope.
 - Equality of two `Reference<M::T>` values SHALL check as identity equality,
   as it does for function parameters today.
-- The checker SHALL type every `=` and `!=` in a clause by QSpec FR-149's
+- The checker SHALL type every `=` and `!=` in a clause by FSpec FR-149's
   expected-type rule for an arithmetic operand against a bounded integer,
   wherever the equality is written: a guard, a capture, an invariant, a
   function body, a retry relation or a recovery predicate. When one operand has
@@ -225,7 +225,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   `<=`, `>` and `>=` supply no expected type and coerce nothing: between an
   `Integer` operand and an `Int[..]` operand they are an integer ordering and
   are accepted.
-- The checker SHALL type infix decimal arithmetic by QSpec FR-140's rule,
+- The checker SHALL type infix decimal arithmetic by FSpec FR-140's rule,
   wherever it is written and whether or not its position supplies an
   expected type. A binary `+`, `-` or `*` whose operands, ignoring
   parentheses, have one named `Decimal[..]` type, and are not both
@@ -241,14 +241,14 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   divisor `undefined_expression`/`unproved-nonzero` at the division after the
   quotient has been typed.
   So `a + b = b + a` with `a` and `b` of one decimal type is an equality of
-  that type (QSpec FR-149). Operands of two distinct named decimal types
+  that type (FSpec FR-149). Operands of two distinct named decimal types
   SHALL refuse `ill_typed`/`type-mismatch` at the arithmetic node until a
   `convert` selects one type. An operation whose operands are both literals
   and whose position supplies no unique expected type SHALL refuse
   `ill_typed`/`ambiguous-literal` at the arithmetic node.
 - The checker SHALL NOT record a range obligation for decimal arithmetic or
   widen its type: a result outside the type's range is refused when it is
-  evaluated, `decimal_out_of_domain`/`outside-domain` (QSpec FR-140). A
+  evaluated, `decimal_out_of_domain`/`outside-domain` (FSpec FR-140). A
   result that needs a wider type `W` SHALL be written with its operands
   converted to `W`, as in `convert<W>(a) + convert<W>(b)`. A declared result
   or `convert` target gives the arithmetic no type of its own:
@@ -263,7 +263,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   where reads of `self`, and reads through references obtained inside `e`,
   are `pre`.
 - A reference value keeps the observation it was read in, and a read through
-  it uses that observation (QSpec: "Dereference follows the reference's own
+  it uses that observation (FSpec: "Dereference follows the reference's own
   universe/type/observation"). A `let` binder keeps its initializer's
   observation.
 - A read through a reference-typed operation parameter SHALL take the
@@ -272,7 +272,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   a postcondition `deref(target).versionNumber` reads `post` and
   `pre(deref(target).versionNumber)` reads `pre`; in a precondition
   `deref(target).versionNumber` reads `pre`. The clause's observation is the
-  qualification the binding supplies (QSpec `state-contract.md`, "The
+  qualification the binding supplies (FSpec `state-contract.md`, "The
   model/binding must supply any reference qualification before evaluation").
 - The checker SHALL admit `pre(e)` only in a `post` clause (the existing
   `ForbiddenPreRead` rule) and only when `e` itself contains an eligible
@@ -281,10 +281,10 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
 - If `pre(e)`'s operand reads only parameters, literals, `result` or `let`
   binders bound outside the `pre`, or reads a field only through a `let`
   binder bound outside the `pre`, then the checker SHALL refuse
-  `wrong_snapshot`/`forbidden-pre-read` at the `pre`. This covers QSpec's
+  `wrong_snapshot`/`forbidden-pre-read` at the `pre`. This covers FSpec's
   `pre(delta)`, `pre(result)`, `let v = self.version in pre(v)` and
   `let s = self in pre(s.version)` rows, and `pre(target)` over a
-  reference-typed parameter `target` in a postcondition: QSpec
+  reference-typed parameter `target` in a postcondition: FSpec
   `state-contract.md` states "A pre selector cannot retag a post-qualified
   parameter reference" and "a bare or parameter-only historical selection
   refuses". `let s = pre(self) in s.version` is admitted and reads `pre`.
@@ -294,12 +294,12 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
 - The checker SHALL admit `reaches(a, b, edge)` only when `edge` names a field
   of an object type `M::T` whose type is `Reference<M::T>`,
   `Option<Reference<M::T>>` or a sequence of `Reference<M::T>`. For a package
-  selecting `quire.model.complete/v1`, the checker SHALL apply QSpec
-  [FR-043](ix://agent-ix/quire-specification/FR-043)'s conformance to the
+  selecting `filament.model.complete/v1`, the checker SHALL apply FSpec
+  [FR-043](ix://agent-ix/filament-specification/FR-043)'s conformance to the
   static edge owner `T` to each operand and retain the checked operand
   references without erasing the type identity that FR-043 uses for each
-  object's most-specific identity at evaluation; QSpec
-  [FR-010](ix://agent-ix/quire-specification/FR-010) delegates this traversal
+  object's most-specific identity at evaluation; FSpec
+  [FR-010](ix://agent-ix/filament-specification/FR-010) delegates this traversal
   profile to FR-043. For any other selection, `a` and `b` SHALL both be
   `Reference<M::T>` of that exact object type, as before. An ineligible
   operand or edge shape, including a set, bag or ordered set of references,
@@ -321,7 +321,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   `value(self.parent)`.
 - If a `value(p)` has no presence fact at its own (observation, path), then
   the checker SHALL refuse `undefined_expression`/`unproved-presence` at the
-  `value`. QSpec's `present(pre(self.parent)) implies value(self.parent)`
+  `value`. FSpec's `present(pre(self.parent)) implies value(self.parent)`
   refuses this way.
 - An integer ordering or equality against an integer literal adds an
   interval fact. An integer ordering between two non-literal paths adds the
@@ -360,7 +360,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   the clause's `self`, `result` and parameter types and the populations the
   clause ranges over: the context's population (every object of which the
   clause holds for) and each population a `reaches` walks. A domain-package
-  population declaration has no maximum of its own (QSpec FR-153's own record
+  population declaration has no maximum of its own (FSpec FR-153's own record
   has none), so a population is an unbounded `Population(None)` domain,
   boundable by `Cardinality`, unless the package authors a bound on it
   (FR-380). A population with an authored bound `N` is a `Population(Some(N))`
@@ -379,7 +379,7 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
   member type the same population declares, all key that population's
   domain identically. `ordinal` names the population: its ordinal among the package's population declarations in ascending
   `DeclarationKey` order (its own `Ord`: `package`, then `node`, each as
-  UTF-8 bytes, `qsl-semantics/src/model/key.rs:80-84`). The ordinal is stable
+  UTF-8 bytes, `fsl-semantics/src/model/key.rs:80-84`). The ordinal is stable
   within one domain-package identity and version only, and domain keys SHALL NOT be
   compared across domain packages. A population record has no node of its own
   (FR-094; the one node FR-380 emits for a bounded population a `reaches`
@@ -412,19 +412,19 @@ body is typed, so S3 resolves and refuses it (see "Requirements").
 | FR-104-AC-6 | Checking the same unit twice, and checking it with its clauses in another order, gives each clause the same node identity and the same requirement record keys. Two clauses with equal kind, anchor and body and different names share a node identity and differ in their `claim` occurrence (ordinals in source order). | Test (TC-461) |
 | FR-104-AC-7 | In postconditions of `attemptUpdate` over a package whose frame modifies `parent`: `present(pre(self.parent)) implies deref(value(self.parent)).versionNumber > 0` refuses `undefined_expression`/`unproved-presence` at `value(self.parent)`; `pre(present(self.parent) implies deref(value(self.parent)).versionNumber > 0)` checks; `let v = self.versionNumber in pre(v) = 1` and `let s = self in pre(s.versionNumber) = 1` each refuse `wrong_snapshot`/`forbidden-pre-read` at the `pre`; `let s = pre(self) in s.versionNumber = 1` checks with its read `pre`. | Test (TC-459) |
 | FR-104-AC-8 | Over a package that adds operation `probe(target: ConfigVersion)` on `ConfigVersion` with no result and an empty frame: the postcondition `deref(target).versionNumber = 1` checks with its read `post`; the precondition `deref(target).versionNumber = 1` checks with its read `pre`; the postcondition `pre(deref(target).versionNumber) = 1` checks with its read `pre`; the postcondition `pre(target) = target` refuses `wrong_snapshot`/`forbidden-pre-read` at the `pre`. | Test (TC-459) |
-| FR-104-AC-9 | Under `quire.model.complete/v1`, `reaches(self, target, parent)` on a `ConfigVersion` subtype with its inherited `parent: Option<Reference<ConfigVersion>>` field checks with `self` retained as the subtype reference and `target` as the base reference, without erasing the operand identity FR-043 evaluates; a target type not conforming to the edge owner refuses `ill_typed`/`operator-ineligible`. The subtype/base operands under any other admitted model selection refuse `ill_typed`/`operator-ineligible` by the exact-type rule. | Test |
+| FR-104-AC-9 | Under `filament.model.complete/v1`, `reaches(self, target, parent)` on a `ConfigVersion` subtype with its inherited `parent: Option<Reference<ConfigVersion>>` field checks with `self` retained as the subtype reference and `target` as the base reference, without erasing the operand identity FR-043 evaluates; a target type not conforming to the edge owner refuses `ill_typed`/`operator-ineligible`. The subtype/base operands under any other admitted model selection refuse `ill_typed`/`operator-ineligible` by the exact-type rule. | Test |
 | FR-104-AC-10 | Over the ConfigVersion package (TC-458's) with a process `Flow` (identity field `x`, field `n: Integer`) that declares operation `go` whose frame is `modifies [Flow/n]` and a closed population of `Flow`, `pre P using v on Config::Flow::go { self.n < 3 }`, `post Q using v on Config::Flow::go { self.n = pre(self.n) + 1 }` and `invariant I using v on Config::Flow at current { self.n >= 0 }` each check, `self` being `Reference<Config::Flow>` and `self.n` an `Attribute` of type `Integer`; `P`'s read is `pre`, `Q`'s reads are `post` and `pre`, `I`'s read is `current`. `pre M using v on Config::Flow::missing { true }` refuses `missing_declaration`/`missing-name` at `missing`. | Test (TC-459, TC-460) |
 | FR-104-AC-11 | Over the ConfigVersion package with `bound HistoryBound on Config::config_history [8]` (FR-380), `NoCycle` yields an `operation-contract` record whose one domain, the `config_history` population keyed as in FR-104-AC-5, is a `Population(Some(8))` domain with available finite bound `Cardinality{8}` and is not listed among the unbounded domains, so a clause whose only domains are bounded has extent `Bounded`; the population covering `ConfigVersion` is still the one `config_history`, and a second population `archive` of `ConfigVersion` with or without a bound of its own still refuses `ambiguous_declaration`/`ambiguous-name` at each clause's `on`. Without the `bound` declaration the record is FR-104-AC-5's. | Test (TC-1054) |
 | FR-104-AC-12 | Extend TC-459 step 7's fixture package with an object type `Counter { tally: Int[0,3]; next: Int[0,3]; }` and an operation `bump` declared on it. `self.tally < 3 and self.next = self.tally + 1` checks as `pre G using v on Config::Counter::bump` and as `invariant I using v on Config::Counter at current`; with `record Pair { tally: Int[0,3]; }`, `function f using v(earlier: Pair, later: Pair, n: Integer): Boolean pure { ... }` with body `earlier.tally < 3 and later.tally = earlier.tally + 1` checks. With `self.tally < 3 and` or `earlier.tally < 3 and` removed, each refuses `undefined_expression`/`unproved-range` at the sum. `later.tally = earlier.tally` checks; `later.tally = -earlier.tally` and `later.tally = n` each refuse `ill_typed`/`type-mismatch` at the comparison. | Test (TC-1084) |
 | FR-104-AC-13 | With `type P = Decimal[-99, 99; 2, 2; nearest-even];` and `type R = Decimal[0, 1000; 1, 1; exact];`, `function c using v(a: P, b: P): Boolean pure { a + b = b + a }` checks with each sum typed `P`, as do the bodies `a * b = b * a`, `a - b = a - b` and `a + decimal(1, 2) = b`, the last with the literal typed `P`. With `b: R`, `a + b = b + a` refuses `ill_typed`/`type-mismatch` at the first `a + b`. `let s = decimal(1, 2) + decimal(2, 2) in s = a` refuses `ill_typed`/`ambiguous-literal` at the sum. Evaluating `c` with `a = decimal(1, 2)`, `b = decimal(2, 2)` returns `true`, and with `a = decimal(99, 2)`, `b = decimal(1, 2)` it is refused `decimal_out_of_domain`/`outside-domain`. With `type W = Decimal[-198, 198; 2, 2; nearest-even];`, `function w using v(a: P, b: P): W pure { convert<W>(a) + convert<W>(b) }` evaluated at `a = decimal(99, 2)`, `b = decimal(1, 2)` returns `decimal(100, 2)`, while the body `convert<W>(a + b)` at the same values is refused `decimal_out_of_domain`/`outside-domain`. `function d using v(a: P): P pure { a / decimal(8, 2) }` checks with `a / decimal(8, 2)` typed `P`, as does `function e using v(a: P): Boolean pure { a / decimal(8, 2) = a }`, whose quotient takes `P` from the equality's other operand; evaluated at `a = decimal(1, 2)` (exactly 0.125, a tie at scale 2) `d` returns `decimal(12, 2)` under `nearest-even`, and `function d2 using v(a: P): P pure { a / decimal(2, 2) }` at `a = decimal(5, 2)` (2.50) is refused `decimal_out_of_domain`/`outside-domain`. `function f using v(a: P, b: P): P pure { a / b }`, `function g using v(a: P, b: P): Boolean pure { a / b = a }` and `function h using v(a: P, b: P): Boolean pure { let s = a / b in s = a }` (the quotient's position supplies no expected type) each refuse `undefined_expression`/`unproved-nonzero` at `a / b`, the quotient being typed `P` (never `ambiguous-literal`) and the parameter divisor no nonzero fact. The body `-a = b` checks with `-a` typed `P`, and with `b: R` the body `a / b = a` refuses `ill_typed`/`type-mismatch` at `a / b`. | Test (TC-1084) |
 | FR-104-AC-14 | A protocol repeat's `visible` and guard slots type an eligible body-produced attempt binder in the scope FR-218 supplies, using its most recently completed iteration value and retaining the producing role. | Test (TC-1268) |
 | FR-104-AC-15 | `spine::check_with_execution_points` accepts `StateClauseExecutionPoints`; the native `CheckBindings.clauses` vector is projected only after its existing complete/no-extra validation, without weakening that contract. A supplied exact authored clause name retains its accepted point unchanged; an absent entry has no point, and none is inferred. An unknown or non-clause key refuses `missing_declaration`/`missing-name` at the check unit's source-start region before lowering or identity minting; duplicate `CheckBindings` names/identities refuse at the native check source-start region. Existing clause/function ambiguity takes precedence. An `invariant` or `constraint` accepts only initialization/handler; a `pre` accepts only pre and a `post` only post. For a pre/post clause, the accepted point's operation name equals the resolved operation member from its authored `on M::T::op`. Every inapplicable variant or mismatched operation name refuses `invalid_model_binding`/`malformed-declaration` at the clause-name span with no checked clause or node identity. A point-bearing pre/post clause is excluded from derived state-transition eligibility; an unbound clause retains FR-105-AC-16's eligibility rule. | Test (TC-475) |
-| FR-104-AC-16 | The six QSpec TC-185 D25 expressions are QSL source (QSL-1394), each built by S2 as `DecimalValue` operands wherever an operand may stand (FR-091-AC-57). With `type P = Decimal[0, 1000; 2, 2; exact];`, `type R = Decimal[0, 1000; 1, 1; exact];` and parameters `p: P`, `r: R`: `function e1 using v(): P pure { let v = decimal(15, 1) + decimal(225, 2) in v }` refuses `ill_typed`/`ambiguous-literal` at the sum, because a `let` binding supplies no expected type; `function e2 using v(): Boolean pure { decimal(15, 1) = decimal(150, 2) }` refuses `ill_typed`/`ambiguous-literal` at the comparison; both refuse before any charge. `function e3 using v(p: P): P pure { p + decimal(15, 1) }` checks with the literal typed `P` (target scale 2); `function e4 using v(p: P, r: R): P pure { p + r }` refuses `ill_typed`/`type-mismatch` at the sum; `function e5 using v(p: P, r: R): P pure { p + convert<P>(r) }` checks; `function e6 using v(): P pure { decimal(15, 1) + decimal(225, 2) }` checks with both literals typed `P` by the declared result. | Test (TC-1084) |
+| FR-104-AC-16 | The six FSpec TC-185 D25 expressions are FSL source (QSL-1394), each built by S2 as `DecimalValue` operands wherever an operand may stand (FR-091-AC-57). With `type P = Decimal[0, 1000; 2, 2; exact];`, `type R = Decimal[0, 1000; 1, 1; exact];` and parameters `p: P`, `r: R`: `function e1 using v(): P pure { let v = decimal(15, 1) + decimal(225, 2) in v }` refuses `ill_typed`/`ambiguous-literal` at the sum, because a `let` binding supplies no expected type; `function e2 using v(): Boolean pure { decimal(15, 1) = decimal(150, 2) }` refuses `ill_typed`/`ambiguous-literal` at the comparison; both refuse before any charge. `function e3 using v(p: P): P pure { p + decimal(15, 1) }` checks with the literal typed `P` (target scale 2); `function e4 using v(p: P, r: R): P pure { p + r }` refuses `ill_typed`/`type-mismatch` at the sum; `function e5 using v(p: P, r: R): P pure { p + convert<P>(r) }` checks; `function e6 using v(): P pure { decimal(15, 1) + decimal(225, 2) }` checks with both literals typed `P` by the declared result. | Test (TC-1084) |
 
 ## Dependencies
 
 - FR-102 (forms), FR-103 (operations), FR-380 (the authored population
   bound), FR-062 and FR-097 (requirement records and extent), FR-088 (clause identity), FR-057 (the
   `operation-contract` kind).
-- QSpec `state-contract.md` ("Operation anchors, aliases and captures",
+- FSpec `state-contract.md` ("Operation anchors, aliases and captures",
   "Finite graph extension"), FR-043, FR-010 and FR-153.

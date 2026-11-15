@@ -3,35 +3,35 @@ id: FR-531
 title: "Evaluate from a checked package read from its bytes alone"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-517
+  - target: ix://agent-ix/filament-spec-language/FR-517
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-520
+  - target: ix://agent-ix/filament-spec-language/FR-520
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-532
+  - target: ix://agent-ix/filament-spec-language/FR-532
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-533
+  - target: ix://agent-ix/filament-spec-language/FR-533
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-251
+  - target: ix://agent-ix/filament-spec-language/FR-251
     type: references
-  - target: ix://agent-ix/quire-contract-ir/FR-357
+  - target: ix://agent-ix/filament-contract-ir/FR-357
     type: references
-  - target: ix://agent-ix/quire-contract-ir/FR-358
+  - target: ix://agent-ix/filament-contract-ir/FR-358
     type: depends_on
-  - target: ix://agent-ix/quire-protocol/FR-045
+  - target: ix://agent-ix/filament-protocol/FR-045
     type: references
-  - target: ix://agent-ix/quire-protocol/FR-046
+  - target: ix://agent-ix/filament-protocol/FR-046
     type: references
 ---
 # FR-531: Evaluate from a checked package read from its bytes alone
@@ -39,17 +39,17 @@ relationships:
 ## Description
 
 A consumer that reads a handoff directory (FR-517) with Contract IR's
-`read_checked_package` holds a `quire_contract_model::CheckedPackageV2` and holds
-no QSL source `CheckedPackage`, no `Emission` and no `AdmittedPackageRead`. Until
-this requirement the QSL evaluation entries needed one of those: `EvidencePackage`
+`read_checked_package` holds a `filament_contract_model::CheckedPackageV2` and holds
+no FSL source `CheckedPackage`, no `Emission` and no `AdmittedPackageRead`. Until
+this requirement the FSL evaluation entries needed one of those: `EvidencePackage`
 is built by `from_emission` or `from_read`, both over an `AdmittedPackageRead`,
-which exists only for a package QSL itself emitted from source and which retains
+which exists only for a package FSL itself emitted from source and which retains
 that source (`AdmittedPackageRead::source`); and `CheckedPackageEvaluation` is
 sealed and implemented for the in-process `CheckedPackage`, its reader-backed
 evaluation view still taking the slot selection, the binder names and the source
 `CheckedBody` from that retained source. FR-515 recorded an evaluator over
 `formula_graph()` with no source graph as out of scope. It is in scope: the
-consumer of the handoff, quire-protocol, evaluates compensation slots and temporal
+consumer of the handoff, filament-protocol, evaluates compensation slots and temporal
 evidence from the package alone, and has nothing else to pass.
 
 This requirement states the one entry that takes a `CheckedPackageV2` and nothing
@@ -61,15 +61,15 @@ entry; FR-533 states the protocol-slot call from it.
 
 ## Use case
 
-quire-protocol reads `checked-package.json` of a handoff directory with
-`read_checked_package`, holds the admitted package, and calls QSL to evaluate a
+filament-protocol reads `checked-package.json` of a handoff directory with
+`read_checked_package`, holds the admitted package, and calls FSL to evaluate a
 compensation's retry relation and to assess a temporal obligation. It builds the
 evaluation value from the package it holds, plus the files beside it (the domain
 package documents and the identity rows, below), and never compiles source.
 
 ## Semantic authority and boundary
 
-QSL owns evaluation (FR-107, FR-390, FR-516); Contract IR owns the reader and the
+FSL owns evaluation (FR-107, FR-390, FR-516); Contract IR owns the reader and the
 package's admission. This requirement adds no checked-package member and no Contract
 IR code. It does not re-verify what the reader admitted: a package the reader
 admitted is the package, and a difference between it and some source is the
@@ -78,7 +78,7 @@ routes that do hold a source).
 
 ## Inputs
 
-In `qsl_package` (behind `std`, no new dependency):
+In `fsl_package` (behind `std`, no new dependency):
 
 ```rust
 pub struct BarePackage<'p> { /* private; neither Copy nor Clone */ }
@@ -109,7 +109,7 @@ impl ReadEqualityRows {
 - `package` is the `CheckedPackageV2` that `read_checked_package` returned. A
   caller cannot build a `BarePackage` from bytes, from a decoded graph or from a
   term; `BarePackage` has no other constructor.
-- `ReadIdentityRows` is the QSL-owned read-evidence wrapper of FR-390: the selected
+- `ReadIdentityRows` is the FSL-owned read-evidence wrapper of FR-390: the selected
   declaration/field identity rows and final source-record rows paired with the
   package they were produced for. A
   consumer obtains it with `ReadIdentityRows::read(bytes, package)` from the
@@ -127,7 +127,7 @@ impl ReadEqualityRows {
 - The dependency closure is not a supply. `BarePackage` derives the admitted
   closure from the direct dependencies the reader retained in the package, which
   the consumer passed to `read_checked_package` as read evidence; a consumer
-  builds no `AdmittedPackages`, which has no public constructor. QSL reads the
+  builds no `AdmittedPackages`, which has no public constructor. FSL reads the
   retained dependencies through the read access Contract IR gives to the packages
   a `CheckedPackageV2` holds. That access is `CheckedPackageV2::direct_dependencies()`,
   a public read-only iterator over the retained direct dependencies in
@@ -138,7 +138,7 @@ impl ReadEqualityRows {
   holds, not source.
 
 `NativeJoinBudget` and `ExactTypeProjectionError` are Contract IR's (FR-358).
-`qsl_eval::bare` re-exports `BarePackage`, implements `CheckedPackageEvaluation`
+`fsl_eval::bare` re-exports `BarePackage`, implements `CheckedPackageEvaluation`
 for it and gives `EvidencePackage` the constructor
 `EvidencePackage::from_package(&'p BarePackage<'p>) -> Result<Self,
 PackageMismatch>`.
@@ -202,7 +202,7 @@ the bytes carry, and the in-process routes spell them the same way:
 - a binder is its `NodeKey`, and its declared name only where the admitted binder
   node carries one;
 - a location is the one the package's own location rows give, and none where the
-  wire carries none (FR-390: QSL never invents one);
+  wire carries none (FR-390: FSL never invents one);
 - a progress binding and a result identity use the package `name()` and the clause
   occurrence, and carry no source authority or source identity label.
 
@@ -233,7 +233,7 @@ equal inputs.
 
 | Member | Content |
 | --- | --- |
-| `format` | the string `quire.checked-handoff.identities/4` |
+| `format` | the string `filament.checked-handoff.identities/4` |
 | `declarations` | the unit's `SelectedExactDeclarationRow` values in the order the emitter holds them; each is an object `{ "structural_node", "selected_document", "form", "original_identity", "exact_identity" }` with `structural_node` the wire node id string, `form` one of `record_value_type`, `object_type`, `union`, `declared_unit`, and `exact_identity` a tagged object `{ "kind": "record" \| "object" \| "union" \| "declared_unit", "value": <value> }` whose `value` is a node reference for `record` and `union`, an `EffectiveId` for `object` and a `UnitId` for `declared_unit`, each as the value encodings below state |
 | `fields` | the unit's `SelectedExactFieldRow` values in emitter order; each is `{ "record_node", "selected_document", "record_original_identity", "field_original_identity", "member_id" }` |
 | `source_records` | every final emission's source-owned record row, in final row order: `{ "structural_node", "source_authority", "source_identity", "qualified_declaration", "record_key", "members" }`; each ordered member is `{ "original_member_identity", "admitted_name", "presence", "type_node", "value_type" }` |
@@ -241,7 +241,7 @@ equal inputs.
 | `source_operations` | every final emission's source-operation identity row (FR-390 "Source-declared operation calls from the reader"), in producer order: `{ "structural_node", "source_authority", "source_identity", "anchor_id" }`, with `structural_node` the wire node id string of the source-declared `state`/`operation_anchor` node, `source_authority` the source authority of the declaring source unit, `source_identity` the original source operation identity (the operation name as the source declares it, qualified by its declaring source type) and `anchor_id` the full anchor id of that node |
 | `source_objects` | every final emission's source-object identity row (FR-569 "Source-object identity rows"), in ascending order of their `structural_node`s: `{ "structural_node", "source_authority", "source_identity", "abstract", "supertypes", "identity_fields", "members", "populations" }`, with `structural_node` the wire node id string of the source-declared `model`/`object_type` node, `source_identity` the type's qualified source name, `abstract` a boolean, `supertypes` the wire node id strings of its direct supertype nodes in source order, `identity_fields` its identity field names in declared order, `members` its own fields in source order, each in the `source_records` member encoding above, and `populations` its own populations in source order, each `{ "name", "symmetric" }` |
 
-A document whose `format` is `quire.checked-handoff.identities/3` is refused as the old format, with no read of its rows and no fallback to an empty `source_operations` or `source_objects`. All seven members are required. The reader SHALL reject `/1`, `/2`, `/3`, an absent member,
+A document whose `format` is `filament.checked-handoff.identities/3` is refused as the old format, with no read of its rows and no fallback to an empty `source_operations` or `source_objects`. All seven members are required. The reader SHALL reject `/1`, `/2`, `/3`, an absent member,
 an unknown or repeated member and a malformed row; it SHALL NOT supply an empty
 default, read a legacy variant or silently omit a row that cannot be represented.
 The writer SHALL emit an empty `source_records` array only when the admitted
@@ -277,7 +277,7 @@ while carrying the final renamed bindings. The writer SHALL NOT substitute an
 emitted structural node key for an original opaque record key.
 
 The new rows distinguish **graph references** (`structural_node`, `type_node`) from **original opaque values**. `record_key` is the shared
-`qsl_foundation::node_wire` shape `{ "package", "path", "ordinal" }`, whose path
+`fsl_foundation::node_wire` shape `{ "package", "path", "ordinal" }`, whose path
 contains text or nested node-key objects. It preserves the producer key as a
 value, never as a graph index or a key inferred from a name. A source member's
 `value_type` uses the equality file's complete value-type grammar, except every
@@ -298,7 +298,7 @@ record type. A healthy carried row SHALL use `source_record_view`; the legacy
 carried source record. Stale, foreign or conflicting supplied record rows return
 a typed native join refusal with no partial file read result. A missing row is
 refused by native projection when that record is requested. The carrier SHALL
-NOT introduce a QSL mirror validator or claim that record-row joining qualifies
+NOT introduce an FSL mirror validator or claim that record-row joining qualifies
 whole-witness validate/rebind owned by IR-1360.
 
 Value encodings. A **node reference** (a `NodeKey`) is the wire node id string the
@@ -327,7 +327,7 @@ of the producer the consumer chose to read. `read` verifies only what the packag
 can answer: that each `structural_node`, `record_node` and node reference is a node
 of the package, and that each declaration's `form` matches its identity (`Unjoined`
 otherwise), and IR's `SelectedExactIdentities` projection validates the structural
-join. It does not verify that QSL's model stage issued an identity; a row that
+join. It does not verify that FSL's model stage issued an identity; a row that
 passes the joins but is forged can change which exact identity a node is read as,
 which the evaluator then checks against the admitted nodes and types of the slot.
 
@@ -342,7 +342,7 @@ retaining its code and native structural locus). Thus tagging a record node as a
 declared unit is a native mismatched-witness refusal even when the tag and key
 encoding are individually well-shaped. A refusal returns no rows and charges no
 scalar evaluation meter.
-quire-protocol's admission input list (its FR-043) names this file beside
+filament-protocol's admission input list (its FR-043) names this file beside
 `checked-package.json`.
 
 ### The equality file
@@ -359,7 +359,7 @@ its `node` member), because an in-process `CheckedNodeId` or `NodeKey` carries
 structural path segments and the wire form carries operand indices. A node the
 package does not name is the writer's `Error::Unnameable`.
 
-The file's value-type vocabulary covers every `quire_exact::ValueType` variant (the
+The file's value-type vocabulary covers every `filament_exact::ValueType` variant (the
 tags listed under "Value encodings" below, `carried_quantity`, `map` and
 `bounded_quantity` included), so the writer names the value type of any equality
 fact. FR-517-AC-14's `Full` recover compares a receipt sum with a captured target
@@ -369,7 +369,7 @@ FR-517, and the vocabulary admits both.
 
 | Member | Content |
 | --- | --- |
-| `format` | the string `quire.checked-handoff.equality/1` |
+| `format` | the string `filament.checked-handoff.equality/1` |
 | `applications` | the unit's equality application rows in emitter order; each is `{ "application", "occurrence", "source_map_entry", "node_key", "location" }` in that member order |
 | `facts` | the unit's equality fact rows in emitter order; each is `{ "application", "checked_application", "occurrence", "source_map_entry", "structural_key", "structural_node", "owner", "value_type", "fact" }` in that member order |
 | `source_units` | the unit's selected source-unit rows in emitter order; each is `{ "structural_node", "source_authority", "source_identity", "qualified_declaration", "unit_id" }` in that member order |
@@ -400,7 +400,7 @@ text is UTF-8 as written.
 - An **owner** (`CheckedNodeOwner`) is `null` or a tagged object: `{ "kind":
   "model_root", "identity": <text> }`, `{ "kind": "source", "authority": <text>,
   "identity": <text> }` or `{ "kind": "model", "identity": <text>, "node": <text> }`.
-- A **location** (`quire_exact::Location`) is `{ "node": <node reference>,
+- A **location** (`filament_exact::Location`) is `{ "node": <node reference>,
   "occurrence": { "role": <text>, "ordinal": <integer> } }`, `role` the text of the
   location's origin role.
 - A **checked rational** (`CheckedRational`) is `{ "numerator": <text>,
@@ -412,7 +412,7 @@ text is UTF-8 as written.
   "exponent": <canonical decimal integer string> }, ... ] }` with the terms in the
   compound's own order. A `source_units` row takes the declared form only, as
   "The identity file" does for `declared_unit`.
-- A **value type** (`quire_exact::ValueType`) is `null` or a tagged object `{
+- A **value type** (`filament_exact::ValueType`) is `null` or a tagged object `{
   "kind": <tag> [, members] }` with the tag and members: `boolean`, `integer`,
   `string`, `uuid`, `timestamp` (no member); `int` `{ "lower", "upper" }`;
   `rational` `{ "numerator": <interval>, "denominator": <interval> }`; `decimal`
@@ -426,7 +426,7 @@ text is UTF-8 as written.
   <unit id>, "carrier": <carrier> }`; `bounded_quantity` `{ "unit": <unit id>, "min":
   null | <quantity>, "max": null | <quantity> }`; `map` `{ "key": <value type>,
   "values": <value type>, "bound": null | { "minimum", "maximum" } }` (`key` is the
-  map's declared key type, a type that nests no other type: quire-exact FR-386, so
+  map's declared key type, a type that nests no other type: filament-exact FR-386, so
   two maps differing only by key never encode alike, and a reader refuses a `key`
   that is an `option`, `collection` or `map`). A *quantity* is `{ "magnitude": <checked rational>, "unit":
   <unit id> }`. A *carrier* is a tagged object `{ "kind": "decimal", "lower", "upper",
@@ -477,7 +477,7 @@ space. The source unit `U` of the vector is owned by source `a`/`s` at declarati
 
 ```
 {
-  "format": "quire.checked-handoff.equality/1",
+  "format": "filament.checked-handoff.equality/1",
   "applications": [
     {
       "application": {
@@ -641,7 +641,7 @@ JSON or not this shape, an unknown or repeated member or row member, an unknown 
 tag, a non-integer number), `Format` (another `format` string, naming it) and
 `Unjoined` (a row whose node id string the package does not hold, or whose
 application is not an equality application of the package), naming the first row. A
-refusal returns no rows and charges nothing. quire-protocol's admission input list
+refusal returns no rows and charges nothing. filament-protocol's admission input list
 names this file beside `identities.json`.
 
 ### Refusals
@@ -691,7 +691,7 @@ names this file beside `identities.json`.
 Joining the supply's identity rows to the package is native work and native
 logical storage, which Contract IR accounts for in one caller-owned
 `NativeJoinBudget` (Contract IR FR-358). Its work and storage are not the
-`Meter`'s counters and are not an input-byte count. QSL states the budget as
+`Meter`'s counters and are not an input-byte count. FSL states the budget as
 follows.
 
 - **One finite budget per pass, built by the pass entry.** The entry of a pass
@@ -702,8 +702,8 @@ follows.
   resets or enlarges a budget, and no entry has an unbounded form. The helpers
   `selected_exact_identities_from_rows`, `SelectedModels::exact_identities`,
   `CheckedGraph::selected_exact_identities` and `ReadIdentityRows::selected`
-  take `&mut NativeJoinBudget` directly, because `qsl-semantics` is below
-  `qsl-package` and cannot name the package limits.
+  take `&mut NativeJoinBudget` directly, because `fsl-semantics` is below
+  `fsl-package` and cannot name the package limits.
 - **Where the ceilings come from.** `V2ReadLimits` (FR-255's `i2.*` row owner)
   gains the required member `storage`, the logical-storage ceiling, and has no
   `Default`; `V2ReadLimits::bounded(storage)` states it and takes the other
@@ -747,7 +747,7 @@ follows.
   and its code remain available in the library form. The same denial from a
   view's join is `ViewFailure::Exhausted`, from an evidence constructor
   `PackageMismatch::Exhausted`, and from the handoff writer
-  `Error::NativeJoinExhausted`. `qsl-eval`'s `CallFailure` has no arm for it:
+  `Error::NativeJoinExhausted`. `fsl-eval`'s `CallFailure` has no arm for it:
   the denial happens at the pass entry, before any call that returns one.
   Every entry, including `with_supply`, `from_read` and `from_emission`
   with an opaque caller budget, retains the native error together with a
@@ -774,7 +774,7 @@ storage, copied node and occurrence identities, paths, source-map entries,
 owner/type/unit payloads, enum declarations, canonical case rows and source-unit
 rows. A borrowed row accessor incurs no owned-storage charge.
 
-The `identity_rows` adapter SHALL charge its QSL-owned materialization in
+The `identity_rows` adapter SHALL charge its FSL-owned materialization in
 addition to the native identity join. It SHALL charge owned producer input
 rows before presenting them to the native join, including copies an input
 iterator would otherwise create while the join first peeks at a row. The
@@ -782,7 +782,7 @@ producer selection SHALL retain final-emission membership after carrying or
 rekeying rows; checking that membership SHALL NOT allocate uncharged scratch. This material includes converted source
 record and member rows, copies of joined declarations and fields, and copied
 source union rows. A successful native join SHALL NOT count as payment for
-those later QSL allocations. A denied materialization SHALL return no partial
+those later FSL allocations. A denied materialization SHALL return no partial
 `ReadIdentityRows` and SHALL retain the native charges already admitted.
 
 Footprint inspection SHALL use borrowed owner data without allocating. When
@@ -792,13 +792,13 @@ SHALL NOT be materialized merely to calculate an uncharged footprint. Charges
 SHALL cover every owned numeric representation that is actually copied,
 including heap-backed values at the signed 128-bit boundary.
 
-These QSL materialization charges count one logical container and one unit per
+These FSL materialization charges count one logical container and one unit per
 initialized entry, plus each copied text or numeric payload byte and its owned
 buffer. A shared Exact handle contributes its containing entry rather than a
 deep copy of the shared payload. The charge does not depend on host pointer
 width, allocator capacity or artifact JSON byte length.
 
-QSL's conversion of its model-enum shapes and collection rows to Contract IR's
+FSL's conversion of its model-enum shapes and collection rows to Contract IR's
 selected-monitor row types SHALL use the same budget for all copied containers
 and payloads. An admitted conversion SHALL preserve complete original node,
 declaration and member identities, canonical variant order and Exact value
@@ -815,7 +815,7 @@ Converting and natively joining or projecting a selected sequence SHALL NOT
 inspect or refuse another retained map. A selected map SHALL pass its original
 key and value type nodes to native joining and projection in the admitted
 key-then-value order. Missing, wrong or misplaced key claims SHALL reach the
-owner's typed collection refusal; QSL SHALL NOT reinterpret that refusal or
+owner's typed collection refusal; FSL SHALL NOT reinterpret that refusal or
 return a partial native result.
 
 A denied adapter charge SHALL return a fixed-size typed refusal without
@@ -824,7 +824,7 @@ the owner's first unpaid resource, amount, original configured bound and locus,
 together with the admitted budget prefix. Each external input-row conversion
 SHALL identify its actual retained input position with
 `NativeJoinLocusSource::AdapterRow(i)` and name its row channel in the locus
-`form`. These QSL adapter charges SHALL NOT use the native read's `ReachedRow`
+`form`. These FSL adapter charges SHALL NOT use the native read's `ReachedRow`
 namespace. A standalone collection conversion SHALL take the caller's
 non-owning `AdapterRow(i)` locus and preserve that input position and form;
 no graph node or row index is invented. A package-wide container allocation
@@ -852,7 +852,7 @@ further inspection or allocation.
 
 ### Same-emission tick-monitor context
 
-When preparing a selected tick-monitor plan, QSL SHALL keep the [FR-251](./FR-251-derive-a-tick-based-monitor-plan-for-an-embedded-target.md) plan,
+When preparing a selected tick-monitor plan, FSL SHALL keep the [FR-251](./FR-251-derive-a-tick-based-monitor-plan-for-an-embedded-target.md) plan,
 obligations, admitted order and progress association bound to the same final
 emission and its original selected package/model identities. The order and
 progress authority remain FR-251's admitted values; selected-row adapters
@@ -866,7 +866,7 @@ authority value. Retained context accessors MAY borrow the already admitted
 values without owned-storage charges; any owned copy SHALL use the same
 caller budget as row materialization and native closure validation.
 
-QSL SHALL pass the complete converted rows to the actual Contract IR native
+FSL SHALL pass the complete converted rows to the actual Contract IR native
 join and selected type-closure projection before treating them as admitted
 monitor inputs. Materialization alone SHALL NOT confer native identity or
 execution authority. Successful composition SHALL retain the original plan,
@@ -886,7 +886,7 @@ none; supply admission and view creation charge only the caller's
 
 ### Relationship to the consumers
 
-quire-protocol FR-045 evaluates compensation slots, and FR-046 assesses temporal
+filament-protocol FR-045 evaluates compensation slots, and FR-046 assesses temporal
 evidence, through this entry and pass it no source package and no emission.
 FR-515 and FR-516 state the evidence package and the call; FR-520 states the
 outcome map. Each carries a "Consumer entry" section that points here.
@@ -895,20 +895,20 @@ outcome map. Each carries a "Consumer entry" section that points here.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-531-AC-1 | In a test crate whose dependencies are `quire-contract-model`, `qsl-package` and `qsl-eval` and which names no `qsl_semantics::CheckedPackage`, no `Emission` and no `AdmittedPackageRead`, the package of **R**'s handoff directory (FR-517) read with `read_checked_package` gives a `BarePackage` by `BarePackage::new`, and from it a temporal evidence call (FR-532) and a protocol-slot call (FR-533) each return a result. | Test (TC-1331) |
+| FR-531-AC-1 | In a test crate whose dependencies are `filament-contract-model`, `fsl-package` and `fsl-eval` and which names no `fsl_semantics::CheckedPackage`, no `Emission` and no `AdmittedPackageRead`, the package of **R**'s handoff directory (FR-517) read with `read_checked_package` gives a `BarePackage` by `BarePackage::new`, and from it a temporal evidence call (FR-532) and a protocol-slot call (FR-533) each return a result. | Test (TC-1331) |
 | FR-531-AC-2 | `BarePackage` has no constructor from bytes, from a decoded graph or from a term, and no public signature of `BarePackage`, `BareSupply`, `EvidencePackage::from_package` or the `BarePackage` evaluation names `CheckedPackage`, `Emission` or `AdmittedPackageRead`; compile-fail probes of each construction fail, and an API-surface inspection lists the signatures. | Test (TC-1331) |
 | FR-531-AC-3 | The evaluation code reached from `BarePackage` does not read a source graph: the same calls over a `BarePackage` whose package was read in a run where the source unit was never compiled give the results the calls give where it was (TC-1331 row 1 runs the calls in a child run that is given the handoff directory only). | Test (TC-1331) |
 | FR-531-AC-4 | Over **R**'s three packages the bare route evaluates every temporal clause form (event position, fixed sample, timestamped event) and every protocol slot kind of FR-390's slot table that **R** holds; a node that is not a temporal clause refuses `clause-root-unresolved` and a slot node that is not a protocol node refuses as FR-390-AC-4 states, each with an empty charge log. | Test (TC-1331) |
 | FR-531-AC-5 | Over a `BarePackage` with no supply, a protocol-slot call refuses `MissingIdentityWitness`; with rows of another package, `ForeignIdentityWitness`; with rows of the package naming no admitted identity, `UnknownIdentityWitness`; rows of another package are `ForeignIdentityWitness` also when they name no admitted identity. Each is `CallFailure::Admission` with `unknown_required_feature`/`unsupported-feature`, category unsupported, exit 21, and the meter untouched. A temporal evidence call over the same `BarePackage` with no supply returns its result; and `read_checked_package` over bytes whose lock selects a dependency the evidence does not supply refuses `MissingImport`, so no `BarePackage` exists for it and no dependency refusal is defined. | Test (TC-1331) |
 | FR-531-AC-6 | Over a package whose `temporal_bindings` rows are absent, the call returns `activation = Unavailable` with the `Missing` non-value for the clock row; over a lock with no `profile_selections` row for the clause, `clause-unreadable` with reason `profile-selection`; over a lock whose row names a definition no profile of the evaluator, `clause-unreadable` with reason `profile-unknown`; over a row naming an infinite-trace profile, the `not-finite-window-profile` temporal refusal. Each has the charges FR-516 gives its counterpart over a source. | Test (TC-1331) |
 | FR-531-AC-7 | No result of the bare route holds, in its canonical bytes or its fields, a clause name, a source label or a source span: over **R**, the encoded `EvidenceResult` and `ProtocolSlotEvaluation` values do not contain the unit's `source:` labels or a byte region of the source map, and a clause name appears only as the `temporal_clause_names` row of its occurrence gives it, identically on every route. Identity is spelled as the "What the bytes do not carry" list states, and the progress binding of a result holds `package.name()`. | Test (TC-1331) |
-| FR-531-AC-8 | The handoff directory of **R** holds required `identities.json` with `format` `quire.checked-handoff.identities/4`; `ReadIdentityRows::read` over it and the package gives a slot call that evaluates; the file equals, byte for byte, the encoding above of the in-process unit's rows, and two writes of equal requests give equal files; omitting the file from a `BareSupply` makes the slot call refuse `MissingIdentityWitness` while the temporal call is unaffected. | Test (TC-1331) |
+| FR-531-AC-8 | The handoff directory of **R** holds required `identities.json` with `format` `filament.checked-handoff.identities/4`; `ReadIdentityRows::read` over it and the package gives a slot call that evaluates; the file equals, byte for byte, the encoding above of the in-process unit's rows, and two writes of equal requests give equal files; omitting the file from a `BareSupply` makes the slot call refuse `MissingIdentityWitness` while the temporal call is unaffected. | Test (TC-1331) |
 | FR-531-AC-12 | `ReadIdentityRows::read` over a file that is not JSON, one with an unknown or repeated member, one with another `format`, one with a row whose `structural_node` the package does not hold and one whose `form` does not match its identity returns `Malformed`, `Malformed`, `Format`, `Unjoined` and `Unjoined` respectively, naming the member, the format string or the first row, and returns no rows. | Test (TC-1331) |
 | FR-531-AC-13 | The identity file of **R** encodes every identity as the "Value encodings" state: a node reference is the wire node id string of the package, an `EffectiveId` has the `chain` list root first, a `MemberId` has `owner` and `member`, and a declared `UnitId` has `kind` `declared` and a `node` reference; `read` returns rows equal to the writer's, a unit with `kind` other than `declared` returns `Malformed`, a declared unit whose node reference the package does not hold returns `Unjoined`, and a `declared_unit` row whose `exact_identity` has another `kind` returns `Unjoined`. A forged row that passes the joins is accepted by `read` and the slot call over it evaluates against the admitted nodes, so the test records that `read` makes no claim of authority. | Test (TC-1331) |
 | FR-531-AC-9 | For each public method of `EvidencePackage` and each method of the `CheckedPackageEvaluation` trait, enumerated by a test that reads those two items' declarations in the crate source with `syn` and compares the names to the first column of the inventory table, the table has exactly one row: available from the bare package, or listed as not carried with a reason; a method added to either type without a row fails the test. | Test (TC-1331) |
 | FR-531-AC-10 | The charge log of each call over the bare package equals the charge log of the same call over the in-process route (FR-532-AC-1, FR-533-AC-1); `BarePackage::new`, `with_supply` and view creation take no `Meter` and a call that refuses at supply admission leaves a caller's meter byte-identical. | Test (TC-1331) |
 | FR-531-AC-11 | A search of FR-515 for the phrases `bytes-only` and `separate future capability` and of FR-515, FR-516 and FR-520 for the heading `Consumer entry` finds that FR-515 no longer states that an evaluator over `formula_graph()` with no source graph is out of scope, and FR-515, FR-516 and FR-520 each carry a "Consumer entry" section that names this requirement. | Inspection (TC-1331) |
-| FR-531-AC-14 | The handoff directory written for TC-1070 fixture E holds `equality.json` with `format` `quire.checked-handoff.equality/1`; `ReadEqualityRows::read` over it and the package gives a slot call on `Refund`'s retry relation (an integer `=` application) that evaluates to the in-process route's value and charge log; the file equals, byte for byte, the encoding above of the in-process unit's rows, and two writes of equal requests give equal files. | Test (TC-1331) |
+| FR-531-AC-14 | The handoff directory written for TC-1070 fixture E holds `equality.json` with `format` `filament.checked-handoff.equality/1`; `ReadEqualityRows::read` over it and the package gives a slot call on `Refund`'s retry relation (an integer `=` application) that evaluates to the in-process route's value and charge log; the file equals, byte for byte, the encoding above of the in-process unit's rows, and two writes of equal requests give equal files. | Test (TC-1331) |
 | FR-531-AC-15 | `ReadEqualityRows::read` over a file that is not JSON, one with an unknown or repeated member, one with an unknown fact tag, one with another `format`, one with a row whose node id string the package does not hold and one whose application is not an equality application returns `Malformed`, `Malformed`, `Malformed`, `Format`, `Unjoined` and `Unjoined` respectively, naming the member, the tag, the format string or the first row, and returns no rows. | Test (TC-1331) |
 | FR-531-AC-16 | A slot call on TC-1070 fixture E's `Refund` retry relation refuses `MissingEqualityWitness` over a supply with `equality: None`, `ForeignEqualityWitness` with rows of another package and `UnknownEqualityWitness` with rows of the package from which the row of the retry relation's application is removed, each as `CallFailure::Admission` with `unknown_required_feature`/`unsupported-feature`, category unsupported, exit 21, `CallAdmissionLocus::Package` and the meter untouched; `Refund`'s `trigger.guard`, whose walk holds no equality application, over the same supply evaluates. | Test (TC-1331) |
 | FR-531-AC-17 | The encoding of the rows of "The equality file" vector equals the vector's bytes exactly; `ReadEqualityRows::read` over those bytes and a package that holds the node `["E"]` and `["U"]` returns rows equal to the input rows; for a row of every fact tag, every value-type tag, every owner kind and a compound unit id in a fact row, writing then reading returns equal rows and a second write is byte-identical; a checked rational whose numerator is spelled `+1`, `01` or `-0`, or whose denominator is `0` or `-2`, returns `Malformed`; a compound unit id in a `source_units` row returns `Malformed`. | Test (TC-1331) |
@@ -924,8 +924,8 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-27 | `/2`, absent `source_unions`, malformed member identity, stale member name, foreign source owner and conflicting union rows return typed format, malformed or native-join refusals without a partial read. An empty union list never fabricates a producer witness from the graph. | Test (TC-1331) |
 | FR-531-AC-28 | Producer and bytes-only equality admission pass the caller's same `NativeJoinBudget` through IR's admitted equality reader after identity/type projection. Decisions and non-resource witness refusals are retained for later unmetered selection and projection. Successful reads consume native work and storage cumulatively; exact measured bounds admit, and one unit less in either resource refuses with the original typed IR equality denial and recorded first unpaid charge, never an unknown witness or internal fault. Reusing an admitted slot consumes no additional native allowance. | Test (TC-1331) |
 | FR-531-AC-29 | Materializing an authentic emission's equality witness with a shared native budget preserves every application, fact and source-unit row, including original identities and order. The source admission and handoff paths use the same budgeted row builder. Exact measured work and storage allowances return the complete witness; one unit less in either resource refuses without allocating the denied material or a diagnostic, retains the first unpaid resource, amount and original locus, and returns no partial witness. Two individually affordable materializations that exceed one shared allowance refuse at the second call's first unpaid step without resetting prior consumption. | Test |
-| FR-531-AC-30 | Source-enum materialization and QSL-to-IR model-enum-shape and selected-collection conversion preserve original structural/declaration/member identities, canonical case order and complete Exact types on one shared native budget. Exact measured bounds admit; work or storage one short and zero storage return allocation-free compact denials at the first unpaid locus with prior consumption intact. A later conversion cannot reset a preceding adapter's charges or replace its first denial. A selected source map preserves its original optional key node and complete Exact map value type through actual native joining and projection; absent or wrong map keys and a map key misplaced on a non-map row return the native typed collection refusal. An unrelated retained map leaves conversion and native projection of a selected sequence unchanged. External row denials name AdapterRow(i) at the actual retained input index and keep that locus across a later attempted charge; native read loci remain in their own namespace. Borrowing already retained rows incurs no owned-storage charge. | Test |
-| FR-531-AC-31 | An authentic emission with source records, record members and unions produces complete identity rows equal to the original producer claims after native joining and QSL materialization. The measured work and storage include the QSL producer input copies, the single native join and each later QSL declaration, field, record/member and union copy. Exact allowances admit; one unit below either measured allowance refuses at its first unpaid step with no partial identity rows, the original configured bound and the admitted prefix intact. Denied external row copies retain AdapterRow(i) at their original per-channel retained input or joined-output position; sparse selection does not renumber inputs, and nested members retain the outer record or union index. Two materializations on one budget compose without reconstructing or resetting it. | Test |
+| FR-531-AC-30 | Source-enum materialization and FSL-to-IR model-enum-shape and selected-collection conversion preserve original structural/declaration/member identities, canonical case order and complete Exact types on one shared native budget. Exact measured bounds admit; work or storage one short and zero storage return allocation-free compact denials at the first unpaid locus with prior consumption intact. A later conversion cannot reset a preceding adapter's charges or replace its first denial. A selected source map preserves its original optional key node and complete Exact map value type through actual native joining and projection; absent or wrong map keys and a map key misplaced on a non-map row return the native typed collection refusal. An unrelated retained map leaves conversion and native projection of a selected sequence unchanged. External row denials name AdapterRow(i) at the actual retained input index and keep that locus across a later attempted charge; native read loci remain in their own namespace. Borrowing already retained rows incurs no owned-storage charge. | Test |
+| FR-531-AC-31 | An authentic emission with source records, record members and unions produces complete identity rows equal to the original producer claims after native joining and FSL materialization. The measured work and storage include the FSL producer input copies, the single native join and each later FSL declaration, field, record/member and union copy. Exact allowances admit; one unit below either measured allowance refuses at its first unpaid step with no partial identity rows, the original configured bound and the admitted prefix intact. Denied external row copies retain AdapterRow(i) at their original per-channel retained input or joined-output position; sparse selection does not renumber inputs, and nested members retain the outer record or union index. Two materializations on one budget compose without reconstructing or resetting it. | Test |
 | FR-531-AC-32 | A real tick-monitor plan's retained context supplies the same emission's plan, obligations, admitted order and progress association to the actual native row join and selected type-closure projection. The resulting native nodes, original declaration/member identities and Exact types equal those of that emission. Substituting another genuine emission's context, even with identical authored names, or omitting required order/progress authority returns a typed refusal and no executable context. Borrowing retained context leaves native storage consumption unchanged. | Test |
 | FR-531-AC-33 | Allocation observation encloses only the adapter/conversion call, with fixture preparation and assertions outside it. A successful owned materialization performs observed allocations; a denial before its first allocation performs none, and a later denial allocates neither the denied material nor an owned diagnostic. The controls include fresh owner-produced lazy numeric payloads, values `2^127` and `-(2^127 + 1)`, and larger heap-backed values without prior warming or formatting. These values remain exact on successful copies; insufficient work/storage retains the first real row locus and original bound. | Test |
 
@@ -940,9 +940,9 @@ outcome map. Each carries a "Consumer entry" section that points here.
   validation and the public accounted-charge/resume budget contract.
   Contract IR FR-357-AC-16 owns optional map-key row representation and native
   map validation; FR-358-AC-10 owns the external `AdapterRow` locus. This
-  requirement owns QSL's intervening row materialization and conversion; it does
+  requirement owns FSL's intervening row materialization and conversion; it does
   not replace either owner's admission or claim monitor/runtime qualification.
-- **Downstream:** quire-protocol FR-045 and FR-046; FR-532 and FR-533. quire-protocol
+- **Downstream:** filament-protocol FR-045 and FR-046; FR-532 and FR-533. filament-protocol
   FR-043's admission input list follows the two files.
 - **Writer and reader encoders for the three added tags:** the code ticket for the
   `carried_quantity`, `bounded_quantity` and `map` encoders follows in the B2a work;
@@ -951,8 +951,8 @@ outcome map. Each carries a "Consumer entry" section that points here.
 - **Wire forms the writer adds:** the equality file's leaf encodings are pinned in
   "The equality file". `CheckedNodeId`, `CheckedOccurrence`, `CheckedSourceMapEntry`,
   `CheckedNodeOwner` and `CheckedRational` have `serde` forms in Contract IR today and
-  the file uses them. `quire_exact::Location`, `ValueType` (with its interval,
+  the file uses them. `filament_exact::Location`, `ValueType` (with its interval,
   decimal, float, text, enum and collection parts), `UnitId`, `NodeKey` and
-  `EffectiveId` have none; the QSL writer and `ReadEqualityRows::read` encode and
+  `EffectiveId` have none; the FSL writer and `ReadEqualityRows::read` encode and
   decode them by hand to the forms above, from those types' public accessors and
-  constructors, and no change to Contract IR or quire-exact is required for the file.
+  constructors, and no change to Contract IR or filament-exact is required for the file.

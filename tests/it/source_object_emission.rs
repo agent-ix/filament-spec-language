@@ -3,15 +3,15 @@
 //! object type, so a unit that declares one is refused at emission and writes
 //! nothing; a unit that declares none emits as before.
 
+use filament_spec_language::checked_handoff::{write, Corpus, ErrorCode};
+use filament_spec_language::emit_checked_v2::{self, Error, Request};
+use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
-use qsl_foundation::diagnostic::Code;
-use quire_spec_language::checked_handoff::{write, Corpus, ErrorCode};
-use quire_spec_language::emit_checked_v2::{self, Error, Request};
 
 use super::checked_handoff::request;
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile P = \"quire.model.complete/v1\";\n\
+    profile P = \"filament.model.complete/v1\";\n\
     object Order { total: Int[0, 9]; population orders; operation size(): Integer; }\n\
     object Sub extends Order { }\n";
 
@@ -48,7 +48,7 @@ fn a_unit_with_a_source_object_is_refused_at_emission_and_writes_nothing() {
     );
 
     // The diagnostic locates the refusal at the first `object` declaration.
-    let qsl_replay::ReplayRefusal::Recompile(inner) = &*refusal else {
+    let fsl_replay::ReplayRefusal::Recompile(inner) = &*refusal else {
         panic!("a recompile refusal: {refusal:?}");
     };
     let region = inner.region().expect("the refusal has a region");
@@ -80,7 +80,7 @@ fn a_unit_without_a_source_object_still_emits() {
     std::fs::write(
         &source.source,
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile P = \"quire.model.complete/v1\";\n\
+         profile P = \"filament.model.complete/v1\";\n\
          function f using P (x: Boolean): Boolean pure { x }\n",
     )
     .unwrap();

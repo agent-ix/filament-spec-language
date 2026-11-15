@@ -3,14 +3,14 @@ id: TC-456
 title: "S2 builds state clause forms and the self, result and reaches expressions"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-102
+  - target: ix://agent-ix/filament-spec-language/FR-102
     type: verifies
 ---
 # TC-456: S2 builds state clause forms and the self, result and reaches expressions
 
 ## Description
 
-Verify that `qsl-forms` builds a `StateClauseForm` for each of `invariant`,
+Verify that `fsl-forms` builds a `StateClauseForm` for each of `invariant`,
 `pre` and `post`, and builds `self`, `result` and `reaches` as expressions.
 
 Scope: FR-102-AC-1, FR-102-AC-2, FR-102-AC-3, FR-102-AC-8.
@@ -20,8 +20,8 @@ Scope: FR-102-AC-1, FR-102-AC-2, FR-102-AC-3, FR-102-AC-8.
 Every unit starts with the header
 `language "ix:native" edition "1-draft";`, one `profile v = ...;` and
 `model Config = "example/config-version";`,
-QSpec's shared-grammar `model` production.
-Parse each through S1 and build through `qsl_forms::build_unit`.
+FSpec's shared-grammar `model` production.
+Parse each through S1 and build through `fsl_forms::build_unit`.
 
 1. Declare `invariant ParentOrder using v on Config::ConfigVersion at current
    { present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }`.

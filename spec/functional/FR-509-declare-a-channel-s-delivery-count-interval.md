@@ -3,21 +3,21 @@ id: FR-509
 title: "Declare a channel's delivery count interval"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-048
+  - target: ix://agent-ix/filament-spec-language/FR-048
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-465
+  - target: ix://agent-ix/filament-specification/FR-465
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-426
+  - target: ix://agent-ix/filament-specification/FR-426
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-170
+  - target: ix://agent-ix/filament-specification/FR-170
     type: depends_on
 ---
 # FR-509: Declare a channel's delivery count interval
@@ -27,16 +27,16 @@ relationships:
 The composed protocol surface wrote a channel as `... ordering <o> delivery
 [lo,hi];`, with `lo` and `hi` natural numbers, `lo <= hi`. The interval is a
 per-send cardinality: the number of deliveries one send produces, not elapsed
-time (the retired `quire.compiled-protocol/1` wire contract: channel delivery bounds are per-send
+time (the retired `filament.compiled-protocol/1` wire contract: channel delivery bounds are per-send
 cardinalities, not elapsed time). The composed emitter wrote it into the
 channel's delivery bounds (FR-048-AC-2). The spine writes a channel's delivery
 as one of four policy words (`unknown`, `at-most-once`, `at-least-once`,
 `exactly-once-premise`) plus `capacity` and `overflow`, so the interval can be
 neither written nor checked. This requirement adds the interval to the spine
 channel and states what it means; the four policy words keep their meaning.
-QSpec FR-465 "Delivery count interval" owns the channel node's delivery text,
-and QSpec FR-426 "Interval sends" and FR-170 own the queue semantics; this
-requirement states how QSL's grammar, checker, emitter, package reader and
+FSpec FR-465 "Delivery count interval" owns the channel node's delivery text,
+and FSpec FR-426 "Interval sends" and FR-170 own the queue semantics; this
+requirement states how FSL's grammar, checker, emitter, package reader and
 explorer realize them and invents none.
 
 ## Inputs
@@ -51,7 +51,7 @@ explorer realize them and invents none.
 
 - A checked `ChannelDelivery::Between{lo, hi}` premise, recorded as written
   beside the channel's other premises.
-- A channel node whose delivery text is the canonical interval text of QSpec
+- A channel node whose delivery text is the canonical interval text of FSpec
   FR-465: `[`, the decimal numeral of `lo`, `,`, the decimal numeral of `hi`
   and `]`, with no space and no other character, each numeral a natural
   number no greater than 18446744073709551615 written with no sign and no
@@ -84,9 +84,9 @@ explorer realize them and invents none.
   sign, a fraction, a numeral above 18446744073709551615, a missing bound or
   bracket, or `lo > hi`), then FR-519's package reader SHALL refuse it with
   `ViewRefusal::MalformedMember` naming the `delivery` member, return no partial value, and
-  not trim, re-parse or repair the text. This matches QSpec FR-465's strict wire rule, under which such a text
-  refuses `malformed_wire` at the term before QSL reads it.
-- Exploration of a channel's queue SHALL follow QSpec FR-426 "Interval sends"
+  not trim, re-parse or repair the text. This matches FSpec FR-465's strict wire rule, under which such a text
+  refuses `malformed_wire` at the term before FSL reads it.
+- Exploration of a channel's queue SHALL follow FSpec FR-426 "Interval sends"
   and FR-170 "Delivery count interval":
   - a thread at a send with no pending send has one `send` step per
     (payload, `d`) with `lo <= d <= hi`, the step identity carrying `count`
@@ -102,7 +102,7 @@ explorer realize them and invents none.
     queue fills with `r > 0` entries unprocessed the send is **pending**: the
     thread rests at the send, waits `full-queue`, binds no binder, and the
     state key holds the pair (`r`, payload) as the thread's `send-pending`
-    entry (QSpec FR-425), so two pending sends differing in count or payload
+    entry (FSpec FR-425), so two pending sends differing in count or payload
     are different states; once the queue is below capacity the pending send
     has one continuation `send` step, with `count` `r` and that payload, that
     appends the next entries the same way, and the step that settles past the
@@ -133,32 +133,32 @@ explorer realize them and invents none.
 | FR-509-AC-2 | Source `delivery [4,3]` refuses `ill_typed`/`type-mismatch` at the interval naming 4 and 3; `delivery [-1,3]`, `delivery [0.5,3]` and `delivery [0,18446744073709551616]` each refuse `invalid_syntax` at the offending token; `delivery [2,2]`, `delivery [0,0]` and `delivery [0,18446744073709551615]` admit. | Test (TC-1304) |
 | FR-509-AC-3 | Channels with `delivery [1,1]` and with `delivery exactly-once-premise`, otherwise equal, are two different checked channels, and neither changes the other's recorded capacity, overflow or ordering. | Test (TC-1304) |
 | FR-509-AC-4 | The emitted package holds the delivery text `[0,3]` for AC-1's channel written either as `[0,3]` or as `[ 0 , 3 ]`, a different text `[0,4]` when only `hi` changes, `[0,18446744073709551615]` for that bound, and the unchanged word text for each policy word; each reads back through FR-519's `delivery` view as the checked premise. | Test (TC-1304) |
-| FR-509-AC-5 | Under QSpec FR-426 "Interval sends", on a `fifo` channel of capacity 2 under `overflow block`: with `delivery [2,2]`, `send P` has one `count` 2 step queuing two entries, so `receive R1 of P` and `receive R2 of P` complete in every execution and a third receive waits `empty-queue`; with `[0,1]`, `send P` has a `d = 0` step queuing nothing (send record `entries` `[]`, `pending` `"0"`), after which `receive R1 of P` waits `empty-queue`, and a `d = 1` step after which it completes; with `[1,3]`, `send P` has `d = 1` and `d = 2` steps that queue and settle past the send, and a `d = 3` step that appends two entries and leaves the send pending with count 1 and payload `P` (send record `pending` `"1"`), the thread waiting `full-queue` at the send; after one receive the pending send's one continuation step, `count` 1, appends the last entry, settles and binds the binder to `P`. On a `[1,1]` channel no execution loses or duplicates the message, and on any interval channel no `duplicate` or `lose` step exists; on `[0,1]` the only losing execution is `d = 0`. | Test (TC-1304) |
+| FR-509-AC-5 | Under FSpec FR-426 "Interval sends", on a `fifo` channel of capacity 2 under `overflow block`: with `delivery [2,2]`, `send P` has one `count` 2 step queuing two entries, so `receive R1 of P` and `receive R2 of P` complete in every execution and a third receive waits `empty-queue`; with `[0,1]`, `send P` has a `d = 0` step queuing nothing (send record `entries` `[]`, `pending` `"0"`), after which `receive R1 of P` waits `empty-queue`, and a `d = 1` step after which it completes; with `[1,3]`, `send P` has `d = 1` and `d = 2` steps that queue and settle past the send, and a `d = 3` step that appends two entries and leaves the send pending with count 1 and payload `P` (send record `pending` `"1"`), the thread waiting `full-queue` at the send; after one receive the pending send's one continuation step, `count` 1, appends the last entry, settles and binds the binder to `P`. On a `[1,1]` channel no execution loses or duplicates the message, and on any interval channel no `duplicate` or `lose` step exists; on `[0,1]` the only losing execution is `d = 0`. | Test (TC-1304) |
 | FR-509-AC-6 | A `delivery [1,2]` channel in a unit whose header selects no temporal profile and no clock checks and emits; the interval reads no clock. | Test (TC-1304) |
 | FR-509-AC-7 | The parser accepts `delivery [<lo>,<hi>]` in a channel clause as the fifth delivery form beside the four policy words, so a channel that declares an interval parses with no syntax error. | Test (TC-1304) |
-| FR-509-AC-8 | FR-519's `delivery` view admits a channel node whose delivery text is `[0,3]`, `[0,0]`, `[2,2]` or `[0,18446744073709551615]`, and refuses with `ViewRefusal::MalformedMember` naming the `delivery` member (never `MissingMember`), with no partial value, each of `[4,3]`, `[0, 3]`, `[ 2 , 2 ]`, `[00,3]`, `[+0,3]`, `[-1,3]`, `[0.5,3]`, `[0,18446744073709551616]`, `[3]`, `[0,3` and `0,3` (the QSpec FR-465-AC-10 spellings). | Test (TC-1304) |
+| FR-509-AC-8 | FR-519's `delivery` view admits a channel node whose delivery text is `[0,3]`, `[0,0]`, `[2,2]` or `[0,18446744073709551615]`, and refuses with `ViewRefusal::MalformedMember` naming the `delivery` member (never `MissingMember`), with no partial value, each of `[4,3]`, `[0, 3]`, `[ 2 , 2 ]`, `[00,3]`, `[+0,3]`, `[-1,3]`, `[0.5,3]`, `[0,18446744073709551616]`, `[3]`, `[0,3` and `0,3` (the FSpec FR-465-AC-10 spellings). | Test (TC-1304) |
 | FR-509-AC-9 | On a `fifo` channel of capacity 1 under `block` with `delivery [0,3]` and its one place full, the `d = 0` step is enabled, queues nothing and settles past the send while the `d >= 1` steps wait; a `[0,0]` channel of capacity 0 completes its send by the `d = 0` step; under `overflow reject` with capacity 1 and `[2,2]`, the one step records `entries` `accepted` then `rejected` and `pending` `"0"`; on a `fifo` channel of capacity 1 under `block` with `delivery [2,3]` and `carries Boolean`, one exploration of `send P` (payload `true` or `false`) followed by one `receive R of P` whose binder no later step reads reaches, after the receive has emptied the queue, the states pending (1, `true`), (1, `false`) and (2, `true`), whose `send-pending` entries are the only member in which they differ and whose keys are pairwise different; each continuation step binds the send's binder to its own payload. | Test (TC-1304) |
-| FR-509-AC-10 | On a `fifo` channel of capacity 2 under `overflow reject` with `delivery [0,1000]`, let `W0` be the work an unlimited run consumes before it expands the state at the send. Under work limit `W0 + 3` the explorer generates the `d = 0` step (1 unit) and the `d = 1` step (1 unit and 1 entry), never generates the `d = 2` step, consumes exactly 3 units at the send, and settles `incomplete` naming the work limit with the state at the send on the unexplored frontier; it is not a refusal and not a completed result with a count dropped, `hi` capped or a step's entries truncated. Under an unlimited work limit the same state has exactly 1001 `send` steps, `count` 0 to 1000, generated in ascending `count` (QSpec FR-426-AC-21, TC-378 CH-21). | Test (TC-1304) |
+| FR-509-AC-10 | On a `fifo` channel of capacity 2 under `overflow reject` with `delivery [0,1000]`, let `W0` be the work an unlimited run consumes before it expands the state at the send. Under work limit `W0 + 3` the explorer generates the `d = 0` step (1 unit) and the `d = 1` step (1 unit and 1 entry), never generates the `d = 2` step, consumes exactly 3 units at the send, and settles `incomplete` naming the work limit with the state at the send on the unexplored frontier; it is not a refusal and not a completed result with a count dropped, `hi` capped or a step's entries truncated. Under an unlimited work limit the same state has exactly 1001 `send` steps, `count` 0 to 1000, generated in ascending `count` (FSpec FR-426-AC-21, TC-378 CH-21). | Test (TC-1304) |
 
 ## Dependencies
 
-- **Contract (QSpec):** QSpec FR-465 "Delivery count interval" and "Delivery
+- **Contract (FSpec):** FSpec FR-465 "Delivery count interval" and "Delivery
   spellings" (FR-465-AC-3, AC-4 and AC-10) define the channel node's
-  delivery text and its strict refusals; QSpec FR-426 "Interval sends" and
+  delivery text and its strict refusals; FSpec FR-426 "Interval sends" and
   "Interval size" (FR-426-AC-19 and AC-20), FR-170 "Delivery count interval"
   and FR-425's `send-pending` state-key entry define the step relation, the
   send record and the work charge; vectors TC-947 `CH13a`, `CH13b`, `CH14a`
   and TC-378. The Contract IR strict reader parses the same text and refuses
-  a non-canonical one before QSL reads the package. This requirement cites
+  a non-canonical one before FSL reads the package. This requirement cites
   them by id.
 - **Implementation:** QSL-1526 (grammar, checking, emission, package reader,
   exploration). The package reader's legacy `delivery` parser in
-  `qsl-package/src/protocol_view.rs` trims spaces and admits a sign, leading
+  `fsl-package/src/protocol_view.rs` trims spaces and admits a sign, leading
   zeros and `lo > hi`, and its test in
-  `qsl-package/src/emit/tests/protocol_view.rs` asserts `[ 2 , 2 ]` is
+  `fsl-package/src/emit/tests/protocol_view.rs` asserts `[ 2 , 2 ]` is
   admitted; both contradict FR-509-AC-8 and are a code defect QSL-1526 owns.
 - **Upstream:** FR-048-AC-2 (the legacy behavior), FR-218 (channel premises),
-  FR-519 (the `delivery` view); QSpec TC-378 (queue semantics).
+  FR-519 (the `delivery` view); FSpec TC-378 (queue semantics).
 - **Fixture note:** `tests/fixtures/composed-choreography.native` is refused
   by the spine today, and TC-885 asserts that refusal (a refusal that is not
   an incomplete outcome). The fixture also uses composed-only forms (`on

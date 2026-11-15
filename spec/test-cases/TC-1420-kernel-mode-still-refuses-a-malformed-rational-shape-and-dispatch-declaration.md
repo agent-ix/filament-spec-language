@@ -3,7 +3,7 @@ id: TC-1420
 title: "Kernel mode still refuses a malformed Rational shape and dispatch declaration"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-495
+  - target: ix://agent-ix/filament-spec-language/FR-495
     type: verifies
 ---
 # TC-1420: Kernel mode still refuses a malformed Rational shape and dispatch declaration

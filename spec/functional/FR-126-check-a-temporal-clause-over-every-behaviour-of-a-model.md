@@ -3,32 +3,32 @@ id: FR-126
 title: "Check a temporal clause over every behaviour of a model (explicit-state)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
 ---
 # FR-126: Check a temporal clause over every behaviour of a model (explicit-state)
 
 ## Description
 
-The `model_check` module of the `qsl-analyze` crate, layer A above the
+The `model_check` module of the `fsl-analyze` crate, layer A above the
 qualified core (ADR-018 LA-1), SHALL decide a temporal item over a model
 subject by exploring the product of the subject's state graph with the
 item's property automaton (ADR-018 EN-1). It runs at stage S6c over edge E10
@@ -39,7 +39,7 @@ retains every product edge it explores (ADR-018 EN-1). A safety form needs the f
 phase only. A liveness form adds a second phase that decomposes the
 retained graph into strongly connected components (SCCs) and looks for a
 fair accepting cycle. The engine returns a `ModelCheckOutcome`
-(`qsl-replay`, ADR-018 LA-3) that FR-127 settles; a proof carries the
+(`fsl-replay`, ADR-018 LA-3) that FR-127 settles; a proof carries the
 certificate FR-338's or FR-339's core checker verifies (ADR-018 PC-3, PC-4).
 
 ## Use case
@@ -90,17 +90,17 @@ pub fn check_model(
 ```
 
 `max_states`, `max_transitions` and `max_automaton_states` are
-caller-raisable ADR-014 B-5 budgets of QSL's own provider (ADR-018 §1,
+caller-raisable ADR-014 B-5 budgets of FSL's own provider (ADR-018 §1,
 IV-6), raised by the settings `model_check.max_states`,
 `model_check.max_transitions` and `model_check.max_automaton_states`
 (FR-255's engine table). `ModelCheckLimits::default()` takes `limits` as FR-101's
 `Limits::default()` (`max_states` 10,000,000, `max_transitions`
 100,000,000) and publishes `max_automaton_states` 1,048,576 (2^20). A request
 raises any of them; reaching one settles `incomplete`,
-`LimitReached{limit, value, setting}` (V-7, FR-127, QSpec FR-331), and
+`LimitReached{limit, value, setting}` (V-7, FR-127, FSpec FR-331), and
 every terminal record states the values used and whether one was reached.
 `ModelCheckOutcome`, `ModelCheckLimits` and `ModelCheckLimit` are
-`qsl-replay` types (ADR-018 LA-5). `max_depth` is the search horizon `k`
+`fsl-replay` types (ADR-018 LA-5). `max_depth` is the search horizon `k`
 of a bounded search, a request member beside the limits and never one of
 them: a run that completes it settles V-5, and the result states
 the `k` it used. `None` sets no horizon. `max_live_instances` is a method bound, a request member beside
@@ -144,7 +144,7 @@ refuses as a standing decision (FR-337 "Capture observation", QSL-1092).
   `MaxAutomatonStates` (members of `ModelCheckLimits`), or
   `EvaluationMeter { counter }` or `MaxCandidates` (the subject's FR-120
   meter budget and `ExpansionLimits`). `counter` is the
-  `quire.value.accounting/v1` counter whose next charge the evaluation
+  `filament.value.accounting/v1` counter whose next charge the evaluation
   denied (one of the ten of FR-255's accounting table), and `value` is that
   counter's configured bound in the subject's meter budget, whichever
   counter ran out. Each limit has exactly one FR-255 setting that raises it,
@@ -290,7 +290,7 @@ automaton states and the depth reached.
 - Under a bounded profile, at a terminal model state the engine SHALL close
   a TP-2 monitor by the profile's closed-boundary rule: it reads the
   remaining positions of the horizon with every atomic predicate false and
-  every constant unchanged (QSpec FR-091), and the item is violated when
+  every constant unchanged (FSpec FR-091), and the item is violated when
   that closure reaches the rejecting state.
 - Under infinite-trace, a terminal model state SHALL contribute one terminal
   stutter edge from each of its product states (FR-125).
@@ -473,7 +473,7 @@ automaton states and the depth reached.
   subject: the index of its initial state in `subject.initial`; its steps in
   the `CounterexampleSteps::Model` arm (FR-128), each step as its FR-120
   transition identity and its post-state's
-  `quire.simulation.state-key/v1` state key, which selects the step's
+  `filament.simulation.state-key/v1` state key, which selects the step's
   successor among the post-states of its transition identity; the loop
   entry, when there is a loop; the terminal stutter marker, when the loop
   is the stutter step, and on a formula counterexample of a safety clause
@@ -572,10 +572,10 @@ automaton states and the depth reached.
 
 - ADR-018 §1 (with UE-1 to UE-4), §2 SM-6, §3 EN-1 (its explicit-state limits and determinism),
   §4 FA-1 to FA-6, §5 CX-1, CX-2 and CX-5, §10 DL-4 and DL-7, §11 IV-3, IV-5
-  and IV-6; ADR-011 §1 and §6.1 (S6c, E10, layer A `qsl-analyze` `model_check`) as amended
+  and IV-6; ADR-011 §1 and §6.1 (S6c, E10, layer A `fsl-analyze` `model_check`) as amended
   by ADR-018; ADR-014 §1 B-5 as amended; ADR-016 §2 (the requires-bound
   pre-check).
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (engine, canonical order, state key, limits),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (`ModelSystem`, evaluation meter, `ExpansionLimits`),

@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use filament_exact::Cancel;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::DependencyInput;
+use fsl_semantics::model::intake::{lift_document, package_input};
 use ix_trace_rs::trace;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::DependencyInput;
-use qsl_semantics::model::intake::{lift_document, package_input};
-use quire_exact::Cancel;
 
 const PACKAGE: &str = "agent-ix/architecture";
 
@@ -59,7 +59,7 @@ fn copy_tree(from: &Path, to: &Path) {
 }
 
 /// The architecture bundle lifted to document bytes. `Pump`, `Sys` and `Tank`
-/// type their `id` as `UUID`, which is not a QSL native value type, and
+/// type their `id` as `UUID`, which is not an FSL native value type, and
 /// `Flow2` is identified in a form the reader refuses, so the copy retypes the
 /// three ids `Boolean` and drops `Flow2`; every Port stays as authored.
 fn lifted_bundle() -> Vec<u8> {
@@ -93,8 +93,8 @@ fn a_port_role_keeps_its_port_identity_through_emission_and_read_back() {
     let packages = package_input([bytes.as_slice()]).expect("the lifted package enters I2");
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile S = \"quire.value.complete/v1\";\n\
-         profile P = \"quire.protocol.finite-global/v1\";\n\
+         profile S = \"filament.value.complete/v1\";\n\
+         profile P = \"filament.protocol.finite-global/v1\";\n\
          model M = \"{PACKAGE}\";\n\
          protocol Plumbing using P over (view: M::Sys) on origin {{\n\
              role Operator on M::Sys;\n\
@@ -106,12 +106,12 @@ fn a_port_role_keeps_its_port_identity_through_emission_and_read_back() {
     );
     let source = SourceIdentity::new("agent-ix", "test:tc-1062-port-role");
     let cancel = Cancel::new();
-    let limits = qsl_replay::spine::SpineLimits::default();
+    let limits = fsl_replay::spine::SpineLimits::default();
     let failure = |failure| {
-        qsl_replay::spine::refusal_or_fault(failure).expect("no internal front-end fault")
+        fsl_replay::spine::refusal_or_fault(failure).expect("no internal front-end fault")
     };
-    let parsed = qsl_replay::spine::parse(
-        &qsl_replay::spine::ParseRequest {
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
             source: &source,
             path: "port-role.native",
             bytes: text.as_bytes(),
@@ -122,11 +122,11 @@ fn a_port_role_keeps_its_port_identity_through_emission_and_read_back() {
     .map_err(failure)
     .expect("the native unit parses")
     .into_value();
-    let models = qsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
         .map_err(failure)
         .expect("model M is selected")
         .into_value();
-    let checked = qsl_replay::spine::check(
+    let checked = fsl_replay::spine::check(
         &parsed,
         "tc-1062-port-role".to_owned(),
         &models,
@@ -154,7 +154,7 @@ fn a_port_role_keeps_its_port_identity_through_emission_and_read_back() {
             .model_member
             .clone()
     };
-    let port = |artifact: &str| quire_checked::key::DeclarationKey {
+    let port = |artifact: &str| filament_checked::key::DeclarationKey {
         package: PACKAGE.to_owned(),
         node: format!("ix://{PACKAGE}/{artifact}"),
     };
@@ -162,10 +162,10 @@ fn a_port_role_keeps_its_port_identity_through_emission_and_read_back() {
     assert_eq!(checked_port("Inlet"), Some(port("tank_in")));
     assert_eq!(checked_port("Operator"), None);
 
-    let emitted = qsl_package::emit_checked(checked.package(), qsl_package::EmitLimits::fixture())
+    let emitted = fsl_package::emit_checked(checked.package(), fsl_package::EmitLimits::fixture())
         .expect("the checked unit emits");
     let read = crate::emit_checked_v2::read_back(emitted.package().bytes(), &[bytes.as_slice()]);
-    let schemas = qsl_package::protocol_occurrence_schemas_from_read(&read)
+    let schemas = fsl_package::protocol_occurrence_schemas_from_read(&read)
         .expect("read-back occurrence schema");
     let in_process = checked
         .package()
@@ -181,7 +181,7 @@ fn a_port_role_keeps_its_port_identity_through_emission_and_read_back() {
             .clone()
     };
     let member = |artifact: &str| {
-        Some(qsl_package::RoleModelMember {
+        Some(fsl_package::RoleModelMember {
             package: PACKAGE.to_owned(),
             node: format!("ix://{PACKAGE}/{artifact}"),
         })

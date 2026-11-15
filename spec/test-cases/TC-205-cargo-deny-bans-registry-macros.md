@@ -3,7 +3,7 @@ id: TC-205
 title: "cargo-deny denies inventory, linkme and ctor"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: verifies
 ---
 # TC-205: cargo-deny denies inventory, linkme and ctor

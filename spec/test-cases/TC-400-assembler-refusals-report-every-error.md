@@ -3,7 +3,7 @@ id: TC-400
 title: "The assembler refuses unresolved and ambiguous names, ill-formed bounds and alias cycles, reporting every error"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-400: The assembler refuses unresolved and ambiguous names, ill-formed bounds and alias cycles, reporting every error

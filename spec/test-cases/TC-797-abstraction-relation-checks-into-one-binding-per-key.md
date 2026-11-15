@@ -3,7 +3,7 @@ id: TC-797
 title: "An abstraction relation checks into one binding per key, total or partial"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: verifies
 ---
 # TC-797: An abstraction relation checks into one binding per key, total or partial

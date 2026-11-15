@@ -3,43 +3,43 @@
 //! request item's candidate filter, against backends registered from
 //! manifests.
 
-use ix_trace_rs::trace;
-use qsl_foundation::{BackendId, SourceIdentity};
-use qsl_route::request::items_from_requirements;
-use qsl_route::{
+use filament_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_foundation::{BackendId, SourceIdentity};
+use fsl_route::request::items_from_requirements;
+use fsl_route::{
     descriptor_from_manifest, Candidate, CandidateOutcome, FairnessKindsMember, FairnessLabel,
     ManifestMembers, ProviderOrigin, Registry,
 };
-use qsl_semantics::check::{Capability, PackageDeclarations};
-use quire_semantic_value::checking::CheckMode;
-use quire_semantic_value::checking::CheckingLimits;
+use fsl_semantics::check::{Capability, PackageDeclarations};
+use ix_trace_rs::trace;
 
 /// The ConfigVersion unit with one infinite-trace clause whose body is `body`.
-pub(crate) fn graph_of(body: &str) -> qsl_semantics::check::CheckedGraph {
+pub(crate) fn graph_of(body: &str) -> fsl_semantics::check::CheckedGraph {
     let document = crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes();
-    let packages = qsl_semantics::model::intake::package_input([document]).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
-         profile t = \"quire.temporal.infinite-trace/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.infinite-trace/v1\";\n\
          model Config = \"example/config-version\";\n\
          temporal C using t over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ {body} }}\n"
     );
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:fairness"),
         "program.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let raw = parsed.source().reference().clone();
-    let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let models = qsl_semantics::model::intake::admit_unit(
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
         &unit.selections().models,
         &packages,
-        qsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("the model is admitted");
     PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())

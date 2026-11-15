@@ -3,7 +3,7 @@ id: TC-837
 title: "S6a evaluates a temporal clause over a finite trace with typed positions and metered work"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: verifies
 ---
 # TC-837: S6a evaluates a temporal clause over a finite trace with typed positions and metered work

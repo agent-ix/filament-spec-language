@@ -1,6 +1,6 @@
 ---
 type: master-requirements
-name: quire-spec-language
+name: filament-spec-language
 org: agent-ix
 component_type: rust-lib
 implementation_language: rust
@@ -8,815 +8,815 @@ standards_alignment:
   - iso-iec-ieee-29148
   - ieee-828
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-035
+  - target: ix://agent-ix/filament-spec-language/FR-035
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-040
+  - target: ix://agent-ix/filament-spec-language/FR-040
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-041
+  - target: ix://agent-ix/filament-spec-language/FR-041
     type: contains
-  - target: ix://agent-ix/quire-spec-language/IT-012
+  - target: ix://agent-ix/filament-spec-language/IT-012
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-038
+  - target: ix://agent-ix/filament-spec-language/FR-038
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-042
+  - target: ix://agent-ix/filament-spec-language/FR-042
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-046
+  - target: ix://agent-ix/filament-spec-language/FR-046
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-047
+  - target: ix://agent-ix/filament-spec-language/FR-047
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-009
+  - target: ix://agent-ix/filament-spec-language/ADR-009
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-010
+  - target: ix://agent-ix/filament-spec-language/ADR-010
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-048
+  - target: ix://agent-ix/filament-spec-language/FR-048
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-049
+  - target: ix://agent-ix/filament-spec-language/FR-049
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-050
+  - target: ix://agent-ix/filament-spec-language/FR-050
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-051
+  - target: ix://agent-ix/filament-spec-language/FR-051
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-054
+  - target: ix://agent-ix/filament-spec-language/FR-054
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-059
+  - target: ix://agent-ix/filament-spec-language/FR-059
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-009
+  - target: ix://agent-ix/filament-spec-language/NFR-009
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-011
+  - target: ix://agent-ix/filament-spec-language/NFR-011
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-012
+  - target: ix://agent-ix/filament-spec-language/NFR-012
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-013
+  - target: ix://agent-ix/filament-spec-language/NFR-013
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-015
+  - target: ix://agent-ix/filament-spec-language/NFR-015
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-016
+  - target: ix://agent-ix/filament-spec-language/NFR-016
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-044
+  - target: ix://agent-ix/filament-spec-language/FR-044
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-045
+  - target: ix://agent-ix/filament-spec-language/FR-045
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-008
+  - target: ix://agent-ix/filament-spec-language/NFR-008
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-032
+  - target: ix://agent-ix/filament-spec-language/FR-032
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-030
+  - target: ix://agent-ix/filament-spec-language/FR-030
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-026
+  - target: ix://agent-ix/filament-spec-language/FR-026
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-001
+  - target: ix://agent-ix/filament-spec-language/FR-001
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-002
+  - target: ix://agent-ix/filament-spec-language/FR-002
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-004
+  - target: ix://agent-ix/filament-spec-language/FR-004
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-005
+  - target: ix://agent-ix/filament-spec-language/FR-005
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-006
+  - target: ix://agent-ix/filament-spec-language/FR-006
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-010
+  - target: ix://agent-ix/filament-spec-language/FR-010
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-001
+  - target: ix://agent-ix/filament-spec-language/US-001
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: contains
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-001
+  - target: ix://agent-ix/filament-spec-language/NFR-001
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-002
+  - target: ix://agent-ix/filament-spec-language/NFR-002
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-003
+  - target: ix://agent-ix/filament-spec-language/NFR-003
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-004
+  - target: ix://agent-ix/filament-spec-language/NFR-004
     type: contains
-  - target: ix://agent-ix/quire-spec-language/IT-002
+  - target: ix://agent-ix/filament-spec-language/IT-002
     type: contains
-  - target: ix://agent-ix/quire-spec-language/NFR-005
+  - target: ix://agent-ix/filament-spec-language/NFR-005
     type: contains
-  - target: ix://agent-ix/quire-spec-language/IT-005
+  - target: ix://agent-ix/filament-spec-language/IT-005
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-013
+  - target: ix://agent-ix/filament-spec-language/FR-013
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-014
+  - target: ix://agent-ix/filament-spec-language/FR-014
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-017
+  - target: ix://agent-ix/filament-spec-language/FR-017
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-025
+  - target: ix://agent-ix/filament-spec-language/FR-025
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-015
+  - target: ix://agent-ix/filament-spec-language/ADR-015
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-032
+  - target: ix://agent-ix/filament-spec-language/ADR-032
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-033
+  - target: ix://agent-ix/filament-spec-language/ADR-033
     type: contains
-  - target: ix://agent-ix/quire-spec-language/AD-001
+  - target: ix://agent-ix/filament-spec-language/AD-001
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: contains
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-102
+  - target: ix://agent-ix/filament-spec-language/FR-102
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-108
+  - target: ix://agent-ix/filament-spec-language/FR-108
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-111
+  - target: ix://agent-ix/filament-spec-language/FR-111
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-112
+  - target: ix://agent-ix/filament-spec-language/FR-112
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-113
+  - target: ix://agent-ix/filament-spec-language/FR-113
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-116
+  - target: ix://agent-ix/filament-spec-language/FR-116
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-122
+  - target: ix://agent-ix/filament-spec-language/FR-122
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-265
+  - target: ix://agent-ix/filament-spec-language/FR-265
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-266
+  - target: ix://agent-ix/filament-spec-language/FR-266
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-268
+  - target: ix://agent-ix/filament-spec-language/FR-268
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-269
+  - target: ix://agent-ix/filament-spec-language/FR-269
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-312
+  - target: ix://agent-ix/filament-spec-language/FR-312
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-270
+  - target: ix://agent-ix/filament-spec-language/FR-270
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-271
+  - target: ix://agent-ix/filament-spec-language/FR-271
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-272
+  - target: ix://agent-ix/filament-spec-language/FR-272
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-273
+  - target: ix://agent-ix/filament-spec-language/FR-273
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-028
+  - target: ix://agent-ix/filament-spec-language/US-028
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-331
+  - target: ix://agent-ix/filament-spec-language/FR-331
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-332
+  - target: ix://agent-ix/filament-spec-language/FR-332
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-333
+  - target: ix://agent-ix/filament-spec-language/FR-333
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-334
+  - target: ix://agent-ix/filament-spec-language/FR-334
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-335
+  - target: ix://agent-ix/filament-spec-language/FR-335
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-336
+  - target: ix://agent-ix/filament-spec-language/FR-336
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-150
+  - target: ix://agent-ix/filament-spec-language/FR-150
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-153
+  - target: ix://agent-ix/filament-spec-language/FR-153
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-156
+  - target: ix://agent-ix/filament-spec-language/FR-156
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-157
+  - target: ix://agent-ix/filament-spec-language/FR-157
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-159
+  - target: ix://agent-ix/filament-spec-language/FR-159
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-160
+  - target: ix://agent-ix/filament-spec-language/FR-160
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-161
+  - target: ix://agent-ix/filament-spec-language/FR-161
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-162
+  - target: ix://agent-ix/filament-spec-language/FR-162
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-136
+  - target: ix://agent-ix/filament-spec-language/FR-136
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-137
+  - target: ix://agent-ix/filament-spec-language/FR-137
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-138
+  - target: ix://agent-ix/filament-spec-language/FR-138
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-139
+  - target: ix://agent-ix/filament-spec-language/FR-139
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-140
+  - target: ix://agent-ix/filament-spec-language/FR-140
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-143
+  - target: ix://agent-ix/filament-spec-language/FR-143
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-145
+  - target: ix://agent-ix/filament-spec-language/FR-145
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-146
+  - target: ix://agent-ix/filament-spec-language/FR-146
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-147
+  - target: ix://agent-ix/filament-spec-language/FR-147
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-163
+  - target: ix://agent-ix/filament-spec-language/FR-163
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-171
+  - target: ix://agent-ix/filament-spec-language/FR-171
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-174
+  - target: ix://agent-ix/filament-spec-language/FR-174
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-175
+  - target: ix://agent-ix/filament-spec-language/FR-175
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-177
+  - target: ix://agent-ix/filament-spec-language/FR-177
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-178
+  - target: ix://agent-ix/filament-spec-language/FR-178
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-179
+  - target: ix://agent-ix/filament-spec-language/FR-179
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-180
+  - target: ix://agent-ix/filament-spec-language/FR-180
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-181
+  - target: ix://agent-ix/filament-spec-language/FR-181
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-183
+  - target: ix://agent-ix/filament-spec-language/FR-183
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-165
+  - target: ix://agent-ix/filament-spec-language/FR-165
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-167
+  - target: ix://agent-ix/filament-spec-language/FR-167
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-168
+  - target: ix://agent-ix/filament-spec-language/FR-168
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-170
+  - target: ix://agent-ix/filament-spec-language/FR-170
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-129
+  - target: ix://agent-ix/filament-spec-language/FR-129
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-130
+  - target: ix://agent-ix/filament-spec-language/FR-130
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-131
+  - target: ix://agent-ix/filament-spec-language/FR-131
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-132
+  - target: ix://agent-ix/filament-spec-language/FR-132
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-133
+  - target: ix://agent-ix/filament-spec-language/FR-133
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-134
+  - target: ix://agent-ix/filament-spec-language/FR-134
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-016
+  - target: ix://agent-ix/filament-spec-language/US-016
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-017
+  - target: ix://agent-ix/filament-spec-language/US-017
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-340
+  - target: ix://agent-ix/filament-spec-language/FR-340
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-341
+  - target: ix://agent-ix/filament-spec-language/FR-341
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-342
+  - target: ix://agent-ix/filament-spec-language/FR-342
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-343
+  - target: ix://agent-ix/filament-spec-language/FR-343
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-344
+  - target: ix://agent-ix/filament-spec-language/FR-344
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-345
+  - target: ix://agent-ix/filament-spec-language/FR-345
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-034
+  - target: ix://agent-ix/filament-spec-language/US-034
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-036
+  - target: ix://agent-ix/filament-spec-language/US-036
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-350
+  - target: ix://agent-ix/filament-spec-language/FR-350
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-351
+  - target: ix://agent-ix/filament-spec-language/FR-351
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-352
+  - target: ix://agent-ix/filament-spec-language/FR-352
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-353
+  - target: ix://agent-ix/filament-spec-language/FR-353
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-448
+  - target: ix://agent-ix/filament-spec-language/FR-448
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-354
+  - target: ix://agent-ix/filament-spec-language/FR-354
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-355
+  - target: ix://agent-ix/filament-spec-language/FR-355
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-185
+  - target: ix://agent-ix/filament-spec-language/FR-185
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-186
+  - target: ix://agent-ix/filament-spec-language/FR-186
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-187
+  - target: ix://agent-ix/filament-spec-language/FR-187
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-188
+  - target: ix://agent-ix/filament-spec-language/FR-188
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-189
+  - target: ix://agent-ix/filament-spec-language/FR-189
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-190
+  - target: ix://agent-ix/filament-spec-language/FR-190
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-191
+  - target: ix://agent-ix/filament-spec-language/FR-191
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-192
+  - target: ix://agent-ix/filament-spec-language/FR-192
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-193
+  - target: ix://agent-ix/filament-spec-language/FR-193
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-194
+  - target: ix://agent-ix/filament-spec-language/FR-194
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-311
+  - target: ix://agent-ix/filament-spec-language/FR-311
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-219
+  - target: ix://agent-ix/filament-spec-language/FR-219
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-221
+  - target: ix://agent-ix/filament-spec-language/FR-221
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-223
+  - target: ix://agent-ix/filament-spec-language/FR-223
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-224
+  - target: ix://agent-ix/filament-spec-language/FR-224
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-225
+  - target: ix://agent-ix/filament-spec-language/FR-225
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-226
+  - target: ix://agent-ix/filament-spec-language/FR-226
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-227
+  - target: ix://agent-ix/filament-spec-language/FR-227
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-228
+  - target: ix://agent-ix/filament-spec-language/FR-228
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-229
+  - target: ix://agent-ix/filament-spec-language/FR-229
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-309
+  - target: ix://agent-ix/filament-spec-language/FR-309
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-207
+  - target: ix://agent-ix/filament-spec-language/FR-207
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-208
+  - target: ix://agent-ix/filament-spec-language/FR-208
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-209
+  - target: ix://agent-ix/filament-spec-language/FR-209
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-210
+  - target: ix://agent-ix/filament-spec-language/FR-210
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-211
+  - target: ix://agent-ix/filament-spec-language/FR-211
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-212
+  - target: ix://agent-ix/filament-spec-language/FR-212
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-213
+  - target: ix://agent-ix/filament-spec-language/FR-213
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-214
+  - target: ix://agent-ix/filament-spec-language/FR-214
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-216
+  - target: ix://agent-ix/filament-spec-language/FR-216
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-217
+  - target: ix://agent-ix/filament-spec-language/FR-217
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-279
+  - target: ix://agent-ix/filament-spec-language/FR-279
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-280
+  - target: ix://agent-ix/filament-spec-language/FR-280
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-281
+  - target: ix://agent-ix/filament-spec-language/FR-281
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-282
+  - target: ix://agent-ix/filament-spec-language/FR-282
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-283
+  - target: ix://agent-ix/filament-spec-language/FR-283
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-284
+  - target: ix://agent-ix/filament-spec-language/FR-284
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-286
+  - target: ix://agent-ix/filament-spec-language/FR-286
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-287
+  - target: ix://agent-ix/filament-spec-language/FR-287
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-288
+  - target: ix://agent-ix/filament-spec-language/FR-288
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-289
+  - target: ix://agent-ix/filament-spec-language/FR-289
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-291
+  - target: ix://agent-ix/filament-spec-language/FR-291
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-292
+  - target: ix://agent-ix/filament-spec-language/FR-292
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-293
+  - target: ix://agent-ix/filament-spec-language/FR-293
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-296
+  - target: ix://agent-ix/filament-spec-language/FR-296
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-297
+  - target: ix://agent-ix/filament-spec-language/FR-297
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-298
+  - target: ix://agent-ix/filament-spec-language/FR-298
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-299
+  - target: ix://agent-ix/filament-spec-language/FR-299
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-231
+  - target: ix://agent-ix/filament-spec-language/FR-231
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-232
+  - target: ix://agent-ix/filament-spec-language/FR-232
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-233
+  - target: ix://agent-ix/filament-spec-language/FR-233
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-235
+  - target: ix://agent-ix/filament-spec-language/FR-235
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-236
+  - target: ix://agent-ix/filament-spec-language/FR-236
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-238
+  - target: ix://agent-ix/filament-spec-language/FR-238
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-240
+  - target: ix://agent-ix/filament-spec-language/FR-240
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-241
+  - target: ix://agent-ix/filament-spec-language/FR-241
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-242
+  - target: ix://agent-ix/filament-spec-language/FR-242
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-243
+  - target: ix://agent-ix/filament-spec-language/FR-243
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-244
+  - target: ix://agent-ix/filament-spec-language/FR-244
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-246
+  - target: ix://agent-ix/filament-spec-language/FR-246
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-247
+  - target: ix://agent-ix/filament-spec-language/FR-247
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-248
+  - target: ix://agent-ix/filament-spec-language/FR-248
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-249
+  - target: ix://agent-ix/filament-spec-language/FR-249
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-250
+  - target: ix://agent-ix/filament-spec-language/FR-250
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-251
+  - target: ix://agent-ix/filament-spec-language/FR-251
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-252
+  - target: ix://agent-ix/filament-spec-language/FR-252
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-253
+  - target: ix://agent-ix/filament-spec-language/FR-253
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-254
+  - target: ix://agent-ix/filament-spec-language/FR-254
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-195
+  - target: ix://agent-ix/filament-spec-language/FR-195
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-197
+  - target: ix://agent-ix/filament-spec-language/FR-197
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-199
+  - target: ix://agent-ix/filament-spec-language/FR-199
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-200
+  - target: ix://agent-ix/filament-spec-language/FR-200
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-202
+  - target: ix://agent-ix/filament-spec-language/FR-202
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-203
+  - target: ix://agent-ix/filament-spec-language/FR-203
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-204
+  - target: ix://agent-ix/filament-spec-language/FR-204
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-032
+  - target: ix://agent-ix/filament-spec-language/US-032
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-313
+  - target: ix://agent-ix/filament-spec-language/FR-313
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-316
+  - target: ix://agent-ix/filament-spec-language/FR-316
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-317
+  - target: ix://agent-ix/filament-spec-language/FR-317
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-318
+  - target: ix://agent-ix/filament-spec-language/FR-318
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-319
+  - target: ix://agent-ix/filament-spec-language/FR-319
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-320
+  - target: ix://agent-ix/filament-spec-language/FR-320
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-321
+  - target: ix://agent-ix/filament-spec-language/FR-321
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-322
+  - target: ix://agent-ix/filament-spec-language/FR-322
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-323
+  - target: ix://agent-ix/filament-spec-language/FR-323
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-324
+  - target: ix://agent-ix/filament-spec-language/FR-324
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-256
+  - target: ix://agent-ix/filament-spec-language/FR-256
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-257
+  - target: ix://agent-ix/filament-spec-language/FR-257
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-258
+  - target: ix://agent-ix/filament-spec-language/FR-258
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-260
+  - target: ix://agent-ix/filament-spec-language/FR-260
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-261
+  - target: ix://agent-ix/filament-spec-language/FR-261
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-402
+  - target: ix://agent-ix/filament-spec-language/FR-402
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-405
+  - target: ix://agent-ix/filament-spec-language/FR-405
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-406
+  - target: ix://agent-ix/filament-spec-language/FR-406
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-263
+  - target: ix://agent-ix/filament-spec-language/FR-263
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-264
+  - target: ix://agent-ix/filament-spec-language/FR-264
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-356
+  - target: ix://agent-ix/filament-spec-language/FR-356
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-357
+  - target: ix://agent-ix/filament-spec-language/FR-357
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-358
+  - target: ix://agent-ix/filament-spec-language/FR-358
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-359
+  - target: ix://agent-ix/filament-spec-language/FR-359
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-360
+  - target: ix://agent-ix/filament-spec-language/FR-360
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-361
+  - target: ix://agent-ix/filament-spec-language/FR-361
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-362
+  - target: ix://agent-ix/filament-spec-language/FR-362
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-363
+  - target: ix://agent-ix/filament-spec-language/FR-363
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-365
+  - target: ix://agent-ix/filament-spec-language/FR-365
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-366
+  - target: ix://agent-ix/filament-spec-language/FR-366
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-367
+  - target: ix://agent-ix/filament-spec-language/FR-367
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-380
+  - target: ix://agent-ix/filament-spec-language/FR-380
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-382
+  - target: ix://agent-ix/filament-spec-language/FR-382
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-384
+  - target: ix://agent-ix/filament-spec-language/FR-384
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-392
+  - target: ix://agent-ix/filament-spec-language/FR-392
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-393
+  - target: ix://agent-ix/filament-spec-language/FR-393
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-394
+  - target: ix://agent-ix/filament-spec-language/FR-394
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-395
+  - target: ix://agent-ix/filament-spec-language/FR-395
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-396
+  - target: ix://agent-ix/filament-spec-language/FR-396
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-397
+  - target: ix://agent-ix/filament-spec-language/FR-397
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-398
+  - target: ix://agent-ix/filament-spec-language/FR-398
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-399
+  - target: ix://agent-ix/filament-spec-language/FR-399
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-401
+  - target: ix://agent-ix/filament-spec-language/FR-401
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-404
+  - target: ix://agent-ix/filament-spec-language/FR-404
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-486
+  - target: ix://agent-ix/filament-spec-language/FR-486
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-494
+  - target: ix://agent-ix/filament-spec-language/FR-494
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-495
+  - target: ix://agent-ix/filament-spec-language/FR-495
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-496
+  - target: ix://agent-ix/filament-spec-language/FR-496
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-497
+  - target: ix://agent-ix/filament-spec-language/FR-497
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-498
+  - target: ix://agent-ix/filament-spec-language/FR-498
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-500
+  - target: ix://agent-ix/filament-spec-language/FR-500
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-502
+  - target: ix://agent-ix/filament-spec-language/FR-502
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-503
+  - target: ix://agent-ix/filament-spec-language/FR-503
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-504
+  - target: ix://agent-ix/filament-spec-language/FR-504
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-505
+  - target: ix://agent-ix/filament-spec-language/FR-505
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-506
+  - target: ix://agent-ix/filament-spec-language/FR-506
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-507
+  - target: ix://agent-ix/filament-spec-language/FR-507
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-508
+  - target: ix://agent-ix/filament-spec-language/FR-508
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-509
+  - target: ix://agent-ix/filament-spec-language/FR-509
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-510
+  - target: ix://agent-ix/filament-spec-language/FR-510
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-511
+  - target: ix://agent-ix/filament-spec-language/FR-511
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-512
+  - target: ix://agent-ix/filament-spec-language/FR-512
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-513
+  - target: ix://agent-ix/filament-spec-language/FR-513
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-514
+  - target: ix://agent-ix/filament-spec-language/FR-514
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-517
+  - target: ix://agent-ix/filament-spec-language/FR-517
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-518
+  - target: ix://agent-ix/filament-spec-language/FR-518
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-519
+  - target: ix://agent-ix/filament-spec-language/FR-519
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-520
+  - target: ix://agent-ix/filament-spec-language/FR-520
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-521
+  - target: ix://agent-ix/filament-spec-language/FR-521
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-524
+  - target: ix://agent-ix/filament-spec-language/FR-524
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-525
+  - target: ix://agent-ix/filament-spec-language/FR-525
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-526
+  - target: ix://agent-ix/filament-spec-language/FR-526
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-527
+  - target: ix://agent-ix/filament-spec-language/FR-527
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-528
+  - target: ix://agent-ix/filament-spec-language/FR-528
     type: contains
-  - target: ix://agent-ix/quire-spec-language/US-027
+  - target: ix://agent-ix/filament-spec-language/US-027
     type: contains
-  - target: ix://agent-ix/quire-spec-language/FR-430
+  - target: ix://agent-ix/filament-spec-language/FR-430
     type: contains
 ---
 # Master Requirements Specification
@@ -892,7 +892,7 @@ StR states the operational need. US records user intent. FR defines observable b
 
 ## 6. Requirement Identification
 
-IDs are stable within this repository. Cross-repository identities use ix://agent-ix/quire-spec-language/ID. Acceptance criteria use the parent ID plus -AC-N; integration steps use -SC-NN.
+IDs are stable within this repository. Cross-repository identities use ix://agent-ix/filament-spec-language/ID. Acceptance criteria use the parent ID plus -AC-N; integration steps use -SC-NN.
 
 ## 7. Requirement Quality Policy
 
@@ -983,7 +983,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [US-015](usecase/US-015-check-a-temporal-property-over-every-behaviour-of-a-model.md) | US |
 | [US-033](usecase/US-033-write-unbounded-temporal-claims-and-unbounded-declarations.md) | US |
 | [US-034](usecase/US-034-catch-a-refinement-regression-across-revisions-and-profiles.md) | US |
-| [US-035](usecase/US-035-qualify-qsl-against-the-complete-v1-conformance-corpus.md) | US |
+| [US-035](usecase/US-035-qualify-fsl-against-the-complete-v1-conformance-corpus.md) | US |
 | [US-036](usecase/US-036-check-the-quire-clauses-in-spec-artifacts.md) | US |
 | [US-027](usecase/US-027-compile-check-and-run-deeply-nested-specifications.md) | US |
 | [US-016](usecase/US-016-prove-liveness-of-a-contended-model-under-strong-fairness.md) | US |
@@ -1046,7 +1046,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [IT-012](integration/IT-012-domain-package-model-intake.md) | IT |
 | [ADR-013](decisions/ADR-013-canonical-type-package-conversion-ownership.md) | ADR |
 | [FR-059](functional/FR-059-check-backend-dependency-direction.md) | FR |
-| [FR-060](functional/FR-060-check-qsl-api-surface-boundary.md) | FR |
+| [FR-060](functional/FR-060-check-fsl-api-surface-boundary.md) | FR |
 | [FR-062](functional/FR-062-implement-checked-family-contract.md) | FR |
 | [FR-063](functional/FR-063-exhaustive-family-extension-seam-probe.md) | FR |
 | [FR-064](functional/FR-064-restrict-string-dispatch-to-marked-edges.md) | FR |
@@ -1063,7 +1063,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-075](functional/FR-075-compute-candidates-from-registered-backends.md) | FR |
 | [FR-076](functional/FR-076-settle-backend-absence-as-unsupported.md) | FR |
 | [FR-077](functional/FR-077-remove-composed-linker-backend-negotiation.md) | FR |
-| [FR-078](functional/FR-078-remove-qsl-negotiate-copies.md) | FR |
+| [FR-078](functional/FR-078-remove-fsl-negotiate-copies.md) | FR |
 | [FR-080](functional/FR-080-registry-evidence-and-gates.md) | FR |
 | [FR-081](functional/FR-081-preserve-model-correspondence-and-declaration-identity.md) | FR |
 | [FR-082](functional/FR-082-resolve-conformance-subsetting-and-redefinition.md) | FR |
@@ -1085,7 +1085,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-098](functional/FR-098-execute-a-replay-request.md) | FR |
 | [FR-099](functional/FR-099-compile-against-supplied-libraries.md) | FR |
 | [FR-100](functional/FR-100-run-a-named-function-through-the-spine.md) | FR |
-| [FR-101](functional/FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md) | FR |
+| [FR-101](functional/FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md) | FR |
 | [FR-102](functional/FR-102-build-state-clause-forms.md) | FR |
 | [FR-103](functional/FR-103-admit-model-operations-and-frames-on-the-spine.md) | FR |
 | [FR-104](functional/FR-104-check-state-clauses.md) | FR |
@@ -1149,7 +1149,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-343](functional/FR-343-compare-prior-and-superseding-classes-per-case.md) | FR |
 | [FR-344](functional/FR-344-report-a-refinement-gate-verdict-and-exit.md) | FR |
 | [FR-345](functional/FR-345-run-the-profile-layering-refinement-gate.md) | FR |
-| [FR-350](functional/FR-350-run-the-conformance-corpus-against-qsl.md) | FR |
+| [FR-350](functional/FR-350-run-the-conformance-corpus-against-fsl.md) | FR |
 | [FR-351](functional/FR-351-settle-each-capability-from-its-executed-vectors.md) | FR |
 | [FR-352](functional/FR-352-report-capability-coverage.md) | FR |
 | [FR-353](functional/FR-353-settle-the-complete-v1-qualification-verdict.md) | FR |
@@ -1231,7 +1231,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-185](functional/FR-185-declare-random-parameters-workloads-and-rewards.md) | FR |
 | [FR-186](functional/FR-186-check-probabilistic-claim-forms-at-s3.md) | FR |
 | [FR-187](functional/FR-187-give-model-transitions-step-probabilities-and-rewards.md) | FR |
-| [FR-188](functional/FR-188-draw-weighted-choices-with-the-qspec-sampler.md) | FR |
+| [FR-188](functional/FR-188-draw-weighted-choices-with-the-fspec-sampler.md) | FR |
 | [FR-189](functional/FR-189-decide-a-probabilistic-claim-by-statistical-model-checking.md) | FR |
 | [FR-190](functional/FR-190-measure-a-long-run-fraction-by-regeneration.md) | FR |
 | [FR-191](functional/FR-191-bound-and-reproduce-a-statistical-run.md) | FR |
@@ -1308,8 +1308,8 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-261](functional/FR-261-read-other-untrusted-json-at-any-depth.md) | FR |
 | [FR-262](functional/FR-262-evaluate-values-and-calls-at-any-depth.md) | FR |
 | [FR-402](functional/FR-402-differentially-test-the-no-std-evaluator-against-the-std-reference.md) | FR |
-| [FR-405](functional/FR-405-retire-the-std-reference-evaluator-for-quire-eval.md) | FR |
-| [FR-406](functional/FR-406-evaluate-clause-families-through-a-quire-eval-clause-entry.md) | FR |
+| [FR-405](functional/FR-405-retire-the-std-reference-evaluator-for-filament-eval.md) | FR |
+| [FR-406](functional/FR-406-evaluate-clause-families-through-a-filament-eval-clause-entry.md) | FR |
 | [FR-263](functional/FR-263-replay-at-any-depth-under-the-request-limits.md) | FR |
 | [FR-264](functional/FR-264-emit-and-read-v2-packages-at-schema-fixed-depth.md) | FR |
 | [FR-356](functional/FR-356-walk-nested-structures-through-one-iterative-walker-toolkit.md) | FR |
@@ -1339,7 +1339,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-397](functional/FR-397-select-the-ieee-profile-of-a-package-that-declares-or-evaluates-a-float.md) | FR |
 | [FR-398](functional/FR-398-expose-the-admitted-unit-table-through-the-replay-facade.md) | FR |
 | [FR-399](functional/FR-399-set-a-named-stage-limit-through-the-replay-root.md) | FR |
-| [FR-401](functional/FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md) | FR |
+| [FR-401](functional/FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md) | FR |
 | [FR-404](functional/FR-404-carry-the-call-s-plugin-replay-context-through-the-replay-facade.md) | FR |
 | [FR-486](functional/FR-486-supplied-admission-and-conversion-owner-allocation.md) | FR |
 | [FR-490](functional/FR-490-retire-the-legacy-mapped-extraction-surface.md) | FR |
@@ -1347,7 +1347,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-492](functional/FR-492-expose-the-refinement-simulation-query-through-the-replay-facade.md) | FR |
 | [FR-493](functional/FR-493-retire-the-native-package-runtime-front-end-and-protocol-artifact-surfaces.md) | FR |
 | [FR-494](functional/FR-494-emit-producer-dispatch-decisions-into-checked-packages.md) | FR |
-| [FR-495](functional/FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-qsl-source.md) | FR |
+| [FR-495](functional/FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md) | FR |
 | [FR-496](functional/FR-496-emit-model-operation-effects-into-checked-packages.md) | FR |
 | [FR-497](functional/FR-497-check-and-emit-carried-quantities-and-their-conversion.md) | FR |
 | [FR-498](functional/FR-498-carry-a-probabilistic-claim-s-checked-package-identity.md) | FR |
@@ -1371,9 +1371,9 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-516](functional/FR-516-carry-the-temporal-evidence-request-and-result-on-the-checked-package-route.md) | FR |
 | [FR-517](functional/FR-517-write-a-checked-package-handoff-directory-from-source-in-process.md) | FR |
 | [FR-518](functional/FR-518-write-the-adverse-mutation-corpus-from-checked-packages-and-name-the-destination-of-every-legacy-case.md) | FR |
-| [FR-519](functional/FR-519-publish-the-protocol-read-surface-the-quire-protocol-link-layer-imports.md) | FR |
+| [FR-519](functional/FR-519-publish-the-protocol-read-surface-the-filament-protocol-link-layer-imports.md) | FR |
 | [FR-520](functional/FR-520-evaluate-state-and-compensation-expressions-through-the-checked-package-evaluation-entry-points.md) | FR |
-| [FR-521](functional/FR-521-gate-the-deletions-behind-quire-protocol-on-the-checked-package-and-name-each-behavior-it-relies-on.md) | FR |
+| [FR-521](functional/FR-521-gate-the-deletions-behind-filament-protocol-on-the-checked-package-and-name-each-behavior-it-relies-on.md) | FR |
 | [FR-522](functional/FR-522-bind-a-temporal-trace-to-the-checked-clause-s-profile-and-clock-and-report-the-authenticated-clock.md) | FR |
 | [FR-523](functional/FR-523-count-temporal-evidence-work-on-thirteen-named-counters-and-keep-a-stopped-instance-apart-from-a-stopped-declaration.md) | FR |
 | [FR-524](functional/FR-524-create-one-temporal-instance-per-trigger-or-origin-with-immutable-captures-and-name-every-capture-fault.md) | FR |
@@ -1400,7 +1400,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [ADR-025](decisions/ADR-025-weak-memory-models-for-parallel.md) | ADR |
 | [ADR-022](decisions/ADR-022-possible-properties-and-state-graph-queries.md) | ADR |
 | [ADR-023](decisions/ADR-023-hyperproperties-over-every-behaviour.md) | ADR |
-| [ADR-020](decisions/ADR-020-refinement-mappings-between-qsl-models.md) | ADR |
+| [ADR-020](decisions/ADR-020-refinement-mappings-between-fsl-models.md) | ADR |
 | [ADR-024](decisions/ADR-024-statistical-and-probabilistic-properties.md) | ADR |
 | [ADR-028](decisions/ADR-028-exact-probabilistic-engine.md) | ADR |
 | [ADR-026](decisions/ADR-026-dense-time.md) | ADR |
@@ -1413,7 +1413,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-269](functional/FR-269-settle-a-witness-disagreement-as-a-typed-cause.md) | FR |
 | [FR-278](functional/FR-278-parse-select-check-and-package-as-library-operations.md) | FR |
 | [FR-279](functional/FR-279-execute-a-checked-entry-as-a-library-operation.md) | FR |
-| [FR-299](functional/FR-299-serve-one-value-family-source-through-every-qsl-library-operation-the-cli-calls.md) | FR |
+| [FR-299](functional/FR-299-serve-one-value-family-source-through-every-fsl-library-operation-the-cli-calls.md) | FR |
 | [US-029](usecase/US-029-drive-the-lifecycle-through-one-cli-or-the-library.md) | US |
 | [US-030](usecase/US-030-extend-quire-without-changing-results.md) | US |
 | [FR-298](functional/FR-298-render-outcomes-and-views-from-typed-values.md) | FR |
@@ -1424,7 +1424,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-292](functional/FR-292-key-cached-results-by-content-identity.md) | FR |
 | [FR-285](functional/FR-285-map-every-outcome-category-to-one-exit-code.md) | FR |
 | [FR-286](functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md) | FR |
-| [FR-287](functional/FR-287-reach-qsl-through-the-driver-cli.md) | FR |
+| [FR-287](functional/FR-287-reach-fsl-through-the-driver-cli.md) | FR |
 | [FR-297](functional/FR-297-inspect-packages-outcomes-and-traces-as-typed-views.md) | FR |
 | [FR-280](functional/FR-280-serve-the-driver-s-lower-generate-and-prove-operations.md) | FR |
 | [FR-281](functional/FR-281-analyze-claims-with-in-process-engines.md) | FR |

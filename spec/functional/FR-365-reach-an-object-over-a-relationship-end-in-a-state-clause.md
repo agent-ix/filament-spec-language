@@ -3,31 +3,31 @@ id: FR-365
 title: "Check, lower and evaluate reachability over a relationship end in a state clause"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-363
+  - target: ix://agent-ix/filament-spec-language/FR-363
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-380
+  - target: ix://agent-ix/filament-spec-language/FR-380
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-047
+  - target: ix://agent-ix/filament-spec-language/FR-047
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-049
+  - target: ix://agent-ix/filament-spec-language/FR-049
     type: references
-  - target: ix://agent-ix/quire-specification/FR-152
+  - target: ix://agent-ix/filament-specification/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-365: Check, lower and evaluate reachability over a relationship end in a state clause
@@ -37,9 +37,9 @@ relationships:
 When a state clause writes `reaches(a, b, name)` and `name` is a relationship
 end of the operands' object type, the `StateModel` family's `check` hook SHALL
 type it as a Boolean reachability over the links of that relationship, S4 SHALL
-lower it to one `quire.op.model.reaches` application, and the evaluator SHALL
+lower it to one `filament.op.model.reaches` application, and the evaluator SHALL
 decide it from the observation's extent of the relationship alone, under the
-`graph` charges of `quire.value.accounting/v1`.
+`graph` charges of `filament.value.accounting/v1`.
 
 Reachability is one or more edges: an object does not reach itself without a
 cycle or a self-loop. The form is the one FR-104 gives a field edge, with the
@@ -64,7 +64,7 @@ a field edge is unchanged.
 A checked reachability node over a relationship end, holding both operands, the
 relationship's declaration key and the end's role, with static type `Boolean`;
 or a located `StateModel` refusal. After lowering, one
-`quire.op.model.reaches` expression node. After evaluation, `true` or `false`
+`filament.op.model.reaches` expression node. After evaluation, `true` or `false`
 with the charges below, or one refusal or incomplete outcome and no Boolean.
 
 ## Behavior
@@ -110,7 +110,7 @@ The hook SHALL check, stopping at the first failure, each refusal
    finite `[l,u]`, unique or not, so `Set`-shaped or `Bag`-shaped). A
    destination end of another type refuses, single-valued or multi-valued.
 
-The order is operands, direction, multiplicity, type: the order QSpec
+The order is operands, direction, multiplicity, type: the order FSpec
 FR-322-AC-57 applies to the lowered application (operand conformance to the
 receiver endpoint, then direction, then destination multiplicity, then the
 destination end's type), so the lowered node satisfies those checks by
@@ -122,7 +122,7 @@ destination end of another type that is also unbounded refuses
 `expression-form`, not `operator-ineligible`. Every refusal's family is
 `StateModel`. The result type is `Boolean` whatever the destination end's
 multiplicity, and the node is the same shape for a single-valued and a
-multi-valued destination end (QSpec FR-322-AC-57, RN-18 to RN-27). The
+multi-valued destination end (FSpec FR-322-AC-57, RN-18 to RN-27). The
 navigation of a set-valued or bag-valued end (FR-363) is unchanged.
 
 ### The population a reachability walks
@@ -147,7 +147,7 @@ expression node, FR-093's application node with `semantic_form` `reachability`:
 | Part | Value |
 | --- | --- |
 | `operator` | `reaches` |
-| `operation.identity` | `quire.op.model.reaches` |
+| `operation.identity` | `filament.op.model.reaches` |
 | `operation.member` | `{kind: "relationship_end", declaration: <the relationship's model node>, name: <the end's role>}` (FR-094), with the added key `population: <the population node's id>` only when the walked population has an authored bound ("The population link") |
 | `operation.laws`, `operation.leaves`, `operation.mode` | none, none, `null` |
 | `arguments` | `[ref(a), ref(b)]`, no `deref` node |
@@ -161,7 +161,7 @@ population's node ("The population link"). It carries no observation, and
 carries no population when the walked population has no authored bound: the
 walked population is also the requirements record's domain, and the
 observation is the clause kind's (FR-104 "Observations of reads"). A reachability over a field edge keeps lowering to
-`quire.op.model.reaches_field` (FR-105). The two operation identities are the
+`filament.op.model.reaches_field` (FR-105). The two operation identities are the
 two forms of one predicate, and a clause holding either is carried by a v2
 package.
 
@@ -244,7 +244,7 @@ imposes no path-length bound and no population bound of its own.
 
 ### Bounds and budgets
 
-The charges are the `graph` rows of `quire.value.accounting/v1`: the kth
+The charges are the `graph` rows of `filament.value.accounting/v1`: the kth
 `graph.expand` charges `value_occurrences = k` (the number of distinct objects
 this evaluation has discovered, `a` included) and `work_units += 1`; each
 `graph.edge` charges `work_units += 1`; `graph.result-retain` charges
@@ -268,7 +268,7 @@ changes the observation or a later run's result.
 | FR-365-AC-2 | A name matching a field and a relationship end, or two ends, refuses `ambiguous_declaration`/`ambiguous-name`; a name matching neither refuses `missing_declaration`/`missing-name`. | Test (TC-1046) |
 | FR-365-AC-3 | An operand of a type that does not conform to the near end's type, a forward traversal against `target-to-source`, an inverse traversal against `source-to-target`, a destination end of another type (single-valued or finite multi-valued) and `reaches` in a function body each refuse `ill_typed`/`operator-ineligible`; an unbounded, ordered or multiplicity-less destination end refuses `unsupported_construct`/`expression-form`; operands are checked ahead of direction, direction ahead of multiplicity and multiplicity ahead of destination type, so a defect earlier in that order is the one reported. | Test (TC-1046) |
 | FR-365-AC-4 | A reachability over `E` whose type is a member type of two populations refuses `ambiguous_declaration`/`ambiguous-name` at the form, naming both populations; with one covering population the requirements record adds that domain once and none when it is the context population. | Test (TC-1046) |
-| FR-365-AC-5 | A checked reachability over a relationship end lowers to one expression node with `semantic_form` `reachability`, `operator` `reaches`, `operation.identity` `quire.op.model.reaches`, member `relationship_end` naming the relationship's model node and the role, no laws, leaves or mode, arguments `[ref(a), ref(b)]` and a `Boolean` `result_type`, with no `deref` node, and IR's v2 reader admits the emitted package. | Test (TC-1047) |
+| FR-365-AC-5 | A checked reachability over a relationship end lowers to one expression node with `semantic_form` `reachability`, `operator` `reaches`, `operation.identity` `filament.op.model.reaches`, member `relationship_end` naming the relationship's model node and the role, no laws, leaves or mode, arguments `[ref(a), ref(b)]` and a `Boolean` `result_type`, with no `deref` node, and IR's v2 reader admits the emitted package. | Test (TC-1047) |
 | FR-365-AC-6 | The lowered node carries no observation, and carries no population or bound unless the walked population has an authored bound, in which case its member holds exactly the one added key `population` naming that population's node (AC-13). The same reachability in two clauses whose conditions differ is one node under two `state_clause` identities, and two clauses of equal kind, parameters, anchor and condition are one `state_clause` node with two `claim` occurrences; one reachability written twice in a condition is one node on two argument paths; two different roles or relationships give two nodes. | Test (TC-1047) |
 | FR-365-AC-7 | Reachability is one or more edges over the extent: a chain reaches its far end and not its start, an isolated object does not reach itself, a self-loop and a cycle return to their start, a cycle that holds no target and an empty complete extent give `false`, and two distinct equal-valued objects are not the same target. | Test (TC-1048) |
 | FR-365-AC-8 | Every graph on one to three objects, with each object holding no outgoing link or one, agrees with an independently authored transitive-closure oracle for every ordered pair, over a forward and an inverse role, and a non-unique relationship that repeats a link gives the same Boolean as one occurrence. | Test (TC-1048) |
@@ -295,6 +295,6 @@ changes the observation or a later run's result.
   semantics and the independent-oracle and exact-budget criteria this form
   repeats over relationship extents. [FR-380](FR-380-bound-a-domain-package-population-and-link-a-reachability-to-its-node.md)
   owns the authored population bound and the population node the link names.
-  QSpec FR-322-AC-57 owns the lowered application's checks, FR-322 the
+  FSpec FR-322-AC-57 owns the lowered application's checks, FR-322 the
   `population` member key and FR-152 the direction rule.
 - **Downstream:** none.

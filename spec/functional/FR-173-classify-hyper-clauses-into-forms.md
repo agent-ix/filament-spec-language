@@ -3,25 +3,25 @@ id: FR-173
 title: "Classify hyper and relation clauses into forms and record their requirements"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: depends_on
 ---
 # FR-173: Classify hyper and relation clauses into forms and record their requirements
@@ -103,8 +103,8 @@ pub enum HyperForm {
 - When negotiation evaluates an `Other` form before provider selection, S3 SHALL
   apply FR-182's hyper-form settlement as V-8
   `unsupported-requested-capability` and produce no engine outcome for that
-  item. When `qsl-route` receives the resulting `unsupported` disposition,
-  qsl-route SHALL route the item to no candidate. This item-local result SHALL NOT
+  item. When `fsl-route` receives the resulting `unsupported` disposition,
+  fsl-route SHALL route the item to no candidate. This item-local result SHALL NOT
   prevent an independently supported sibling item from routing to its
   selected candidate.
 
@@ -116,7 +116,7 @@ pub enum HyperForm {
 | FR-173-AC-2 | `Other`, each naming its rule: `exists trace b of V forall trace a of V`; `Opaque` with body `always eventually holds(v.l @ a = v.l @ b)`; `Opaque` with `fair { weak V::Vault::step }` on `b`; §13's clause with an `exists` variable. Each settles V-8 `unsupported-requested-capability` in negotiation with no engine run. | Test (TC-598) |
 | FR-173-AC-3 | `SingleExistential` with a `match` block refuses `unsupported_construct`/`expression-form` at the block. `NonInterference` under the event-position profile records no form and settles V-8. | Test (TC-598) |
 | FR-173-AC-4 | A request with `SavesPower` supplies subjects for `S` and `N` and carries two deadlock-freedom items; a request with `NonInterference` and `Opaque` over `V` carries one. | Test (TC-598) |
-| FR-173-AC-5 | For a request containing an HP-4 `Other` item and a supported `Universal` sibling, negotiation settles the HP-4 item as `unsupported` V-8 without an engine outcome and `qsl-route` gives it no target; the sibling keeps its `supported` disposition and selected candidate. | Test (TC-598) |
+| FR-173-AC-5 | For a request containing an HP-4 `Other` item and a supported `Universal` sibling, negotiation settles the HP-4 item as `unsupported` V-8 without an engine outcome and `fsl-route` gives it no target; the sibling keeps its `supported` disposition and selected candidate. | Test (TC-598) |
 
 ## Dependencies
 
@@ -126,9 +126,9 @@ pub enum HyperForm {
   [FR-123](FR-123-check-fairness-and-interval-operators-of-infinite-trace-clauses.md)
   (safety classification), [FR-124](FR-124-declare-intended-terminal-states-and-derive-deadlock-freedom.md),
   [FR-057](FR-057-admit-shared-capability-kinds.md).
-- QSpec owns the forms, the admitted fragment, V-8 for HP-4 and the
+- FSpec owns the forms, the admitted fragment, V-8 for HP-4 and the
   claim-form rows (ADR-023 QS-3, QS-4).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-396 (Linear STD-136; ADR-023 QS-3, QS-4).
+- ADR-023. FSpec half: FSpec FR-396 (Linear STD-136; ADR-023 QS-3, QS-4).

@@ -3,7 +3,7 @@ id: TC-791
 title: "The seam probe reports the StateModel arms at S1 and S3 and only the Bound StateModel arm at S2"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-300
+  - target: ix://agent-ix/filament-spec-language/FR-300
     type: verifies
 ---
 # TC-791: The seam probe reports the StateModel arms at S1 and S3 and only the Bound StateModel arm at S2

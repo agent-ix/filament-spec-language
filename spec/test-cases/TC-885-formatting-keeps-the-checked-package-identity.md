@@ -3,7 +3,7 @@ id: TC-885
 title: "Formatting keeps the checked package identity of every complete-V1 fixture unit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: verifies
 ---
 # TC-885: Formatting keeps the checked package identity of every complete-V1 fixture unit

@@ -3,11 +3,11 @@ id: TC-1407
 title: "Evaluate a source-declared operation call from the reader view"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-569
+  - target: ix://agent-ix/filament-spec-language/FR-569
     type: verifies
 ---
 # TC-1407: Evaluate a source-declared operation call from the reader view
@@ -24,7 +24,7 @@ FR-352 witness kind exists view creation reports the typed
 FR-383-AC-67 and the E-S part of FR-569-AC-11.
 
 Each step is marked **now** (runs and passes today: the source route and
-the S4 refusal) or **waits** (runs once ADR-013 QC-30 is adopted by QSpec and
+the S4 refusal) or **waits** (runs once ADR-013 QC-30 is adopted by FSpec and
 IR; step 2 also waits on IR's FR-352 witness kind). Until QC-30 lands, S4
 refuses every unit that declares a source object type, E-S and TC-1408's
 fixture S included, with the single `SourceObjectEmission` refusal and writes
@@ -32,7 +32,7 @@ no package, so every waits step has no package to read.
 
 ## Test Procedure
 
-Fixture **E-S** is real QSL source: TC-1070's fixture E with the object type
+Fixture **E-S** is real FSL source: TC-1070's fixture E with the object type
 `Node` declared by the unit's own source (FR-569) instead of by the domain
 package `M`. Its domain package is fixture E's `M` without the object type
 `Node` (and its `owns` relationship, which only fixture L reads) and without

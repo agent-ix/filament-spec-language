@@ -3,7 +3,7 @@ id: TC-700
 title: "The in-core checker accepts valid zone certificates and rejects every tampering"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: verifies
 ---
 # TC-700: The in-core checker accepts valid zone certificates and rejects every tampering
@@ -36,6 +36,6 @@ Tag the tests `#[trace("TC-700", "FR-245-AC-n")]`.
 - Step 3: `Stopped` naming the limit and 1.
 - Step 4: every harness passes.
 - Step 5: `Accepted`; `Rejected` naming the bad node; `Rejected` naming the reachable `ping` cycle.
-- Step 6: no core crate names `qsl-analyze`.
+- Step 6: no core crate names `fsl-analyze`.
 - Step 7: `Accepted` for each refinement-form certificate; `Rejected` `StepFails` at the `ZoneEdge`; `Rejected` `InitialMismatch`; `Rejected` `PostDiffers`; `Stopped` naming `evaluation-meter` for the zero meter; and `Rejected` `Malformed` at `CertificateMember("positions")`.
 - Step 8: `Accepted` for the `Init3` certificate; `Rejected` `InitialMismatch` at the initial `ZoneNode` for each of the two marks; `Rejected` `InitialMissing` for the non-covering node; `Accepted` for `Init3L` with `admitted` from `initials[1]` and `WitnessFails` from `initials[0]`; `Rejected` `BadState` at the forged `locked` initial node.

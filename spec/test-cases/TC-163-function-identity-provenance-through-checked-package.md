@@ -3,7 +3,7 @@ id: TC-163
 title: "Function identity and provenance survive checking and package conversion"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: verifies
 ---
 # TC-163: Function identity and provenance survive checking and package conversion
@@ -13,7 +13,7 @@ relationships:
 Verify that the function packaging/lowering public API accepts only checked
 objects or verified checked-package bytes, that a function declaration's
 identity and a call's source occurrence survive checking, linking and v2
-emission unchanged, and that the identities equal QSpec's vectors. Scope:
+emission unchanged, and that the identities equal FSpec's vectors. Scope:
 FR-065-AC-1 through FR-065-AC-3 and FR-065-AC-8.
 
 ## Test Procedure
@@ -35,7 +35,7 @@ FR-065-AC-1 through FR-065-AC-3 and FR-065-AC-8.
    occurrence has one byte corrupted, and resolve the occurrence against it.
 6. Under source owner (`a`, `u`), check `both` and `nb` as FR-065-AC-8 gives
    them, and read the identity of `both` and of the call `both(a, true)`.
-   Read in place from the QSpec checkout every `operation_vectors` preimage
+   Read in place from the FSpec checkout every `operation_vectors` preimage
    in `proposals/checked-package-v2/node-identity-vectors.json` and run the
    application-node key builder over each one.
 
@@ -52,6 +52,6 @@ FR-065-AC-1 through FR-065-AC-3 and FR-065-AC-8.
   showing the assertion reads the actual region rather than a fixed
   constant.
 - Step 6: `both`'s identity is FR-092 vector F2 and the call's is E2, in
-  domain `quire.checked-semantic-node/v1`; every in-place
+  domain `filament.checked-semantic-node/v1`; every in-place
   `operation_vectors` entry's recomputed key equals its recorded expected
   key.

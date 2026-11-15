@@ -5,19 +5,19 @@
 
 use std::collections::BTreeMap;
 
-use ix_trace_rs::trace;
-use qsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::{
-    self, CheckedUnit, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary,
-};
-use qsl_semantics::model::object_environment::ObjectEnvironment;
-use qsl_semantics::model::observation::{AdmittedObservations, DocumentRef, Observation, SelfKind};
-use quire_exact::{
+use filament_exact::{
     admit_text, Cancel, FieldValue, Integer, Meter, NodeKey, ObjectId, ObjectReference, Outcome,
     PathSegment, TextPayload, TextProfile, TextType, UniverseId, Value,
 };
-use quire_semantic_value::object_closure::ObjectClosure;
+use filament_semantic_value::object_closure::ObjectClosure;
+use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{
+    self, CheckedUnit, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary,
+};
+use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::model::observation::{AdmittedObservations, DocumentRef, Observation, SelfKind};
+use ix_trace_rs::trace;
 
 const DIR: &str = "examples/checked-handoff";
 const LIBRARY: &str = "agent-ix/checked-handoff-library";
@@ -56,7 +56,7 @@ fn checked() -> CheckedUnit {
         bytes: library,
     }])
     .expect("the library is supplied once");
-    let packages = qsl_semantics::model::intake::package_input([model.as_slice()])
+    let packages = fsl_semantics::model::intake::package_input([model.as_slice()])
         .expect("the model is admitted");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -92,7 +92,7 @@ fn text(payload: &str) -> Value {
     let admitted = admit_text(
         &TextPayload::from_utf8(payload.as_bytes()).expect("valid UTF-8"),
         &TextType::new(0, 128, TextProfile::Nfc).expect("a text type"),
-        &mut Meter::new(qsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
+        &mut Meter::new(fsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
     )
     .completed()
     .expect("the text admits");
@@ -108,10 +108,11 @@ fn healthy(unit: &CheckedUnit, total: i64) -> bool {
             &QualifiedName::unqualified("twoAndThree").expect("an identifier"),
             Vec::new(),
             &ObjectEnvironment::default(),
-            &mut Meter::new(qsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
+            &mut Meter::new(fsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
         )
         .expect("the receipts are formed");
-    let quire_eval::FamilyOutcome::Evaluated(Outcome::Completed(receipts)) = called.outcome else {
+    let filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(receipts)) = called.outcome
+    else {
         panic!("a completed receipts value, not {:?}", called.outcome);
     };
     let Value::Collection(collection) = &receipts else {
@@ -135,8 +136,8 @@ fn healthy(unit: &CheckedUnit, total: i64) -> bool {
         ObjectId::new("w1".to_owned()).expect("an object id"),
     );
     let whole = |value: i64| Value::Integer(Integer::from(value));
-    let amount = Value::Quantity(quire_exact::Quantity::new(
-        quire_exact::Rational::from_integer(Integer::from(total)),
+    let amount = Value::Quantity(filament_exact::Quantity::new(
+        filament_exact::Rational::from_integer(Integer::from(total)),
         first.unit().clone(),
     ));
     let closure = ObjectClosure::new(
@@ -188,11 +189,11 @@ fn healthy(unit: &CheckedUnit, total: i64) -> bool {
         .evaluate_clause(
             &QualifiedName::unqualified("Healthy").expect("an identifier"),
             &observations,
-            &mut Meter::new(qsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
+            &mut Meter::new(fsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
         )
         .expect("the clause evaluates");
     match evaluation.evaluation.outcome {
-        quire_eval::FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(truth))) => truth,
+        filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(truth))) => truth,
         other => panic!("a completed Boolean, not {other:?}"),
     }
 }
@@ -228,10 +229,10 @@ fn unit_queries_over_duplicate_items_evaluate_on_the_checked_route() {
                 &QualifiedName::unqualified(format!("query{index}")).expect("an identifier"),
                 Vec::new(),
                 &ObjectEnvironment::default(),
-                &mut Meter::new(qsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
+                &mut Meter::new(fsl_semantics::check::SCALAR_LIMITS_UNLIMITED),
             )
             .unwrap_or_else(|error| panic!("{label}: the call runs: {error:?}"));
-        let quire_eval::FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(held))) =
+        let filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(held))) =
             called.outcome
         else {
             panic!("{label}: a completed Boolean, not {:?}", called.outcome);

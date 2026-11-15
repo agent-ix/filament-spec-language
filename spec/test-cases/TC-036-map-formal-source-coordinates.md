@@ -3,7 +3,7 @@ id: TC-036
 title: "Map independent source coordinate examples"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-014
+  - target: ix://agent-ix/filament-spec-language/FR-014
     type: verifies
 ---
 # TC-036: Map independent source coordinate examples

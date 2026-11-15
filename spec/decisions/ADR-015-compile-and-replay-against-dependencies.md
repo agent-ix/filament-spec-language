@@ -3,21 +3,21 @@ id: ADR-015
 title: "Compile and replay against dependencies"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: relates_to
-  - target: ix://agent-ix/quire-specification/FR-307
+  - target: ix://agent-ix/filament-specification/FR-307
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
 ---
 # ADR-015: Compile and replay against dependencies
@@ -36,7 +36,7 @@ FR-087-AC-14). Five questions were still open, so E3 refused every
    identity alone; the library is bound by the identity, version and `package_id`
    its compile yields, and ADR-013 O-02 forbids taking them from the caller.
 3. What a library identity is. `library::LibraryName` accepts identifier
-   segments only; FR-322 admits any non-empty string, and QSpec's vectors
+   segments only; FR-322 admits any non-empty string, and FSpec's vectors
    use `test/geometry`.
 4. How `replay` knows which of its sources is the proved package and which
    is which dependency. FR-098 required exactly one source, so
@@ -47,16 +47,16 @@ FR-087-AC-14). Five questions were still open, so E3 refused every
 
 Amends ADR-011 §2.1 (E3), §4 (dependency binding)
 and §5 (spine `compile`), and ADR-013 O-02, O-04, O-26 and QC-27, as each
-decision below states. QSpec states the wire and identity parts in FR-307,
-FR-322 and FR-323 (agent-ix/quire-specification); this
-record states QSL's side.
+decision below states. FSpec states the wire and identity parts in FR-307,
+FR-322 and FR-323 (agent-ix/filament-specification); this
+record states FSL's side.
 
 ## Decision
 
 ### D-1 The dependency input and the S4 source resolution
 
 A compile takes a **dependency input**: a set of **supplied libraries**
-(QSpec FR-307), at most one per library identity. A supplied library is
+(FSpec FR-307), at most one per library identity. A supplied library is
 `{identity, source}`, where `identity` is a `LibraryName` (D-3) and
 `source` a source unit: its
 FR-001 `SourceIdentity` (two labels), a display path and its bytes. It
@@ -83,7 +83,7 @@ sources:
 - `replay` builds it from the request's package reference (D-4).
 
 A compile also takes the optional **refinement internals** input, a JSON
-value for the unit and one for each supplied library, which QSpec FR-375 names
+value for the unit and one for each supplied library, which FSpec FR-375 names
 (FR-099). It is carried unchanged to S3, which owns every refusal of its
 content (FR-147); it is part of the refinement node's identity, so replay
 carries it in the package reference beside `dependencies`.
@@ -148,7 +148,7 @@ hold the identity only.
 
 A library identity is the FR-322 `DependencySelection.identity`: a
 non-empty string with no segment structure, equal to another only when
-their UTF-8 bytes are equal and ordered by UTF-8 bytes (QSpec FR-307,
+their UTF-8 bytes are equal and ordered by UTF-8 bytes (FSpec FR-307,
 FR-322). `library::LibraryName` wraps that string. Its constructor refuses
 only the empty string, and it has no segment accessor. `SelectionRequest`, `ImportDeclaration`, the E4 closure and the dependency
 input key libraries by it. The S1 parser's identity bound (at most 512
@@ -157,7 +157,7 @@ bytes) is a source limit, not part of the identity.
 ### D-4 Replay pairs each dependency's sources with its identity
 
 The in-process replay request's package reference is
-`{package_id, sources, dependencies}`, QSpec FR-323's reference without
+`{package_id, sources, dependencies}`, FSpec FR-323's reference without
 the wire's `contract_version`, which the in-process request does not
 carry (ADR-013 O-26). `sources` is the
 proved package's own `sources`. `dependencies` holds one entry per
@@ -168,9 +168,9 @@ and the dependency packages the proving run admitted, and invents none
 (ADR-013 C-12).
 
 `replay` refuses with the first of these rules, each rule applied over all
-entries, in entry order, before the next rule. It uses QSpec FR-323's codes
+entries, in entry order, before the next rule. It uses FSpec FR-323's codes
 for the rules FR-323 states; the one-source rule and the dependency-input
-rule (rules 2 and 3) are QSL's own preconditions on its request, and both
+rule (rules 2 and 3) are FSL's own preconditions on its request, and both
 run before the recompile:
 
 1. The entries are in strictly ascending UTF-8 byte order of `identity`, a
@@ -231,13 +231,13 @@ function one of whose reachable signature type nodes carries a
 `declaration` or a `ModelOwner` (a `Set<R>`, a tuple holding `R`, a
 quantity over a declared unit, or `Reference<M::T>` for a model type
 `M::T`), refuses `ill_typed`/`operator-ineligible` at the use
-(QSpec FR-322). An imported name stands only as a callee.
+(FSpec FR-322). An imported name stands only as a callee.
 
 A call site discharges an imported function's preconditions exactly as
 it discharges a local function's. A complete-V1 `function` declares no
-precondition clause (QSpec shared grammar `function`), so its parameter
+precondition clause (FSpec shared grammar `function`), so its parameter
 types are its only precondition. E3 checks each argument of `l::f(x)`
-against `f`'s checked parameter type with the conversions and the QSpec
+against `f`'s checked parameter type with the conversions and the FSpec
 FR-146 obligations that a call of a local function with `f`'s signature
 gets, and discharges each obligation from the importing unit's own facts.
 The callee's own body obligations (FR-146 totality, termination and
@@ -247,12 +247,12 @@ refuses inside `CompileRefusal::Dependency` and yields no view, so E3
 never re-checks those obligations and never assumes a fact from them at
 the call site.
 
-A reference to an imported function lowers to QSpec FR-322's
+A reference to an imported function lowers to FSpec FR-322's
 `dependency_reference` term `{term: "dependency_reference", package, node}`,
 with `package` the dependency's name (its `LibraryName`, the FR-322
 `DependencySelection.identity`, never a `package_id`) and `node` the node's
 `WireNodeId`, in the node body and in its node-identity preimage alike. So the call `l::f(x)` is a
-`quire.op.function.call` application whose callee argument is that term and
+`filament.op.function.call` application whose callee argument is that term and
 whose `result_type` is `f`'s result type node. The referenced dependency's
 name and node id enter the referencing node's id; the term is never
 listed in the node's `dependencies` (FR-322-AC-36, FR-322-AC-37). This
@@ -300,10 +300,10 @@ stays acyclic.
   library are only read back to build its import view.
 - The CLI request gains an optional member; a request with no `libraries`
   compiles as before.
-- IR's `quire-contract-model` reader admits the `dependency_reference` term
+- IR's `filament-contract-model` reader admits the `dependency_reference` term
   in the v2 node body and in the application-node preimage, and resolves it
-  against the admitted dependency packages (QSpec FR-322-AC-36). CG's replay
-  adapter fills the request's `dependencies` (ADR-013 C-12, QSpec
+  against the admitted dependency packages (FSpec FR-322-AC-36). CG's replay
+  adapter fills the request's `dependencies` (ADR-013 C-12, FSpec
   FR-323-AC-7).
 
 ## Amendments
@@ -314,7 +314,7 @@ stays acyclic.
   reads "two": D-1's labels that name a dependency source are its authority and
   identity. The decision itself is unchanged.
 - 2026-11-04: D-5's `dependency_reference` carries the dependency's name
-  (`LibraryName`) as `package`, not the view's `package_id`, as QSpec FR-322,
+  (`LibraryName`) as `package`, not the view's `package_id`, as FSpec FR-322,
   ADR-013 QC-10 and the emitter state; the earlier wording said
   `package_id`. A node's id therefore binds a dependency through its name and
   the referenced node id; no checked package carries a dependency's

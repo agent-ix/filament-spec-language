@@ -3,44 +3,44 @@ id: FR-430
 title: "Check refinement, reductions and strong fairness over timed subjects"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-149
+  - target: ix://agent-ix/filament-spec-language/FR-149
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-159
+  - target: ix://agent-ix/filament-spec-language/FR-159
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-244
+  - target: ix://agent-ix/filament-spec-language/FR-244
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-240
+  - target: ix://agent-ix/filament-spec-language/FR-240
     type: depends_on
 ---
 # FR-430: Check refinement, reductions and strong fairness over timed subjects
 
 ## Description
 
-QSL SHALL check the three ADR-026 §15 interactions of dense time with its
+FSL SHALL check the three ADR-026 §15 interactions of dense time with its
 sibling records. A timed concrete model refines an untimed abstract model
 through its step map, a delay being a stutter step of the abstract model
 (ADR-020). EN-6 applies symmetry, permuting each object together with its
@@ -204,8 +204,8 @@ digital time (ADR-026 TS-6) and keeps FR-159 unchanged.
   [FR-240](FR-240-decide-timed-liveness-and-time-lock-freedom-on-the-symbolic-graph.md),
   [FR-244](FR-244-emit-a-zone-certificate-with-every-proof.md),
   [FR-245](FR-245-check-a-zone-certificate-in-the-qualified-core.md).
-- QSpec owns the preservation table, the provider advertisement and the
-  refinement and fairness readings over timed subjects (QSpec FR-377,
+- FSpec owns the preservation table, the provider advertisement and the
+  refinement and fairness readings over timed subjects (FSpec FR-377,
   FR-382, FR-416).
 
 ## References

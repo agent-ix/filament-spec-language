@@ -3,7 +3,7 @@ id: TC-913
 title: "A wide-range source recompiles to its package_id and replays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: verifies
 ---
 # TC-913: A wide-range source recompiles to its package_id and replays
@@ -19,7 +19,7 @@ Scope: FR-098-AC-11.
 ## Test Procedure
 
 For each case, compile the source, build a replay request over its bytes
-and `package_id` with an `Input` assignment, and call `qsl_replay::replay`:
+and `package_id` with an `Input` assignment, and call `fsl_replay::replay`:
 
 1. `function wide using v(x: Int[0, 18446744073709551615]): Boolean pure
    { x <= 18446744073709551614 }` with `x` = `"18446744073709551615"`.

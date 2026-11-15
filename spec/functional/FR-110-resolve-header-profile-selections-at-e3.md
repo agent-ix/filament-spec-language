@@ -3,21 +3,21 @@ id: FR-110
 title: "E3 resolves a unit's header profile selections against the layer table"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-014
+  - target: ix://agent-ix/filament-spec-language/US-014
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-453
+  - target: ix://agent-ix/filament-specification/FR-453
     type: depends_on
 ---
 # FR-110: E3 resolves a unit's header profile selections against the layer table
@@ -30,7 +30,7 @@ header declarations in the catalog of the family that owns the selected
 definition, and refuse, with its typed code and cause, every header profile
 that does not resolve (ADR-011 §2.4, amended 2026-09-26).
 The `Value` family's supported identities are represented by closed typed
-roles in QSL; header-selectable layer roles also define their direct layer
+roles in FSL; header-selectable layer roles also define their direct layer
 requirements and admitted forms. A clause profile (FR-322 roles
 `temporal_profile` and `protocol_profile`) resolves against its clause
 family's supported profile roles (ADR-012 §2, the `TemporalTrace` and
@@ -44,20 +44,20 @@ exist"; ruling on QSL-229). Its model half is I1 (FR-056), which spine
 edition and each law's `DefinitionRef` are produced from those closed roles
 through the emitter (ADR-011 §2.4, amended 2026-09-24).
 
-FR-361 states what a unit that selects `quire.model.complete/v1` gains.
+FR-361 states what a unit that selects `filament.model.complete/v1` gains.
 
 ## Inputs
 
 - The unit's profile selections as S2 carries them
-  (`qsl_foundation::selection::ProfileSelection`: alias, `DefinitionRef`
+  (`fsl_foundation::selection::ProfileSelection`: alias, `DefinitionRef`
   identity, declaration span, identity-literal span).
-- The closed typed roles for definitions the QSpec prose names, each resolved
+- The closed typed roles for definitions the FSpec prose names, each resolved
   by `{authority, identity}`, including header-selectable layers (each
   layer's identity, direct requirements and admitted forms). There is no
   separately recorded identity table.
 - When spine `compile` is given a `ProfileCatalogInput`
-  (`qsl_replay::spine`), that input's `DefinitionCatalog`
-  (`qsl_semantics::library::bundle`), read only to classify a header
+  (`fsl_replay::spine`), that input's `DefinitionCatalog`
+  (`fsl_semantics::library::bundle`), read only to classify a header
   identity no layer has as an extension selection ("Extension selection").
 
 ## Outputs
@@ -71,7 +71,7 @@ FR-361 states what a unit that selects `quire.model.complete/v1` gains.
   typed `DefinitionRole::Root` it was compared with and a `ProfileCause`:
   `UnsupportedSelection` or `WrongSelectionRole`. Its `code()` and `cause()`
   give the typed refusal code and cause pair in the table below.
-- `qsl_replay::spine::CompileRefusal::Profile`: the refusals and the region
+- `fsl_replay::spine::CompileRefusal::Profile`: the refusals and the region
   of the first, reported at spine stage `assembly`.
 
 ## Behavior
@@ -83,7 +83,7 @@ identity, in source order, with the closed layer roles. A header selects
 a header-selectable layer (see "Layer selection"); the catalog's
 qualification definitions are not selected by a header. E3
 compares the header's identity, the only member a header profile carries
-(QSpec shared grammar `profile = 'profile', ident, '=', string, ';'`). The
+(FSpec shared grammar `profile = 'profile', ident, '=', string, ';'`). The
 emitter writes no `profile_selections` row for the selected layer ("Lock
 rows").
 
@@ -106,10 +106,10 @@ rows").
   depends on its operand types, so S3 decides it after typing (Equality by
   operand family).
 - A unit whose header declares no profile selects no layer. The admitted forms are those that apply without a layer, as for a unit that
-  selects `quire.value.complete/v1`. This is the explicit default.
+  selects `filament.value.complete/v1`. This is the explicit default.
 - Two header profiles that both select the same layer both resolve;
   a repeated alias is the assembler's duplicate-alias refusal (FR-091-AC-22).
-- Every code and cause is one `quire.native.diagnostics/v1` lists. The
+- Every code and cause is one `filament.native.diagnostics/v1` lists. The
   `unsupported-selection` row gives the pair the editor's profile check
   gives for the same standing (`complete::editor::profile_refusal`).
 
@@ -118,7 +118,7 @@ rows").
 An extension is selected by a header `profile <alias> = "<identity>";`
 whose identity is no header-selectable layer's and which the
 `DefinitionCatalog` supplied in `ProfileCatalogInput` holds as an extension
-definition (FR-354, QSpec FR-467). The selection is typed: the catalog's
+definition (FR-354, FSpec FR-467). The selection is typed: the catalog's
 `DefinitionRole` has the variant `DefinitionRole::Extension`, and a held
 definition is an extension definition exactly when its role is `Extension`
 (a `Definition::is_extension()`, if provided, is `role() ==
@@ -147,12 +147,12 @@ it applies the same resolution.
 
 ### Layer selection
 
-Every layer of QSpec AD-003's state, value, model and timed-model hierarchy
-is header-selectable (QSpec FR-453; the QSpec definition prose lists the header-selectable
-layers): `quire.state.core/v1`,
-`quire.state.queries/v1`, `quire.state.graph/v1`,
-`quire.value.complete/v1`, `quire.model.complete/v1` and
-`quire.temporal.complete/v1` (which requires `quire.model.complete/v1`;
+Every layer of FSpec AD-003's state, value, model and timed-model hierarchy
+is header-selectable (FSpec FR-453; the FSpec definition prose lists the header-selectable
+layers): `filament.state.core/v1`,
+`filament.state.queries/v1`, `filament.state.graph/v1`,
+`filament.value.complete/v1`, `filament.model.complete/v1` and
+`filament.temporal.complete/v1` (which requires `filament.model.complete/v1`;
 FR-361 item 18 states what a unit that selects it gains).
 
 - When a header profile's identity names a header-selectable layer,
@@ -192,8 +192,8 @@ other.
 
 ### Equality by operand family
 
-QSpec's layer definitions (`state-core.md`, `state-queries.md`,
-`state-graph.md` under QSpec `proposals/quire-v1/definitions/`) admit
+FSpec's layer definitions (`state-core.md`, `state-queries.md`,
+`state-graph.md` under FSpec `proposals/filament-v1/definitions/`) admit
 equality by what it compares, not by the operator. For a declaration whose
 `using` alias names a header profile resolved to a layer (Layer selection),
 S3 SHALL classify each `=` and `!=` by its typed operand families (FR-149)
@@ -204,8 +204,8 @@ section.
 | Operand family | Layers that admit `=` and `!=`, first the one a refusal names |
 | --- | --- |
 | Boolean, integer, rational, decimal, text, enum, quantity, UUID, Timestamp (scalar) | every layer |
-| `Reference<T>` and object identity | `quire.state.graph/v1`, `quire.model.complete/v1` |
-| record, tuple, union, `Option<T>`, `Sequence<T>`, `Set<T>`, `Bag<T>`, `OrderedSet<T>` (whole value) | `quire.value.complete/v1`, `quire.model.complete/v1` |
+| `Reference<T>` and object identity | `filament.state.graph/v1`, `filament.model.complete/v1` |
+| record, tuple, union, `Option<T>`, `Sequence<T>`, `Set<T>`, `Bag<T>`, `OrderedSet<T>` (whole value) | `filament.value.complete/v1`, `filament.model.complete/v1` |
 
 - An operand type's families SHALL be the family of the type itself and of
   every type it contains at any depth: `Sequence<Reference<T>>` and a record
@@ -226,7 +226,7 @@ section.
   `ill_typed`/`operator-ineligible`, FR-149) SHALL report that refusal and no
   layer refusal.
 - An equality nested inside another form SHALL be classified by its own
-  operands: `present(o)` admits under `quire.state.core/v1` while `o = p`
+  operands: `present(o)` admits under `filament.state.core/v1` while `o = p`
   over `Option<T>` operands does not.
 
 ### Model selections
@@ -236,7 +236,7 @@ I1 admitted for it (FR-056; ADR-011 §2.4). A declaration naming no supplied
 package refuses at I1 with FR-056's cause (FR-056-AC-2, FR-056-AC-7). A
 `model` declaration carries no clause beyond its identity; any other clause refuses at parse (`invalid_syntax`). Code that still parses `version ... digest ...` on a `model` line is CODE-LANE QSL-1260 (PR #1852, draft); this Test goes red on current code until #1852 lands.
 The emitter records each admitted package by its `model_root` node only
-(QSpec #510); the package has no model selection row.
+(FSpec #510); the package has no model selection row.
 
 ### Emitted profile selections and law definitions
 
@@ -246,7 +246,7 @@ rows (`temporal_profile`, `protocol_profile`).
 
 The emitter writes no `profile_selections` row for a selected layer or
 extension. A law's `definition` is the `DefinitionRef` `{authority,
-identity}` of the QSpec definition prose for that role, from the layer
+identity}` of the FSpec definition prose for that role, from the layer
 table (FR-093).
 
 ### Lock rows
@@ -256,7 +256,7 @@ its `definition_selections` as these rows, each `{authority, identity}`,
 each once, in this order:
 
 1. the closed rows, in the lock's row order: the header-selected layers and every layer their
-   `requires` closure names; the qualification-catalog rows QSpec FR-001
+   `requires` closure names; the qualification-catalog rows FSpec FR-001
    selects for those layers (the `always` rows for a unit that selects no
    layer), the edition excepted; and the complete-model and
    complete-temporal lock rows when those layers are in the closure
@@ -272,24 +272,24 @@ adds no `required_features` entry and no `profile_selections` row for it.
 
 | ID | Constraint | Type | Validation |
 | --- | --- | --- | --- |
-| FR-110-CON-1 | The resolution's one source input is the unit's profile selections. It reads the layer table, which names each layer's admitted-form set and `requires` edges (ADR-011 §2.4: the package selections derive from the source and the QSL build), and, for the extension row only, the role of the supplied `ProfileCatalogInput`'s catalog definitions. QSL's Rust layer table is the machine form of QSpec's prose admitted-form sets; QSL adds no form of its own. | Design | Inspection |
+| FR-110-CON-1 | The resolution's one source input is the unit's profile selections. It reads the layer table, which names each layer's admitted-form set and `requires` edges (ADR-011 §2.4: the package selections derive from the source and the FSL build), and, for the extension row only, the role of the supplied `ProfileCatalogInput`'s catalog definitions. FSL's Rust layer table is the machine form of FSpec's prose admitted-form sets; FSL adds no form of its own. | Design | Inspection |
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-110-AC-1 | A unit whose one header profile names `quire.value.complete/v1` compiles through spine `compile`. Its emitted package has empty `profile_selections`. | Test (TC-490) |
+| FR-110-AC-1 | A unit whose one header profile names `filament.value.complete/v1` compiles through spine `compile`. Its emitted package has empty `profile_selections`. | Test (TC-490) |
 | FR-110-AC-2 | The same unit with the profile identity `test:unknown-profile` refuses `unknown_profile`/`unsupported-selection` at the span of the identity literal, naming alias `v`, the selection and required role `root`, and produces no package. | Test (TC-490) |
 | FR-110-AC-3 | The same unit with the header profile set to the `ieee_profile` row's identity refuses `unknown_profile`/`wrong-selection-role`, retaining the selection and required role `root`. The `edition` row's identity (`ix:native`) refuses the same way. | Test (TC-490) |
-| FR-110-AC-5 | A unit whose header `profile` declaration holds any token after its identity string and before its terminator refuses as a syntax error at that token, before E3, and produces no package. The tested production is `profile = 'profile', ident, '=', string, ';'` in QSpec's `proposals/quire-v1/shared-grammar.md`. | Test (TC-490) |
+| FR-110-AC-5 | A unit whose header `profile` declaration holds any token after its identity string and before its terminator refuses as a syntax error at that token, before E3, and produces no package. The tested production is `profile = 'profile', ident, '=', string, ';'` in FSpec's `proposals/filament-v1/shared-grammar.md`. | Test (TC-490) |
 | FR-110-AC-6 | A unit with three header profiles, the `root` selection under alias `v`, the `ieee_profile` row's identity under `w` and an `unsupported-selection` selection under `x`, refuses with exactly two refusals, `w`'s then `x`'s, and no package. A unit with the `root` selection under two aliases compiles. | Test (TC-490) |
-| FR-110-AC-7 | For each of `quire.state.core/v1`, `quire.state.queries/v1`, `quire.state.graph/v1`, `quire.value.complete/v1`, `quire.model.complete/v1` and `quire.temporal.complete/v1`, a unit whose one header profile names that layer and whose declarations use only its admitted forms compiles. | Test (TC-490) |
-| FR-110-AC-8 | A unit whose header profile names `quire.state.core/v1` and whose declaration calls a named predicate refuses `unsupported_construct`/`expression-form` at the call's span naming `quire.state.core/v1`; a unit naming `quire.state.core/v1` that declares a named predicate refuses `unsupported_construct`/`declaration-form` at the declaration's span; both units naming `quire.state.queries/v1` compile. | Test (TC-490) |
-| FR-110-AC-9 | **RETIRED (no layer-table comparison).** QSL no longer compares its layer table with QSpec's definition files; the catalog's behavior is asserted by FR-110-AC-1 to AC-8 and AC-10 to AC-13. | Test (TC-490), retired |
-| FR-110-AC-10 | Under `quire.state.core/v1`, `x = y` over `Int[0, 9]`, over `Boolean` and over an enum compiles. Under `quire.state.core/v1` and under `quire.state.queries/v1`, each of a whole-record equality `r = q` (a record whose fields are `Int[0, 9]` and `Boolean`), a sequence equality `s = t` (over `Sequence<Int[0, 9]>`), an option equality `o = p` (over `Option<Int[0, 9]>`) and a reference equality `a = b` (over `Reference<Order>`) refuses `unsupported_construct`/`expression-form` at the operator's span, naming the selected layer and, in order, `quire.value.complete/v1`, `quire.value.complete/v1`, `quire.value.complete/v1` and `quire.state.graph/v1`. Under `quire.state.graph/v1`, `a = b` compiles and `r != q` refuses naming `quire.value.complete/v1`. Under `quire.value.complete/v1`, `r = q`, `s = t` and `o = p` compile and `a = b` refuses naming `quire.state.graph/v1`; under `quire.model.complete/v1`, all four compile. Under `quire.state.core/v1`, `r = 1` with `r` a record refuses `ill_typed`/`type-mismatch` and no layer refusal. | Test (TC-490) |
-| FR-110-AC-11 | In a unit with no header profile, `r = q` over records and `x = y` over `Int[0, 9]` compile. Under `quire.value.complete/v1`, `s = t` over `Sequence<Reference<Order>>` and `r = q` over a record with a `Reference<Order>` field each refuse `unsupported_construct`/`expression-form` at the operator naming `quire.state.graph/v1`; under `quire.state.graph/v1` the same two refuse naming `quire.value.complete/v1`; under `quire.model.complete/v1` both compile. | Test (TC-490) |
+| FR-110-AC-7 | For each of `filament.state.core/v1`, `filament.state.queries/v1`, `filament.state.graph/v1`, `filament.value.complete/v1`, `filament.model.complete/v1` and `filament.temporal.complete/v1`, a unit whose one header profile names that layer and whose declarations use only its admitted forms compiles. | Test (TC-490) |
+| FR-110-AC-8 | A unit whose header profile names `filament.state.core/v1` and whose declaration calls a named predicate refuses `unsupported_construct`/`expression-form` at the call's span naming `filament.state.core/v1`; a unit naming `filament.state.core/v1` that declares a named predicate refuses `unsupported_construct`/`declaration-form` at the declaration's span; both units naming `filament.state.queries/v1` compile. | Test (TC-490) |
+| FR-110-AC-9 | **RETIRED (no layer-table comparison).** FSL no longer compares its layer table with FSpec's definition files; the catalog's behavior is asserted by FR-110-AC-1 to AC-8 and AC-10 to AC-13. | Test (TC-490), retired |
+| FR-110-AC-10 | Under `filament.state.core/v1`, `x = y` over `Int[0, 9]`, over `Boolean` and over an enum compiles. Under `filament.state.core/v1` and under `filament.state.queries/v1`, each of a whole-record equality `r = q` (a record whose fields are `Int[0, 9]` and `Boolean`), a sequence equality `s = t` (over `Sequence<Int[0, 9]>`), an option equality `o = p` (over `Option<Int[0, 9]>`) and a reference equality `a = b` (over `Reference<Order>`) refuses `unsupported_construct`/`expression-form` at the operator's span, naming the selected layer and, in order, `filament.value.complete/v1`, `filament.value.complete/v1`, `filament.value.complete/v1` and `filament.state.graph/v1`. Under `filament.state.graph/v1`, `a = b` compiles and `r != q` refuses naming `filament.value.complete/v1`. Under `filament.value.complete/v1`, `r = q`, `s = t` and `o = p` compile and `a = b` refuses naming `filament.state.graph/v1`; under `filament.model.complete/v1`, all four compile. Under `filament.state.core/v1`, `r = 1` with `r` a record refuses `ill_typed`/`type-mismatch` and no layer refusal. | Test (TC-490) |
+| FR-110-AC-11 | In a unit with no header profile, `r = q` over records and `x = y` over `Int[0, 9]` compile. Under `filament.value.complete/v1`, `s = t` over `Sequence<Reference<Order>>` and `r = q` over a record with a `Reference<Order>` field each refuse `unsupported_construct`/`expression-form` at the operator naming `filament.state.graph/v1`; under `filament.state.graph/v1` the same two refuse naming `filament.value.complete/v1`; under `filament.model.complete/v1` both compile. | Test (TC-490) |
 | FR-110-AC-12 | `complete::header_profile_catalog()` contains each identity of the layer table's layers, and contains neither `test:unknown-profile` nor the identity of any qualification definition. For each of the six layers, `complete::parse_with_catalog` over a unit whose one header profile names the layer, with that catalog, adds no `unknown_profile` diagnostic. The same call over the unit with the identity `test:unknown-profile` reports `unknown_profile`/`unsupported-selection` at the identity literal's span, the pair FR-110-AC-2 gives; over the unit whose header profile names the `ieee_profile` row's identity, which E3 refuses `wrong-selection-role` (FR-110-AC-3), it reports `unknown_profile`/`unsupported-selection` at the identity literal's span. | Test (TC-490) |
-| FR-110-AC-13 | A unit whose one header profile names `quire.temporal.complete/v1` resolves to that layer as a header-selectable layer, with no new refusal code; `complete::header_profile_catalog()` contains the identity, and `complete::parse_with_catalog` over the unit adds no `unknown_profile` diagnostic. A declaration whose `using` alias names the layer is admitted under the layer's and its `requires` closure's admitted forms, and an equality `r = q` over records, `a = b` over `Reference<Order>` and `s = t` over sequences compile under it. | Test (TC-490) |
+| FR-110-AC-13 | A unit whose one header profile names `filament.temporal.complete/v1` resolves to that layer as a header-selectable layer, with no new refusal code; `complete::header_profile_catalog()` contains the identity, and `complete::parse_with_catalog` over the unit adds no `unknown_profile` diagnostic. A declaration whose `using` alias names the layer is admitted under the layer's and its `requires` closure's admitted forms, and an equality `r = q` over records, `a = b` over `Reference<Order>` and `s = t` over sequences compile under it. | Test (TC-490) |
 | FR-110-AC-14 | A unit with the `root` profile `v` and a second header profile `r` naming `ext.retention`, an identity no layer has, compiled with a `ProfileCatalogInput` whose `DefinitionCatalog` holds `agent-ix`/`ext.retention` as a `DefinitionRole::Extension` definition, resolves `r` to the extension selection `{agent-ix, ext.retention}` and reports no `unknown_profile` refusal; the same unit with a catalog that does not hold the identity, and with one that holds it under another role, each refuse `unknown_profile`/`unsupported-selection` at the identity literal's span, as FR-110-AC-2. | Test (TC-490) |
 | FR-110-AC-15 | The AC-14 unit's emitted lock has `definition_selections` whose last row is `{agent-ix, ext.retention}`, after every closed row and law row; a unit selecting `agent-ix`/`ext.b` and then `agent-ix`/`ext.a` ends `definition_selections` with `ext.a` then `ext.b`; no extension identity appears in `required_features` or `profile_selections`. | Test (TC-490) |
 
@@ -306,8 +306,8 @@ adds no `required_features` entry and no `profile_selections` row for it.
 - [FR-091](FR-091-produce-value-forms-and-assemble-package-declarations.md),
   whose assembler resolves each `using` alias to a header profile
   (FR-091-AC-22) after this resolution.
-- The QSpec definition prose (the catalog definitions and the
+- The FSpec definition prose (the catalog definitions and the
   header-selectable layers), `native-diagnostics.md`
   (the codes and causes) and FR-322 (the package members).
-- QSpec FR-453 and QSpec FR-001 (header selection of each layer and its
+- FSpec FR-453 and FSpec FR-001 (header selection of each layer and its
   restricted admission).

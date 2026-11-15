@@ -3,7 +3,7 @@ id: TC-672
 title: "Weak-memory counterexamples carry memory components and replay"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-227
+  - target: ix://agent-ix/filament-spec-language/FR-227
     type: verifies
 ---
 # TC-672: Weak-memory counterexamples carry memory components and replay

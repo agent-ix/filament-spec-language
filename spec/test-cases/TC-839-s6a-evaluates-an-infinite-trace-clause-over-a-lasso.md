@@ -3,7 +3,7 @@ id: TC-839
 title: "S6a evaluates an infinite-trace clause exactly over a fair lasso"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: verifies
 ---
 # TC-839: S6a evaluates an infinite-trace clause exactly over a fair lasso

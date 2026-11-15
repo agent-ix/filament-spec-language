@@ -3,7 +3,7 @@ id: TC-824
 title: "A case checks under each clause kind and adds no requirement record"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-318
+  - target: ix://agent-ix/filament-spec-language/FR-318
     type: verifies
 ---
 # TC-824: A case checks under each clause kind and adds no requirement record

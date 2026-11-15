@@ -3,9 +3,9 @@ id: IT-005
 title: "Qualify native formal-declaration consumption and static judgments"
 type: IT
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-005
+  - target: ix://agent-ix/filament-spec-language/FR-005
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-006
+  - target: ix://agent-ix/filament-spec-language/FR-006
     type: verifies
 ---
 

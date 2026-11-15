@@ -3,14 +3,14 @@ id: TC-419
 title: "A declared unit's quantity type is its unit node, and a compound unit is its own node"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: verifies
 ---
 # TC-419: A declared unit's quantity type is its unit node, and a compound unit is its own node
 
 ## Description
 
-Verify that a quantity of a declared unit is typed by that unit's QSpec
+Verify that a quantity of a declared unit is typed by that unit's FSpec
 nominal node with no wrapper node, that a compound unit's type node lists its
 terms in ascending root-unit node-id order, and that a compound unit the
 check stage's unit scope does not hold is an internal fault.
@@ -23,9 +23,9 @@ Scope: FR-094-AC-6, FR-094-AC-7 (its compound-unit and declared-unit cases), FR-
 
 ## Test Procedure
 
-For steps 1–7, the unit table admits QSpec's `dimension-length`, `dimension-time`,
+For steps 1–7, the unit table admits FSpec's `dimension-length`, `dimension-time`,
 `unit-metre` and `unit-second` nominal nodes, read at run time from
-`QSPEC_DIR` (the opt-in `make conformance` gate).
+`FSPEC_DIR` (the opt-in `make conformance` gate).
 
 1. Check a parameter typed as a quantity of the declared unit `metre`. Read
    its semantic type, and list the graph's `compound_unit` nodes.
@@ -58,7 +58,7 @@ For steps 1–7, the unit table admits QSpec's `dimension-length`, `dimension-ti
    with the node's `root_scale` set to `0/1`, `-1/1`, `2000/2`, removed, and
    with the base ratios not multiplying to one.
 
-8. Independently place `ix://quire/unit/U` in each of FR-094-AC-15's eight publicly admitted model type positions, leaving every other model type unitless. Select that model from a source declaring dimension `Money`, root unit `Base`, derived unit `U = 2 × Base` and unrelated unit `Unused`. For Rational, also declare the model's own `Money` dimension and `U` root unit, satisfying its namespace rule. Check only a Boolean expression that names no unit. Write each checked handoff through the production writer and read it through the production IR reader.
+8. Independently place `ix://filament/unit/U` in each of FR-094-AC-15's eight publicly admitted model type positions, leaving every other model type unitless. Select that model from a source declaring dimension `Money`, root unit `Base`, derived unit `U = 2 × Base` and unrelated unit `Unused`. For Rational, also declare the model's own `Money` dimension and `U` root unit, satisfying its namespace rule. Check only a Boolean expression that names no unit. Write each checked handoff through the production writer and read it through the production IR reader.
 
 9. Independently for the defensive Variant and Map record arms, construct a synthetic domain package containing an otherwise unused variant payload or map value typed by an admitted unit. Run the real model normalizer, admit its resulting contract view, and invoke production model-type unit-root lowering without any expression lowering. This is contract-fixture coverage, not evidence of public intake accepting a unit payload. The existing FR-056-AC-25/TC-995 test continues to assert that public refusal.
 
@@ -66,7 +66,7 @@ Tag the tests `#[trace("FR-094-AC-n", "TC-419")]` with the AC each backs.
 
 ## Expected Results
 
-- Step 1: the semantic type is QSpec's `unit-metre` node, and the
+- Step 1: the semantic type is FSpec's `unit-metre` node, and the
   graph holds no `compound_unit` node. It holds the `metre` node, a
   `scalar_type`/`unit` node typed by the `dimension-length` node, which it also
   holds as a `scalar_type`/`dimension` node.

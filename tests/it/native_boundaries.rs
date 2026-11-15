@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Parse/format round-trip boundaries and diagnostics for native syntax.
-use ix_trace_rs::trace;
-use qsl_cst::format::{
+use fsl_cst::format::{
     format, format_with_limit, format_with_limits, FormatLimits, FormatRefusal, OUTPUT_BYTE_CEILING,
 };
-use qsl_cst::ParsedSource;
-use qsl_foundation::source::MAX_SOURCE_BYTES;
-use qsl_foundation::{Code, Diagnostic, Phase, Source, SourceIdentity};
+use fsl_cst::ParsedSource;
+use fsl_foundation::source::MAX_SOURCE_BYTES;
+use fsl_foundation::{Code, Diagnostic, Phase, Source, SourceIdentity};
+use ix_trace_rs::trace;
 
 /// A refusal from the one source intake, as a `Box<Diagnostic>`.
 fn refuse_source(bytes: &[u8]) -> Result<Source, Box<Diagnostic>> {
@@ -22,14 +22,14 @@ fn refuse_source(bytes: &[u8]) -> Result<Source, Box<Diagnostic>> {
 }
 
 fn parse_complete(text: &str) -> ParsedSource {
-    qsl_cst::parse(
+    fsl_cst::parse(
         SourceIdentity {
             authority: "test".into(),
             identity: "test:boundary".into(),
         },
         "boundary.quire",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .unwrap()
 }
@@ -37,7 +37,7 @@ fn parse_complete(text: &str) -> ParsedSource {
 const COMPLETE: &str = concat!(
     "language \"ix:native\" edition \"1-draft\";\n",
     "// café: a multibyte comment counts in bytes\n",
-    "profile v = \"quire.value.complete/v1\";\n",
+    "profile v = \"filament.value.complete/v1\";\n",
     "type Digit = Int[0, 9];\n",
     "function inc using v(x: Digit): Int[0, 10] pure { x + 1 }\n",
 );
@@ -64,7 +64,7 @@ fn format_output_refusal_names_emitted_bytes_at_zero_and_one_short() {
         assert_eq!(diagnostic.code, Code::ResourceExhausted);
         assert_eq!(
             diagnostic.cause,
-            qsl_cst::CompleteCause::StageLimit(qsl_foundation::diagnostic::LimitKind::InputBytes)
+            fsl_cst::CompleteCause::StageLimit(fsl_foundation::diagnostic::LimitKind::InputBytes)
         );
         assert!(diagnostic.cause.is_cause_of(diagnostic.code));
         assert_eq!(diagnostic.phase, Phase::Format);
@@ -72,7 +72,7 @@ fn format_output_refusal_names_emitted_bytes_at_zero_and_one_short() {
         assert!(diagnostic.region.is_some());
         assert_eq!(
             diagnostic.limit(),
-            Some(qsl_foundation::SyntaxLimit::SourceBytes { bound })
+            Some(fsl_foundation::SyntaxLimit::SourceBytes { bound })
         );
         assert!(diagnostic.message.contains("format output-byte limit"));
         assert!(diagnostic.message.contains("format.output_bytes"));
@@ -101,15 +101,15 @@ fn format_output_refusal_names_emitted_bytes_at_zero_and_one_short() {
 #[trace("TC-931", "FR-255-AC-4", "FR-255-AC-6")]
 #[test]
 fn caller_settings_report_the_requested_format_output_bound() {
-    use qsl_foundation::{Setting, SettingLimits};
-    use qsl_replay::CallerLimits;
+    use fsl_foundation::{Setting, SettingLimits};
+    use fsl_replay::CallerLimits;
 
     let setting = Setting::from_name("format.output_bytes")
         .expect("the published format setting has a shared row");
     assert_eq!(setting.stage(), "format");
     assert_eq!(
         setting.kind(),
-        qsl_foundation::diagnostic::LimitKind::InputBytes
+        fsl_foundation::diagnostic::LimitKind::InputBytes
     );
     let defaults = CallerLimits::from_operands(std::iter::empty::<&str>()).unwrap();
     assert_eq!(
@@ -146,8 +146,8 @@ fn caller_settings_report_the_requested_format_output_bound() {
 #[trace("TC-931", "FR-255-AC-5")]
 #[test]
 fn malformed_format_setting_operands_refuse_before_any_stage() {
-    use qsl_foundation::UsageCause;
-    use qsl_replay::CallerLimits;
+    use fsl_foundation::UsageCause;
+    use fsl_replay::CallerLimits;
 
     for (operand, cause) in [
         ("format.unknown=1", UsageCause::UnknownSetting),
@@ -173,8 +173,8 @@ fn malformed_format_setting_operands_refuse_before_any_stage() {
 #[trace("TC-931", "FR-003-AC-10", "FR-255-AC-3", "FR-255-AC-4")]
 #[test]
 fn the_settings_operation_supplies_the_actual_formatter_limits() {
-    use qsl_foundation::{Setting, SettingLimits};
-    use qsl_replay::CallerLimits;
+    use fsl_foundation::{Setting, SettingLimits};
+    use fsl_replay::CallerLimits;
 
     let parsed = parse_complete(COMPLETE);
     assert!(parsed.is_admissible());
@@ -231,7 +231,7 @@ fn formatter_byte_ceiling_is_inclusive_and_counts_final_newline() {
     let expected = concat!(
         "language \"ix:native\" edition \"1-draft\";\n",
         "// café: a multibyte comment counts in bytes\n",
-        "profile v = \"quire.value.complete/v1\";\n",
+        "profile v = \"filament.value.complete/v1\";\n",
         "type Digit = Int [0, 9];\n",
         "function inc using v (x : Digit) : Int [0, 10] pure {\n  x + 1\n}\n",
     );
@@ -265,7 +265,7 @@ fn formatter_byte_ceiling_is_inclusive_and_counts_final_newline() {
 fn formatter_uses_a_raised_content_ceiling_as_given() {
     let header = concat!(
         "language\"ix:native\"edition\"1-draft\";",
-        "profile v=\"quire.value.complete/v1\";",
+        "profile v=\"filament.value.complete/v1\";",
         "type Digit=Int[0,9];"
     );
     assert_eq!(OUTPUT_BYTE_CEILING, 1_048_576);
@@ -283,7 +283,7 @@ fn formatter_uses_a_raised_content_ceiling_as_given() {
     assert_eq!(format(&parsed).unwrap_err().code(), Code::ResourceExhausted);
     let expected_header = concat!(
         "language \"ix:native\" edition \"1-draft\";\n",
-        "profile v = \"quire.value.complete/v1\";\n",
+        "profile v = \"filament.value.complete/v1\";\n",
         "type Digit = Int [0, 9];\n",
     );
     let expected = format!(
@@ -297,7 +297,7 @@ fn formatter_uses_a_raised_content_ceiling_as_given() {
     let refusal = format_with_limit(&parsed, expected.len() - 1).unwrap_err();
     assert_eq!(
         refusal.diagnostic().limit(),
-        Some(qsl_foundation::SyntaxLimit::SourceBytes {
+        Some(fsl_foundation::SyntaxLimit::SourceBytes {
             bound: expected.len() - 1
         })
     );
@@ -307,10 +307,10 @@ fn formatter_uses_a_raised_content_ceiling_as_given() {
     assert!(refusal.to_string().contains("format_with_limit"));
 }
 
-/// Everything in `qsl-cst/src/format.rs` except its `mod tests` block and comment
+/// Everything in `fsl-cst/src/format.rs` except its `mod tests` block and comment
 /// lines, for the TC-404 step-1 edge scan.
 fn format_module_production_code() -> String {
-    let text = include_str!("../../qsl-cst/src/format.rs");
+    let text = include_str!("../../fsl-cst/src/format.rs");
     let production = text
         .split_once("#[cfg(test)]\nmod tests {")
         .map_or(text, |(production, _)| production);
@@ -360,16 +360,16 @@ fn format_takes_the_cst_and_depends_on_layer_1_and_f_only() {
     assert!(!uses.is_empty());
     for path in &uses {
         assert!(
-            ["crate", "qsl_foundation", "std"]
+            ["crate", "fsl_foundation", "std"]
                 .iter()
                 .any(|allowed| path.starts_with(allowed)),
             "use {path}"
         );
     }
-    for forbidden in ["super::", "self::", "quire_spec_language"] {
+    for forbidden in ["super::", "self::", "filament_spec_language"] {
         assert!(
             !code.contains(forbidden),
-            "qsl-cst/src/format.rs names {forbidden}"
+            "fsl-cst/src/format.rs names {forbidden}"
         );
     }
     // A crate-local `macro_rules!` macro reaches the root crate without a
@@ -377,7 +377,7 @@ fn format_takes_the_cst_and_depends_on_layer_1_and_f_only() {
     for name in invoked_macros(&code) {
         assert!(
             ["matches", "format"].contains(&name.as_str()),
-            "qsl-cst/src/format.rs invokes {name}!"
+            "fsl-cst/src/format.rs invokes {name}!"
         );
     }
 }
@@ -387,7 +387,7 @@ fn format_takes_the_cst_and_depends_on_layer_1_and_f_only() {
 fn format_formats_complete_v1_source() {
     let text = concat!(
         "language \"ix:native\" edition \"1-draft\";\n",
-        "profile v = \"quire.value.complete/v1\";\n",
+        "profile v = \"filament.value.complete/v1\";\n",
         "record Point { x: Int[0, 9]; y: Int[0, 9]; }\n",
         "function px using v(p: Point): Int[0, 9] pure {\n",
         "  // the nested block keeps this comment\n",
@@ -404,7 +404,7 @@ fn format_formats_complete_v1_source() {
             .cst()
             .tokens()
             .iter()
-            .filter(|token| token.class() != qsl_cst::TokenClass::Whitespace)
+            .filter(|token| token.class() != fsl_cst::TokenClass::Whitespace)
             .map(|token| token.spelling().to_vec())
             .collect()
     };
@@ -417,7 +417,7 @@ fn format_formats_complete_v1_source() {
 fn format_refuses_a_recovering_or_diagnosed_parse_without_output() {
     let recovering = parse_complete(concat!(
         "language \"ix:native\" edition \"1-draft\"; ",
-        "profile v = \"quire.value.complete/v1\"; ",
+        "profile v = \"filament.value.complete/v1\"; ",
         "record Broken { value: Integer }"
     ));
     assert!(!recovering.cst().recoveries().is_empty());
@@ -435,10 +435,10 @@ fn format_refuses_a_recovering_or_diagnosed_parse_without_output() {
 
     let mut diagnosed = parse_complete(COMPLETE);
     assert!(diagnosed.is_admissible());
-    let profile_refusal = qsl_cst::diagnostic::error(
+    let profile_refusal = fsl_cst::diagnostic::error(
         diagnosed.source(),
         Code::UnknownProfile,
-        qsl_cst::CompleteCause::UnsupportedSelection,
+        fsl_cst::CompleteCause::UnsupportedSelection,
         Phase::Profile,
         0,
         0,

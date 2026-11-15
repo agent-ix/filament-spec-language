@@ -3,7 +3,7 @@ id: TC-1187
 title: "A hybrid declaration checks to a classified model and its claim routes to a hybrid provider"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-447
+  - target: ix://agent-ix/filament-spec-language/FR-447
     type: verifies
 ---
 # TC-1187: A hybrid declaration checks to a classified model and its claim routes to a hybrid provider
@@ -34,17 +34,17 @@ from the package bytes it receives.
    fixture registered, then with only the process fixture registered, then
    with no provider; compare the checked package identities of `Braking` and
    of `Braking` with `Moving`'s `v' = -a` replaced by `v' = -(2 * a)`.
-5. Run S4 over the package and read the emitted bytes with QSpec's v2
+5. Run S4 over the package and read the emitted bytes with FSpec's v2
    reader; check that `MovingFair`'s fairness member references the
    `[Braking]` model node and names `Moving`; run S4 over the
    `v' = -(2 * a)` package and compare `package_id`s.
-6. Read the emitted package and QSpec's `positive-all-families.json` with
-   QSL's I2 reader; feed it each mutation FR-447-AC-13 lists, with
+6. Read the emitted package and FSpec's `positive-all-families.json` with
+   FSL's I2 reader; feed it each mutation FR-447-AC-13 lists, with
    `dependencies`, keys and `package_id` rebuilt after each edit.
 7. Emit the claim body `always [0, 10] true`, and read `SlowEnough`'s
    emitted law.
 8. Check and emit `SlowEnough` under a `timed/v1` profile alias and read the
-   bytes with QSpec's v2 reader; check `always [0, *] holds(h.v < 30)` under
+   bytes with FSpec's v2 reader; check `always [0, *] holds(h.v < 30)` under
    `timed/v1`, and `always holds(h.v < 30)` under `timed/v1` and under the
    event-position profile.
 
@@ -66,7 +66,7 @@ Tag the tests `#[trace("TC-1187", "FR-447-AC-n")]`.
   `temporal_clause` node, routed to the in-process fixture, which reads
   `Braking` from the checked package; with only the process fixture, routed
   to it, which receives the v2 bytes and reads `Braking` and `SlowEnough`
-  from their QSpec FR-481 nodes; `unsupported`,
+  from their FSpec FR-481 nodes; `unsupported`,
   `unsupported-requested-capability` with none; different checked package
   identities.
 - Step 5: the package is emitted and admitted, holding FR-447-AC-5's
@@ -76,7 +76,7 @@ Tag the tests `#[trace("TC-1187", "FR-447-AC-n")]`.
 - Step 6: the read-back `CheckedHybridModel` and `CheckedHybridClaim`
   (horizon 10) equal the checked ones; `positive-all-families.json` is
   admitted; each mutation refused with the code and locus FR-447-AC-13 states.
-- Step 7: a `quire.op.temporal.true` formula node under the `always` node
+- Step 7: a `filament.op.temporal.true` formula node under the `always` node
   and no `holds` node over a Boolean literal; the law `p` selects.
 - Step 8: the interval `[0, 10]` with closed ends and horizon 10, emitted in
     the timed form with the `timed/v1` law and admitted; `always [0, *]`

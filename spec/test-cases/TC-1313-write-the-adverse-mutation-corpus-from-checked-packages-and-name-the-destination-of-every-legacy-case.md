@@ -3,7 +3,7 @@ id: TC-1313
 title: "Write the adverse mutation corpus from checked packages and name the destination of every legacy case"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-518
+  - target: ix://agent-ix/filament-spec-language/FR-518
     type: verifies
 ---
 # TC-1313: Write the adverse mutation corpus from checked packages and name the destination of every legacy case
@@ -17,7 +17,7 @@ The case table is FR-518's; rows are referenced by number.
 
 | Row | AC | Input | Expected |
 | --- | --- | --- | --- |
-| 1 | 1 | `write(R, dir)` with `Standard`; parse `mutations/manifest.json` | format `quire.checked-handoff.mutations/1`; cases in table order with unique identities and stages `reader` or `selection`; 14b, 15b present; every file non-empty |
+| 1 | 1 | `write(R, dir)` with `Standard`; parse `mutations/manifest.json` | format `filament.checked-handoff.mutations/1`; cases in table order with unique identities and stages `reader` or `selection`; 14b, 15b present; every file non-empty |
 | 2 | 2 | submit each `reader` case to `read_checked_package` with the evidence of the directory | refused with the table's code, cause and pointer; every `reader` case of the manifest |
 | 3 | 3 | submit each `selection` case to the reader, then to `Selection::check`; submit unmutated **R** to both | admitted then refused with the row's `SelectionAxis` (every `selection` case of the manifest); **R** passes both |
 | 4 | 4 | submit the cases of rows 12 and 29 to the reader, then `Selection::check` | admitted, then `definition.identity` and `definition.authority` |

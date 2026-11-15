@@ -4,18 +4,18 @@ title: S3 checker one-shot wall time and peak RSS
 type: MeasurementPlan
 status: active
 owner: peter
-metric: qsl.bench.probe.check_wall_time_and_rss
-definition_version: qsl.bench.probe.check_wall_time_and_rss-v1
+metric: fsl.bench.probe.check_wall_time_and_rss
+definition_version: fsl.bench.probe.check_wall_time_and_rss-v1
 stage: baseline
 ground_truth_kind: mechanical
 objective:
   direction: lower
 subject_identity:
-  name: qsl-semantics S3 checker (PackageDeclarations::check)
-  version: "qsl-semantics/Cargo.toml"
+  name: fsl-semantics S3 checker (PackageDeclarations::check)
+  version: "fsl-semantics/Cargo.toml"
 statistical_design:
   population: >-
-    The fixed, generated inputs `qsl-bench-probe check <shape> <n>` builds,
+    The fixed, generated inputs `fsl-bench-probe check <shape> <n>` builds,
     one observation dimension per shape, size and quantity (`wall_time` or
     `peak_rss`); every input is deterministic.
   sampling: >-
@@ -36,9 +36,9 @@ statistical_design:
     comparator: lt
     baseline: prior-collection
 protected_apparatus:
-  - qsl-bench/src/bin/qsl-bench-probe.rs
-  - qsl-bench/src/check.rs
-  - qsl-bench/src/rss.rs
+  - fsl-bench/src/bin/fsl-bench-probe.rs
+  - fsl-bench/src/check.rs
+  - fsl-bench/src/rss.rs
 negative_controls:
   - kind: gain-within-noise
     description: >-
@@ -48,7 +48,7 @@ negative_controls:
       baseline revision's same-session median by more than the larger of
       either side's MAD/median in that session. A smaller change is
       recorded as no change, using the live session-noise rule in
-      qsl-bench/BENCHMARKING.md.
+      fsl-bench/BENCHMARKING.md.
   - kind: apparatus-edit
     description: >-
       The probe, its input generator and its RSS reader are protected
@@ -63,7 +63,7 @@ negative_controls:
       Every recorded collection names the machine it ran on; a result from
       another machine is not compared with this paired session.
 relationships:
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: measures
 ---
 
@@ -78,7 +78,7 @@ before and after it. The plan grades no release and gates no merge.
 
 ## Population
 
-Each `qsl-bench-probe check <shape> <n>` run, where `<shape>` is `chain`,
+Each `fsl-bench-probe check <shape> <n>` run, where `<shape>` is `chain`,
 `independent` or `self-recursive`. Each (shape, size, quantity) triple is one
 observation dimension:
 
@@ -89,7 +89,7 @@ observation dimension:
 
 ## Collection Procedure
 
-Run `qsl-bench-probe check <shape> <n>` once per size per round, one process
+Run `fsl-bench-probe check <shape> <n>` once per size per round, one process
 each, five rounds, on one machine. Record
 `/proc/loadavg` before and after each round. The observed value per dimension
 is the median of the five rounds.

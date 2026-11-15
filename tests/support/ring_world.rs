@@ -14,21 +14,21 @@
     reason = "each test binary uses the part of the fixture it needs"
 )]
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
-use qsl_eval::simulation::model::{
+use filament_exact::{Integer, ScalarLimits, Value};
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use qsl_foundation::SourceIdentity;
-use qsl_package::CheckedPackage;
-use qsl_semantics::check::{CheckedGraph, CheckedRefinement, PackageDeclarations};
-use qsl_semantics::model::accounting::ModelNormalizationLimits;
-use qsl_semantics::model::intake::{admit_unit, package_input};
-use qsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use qsl_semantics::model::state::{ModelState, StateObject};
-use quire_exact::{Integer, ScalarLimits, Value};
-use quire_semantic_value::checking::CheckingLimits;
+use fsl_foundation::SourceIdentity;
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::{CheckedGraph, CheckedRefinement, PackageDeclarations};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{admit_unit, package_input};
+use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
+use fsl_semantics::model::state::{ModelState, StateObject};
 use serde_json::{json, Value as Json};
 
 #[path = "ring_queue.rs"]
@@ -36,7 +36,7 @@ pub(crate) mod ring_queue;
 
 pub use ring_queue::{key, node, QUEUE, RING};
 
-const BOOLEAN: &str = "ix://quire/native/Boolean";
+const BOOLEAN: &str = "ix://filament/native/Boolean";
 
 /// A budget no fixture evaluation exhausts.
 pub const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -324,15 +324,15 @@ pub fn ring_is_queue(items: &str) -> String {
 
 /// The unit text: both models, the contracts of `variant` and `refinement`.
 fn unit_text(
-    documents: &qsl_semantics::model::intake::PackageInput,
+    documents: &fsl_semantics::model::intake::PackageInput,
     refinement: &str,
     variant: Variant,
 ) -> String {
     let _ = documents;
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
-         profile inf = \"quire.temporal.infinite-trace/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          model Q = \"{QUEUE}\";\n\
          model R = \"{RING}\";\n\
          {}{refinement}\n",
@@ -341,7 +341,7 @@ fn unit_text(
 }
 
 /// The two domain packages' documents, by identity.
-fn packages(variant: Variant) -> qsl_semantics::model::intake::PackageInput {
+fn packages(variant: Variant) -> fsl_semantics::model::intake::PackageInput {
     package_input([
         queue_document(variant).as_slice(),
         ring_document(variant).as_slice(),
@@ -353,15 +353,15 @@ fn packages(variant: Variant) -> qsl_semantics::model::intake::PackageInput {
 pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String> {
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "ring"),
         "ring.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 parses the unit");
     assert!(parsed.is_admissible(), "S1: {:?}", parsed.diagnostics());
-    let built = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let models = admit_unit(
         &built.selections().models,
         &documents,
@@ -369,7 +369,7 @@ pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String>
     )
     .expect("the model selections admit")
     .with_parsed_operation_clauses(|text| {
-        qsl_forms::parse_clause_text(text, qsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let declarations = PackageDeclarations::assemble(
@@ -391,11 +391,11 @@ pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String>
 fn snapshot(
     package: &str,
     populations: Vec<Json>,
-    snapshots: &mut qsl_semantics::model::observation::DocumentProvision,
+    snapshots: &mut fsl_semantics::model::observation::DocumentProvision,
 ) -> DocumentRef {
     let name = format!("{package}/start");
     let snapshot = json!({
-        "format": "quire.state.snapshot/v1",
+        "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": name},
         "observation": "current",
         "model": {"identity": package},
@@ -404,7 +404,7 @@ fn snapshot(
     });
     let bytes = snapshot.to_string().into_bytes();
     snapshots.insert(
-        qsl_semantics::model::observation::document_reference(&bytes)
+        fsl_semantics::model::observation::document_reference(&bytes)
             .expect("a document names itself"),
         bytes,
     );
@@ -417,8 +417,8 @@ fn snapshot(
 /// The unit's package, the two models' documents and their initial states.
 pub struct RingWorld {
     package: CheckedPackage,
-    packages: qsl_semantics::model::intake::PackageInput,
-    snapshots: qsl_semantics::model::observation::DocumentProvision,
+    packages: fsl_semantics::model::intake::PackageInput,
+    snapshots: fsl_semantics::model::observation::DocumentProvision,
     queue_initial: DocumentRef,
     ring_initial: DocumentRef,
 }
@@ -546,7 +546,7 @@ impl RingWorld {
             ]
         };
         ModelSimulationRequest {
-            emit: qsl_package::EmitLimits::fixture(),
+            emit: fsl_package::EmitLimits::fixture(),
             package: &self.package,
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
@@ -717,8 +717,8 @@ pub fn custom_state(
 /// initial state.
 pub struct MapWorld {
     package: CheckedPackage,
-    packages: qsl_semantics::model::intake::PackageInput,
-    snapshots: qsl_semantics::model::observation::DocumentProvision,
+    packages: fsl_semantics::model::intake::PackageInput,
+    snapshots: fsl_semantics::model::observation::DocumentProvision,
 }
 
 impl MapWorld {
@@ -748,7 +748,7 @@ impl MapWorld {
     fn system(&self, model: &str, universes: Vec<PopulationUniverse>) -> ModelSystem<'_> {
         ModelSystem::over_model(
             ModelSimulationRequest {
-                emit: qsl_package::EmitLimits::fixture(),
+                emit: fsl_package::EmitLimits::fixture(),
                 package: &self.package,
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),

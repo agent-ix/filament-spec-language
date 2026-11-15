@@ -3,7 +3,7 @@ id: TC-620
 title: "S3 admits random parameters, workloads and rewards and refuses malformed ones"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-185
+  - target: ix://agent-ix/filament-spec-language/FR-185
     type: verifies
 ---
 # TC-620: S3 admits random parameters, workloads and rewards and refuses malformed ones
@@ -25,7 +25,7 @@ Fixtures: the dimension `Time`, the unit `s` (root) and the unit `ms` (target `s
 5. Declare a second workload `Steady` on `Service`, and one on `Other` (FR-185-AC-5).
 6. Check the two coprime-weight distributions of FR-185-AC-6, and one with a check cancelled before it starts.
 7. Emit `Service` (FR-185-AC-7).
-8. Check `Server::attempt` with `d: Quantity<ms>` and its supports, then with `1 s` and `true` (FR-185-AC-8, with `Time`, `s` and `ms` declared; it reads QSpec's unit `typeRef` and quantity literal form, FR-322-AC-79 and FR-322-AC-80).
+8. Check `Server::attempt` with `d: Quantity<ms>` and its supports, then with `1 s` and `true` (FR-185-AC-8, with `Time`, `s` and `ms` declared; it reads FSpec's unit `typeRef` and quantity literal form, FR-322-AC-79 and FR-322-AC-80).
 9. Check the reference-typed parameter variant of FR-185-AC-9 with a reference literal naming the key of a `Server` object as the support value, then the variant with the parameter typed `Int[1, 12]` and the integer support value `3`.
 
 Tag the tests `#[trace("TC-620", "FR-185-AC-n")]`.

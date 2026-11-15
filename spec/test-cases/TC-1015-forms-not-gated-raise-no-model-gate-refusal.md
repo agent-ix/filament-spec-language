@@ -3,7 +3,7 @@ id: TC-1015
 title: "Forms this requirement does not gate raise no model-gate refusal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-361
+  - target: ix://agent-ix/filament-spec-language/FR-361
     type: verifies
 ---
 # TC-1015: Forms this requirement does not gate raise no model-gate refusal
@@ -14,12 +14,12 @@ Verify that only the families of FR-361 item 5 are gated. Scope: FR-361-AC-4 and
 
 ## Test Procedure
 
-1. Compile a unit with the header profile `quire.value.complete/v1`, a `model` declaration and a `pre`, a `post` and an `invariant` against its alias.
-2. For each of `Population<M::A>` as a type, `allInstances<M::A>(...)`, the field navigation `a.f` on an object-typed value, a `hyper` clause, a `relation` clause and a state-graph clause, compile one unit that holds only that form, first with the header profile `quire.model.complete/v1` and then with `quire.value.complete/v1`.
-3. Compile one declaration holding a `deref` and one holding a `reaches`, each with a `using` alias that resolves first to `quire.value.complete/v1`, then to `quire.state.graph/v1`, then to `quire.model.complete/v1`; repeat with the value-profile alias in a unit whose header also selects `quire.state.graph/v1` through a second alias.
+1. Compile a unit with the header profile `filament.value.complete/v1`, a `model` declaration and a `pre`, a `post` and an `invariant` against its alias.
+2. For each of `Population<M::A>` as a type, `allInstances<M::A>(...)`, the field navigation `a.f` on an object-typed value, a `hyper` clause, a `relation` clause and a state-graph clause, compile one unit that holds only that form, first with the header profile `filament.model.complete/v1` and then with `filament.value.complete/v1`.
+3. Compile one declaration holding a `deref` and one holding a `reaches`, each with a `using` alias that resolves first to `filament.value.complete/v1`, then to `filament.state.graph/v1`, then to `filament.model.complete/v1`; repeat with the value-profile alias in a unit whose header also selects `filament.state.graph/v1` through a second alias.
 
 ## Expected Results
 
 1. The unit compiles.
-2. Under `quire.model.complete/v1` no unit is refused by the model-profile gate (a checked `hyper` clause over `behaviours` is emitted, FR-488, and is refused `NotEmitted` only in the cases of FR-488 "Clauses S4 does not emit"; a `relation` clause over model operations is emitted, FR-180). Under `quire.value.complete/v1` each unit is admitted or refused by FR-110's layer rule naming `quire.value.complete/v1`; no refusal retains a family of item 5 or the required layer `quire.model.complete/v1`.
+2. Under `filament.model.complete/v1` no unit is refused by the model-profile gate (a checked `hyper` clause over `behaviours` is emitted, FR-488, and is refused `NotEmitted` only in the cases of FR-488 "Clauses S4 does not emit"; a `relation` clause over model operations is emitted, FR-180). Under `filament.value.complete/v1` each unit is admitted or refused by FR-110's layer rule naming `filament.value.complete/v1`; no refusal retains a family of item 5 or the required layer `filament.model.complete/v1`.
 3. With the value-profile alias each declaration is refused once by FR-110's layer rule naming that layer, retaining no family of item 5; with the other two aliases each compiles; with the value-profile alias in the multi-profile unit each declaration is still refused by the layer rule.

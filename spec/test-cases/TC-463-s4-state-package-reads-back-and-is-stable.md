@@ -3,14 +3,14 @@ id: TC-463
 title: "The state package reads back through I2, keeps its identity rules and emits all or nothing"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: verifies
 ---
 # TC-463: The state package reads back through I2, keeps its identity rules and emits all or nothing
 
 ## Description
 
-Verify QSL's I2 read of the emitted state package, identity and cardinality
+Verify FSL's I2 read of the emitted state package, identity and cardinality
 rules under edits, anchoring of inherited operations, and all-or-nothing
 emission.
 
@@ -18,7 +18,7 @@ Scope: FR-105-AC-3, FR-105-AC-4, FR-105-AC-6, FR-105-AC-12.
 
 ## Test Procedure
 
-1. Read TC-462's emitted bytes through QSL's `checked_v2` I2 reader.
+1. Read TC-462's emitted bytes through FSL's `checked_v2` I2 reader.
 2. Compile the unit twice. Then rename `ParentOrder` to `ParentFirst`; then
    change its `<` to `<=`; then add `ParentOrder2` with `ParentOrder`'s body;
    then add `post Also using v on Config::ConfigVersion::attemptUpdate

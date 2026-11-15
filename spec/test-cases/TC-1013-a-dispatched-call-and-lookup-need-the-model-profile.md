@@ -3,7 +3,7 @@ id: TC-1013
 title: "A dispatched call and a lookup refuse without the model profile"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-361
+  - target: ix://agent-ix/filament-spec-language/FR-361
     type: verifies
 ---
 # TC-1013: A dispatched call and a lookup refuse without the model profile
@@ -14,9 +14,9 @@ Verify that the `dispatch-call` and `lookup` expression families refuse `unsuppo
 
 ## Test Procedure
 
-1. Unit A: a `model` declaration with object type `A` and operation `A.add(amount: Integer): Integer`, and a function whose body calls `a.add(1)` on a parameter `a: M::A`. Compile it with the header profile `quire.value.complete/v1`.
-2. Unit B: a `model` declaration with object type `A`, a population binding `p` of type `Population<M::A>` and a function whose body is `lookup<M::A>(p, r) absent undefined`. Compile it with the header profile `quire.value.complete/v1`.
-3. Compile units A and B with the header profile `quire.model.complete/v1`.
+1. Unit A: a `model` declaration with object type `A` and operation `A.add(amount: Integer): Integer`, and a function whose body calls `a.add(1)` on a parameter `a: M::A`. Compile it with the header profile `filament.value.complete/v1`.
+2. Unit B: a `model` declaration with object type `A`, a population binding `p` of type `Population<M::A>` and a function whose body is `lookup<M::A>(p, r) absent undefined`. Compile it with the header profile `filament.value.complete/v1`.
+3. Compile units A and B with the header profile `filament.model.complete/v1`.
 
 ## Expected Results
 

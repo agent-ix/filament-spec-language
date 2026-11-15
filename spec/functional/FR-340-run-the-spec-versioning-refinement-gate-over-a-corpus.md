@@ -3,40 +3,40 @@ id: FR-340
 title: "Run the spec-versioning refinement gate over a corpus of revision pairs"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-034
+  - target: ix://agent-ix/filament-spec-language/US-034
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-001
+  - target: ix://agent-ix/filament-spec-language/FR-001
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-342
+  - target: ix://agent-ix/filament-spec-language/FR-342
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-343
+  - target: ix://agent-ix/filament-spec-language/FR-343
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-344
+  - target: ix://agent-ix/filament-spec-language/FR-344
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
 ---
 # FR-340: Run the spec-versioning refinement gate over a corpus of revision pairs
 
 ## Description
 
-QSL SHALL provide `xtask refinement versioning <corpus>`, a test gate that
+FSL SHALL provide `xtask refinement versioning <corpus>`, a test gate that
 checks, for every pair of revisions of one specification in a corpus, that
 the superseding revision admits every case its prior revision admitted
-(ADR-017 RF-2; QSpec capability row V1-TOOL-011). Each case tests one clause
-implication of the QSpec FR-290 claim-form row for refinement between two
+(ADR-017 RF-2; FSpec capability row V1-TOOL-011). Each case tests one clause
+implication of the FSpec FR-290 claim-form row for refinement between two
 operation contracts or state models, on one input (ADR-017 RF-1).
 
 The gate is a behavioural comparison over what each revision does on the
@@ -105,7 +105,7 @@ passed to FR-344's report.
 
 ### Running a case
 
-- For each case, the gate SHALL call `qsl_replay::spine::run_clause` twice,
+- For each case, the gate SHALL call `fsl_replay::spine::run_clause` twice,
   once with the `prior` source and once with the `superseding` source, each
   time with the pair's packages and dependency input, the case's selection
   and provisions.
@@ -133,14 +133,14 @@ passed to FR-344's report.
 
 | ID | Constraint | Type | Validation |
 | --- | --- | --- | --- |
-| FR-340-CON-1 | The gate reaches compile and evaluation only through `qsl_replay::spine::run_clause` and the FR-278 composition; it calls no family checker, backend or router. | Design | Inspection |
+| FR-340-CON-1 | The gate reaches compile and evaluation only through `fsl_replay::spine::run_clause` and the FR-278 composition; it calls no family checker, backend or router. | Design | Inspection |
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-340-AC-1 | A corpus holding one well-formed ConfigVersion pair with two `Clause` cases runs each case against both revisions, and FR-344's report holds exactly two case results, each naming the pair's prior and superseding `RawSourceRef`s and its selection. | Test (TC-860) |
-| FR-340-AC-2 | In a corpus of one well-formed pair and eight malformed ones (a `pair.json` that is not JSON; one missing `superseding`; one with an extra member `expected`; one naming `../outside.qsl`; one naming an absolute path; one whose two sources differ in `identity`; one naming `repo:../outside`; one naming `repo:/etc/hostname`), each malformed pair yields exactly one tool-failure result naming its `pair.json` path and its defect, none of its cases runs, and the well-formed pair's cases still run. A corpus directory with no pair subdirectory yields one tool-failure result naming the corpus path; verdict tool failure, exit 30. A case naming a file that does not exist yields one tool-failure case result naming the case and the defect, and the pair's other case still runs. | Test (TC-860) |
+| FR-340-AC-2 | In a corpus of one well-formed pair and eight malformed ones (a `pair.json` that is not JSON; one missing `superseding`; one with an extra member `expected`; one naming `../outside.fsl`; one naming an absolute path; one whose two sources differ in `identity`; one naming `repo:../outside`; one naming `repo:/etc/hostname`), each malformed pair yields exactly one tool-failure result naming its `pair.json` path and its defect, none of its cases runs, and the well-formed pair's cases still run. A corpus directory with no pair subdirectory yields one tool-failure result naming the corpus path; verdict tool failure, exit 30. A case naming a file that does not exist yields one tool-failure case result naming the case and the defect, and the pair's other case still runs. | Test (TC-860) |
 | FR-340-AC-3 | A pair whose `prior` unit admits a case and whose `superseding` unit refuses it is compared in that direction: the case is a regression; the same two units named the other way round give `not applicable`. | Test (TC-860) |
 | FR-340-AC-4 | A case stating no limit sets runs with each set's published default; the same case stating `accounting` with a work budget of one unit runs both revisions with that budget: both classes are `incomplete` and the case is `unresolved (incomplete)`. | Test (TC-860) |
 | FR-340-AC-5 | Copying a corpus to another directory and running the gate there gives a report byte-equal to the original's. | Test (TC-860) |
@@ -155,12 +155,12 @@ passed to FR-344's report.
   invocation provisions), FR-056 and FR-099 (package and dependency input),
   FR-001 (source labels).
 - FR-342, FR-343 and FR-344 (classification, comparison, report).
-- QSpec FR-290 (the claim-form row a case tests).
+- FSpec FR-290 (the claim-form row a case tests).
 
 ## References
 
 - ADR-017 §2 RF-1, RF-2 (amended 2026-10-01: corpus layout, pair
   direction), RF-5, RF-6.
-- QSpec half: QSpec FR-452 and FR-290 (the claim-form row and the
+- FSpec half: FSpec FR-452 and FR-290 (the claim-form row and the
   V1-TOOL-011 re-trace), STD-117.
 - Implementation ticket QSL-40; specification ticket QSL-386.

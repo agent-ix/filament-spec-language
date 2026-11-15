@@ -3,7 +3,7 @@ id: TC-905
 title: "A witness value text decodes exactly for every composite and leaf family, and each malformed form refuses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-905: A witness value text decodes exactly for every composite and leaf family, and each malformed form refuses
@@ -73,7 +73,7 @@ otherwise.
    `{"ordinal":0,"package":"fixture","path":["a"]}` and `B` the
    `NodeKey` whose compact JSON spelling is
    `{"ordinal":0,"package":"fixture","path":["b"]}`. Generate their
-   entry names with `qsl_replay::witness_entry_name`. Construct a `Witness`
+   entry names with `fsl_replay::witness_entry_name`. Construct a `Witness`
    for each two-entry assertion block and decode it with bindings
    `[WitnessBinding { parameter: A, value_type: I128 }, WitnessBinding {
    parameter: B, value_type: I128 }]`. Use `A`'s generated name carrying `0`

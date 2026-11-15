@@ -3,7 +3,7 @@ id: TC-1039
 title: "A clause set reports its results together, evaluates postconditions only after true preconditions and refuses a bad set whole"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: verifies
 ---
 # TC-1039: A clause set reports its results together, evaluates postconditions only after true preconditions and refuses a bad set whole

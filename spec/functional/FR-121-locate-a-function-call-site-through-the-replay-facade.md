@@ -3,38 +3,38 @@ id: FR-121
 title: "Locate a function's, an operation's or a state clause's call site through the replay facade"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-116
+  - target: ix://agent-ix/filament-spec-language/FR-116
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-015
+  - target: ix://agent-ix/filament-spec-language/ADR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-577
+  - target: ix://agent-ix/filament-spec-language/FR-577
     type: references
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
 ---
 # FR-121: Locate a function's, an operation's or a state clause's call site through the replay facade
 
 ## Description
 
-QSL SHALL provide `qsl_replay::call_site`, a second public entry of the
+FSL SHALL provide `fsl_replay::call_site`, a second public entry of the
 layer-6 replay facade (ADR-011 §6.1, ADR-013 TK-01) beside `replay`
 (FR-098), for a consumer that must build an FR-071 replay request or an
 FR-116 frame or state-clause counterexample itself rather than execute
@@ -60,11 +60,11 @@ FR-106's `ClauseSelection` names it by. It derives each node id the same way
 builds no `replay` call and no `spine::Call`; it names a call site, it does
 not make one.
 
-CG needs this because it reaches QSL only through `qsl_replay` (ADR-011
-FB-05) and may not name `qsl_replay::spine` (ADR-011 §3 FB-05, T-12 rule
+CG needs this because it reaches FSL only through `fsl_replay` (ADR-011
+FB-05) and may not name `fsl_replay::spine` (ADR-011 §3 FB-05, T-12 rule
 (a): `spine` is public for `command` and the orchestrating driver), yet must know these identities
 to build the harnesses and requests `replay` and `replay_frame` later
-execute. For the same reason `qsl_replay` re-exports, at its root, the
+execute. For the same reason `fsl_replay` re-exports, at its root, the
 types a caller constructs a `call_site` input from or matches a refusal
 on: `DependencyInput`, `SuppliedLibrary`, `DependencyInputRefusal`,
 `SourceHolder`, `OperationName`, `FieldName`, `FieldStep`, `PopulationName`,
@@ -95,7 +95,7 @@ package that the unit's own compile produced from the same `dependencies`
 `declaration` occurrence and parameters all come from one compile of one
 dependency input -- the input CG builds from its dependency lock. The
 selected `library` and the function's node equal the `package` (the
-dependency's name) and `node` of the QSpec FR-322 `dependency_reference`
+dependency's name) and `node` of the FSpec FR-322 `dependency_reference`
 term a call of that function in the unit lowers to. CG needs
 this to replay a dependency-owned function: a one-segment `QualifiedName`
 resolves only among the unit's own declarations, and CG may neither
@@ -126,24 +126,24 @@ site from text.
 
 ## Outputs
 
-- A `CallSite` on success: `package_id` (QSpec FR-322's checked-package `package_id` member), `package`
-  (`Vec<u8>`, the compiled package's `quire.checked-package/v2` bytes
+- A `CallSite` on success: `package_id` (FSpec FR-322's checked-package `package_id` member), `package`
+  (`Vec<u8>`, the compiled package's `filament.checked-package/v2` bytes
   exactly as the S4 emitter wrote them when it minted `package_id`), and
   `site`, whose type the selection decides:
   - for a `QualifiedName`, a `FunctionSite`: `function` (`WireNodeId`,
     the function declaration's `function` node, FR-092), `declaration`
     (`OccurrenceKey`, that node's `declaration` occurrence),
-    `obligation_identity()` (the read-only QSL-issued function-contract
+    `obligation_identity()` (the read-only FSL-issued function-contract
     `ObligationIdentity` for that occurrence),
     `parameters`, `Vec<(Identifier, WireNodeId)>`, in declared order, and
     `value_parity` (`Option<ValueParitySite>`, the function-value parity
-    preimage and the obligation identity QSL mints from it, `Some` exactly
+    preimage and the obligation identity FSL mints from it, `Some` exactly
     for a function whose declared result is not `Boolean`, FR-484);
   - for an `OperationName`, an `OperationSite`: `frame_operation`
     (`FrameOperation`: `object`, the declaring object's `QualifiedName`,
     and `operation`, the operation's `Identifier`), `anchor` and `frame`
     (`WireNodeId`), `frame_occurrence` (`OccurrenceKey`),
-    `obligation_identity()` (the read-only QSL-issued operation-frame
+    `obligation_identity()` (the read-only FSL-issued operation-frame
     `ObligationIdentity` for that occurrence), and `clauses`
     (`Vec<ClauseSite>`, each `name: Identifier`, `node: WireNodeId` and
     `occurrence: OccurrenceKey`, in declaration order);
@@ -153,7 +153,7 @@ site from text.
   - for an `ImportedFunctionName`, an `ImportedFunctionSite`: `library`
     (`LibraryName`, the selected library), `package_id` (the library's
     checked-package `package_id`, the declaring package identity),
-    `package` (`Vec<u8>`, the library's `quire.checked-package/v2` bytes
+    `package` (`Vec<u8>`, the library's `filament.checked-package/v2` bytes
     exactly as the S4 emitter wrote them in the unit's compile), and
     `function` (`FunctionSite`, the members above, located in the
     library's checked package); the `CallSite`'s own `package_id` and
@@ -179,7 +179,7 @@ site from text.
   - the unit's own source, forms, profile, assembly, check, link or emit
     refusal: `Compile`.
 - `call_site` SHALL carry on `CallSiteRefusal::Compile`, beside its code and
-  rendered message, `region: Option<SourceRegion>` (the `qsl_replay` root type): the
+  rendered message, `region: Option<SourceRegion>` (the `fsl_replay` root type): the
   region the spine `CompileRefusal` names for its first refusal, or `None`
   when it names none. For a check refusal located at an expression, such as
   FR-577's `unproved-range` at an arithmetic node, the region SHALL span
@@ -197,7 +197,7 @@ site from text.
   identity, which CG computes and never derives itself.
 - For a function selection, `call_site` SHALL return the resolved
   function's `value_parity` as FR-484 states: the function-value parity
-  obligation identity QSL mints, which a value-parity claim producer
+  obligation identity FSL mints, which a value-parity claim producer
   carries and never derives itself.
 - For a function selection, `call_site` SHALL pair each of the resolved
   function's declared parameters, in declared order, with its own node id,
@@ -207,7 +207,7 @@ site from text.
   to its domain package, the owner `T` among that package's object types,
   processes and state machines, as FR-104 resolves a clause's context
   `M::T`, and the operation in the owner's effective view (FR-103, FR-081,
-  QSpec FR-342): its own and its inherited operations, along its
+  FSpec FR-342): its own and its inherited operations, along its
   supertypes of the same kind, for an object type, a process and a state
   machine alike. This is the resolution FR-104 makes for a clause's `op`
   and FR-115's `Frame` selection makes for its operation.
@@ -223,17 +223,17 @@ site from text.
   declaration and its original declaration keys (for an operation the
   selected type only inherits, the supertype that declares it; for an
   operation the selected type redefines, the redefining type itself, whose
-  own declaration QSpec FR-342 resolves the pair to, never the type whose
+  own declaration FSpec FR-342 resolves the pair to, never the type whose
   member it redefines), named by
   its `QualifiedName` under the unit's model alias for its domain package;
-  as `operation`, the operation's `Identifier`. This pair is the QSpec
+  as `operation`, the operation's `Identifier`. This pair is the FSpec
   FR-323 `frame_operation` replay target that CG FR-024 copies into a frame
   packet. The selection's own object type is not authority for the
   declaring object, and no `OperationSite` is returned without the pair. A
   declaring object that is no declaration of the selected model alias's
   domain package refuses `CallSiteRefusal::Fault`, never a partial site.
   The declaring object is an object type, a process or a state machine,
-  the kinds QSpec FR-323's `frame_operation.object` allows; for an
+  the kinds FSpec FR-323's `frame_operation.object` allows; for an
   operation the selected owner inherits it is the supertype of the same
   kind that declares it (for a state machine, the declaring state machine). Because
   `frame_operation` always names the declaring object, a replay request
@@ -245,7 +245,7 @@ site from text.
   type, a relationship or a population), then `call_site` SHALL refuse
   `CallSiteRefusal::NotAnOperationOwner`, pairing
   the `OperationName` with the compiled package's own `package_id`; its
-  code is `invalid_model_binding`, cause `malformed-declaration`, as QSpec
+  code is `invalid_model_binding`, cause `malformed-declaration`, as FSpec
   FR-323 refuses such an `object`. This differs on purpose from FR-104 and FR-115,
   which report `missing_declaration`/`missing-name` for a clause or
   `Frame` selection whose owner is not an object type, a process or a
@@ -255,7 +255,7 @@ site from text.
   declarations of two supertypes, neither hiding the other, then
   `call_site` SHALL refuse `CallSiteRefusal::AmbiguousOperation`, pairing
   the `OperationName` with the compiled package's own `package_id`; its
-  code is `ambiguous_declaration`, cause `ambiguous-name`, as QSpec FR-323
+  code is `ambiguous_declaration`, cause `ambiguous-name`, as FSpec FR-323
   refuses such a name.
 - While it resolves the owner and the operation, before it looks for the
   operation's frame, `call_site` SHALL decide `NotAnOperationOwner` and
@@ -289,7 +289,7 @@ site from text.
   UTF-8 byte order. A selection whose alias, object type or field does not
   resolve SHALL refuse `CallSiteRefusal::UnknownField`, pairing the
   `FieldName` with the compiled package's own `package_id` (FR-088-AC-6).
-- The `qsl_replay` facade SHALL define `FieldStep` with exactly the variants
+- The `fsl_replay` facade SHALL define `FieldStep` with exactly the variants
   `Element`, `Payload`, `Field(Identifier)`, `Position(u32)` and
   `Member(Identifier, u32)`, and SHALL build a `FieldName` with steps through
   `FieldName::nested(alias, object_type, field, steps)`, `FieldName::new`
@@ -337,7 +337,7 @@ site from text.
   the compiled package's own `package_id` (FR-088-AC-6).
 - For an imported-function selection, `call_site` SHALL resolve `library`
   among the unit's own direct imports, the libraries its compiled
-  package's `dependency_selections` hold (QSpec FR-322), by `LibraryName`
+  package's `dependency_selections` hold (FSpec FR-322), by `LibraryName`
   equality, and SHALL never fall back to a function of the unit with the
   same name.
 - If `library` names no library that an `import` of the unit names -- one
@@ -350,8 +350,8 @@ site from text.
   selects. A library outside the unit's direct imports is, for the
   selection, an import the unit does not have, so the source-side pair
   applies rather than the `missing_declaration`/`missing-selection` pair
-  the QSpec FR-322 reader gives a `dependency_reference` outside the
-  direct selections; QSL's diagnostic catalog admits cause
+  the FSpec FR-322 reader gives a `dependency_reference` outside the
+  direct selections; FSL's diagnostic catalog admits cause
   `missing-selection` only under code `missing_import`.
 - For an imported-function selection, `call_site` SHALL resolve `function`
   by name among the declarations of the library's checked package that the
@@ -379,7 +379,7 @@ site from text.
   share the compiled source's owner, ADR-015 D-1); its `package_id` and
   `package` SHALL equal that call's `CallSite` `package_id` and `package`.
   The site's `library` and `function.function` SHALL equal the `package`
-  (the dependency's name) and `node` of the QSpec FR-322
+  (the dependency's name) and `node` of the FSpec FR-322
   `dependency_reference` term every call of that function in the unit
   lowers to. That term carries no `package_id`; the declaring package's
   `package_id` is bound by the equality with the library's own compile.
@@ -405,15 +405,15 @@ site from text.
   `runtime_invariant`. Each variant other than `Fault` carries the code of
   the refusal it was built from rather than only its rendered message.
 - The settlement of a refusal is keyed on timing, by the terminal mapping
-  ADR-013 C-09 owns (QSpec FR-331). A `CallSiteRefusal` other than `Fault`
+  ADR-013 C-09 owns (FSpec FR-331). A `CallSiteRefusal` other than `Fault`
   refuses the obligation's own input before any backend run, so it settles
   `TerminalValue::Declined` with cause `ProofRefusalCause::InvalidInput` for
   every such variant (`Compile`, `ModelIntake`, `DependencyInput`, `Import`,
   `Dependency`, `UnknownFunction`, `UnknownOperation`, `UnknownClause`,
   `NotAnOperationOwner`, `AmbiguousOperation`, `UnknownImport`,
   `UnknownImportedFunction`, `NotImportable`) and
-  its own code (`CallSiteRefusal::code`) as `DeclineCode::Qsl(code)`, which
-  `TerminalValue::from_call_site_refusal` builds. `DeclineCode` carries a QSL catalog code (`DeclineCode::Qsl`) or a STD-001 registry code (`DeclineCode::Std001`, IR's `kani_*` codes among them); a code is never remapped from one registry onto the other, the `Std001` arm records no issuer, and it refuses no unregistered code (`Std001Code`'s own form check is all). A `ReplayRefusal` after a
+  its own code (`CallSiteRefusal::code`) as `DeclineCode::Fsl(code)`, which
+  `TerminalValue::from_call_site_refusal` builds. `DeclineCode` carries an FSL catalog code (`DeclineCode::Fsl`) or a STD-001 registry code (`DeclineCode::Std001`, IR's `kani_*` codes among them); a code is never remapped from one registry onto the other, the `Std001` arm records no issuer, and it refuses no unregistered code (`Std001Code`'s own form check is all). A `ReplayRefusal` after a
   backend run (the replay of a refutation) is no refusal of the obligation's
   input: it settles `TerminalValue::Inconclusive` with
   `InconclusiveCause::ReplayRefused` carrying its code, which
@@ -439,12 +439,12 @@ site from text.
 | FR-121-AC-9 | The AC-6 unit with no domain package supplied refuses `CallSiteRefusal::ModelIntake` with the alias `Config`. | Test (TC-516) |
 | FR-121-AC-10 | For the AC-4 unit, a `DependencyInput` supplying the imported library from a source with the unit's own authority and identity refuses `CallSiteRefusal::DependencyInput`, carrying `DependencyInputRefusal::SharedOwner` with `first` the unit, `second` the library and that shared authority and identity. | Test (TC-516) |
 | FR-121-AC-11 | For the AC-4 unit, a `DependencyInput` supplying the imported library from source bytes that do not parse refuses `CallSiteRefusal::Dependency`, its `path` exactly that library's identity. | Test (TC-516) |
-| FR-121-AC-12 | A `CallSite`'s `package` equals the S4 emitter's bytes for the same compile, and the `identity_preimage` member of those bytes (QSpec FR-322) equals the identity the `CallSite`'s `package_id` carries, compared structurally. | Test (TC-516) |
-| FR-121-AC-13 | From outside the crate, a `DeclaredDomain` over an integer range on a parameter node `call_site` returned is built through `qsl_replay`'s root paths alone (`ProofBound`, `DomainKey`, `FiniteBound`, `Integer`), its kind is `FiniteBoundKind::IntegerRange` and its interval equals the `IntegerInterval` built there; an inverted range refuses `EmptyFiniteBound::InvertedIntegerRange` through `FiniteBound::integer_range` and `EmptyInterval` through `IntegerInterval::new`. | Test (TC-516) |
+| FR-121-AC-12 | A `CallSite`'s `package` equals the S4 emitter's bytes for the same compile, and the `identity_preimage` member of those bytes (FSpec FR-322) equals the identity the `CallSite`'s `package_id` carries, compared structurally. | Test (TC-516) |
+| FR-121-AC-13 | From outside the crate, a `DeclaredDomain` over an integer range on a parameter node `call_site` returned is built through `fsl_replay`'s root paths alone (`ProofBound`, `DomainKey`, `FiniteBound`, `Integer`), its kind is `FiniteBoundKind::IntegerRange` and its interval equals the `IntegerInterval` built there; an inverted range refuses `EmptyFiniteBound::InvertedIntegerRange` through `FiniteBound::integer_range` and `EmptyInterval` through `IntegerInterval::new`. | Test (TC-516) |
 | FR-121-AC-14 | `CallSiteRefusal::code` returns `missing_declaration` for AC-2's `UnknownFunction`, AC-5's `UnknownOperation` and AC-8's `UnknownClause`; for AC-9's `ModelIntake`, AC-10's `DependencyInput`, AC-11's `Dependency` and AC-4's `Import`, the code `ReplayRefusal::code` returns when `replay` is given the same unit, packages and dependency input; and for a unit with a syntax error, `Compile` carrying the same code as the `ReplayRefusal::Recompile` `replay` returns for it. | Test (TC-516) |
 | FR-121-AC-15 | Worked example. For a unit declaring `p(x: Int[0, 9]): Boolean { x < 5 }` and `q(x: Int[0, 9]): Boolean { x < 5 }`, the `FunctionSite` for `p` carries `function` equal to the compiled graph's `function` node whose `declaration` is `p`, and `declaration` equal to `OccurrenceKey::new(function, Origin::new(Role::new("declaration"), 0))`. With a CG obligation kind and `arguments` `[(x's parameter node id, [0, 9])]`, these are the members of `p`'s ADR-013 O-09 function-contract obligation preimage. `q`'s `FunctionSite` has the same `parameters` (one shared parameter node) and a different `function`, so the two obligations differ. Recompiling the unit with a comment and blank lines inserted before `p` gives `p` the same `function` and `declaration`. Over the AC-6 unit, `sameIdentity`'s `function` equals no `ClauseSite` `node` returned for `attemptUpdate`, `probe` or any AC-8 clause selection. | Test (TC-516) |
 | FR-121-AC-16 | A `ReplayRefusal` that is no fault, such as `UnboundParameter`, maps by `TerminalValue::from_replay_refusal` to `TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(code))` with `code` equal to `ReplayRefusal::code` for it, and category `inconclusive`; `ReplayRefusal::Fault` and `ReplayRefusal::Admission` with `AdmissionFailure::Fault` map to `TerminalValue::Failed`. | Test (TC-516) |
-| FR-121-AC-17 | A `CallSiteRefusal` other than `Fault`, such as `Compile` or `UnknownFunction`, maps by `TerminalValue::from_call_site_refusal` to `TerminalValue::Declined { cause: ProofRefusalCause::InvalidInput, code: DeclineCode::Qsl(code) }` with `code` equal to `CallSiteRefusal::code` for it, and category `refusal`; `CallSiteRefusal::Fault` maps to `TerminalValue::Failed`. | Test (TC-516) |
+| FR-121-AC-17 | A `CallSiteRefusal` other than `Fault`, such as `Compile` or `UnknownFunction`, maps by `TerminalValue::from_call_site_refusal` to `TerminalValue::Declined { cause: ProofRefusalCause::InvalidInput, code: DeclineCode::Fsl(code) }` with `code` equal to `CallSiteRefusal::code` for it, and category `refusal`; `CallSiteRefusal::Fault` maps to `TerminalValue::Failed`. | Test (TC-516) |
 | FR-121-AC-18 | For the ConfigVersion domain package plus `Sub`, a subtype of `ConfigVersion` declaring `zeta` then `alpha`, a field selection returns `DomainKey::Node` on `ConfigVersion`'s own `object_type` node with path `[0]` for `parent` and `[1]` for `versionNumber`, the same `[1]` key for `versionNumber` named through `Sub`, and on `Sub`'s own `object_type` node `[0]` for `alpha` and `[1]` for `zeta`; each node equals the one the compiled graph's lowering keyed for that type. `Config::Sub.nope`, `Config::ConfigVersion.alpha`, `Config::Nope.parent` and `Nope::Sub.alpha` each refuse `CallSiteRefusal::UnknownField` (code `missing_declaration`), pairing the `FieldName` with the package. | Test (TC-516) |
 | FR-121-AC-19 | For the AC-18 domain package and a unit with no clause on `Sub`, so that the compiled graph holds no `Sub` node, `Config::Sub.alpha`'s domain key equals the one returned for the AC-18 unit. | Test (TC-516) |
 | FR-121-AC-20 | For the ConfigVersion unit, the field key of `parent` (ordinal 0 under `ConfigVersion`) differs from the `config_history` population key its clauses' requirement records carry (ordinal 0, member type `ConfigVersion`), which is a `DomainKey::Population` on the same node. | Test (TC-516) |
@@ -457,8 +457,8 @@ site from text.
 | FR-121-AC-28 | For the ConfigVersion domain package plus a record value type `Span` declaring `lo: Integer` then `hi: Int[0, 9]` and an object type `Box` whose fields are `span: Span`, `tags`, an unbounded collection of `Integer`, and `note`, an optional `Span`, a field selection of `Config::Box` returns `DomainKey::Node` on `Box`'s `object_type` node with paths: `[1]` for `span` with no steps; `[1, 0]` for `span` with `[Field(lo)]` and `[1, 1]` with `[Field(hi)]`; `[2]` for `tags` and `[2, 0]` with `[Element]`; `[0, 0, 1]` for `note` with `[Payload, Field(hi)]`. `FieldName::new` and `FieldName::nested` with no steps give equal keys. `span` with `[Field(mid)]`, `[Element]` or `[Field(lo), Element]`, `tags` with `[Payload]` and `note` with `[Field(lo)]` each refuse `CallSiteRefusal::UnknownField` (code `missing_declaration`), pairing the `FieldName` with the package. | Test (TC-516) |
 | FR-121-AC-29 | For a domain package whose record `Node` declares `value: Integer` then `next`, an optional `Node`, and whose object type `List` declares one field `head: Node`, `Config::List.head` with `[Field(next), Payload]` reaches `Node` again and returns path `[0]`, where `Node` was first entered: the `Recursive` domain key ADR-014 §4's extent walk gives `Node` under `head`, equal to `head`'s key with no steps. `[Field(value)]` returns `[0, 0]`, and `[Field(next), Payload, Field(value)]` refuses `CallSiteRefusal::UnknownField`. With a union `Shape` declaring member `Circle(r: Integer)` then `Rect(w: Integer, h: Int[0, 9])`, and an object type `Figure` whose one field is `shape: Shape`, `Config::Figure.shape` with `[Member(Rect, 1)]` returns `[0, 2]` and with `[Member(Circle, 1)]` refuses `CallSiteRefusal::UnknownField`. | Test (TC-516) |
 | FR-121-AC-27 | An operation selection whose owner names a record value type, an event type, an enum, a persistence interface or a population of the package refuses `CallSiteRefusal::NotAnOperationOwner` (code `invalid_model_binding`, message leading with `invalid_model_binding/malformed-declaration`); over a package where `C` specializes `A` and `B`, each declaring `touch` with a clause of the unit on each, the `M::C::touch` selection refuses `CallSiteRefusal::AmbiguousOperation` (code `ambiguous_declaration`, message leading with `ambiguous_declaration/ambiguous-name`), although `C` has no frame for `touch`; each pairs the `OperationName` with the compiled package's own `package_id` and maps by `TerminalValue::from_call_site_refusal` to `Declined` with `InvalidInput` and its code. | Test (TC-1162) |
-| FR-121-AC-30 | For AC-15's `p` and `q`, each `FunctionSite::obligation_identity()` returns a borrowed QSL-issued `ObligationIdentity` whose node is its own checked function node, model is `None`, and ordinal is its `declaration` occurrence ordinal 0. The two identities differ even though the parameter node is shared; inserting a comment and blank lines before `p` leaves `p`'s identity equal. | Test (TC-516) |
-| FR-121-AC-31 | For AC-3's selected operation, `OperationSite::obligation_identity()` returns a borrowed QSL-issued `ObligationIdentity` whose node is the selected frame node, whose model is the selected model's domain package identity, and whose ordinal is the frame's `generated` occurrence ordinal. An inherited selection of the same frame yields the same identity; two distinct frames yield different identities. | Test (TC-516) |
+| FR-121-AC-30 | For AC-15's `p` and `q`, each `FunctionSite::obligation_identity()` returns a borrowed FSL-issued `ObligationIdentity` whose node is its own checked function node, model is `None`, and ordinal is its `declaration` occurrence ordinal 0. The two identities differ even though the parameter node is shared; inserting a comment and blank lines before `p` leaves `p`'s identity equal. | Test (TC-516) |
+| FR-121-AC-31 | For AC-3's selected operation, `OperationSite::obligation_identity()` returns a borrowed FSL-issued `ObligationIdentity` whose node is the selected frame node, whose model is the selected model's domain package identity, and whose ordinal is the frame's `generated` occurrence ordinal. An inherited selection of the same frame yields the same identity; two distinct frames yield different identities. | Test (TC-516) |
 | FR-121-AC-32 | For TC-444 step 7's library and unit -- `test/units` declaring `function big using v(x: Int[0, 9]): Boolean pure { x > 5 }`, here also `function small using v(x: Int[0, 9]): Boolean pure { x < 2 }`, and the unit importing it `as u` and declaring `function q using v(x: Int[0, 9]): Boolean pure { u::big(x) }` -- with the `DependencyInput` supplying `test/units`, the `ImportedFunctionName` `{test/units, big}` returns an `ImportedFunctionSite` whose `library` and `function.function` equal the `package` (the name `test/units`) and `node` of the `dependency_reference` callee term of `q`'s call in the `CallSite`'s own `package` bytes, and whose `function.parameters` hold exactly one pair, its `Identifier` `x`. The `function` equals, member for member, the `FunctionSite` a `QualifiedName` `big` selection returns from `call_site` over `test/units`'s own source with package name `test/units` and an empty `DependencyInput`, and the site's `package_id` and `package` equal that call's `CallSite` `package_id` and `package`. The `CallSite`'s own `package_id` is the unit's and differs from the site's `package_id`. `{test/units, small}`, which the unit never calls, returns `small`'s site by the same equality with the standalone compile. | Test (TC-516) |
 | FR-121-AC-33 | From the AC-32 answer alone, a `ReplayRequestWire` with package name `test/units`, whose package reference is the site's `package_id` with `test/units`'s one source and no `dependencies` entry, keyed by the site's one parameter pair with `x = 3`, replays `big` (`x > 5`) and agrees with the value `false`; it does not refuse `UnknownParameter`, `UnboundParameter` or for its `package_id`. | Test (TC-516) |
 | FR-121-AC-34 | For the AC-32 unit with its own `function big using v(x: Int[0, 9]): Boolean pure { x < 2 }` added, `{test/units, big}` returns the library's `function` node (the `dependency_reference` `node` of `q`'s call), which differs from the `function` the `QualifiedName` `big` selection returns for the unit's own `big`; neither selection answers with the other's node. | Test (TC-516) |
@@ -483,7 +483,7 @@ site from text.
 - [FR-116](FR-116-replay-a-frame-counterexample.md): the frame
   counterexample whose anchor, frame and occurrence an `Operation`
   selection supplies, and the `frame_operation` replay target it reads.
-- QSpec AD-006 (original and effective declaration identities) and QSpec
+- FSpec AD-006 (original and effective declaration identities) and FSpec
   FR-323 (the `frame_operation` replay target); CG FR-024 builds a frame
   packet's `frame_operation` from the `OperationSite` and refuses without
   it.
@@ -501,7 +501,7 @@ site from text.
   `UnknownImport` uses), D-3 (the `LibraryName` it names a library by)
   and D-5 (the package-independent signature an imported function has, and
   the call lowering to a `dependency_reference` term).
-- QSpec FR-322: `dependency_selections`, the direct imports an
+- FSpec FR-322: `dependency_selections`, the direct imports an
   imported-function selection resolves among, and the members of the
   `dependency_reference` term (`package`, the dependency's name, and
   `node`) the site's `library` and `function` equal.

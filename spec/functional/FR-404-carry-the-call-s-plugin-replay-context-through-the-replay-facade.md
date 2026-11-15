@@ -3,27 +3,27 @@ id: FR-404
 title: "Carry the call's plugin replay context through the replay facade"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-395
+  - target: ix://agent-ix/filament-spec-language/FR-395
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: traces_to
 ---
 # FR-404: Carry the call's plugin replay context through the replay facade
@@ -37,7 +37,7 @@ settles it through the item's S6a replay (FR-290 "Replay context", FR-098),
 and the replay request's package-wide members come from a
 `PluginReplayContext`. `PluginReplayContext::new` takes the `CheckedUnit`,
 `EmittedUnit` and `AdmittedModels` of the compile and the run's
-`CallerLimits`. Those units are `qsl_replay::spine` types, which a consumer
+`CallerLimits`. Those units are `fsl_replay::spine` types, which a consumer
 may not name (FR-060 T12-A), and `run_with_requirements` keeps none of them.
 A driver that compiled the package a second time to get them could build a
 context from a compile other than the one its items came from, or under other
@@ -157,22 +157,22 @@ another run's package is refused.
   to `PluginReplayContext` and have no method that returns the wrapped
   context, so a consumer cannot reach the unbound
   `PluginReplayContext::request` through it.
-- **Facade boundary.** The `qsl_replay` root SHALL expose
+- **Facade boundary.** The `fsl_replay` root SHALL expose
   `run_with_replay_context`, `RunWithReplayContext` and `CallReplayContext`,
   and SHALL re-export every type of the entry's and of `request`'s signature
   and result that it does not export, so that a consumer runs a call, builds
-  a request and settles its refusal without naming `qsl_replay::spine`,
-  `qsl_foundation` or `qsl_semantics`: among them `CallerLimits`,
+  a request and settles its refusal without naming `fsl_replay::spine`,
+  `fsl_foundation` or `fsl_semantics`: among them `CallerLimits`,
   `RequestIndex`, `ProofBound`, `BackendId`, `CanonicalAssignment`,
   `ReplayRequestWire` and `PluginReplayRefusal`. The consumer writes the
-  call's items with `qsl_route::items_from_requirements` (FR-075), which is
-  not part of this facade. `qsl_replay::spine` stays internal (FR-060 T12-A).
+  call's items with `fsl_route::items_from_requirements` (FR-075), which is
+  not part of this facade. `fsl_replay::spine` stays internal (FR-060 T12-A).
   `run_with_requirements` keeps its signature and result (FR-395).
 
 ## Acceptance Criteria
 
 Fixture **R** is one `1-draft` unit under profile alias `v`
-(`quire.value.complete/v1`) with the functions of FR-290-AC-12 and AC-15:
+(`filament.value.complete/v1`) with the functions of FR-290-AC-12 and AC-15:
 
 - `function p using v(x: Int[0, 9]): Boolean pure { x > 3 }`;
 - `function q using v(x: Int[0, 9]): Integer pure { x + 1 }`;
@@ -194,7 +194,7 @@ of the item that `items_from_requirements` writes for the member.
 | FR-404-AC-6 | Over R, `q` with `x = 3` under `CallerLimits` whose `s1.tokens` is 200000, whose `library.definitions` is 9000 and whose accounting `work_units` is 5000 completes, and the request for its member holds `s1.tokens` 200000 and `library.definitions` 9000 in `stage_limits` and `work_units` 5000 in `accounting_limits`. The same call under `CallerLimits` whose `s1.tokens` is 1 refuses `Compile` at the S1 token limit with no context, while `run_with_requirements` over the same inputs with `SpineLimits::default()` completes. | Test (TC-1173) |
 | FR-404-AC-7 | For AC-1's run, each with two proof bounds at one `DomainKey`: R2's `q` pairing key refuses `ForeignRun`; the run's `package_id` with `r`'s member's index refuses `NotACallItem`; `q`'s member refuses `DuplicateBoundKey` (`invalid_runtime_input`/`duplicate-member`). | Test (TC-1173) |
 | FR-404-AC-8 | Over R, the function `nope` refuses `MissingDeclaration`, `q` with a Boolean `x` refuses `WrongValueKind` at position 0, a source that does not parse refuses `Compile`, and a cancelled handle refuses `Cancelled`; each refusal equals `run_with_requirements`' for the same inputs with `CallerLimits::default().spine`, and returns no context and no members. | Test (TC-1173) |
-| FR-404-AC-9 | A consumer test runs AC-1's call, builds AC-2's request and settles AC-4's refusal naming only `qsl_replay` root paths and `qsl_route::items_from_requirements`, and no path through `qsl_replay::spine`, `qsl_foundation` or `qsl_semantics`; FR-060's T12-A rule reports no call site outside its allowed callers for it. Each of these does not compile: a `CallReplayContext` struct literal; `CallReplayContext::new()`; `CallReplayContext::default()`; `serde_json::from_str::<CallReplayContext>("{}")`; `let _: &PluginReplayContext = &*context;`; `let _: &PluginReplayContext = context.as_ref();`. | Test (TC-1173) |
+| FR-404-AC-9 | A consumer test runs AC-1's call, builds AC-2's request and settles AC-4's refusal naming only `fsl_replay` root paths and `fsl_route::items_from_requirements`, and no path through `fsl_replay::spine`, `fsl_foundation` or `fsl_semantics`; FR-060's T12-A rule reports no call site outside its allowed callers for it. Each of these does not compile: a `CallReplayContext` struct literal; `CallReplayContext::new()`; `CallReplayContext::default()`; `serde_json::from_str::<CallReplayContext>("{}")`; `let _: &PluginReplayContext = &*context;`; `let _: &PluginReplayContext = context.as_ref();`. | Test (TC-1173) |
 
 ## Dependencies
 

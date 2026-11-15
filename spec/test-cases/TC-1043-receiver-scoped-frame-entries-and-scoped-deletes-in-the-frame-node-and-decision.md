@@ -3,9 +3,9 @@ id: TC-1043
 title: "Receiver-scoped field entries and scoped deletes appear in the frame node wire and decide the frame"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: verifies
 ---
 # TC-1043: Receiver-scoped field entries and scoped deletes appear in the frame node wire and decide the frame
@@ -13,7 +13,7 @@ relationships:
 ## Description
 
 Verify the frame node body S4 emits for scoped `modifies` and `deletes` entries
-(QSpec FR-340's `scope` and `deletes_scoped`), the intake refusals, the I2
+(FSpec FR-340's `scope` and `deletes_scoped`), the intake refusals, the I2
 reader's frame step, and the decision `decide_frame` and the `Frame` run take
 from the scopes.
 
@@ -32,7 +32,7 @@ named by its own postcondition clause (`DoneBump`, `DoneMerge`, `DoneNoop`,
 package holds its frame node. Node identity strings are written with the prefix
 `ix://test/counters/` as `Counter/value`, `Counter/step`, `Gauge/d`, `Flow/x`, `Counter`,
 `Gauge` and `Supersedes`. In the wire vectors `<Counter>` stands for the NodeRef
-(QSpec FR-322 node id) of the `Counter` object type node, and `<Gauge>` for `Gauge`'s. Every frame
+(FSpec FR-322 node id) of the `Counter` object type node, and `<Gauge>` for `Gauge`'s. Every frame
 body is written with its members in canonical JCS order. Tag the tests
 `#[trace("TC-1043", "FR-154-AC-n")]`, `#[trace("TC-1043", "FR-105-AC-7")]` and `#[trace("TC-1043", "FR-115-AC-11")]`.
 
@@ -156,7 +156,7 @@ Results:
   (ascending operation name), and two `state`/`operation_anchor` nodes, one
   per operation, both with context `Counter` and both with the `frame`
   binding referencing that node; `DoneAll` and `DoneSame` reference different
-  anchors, so B3 holds two clause nodes; the I2 reader admits B3 (QSpec
+  anchors, so B3 holds two clause nodes; the I2 reader admits B3 (FSpec
   FR-342-AC-6).
 - Step 3: I1 refuses `missing_declaration`/`missing-name` at the entry. I2
   and I3 refuse `invalid_model_binding`/`malformed-declaration` at the entry
@@ -185,7 +185,7 @@ Results:
   `invalid_model_binding`/`conflicting-binding` naming both `step` entries:
   every entry resolves, so no other meaning-join defect exists, and the
   conflict outranks X8's misordered array, so X8 is not reported
-  `invalid_semantic_graph` (QSpec FR-340).
+  `invalid_semantic_graph` (FSpec FR-340).
 - Step 5: D1 returns a `FrameDelta` with empty `created` and `deleted`
   (`c1.value` is granted by the receiver entry, `c2.step` by the every-object
   entry). D2 is `frame_violation`/`unauthorized-change` naming `c2` and

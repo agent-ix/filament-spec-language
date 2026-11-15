@@ -3,7 +3,7 @@ id: TC-790
 title: "Each model form types through StateModel and refuses with a StateModel cause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-300
+  - target: ix://agent-ix/filament-spec-language/FR-300
     type: verifies
 ---
 # TC-790: Each model form types through StateModel and refuses with a StateModel cause
@@ -13,7 +13,7 @@ relationships:
 Verify that the five model expression forms type through the `StateModel`
 family's `check` hook. Scope: FR-300-AC-1, FR-300-AC-2.
 
-The population spelling and query types come from QSpec FR-339's incorporated
+The population spelling and query types come from FSpec FR-339's incorporated
 complete-V1 grammar and FR-153-AC-4, FR-153-AC-8 and FR-153-AC-9. Grammar
 controls below exercise FR-339-AC-1 and FR-339-AC-4; syntax refusals precede
 S3 and are not asserted to be `StateModel` checking causes.
@@ -28,7 +28,7 @@ Catches a form left in the `Value` typer: its refusal would carry
    `r: Reference<T>`, `reaches` inside a clause, and a dispatched query call
    `receiver.member(args)` in a precondition. Supply the actual admitted model
    declarations, population binding and query operation body required by
-   QSpec FR-151 and FR-153; do not manufacture a population from a type name.
+   FSpec FR-151 and FR-153; do not manufacture a population from a type name.
 2. Compile one unit per form, ill-formed: a read of an undeclared field, an
    `allInstances` over an admitted non-population value, a `lookup` whose
    key's static type does not conform to `T`, a `reaches` over an undeclared
@@ -89,9 +89,9 @@ Catches a form left in the `Value` typer: its refusal would carry
 
 1. Every well-typed unit from step 1 compiles; the checked nodes are `Attribute`, `AllInstances`
    typed `Set<Reference<T>>[0,3]`, `Lookup` typed `Reference<T>`, `Reaches` and a dispatched
-   call, each with the static type QSpec FR-151 and FR-153 fix.
+   call, each with the static type FSpec FR-151 and FR-153 fix.
 2. Every ill-formed unit from step 2 refuses at S3. Each cause has family `FamilyKind::StateModel`,
-   a catalog code beginning `state-model`, and the QSpec code and cause the
+   a catalog code beginning `state-model`, and the FSpec code and cause the
    expected table in the test states as literals: `ill_typed`/`type-mismatch`
    for a field absent from the effective static type and a nonconforming lookup
    key; `ill_typed`/`operator-ineligible` for an admitted non-population

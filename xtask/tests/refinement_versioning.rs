@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use fsl_foundation::source::provenance::RawSourceRef;
 use ix_trace_rs::trace;
-use qsl_foundation::source::provenance::RawSourceRef;
 use serde_json::{json, Value};
 use xtask::refinement::compare::CaseResult;
 use xtask::refinement::report::{CaseEntry, CaseName, Report, SelectionName, SideReport, Verdict};
@@ -75,9 +75,9 @@ fn broken() -> String {
 /// (FR-234).
 fn unsupported() -> String {
     unit().replace(
-        "profile v = \"quire.model.complete/v1\";\n",
-        "profile v = \"quire.model.complete/v1\";\n\
-             profile t = \"quire.temporal.timed/v1\";\n",
+        "profile v = \"filament.model.complete/v1\";\n",
+        "profile v = \"filament.model.complete/v1\";\n\
+             profile t = \"filament.temporal.timed/v1\";\n",
     ) + "temporal Unemitted using t over (c: Config::ConfigVersion) \
            clock \"model-steps\" on origin { eventually[0 ms, 3 ms] \
            holds(c.versionNumber <= 1000) }\n"
@@ -111,7 +111,7 @@ fn snapshot(name: &str, rows: &[(&str, i64, Option<&str>)]) -> Value {
         })
         .collect();
     json!({
-        "format": "quire.state.snapshot/v1",
+        "format": "filament.state.snapshot/v1",
         "identity": {
             "authority": "agent-ix",
             "identity": format!("ix://example/config-version/spine/current/{name}"),
@@ -389,10 +389,10 @@ fn each_malformed_pair_is_one_tool_failure_and_the_rest_still_run() {
     extra["expected"] = json!("anything");
     write_pair("extra-member", &extra.to_string());
     let mut outside = base.clone();
-    outside["prior"]["path"] = json!("../outside.qsl");
+    outside["prior"]["path"] = json!("../outside.fsl");
     write_pair("outside", &outside.to_string());
     let mut absolute = base.clone();
-    absolute["prior"]["path"] = json!("/outside.qsl");
+    absolute["prior"]["path"] = json!("/outside.fsl");
     write_pair("absolute", &absolute.to_string());
     let mut mismatch = base.clone();
     mismatch["superseding"]["identity"] = json!("ix://example/another-spec");
@@ -426,8 +426,8 @@ fn each_malformed_pair_is_one_tool_failure_and_the_rest_still_run() {
     assert!(defect_of("missing-superseding/pair.json").contains("missing field `superseding`"));
     assert!(defect_of("extra-member/pair.json").contains("unknown field `expected`"));
     assert!(defect_of("outside/pair.json")
-        .contains("../outside.qsl resolves outside the pair directory"));
-    assert!(defect_of("absolute/pair.json").contains("/outside.qsl is an absolute path"));
+        .contains("../outside.fsl resolves outside the pair directory"));
+    assert!(defect_of("absolute/pair.json").contains("/outside.fsl is an absolute path"));
     assert!(defect_of("repo-escape/pair.json").contains("repo:../outside resolves outside"));
     assert!(defect_of("repo-absolute/pair.json").contains("repo:/etc/hostname is an absolute path"));
     let mismatch = defect_of("identity/pair.json");

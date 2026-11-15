@@ -1,0 +1,4632 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! `Value`'s function-declaration family (FR-062, FR-065): identity minting,
+//! split out of `value::expression::family` by ADR-011 §7.3 M-5, **and**
+//! the real typing, coercion and static-definedness checking for
+//! both a function declaration and a function application.
+//!
+//! **This module's role is wider than it was.** `ValueFunctionFamily::check`
+//! (below) does not only charge the declaration's own limits: the real typing
+//! and definedness verdict is made inside it, by a `Typer`, so calling the
+//! contract's own `check` on an ill-typed declaration refuses. `check`
+//! calls [`check_declaration_body`] itself, inside the one `FamilyContract`
+//! entry point, and returns the crate's real, located [`CheckRefusal`]
+//! through [`StageFailure::Refused`] when the body or measure
+//! does not type or is not statically defined; `PackageDeclarations::check`
+//! reaches that verdict only by calling the contract, not by a second,
+//! parallel call of its own. [`Application`] is `Value`'s
+//! function-application family check code the same way, relocated from
+//! `check.rs`'s deleted `Typer::call`; it is reached transitively through
+//! `check_declaration_body`'s own `Typer` pass (a call nested anywhere in a
+//! checked body reaches the typer's `Call` arm, which resolves it through
+//! [`Application::resolve`] and builds it through [`Application::finish`]),
+//! through the same enclosing check. The typer also carries that check's
+//! shared context for nested model questions, which it forwards to
+//! `check::state_model` without constructing another context per node.
+//!
+//! **Amended, PR #282 review F4:** FR-068's move surface names `family.rs`
+//! explicitly, alongside `check`, `evaluate`, `facts`, `ir`, `refusal`,
+//! `termination` and `mod.rs` -- an omission in the requirement's original
+//! text, not a deliberate exclusion. This module carries the minimum needed
+//! to keep `check`'s real import graph from reaching back into
+//! `value::expression::family`, the reverse edge FR-068-AC-3 forbids:
+//! everything `PackageDeclarations::check` (via [`ValueFunctionFamily`]'s
+//! [`crate::family::FamilyContract`] half) needs to mint a checked identity
+//! and check a declaration's body and applications.
+//!
+//! `value::expression::family` keeps `QualifiedName`, S4 linking and the v2
+//! emit/decode codec: `CheckedPackage::call`'s public signature and the v2
+//! wire format are evaluation/emission-side concerns FR-068 leaves at layer
+//! 5, and this module does not duplicate them. `ValueFunctionFamily`'s
+//! evaluation half (layer 5's `ReferenceEvaluation`, `value::expression::s6a`)
+//! stays there too,
+//! importing this module's [`ValueFunctionFamily`] back through
+//! `crate::check` -- layer 5 depending on layer 3 is the permitted
+//! direction (ADR-011 §6.1).
+
+use filament_checked::node::{NodeKind, OrderedKind};
+use filament_semantic_value::checking::CheckMode;
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
+
+use filament_exact::{CollectionKind, NodeKey, Origin, Role};
+
+use filament_semantic_value::absence::AbsenceMode;
+use fsl_forms::{
+    Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprNode, Expression, FieldInitializer,
+    FunctionDeclaration,
+};
+#[cfg(test)]
+use fsl_foundation::diagnostic::LimitKind;
+use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, Staged};
+use fsl_foundation::Setting;
+// The relocated function-application/-declaration checking code
+// below needs `check.rs`'s own `Typer`/`Signature`/`bind_parameters` (the
+// general typer this family delegates to for a body or a call's
+// arguments -- FR-065-CON-1 forbids reimplementing that engine here, not
+// calling into it) and `check::refusal`'s located-refusal vocabulary. Both
+// are sibling submodules of `crate::check`, reached the same way this
+// module's own pre-existing `use crate::check::ValueFunctionFamily` already
+// crosses that boundary.
+use super::check::{bind_parameters, Signature, Signatures, Typer};
+use super::facts::{CallSite, Definedness};
+use super::imports::ImportedNames;
+use super::ir::{CheckedBody, Node};
+use super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::AdmittedImport;
+use super::{DeclarationRegions, DispatchTable, Scope};
+use crate::family::ClassifyFailure;
+use filament_exact::IeeeWidth;
+use filament_exact::IllTypedCause;
+use filament_exact::QuantityCarrier;
+use filament_exact::RoundingMode;
+use filament_exact::TextProfile;
+use filament_exact::ValueType;
+use filament_exact::{UnitDomain, UnitId};
+use filament_semantic_value::checking::CheckingLimits;
+use filament_semantic_value::declaration::CompositeShape;
+use filament_semantic_value::location::ExpressionLocation as CheckLocation;
+use filament_semantic_value::location::ExpressionOwner as CheckOrigin;
+
+/// The contract-level `filament_exact::Meter`'s limits, for every call site in
+/// this module and [`super`] that builds one just to satisfy
+/// [`crate::family::CheckContext::new`]'s signature without itself wanting
+/// to bound anything (`ValueFunctionFamily::check`/`evaluate` are not
+/// metered against this limit today -- see `crate::family::contract`'s own
+/// doc on `_meter`). One `u64::MAX`-in-every-field literal, not six (PR #262
+/// review, nit): each copy was a fact -- "this call site does not want a
+/// scalar limit" -- restated by hand in ten fields, with nothing checking
+/// the six copies stayed identical.
+pub(crate) const SCALAR_LIMITS_UNLIMITED: filament_exact::ScalarLimits =
+    filament_exact::ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    };
+
+/// The size meter over one parsed declaration: the `StageLimits`
+/// figure [`ValueFunctionFamily::check`] compares before it types the
+/// declaration (`input_bytes`) and the work it charges (`work_budget`). It hashes nothing and mints no identity: a checked
+/// node's identity is its FR-092/FR-093 key (`check::lowering`),
+/// minted after typing.
+///
+/// Each figure is the length-prefixed encoding this walk describes, so the
+/// limits keep their meaning: `input_bytes` is the encoding's
+/// logical byte length (a `u64` length prefix plus the bytes of each written
+/// string, eight bytes per number, one per flag), accumulated via
+/// [`filament_exact::length_amount`], never a bare `as` cast; `writes` counts
+/// each base write.
+/// Every tag is an explicit `&'static str` chosen at its `match` arm and
+/// every `match` below is exhaustive, so a new `Expression` or `ValueType`
+/// variant does not compile until it is measured.
+pub(super) struct DeclarationMeter {
+    writes: u64,
+    input_bytes: u64,
+}
+
+impl DeclarationMeter {
+    fn new() -> Self {
+        Self {
+            writes: 0,
+            input_bytes: 0,
+        }
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.writes += 1;
+        // A `u64` length prefix, plus the bytes themselves.
+        self.input_bytes = self
+            .input_bytes
+            .saturating_add(filament_exact::length_amount(std::mem::size_of::<u64>()))
+            .saturating_add(filament_exact::length_amount(bytes.len()));
+    }
+
+    fn write_str(&mut self, text: &str) {
+        self.write_bytes(text.as_bytes());
+    }
+
+    fn write_u64(&mut self, _value: u64) {
+        self.writes += 1;
+        self.input_bytes = self
+            .input_bytes
+            .saturating_add(filament_exact::length_amount(std::mem::size_of::<u64>()));
+    }
+
+    fn write_bool(&mut self, _value: bool) {
+        self.writes += 1;
+        self.input_bytes = self.input_bytes.saturating_add(1);
+    }
+}
+
+fn binary_operator_tag(operator: BinaryOperator) -> &'static str {
+    match operator {
+        BinaryOperator::Add => "add",
+        BinaryOperator::Subtract => "subtract",
+        BinaryOperator::Multiply => "multiply",
+        BinaryOperator::Divide => "divide",
+        BinaryOperator::IntegerDiv => "integer-div",
+        BinaryOperator::IntegerRem => "integer-rem",
+        BinaryOperator::IntegerMod => "integer-mod",
+        BinaryOperator::Equal => "equal",
+        BinaryOperator::NotEqual => "not-equal",
+        BinaryOperator::Less => "less",
+        BinaryOperator::LessOrEqual => "less-or-equal",
+        BinaryOperator::Greater => "greater",
+        BinaryOperator::GreaterOrEqual => "greater-or-equal",
+        BinaryOperator::And => "and",
+        BinaryOperator::Or => "or",
+        BinaryOperator::Implies => "implies",
+    }
+}
+
+fn population_form_tag(form: fsl_forms::PopulationForm) -> &'static str {
+    match form {
+        fsl_forms::PopulationForm::Count => "count",
+        fsl_forms::PopulationForm::Sum => "sum",
+        fsl_forms::PopulationForm::Exists => "exists",
+        fsl_forms::PopulationForm::All => "all",
+        fsl_forms::PopulationForm::Only => "only",
+    }
+}
+
+fn binder_query_tag(query: BinderQuery) -> &'static str {
+    match query {
+        BinderQuery::Map => "map",
+        BinderQuery::Filter => "filter",
+        BinderQuery::FlatMap => "flat-map",
+        BinderQuery::Forall => "forall",
+        BinderQuery::Exists => "exists",
+    }
+}
+
+fn accumulation_tag(form: Accumulation) -> &'static str {
+    match form {
+        Accumulation::Fold => "fold",
+        Accumulation::Reduce => "reduce",
+    }
+}
+
+fn absence_mode_tag(mode: AbsenceMode) -> &'static str {
+    match mode {
+        AbsenceMode::Undefined => "undefined",
+        AbsenceMode::Empty => "empty",
+        AbsenceMode::Refused => "refused",
+    }
+}
+
+fn collection_kind_tag(kind: CollectionKind) -> &'static str {
+    match kind {
+        CollectionKind::Sequence => "sequence",
+        CollectionKind::Set => "set",
+        CollectionKind::Bag => "bag",
+        CollectionKind::OrderedSet => "ordered-set",
+    }
+}
+
+fn rounding_mode_tag(mode: RoundingMode) -> &'static str {
+    match mode {
+        RoundingMode::Exact => "exact",
+        RoundingMode::TowardZero => "toward-zero",
+        RoundingMode::TowardPositive => "toward-positive",
+        RoundingMode::TowardNegative => "toward-negative",
+        RoundingMode::NearestEven => "nearest-even",
+        RoundingMode::NearestAway => "nearest-away",
+    }
+}
+
+fn text_profile_tag(profile: TextProfile) -> &'static str {
+    match profile {
+        TextProfile::UnicodeScalars => "unicode-scalars",
+        TextProfile::Nfc => "nfc",
+        TextProfile::Nfd => "nfd",
+        TextProfile::Nfkc => "nfkc",
+        TextProfile::Nfkd => "nfkd",
+        TextProfile::BinaryUtf8 => "binary-utf8",
+    }
+}
+
+fn encode_quantity_unit(out: &mut DeclarationMeter, unit: UnitId) {
+    // The unit's own content-addressed identity: a declared unit's node key
+    // or a compound unit's `filament.value.compound-unit/v1` digest (ADR-013
+    // OQ-B), tagged by its domain -- never a re-derivation from the unit's
+    // internal dimension/edge graph, and never `Debug`.
+    out.write_str(match unit.domain() {
+        UnitDomain::Declared => "declared",
+        UnitDomain::Compound => "compound",
+    });
+    out.write_str(&format!("{unit:?}"));
+}
+
+// PR #262 review, round 2: this function and `encode_expression` write
+// several `filament_exact::Integer` leaves through `.to_string()`
+// (`Int`/`Rational`/`Decimal` bounds below; `Expression::Integer`/
+// `Rational` literals in `encode_expression`) -- `Display`, the same
+// mechanism `{:?}` (`Debug`) was rejected for elsewhere in this file. The
+// two are not equivalent here: `Integer`'s `Display` is not incidental
+// formatting `std` warns is unstable, it is `filament_exact::integer::
+// Integer`'s own documented "canonical wire spelling used by complete-V1
+// schemas" (`filament_exact::integer::Integer`'s `FromStr` doc), paired with a
+// `FromStr` that refuses any non-canonical spelling (leading zeros, `+`,
+// etc.) -- a real, enforced, round-tripping contract, not a Debug-style
+// dump of whatever fields happen to exist. `src/value/semantic_node.rs`'s own
+// `CanonicalRational` already relies on exactly this contract for this
+// codebase's other content-addressed digest (RFC 8785 JCS preimages).
+// Repointing these leaves at a bespoke byte encoding would introduce a
+// second, parallel integer serialization where one canonical, tested one
+// already exists and is already trusted for identity purposes -- so they
+// are left on `Integer::to_string()` deliberately, not as an oversight.
+///
+/// An `option` or collection writes its own tag, then its inner type, then
+/// (a collection) its bound: a loop down the chain writes each tag, and the
+/// bounds are written innermost first after the leaf, so a type of any
+/// depth encodes on a constant native stack (ADR-030).
+fn encode_value_type(out: &mut DeclarationMeter, value_type: &ValueType) {
+    // Each enclosing collection's bound, outermost first.
+    let mut bounds = Vec::new();
+    let mut current = value_type;
+    loop {
+        match current {
+            ValueType::Boolean => out.write_str("boolean"),
+            ValueType::Integer => out.write_str("integer"),
+            ValueType::Uuid => out.write_str("uuid"),
+            ValueType::Timestamp => out.write_str("timestamp"),
+            ValueType::Int(interval) => {
+                out.write_str("int");
+                out.write_str(&interval.lower().to_string());
+                out.write_str(&interval.upper().to_string());
+            }
+            ValueType::Rational(domain) => {
+                out.write_str("rational");
+                out.write_str(&domain.numerator().lower().to_string());
+                out.write_str(&domain.numerator().upper().to_string());
+                out.write_str(&domain.denominator().lower().to_string());
+                out.write_str(&domain.denominator().upper().to_string());
+            }
+            ValueType::Decimal(decimal) => {
+                out.write_str("decimal");
+                out.write_str(&decimal.lower().to_string());
+                out.write_str(&decimal.upper().to_string());
+                out.write_u64(u64::from(decimal.min_scale()));
+                out.write_u64(u64::from(decimal.max_scale()));
+                out.write_str(rounding_mode_tag(decimal.rounding()));
+            }
+            ValueType::Float(float) => {
+                out.write_str("float");
+                out.write_str(match float.width() {
+                    IeeeWidth::Binary32 => "binary32",
+                    IeeeWidth::Binary64 => "binary64",
+                });
+                out.write_str(rounding_mode_tag(float.rounding()));
+            }
+            ValueType::Quantity(unit) => {
+                out.write_str("quantity");
+                encode_quantity_unit(out, unit.clone());
+            }
+            ValueType::BoundedQuantity(bounded) => {
+                out.write_str("bounded-quantity");
+                encode_quantity_unit(out, bounded.unit().clone());
+                // Bound presence is part of the type (QExact FR-387).
+                for bound in [bounded.min(), bounded.max()] {
+                    match bound {
+                        Some(bound) => {
+                            out.write_str("bounded");
+                            out.write_str(&bound.magnitude().to_string());
+                        }
+                        None => out.write_str("unbounded"),
+                    }
+                }
+            }
+            ValueType::CarriedQuantity(carried) => {
+                out.write_str("carried-quantity");
+                encode_quantity_unit(out, carried.unit().clone());
+                // The carrier is part of the type identity (QExact FR-497).
+                match carried.carrier() {
+                    QuantityCarrier::Decimal(decimal) => {
+                        out.write_str("decimal");
+                        out.write_str(&decimal.lower().to_string());
+                        out.write_str(&decimal.upper().to_string());
+                        out.write_u64(u64::from(decimal.min_scale()));
+                        out.write_u64(u64::from(decimal.max_scale()));
+                        out.write_str(rounding_mode_tag(decimal.rounding()));
+                    }
+                    QuantityCarrier::Integer { domain, rounding } => {
+                        out.write_str("int");
+                        out.write_str(&domain.lower().to_string());
+                        out.write_str(&domain.upper().to_string());
+                        out.write_str(rounding_mode_tag(*rounding));
+                    }
+                    QuantityCarrier::Rational(domain) => {
+                        out.write_str("rational");
+                        out.write_str(&domain.numerator().lower().to_string());
+                        out.write_str(&domain.numerator().upper().to_string());
+                        out.write_str(&domain.denominator().lower().to_string());
+                        out.write_str(&domain.denominator().upper().to_string());
+                        out.write_str(rounding_mode_tag(RoundingMode::Exact));
+                    }
+                }
+            }
+            ValueType::Text(text_type) => {
+                out.write_str("text");
+                out.write_u64(text_type.min());
+                out.write_u64(text_type.max());
+                out.write_str(text_profile_tag(text_type.profile()));
+            }
+            ValueType::String => out.write_str("string"),
+            ValueType::Enum(shape) => {
+                out.write_str("enum");
+                out.write_bool(shape.is_ordered());
+                for variant in shape.variants() {
+                    out.write_str(&format!("{variant:?}"));
+                }
+            }
+            ValueType::Option(payload) => {
+                out.write_str("option");
+                current = payload;
+                continue;
+            }
+            ValueType::Composite(key) => {
+                out.write_str("composite");
+                out.write_str(&key.to_string());
+            }
+            ValueType::Collection(collection_type) => {
+                out.write_str("collection");
+                out.write_str(collection_kind_tag(collection_type.kind()));
+                bounds.push(collection_type.bound());
+                current = collection_type.element();
+                continue;
+            }
+            ValueType::Map(map_type) => {
+                out.write_str("map");
+                // The key nests no type (filament-exact FR-386), so this
+                // recursion is one level deep.
+                encode_value_type(out, map_type.key());
+                bounds.push(map_type.bound());
+                current = map_type.values();
+                continue;
+            }
+            ValueType::Reference(key) => {
+                out.write_str("reference");
+                out.write_str(&format!("{key:?}"));
+            }
+            ValueType::Population(maximum) => {
+                out.write_str("population");
+                match maximum {
+                    Some(maximum) => {
+                        out.write_str("bounded");
+                        out.write_u64(*maximum);
+                    }
+                    None => out.write_str("unbounded"),
+                }
+            }
+        }
+        break;
+    }
+    // Bound presence is part of the type (ADR-014 N-3).
+    for bound in bounds.into_iter().rev() {
+        match bound {
+            Some(bound) => {
+                out.write_str("bounded");
+                out.write_u64(bound.minimum());
+                out.write_u64(bound.maximum());
+            }
+            None => out.write_str("unbounded"),
+        }
+    }
+}
+
+// `Expression::Integer`/`Rational`'s `.to_string()` below: same
+// `Integer::Display` canonical-wire-spelling contract, same reasoning --
+// see `encode_value_type`'s own doc comment above.
+//
+// The walk keeps its pending sub-expressions on a heap stack, not
+// the host stack, so an expression of any depth is measured in constant
+// host stack. Sub-expressions are visited in source pre-order,
+// so a `Convert`/`AllInstances`/`Lookup` target that does not resolve is
+// refused at the same node the recursive walk refused it at. A node's own
+// writes all happen at its visit, including the few (a field name, an
+// absence mode, a dispatch member, the identity flag) that follow an operand
+// in source order: every figure is a sum over the writes, so where a write
+// falls in the walk does not change it.
+fn encode_expression(
+    out: &mut DeclarationMeter,
+    root: &Expression,
+    targets: &TargetTypes<'_>,
+) -> Result<(), CheckRefusal> {
+    let mut pending = vec![root.root()];
+    while let Some(expr) = pending.pop() {
+        // One poll per measured node: the measure pass's own work charge.
+        if targets.cancel.is_some_and(filament_exact::Cancel::poll) {
+            return Err(super::check::cancelled_refusal(targets.location));
+        }
+        // The node's sub-expressions in source order; pushed reversed below
+        // so the first is visited next.
+        let first = pending.len();
+        match expr.node() {
+            ExprNode::Boolean(value) => {
+                out.write_str("boolean");
+                out.write_bool(*value);
+            }
+            ExprNode::Absent => out.write_str("absent"),
+            ExprNode::Integer(value) => {
+                out.write_str("integer");
+                out.write_str(&value.to_string());
+            }
+            ExprNode::Float32(bits) => {
+                out.write_str("float32_bits");
+                out.write_str(&format!("{bits:08x}"));
+            }
+            ExprNode::Float64(bits) => {
+                out.write_str("float64_bits");
+                out.write_str(&format!("{bits:016x}"));
+            }
+            ExprNode::Rational(numerator, denominator) => {
+                out.write_str("rational");
+                out.write_str(&numerator.to_string());
+                out.write_str(&denominator.to_string());
+            }
+            ExprNode::DecimalValue { coefficient, scale } => {
+                out.write_str("decimal");
+                out.write_str(&coefficient.to_string());
+                out.write_str(&scale.to_string());
+            }
+            ExprNode::Quantity(quantity) => {
+                out.write_str("quantity");
+                out.write_str(&quantity.magnitude.first.to_string());
+                out.write_str(&quantity.magnitude.second.to_string());
+                out.write_str(&quantity.unit.name);
+            }
+            ExprNode::String(text) => {
+                out.write_str("string");
+                out.write_str(text.text());
+            }
+            ExprNode::Name(name) => {
+                out.write_str("name");
+                out.write_str(&name.name);
+            }
+            ExprNode::ProtocolReference { target } => {
+                out.write_str("protocol_reference");
+                out.write_str(target);
+            }
+            ExprNode::Case(case) => {
+                out.write_str("case");
+                out.write_u64(case.arms.len() as u64);
+                pending.push(expr.at(case.scrutinee));
+                for arm in &case.arms {
+                    out.write_str(&arm.member.name);
+                    out.write_u64(arm.binders.len() as u64);
+                    for binder in &arm.binders {
+                        out.write_str(&binder.name);
+                    }
+                    pending.push(expr.at(arm.body));
+                }
+            }
+            ExprNode::Let { name, value, body } => {
+                out.write_str("let");
+                out.write_str(name);
+                pending.extend([expr.at(*value), expr.at(*body)]);
+            }
+            ExprNode::If {
+                condition,
+                then,
+                otherwise,
+            } => {
+                out.write_str("if");
+                pending.extend([expr.at(*condition), expr.at(*then), expr.at(*otherwise)]);
+            }
+            ExprNode::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                out.write_str("binary");
+                out.write_str(binary_operator_tag(*operator));
+                pending.extend([expr.at(*left), expr.at(*right)]);
+            }
+            ExprNode::Negate(operand) => {
+                out.write_str("negate");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Power { base, exponent } => {
+                out.write_str("power");
+                out.write_str(&exponent.to_string());
+                pending.push(expr.at(*base));
+            }
+            ExprNode::Not(operand) => {
+                out.write_str("not");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Field { operand, field } => {
+                out.write_str("field");
+                out.write_str(field);
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Present(operand) => {
+                out.write_str("present");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Value(operand) => {
+                out.write_str("value");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Deref(operand) => {
+                out.write_str("deref");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Select { place, selector } => {
+                out.write_str("select");
+                pending.push(expr.at(*selector));
+                pending.push(expr.at(*place));
+            }
+            ExprNode::Ref(operand) => {
+                out.write_str("ref");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Call { name, arguments } => {
+                out.write_str("call");
+                out.write_str(&name.name);
+                out.write_u64(arguments.len() as u64);
+                pending.extend(arguments.iter().map(|id| expr.at(*id)));
+            }
+            ExprNode::Record { name, fields } => {
+                out.write_str("record");
+                out.write_str(&name.name);
+                out.write_u64(fields.len() as u64);
+                for (field_name, initializer) in fields {
+                    out.write_str(field_name);
+                    match initializer {
+                        FieldInitializer::Value(expression) => {
+                            out.write_str("value");
+                            pending.push(expr.at(*expression));
+                        }
+                        FieldInitializer::Null => out.write_str("null"),
+                    }
+                }
+            }
+            ExprNode::Collection { kind, elements } => {
+                out.write_str("collection");
+                out.write_str(collection_kind_tag(*kind));
+                out.write_u64(elements.len() as u64);
+                pending.extend(elements.iter().map(|id| expr.at(*id)));
+            }
+            ExprNode::Convert { target, operand } => {
+                out.write_str("convert");
+                encode_value_type(out, &targets.resolve(target)?);
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Query {
+                query,
+                binder,
+                source,
+                body,
+            } => {
+                out.write_str("query");
+                out.write_str(binder_query_tag(*query));
+                out.write_str(binder);
+                pending.extend([expr.at(*source), expr.at(*body)]);
+            }
+            ExprNode::Flatten(operand) => {
+                out.write_str("flatten");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Accumulate {
+                accumulator_type_span: _,
+                form,
+                accumulator_type,
+                accumulator,
+                binder,
+                source,
+                step,
+                identity,
+            } => {
+                out.write_str("accumulate");
+                out.write_str(accumulation_tag(*form));
+                out.write_str(accumulator_type);
+                out.write_str(accumulator);
+                out.write_str(binder);
+                out.write_bool(identity.is_some());
+                pending.extend([expr.at(*source), expr.at(*step)]);
+                pending.extend(identity.map(|id| expr.at(id)));
+            }
+            ExprNode::Count {
+                result_type_span: _,
+                result_type,
+                binder,
+                source,
+                predicate,
+            } => {
+                out.write_str("count");
+                out.write_str(result_type);
+                out.write_str(binder);
+                pending.extend([expr.at(*source), expr.at(*predicate)]);
+            }
+            ExprNode::Sum {
+                result_type_span: _,
+                result_type,
+                binder,
+                source,
+                summand,
+            } => {
+                out.write_str("sum");
+                out.write_str(result_type);
+                out.write_str(binder);
+                pending.extend([expr.at(*source), expr.at(*summand)]);
+            }
+            ExprNode::Population {
+                form,
+                binder,
+                population,
+                population_span: _,
+                condition,
+                body,
+            } => {
+                out.write_str("population");
+                out.write_str(population_form_tag(*form));
+                out.write_str(binder);
+                out.write_str(population);
+                out.write_bool(condition.is_some());
+                out.write_bool(body.is_some());
+                pending.extend(condition.iter().chain(body.iter()).map(|id| expr.at(*id)));
+            }
+            ExprNode::Seq {
+                binder,
+                low,
+                high,
+                body,
+            } => {
+                out.write_str("seq");
+                out.write_str(binder);
+                pending.extend([expr.at(*low), expr.at(*high), expr.at(*body)]);
+            }
+            ExprNode::Size(operand) => {
+                out.write_str("size");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::Contains { collection, item } => {
+                out.write_str("contains");
+                pending.extend([expr.at(*collection), expr.at(*item)]);
+            }
+            ExprNode::DropFirst(operand) => {
+                out.write_str("drop-first");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::RemoveOne { collection, item } => {
+                out.write_str("remove-one");
+                pending.extend([expr.at(*collection), expr.at(*item)]);
+            }
+            ExprNode::AllInstances { target, population } => {
+                out.write_str("all-instances");
+                measure_model_target(out, target);
+                pending.push(expr.at(*population));
+            }
+            ExprNode::Lookup {
+                target,
+                population,
+                reference,
+                absence,
+            } => {
+                out.write_str("lookup");
+                measure_model_target(out, target);
+                out.write_str(absence_mode_tag(*absence));
+                pending.extend([expr.at(*population), expr.at(*reference)]);
+            }
+            ExprNode::Dispatch {
+                receiver,
+                member,
+                arguments,
+            } => {
+                out.write_str("dispatch");
+                out.write_str(member);
+                out.write_u64(arguments.len() as u64);
+                pending.push(expr.at(*receiver));
+                pending.extend(arguments.iter().map(|id| expr.at(*id)));
+            }
+            ExprNode::Pre(operand) => {
+                out.write_str("pre");
+                pending.push(expr.at(*operand));
+            }
+            ExprNode::SelfRef => {
+                out.write_str("self_ref");
+            }
+            ExprNode::Result => {
+                out.write_str("result");
+            }
+            ExprNode::Reaches {
+                source,
+                target,
+                edge,
+                ..
+            } => {
+                out.write_str("reaches");
+                out.write_str(edge);
+                pending.extend([expr.at(*source), expr.at(*target)]);
+            }
+            ExprNode::Indexed { read, trace } => {
+                out.write_str("indexed");
+                out.write_str(trace);
+                pending.push(expr.at(*read));
+            }
+            ExprNode::StepLabel { trace, label } => {
+                out.write_str("step_label");
+                out.write_str(trace);
+                match label {
+                    fsl_forms::StepLabelForm::Operation => out.write_str("op"),
+                    fsl_forms::StepLabelForm::Receiver => out.write_str("receiver"),
+                    fsl_forms::StepLabelForm::Argument {
+                        operation,
+                        parameter,
+                    } => {
+                        out.write_str("argument");
+                        out.write_str(operation);
+                        out.write_str(parameter);
+                    }
+                }
+            }
+            ExprNode::Stutter => {
+                out.write_str("stutter");
+            }
+            // Not the S2 seam (`Typer::infer_form`'s own doc,
+            // `fsl-semantics/src/check/check/typing.rs`): an unconditional
+            // probe arm so this match keeps compiling under `--cfg
+            // seam_probe`.
+            #[cfg(seam_probe)]
+            ExprNode::__SeamProbe => unreachable!("never constructed outside the probe build"),
+        }
+        pending[first..].reverse();
+    }
+    Ok(())
+}
+
+/// Measure authored model targets without resolving their S3 question.
+fn measure_model_target(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) {
+    use fsl_forms::{BuiltinType, TypeFormHead};
+    let mut pending = vec![root];
+    while let Some(form) = pending.pop() {
+        out.write_str(match &form.head {
+            TypeFormHead::UnitExpression(_) => "unit-expression",
+            TypeFormHead::Name(name) => &name.name,
+            TypeFormHead::Collection(kind) => collection_kind_tag(*kind),
+            TypeFormHead::Population => "Population",
+            TypeFormHead::Builtin(builtin) => match builtin {
+                BuiltinType::Boolean => "Boolean",
+                BuiltinType::Integer => "Integer",
+                BuiltinType::Int => "Int",
+                BuiltinType::Rational => "Rational",
+                BuiltinType::Decimal => "Decimal",
+                BuiltinType::Float32 => "Float32",
+                BuiltinType::Float64 => "Float64",
+                BuiltinType::Text => "Text",
+                BuiltinType::Option => "Option",
+                BuiltinType::Reference => "Reference",
+                BuiltinType::Quantity => "Quantity",
+                BuiltinType::Clock => "Clock",
+            },
+        });
+        if let TypeFormHead::UnitExpression(terms) = &form.head {
+            out.write_u64(filament_exact::length_amount(terms.len()));
+            for term in terms {
+                out.write_str(&term.name.name);
+                match &term.exponent {
+                    Some((exponent, _)) => out.write_str(&exponent.to_string()),
+                    None => out.write_str("1"),
+                }
+            }
+        }
+        out.write_u64(filament_exact::length_amount(form.arguments.len()));
+        out.write_u64(filament_exact::length_amount(form.bounds.len()));
+        for bound in &form.bounds {
+            out.write_str(bound);
+        }
+        pending.extend(form.arguments.iter().rev());
+    }
+}
+
+/// Measure one function declaration's parsed size: its name,
+/// parameters, result, measure and body, as authored, with every declared
+/// type written as its resolved `ValueType` (so two spellings of one type
+/// measure alike) and each `Convert`/`AllInstances`/`Lookup` target resolved
+/// through `targets`. A target that does not resolve is refused here with
+/// the same refusal the checker would give it.
+///
+/// The figures bound the work [`ValueFunctionFamily::check`] is about to do
+/// (see [`DeclarationMeter`]); the declaration's identity is its FR-092
+/// function node key, minted by `check::lowering` once every declaration is
+/// typed.
+pub(crate) fn measure_declaration(
+    declaration: &FunctionDeclaration,
+    signature: &Signature,
+    targets: &TargetTypes<'_>,
+) -> Result<DeclarationMetrics, CheckRefusal> {
+    let mut meter = DeclarationMeter::new();
+    meter.write_str("value.function-declaration");
+    meter.write_str(&declaration.name);
+    meter.write_u64(signature.parameters.len() as u64);
+    for (name, value_type) in &signature.parameters {
+        meter.write_str(name);
+        encode_value_type(&mut meter, value_type);
+    }
+    encode_value_type(&mut meter, &signature.result);
+    meter.write_bool(declaration.measure.is_some());
+    if let Some(measure) = &declaration.measure {
+        encode_expression(&mut meter, measure, targets)?;
+    }
+    encode_expression(&mut meter, &declaration.body, targets)?;
+    Ok(DeclarationMetrics {
+        input_bytes: meter.input_bytes,
+        work_budget: meter.writes,
+    })
+}
+
+/// [`StageLimits`](crate::family::StageLimits)'s real producer values,
+/// read back from one `measure_declaration` pass.
+/// `input_bytes` is a `StageLimits` field, compared by
+/// `crate::family::CheckContext::check_input_bytes`;
+/// `work_budget` is charged against the shared kernel meter instead (PR
+/// #302 review finding 3) -- see `StageLimits`'s own doc.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeclarationMetrics {
+    /// The measured encoding's logical byte length.
+    pub(crate) input_bytes: u64,
+    /// The number of base writes performed.
+    pub(crate) work_budget: u64,
+}
+
+/// Resolves conversion targets measured against the package's [`Scope`].
+/// Model targets are measured as authored syntax and resolved by their hook.
+pub(crate) struct TargetTypes<'a> {
+    scope: &'a Scope,
+    /// The source unit whose model aliases the targets are written under.
+    source: Option<&'a fsl_foundation::source::provenance::RawSourceRef>,
+    location: &'a CheckLocation,
+    cancel: Option<&'a filament_exact::Cancel>,
+}
+
+impl<'a> TargetTypes<'a> {
+    /// Resolve targets against `scope`, refusing at `location`.
+    pub(crate) fn new(scope: &'a Scope, location: &'a CheckLocation) -> Self {
+        Self {
+            scope,
+            source: None,
+            location,
+            cancel: None,
+        }
+    }
+
+    /// These targets, written in the source unit `source`.
+    #[must_use]
+    pub(crate) fn with_source(
+        mut self,
+        source: Option<&'a fsl_foundation::source::provenance::RawSourceRef>,
+    ) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// These targets, with the measure pass polling `cancel` at every node
+    /// it measures (FR-276).
+    #[must_use]
+    pub(crate) fn with_cancel(mut self, cancel: Option<&'a filament_exact::Cancel>) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
+    fn resolve(&self, target: &fsl_forms::TypeForm) -> Result<ValueType, CheckRefusal> {
+        super::type_form::resolve_type_form(
+            &self.scope.in_source(self.source),
+            target,
+            self.location,
+        )
+    }
+}
+/// `Value`'s family check code for function application
+/// (FR-065-AC-4; the typer's `Call` arm calls it once, FR-065-CON-3), relocated
+/// here from `check.rs`'s deleted `Typer::call`. The algorithm is unchanged
+/// -- name resolution against `typer.signatures()`, an arity check, a check
+/// of every argument against its parameter type, then a tuple-constructor
+/// fallback -- only its *location* moved, from a `Typer`-owned method into
+/// this family module, so the typer's `Expression::Call` arm dispatches to
+/// family-owned code instead of deciding admission itself.
+///
+/// The one function is split in two around the arguments' typing:
+/// [`Self::resolve`] resolves the callee and checks the arity, the typer's
+/// explicit-stack loop checks each argument against [`Self::parameter`], and
+/// [`Self::finish`] builds the call. The typer's loop, not this module,
+/// holds the argument checks, so a call nested in a call's argument costs
+/// heap, not host stack.
+///
+/// Resolved against the `Typer`'s own declarations rather than a
+/// `CheckContext`: an ordinary call's own admission decision (does this
+/// name resolve, does the arity match, do the arguments type) needs exactly
+/// what `Typer` already carries -- the package's `Scope` and every declared
+/// `Signature`, for a call possibly nested arbitrarily deep inside the
+/// declaration currently being typed. A call is reached from the typer's
+/// dispatch over every other `Value` expression form (`Let`, `If`,
+/// `Binary`, ... ), so this is itself already reached, transitively,
+/// through the one
+/// [`FamilyContract::check`](crate::family::FamilyContract::check) call that starts a declaration's real
+/// typing (`check` now calls [`check_declaration_body`], which
+/// drives the same `Typer`) -- an application inside a declaration's own
+/// body is checked "through the contract" in that sense already.
+///
+/// **An application inside a clause expression is not (PR #303 review,
+/// finding N4; type name corrected, round 3 finding F5).**
+/// `CheckedGraph::check_clause_expression` (`check/mod.rs`) -- the entry
+/// every precondition, postcondition and operation body clause checks
+/// through -- builds its own `Typer` directly, with its own declaration-local
+/// `nodes` counter and one enclosing shared `CheckContext`; it is a
+/// standalone public entry point on `CheckedGraph`, not something
+/// `ValueFunctionFamily::check` (or anything else reached from it) calls. An
+/// `Expression::Call` inside such a clause still reaches this same
+/// application check, through that `Typer`'s own dispatch -- the
+/// algorithm is identical either way -- but that call is not, today, reached
+/// "through the contract" the way a declaration body's own application is;
+/// only the `CheckedGraph` caller that invoked `check_clause_expression`
+/// knows it happened at all.
+///
+/// The shared context reaches nested model checks through the typer.
+/// The enclosing declaration charges its work once; the typer's
+/// [`super::CheckingLimits`] node charge at every entered node bounds
+/// nesting on both paths. Application traversal remains on the same
+/// explicit stack and does not create another per-node context or meter.
+#[derive(Clone, Debug)]
+pub(crate) enum Application<'a> {
+    /// A call of the declared function at index `function`.
+    Function {
+        /// The callee's index among the package's functions.
+        function: usize,
+        /// The callee's signature.
+        signature: &'a Signature,
+    },
+    /// A tuple constructor of the declared tuple `declaration`.
+    Tuple {
+        /// The tuple declaration's handle.
+        declaration: NodeKey,
+        /// Its position types, in order.
+        positions: &'a [ValueType],
+    },
+    /// A call of an imported library's function (ADR-015 D-5), typed from
+    /// the library's checked graph.
+    Imported {
+        /// The function, as the import view names it.
+        callee: NodeKey,
+        /// The library identity selected by the source import.
+        library: String,
+        /// The function's index in the library's checked graph.
+        function: usize,
+        /// The function's checked signature in the library's graph; every
+        /// type in it is package-independent.
+        signature: &'a Signature,
+    },
+    /// A reserved `filament::value::ieee::*` intrinsic (FR-397 "Intrinsics").
+    Ieee {
+        /// The intrinsic the call names.
+        intrinsic: IeeeIntrinsic,
+        /// Expected float type, when the surrounding expression supplies one.
+        expected: Option<ValueType>,
+    },
+}
+
+/// ADR-015 D-5, FSpec FR-322: whether `value_type` is the same type in
+/// every package, so an importing graph holds it under the id the library
+/// gives it. A builtin scalar, and an option or collection over such types,
+/// is; a type naming a declaration (a record, a tuple, an enum, a declared
+/// unit) or a model owner (a reference, a population) is not.
+pub(crate) fn is_package_independent(value_type: &ValueType) -> bool {
+    // An option or collection is independent when its inner type is: a
+    // loop down the chain, so any depth runs on a constant stack.
+    let mut current = value_type;
+    loop {
+        match current {
+            ValueType::Boolean
+            | ValueType::Integer
+            | ValueType::Int(_)
+            | ValueType::Rational(_)
+            | ValueType::Decimal(_)
+            | ValueType::Float(_)
+            | ValueType::Text(_)
+            | ValueType::String
+            | ValueType::Uuid
+            | ValueType::Timestamp => return true,
+            ValueType::Option(payload) => current = payload,
+            ValueType::Collection(collection) => current = collection.element(),
+            ValueType::Map(map) => current = map.values(),
+            ValueType::Quantity(_)
+            | ValueType::BoundedQuantity(_)
+            | ValueType::CarriedQuantity(_)
+            | ValueType::Enum(_)
+            | ValueType::Composite(_)
+            | ValueType::Reference(_)
+            | ValueType::Population(_) => return false,
+        }
+    }
+}
+
+/// A reserved IEEE intrinsic of the `filament::value::ieee::` family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IeeeIntrinsic {
+    /// `sqrt(x)`: one float operand, a float result.
+    SquareRoot,
+    /// `fma(a, b, c)`: three float operands, a float result.
+    FusedMultiplyAdd,
+    /// `numericEqual(a, b)`: two float operands, a `Boolean`.
+    NumericEqual,
+    /// `totalOrder(a, b)`: two float operands, a `Boolean`.
+    TotalOrder,
+    /// `bitIdentical(a, b)`: two float operands, a `Boolean`.
+    BitIdentical,
+}
+
+impl IeeeIntrinsic {
+    /// The intrinsic whose authored qualified spelling is `name`, if any.
+    /// `#[string_edge]`: reads a written call name before it is resolved.
+    #[ix_trace_rs::string_edge]
+    fn named(name: &str) -> Option<Self> {
+        Some(match name.strip_prefix("filament::value::ieee::")? {
+            "sqrt" => Self::SquareRoot,
+            "fma" => Self::FusedMultiplyAdd,
+            "numericEqual" => Self::NumericEqual,
+            "totalOrder" => Self::TotalOrder,
+            "bitIdentical" => Self::BitIdentical,
+            _ => return None,
+        })
+    }
+
+    /// The number of arguments the intrinsic takes.
+    fn arity(self) -> usize {
+        match self {
+            Self::SquareRoot => 1,
+            Self::FusedMultiplyAdd => 3,
+            Self::NumericEqual | Self::TotalOrder | Self::BitIdentical => 2,
+        }
+    }
+
+    /// Whether the result is a float of the operands' type rather than a
+    /// `Boolean`.
+    fn yields_float(self) -> bool {
+        matches!(self, Self::SquareRoot | Self::FusedMultiplyAdd)
+    }
+}
+
+impl<'a> Application<'a> {
+    /// Resolve a call of `name` with `arity` arguments: a declared function
+    /// callable by name, else a tuple constructor; refuses an arity
+    /// mismatch, a name naming neither, and a name that is not callable.
+    pub(crate) fn resolve(
+        typer: &Typer<'a>,
+        name: &str,
+        arity: usize,
+        hint: Option<&ValueType>,
+        location: &CheckLocation,
+    ) -> Result<Self, CheckRefusal> {
+        if let Some(intrinsic) = IeeeIntrinsic::named(name) {
+            // A supplied library never replaces an intrinsic: one that
+            // exports a declaration under the intrinsic's qualified
+            // identity makes the call refuse.
+            if typer.scope().imported_packages().any(|import| {
+                import.view.exports().any(|(export, _)| {
+                    export == name
+                        || name
+                            .strip_suffix(export)
+                            .and_then(|head| head.strip_suffix("::"))
+                            .is_some_and(|head| head == import.identity.as_str())
+                })
+            }) {
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::ReservedIntrinsicConflict(name.to_owned()),
+                });
+            }
+            // FR-397-AC-25: a unit without a float form refuses the profile
+            // before it types or counts the call's arguments.
+            if typer.scope().ieee_profile.is_none() {
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::IeeeProfileNotAdmitted,
+                });
+            }
+            if arity != intrinsic.arity() {
+                return Err(CheckRefusal::ill_typed(
+                    location,
+                    IllTypedCause::TypeMismatch,
+                ));
+            }
+            return Ok(Self::Ieee {
+                intrinsic,
+                expected: hint.filter(|_| intrinsic.yields_float()).cloned(),
+            });
+        }
+        if let Some((qualifier, member)) = name.split_once("::") {
+            if let Some(import) = typer.imported(qualifier) {
+                return Self::imported(import, member, arity, location);
+            }
+        }
+        if let Some((function, signature)) = typer.signatures().callable(name) {
+            if signature.parameters.len() != arity {
+                return Err(CheckRefusal::ill_typed(
+                    location,
+                    IllTypedCause::TypeMismatch,
+                ));
+            }
+            return Ok(Self::Function {
+                function,
+                signature,
+            });
+        }
+        let declared = match typer.type_named(name, location) {
+            Ok(value_type) => Some(value_type),
+            Err(CheckRefusal {
+                cause: CheckCause::MissingName(_) | CheckCause::MissingQualifiedName(_),
+                ..
+            }) => None,
+            Err(refusal) => return Err(refusal),
+        };
+        match &declared {
+            Some(ValueType::Composite(key)) => {
+                let Some(CompositeShape::Tuple(positions)) = typer
+                    .scope()
+                    .types()
+                    .composite(key.clone())
+                    .map(|declaration| declaration.shape())
+                else {
+                    return Err(CheckRefusal::ill_typed(
+                        location,
+                        IllTypedCause::OperatorIneligible,
+                    ));
+                };
+                if positions.len() != arity {
+                    return Err(CheckRefusal::ill_typed(
+                        location,
+                        IllTypedCause::TypeMismatch,
+                    ));
+                }
+                Ok(Self::Tuple {
+                    declaration: key.clone(),
+                    positions,
+                })
+            }
+            Some(_) => Err(CheckRefusal::ill_typed(
+                location,
+                IllTypedCause::OperatorIneligible,
+            )),
+            None if typer.scope().declares_model_operation(name) => Err(CheckRefusal::ill_typed(
+                location,
+                IllTypedCause::OperatorIneligible,
+            )),
+            // FR-230 "Clock-reading declarations": a call the timed-model
+            // check did not expand is outside every place that admits it.
+            None if typer.scope().is_clock_reading(name) => Err(CheckRefusal {
+                location: location.clone(),
+                cause: CheckCause::ClockReadingCall(name.to_owned()),
+            }),
+            None => Err(CheckRefusal {
+                location: location.clone(),
+                cause: CheckCause::MissingName(name.to_owned()),
+            }),
+        }
+    }
+
+    /// ADR-015 D-5: a call of `member` of the admitted import `import`.
+    /// `member` resolves through the import view (FR-087-AC-13), else
+    /// `missing_declaration`/`missing-name`; the node it names is looked up
+    /// among the library graph's function identities, and a name that is no
+    /// function callable by name, or a function one of whose signature types
+    /// is package-dependent, refuses `ill_typed`/`operator-ineligible`; an
+    /// arity mismatch refuses `ill_typed`/`type-mismatch`.
+    fn imported(
+        import: &'a AdmittedImport,
+        member: &str,
+        arity: usize,
+        location: &CheckLocation,
+    ) -> Result<Self, CheckRefusal> {
+        let callee = ImportedNames::of(&import.view)
+            .resolve(member)
+            .map_err(|cause| CheckRefusal {
+                location: location.clone(),
+                cause,
+            })?;
+        let ineligible = || CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
+        let (function, signature) = import
+            .graph
+            .imported_function(&callee)
+            .ok_or_else(ineligible)?;
+        let independent = signature
+            .parameters
+            .iter()
+            .map(|(_, parameter)| parameter)
+            .chain([&signature.result])
+            .all(is_package_independent);
+        if !independent {
+            return Err(ineligible());
+        }
+        if signature.parameters.len() != arity {
+            return Err(CheckRefusal::ill_typed(
+                location,
+                IllTypedCause::TypeMismatch,
+            ));
+        }
+        Ok(Self::Imported {
+            callee,
+            library: import.identity.as_str().to_owned(),
+            function,
+            signature,
+        })
+    }
+
+    pub(crate) fn pending_dependency_target(&self) -> Option<super::PendingDependencyTarget> {
+        match self {
+            Self::Function { function, .. } => {
+                Some(super::PendingDependencyTarget::LocalFunction(*function))
+            }
+            Self::Imported {
+                callee, library, ..
+            } => Some(super::PendingDependencyTarget::Imported {
+                library: library.clone(),
+                target: callee.clone(),
+            }),
+            Self::Tuple { .. } | Self::Ieee { .. } => None,
+        }
+    }
+
+    /// The type the argument at `index` is checked against.
+    pub(crate) fn parameter(&self, index: usize) -> Option<ValueType> {
+        match self {
+            Self::Function { signature, .. } | Self::Imported { signature, .. } => signature
+                .parameters
+                .get(index)
+                .map(|(_, parameter)| parameter.clone()),
+            Self::Tuple { positions, .. } => positions.get(index).cloned(),
+            Self::Ieee { expected, .. } => expected
+                .as_ref()
+                .filter(|value_type| matches!(value_type, ValueType::Float(_)))
+                .cloned(),
+        }
+    }
+
+    /// The declared parameter type at `index` when this is a call of a
+    /// declared function (local or imported).
+    pub(crate) fn call_parameter(&self, index: usize) -> Option<ValueType> {
+        match self {
+            Self::Function { .. } | Self::Imported { .. } => self.parameter(index),
+            Self::Tuple { .. } | Self::Ieee { .. } => None,
+        }
+    }
+
+    /// For an IEEE intrinsic, the expected type of the next argument
+    /// (FR-397 "Float constants"): the type of its sibling when that is a
+    /// float, else the expected type of the whole call when that is a
+    /// float. `None` for every other application, whose arguments are
+    /// checked against [`Self::parameter`].
+    pub(crate) fn intrinsic_hint(&self, siblings: &[ValueType]) -> Option<Option<ValueType>> {
+        let Self::Ieee { expected, .. } = self else {
+            return None;
+        };
+        Some(
+            siblings
+                .iter()
+                .find(|each| matches!(each, ValueType::Float(_)))
+                .or(expected
+                    .as_ref()
+                    .filter(|each| matches!(each, ValueType::Float(_))))
+                .cloned(),
+        )
+    }
+
+    /// The application node over its checked `arguments`.
+    pub(crate) fn finish(
+        self,
+        arguments: Vec<super::ir::NodeId>,
+        argument_types: Vec<ValueType>,
+        location: &CheckLocation,
+    ) -> Result<Node, CheckRefusal> {
+        match self {
+            // FR-093: the call's identity is the key of the `expression`
+            // node `check::lowering` builds for it once its callee is keyed.
+            Self::Function {
+                function,
+                signature,
+            } => Ok(Node {
+                kind: NodeKind::Call {
+                    function,
+                    arguments,
+                },
+                value_type: signature.result.clone(),
+                location: location.clone(),
+                equality_producer: None,
+                ordering_part: false,
+                field_population: None,
+            }),
+            Self::Imported {
+                callee,
+                function,
+                signature,
+                ..
+            } => Ok(Node {
+                kind: NodeKind::ImportedCall {
+                    callee,
+                    function,
+                    arguments,
+                },
+                value_type: signature.result.clone(),
+                location: location.clone(),
+                equality_producer: None,
+                ordering_part: false,
+                field_population: None,
+            }),
+            Self::Tuple { declaration, .. } => Ok(Node {
+                kind: NodeKind::Tuple {
+                    declaration: declaration.clone(),
+                    arguments,
+                },
+                value_type: ValueType::Composite(declaration),
+                location: location.clone(),
+                equality_producer: None,
+                ordering_part: false,
+                field_population: None,
+            }),
+            Self::Ieee { intrinsic, .. } => {
+                // Every operand is a float of the first operand's type;
+                // the first one that is not refuses at its own position.
+                let Some(first @ ValueType::Float(float)) = argument_types.first() else {
+                    return Err(CheckRefusal::ill_typed(
+                        &location.child(0),
+                        IllTypedCause::TypeMismatch,
+                    ));
+                };
+                if let Some(index) = argument_types.iter().position(|each| each != first) {
+                    return Err(CheckRefusal::ill_typed(
+                        &location.child(index),
+                        IllTypedCause::TypeMismatch,
+                    ));
+                }
+                let kind = match (intrinsic, arguments.as_slice()) {
+                    (IeeeIntrinsic::SquareRoot, [operand]) => {
+                        NodeKind::IeeeSquareRoot(float.rounding(), *operand)
+                    }
+                    (IeeeIntrinsic::FusedMultiplyAdd, [a, b, c]) => match float.width() {
+                        filament_exact::IeeeWidth::Binary32 => {
+                            NodeKind::IeeeFloat32Fma(float.rounding(), *a, *b, *c)
+                        }
+                        filament_exact::IeeeWidth::Binary64 => {
+                            NodeKind::IeeeFloat64Fma(float.rounding(), *a, *b, *c)
+                        }
+                    },
+                    (IeeeIntrinsic::NumericEqual, [a, b]) => NodeKind::IeeeNumericEquality(*a, *b),
+                    (IeeeIntrinsic::TotalOrder, [a, b]) => {
+                        NodeKind::IeeeTotalOrder(OrderedKind::Float, *a, *b)
+                    }
+                    (IeeeIntrinsic::BitIdentical, [a, b]) => NodeKind::IeeeBitIdentical(*a, *b),
+                    _ => {
+                        return Err(CheckRefusal::ill_typed(
+                            location,
+                            IllTypedCause::TypeMismatch,
+                        ))
+                    }
+                };
+                Ok(Node {
+                    kind,
+                    value_type: if intrinsic.yields_float() {
+                        ValueType::Float(*float)
+                    } else {
+                        ValueType::Boolean
+                    },
+                    location: location.clone(),
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                })
+            }
+        }
+    }
+}
+
+/// One function declaration's real typing and static-definedness verdict,
+/// returned by [`Application`]'s sibling entry point for
+/// declarations. Termination is not included -- see this function's own
+/// doc below for why it cannot be.
+#[derive(Debug)]
+pub(crate) struct CheckedDeclarationBody {
+    /// The typed body.
+    pub(crate) body: CheckedBody,
+    /// The typed `decreases` measure, when the declaration wrote one.
+    pub(crate) measure: Option<CheckedBody>,
+    /// The evaluation slot count the body's own parameter/local bindings
+    /// allocated.
+    pub(crate) slots: usize,
+    /// The name each body slot was bound under, indexed by slot (FR-092
+    /// parameter nodes).
+    pub(crate) slot_names: Vec<String>,
+    /// The name each measure slot was bound under, indexed by slot.
+    pub(crate) measure_slot_names: Vec<String>,
+    /// Every compound unit the body's and measure's typing formed (FR-094).
+    pub(crate) formed_units: filament_semantic_value::quantity::UnitTable,
+    /// Every call reachable from the body (not the measure -- unchanged
+    /// from the pre-migration behavior, see the call site's own doc), for
+    /// `check::mod`'s whole-package termination pass.
+    pub(crate) calls: Vec<CallSite>,
+    /// PR #303 review round 3, finding F1: [`ValueDeclarations::nodes_used`]
+    /// (the package's running node total *before* this declaration), plus
+    /// every `Expression` node this declaration's own body and measure
+    /// admitted -- the same package-wide running total, carried forward.
+    /// `check::mod`'s loop reads this back as the next declaration's own
+    /// `nodes_used`, restoring the cumulative, package-wide `nodes` bound
+    /// [`CheckingLimits::new`] documents ("at most `nodes` expression nodes
+    /// per checked package"), through this ordinary `Ok` payload rather than
+    /// a side channel.
+    pub(crate) nodes_used: u64,
+}
+
+/// `Value`'s family check code for a function declaration's
+/// typing, coercion and static definedness (FR-065's "the typing,
+/// definedness... checking decision"), relocated here from the closure
+/// `PackageDeclarations::check` (`check::mod`) used to build inline. The
+/// algorithm is unchanged: `bind_parameters`, `check_declared_type` on the
+/// declared result, a `check_as` pass over the body, the same treatment for
+/// a `decreases` measure (always [`ClauseKind::Body`], regardless of the
+/// declaration's own clause kind -- FR-151's dispatch-call restriction
+/// gates on the *body's* context, per this function's own inline note
+/// below), and a [`Definedness`] pass over the typed body. Only the
+/// *entry point* moved: `check::mod`'s `PackageDeclarations::check` no
+/// longer constructs a `Typer` or calls any of these functions directly for
+/// a declaration -- it calls this one function instead, and this is now the
+/// only place that does.
+///
+/// **Termination stays a whole-package pass, not a per-declaration one.**
+/// `check::termination::check` decides a *recursive component of the call
+/// graph across every declaration in the package* -- whether `f` calling
+/// `g` calling `f` terminates cannot be judged from `f`'s own declaration in
+/// isolation, especially since [`crate::family::FamilyContract::check`]
+/// (and this function) are called once per declaration and FR-065-AC-2
+/// requires each declaration's own identity to be independent of every
+/// other declaration's position, so nothing here may assume any other
+/// declaration has already been checked. Termination is therefore *not*
+/// moved into the family: it stays exactly where `check::mod` already runs
+/// it, over every declaration's [`CheckedDeclarationBody::calls`] collected
+/// after every declaration's own family check succeeds. This is a reported
+/// finding, not a silent narrowing (ADR-012 §14.1, FR-065): typing and
+/// definedness move into this family, but termination's own whole-package
+/// shape makes moving it impossible under the per-node contract ADR-012
+/// §2 defines (each `check` call sees one form and one `Declarations`,
+/// never every sibling declaration at once).
+///
+/// Takes `input: &ValueDeclarations<'_>` rather than its constituent fields
+/// spelled out as separate parameters (PR #303 review, finding 12): this is
+/// [`ValueFunctionFamily`]'s own `FamilyContract::Declarations`, the same
+/// bundle `check` reads via `cx.declarations()`, reused here rather than
+/// unpacked into a `#[allow(clippy::too_many_arguments)]` signature.
+///
+/// **`Typer`'s own node-budget counter is package-wide again (PR #303 review
+/// round 3, finding F1).** An earlier round of this fix gave `Typer` a fresh
+/// `let mut nodes = 0_u64` here, on the reasoning that
+/// a per-declaration node check one step earlier in
+/// [`FamilyContract::check`](crate::family::FamilyContract::check) already
+/// bounded the same underlying concern. That reasoning was wrong: a
+/// per-declaration count is no substitute for a *cumulative* one, and that
+/// check is gone. Resetting `Typer`'s counter to zero for
+/// every declaration silently dropped `CheckingLimits::new`'s documented,
+/// package-wide contract ("at most `nodes` expression nodes per checked
+/// package") down to a per-declaration one -- a package of many small,
+/// individually-tiny declarations could exceed the caller's configured
+/// `nodes` budget by an unbounded factor.
+///
+/// The fix restores the earlier shape -- one node counter shared across
+/// every declaration in the package -- without a `Cell`, a second call into
+/// the caller, or any mutation through this function's read-only
+/// `&ValueDeclarations<'_>` parameter: `Typer` is seeded from
+/// [`ValueDeclarations::nodes_used`] (the running total every earlier
+/// declaration has already admitted, owned and advanced by `check::mod`'s
+/// own loop) instead of zero, and this declaration's own final count is
+/// carried back out through [`CheckedDeclarationBody::nodes_used`], an
+/// ordinary field on this function's ordinary `Ok` payload. `Typer`'s cap
+/// itself never changes -- it is still exactly `input.checking_limits.nodes()`,
+/// the caller's own original configured limit -- so a refusal it raises
+/// already names that limit, never a partial or remaining figure.
+pub(crate) fn check_declaration_body(
+    input: &ValueDeclarations<'_>,
+    form: &FunctionDeclaration,
+    cx: &mut crate::family::CheckContext<'_, Scope>,
+) -> Result<CheckedDeclarationBody, CheckRefusal> {
+    let mut nodes = input.nodes_used;
+    // The declaration's resolved parameter and result types; `form`'s own
+    // are type forms.
+    let parameters = &input.own_signature.parameters;
+    let result = &input.own_signature.result;
+    let mut typer = Typer::new(
+        input.scope,
+        input.signatures,
+        input.checking_limits,
+        &mut nodes,
+        form.clause_kind(),
+    )
+    .with_source_owner(input.source_owner.clone())
+    .with_cancel(input.cancel)
+    .with_complete_value(input.complete_value)
+    .with_context(cx.reborrow(input.scope));
+    if let Some(model_scope) = &input.model_scope {
+        typer = typer
+            .with_model_family(input.derived_model_family)
+            .with_named_populations(model_scope.clone());
+    }
+    bind_parameters(&mut typer, parameters, input.location)?;
+    typer.check_declared_type(result, input.location)?;
+    let body = typer.check_as(&form.body, result, input.location)?;
+    let slots = typer.slots();
+    let slot_names = typer.slot_names().to_vec();
+    let mut formed_units = typer.into_formed_units();
+    let mut measure_slot_names = Vec::new();
+    let measure = match &form.measure {
+        Some(measure) => {
+            // A `decreases` measure is always checked as `ClauseKind::Body`
+            // (`syntax.rs`'s own doc: "A function body, an operation body,
+            // or a `decreases` measure"), never `form.clause_kind`:
+            // FR-151's dispatch-call restriction gates on the *body's*
+            // context, and a measure is its own, always-`Body` context
+            // regardless of what the declaration's own body is checked as.
+            let mut measure_typer = Typer::new(
+                input.scope,
+                input.signatures,
+                input.checking_limits,
+                &mut nodes,
+                ClauseKind::Body,
+            )
+            .with_source_owner(input.source_owner.clone())
+            .with_cancel(input.cancel)
+            .with_complete_value(input.complete_value)
+            .with_context(cx.reborrow(input.scope));
+            bind_parameters(&mut measure_typer, parameters, input.measure_location)?;
+            let measure = measure_typer.infer(measure, None, input.measure_location)?;
+            measure_slot_names = measure_typer.slot_names().to_vec();
+            formed_units.append(measure_typer.into_formed_units());
+            Some(measure)
+        }
+        None => None,
+    };
+    let mut definedness = Definedness::new(
+        parameters.len(),
+        input.dispatch_tables,
+        &input.scope.dispatch_operations,
+    )
+    .with_check_mode(input.mode);
+    definedness.check(body.root())?;
+    // The measure's own definedness is checked in `Linked` mode in every
+    // mode (termination is not a run-time obligation), but (unchanged from the
+    // pre-migration behavior) its calls are not folded into `calls` below:
+    // termination's call graph is built from each function's *body*, not
+    // its measure.
+    if let Some(measure) = &measure {
+        Definedness::new(
+            parameters.len(),
+            input.dispatch_tables,
+            &input.scope.dispatch_operations,
+        )
+        .check(measure.root())?;
+    }
+    Ok(CheckedDeclarationBody {
+        body,
+        measure,
+        slots,
+        slot_names,
+        measure_slot_names,
+        formed_units,
+        calls: definedness.calls,
+        nodes_used: nodes,
+    })
+}
+
+/// Every source occurrence of a migrated form recorded so far, keyed by
+/// (identity, role, ordinal) (ADR-013 O-07) and mapped to its source span
+/// (ADR-013 O-12). FSL is the only minter (FR-062 "Provenance").
+///
+/// `S` is the span type. Complete-V1's own function forms have no lexed
+/// byte offsets to report (there is no text parser for this API-constructed
+/// family -- `check`'s [`filament_semantic_value::location::ExpressionLocation`] is its
+/// existing span
+/// analogue: a declaration plus a child-index path). A test exercising this
+/// generically with a `(u32, u32)` byte-offset stand-in is still exercising
+/// the real mechanism: ordinal assignment and lookup by (identity, role,
+/// ordinal) do not depend on what a span actually is.
+///
+/// Keyed by identity, then role: each role's value holds its spans in
+/// ordinal order, so the next ordinal is its length and an ordinal's span
+/// is an index. Neither `record` nor `resolve` scans another entry, and
+/// neither compares node keys beyond a hash and an equality test, so a key's
+/// nesting depth never multiplies their cost. The ascending iterations rank
+/// the keys once per call (`super::key_order`).
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct OccurrenceMap<S> {
+    spans: HashMap<NodeKey, Roles<S>>,
+}
+
+/// One node's occurrences: each role's spans in ordinal order.
+type Roles<S> = BTreeMap<OccurrenceRole, Spans<S>>;
+
+/// One role's occurrences of one node, ascending by ordinal. The ordinals
+/// are the repeat counts `0..n` unless an occurrence was placed at its own
+/// ordinal ([`OccurrenceMap::record_at`]), so a placed ordinal costs one
+/// entry however large it is.
+#[derive(Clone, Eq, PartialEq)]
+struct Spans<S>(Vec<(u64, S)>);
+
+impl<S> Spans<S> {
+    /// An empty list with room for the one occurrence most nodes have.
+    fn new() -> Self {
+        Self(Vec::with_capacity(1))
+    }
+
+    /// The ordinal the next counted occurrence takes.
+    fn next_ordinal(&self) -> u64 {
+        self.0
+            .last()
+            .map_or(0, |(ordinal, _)| ordinal.saturating_add(1))
+    }
+
+    /// The span at exactly `ordinal`.
+    fn get(&self, ordinal: u64) -> Option<&S> {
+        // Counted occurrences sit at their own index.
+        let at = usize::try_from(ordinal).ok()?;
+        if let Some((held, span)) = self.0.get(at) {
+            if *held == ordinal {
+                return Some(span);
+            }
+        }
+        let at = self
+            .0
+            .binary_search_by_key(&ordinal, |(held, _)| *held)
+            .ok()?;
+        self.0.get(at).map(|(_, span)| span)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (u64, &S)> {
+        self.0.iter().map(|(ordinal, span)| (*ordinal, span))
+    }
+}
+
+/// An occurrence placed at an ordinal that another occurrence of the same
+/// node and role already holds, or that the counted occurrences already
+/// passed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OrdinalTaken;
+
+/// Each occurrence's node is written through [`NodeKeyDebug`], so under a
+/// [`scoped`] call no node's text repeats.
+impl<S: fmt::Debug> DebugWith for OccurrenceMap<S> {
+    fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
+        f.debug_list()
+            .entries(
+                self.iter()
+                    .map(|(node, origin, span)| (NodeKeyDebugOwned(node, table), origin, span)),
+            )
+            .finish()
+    }
+}
+
+impl<S: fmt::Debug> std::fmt::Debug for OccurrenceMap<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        standalone(f, self)
+    }
+}
+
+/// An owned node key written through [`NodeKeyDebug`].
+struct NodeKeyDebugOwned<'t>(NodeKey, &'t DebugTable);
+
+impl fmt::Debug for NodeKeyDebugOwned<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        NodeKeyDebug(&self.0, self.1).fmt(f)
+    }
+}
+
+/// The role an occurrence plays for its node (FR-322): a closed set, so no
+/// code compares a role's spelling to choose behaviour. Variants are declared
+/// in the spelling's alphabetical order, which is the order the kernel's
+/// string roles sorted in. The kernel's [`Role`] stays an open string carrier;
+/// this enum is what FSL code records and selects by.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum OccurrenceRole {
+    /// A declaration-anchored node.
+    Anchor,
+    /// A requirement claim.
+    Claim,
+    /// A declaration site.
+    Declaration,
+    /// An expression node.
+    Expression,
+    /// An occurrence of a node that no source form of its own denotes: a
+    /// generated occurrence of an owner node, which may still carry a
+    /// `source_map` region (ADR-013 O-07's per-step records).
+    Generated,
+    /// A type node.
+    Type,
+}
+
+impl OccurrenceRole {
+    /// The kernel role this role is carried as.
+    pub(crate) fn kernel_role(self) -> Role {
+        Role::new(match self {
+            Self::Anchor => "anchor",
+            Self::Claim => "claim",
+            Self::Declaration => "declaration",
+            Self::Expression => "expression",
+            Self::Generated => "generated",
+            Self::Type => "type",
+        })
+    }
+
+    /// The role a kernel role carries, or `None` for a spelling FSL never
+    /// records. The one place a kernel role's spelling is read.
+    #[ix_trace_rs::string_edge]
+    fn of(role: &Role) -> Option<Self> {
+        match role.as_str() {
+            "anchor" => Some(Self::Anchor),
+            "claim" => Some(Self::Claim),
+            "declaration" => Some(Self::Declaration),
+            "expression" => Some(Self::Expression),
+            "generated" => Some(Self::Generated),
+            "type" => Some(Self::Type),
+            _ => None,
+        }
+    }
+}
+
+// A hand-written `Default`, not `#[derive(Default)]`: the derive macro adds
+// an `S: Default` bound even though `HashMap::default()` needs none -- a
+// known derive-macro imprecision, not a real requirement on the span type.
+impl<S> Default for OccurrenceMap<S> {
+    fn default() -> Self {
+        Self {
+            spans: HashMap::new(),
+        }
+    }
+}
+
+impl<S> OccurrenceMap<S> {
+    /// Record one occurrence of `identity` under `role`, at `span`. Ordinals
+    /// are assigned by (identity, role) insertion order (ADR-013 O-07: "an
+    /// ordinal disambiguating repeated occurrences of that role on the same
+    /// node") -- reordering *other* nodes' occurrences never changes this
+    /// one's ordinal, only its own role's own repeat count does.
+    pub(crate) fn record(&mut self, identity: NodeKey, role: OccurrenceRole, span: S) -> Origin {
+        // Most (identity, role) pairs occur once; a capacity of one keeps a
+        // single occurrence from reserving a vector's default four slots.
+        let spans = self
+            .spans
+            .entry(identity)
+            .or_default()
+            .entry(role)
+            .or_insert_with(Spans::new);
+        let ordinal = spans.next_ordinal();
+        spans.0.push((ordinal, span));
+        Origin::new(role.kernel_role(), ordinal)
+    }
+
+    /// Record the occurrence of `identity` under `role` at exactly
+    /// `ordinal`, for a role whose ordinal is the occurrence's place among
+    /// the unit's declarations and not a repeat count (FR-322: a dimension
+    /// equivalence node's `anchor` carries the declaration's index among the
+    /// source's equivalence declarations).
+    ///
+    /// # Errors
+    ///
+    /// [`OrdinalTaken`] when `identity` already holds a `role` occurrence at
+    /// `ordinal`, or at a greater one.
+    pub(crate) fn record_at(
+        &mut self,
+        identity: NodeKey,
+        role: OccurrenceRole,
+        ordinal: u64,
+        span: S,
+    ) -> Result<Origin, OrdinalTaken> {
+        let spans = self
+            .spans
+            .entry(identity)
+            .or_default()
+            .entry(role)
+            .or_insert_with(Spans::new);
+        if spans.0.last().is_some_and(|(last, _)| *last >= ordinal) {
+            return Err(OrdinalTaken);
+        }
+        spans.0.push((ordinal, span));
+        Ok(Origin::new(role.kernel_role(), ordinal))
+    }
+
+    /// Replace every recorded span for which `relocate` returns a new one,
+    /// keeping each occurrence's ordinal.
+    pub(crate) fn relocate(&mut self, relocate: impl Fn(&S) -> Option<S>) {
+        for roles in self.spans.values_mut() {
+            for spans in roles.values_mut() {
+                for (_, span) in &mut spans.0 {
+                    if let Some(moved) = relocate(span) {
+                        *span = moved;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Renumber the `role` occurrences of each node of `nodes` into
+    /// ascending order of `position` of their spans, keeping the recorded
+    /// order among equal positions (FR-380: a population node's `Type`
+    /// occurrences take their ordinals in source order, whichever writer
+    /// recorded them first). Only meant to run once lowering is done and
+    /// nothing holds an ordinal it returned.
+    pub(crate) fn order_by<K: Ord>(
+        &mut self,
+        role: OccurrenceRole,
+        nodes: &BTreeSet<NodeKey>,
+        position: impl Fn(&S) -> K,
+    ) {
+        for node in nodes {
+            if let Some(spans) = self
+                .spans
+                .get_mut(node)
+                .and_then(|roles| roles.get_mut(&role))
+            {
+                // The counted ordinals `0..n` follow the spans' new order.
+                let mut ordered: Vec<S> = spans.0.drain(..).map(|(_, span)| span).collect();
+                ordered.sort_by_key(&position);
+                spans.0 = (0_u64..).zip(ordered).collect();
+            }
+        }
+    }
+
+    /// Whether any occurrence of `identity` is recorded.
+    pub(crate) fn has(&self, identity: NodeKey) -> bool {
+        self.spans.contains_key(&identity)
+    }
+
+    /// Every recorded occurrence, ascending by (identity, role), each role's
+    /// occurrences in ordinal order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (NodeKey, Origin, &S)> {
+        self.ascending(|_| true)
+            .into_iter()
+            .flat_map(|(identity, roles)| occurrences_of(identity, roles))
+    }
+
+    /// Every recorded occurrence, each node's in (role, ordinal) order but
+    /// the nodes in no particular order: for a reader whose result does not
+    /// depend on which node comes first.
+    pub(crate) fn iter_any_order(&self) -> impl Iterator<Item = (NodeKey, Origin, &S)> {
+        self.spans
+            .iter()
+            .flat_map(|(identity, roles)| occurrences_of(identity, roles))
+    }
+
+    /// Every recorded occurrence of exactly `role`, ascending by identity,
+    /// each identity's occurrences in ordinal order.
+    pub(crate) fn iter_role(
+        &self,
+        role: OccurrenceRole,
+    ) -> impl Iterator<Item = (NodeKey, Origin, &S)> {
+        self.ascending(|roles| roles.contains_key(&role))
+            .into_iter()
+            .flat_map(move |(identity, roles)| {
+                let spans = roles.get(&role);
+                spans
+                    .into_iter()
+                    .flat_map(move |spans| role_occurrences(identity, role, spans))
+            })
+    }
+
+    /// The `Origin` of the first `role` occurrence of `identity` whose span
+    /// `at` admits, if any.
+    pub(crate) fn first_origin(
+        &self,
+        identity: &NodeKey,
+        role: OccurrenceRole,
+        at: impl Fn(&S) -> bool,
+    ) -> Option<Origin> {
+        let spans = self.spans.get(identity)?.get(&role)?;
+        let (ordinal, _) = spans.iter().find(|(_, span)| at(span))?;
+        Some(Origin::new(role.kernel_role(), ordinal))
+    }
+
+    /// The span recorded for `identity` at exactly `origin`, if any.
+    pub(crate) fn resolve(&self, identity: NodeKey, origin: &Origin) -> Option<&S> {
+        self.spans
+            .get(&identity)?
+            .get(&OccurrenceRole::of(origin.role())?)?
+            .get(origin.ordinal())
+    }
+
+    /// The nodes whose roles `admits`, ascending by key.
+    fn ascending(&self, admits: impl Fn(&Roles<S>) -> bool) -> Vec<(&NodeKey, &Roles<S>)> {
+        let nodes = self
+            .spans
+            .iter()
+            .filter(|(_, roles)| admits(roles))
+            .collect();
+        super::key_order::sorted_by_key(nodes, |(identity, _)| identity)
+    }
+}
+
+/// `identity`'s occurrences in (role, ordinal) order.
+fn occurrences_of<'m, S>(
+    identity: &'m NodeKey,
+    roles: &'m Roles<S>,
+) -> impl Iterator<Item = (NodeKey, Origin, &'m S)> + 'm {
+    roles
+        .iter()
+        .flat_map(move |(role, spans)| role_occurrences(identity, *role, spans))
+}
+
+/// `identity`'s `role` occurrences in ordinal order.
+fn role_occurrences<'m, S>(
+    identity: &'m NodeKey,
+    role: OccurrenceRole,
+    spans: &'m Spans<S>,
+) -> impl Iterator<Item = (NodeKey, Origin, &'m S)> + 'm {
+    spans.iter().map(move |(ordinal, span)| {
+        (
+            identity.clone(),
+            Origin::new(role.kernel_role(), ordinal),
+            span,
+        )
+    })
+}
+
+/// [`ValueFunctionFamily`]'s [`crate::family::FamilyContract::Declarations`]:
+/// the package-wide, read-only state one declaration's `check` call needs to
+/// run `check_declaration_body` for real -- `Scope`, every
+/// declared `Signature` and the checked package's dispatch tables, none of
+/// which the shared `CheckContext`/`StageLimits` carry, since those are
+/// generic across every family -- plus the two per-declaration locations
+/// (`location`, `measure_location`) `check::mod`'s per-declaration loop
+/// already computes fresh each iteration, plus `nodes_used` (PR #303
+/// review round 3, finding F1).
+///
+/// **No interior mutability (PR #303 review, finding N3).** The real checked
+/// body is never smuggled out through a `Cell`-threaded side slot;
+/// [`FamilyContract::Checked`](crate::family::FamilyContract::Checked) itself carries it (see
+/// [`CheckedDeclaration`]), returned the ordinary way, through `check`'s own
+/// `Ok`.
+///
+/// **The package-wide `nodes` budget travels the same ordinary way (PR #303
+/// review round 3, finding F1).** `nodes_used` is the running total
+/// of `Expression` nodes every earlier declaration in this same package has
+/// already admitted -- owned and advanced by `check::mod`'s own loop, not by
+/// this struct, exactly the way that loop's earlier version shared one
+/// `&mut u64` across every `Typer` it built in turn.
+/// `check_declaration_body` seeds `Typer`'s own counter from it instead of
+/// starting at zero each time, so `Typer` still compares against the one,
+/// unmodified `CheckingLimits::nodes` bound this declaration's own
+/// `checking_limits` names, but against the *package's* running total, not
+/// this declaration's own -- restoring `CheckingLimits::new`'s documented
+/// contract ("at most `nodes` expression nodes per checked package") without
+/// a `Cell`, a second call into the caller, or a mutation through this
+/// struct's own read-only `&D` reference.
+pub struct ValueDeclarations<'a> {
+    pub(crate) scope: &'a Scope,
+    pub(crate) signatures: &'a Signatures,
+    /// The resolved signature of the declaration being checked
+    /// (`signatures[index]`). `check_declaration_body` types against it, and
+    /// `measure_declaration` measures it.
+    pub(crate) own_signature: &'a Signature,
+    pub(crate) dispatch_tables: &'a [DispatchTable],
+    pub(crate) checking_limits: CheckingLimits,
+    pub(crate) complete_value: bool,
+    /// The check mode (FR-495): `Kernel` records no definedness obligation.
+    pub(crate) mode: CheckMode,
+    /// The derived StateModel body family and its population-name scope.
+    /// `None` for a value-only function body.
+    pub(crate) model_scope: Option<super::check::NamedScope>,
+    /// Whether this body was admitted in the derived model family from a
+    /// `filament.value.complete/v1` function selection (FR-361-AC-16).
+    pub(crate) derived_model_family: bool,
+    pub(crate) location: &'a CheckLocation,
+    pub(crate) measure_location: &'a CheckLocation,
+    /// See this struct's own doc.
+    pub(crate) nodes_used: u64,
+    /// The source declaring this body, for FR-480 source-local imports.
+    pub(crate) source_owner: Option<fsl_foundation::source::provenance::RawSourceRef>,
+    /// FR-096: the regions of the unit the declarations were read from,
+    /// through which a limit's locus resolves. `None` for declarations not
+    /// read from a unit, whose positions no region names.
+    pub(crate) regions: Option<&'a DeclarationRegions>,
+    /// The caller's cancellation handle, polled at every node and measure
+    /// charge of this declaration's check (FR-276).
+    pub(crate) cancel: Option<&'a filament_exact::Cancel>,
+}
+
+impl ValueDeclarations<'_> {
+    /// FR-096: the declaration being checked, as a whole, located at its
+    /// form's span; `None` when it was not read from the unit (a function
+    /// synthesized for FR-151 dispatch).
+    fn declaration_locus(&self) -> Option<Locus> {
+        let CheckOrigin::Body { index, .. } = self.location.origin else {
+            return None;
+        };
+        self.regions?.declaration_region(index).map(Locus::Region)
+    }
+
+    /// FR-096: the node `location` names, located at its span; `None` for
+    /// a position in a tree not read from the unit.
+    fn locus(&self, location: &CheckLocation) -> Option<Locus> {
+        self.regions?.region(location).map(Locus::Region)
+    }
+}
+
+/// [`ValueFunctionFamily`]'s [`crate::family::FamilyContract::Checked`]
+/// (PR #303 review, finding N3): the real checked body
+/// `check_declaration_body` produces, returned through `check`'s own `Ok`
+/// rather than a side channel. The declaration's identity is not here: it is
+/// the FR-092 function node key, which hashes the keys of the functions its
+/// body calls, so `PackageDeclarations::check` mints it once every
+/// declaration is checked (`check::lowering`).
+#[derive(Debug)]
+pub struct CheckedDeclaration {
+    pub(crate) body: CheckedDeclarationBody,
+    /// The body's claims, one per scalar operation application, each
+    /// extent classified under the declaration's stage limits.
+    pub(crate) claims: Vec<super::claims::ValueClaim>,
+}
+
+/// `Value`'s checked-package producer for the function-declaration form
+/// (FR-062, FR-065): the one family slice migrated onto the
+/// `crate::family` contract. A marker type -- every method is a bare
+/// associated function over `Self::Form`/`Self::Checked`, with no instance
+/// state (ADR-012 §2's contract is static, dispatched through closed enums,
+/// not through an object). Its evaluation half
+/// (layer 5's `ReferenceEvaluation`, `value::expression::s6a`) is implemented in
+/// `value::expression::family`, over this type re-exported through
+/// `crate::check`.
+pub struct ValueFunctionFamily;
+
+impl crate::family::FamilyContract for ValueFunctionFamily {
+    type Form = FunctionDeclaration;
+    /// See [`CheckedDeclaration`]'s own doc (PR #303 review, finding N3):
+    /// the real checked body, returned through `check`'s ordinary `Ok`, not
+    /// a side channel.
+    type Checked = CheckedDeclaration;
+    /// The crate's own located refusal vocabulary: `check` can now
+    /// genuinely refuse (an ill-typed or undefined body), and `CheckRefusal`
+    /// already carries a closed cause and `catalog_code()` mapping
+    /// (`check::CheckCause::code`/`cause`) -- ADR-012 §5.1 S4's "family
+    /// `Cause` enum" for this family, not a shape invented to fill this
+    /// associated type.
+    type Cause = CheckRefusal;
+    /// See [`ValueDeclarations`]'s own doc.
+    type Declarations<'a> = ValueDeclarations<'a>;
+    /// A scalar operation application's `value-validity` claim (FR-057's
+    /// claim-form table), keyed by `check` once lowering records its
+    /// occurrence.
+    type Claim = super::claims::ValueClaim;
+
+    /// One `value-validity` claim per scalar operation application in the
+    /// body (FR-062 "Requirement records of a value function"), as `check`
+    /// found and classified them; none for a body with no such
+    /// application.
+    fn requirements(checked: &CheckedDeclaration) -> Vec<super::claims::ValueClaim> {
+        checked.claims.clone()
+    }
+
+    fn check<'a>(
+        form: &Self::Form,
+        cx: &mut crate::family::CheckContext<'a, ValueDeclarations<'a>>,
+    ) -> crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal> {
+        // FR-062 "Explicit resource limits bound every stage entry, at any
+        // depth": the declaration's input bytes and node count, then its work
+        // charge, then the `Typer`'s package-wide node budget. No limit
+        // bounds depth (ADR-030 D-1).
+        //
+        // FR-096: every limit this function reaches for the declaration as
+        // a whole is located at the declaration's span; `Typer`'s node stop,
+        // at the node whose entry failed.
+        let declarations = cx.declarations();
+        let located =
+            |limit: LimitExceeded| StageFailure::Limit(limit.at(declarations.declaration_locus()));
+        // FR-062-AC-3 "no side door": the scope stack is pushed and popped
+        // around this one check (`cx.scopes.enter`/`leave` below), not just
+        // read.
+        cx.scopes
+            .enter(format!("value.function-declaration:{}", form.name));
+        let measured = measure_declaration(
+            form,
+            declarations.own_signature,
+            &TargetTypes::new(declarations.scope, declarations.location)
+                .with_source(declarations.source_owner.as_ref())
+                .with_cancel(declarations.cancel),
+        );
+        let metrics = match measured {
+            Ok(metrics) => metrics,
+            Err(refusal) => {
+                cx.scopes.leave();
+                if let Some(cause) = declarations
+                    .cancel
+                    .and_then(filament_exact::Cancel::tripped)
+                {
+                    return Err(StageFailure::Cancelled(cause));
+                }
+                return Err(StageFailure::Refused(refusal));
+            }
+        };
+        // The measured byte length is checked against `cx`'s `StageLimits`
+        // before this declaration is admitted: past it, `check` refuses with
+        // a `Limit` outcome naming it. The node count has no such stage-entry
+        // check: the package-wide `nodes` budget is charged per node, at the
+        // node, by `check_declaration_body`'s own `Typer` counter below,
+        // through `ValueDeclarations::nodes_used`/
+        // `CheckedDeclarationBody::nodes_used`. This check (and the meter
+        // charge below) runs *before* `check_declaration_body` -- the real
+        // typing/definedness pass -- ever starts, since it guards the work
+        // that pass is about to do, not a check on its output.
+        if let Err(exceeded) = cx.check_input_bytes(metrics.input_bytes) {
+            cx.scopes.leave();
+            return Err(located(exceeded));
+        }
+        // PR #302 review finding 3: `WorkBudget` is a `Limit` outcome
+        // produced by a denied charge against `cx.meter` -- the *shared
+        // kernel* budget every family's `check` already receives -- not by
+        // comparing the preimage's own write count against a `StageLimits`
+        // field (that field's meaning was "how many times the encoder
+        // wrote," never a caller-configured budget). One
+        // `ChargePoint::DeclarationCheck` per checked declaration, sized by
+        // the same preimage pass's field-write count, charged cumulatively
+        // against `cx.meter`'s own `work_units` bound (`StageLimits`'s own
+        // doc: this is the checking stage's total spend, not one
+        // declaration's own shape). This bounds `work_budget` alone --
+        // `nodes` has its own separate, package-wide accounting, restored in
+        // `check_declaration_body` (PR #303 review round 3, finding F1),
+        // not this charge.
+        if let Err(incomplete) = cx.meter.charge(
+            filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
+                .work(filament_exact::Integer::from(metrics.work_budget)),
+        ) {
+            cx.scopes.leave();
+            // The meter's own report: the charge carries work units only, so
+            // the denied counter is `work_units`, and the refused charge
+            // would have taken its cumulative spend to what was consumed
+            // plus the denied amount -- this declaration's charge, a `u64`.
+            debug_assert_eq!(
+                incomplete.limit_kind,
+                filament_exact::LimitKind::WorkUnits,
+                "a declaration-check charge carries work units only"
+            );
+            let denied = incomplete.next_charge.to_u64();
+            debug_assert_eq!(
+                denied,
+                Some(metrics.work_budget),
+                "the denied amount is this declaration's charge"
+            );
+            return Err(located(LimitExceeded::new(
+                Setting::S3WorkUnits,
+                incomplete.limit,
+                u128::from(incomplete.consumed) + u128::from(denied.unwrap_or(metrics.work_budget)),
+            )));
+        }
+        // The real typing and static-definedness verdict, made
+        // here -- inside the contract's own `check` -- rather than by a
+        // second, parallel call `check::mod`'s loop used to make on the
+        // side after calling this function. `PackageDeclarations::check`
+        // now reaches this verdict only through this one `FamilyContract`
+        // entry point (`Self::Checked` itself carries it -- PR #303 review,
+        // finding N3 -- not a side-channel `Cell` `cx.declarations()`
+        // would otherwise have to expose).
+        let checked_body =
+            check_declaration_body(declarations, form, &mut cx.reborrow(declarations.scope));
+        // PR #303 review, finding 11: this diagnostic is recorded only once
+        // `check_declaration_body` has actually succeeded, not beforehand --
+        // an earlier version logged "checked function declaration" right
+        // after minting identity, before the real typing/definedness pass
+        // ran, so a declaration that the very next line refused (or that a
+        // reached limit stopped) had already been diagnosed as checked.
+        //
+        // PR #303 review round 3, finding F2: recorded here, before
+        // `cx.scopes.leave()` below, not after -- `DiagnosticSink::record`
+        // reads `cx.scopes.path()` at the moment it is called, so
+        // recording it after the scope this check ran in has already been
+        // popped reports `<root>` instead of
+        // `value.function-declaration:<name>`, silently defeating
+        // FR-062-AC-3's "no side door" point of pushing a named scope around
+        // this check at all.
+        if checked_body.is_ok() {
+            cx.diagnostics.record(
+                cx.scopes,
+                format!(
+                    "{}: checked function declaration {} (node limit={}, meter admissions={})",
+                    crate::family::FamilyKind::Value.catalog_code_prefix(),
+                    form.name,
+                    cx.limits().node_count,
+                    cx.meter.admission_count(),
+                ),
+            );
+        }
+        cx.scopes.leave();
+        // PR #262 review (coordinator round 3): an earlier version of this
+        // function also asserted `cx.scopes.depth() == depth_before` here.
+        // In this straight-line body, one `enter` several lines above is
+        // followed by exactly one `leave`, with nothing between them that
+        // could push or pop again -- the assertion restated what the two
+        // calls already guarantee by construction, not something a broken
+        // implementation could trip. `ScopeStack::depth`, that assertion's
+        // only reader, is deleted with it.
+        // FR-062-AC-7: a `Typer` stage limit (its package-wide node budget,
+        // or a lowering work charge) is a `StageFailure::Limit` naming that
+        // limit's kind, bound and count, located at the node whose entry
+        // failed (FR-096), not a typed `Refused`.
+        let body = checked_body.map_err(|refusal| match refusal.cause {
+            CheckCause::ResourceExhausted(ref exceeded) => StageFailure::Limit(
+                LimitExceeded::new(exceeded.kind.setting(), exceeded.limit, exceeded.actual)
+                    .at(declarations.locus(&refusal.location)),
+            ),
+            _ => StageFailure::Refused(refusal),
+        })?;
+        // FR-062: each claim's extent is classified here, under the
+        // declaration's node-count limit. A reached ceiling is the
+        // declaration's limit; a broken check invariant, an internal fault.
+        let claims = super::claims::claims_of(
+            body.body.root(),
+            &declarations.own_signature.parameters,
+            declarations.location,
+            declarations.scope.types(),
+            cx.limits().node_count,
+        )
+        .map_err(|failure| match failure {
+            ClassifyFailure::Limit(exceeded) => located(exceeded),
+            ClassifyFailure::Fault(fault) => StageFailure::Refused(CheckRefusal {
+                location: declarations.location.clone(),
+                cause: CheckCause::InternalFault(Box::new(KeyFault::UnclassifiedExtent(fault))),
+            }),
+        })?;
+        Ok(Staged::new(CheckedDeclaration { body, claims }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixtures::{empty_scope, root_location};
+    use super::*;
+    use fsl_forms::{BuiltinType, TypeForm};
+
+    const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
+
+    /// A `Convert` target that does not resolve is refused while measuring,
+    /// with the checker's own missing-name refusal, not measured as spelling.
+    #[test]
+    fn an_unresolved_target_is_refused_while_measuring() {
+        let scope = empty_scope();
+        let location = root_location();
+        let declaration = FunctionDeclaration::new(
+            "g",
+            Vec::new(),
+            TypeForm::builtin(BuiltinType::Integer, SPAN),
+            None,
+            Expression::convert(TypeForm::name("Nowhere", SPAN), Expression::integer(1_i64)),
+        );
+        let signature = Signature {
+            name: "g".to_owned(),
+            parameters: Vec::new(),
+            result: ValueType::Integer,
+            callable_by_name: true,
+        };
+        let refusal = measure_declaration(
+            &declaration,
+            &signature,
+            &TargetTypes::new(&scope, &location),
+        )
+        .unwrap_err();
+        assert!(matches!(refusal.cause, CheckCause::MissingName(name) if name == "Nowhere"));
+    }
+}
+
+/// Test fixtures shared by `check`'s own tests and by the layer-5
+/// evaluator's tests (`value::expression::family`), which reach them across
+/// the `fsl-semantics` crate boundary through `test-support`. Never compiled into a
+/// production build.
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures {
+    #[cfg(test)]
+    pub fn fill_key(fill: u8) -> filament_exact::NodeKey {
+        filament_exact::NodeKey::new(
+            "fixture".to_owned(),
+            vec![filament_exact::PathSegment::Text(format!("node-{fill}"))],
+            0,
+        )
+        .expect("a nonempty structural fixture key")
+    }
+
+    /// Every released kernel invariant cause, including distinct nested payloads.
+    pub fn received_kernel_causes() -> Vec<filament_exact::CheckedInvariantCause> {
+        use filament_exact::{CheckedInvariantCause as C, IllTypedCause};
+        let mut cases = vec![
+            C::NativeIntegerCapacityBreach,
+            C::CollectionElementNotAdmitted,
+            C::DeferredResultNotAdmitted,
+            C::CanonicalKeyUnavailable,
+            C::BoundedDivisionExpected,
+            C::CollectionKindMismatch,
+            C::PopulationPair,
+            C::ValueKindMismatch,
+            C::UnknownCheckedFunction,
+            C::ForeignCheckedExpression,
+            C::MeterBorrowConflict,
+            C::EqualityScheduleMismatch,
+            C::EqualityOperandSourceNotAdmitted,
+            C::EqualityOperandNonIntegralDecimal,
+            C::EqualityQuantityNonExactPlacement,
+            C::EqualityConversionShapeMismatch,
+            C::EqualityOperandTargetNotAdmitted,
+            C::EqualityUnitUnresolved,
+            C::EqualityEnumVariantUnresolved,
+            C::ExpectedIntegerPlacement,
+            C::GeneratedArgumentShapeMismatch,
+            C::GeneratedOperandKindUnsupported,
+            C::GeneratedUnexpectedOutcome,
+            C::GeneratedIntervalInvalid,
+            C::GeneratedEnvironmentRejected,
+            C::GeneratedDescriptorReconstructionFailed,
+        ];
+        for cause in [
+            IllTypedCause::TypeMismatch,
+            IllTypedCause::OperatorIneligible,
+        ] {
+            cases.extend([
+                C::ScheduledComparisonRefused { cause },
+                C::EqualityQuantityConversionRejected { cause },
+                C::GeneratedTypeCheckRejected { cause },
+                C::GeneratedEqualityCheckRejected { cause },
+            ]);
+        }
+        cases
+    }
+    use super::*;
+    use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
+    use filament_exact::Meter;
+    use filament_semantic_value::location::ExpressionOwner as CheckOrigin;
+
+    /// The source reference of the empty unit admitted as (`a`, `u`,
+    /// `git`, `1`): its owner `(a, u)` is the one FR-092's golden vectors
+    /// are keyed under.
+    pub fn fixture_source() -> fsl_foundation::source::provenance::RawSourceRef {
+        admitted_source(fsl_foundation::SourceIdentity::new("a", "u"), b"")
+    }
+
+    /// The `RawSourceRef` S0 mints for `bytes` admitted under `labels`.
+    pub fn admitted_source(
+        labels: fsl_foundation::SourceIdentity,
+        bytes: &[u8],
+    ) -> fsl_foundation::source::provenance::RawSourceRef {
+        let path = labels.identity.clone();
+        fsl_foundation::Source::read(labels, path, bytes, bytes.len())
+            .expect("named, admissible fixture bytes")
+            .reference()
+            .clone()
+    }
+
+    /// The deepest JSON array/object nesting in `bytes`, a JSON document
+    /// such as an identity preimage. A scalar document is depth 0. Brackets
+    /// inside strings are not counted. One pass, no recursion.
+    pub fn json_depth(bytes: &[u8]) -> usize {
+        let (mut depth, mut deepest) = (0_usize, 0_usize);
+        let (mut in_string, mut escaped) = (false, false);
+        for &byte in bytes {
+            if in_string {
+                match (escaped, byte) {
+                    (true, _) => escaped = false,
+                    (false, b'\\') => escaped = true,
+                    (false, b'"') => in_string = false,
+                    (false, _) => {}
+                }
+                continue;
+            }
+            match byte {
+                b'"' => in_string = true,
+                b'{' | b'[' => {
+                    depth += 1;
+                    deepest = deepest.max(depth);
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        deepest
+    }
+
+    /// `check`'s unbounded scalar limits (`pub(crate)`).
+    pub const SCALAR_LIMITS_UNLIMITED: filament_exact::ScalarLimits =
+        super::SCALAR_LIMITS_UNLIMITED;
+
+    /// A family check context, through `CheckContext::new` (`pub(crate)`).
+    pub fn check_context<'a, D>(
+        declarations: &'a D,
+        limits: StageLimits,
+        meter: &'a mut Meter,
+        diagnostics: &'a mut DiagnosticSink,
+        scopes: &'a mut ScopeStack,
+    ) -> CheckContext<'a, D> {
+        CheckContext::new(declarations, limits, meter, diagnostics, scopes)
+    }
+
+    /// `declaration`'s [`DeclarationMetrics`] as `ValueFunctionFamily::check`
+    /// measures it: over its signature resolved against `scope`.
+    pub fn measure_resolved(
+        scope: &Scope,
+        declaration: &FunctionDeclaration,
+    ) -> DeclarationMetrics {
+        let location = root_location();
+        let (parameters, result) = crate::check::resolve_signature(scope, declaration, &location)
+            .expect("the fixture's signature resolves");
+        let signature = Signature {
+            name: declaration.name.clone(),
+            parameters,
+            result,
+            callable_by_name: true,
+        };
+        measure_declaration(declaration, &signature, &TargetTypes::new(scope, &location))
+            .expect("the fixture's targets resolve")
+    }
+    /// PR #303 review, finding N7b: shared, not private -- this is
+    /// the one real definition `check::mod`'s own test-support
+    /// re-export hands to `value::expression::family`'s
+    /// `family_contract_tests` module, which used to keep a second,
+    /// byte-for-byte copy of this same fixture instead of importing it.
+    pub fn root_location() -> CheckLocation {
+        CheckLocation::root(CheckOrigin::Expression)
+    }
+    pub fn boolean_signature(name: &str, parameter_count: usize) -> Signature {
+        Signature {
+            name: name.to_owned(),
+            parameters: (0..parameter_count)
+                .map(|index| (format!("p{index}"), ValueType::Boolean))
+                .collect(),
+            result: ValueType::Boolean,
+            callable_by_name: true,
+        }
+    }
+    /// A bare `Boolean` type form.
+    pub fn boolean_type_form() -> fsl_forms::TypeForm {
+        fsl_forms::TypeForm::builtin(
+            fsl_forms::BuiltinType::Boolean,
+            fsl_foundation::Span { start: 0, end: 0 },
+        )
+    }
+    /// See [`root_location`]'s own doc (PR #303 review, finding N7b): the
+    /// one real definition, re-exported rather than duplicated.
+    pub fn empty_scope() -> Scope {
+        scope_with(
+            filament_semantic_value::declaration::TypeEnvironment::default(),
+            Vec::new(),
+        )
+    }
+    /// A scope declaring only `types` and `aliases`, its by-name lookups
+    /// built over them (a `Scope` is built once, never mutated).
+    pub fn scope_with(
+        types: filament_semantic_value::declaration::TypeEnvironment,
+        aliases: Vec<(String, filament_exact::ValueType)>,
+    ) -> Scope {
+        Scope::new(
+            types,
+            crate::model::operation::OperationTable::default(),
+            Vec::new(),
+            aliases,
+            Vec::new(),
+            None,
+            Vec::new(),
+        )
+    }
+    /// A [`ValueDeclarations`] for tests exercising `check_declaration_body`
+    /// or `ValueFunctionFamily::check` directly (PR #303 review round 3,
+    /// finding F6: the one real definition, shared the same way
+    /// [`empty_scope`]/[`root_location`] are -- this used to be defined a
+    /// second time, with a different parameter shape, in
+    /// `value::expression::family`'s own `family_contract_tests` module).
+    /// `nodes_used` always starts at `0`: every test using this helper
+    /// exercises one declaration in isolation, not `check::mod`'s own
+    /// running package total.
+    pub fn declarations_for<'a>(
+        scope: &'a Scope,
+        signatures: &'a Signatures,
+        own_signature: &'a Signature,
+        dispatch_tables: &'a [DispatchTable],
+        checking_limits: CheckingLimits,
+        location: &'a CheckLocation,
+    ) -> ValueDeclarations<'a> {
+        ValueDeclarations {
+            scope,
+            signatures,
+            own_signature,
+            dispatch_tables,
+            checking_limits,
+            complete_value: false,
+            mode: CheckMode::Linked,
+            model_scope: None,
+            derived_model_family: false,
+            location,
+            measure_location: location,
+            nodes_used: 0,
+            source_owner: None,
+            regions: None,
+            cancel: None,
+        }
+    }
+    /// The contract-level stage limits these tests check under: nothing
+    /// is bounded except where a test tightens one field.
+    pub fn limits() -> StageLimits {
+        StageLimits {
+            input_bytes: u64::MAX,
+            node_count: u64::MAX,
+        }
+    }
+    /// A `Boolean`-result, parameterless declaration of `body`.
+    pub fn declaration(name: &str, body: Expression) -> FunctionDeclaration {
+        FunctionDeclaration::new(name, Vec::new(), boolean_type_form(), None, body)
+    }
+    /// The resolved signature of a [`declaration`] fixture (no parameters,
+    /// `Boolean` result), for `declarations_for`'s `own_signature`.
+    pub fn declaration_signature(name: &str) -> Signature {
+        boolean_signature(name, 0)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod checking_tests {
+    //! Behavioral coverage of what `Value`'s relocated family check
+    //! code (`Application`, `check_declaration_body`) accepts and
+    //! refuses, per the testing-policy ruling at
+    //! <https://linear.app/agent-ix/issue/QSL-148#comment-2a4d2837>
+    //! (Peter, 2026-09-22, relayed by the FSL team lead) -- these tests
+    //! exercise real accept/refuse outcomes over real fixtures, not the
+    //! code's shape or where it lives.
+    use super::fixtures::{
+        boolean_signature, boolean_type_form, declaration, declaration_signature, declarations_for,
+        empty_scope, fill_key, limits, measure_resolved, root_location,
+    };
+    use super::*;
+    use crate::family::{CheckContext, DiagnosticSink, FamilyContract, ScopeStack, StageLimits};
+    use filament_exact::Meter;
+    use ix_trace_rs::trace;
+
+    fn check_declaration_body(
+        input: &ValueDeclarations<'_>,
+        form: &FunctionDeclaration,
+    ) -> Result<CheckedDeclarationBody, CheckRefusal> {
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(
+            input.scope,
+            limits(),
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        super::check_declaration_body(input, form, &mut cx)
+    }
+
+    /// A call of `name` over `arguments`, typed through the typer's `Call`
+    /// arm: [`Application::resolve`], each argument's check, then
+    /// [`Application::finish`].
+    fn check_application(
+        typer: &mut Typer<'_>,
+        name: &str,
+        arguments: &[Expression],
+        location: &CheckLocation,
+    ) -> Result<CheckedBody, CheckRefusal> {
+        let call = Expression::call(name.to_owned(), arguments.to_vec());
+        typer.infer(&call, None, location)
+    }
+
+    /// An `Option<Integer>` type form.
+    fn option_integer_type_form() -> fsl_forms::TypeForm {
+        fsl_forms::TypeForm::builtin(
+            fsl_forms::BuiltinType::Option,
+            fsl_foundation::Span { start: 0, end: 0 },
+        )
+        .with_arguments(vec![fsl_forms::TypeForm::builtin(
+            fsl_forms::BuiltinType::Integer,
+            fsl_foundation::Span { start: 0, end: 0 },
+        )])
+    }
+
+    /// TC-376/FR-065-AC-4: a well-typed call to a one-argument Boolean
+    /// function is admitted through [`Application`] -- `Value`'s
+    /// relocated family check code, not `Typer::call` (deleted) -- and
+    /// produces a `NodeKind::Call` node of the declared result type.
+    #[trace("TC-376", "FR-065-AC-4")]
+    #[test]
+    fn check_application_accepts_a_well_typed_call() {
+        let scope = empty_scope();
+        let signatures = Signatures::from(vec![boolean_signature("f", 1)]);
+        let mut nodes = 0_u64;
+        let mut typer = Typer::new(
+            &scope,
+            &signatures,
+            CheckingLimits::default(),
+            &mut nodes,
+            ClauseKind::Body,
+        );
+        let location = root_location();
+        let arguments = vec![Expression::boolean(true)];
+        let checked = check_application(&mut typer, "f", &arguments, &location)
+            .expect("one Boolean argument against a one-Boolean-parameter signature admits");
+        assert_eq!(checked.root().value_type(), &ValueType::Boolean);
+        assert!(matches!(
+            checked.root().kind(),
+            super::NodeKind::Call { function: 0, .. }
+        ));
+    }
+
+    /// TC-376/FR-065-AC-4: a call with the wrong number of arguments is
+    /// refused (`ill_typed`/`type-mismatch`) by [`Application::resolve`] itself,
+    /// not admitted and caught somewhere else.
+    #[trace("TC-376", "FR-065-AC-4")]
+    #[test]
+    fn check_application_refuses_wrong_arity() {
+        let scope = empty_scope();
+        let signatures = Signatures::from(vec![boolean_signature("f", 1)]);
+        let mut nodes = 0_u64;
+        let mut typer = Typer::new(
+            &scope,
+            &signatures,
+            CheckingLimits::default(),
+            &mut nodes,
+            ClauseKind::Body,
+        );
+        let location = root_location();
+        let arguments = vec![Expression::boolean(true), Expression::boolean(false)];
+        let refusal = check_application(&mut typer, "f", &arguments, &location)
+            .expect_err("two arguments against a one-parameter signature must refuse");
+        assert!(matches!(
+            refusal.cause,
+            CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        ));
+    }
+
+    /// TC-376/FR-065-AC-4: a call naming no declared function and no tuple
+    /// constructor is refused `missing-name`, exactly as `Typer::call` (now
+    /// deleted) used to refuse it.
+    #[trace("TC-376", "FR-065-AC-4")]
+    #[test]
+    fn check_application_refuses_an_unknown_name() {
+        let scope = empty_scope();
+        let signatures = Signatures::default();
+        let mut nodes = 0_u64;
+        let mut typer = Typer::new(
+            &scope,
+            &signatures,
+            CheckingLimits::default(),
+            &mut nodes,
+            ClauseKind::Body,
+        );
+        let location = root_location();
+        let refusal = check_application(&mut typer, "nowhere", &[], &location)
+            .expect_err("an undeclared name with no tuple-constructor type must refuse");
+        assert!(matches!(
+            refusal.cause,
+            CheckCause::MissingName(name) if name == "nowhere"
+        ));
+    }
+
+    /// TC-376 step 4: a call whose argument type disagrees with the
+    /// declared parameter type -- arity matches, the callee resolves, but
+    /// `typer.check_as` refuses the mismatched argument -- is refused
+    /// `ill_typed`/`type-mismatch` by the application check itself, the same
+    /// path `check_application_refuses_wrong_arity` exercises for the
+    /// arity case above.
+    #[trace("TC-376", "FR-065-AC-4")]
+    #[test]
+    fn check_application_refuses_a_type_mismatched_argument() {
+        let scope = empty_scope();
+        let signatures = Signatures::from(vec![boolean_signature("f", 1)]);
+        let mut nodes = 0_u64;
+        let mut typer = Typer::new(
+            &scope,
+            &signatures,
+            CheckingLimits::default(),
+            &mut nodes,
+            ClauseKind::Body,
+        );
+        let location = root_location();
+        let arguments = vec![Expression::integer(1_i64)];
+        let refusal = check_application(&mut typer, "f", &arguments, &location)
+            .expect_err("an Integer argument against a declared Boolean parameter must refuse");
+        assert!(matches!(
+            refusal.cause,
+            CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        ));
+    }
+
+    /// The signatures of the QSL-1824 widening tests: `src() -> Int[0, 1000]`
+    /// and one-parameter helpers over `Integer`, `Int[0, 2000]`,
+    /// `Int[0, 1000]` and `Int[0, 10]`.
+    fn widening_signatures() -> Signatures {
+        use filament_exact::{Integer, IntegerInterval};
+        let bounded = |upper: i64| {
+            ValueType::Int(
+                IntegerInterval::new(Integer::from(0_i64), Integer::from(upper)).unwrap(),
+            )
+        };
+        let helper = |name: &str, parameter: ValueType| Signature {
+            name: name.to_owned(),
+            parameters: vec![("p".to_owned(), parameter)],
+            result: ValueType::Boolean,
+            callable_by_name: true,
+        };
+        Signatures::from(vec![
+            Signature {
+                name: "src".to_owned(),
+                parameters: Vec::new(),
+                result: bounded(1000),
+                callable_by_name: true,
+            },
+            helper("wide", ValueType::Integer),
+            helper("mid", bounded(2000)),
+            helper("same", bounded(1000)),
+            helper("narrow", bounded(10)),
+        ])
+    }
+
+    /// Whether the one argument of `callee(arguments)` is a conversion, a
+    /// `Coerce`, and its type.
+    fn argument_of(callee: &str, arguments: &[Expression]) -> (bool, bool, ValueType) {
+        let scope = empty_scope();
+        let signatures = widening_signatures();
+        let mut nodes = 0_u64;
+        let mut typer = Typer::new(
+            &scope,
+            &signatures,
+            CheckingLimits::default(),
+            &mut nodes,
+            ClauseKind::Body,
+        );
+        let checked = check_application(&mut typer, callee, arguments, &root_location())
+            .expect("the call is admitted");
+        let super::NodeKind::Call { arguments: ids, .. } = checked.root().kind() else {
+            panic!("a call node");
+        };
+        let argument = checked.root().at(ids[0]);
+        (
+            matches!(argument.kind(), super::NodeKind::ConvertScalar(..)),
+            matches!(argument.kind(), super::NodeKind::Coerce(..)),
+            argument.value_type().clone(),
+        )
+    }
+
+    /// TC-376/FR-065-AC-9 (QSL-1824): a bounded integer argument of a wider
+    /// parameter carries an exact conversion to the parameter's type, an
+    /// identical type none, and a narrowing keeps its range-obligated
+    /// `Coerce`.
+    #[trace("TC-376", "FR-065-AC-9")]
+    #[test]
+    fn check_application_makes_integer_widening_explicit() {
+        let source = Expression::call("src".to_owned(), Vec::new());
+        let (converts, _, value_type) = argument_of("wide", std::slice::from_ref(&source));
+        assert!(converts, "Int[0, 1000] into Integer converts");
+        assert_eq!(value_type, ValueType::Integer);
+        let (converts, _, value_type) = argument_of("mid", std::slice::from_ref(&source));
+        assert!(converts, "Int[0, 1000] into Int[0, 2000] converts");
+        assert!(matches!(
+            value_type,
+            ValueType::Int(ref bound) if bound.upper() == &filament_exact::Integer::from(2000_i64)
+        ));
+        let (converts, coerces, _) = argument_of("same", std::slice::from_ref(&source));
+        assert!(!converts && !coerces, "an identical type takes no node");
+        let (converts, coerces, _) = argument_of("narrow", std::slice::from_ref(&source));
+        assert!(
+            !converts && coerces,
+            "a narrowing is a Coerce, not a conversion"
+        );
+    }
+
+    /// TC-376/FR-065-AC-9: a literal argument is typed from its parameter, so
+    /// it takes no redundant conversion.
+    #[trace("TC-376", "FR-065-AC-9")]
+    #[test]
+    fn check_application_converts_no_literal_argument() {
+        let five = [Expression::integer(5_i64)];
+        assert!(!argument_of("wide", &five).0);
+        assert!(!argument_of("mid", &five).0);
+    }
+
+    /// TC-377/FR-065's checking-decision half: `check_declaration_body`
+    /// admits a well-typed declaration whose body calls another declared
+    /// function, and reports that call in `calls` -- the same `CallSite`
+    /// list `check::mod`'s whole-package termination pass reads.
+    #[trace("TC-377")]
+    #[test]
+    fn check_declaration_body_accepts_a_well_typed_declaration_and_reports_its_calls() {
+        let scope = empty_scope();
+        // `f` is represented only by its resolved signature below, which is
+        // how `check_declaration_body` receives its callees.
+        let caller = FunctionDeclaration::new(
+            "g",
+            Vec::new(),
+            boolean_type_form(),
+            None,
+            Expression::call("f".to_owned(), vec![Expression::boolean(true)]),
+        );
+        let signatures = Signatures::from(vec![
+            Signature {
+                name: "f".to_owned(),
+                parameters: vec![("x".to_owned(), ValueType::Boolean)],
+                result: ValueType::Boolean,
+                callable_by_name: true,
+            },
+            Signature {
+                name: "g".to_owned(),
+                parameters: Vec::new(),
+                result: ValueType::Boolean,
+                callable_by_name: true,
+            },
+        ]);
+        let dispatch_tables: Vec<DispatchTable> = Vec::new();
+        let location = root_location();
+        let input = declarations_for(
+            &scope,
+            &signatures,
+            &signatures.as_slice()[1],
+            &dispatch_tables,
+            CheckingLimits::default(),
+            &location,
+        );
+        let checked = check_declaration_body(&input, &caller)
+            .expect("g's body -- a well-typed call to f -- admits");
+        assert_eq!(checked.slots, 0);
+        assert_eq!(checked.calls.len(), 1);
+        assert_eq!(
+            checked.calls[0].callee, 0,
+            "the call resolves to f, index 0"
+        );
+    }
+
+    /// TC-377: `check_declaration_body` refuses a declaration whose body
+    /// does not have the declared result type.
+    #[trace("TC-377")]
+    #[test]
+    fn check_declaration_body_refuses_an_ill_typed_body() {
+        let scope = empty_scope();
+        let signatures = Signatures::default();
+        let own_signature = Signature {
+            name: "g".to_owned(),
+            parameters: Vec::new(),
+            result: ValueType::Boolean,
+            callable_by_name: true,
+        };
+        let dispatch_tables: Vec<DispatchTable> = Vec::new();
+        let location = root_location();
+        let form = FunctionDeclaration::new(
+            "g",
+            Vec::new(),
+            boolean_type_form(),
+            None,
+            Expression::integer(1_i64),
+        );
+        let input = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &dispatch_tables,
+            CheckingLimits::default(),
+            &location,
+        );
+        let refusal = check_declaration_body(&input, &form)
+            .expect_err("an Integer body against a declared Boolean result must refuse");
+        assert!(matches!(
+            refusal.cause,
+            CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        ));
+    }
+
+    /// TC-377: `check_declaration_body` refuses a well-*typed* body that is
+    /// statically undefined -- `value(o)` on an `Option[Integer]` parameter
+    /// with no proved `present(o)` guarding it -- via the same
+    /// `Definedness` pass `check_declaration_body` runs after typing, not
+    /// only a type mismatch. Distinct from
+    /// `check_declaration_body_refuses_an_ill_typed_body` above: this body
+    /// types cleanly (`value(o)` on an `Option[Integer]` is `Integer`,
+    /// matching the declared result) and is refused only because the
+    /// obligation `present(o)` proves is unproved.
+    #[trace("TC-377")]
+    #[test]
+    fn check_declaration_body_refuses_an_undefined_body() {
+        let scope = empty_scope();
+        let signatures = Signatures::default();
+        let own_signature = Signature {
+            name: "v".to_owned(),
+            parameters: vec![("o".to_owned(), ValueType::option(ValueType::Integer))],
+            result: ValueType::Integer,
+            callable_by_name: true,
+        };
+        let dispatch_tables: Vec<DispatchTable> = Vec::new();
+        let location = root_location();
+        let form = FunctionDeclaration::new(
+            "v",
+            vec![("o".to_owned(), option_integer_type_form())],
+            fsl_forms::TypeForm::builtin(
+                fsl_forms::BuiltinType::Integer,
+                fsl_foundation::Span { start: 0, end: 0 },
+            ),
+            None,
+            Expression::value(Expression::name("o".to_owned())),
+        );
+        let input = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &dispatch_tables,
+            CheckingLimits::default(),
+            &location,
+        );
+        let refusal = check_declaration_body(&input, &form).expect_err(
+            "value(o) with no proved present(o) is statically undefined, not ill-typed",
+        );
+        assert!(matches!(
+            refusal.cause,
+            CheckCause::Unproved(crate::check::refusal::Obligation::Presence)
+        ));
+    }
+
+    // The tests below exercise only `ValueFunctionFamily`'s
+    // `check` hook and the identity minting under it, so they live here, in
+    // layer-3 `check`, rather than beside the layer-5 evaluator in
+    // `value::expression::family`, whose tests keep only what needs the
+    // evaluator or the v2 codec. The three fixtures below are shared with
+    // those tests through `check::mod`'s `#[cfg(test)]` re-export (PR #303
+    // N7b), not copied.
+
+    /// The core requirement: calling
+    /// `ValueFunctionFamily::check` on an ill-typed declaration -- `g() ->
+    /// Boolean = 1`, an `Integer` body against a declared `Boolean` result
+    /// -- returns a refusal *through the contract itself*, not `Ok` after
+    /// minting an identity that says nothing about whether the body
+    /// actually types. Before this ticket, `check` never inspected
+    /// `form.body`'s type at all: the real typing decision was made by a
+    /// `Typer` `check::mod`'s per-declaration loop constructed and drove
+    /// separately, after already calling `check` and discarding nothing --
+    /// so this exact fixture, checked through the contract alone, returned
+    /// `Ok`. It does not any more.
+    #[trace("TC-380", "FR-065-AC-7")]
+    #[test]
+    fn value_function_family_check_refuses_an_ill_typed_body() {
+        let scope = empty_scope();
+        let location = root_location();
+        let own_signature = declaration_signature("g");
+        let signatures = Signatures::default();
+        let declarations = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location,
+        );
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(
+            &declarations,
+            limits(),
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        let form = FunctionDeclaration::new(
+            "g",
+            Vec::new(),
+            boolean_type_form(),
+            None,
+            Expression::integer(1_i64),
+        );
+        let refused = ValueFunctionFamily::check(&form, &mut cx).expect_err(
+            "an Integer body against a declared Boolean result must refuse through the contract",
+        );
+        match refused {
+            StageFailure::Refused(refusal) => assert!(
+                matches!(
+                    refusal.cause,
+                    CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+                ),
+                "expected an ill-typed/type-mismatch refusal, got {refusal:?}"
+            ),
+            other => panic!("expected StageFailure::Refused, got {other:?}"),
+        }
+        // PR #303 review, finding 11: no diagnostic is recorded for a
+        // refused declaration -- the "checked function declaration"
+        // message asserts a real success, not an attempt.
+        assert_eq!(diagnostics.entries().len(), 0);
+    }
+
+    /// FR-062-AC-3's central clause: two independently
+    /// constructed typing contexts, checking the same form, produce
+    /// *identical checked output* -- not merely "each observes one
+    /// diagnostic" (this test's own isolation half, kept below).
+    ///
+    /// **Rebuilt.** PR #262 review F6 deleted this test's earlier
+    /// `staged_a.value == staged_b.value` assertion as a self-comparison
+    /// (both sides came from the same deterministic call, so nothing could
+    /// make it fail) and left the tag on what remained -- two diagnostic
+    /// counts, each compared only to the literal `1` the loop already
+    /// guarantees by construction. Comparing `CheckedDeclaration` by `==`
+    /// is not available: its checked `Node` tree deliberately carries no
+    /// `PartialEq` (`ir.rs`'s own doc on `Node`'s privacy), and adding one
+    /// across the whole IR is a change no ticket here owns. This repo's own
+    /// established substitute for exactly this situation --
+    /// `fsl-eval/tests/it/collection_algebra.rs` and
+    /// `collection_queries.rs` both compare `format!("{:?}", ..)` of two
+    /// computed values where no `PartialEq` exists -- applies the same way
+    /// here: `CheckedDeclaration` and `StageFailure<CheckRefusal>` both
+    /// derive `Debug`, and two independently constructed, differently
+    /// shaped contexts producing the same `Debug` text is a real assertion
+    /// a divergent implementation could fail.
+    ///
+    /// **Not a self-comparison this time.** Context `b` is seeded with
+    /// `unrelated` ahead of `helper` in `signatures_b` (not the plain
+    /// `helper`-only set in `a`) -- an extra declaration `f`'s body never
+    /// calls, placed so it also shifts `helper`'s own position in `b`'s
+    /// signature table. If `check` leaked *any* shared state (a global
+    /// cache keyed by declaration count or position, rather than reading
+    /// only `cx`), the two outputs would diverge in some way this
+    /// normalization does not account for; if it does not, they match
+    /// exactly once each context's own legitimate, positional `function`/
+    /// `callee` index is normalized to a name (see `normalize`, below) --
+    /// `Signatures::callable`'s own doc records that this index is
+    /// "index-aligned with the package's functions," so an extra
+    /// declaration ahead of `helper` in `b`'s table is expected to change
+    /// it there, without that being the state leak this test looks for.
+    /// `f` itself takes a parameter and calls `helper` with it, rather
+    /// than a bare literal, so there is a real call to check identically
+    /// in both contexts, not just a trivial body neither context can
+    /// diverge on.
+    #[trace("TC-160", "FR-062-AC-3")]
+    #[test]
+    fn two_contexts_from_the_same_declarations_check_identically() {
+        let scalar_limits = SCALAR_LIMITS_UNLIMITED;
+        let form = FunctionDeclaration::new(
+            "f",
+            vec![("p0".to_owned(), boolean_type_form())],
+            boolean_type_form(),
+            None,
+            Expression::call("helper".to_owned(), vec![Expression::name("p0".to_owned())]),
+        );
+        let own_signature = boolean_signature("f", 1);
+
+        let scope_a = empty_scope();
+        let location_a = root_location();
+        let signatures_a = Signatures::from(vec![boolean_signature("helper", 1)]);
+        let declarations_a = declarations_for(
+            &scope_a,
+            &signatures_a,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location_a,
+        );
+        let mut meter_a = Meter::new(scalar_limits);
+        let mut diagnostics_a = DiagnosticSink::default();
+        let mut scopes_a = ScopeStack::default();
+        let mut cx_a = CheckContext::new(
+            &declarations_a,
+            limits(),
+            &mut meter_a,
+            &mut diagnostics_a,
+            &mut scopes_a,
+        );
+        let outcome_a = ValueFunctionFamily::check(&form, &mut cx_a);
+        assert!(
+            outcome_a.is_ok(),
+            "the fixture must check successfully in context a: {outcome_a:?}"
+        );
+
+        let scope_b = empty_scope();
+        let location_b = root_location();
+        // `helper`, which `f`'s body actually calls, plus an extra
+        // declaration `f`'s body never calls -- so a correct
+        // implementation's output is unaffected, but a leaky one (reading
+        // declaration count or position from somewhere other than `cx`)
+        // would not be.
+        let signatures_b = Signatures::from(vec![
+            boolean_signature("unrelated", 0),
+            boolean_signature("helper", 1),
+        ]);
+        let declarations_b = declarations_for(
+            &scope_b,
+            &signatures_b,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location_b,
+        );
+        let mut meter_b = Meter::new(scalar_limits);
+        let mut diagnostics_b = DiagnosticSink::default();
+        let mut scopes_b = ScopeStack::default();
+        let mut cx_b = CheckContext::new(
+            &declarations_b,
+            limits(),
+            &mut meter_b,
+            &mut diagnostics_b,
+            &mut scopes_b,
+        );
+        let outcome_b = ValueFunctionFamily::check(&form, &mut cx_b);
+        assert!(
+            outcome_b.is_ok(),
+            "the fixture must check successfully in context b too: {outcome_b:?}"
+        );
+
+        // `helper`'s own index differs between `a` and `b` (0 and 1) purely
+        // because `b`'s table lists `unrelated` first -- a legitimate,
+        // positional property of `Signatures::callable` (its own doc: "index-
+        // aligned with the package's functions"), not a state leak. Replace
+        // each context's own index, wherever a `NodeKind::Call` or
+        // `CallSite` embeds it, with a shared placeholder before comparing,
+        // so this assertion is still sensitive to a real leak (anything else
+        // that diverges) without failing on this expected difference.
+        let index_a = signatures_a
+            .callable("helper")
+            .expect("helper is declared in signatures_a")
+            .0;
+        let index_b = signatures_b
+            .callable("helper")
+            .expect("helper is declared in signatures_b")
+            .0;
+        let normalize = |outcome: &str, index: usize| {
+            outcome
+                .replace(&format!("function: {index}"), "function: HELPER")
+                .replace(&format!("callee: {index}"), "callee: HELPER")
+        };
+        assert_eq!(
+            normalize(&format!("{outcome_a:?}"), index_a),
+            normalize(&format!("{outcome_b:?}"), index_b),
+            "two independently constructed typing contexts checking the same \
+             form must produce identical checked output, once each one's own \
+             legitimate signature-table position is normalized away"
+        );
+
+        // Each independently constructed sink shows exactly its own one
+        // entry -- a shared/global sink would leak entries into whichever
+        // one ran second, or show two entries in one and zero in the other.
+        assert_eq!(diagnostics_a.entries().len(), 1);
+        assert_eq!(diagnostics_b.entries().len(), 1);
+    }
+
+    /// Checks `form` (one `Boolean` declaration named `f`) through
+    /// `ValueFunctionFamily::check` against the caller's own `meter`,
+    /// `diagnostics` and `scopes`, and returns only the outcome, so a test
+    /// varies exactly one of the three and reads the difference back.
+    fn check_f_with(
+        form: &FunctionDeclaration,
+        meter: &mut Meter,
+        diagnostics: &mut DiagnosticSink,
+        scopes: &mut ScopeStack,
+    ) -> crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal> {
+        let scope = empty_scope();
+        let location = root_location();
+        let own_signature = declaration_signature("f");
+        let signatures = Signatures::default();
+        let declarations = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location,
+        );
+        let mut cx = CheckContext::new(&declarations, limits(), meter, diagnostics, scopes);
+        ValueFunctionFamily::check(form, &mut cx)
+    }
+
+    /// FR-062-AC-3 clause 2, meter: mutating only the context's meter shows
+    /// up in the outcome. A meter that has already admitted `k` charges
+    /// makes the sink's recorded `meter admissions=` figure `k` higher
+    /// (`check` reads `cx.meter`, not a private counter), and a meter whose
+    /// work bound is one below the declaration's charge turns the same
+    /// form's outcome into a `WorkBudget` `Limit`.
+    #[trace("TC-160", "FR-062-AC-3")]
+    #[test]
+    fn a_mutated_meter_is_reflected_in_the_check_outcome() {
+        let form = declaration("f", Expression::boolean(true));
+        let admissions = |pre_admitted: u64| {
+            let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+            for _ in 0..pre_admitted {
+                meter
+                    .charge(filament_exact::Charge::new(
+                        filament_exact::ChargePoint::FunctionCall,
+                    ))
+                    .expect("an unlimited meter admits");
+            }
+            let mut diagnostics = DiagnosticSink::default();
+            let mut scopes = ScopeStack::default();
+            let outcome = check_f_with(&form, &mut meter, &mut diagnostics, &mut scopes);
+            assert!(outcome.is_ok(), "the fixture checks: {outcome:?}");
+            let [entry] = diagnostics.entries() else {
+                panic!(
+                    "one check records one diagnostic: {:?}",
+                    diagnostics.entries()
+                );
+            };
+            entry.message.clone()
+        };
+        let fresh = admissions(0);
+        let used = admissions(5);
+        // The declaration's own charge is admitted first, so the recorded
+        // figure is `pre-admitted + 1` for a fresh meter's single charge.
+        assert!(
+            fresh.contains("meter admissions=1)"),
+            "a fresh meter shows the check's own one admission: {fresh}"
+        );
+        assert!(
+            used.contains("meter admissions=6)"),
+            "five earlier admissions show in the outcome: {used}"
+        );
+
+        let charge = measure_resolved(&empty_scope(), &form).work_budget;
+        let mut tight = Meter::new(filament_exact::ScalarLimits {
+            work_units: charge - 1,
+            ..SCALAR_LIMITS_UNLIMITED
+        });
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let outcome = check_f_with(&form, &mut tight, &mut diagnostics, &mut scopes);
+        let Err(StageFailure::Limit(exceeded)) = outcome else {
+            panic!("a meter one unit short must yield a Limit outcome: {outcome:?}");
+        };
+        assert_eq!(exceeded.kind(), LimitKind::WorkBudget);
+        assert!(
+            diagnostics.entries().is_empty(),
+            "a denied check is not diagnosed as checked"
+        );
+    }
+
+    /// FR-062-AC-3 clause 2, diagnostic sink: entries already in the sink
+    /// are kept in order and the check appends exactly its own one after
+    /// them, so the sink is the one channel the check writes through.
+    #[trace("TC-160", "FR-062-AC-3")]
+    #[test]
+    fn a_mutated_diagnostic_sink_is_reflected_in_the_check_outcome() {
+        let form = declaration("f", Expression::boolean(true));
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        diagnostics.record(&scopes, "seeded before the check");
+        let seeded = diagnostics.entries().to_vec();
+        let outcome = check_f_with(&form, &mut meter, &mut diagnostics, &mut scopes);
+        assert!(outcome.is_ok(), "{outcome:?}");
+        let entries = diagnostics.entries();
+        assert_eq!(entries.len(), 2, "the seeded entry plus the check's own");
+        assert_eq!(&entries[..1], &seeded[..], "the seeded entry is untouched");
+        assert!(
+            entries[1]
+                .message
+                .contains("checked function declaration f"),
+            "{:?}",
+            entries[1]
+        );
+    }
+
+    /// FR-062-AC-3 clause 2, scope stack: the scope stack the caller hands
+    /// in is what the check's diagnostic is scoped to (a frame pushed by the
+    /// caller stays beneath the check's own frame and is restored on every
+    /// return path, success and refusal alike).
+    #[trace("TC-160", "FR-062-AC-3")]
+    #[test]
+    fn a_mutated_scope_stack_is_reflected_in_the_check_outcome() {
+        let good = declaration("f", Expression::boolean(true));
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        scopes.enter("caller-frame");
+        let outcome = check_f_with(&good, &mut meter, &mut diagnostics, &mut scopes);
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(
+            diagnostics.entries()[0].scope,
+            "caller-frame/value.function-declaration:f",
+            "the diagnostic's scope path is the caller's frame, then the check's own"
+        );
+        assert_eq!(
+            scopes.path(),
+            "caller-frame",
+            "the caller's frame is restored"
+        );
+
+        // A refusal (`Integer` body, `Boolean` result) restores it too.
+        let bad = declaration("f", Expression::integer(1_i64));
+        let refused = check_f_with(&bad, &mut meter, &mut diagnostics, &mut scopes);
+        assert!(
+            matches!(refused, Err(StageFailure::Refused(_))),
+            "{refused:?}"
+        );
+        assert_eq!(scopes.path(), "caller-frame");
+        assert_eq!(diagnostics.entries().len(), 1, "a refusal records nothing");
+
+        // With no caller frame the same check is scoped identically: the
+        // scope name comes from the check, and the base is `<root>`.
+        let mut bare = ScopeStack::default();
+        let mut sink = DiagnosticSink::default();
+        let again = check_f_with(&good, &mut meter, &mut sink, &mut bare);
+        assert!(again.is_ok());
+        assert_eq!(bare.path(), "<root>");
+        assert_eq!(
+            sink.entries()[0].scope,
+            "value.function-declaration:f",
+            "without a caller frame the path is the check's own frame alone"
+        );
+    }
+
+    /// FR-062-AC-3 clause 1: the family-contract and check-stage sources
+    /// (non-test items of `src/check` and `src/family`) have no path to
+    /// global or thread-local state: no `static mut`, no `thread_local!`
+    /// or `lazy_static!`, and no once-cell, lazy, lock or atomic type. Scans
+    /// the parsed syntax, so a violation added anywhere in those modules
+    /// fails this test. A synthetic violating source proves the scanner
+    /// fires on each form.
+    #[trace("TC-160", "FR-062-AC-3")]
+    #[test]
+    fn check_stage_sources_have_no_global_or_thread_local_state() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        for module in ["check", "family"] {
+            collect_sources(&root.join(module), &mut files);
+        }
+        assert!(files.len() > 5, "the scan found the sources: {files:?}");
+        let mut findings = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("source reads");
+            for finding in global_state_findings(&text) {
+                findings.push(format!("{}: {finding}", file.display()));
+            }
+        }
+        assert!(findings.is_empty(), "global state reachable: {findings:#?}");
+
+        let violating = "static mut RAW: u8 = 0;\n\
+             static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);\n\
+             thread_local! { static SEEN: std::cell::Cell<u8> = std::cell::Cell::new(0); }\n\
+             use std::sync::Mutex as Guard;\n\
+             use std::sync::Once;\n\
+             fn f() { let _c: std::sync::OnceLock<u8>; let _m: std::sync::Mutex<u8>; }";
+        let found = global_state_findings(violating);
+        for needle in [
+            "static mut RAW",
+            "thread_local",
+            "OnceLock",
+            "Mutex",
+            "AtomicU64",
+            "use Mutex as Guard",
+            "use Once",
+        ] {
+            assert!(
+                found.iter().any(|finding| finding.contains(needle)),
+                "the scanner must flag {needle}: {found:?}"
+            );
+        }
+        let variant = "fn f(o: TemporalOperator) -> bool { \
+             match o { TemporalOperator::Once | TemporalOperator::Lazy => true, _ => false } }";
+        assert!(
+            global_state_findings(variant).is_empty(),
+            "an enum variant named like a std type is not that type"
+        );
+        let qualified = "fn f() { let _o: sync::Once; let _a = Once::new(); }";
+        assert!(
+            global_state_findings(qualified).len() >= 2,
+            "a lowercase module path or a bare Once is still flagged"
+        );
+        let test_only = "#[cfg(test)] mod t { static OK: u8 = 0; }";
+        assert!(global_state_findings(test_only).is_empty());
+    }
+
+    fn collect_sources(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).expect("directory reads") {
+            let path = entry.expect("entry reads").path();
+            if path.is_dir() {
+                collect_sources(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && !path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem.contains("tests"))
+            {
+                files.push(path);
+            }
+        }
+    }
+
+    /// Every global- or thread-local-state construct in `source`'s non-test
+    /// items, each described with its identifier.
+    fn global_state_findings(source: &str) -> Vec<String> {
+        use syn::visit::Visit;
+        struct Scan(Vec<String>);
+        fn is_cfg_test(attributes: &[syn::Attribute]) -> bool {
+            attributes.iter().any(|attribute| {
+                attribute.path().is_ident("cfg")
+                    && attribute
+                        .parse_args::<syn::Ident>()
+                        .is_ok_and(|ident| ident == "test")
+            })
+        }
+        fn banned_name(name: &str) -> bool {
+            matches!(
+                name,
+                "OnceLock"
+                    | "OnceCell"
+                    | "Once"
+                    | "LazyLock"
+                    | "LazyCell"
+                    | "Lazy"
+                    | "Mutex"
+                    | "RwLock"
+                    | "UnsafeCell"
+            ) || (name.starts_with("Atomic") && name.len() > "Atomic".len())
+        }
+        impl<'ast> Visit<'ast> for Scan {
+            // `use std::sync::Mutex as Guard;` names the type only here, so
+            // a later `Guard<u8>` would pass the path-segment check.
+            fn visit_use_name(&mut self, name: &'ast syn::UseName) {
+                if banned_name(&name.ident.to_string()) {
+                    self.0.push(format!("use {}", name.ident));
+                }
+            }
+            fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+                if banned_name(&rename.ident.to_string()) {
+                    self.0
+                        .push(format!("use {} as {}", rename.ident, rename.rename));
+                }
+            }
+            fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+                if !is_cfg_test(&item.attrs) {
+                    syn::visit::visit_item_mod(self, item);
+                }
+            }
+            fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+                if !is_cfg_test(&item.attrs) {
+                    syn::visit::visit_item_fn(self, item);
+                }
+            }
+            fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+                // An immutable `static` of a plain type is a constant (the
+                // checker's `BOOLEAN` and `NO_GROUP`); only `static mut`
+                // is state, and interior-mutable statics are caught by the
+                // type-name scan below.
+                if matches!(item.mutability, syn::StaticMutability::Mut(_)) {
+                    self.0.push(format!("static mut {}", item.ident));
+                }
+                syn::visit::visit_item_static(self, item);
+            }
+            fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+                if let Some(segment) = mac.path.segments.last() {
+                    if segment.ident == "thread_local" || segment.ident == "lazy_static" {
+                        self.0.push(format!("{}! macro", segment.ident));
+                    }
+                }
+            }
+            // A banned name is a finding wherever it names a type, except as
+            // the last segment of a path whose previous segment is a type
+            // (`TemporalOperator::Once` is an enum variant, not
+            // `std::sync::Once`: std's prefixes are lowercase modules).
+            fn visit_path(&mut self, path: &'ast syn::Path) {
+                let last = path.segments.len().saturating_sub(1);
+                for (index, segment) in path.segments.iter().enumerate() {
+                    let name = segment.ident.to_string();
+                    let variant_of_type = index == last
+                        && index > 0
+                        && path.segments[index - 1]
+                            .ident
+                            .to_string()
+                            .starts_with(char::is_uppercase);
+                    if banned_name(&name) && !variant_of_type {
+                        self.0.push(format!("type {name}"));
+                    }
+                    syn::visit::visit_path_segment(self, segment);
+                }
+            }
+        }
+        let file = syn::parse_file(source).expect("source parses");
+        let mut scan = Scan(Vec::new());
+        scan.visit_file(&file);
+        scan.0
+    }
+
+    /// `StageLimits`' `input_bytes` has a real producer
+    /// (`measure_declaration`'s own pass) and a real consumer
+    /// (`CheckContext::check_input_bytes`, called from
+    /// `ValueFunctionFamily::check`) that changes behaviour: a limit
+    /// configured one below the real, measured metric refuses with `Limit`
+    /// naming that exact kind; the same limit at the metric itself admits --
+    /// the limit varies by exactly one, so the limit (not the fixture) is
+    /// shown to be the proximate cause. `work_budget` is a real producer and
+    /// consumer too, but through the shared kernel meter's own `work_units`
+    /// charge (PR #302 review finding 3), not a `StageLimits` field -- see
+    /// `work_budget_kind_refuses_from_a_denied_meter_charge`. The node count
+    /// has no stage-entry check: `Typer` charges it at the node
+    /// (`real_checker_node_limit_is_the_proximate_cause`).
+    #[trace("TC-160", "FR-062-AC-5")]
+    #[trace("TC-432", "FR-062-AC-12")]
+    #[test]
+    fn stage_limits_restored_kinds_refuse_one_below_the_real_metric() {
+        let scope = empty_scope();
+        let location = root_location();
+        let own_signature = declaration_signature("f");
+        let signatures = Signatures::default();
+        let declarations = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location,
+        );
+        let form = declaration("f", Expression::boolean(true));
+        let metrics = measure_resolved(&empty_scope(), &form);
+        assert!(metrics.input_bytes > 0);
+
+        let base = StageLimits {
+            input_bytes: u64::MAX,
+            node_count: u64::MAX,
+        };
+        let check_kind = |limits: StageLimits, expected: LimitExceeded| {
+            let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+            let mut diagnostics = DiagnosticSink::default();
+            let mut scopes = ScopeStack::default();
+            let mut cx = CheckContext::new(
+                &declarations,
+                limits,
+                &mut meter,
+                &mut diagnostics,
+                &mut scopes,
+            );
+            match ValueFunctionFamily::check(&form, &mut cx) {
+                Err(StageFailure::Limit(exceeded)) => {
+                    assert_eq!(exceeded, expected);
+                }
+                other => panic!("expected {expected:?}, got {other:?}"),
+            }
+        };
+        let admits = |limits: StageLimits| {
+            let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+            let mut diagnostics = DiagnosticSink::default();
+            let mut scopes = ScopeStack::default();
+            let mut cx = CheckContext::new(
+                &declarations,
+                limits,
+                &mut meter,
+                &mut diagnostics,
+                &mut scopes,
+            );
+            assert!(ValueFunctionFamily::check(&form, &mut cx).is_ok());
+        };
+
+        check_kind(
+            StageLimits {
+                input_bytes: metrics.input_bytes - 1,
+                ..base
+            },
+            LimitExceeded::new(
+                Setting::S3InputBytes,
+                metrics.input_bytes - 1,
+                u128::from(metrics.input_bytes),
+            ),
+        );
+        admits(StageLimits {
+            input_bytes: metrics.input_bytes,
+            ..base
+        });
+
+        // A bound of 0, far below a larger declaration's measured byte
+        // length: the reported counter is the measured metric, not the bound
+        // plus one.
+        let larger = declaration(
+            "f",
+            Expression::if_then_else(
+                Expression::boolean(true),
+                Expression::boolean(false),
+                Expression::boolean(true),
+            ),
+        );
+        let measured = measure_resolved(&empty_scope(), &larger);
+        assert!(measured.input_bytes > 1);
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(
+            &declarations,
+            StageLimits {
+                input_bytes: 0,
+                ..base
+            },
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        let bytes = match ValueFunctionFamily::check(&larger, &mut cx) {
+            Err(StageFailure::Limit(exceeded)) => exceeded,
+            other => panic!("expected a Limit outcome, got {other:?}"),
+        };
+        assert_eq!(bytes.kind(), LimitKind::InputBytes);
+        assert_eq!(bytes.configured_bound(), 0);
+        assert_eq!(bytes.actual(), u128::from(measured.input_bytes));
+    }
+
+    /// PR #302 review finding 3: `WorkBudget` is a `Limit` outcome from a
+    /// denied `cx.meter` charge, cumulative across every declaration
+    /// checked against one meter. A budget one below one declaration's
+    /// charge `w`, and a budget of 0, each refuse with actual counter `w`;
+    /// a budget of exactly `w` admits the first check and refuses the
+    /// second with actual counter `2w`.
+    #[trace("TC-432", "FR-062-AC-12")]
+    #[test]
+    fn work_budget_kind_refuses_from_a_denied_meter_charge() {
+        let scope = empty_scope();
+        let location = root_location();
+        let own_signature = declaration_signature("f");
+        let signatures = Signatures::default();
+        let declarations = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location,
+        );
+        let form = declaration("f", Expression::boolean(true));
+        let charge = measure_resolved(&empty_scope(), &form).work_budget;
+        assert!(charge > 0);
+        let limits = StageLimits {
+            input_bytes: u64::MAX,
+            node_count: u64::MAX,
+        };
+        // The stage limit `check` reached against `meter`, or `None` when
+        // it admitted the declaration.
+        let limit_of = |meter: &mut Meter| {
+            let mut diagnostics = DiagnosticSink::default();
+            let mut scopes = ScopeStack::default();
+            let mut cx =
+                CheckContext::new(&declarations, limits, meter, &mut diagnostics, &mut scopes);
+            match ValueFunctionFamily::check(&form, &mut cx) {
+                Ok(_) => None,
+                Err(
+                    StageFailure::Limit(exceeded) | StageFailure::LimitWithPayload(exceeded, ()),
+                ) => Some(exceeded),
+                Err(StageFailure::Refused(refusal)) => panic!("unexpected refusal {refusal:?}"),
+                Err(StageFailure::RefusedWithPayload(refusal, ())) => {
+                    panic!("unexpected refusal {refusal:?}")
+                }
+                Err(StageFailure::Cancelled(cause)) => panic!("unexpected cancellation {cause:?}"),
+                Err(StageFailure::Fault(fault)) => panic!("unexpected fault {fault:?}"),
+            }
+        };
+        let budget = |work_units| {
+            Meter::new(filament_exact::ScalarLimits {
+                work_units,
+                ..SCALAR_LIMITS_UNLIMITED
+            })
+        };
+        let work_limit = |bound: u64, actual: u128| {
+            Some(LimitExceeded::new(Setting::S3WorkUnits, bound, actual))
+        };
+
+        assert_eq!(
+            limit_of(&mut budget(charge - 1)),
+            work_limit(charge - 1, u128::from(charge))
+        );
+        // A budget of 0, below the charge: the counter is the charge, not
+        // the budget plus one.
+        let empty = limit_of(&mut budget(0)).expect("a zero budget refuses");
+        assert_eq!(empty.kind(), LimitKind::WorkBudget);
+        assert_eq!(empty.actual(), u128::from(charge));
+
+        let mut meter = budget(charge);
+        assert_eq!(limit_of(&mut meter), None);
+        assert_eq!(
+            limit_of(&mut meter),
+            work_limit(charge, 2 * u128::from(charge))
+        );
+    }
+
+    /// FR-062-AC-5 third clause, `check` half (TC-160 step 6): across one
+    /// fixture set, `check` returns a checked node, a typed refusal or a
+    /// `Limit` outcome, and never `Incomplete`. The fixture set has one
+    /// admitted declaration, one refused declaration and one declaration
+    /// that reaches each of the four stage-entry limits; the last, a
+    /// work-budget denial, is the meter state that makes `evaluate` return
+    /// `Incomplete`, so `check` is shown to answer the same exhausted meter
+    /// with a `Limit`. `classify` matches `CheckOutcome` and `StageFailure`
+    /// with no wildcard arm: a variant added to either, such as an
+    /// `Incomplete`, stops this test compiling until `classify` says what
+    /// `check` does with it, and the exact expected classification per
+    /// fixture fails if `check` mapped any of them to something else.
+    #[trace("TC-160", "FR-062-AC-5")]
+    #[test]
+    fn check_never_returns_incomplete_across_the_fixture_set() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum Seen {
+            Checked,
+            Refused,
+            Limit(LimitKind),
+        }
+        fn classify(
+            outcome: crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal>,
+        ) -> Seen {
+            match outcome {
+                Ok(staged) => {
+                    let _checked = staged.into_value();
+                    Seen::Checked
+                }
+                Err(StageFailure::Refused(_) | StageFailure::RefusedWithPayload(_, ())) => {
+                    Seen::Refused
+                }
+                Err(
+                    StageFailure::Limit(exceeded) | StageFailure::LimitWithPayload(exceeded, ()),
+                ) => Seen::Limit(exceeded.kind()),
+                Err(StageFailure::Cancelled(cause)) => panic!("unexpected cancellation {cause:?}"),
+                Err(StageFailure::Fault(fault)) => panic!("unexpected fault {fault:?}"),
+            }
+        }
+        let scope = empty_scope();
+        let location = root_location();
+        let own_signature = declaration_signature("f");
+        let signatures = Signatures::default();
+        let declarations = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location,
+        );
+        let roomy = StageLimits {
+            input_bytes: u64::MAX,
+            node_count: u64::MAX,
+        };
+        let seen = |form: &FunctionDeclaration, stage: StageLimits, work_units: u64| {
+            let mut meter = Meter::new(filament_exact::ScalarLimits {
+                work_units,
+                ..SCALAR_LIMITS_UNLIMITED
+            });
+            let mut diagnostics = DiagnosticSink::default();
+            let mut scopes = ScopeStack::default();
+            let mut cx = CheckContext::new(
+                &declarations,
+                stage,
+                &mut meter,
+                &mut diagnostics,
+                &mut scopes,
+            );
+            classify(ValueFunctionFamily::check(form, &mut cx))
+        };
+        let good = declaration("f", Expression::boolean(true));
+        let ill_typed = declaration("f", Expression::integer(1_i64));
+        let unlimited = SCALAR_LIMITS_UNLIMITED.work_units;
+        assert_eq!(seen(&good, roomy, unlimited), Seen::Checked);
+        assert_eq!(seen(&ill_typed, roomy, unlimited), Seen::Refused);
+        assert_eq!(
+            seen(
+                &good,
+                StageLimits {
+                    input_bytes: 0,
+                    ..roomy
+                },
+                unlimited
+            ),
+            Seen::Limit(LimitKind::InputBytes)
+        );
+        assert_eq!(seen(&good, roomy, 0), Seen::Limit(LimitKind::WorkBudget));
+    }
+
+    /// FR-062-AC-7: a body of N = 4 expression nodes nested 4 deep
+    /// (`Not(Not(Not(true)))`), checked through `ValueFunctionFamily::check`
+    /// with the `CheckingLimits` node limit at N - 1, returns a `Limit`
+    /// outcome naming the node-count limit, bound N - 1 and count N; at N it
+    /// checks. Only the limit varies, by exactly one, so the limit, not the
+    /// fixture's depth or the host stack, is the proximate cause. Its
+    /// declarations were not read from a unit, so it carries no `Locus`
+    /// (FR-096; `locus_tests` covers the located case).
+    #[test]
+    #[trace("TC-378", "FR-062-AC-7")]
+    fn real_checker_node_limit_is_the_proximate_cause() {
+        let scope = empty_scope();
+        let location = root_location();
+        let nested = Expression::logical_not(Expression::logical_not(Expression::logical_not(
+            Expression::boolean(true),
+        )));
+        let form = declaration("f", nested);
+        let own_signature = declaration_signature("f");
+
+        let tight = CheckingLimits::new(3);
+        let signatures = Signatures::default();
+        let declarations =
+            declarations_for(&scope, &signatures, &own_signature, &[], tight, &location);
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(
+            &declarations,
+            limits(),
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        let refused = ValueFunctionFamily::check(&form, &mut cx)
+            .expect_err("a node limit of 3 must refuse a body of 4 nodes");
+        match refused {
+            StageFailure::Limit(exceeded) => {
+                assert_eq!(exceeded.kind(), LimitKind::NodeCount);
+                assert_eq!(exceeded.configured_bound(), 3);
+                assert_eq!(exceeded.actual(), 4);
+            }
+            other => panic!("expected StageFailure::Limit, got {other:?}"),
+        }
+
+        let wide = CheckingLimits::new(4);
+        let signatures = Signatures::default();
+        let declarations =
+            declarations_for(&scope, &signatures, &own_signature, &[], wide, &location);
+        let mut cx = CheckContext::new(
+            &declarations,
+            limits(),
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        let admitted = ValueFunctionFamily::check(&form, &mut cx);
+        assert!(
+            admitted.is_ok(),
+            "a node limit of 4 must admit the identical body of exactly 4 nodes"
+        );
+    }
+
+    /// FR-062-AC-2/FR-065-AC-2: two structurally identical declarations,
+    /// checked in two packages of one owner, mint one identity; a name
+    /// change mints a different one.
+    #[trace("TC-160", "FR-062-AC-2")]
+    #[test]
+    fn identical_declarations_share_one_identity() {
+        let identity = |name: &str| {
+            crate::check::PackageDeclarations {
+                functions: vec![declaration(name, Expression::boolean(true))],
+                ..crate::check::PackageDeclarations::new(
+                    super::fixtures::fixture_source(),
+                    "fixture",
+                    fsl_foundation::IdentityLimits::default(),
+                )
+            }
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .expect("the fixture checks")
+            .function_identity(name)
+            .expect("the fixture declares its function")
+        };
+        assert_eq!(identity("f"), identity("f"));
+        assert_ne!(identity("f"), identity("g"));
+    }
+
+    /// FR-062-AC-2: two occurrences of one identity get distinct ordinals;
+    /// a different identity's occurrence does not consume an ordinal from
+    /// this one.
+    #[trace("TC-160", "FR-062-AC-2")]
+    #[test]
+    fn occurrence_ordinals_are_per_identity_and_role() {
+        let mut map = OccurrenceMap::default();
+        let a = fill_key(1);
+        let b = fill_key(2);
+        let first = map.record(a.clone(), OccurrenceRole::Expression, (0, 3));
+        let second = map.record(a.clone(), OccurrenceRole::Expression, (4, 7));
+        let other = map.record(b.clone(), OccurrenceRole::Expression, (8, 11));
+        assert_eq!(first.ordinal(), 0);
+        assert_eq!(second.ordinal(), 1);
+        assert_eq!(other.ordinal(), 0);
+        assert_eq!(map.resolve(a.clone(), &first), Some(&(0, 3)));
+        assert_eq!(map.resolve(a, &second), Some(&(4, 7)));
+        assert_eq!(map.resolve(b, &other), Some(&(8, 11)));
+    }
+
+    /// FR-062-AC-2: the keyed map gives every occurrence the
+    /// ordinal the earlier scan gave it -- the number of earlier
+    /// records with the same (identity, role) -- over an interleaved
+    /// sequence of identities and roles, and resolves each one back to its
+    /// own span.
+    #[trace("TC-160", "FR-062-AC-2")]
+    #[test]
+    fn keyed_ordinals_match_counting_earlier_records() {
+        let keys: Vec<NodeKey> = (1..=5).map(fill_key).collect();
+        let roles = [
+            OccurrenceRole::Declaration,
+            OccurrenceRole::Expression,
+            OccurrenceRole::Generated,
+        ];
+        let mut map = OccurrenceMap::default();
+        let mut recorded: Vec<(NodeKey, OccurrenceRole, Origin)> = Vec::new();
+        // A fixed linear congruential sequence: deterministic, and it
+        // interleaves every (identity, role) pair many times.
+        let mut state = 7_u64;
+        for span in 0..2_000_u64 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let key = keys[usize::try_from(state >> 33).unwrap() % keys.len()].clone();
+            let role = roles[usize::try_from(state >> 17).unwrap() % roles.len()];
+            let expected = recorded
+                .iter()
+                .filter(|(other, other_role, _)| *other == key && *other_role == role)
+                .count();
+            let origin = map.record(key.clone(), role, span);
+            assert_eq!(origin.ordinal(), u64::try_from(expected).unwrap());
+            assert_eq!(OccurrenceRole::of(origin.role()), Some(role));
+            recorded.push((key, role, origin));
+        }
+        for (span, (key, _, origin)) in (0_u64..).zip(&recorded) {
+            assert_eq!(map.resolve(key.clone(), origin), Some(&span));
+            assert!(map.has(key.clone()));
+        }
+        let unrecorded = fill_key(9);
+        assert!(!map.has(unrecorded.clone()));
+        assert_eq!(
+            map.resolve(unrecorded, &Origin::new(Role::new("expression"), 0)),
+            None
+        );
+        let past_the_end = Origin::new(Role::new("expression"), u64::MAX);
+        assert_eq!(map.resolve(keys[0].clone(), &past_the_end), None);
+    }
+
+    /// A name's first signature and its first callable one are
+    /// kept apart: a named call resolves to the callable one, while
+    /// `position` names the first declared.
+    #[test]
+    fn signatures_keep_first_and_first_callable_positions() {
+        let signature = |callable_by_name| Signature {
+            name: "f".to_owned(),
+            parameters: Vec::new(),
+            result: ValueType::Boolean,
+            callable_by_name,
+        };
+        let signatures = Signatures::new(vec![signature(false), signature(true), signature(true)]);
+        assert_eq!(signatures.callable("f").map(|(index, _)| index), Some(1));
+        assert_eq!(signatures.position("f"), Some(0));
+        assert!(signatures.declares("f"));
+        assert_eq!(signatures.callable("g").map(|(index, _)| index), None);
+        assert_eq!(signatures.position("g"), None);
+        let hidden = Signatures::new(vec![signature(false)]);
+        assert!(hidden.callable("f").is_none());
+        assert!(hidden.declares("f"));
+    }
+
+    /// Grouping names in one pass refuses exactly the declarations
+    /// whose name repeats, in declaration order, each with every locus of
+    /// its name in declaration order -- the refusals the pairwise scan made.
+    #[trace("FSpec-TC-191", "FSpec-FR-146-AC-8")]
+    #[test]
+    fn duplicate_names_are_refused_with_every_locus_in_order() {
+        use filament_semantic_value::location::{
+            ExpressionLocation as BodyLocation, ExpressionOwner as BodyOrigin,
+        };
+        let names = ["a", "b", "a", "c", "b", "a"];
+        let refusals = crate::check::PackageDeclarations {
+            functions: names
+                .iter()
+                .map(|name| super::fixtures::declaration(name, Expression::boolean(true)))
+                .collect(),
+            ..crate::check::PackageDeclarations::new(
+                super::fixtures::fixture_source(),
+                "fixture",
+                fsl_foundation::IdentityLimits::default(),
+            )
+        }
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("repeated names are refused");
+        let at = |index: usize| {
+            BodyLocation::root(BodyOrigin::Body {
+                function: names[index].to_owned(),
+                index,
+            })
+        };
+        let expected: Vec<CheckRefusal> = [0, 1, 2, 4, 5]
+            .into_iter()
+            .map(|index| {
+                let loci = (0..names.len())
+                    .filter(|other| names[*other] == names[index])
+                    .map(at)
+                    .collect();
+                CheckRefusal {
+                    location: at(index),
+                    cause: CheckCause::AmbiguousName {
+                        name: names[index].to_owned(),
+                        loci,
+                    },
+                }
+            })
+            .collect();
+        assert_eq!(refusals, expected);
+    }
+}
+
+/// FR-096: a family `check`'s limits name the locus where the charge
+/// failed, over declarations S1, S2 and the FR-091 assembler read from real
+/// source text.
+#[cfg(test)]
+mod locus_tests {
+    use super::fixtures::{
+        declaration, declaration_signature, declarations_for, empty_scope, fill_key, limits,
+        measure_resolved, root_location,
+    };
+    use super::*;
+    use crate::check::refusal::{CheckingLimitKind, StageLimitCause};
+    use crate::check::PackageDeclarations;
+    use crate::family::{CheckContext, DiagnosticSink, FamilyContract, ScopeStack, StageLimits};
+    use filament_exact::{Meter, ScalarLimits};
+    use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
+    use filament_semantic_value::location::ExpressionOwner as CheckOrigin;
+    use fsl_forms::build_unit;
+    use fsl_foundation::source::provenance::SourceRegion;
+    use fsl_foundation::SourceIdentity;
+    use ix_trace_rs::trace;
+
+    const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        function f using v(): Boolean pure { not not not true }\n";
+
+    /// [`UNIT`] through S1, S2 and the assembler.
+    fn unit() -> PackageDeclarations {
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("a", "u"),
+            "unit.native",
+            UNIT.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the unit");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let forms = build_unit(&parsed).expect("S2 builds the unit");
+        PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "fixture".to_owned(),
+            forms,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("the unit assembles")
+    }
+
+    fn body_location() -> CheckLocation {
+        CheckLocation::root(CheckOrigin::Body {
+            function: "f".into(),
+            index: 0,
+        })
+    }
+
+    /// The unit bytes `locus` names, asserting it is a region of the unit.
+    fn text(locus: Option<&Locus>, unit: &PackageDeclarations) -> &'static str {
+        let Some(Locus::Region(region)) = locus else {
+            panic!("expected a region locus, got {locus:?}");
+        };
+        assert_eq!(region.source(), &unit.source);
+        let start = usize::try_from(region.start()).unwrap();
+        let end = usize::try_from(region.end()).unwrap();
+        &UNIT[start..end]
+    }
+
+    /// The outcome of checking function 0 of `unit` under `checking`,
+    /// `stage` and `meter`, located through `unit`'s regions.
+    fn check_unit(
+        unit: &PackageDeclarations,
+        checking: CheckingLimits,
+        stage: StageLimits,
+        meter: &mut Meter,
+    ) -> crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal> {
+        let scope = empty_scope();
+        let signatures = Signatures::default();
+        let own_signature = declaration_signature("f");
+        let location = body_location();
+        let regions = unit.regions();
+        let declarations = ValueDeclarations {
+            regions: Some(&regions),
+            ..declarations_for(
+                &scope,
+                &signatures,
+                &own_signature,
+                &[],
+                checking,
+                &location,
+            )
+        };
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(&declarations, stage, meter, &mut diagnostics, &mut scopes);
+        ValueFunctionFamily::check(&unit.functions[0], &mut cx)
+    }
+
+    fn limit(
+        outcome: crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal>,
+    ) -> LimitExceeded {
+        match outcome {
+            Err(StageFailure::Limit(exceeded)) => exceeded,
+            other => panic!("expected a stage limit, got {other:?}"),
+        }
+    }
+
+    fn unlimited() -> Meter {
+        Meter::new(SCALAR_LIMITS_UNLIMITED)
+    }
+
+    /// FR-096-AC-11: `Typer`'s node stop on `not not not true` (four
+    /// nodes) under a node limit of 3 is a node-count limit with bound 3,
+    /// actual 4, located at the span of `true`, the node whose entry failed,
+    /// and coded `stage_limit_exceeded`/`node-count-exceeded`; a limit of 4
+    /// admits. The same stop in a function not read from a unit carries no
+    /// locus.
+    #[trace("TC-378", "FR-096-AC-11", "FR-062-AC-7")]
+    #[test]
+    fn the_typer_node_stop_is_located_at_the_node_whose_entry_failed() {
+        let unit = unit();
+        let tight = CheckingLimits::new(3);
+        let exceeded = limit(check_unit(&unit, tight, limits(), &mut unlimited()));
+        assert_eq!(exceeded.kind(), LimitKind::NodeCount);
+        assert_eq!(exceeded.configured_bound(), 3);
+        assert_eq!(exceeded.actual(), 4);
+        assert_eq!(text(exceeded.locus(), &unit), "true");
+        assert_eq!(
+            exceeded.catalog_code(),
+            CatalogCode::new("stage_limit_exceeded", "node-count-exceeded")
+        );
+
+        let wide = CheckingLimits::new(4);
+        assert!(check_unit(&unit, wide, limits(), &mut unlimited()).is_ok());
+
+        let scope = empty_scope();
+        let signatures = Signatures::default();
+        let own_signature = declaration_signature("f");
+        let location = body_location();
+        let synthesized =
+            declarations_for(&scope, &signatures, &own_signature, &[], tight, &location);
+        let mut meter = unlimited();
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(
+            &synthesized,
+            limits(),
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        let exceeded = limit(ValueFunctionFamily::check(&unit.functions[0], &mut cx));
+        assert_eq!(exceeded.kind(), LimitKind::NodeCount);
+        assert_eq!(exceeded.locus(), None);
+    }
+
+    /// `function f using v(): Integer pure { 1 + 1 + … + 1 }`, 1,000 terms
+    /// (1,999 expression nodes), through S1, S2 and the assembler, with its
+    /// source text.
+    fn sum_unit() -> (PackageDeclarations, String) {
+        let terms = vec!["1"; 1_000].join(" + ");
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function f using v(): Integer pure {{ {terms} }}\n"
+        );
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("a", "u"),
+            "unit.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the unit");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let forms = build_unit(&parsed).expect("S2 builds the unit");
+        let unit = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "fixture".to_owned(),
+            forms,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("the unit assembles");
+        (unit, text)
+    }
+
+    /// TC-727 step 2: the 1,000-term sum under a node limit of 1,500, through
+    /// package checking, stops on the node limit, bound 1,500, count 1,501,
+    /// at the `1` whose entry failed; raised to 5,000 through the library
+    /// builder, it checks.
+    #[trace("TC-727", "FR-258-AC-4")]
+    #[test]
+    fn a_1000_term_sum_stops_on_the_node_limit_at_the_failing_node() {
+        let (unit, text) = sum_unit();
+        let (exceeded, region) = package_limit(unit, CheckingLimits::new(1_500));
+        assert_eq!(exceeded.kind, CheckingLimitKind::Nodes);
+        assert_eq!((exceeded.limit, exceeded.actual), (1_500, 1_501));
+        let region = region.expect("the stop is located");
+        let start = usize::try_from(region.start()).unwrap();
+        let end = usize::try_from(region.end()).unwrap();
+        assert_eq!(&text[start..end], "1", "the node whose entry failed");
+        let (unit, _) = sum_unit();
+        assert!(unit
+            .check(CheckMode::Linked, CheckingLimits::new(5_000))
+            .is_ok());
+    }
+
+    /// TC-727 step 3: the same sum, through package checking, under a work
+    /// budget one below the declaration's measured work `w` stops on the work
+    /// budget, bound `w - 1`, count `w`, at the declaration's span (the
+    /// charge is made once per declaration, not per node). At `w` the
+    /// declaration's own charge is admitted: the stop is a later lowering
+    /// charge, located at a node.
+    #[trace("TC-727", "FR-258-AC-4")]
+    #[test]
+    fn a_1000_term_sum_stops_on_a_work_budget_one_below_its_work() {
+        let (unit, text) = sum_unit();
+        let work = measure_resolved(&empty_scope(), &unit.functions[0]).work_budget;
+        let checking = |work_units| CheckingLimits::new(5_000).with_work_budget(work_units);
+        let (exceeded, region) = package_limit(unit, checking(work - 1));
+        assert_eq!(exceeded.kind, CheckingLimitKind::WorkBudget);
+        assert_eq!(
+            (exceeded.limit, exceeded.actual),
+            (work - 1, u128::from(work))
+        );
+        let region = region.expect("the stop is located at the declaration");
+        let start = usize::try_from(region.start()).unwrap();
+        let end = usize::try_from(region.end()).unwrap();
+        assert!(
+            text[start..end].starts_with("function f using v()"),
+            "the declaration's span, not a node's"
+        );
+
+        let (unit, _) = sum_unit();
+        let (admitted, _) = package_limit(unit, checking(work));
+        assert_eq!(admitted.kind, CheckingLimitKind::WorkBudget);
+        assert_eq!(admitted.limit, work);
+        assert!(admitted.actual > u128::from(work), "a lowering charge");
+        assert_eq!(admitted.region, None, "a lowering stop names no region");
+    }
+
+    /// TC-727 step 1: `CheckingLimits::default()` holds 100,000 nodes,
+    /// 16,777,216 preimage bytes and 16,777,216 work units, and a node
+    /// limit of 0, 1 or `u64::MAX` builds.
+    #[trace("TC-727", "FR-258-AC-3")]
+    #[test]
+    fn the_checking_defaults_hold_no_depth() {
+        let defaults = CheckingLimits::default();
+        assert_eq!(
+            (
+                defaults.nodes(),
+                defaults.input_bytes(),
+                defaults.work_budget()
+            ),
+            (100_000, 16_777_216, 16_777_216)
+        );
+        for nodes in [0, 1, u64::MAX] {
+            assert_eq!(CheckingLimits::new(nodes).nodes(), nodes);
+        }
+    }
+
+    /// FR-096-AC-4: a declaration whose preimage input bytes exceed a bound
+    /// `B` stops with kind input bytes, bound `B`, the measured bytes and
+    /// the declaration's span. The same limit reached for a function not
+    /// read from a unit carries no locus.
+    #[trace("TC-427", "FR-096-AC-4")]
+    #[test]
+    fn a_declaration_input_bytes_limit_is_located_at_the_declaration() {
+        let unit = unit();
+        let measured = measure_resolved(&empty_scope(), &unit.functions[0]).input_bytes;
+        let bound = measured - 1;
+        let stage = StageLimits {
+            input_bytes: bound,
+            ..limits()
+        };
+        let exceeded = limit(check_unit(
+            &unit,
+            CheckingLimits::default(),
+            stage,
+            &mut unlimited(),
+        ));
+        assert_eq!(exceeded.kind(), LimitKind::InputBytes);
+        assert_eq!(exceeded.configured_bound(), bound);
+        assert_eq!(exceeded.actual(), u128::from(measured));
+        assert_eq!(
+            text(exceeded.locus(), &unit),
+            "function f using v(): Boolean pure { not not not true }"
+        );
+
+        let scope = empty_scope();
+        let signatures = Signatures::default();
+        let own_signature = declaration_signature("f");
+        let location = root_location();
+        let synthesized = declarations_for(
+            &scope,
+            &signatures,
+            &own_signature,
+            &[],
+            CheckingLimits::default(),
+            &location,
+        );
+        let form = declaration("f", Expression::boolean(true));
+        let stage = StageLimits {
+            input_bytes: 0,
+            ..limits()
+        };
+        let mut meter = unlimited();
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(
+            &synthesized,
+            stage,
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        let exceeded = limit(ValueFunctionFamily::check(&form, &mut cx));
+        assert_eq!(exceeded.kind(), LimitKind::InputBytes);
+        assert_eq!(exceeded.locus(), None);
+    }
+
+    /// The one stage-limit refusal package checking returns for `unit`
+    /// under `limits`, with the region FR-096 locates it at.
+    fn package_limit(
+        unit: PackageDeclarations,
+        limits: CheckingLimits,
+    ) -> (StageLimitCause, Option<SourceRegion>) {
+        let regions = unit.regions();
+        let refusals = unit
+            .check(CheckMode::Linked, limits)
+            .expect_err("the limit stops package checking");
+        let [refusal] = refusals.as_slice() else {
+            panic!("one refusal, got {refusals:?}");
+        };
+        let CheckCause::ResourceExhausted(cause) = &refusal.cause else {
+            panic!("a stage limit, got {refusal:?}");
+        };
+        ((**cause).clone(), regions.refusal_region(refusal))
+    }
+
+    /// The bytes `region` names in [`UNIT`].
+    fn unit_text(region: Option<SourceRegion>) -> &'static str {
+        let region = region.expect("the limit is located");
+        let start = usize::try_from(region.start()).unwrap();
+        let end = usize::try_from(region.end()).unwrap();
+        &UNIT[start..end]
+    }
+
+    /// FR-096 through package checking, `ValueFunctionFamily::check`'s
+    /// production caller: a node limit of 3 on `not not not true` (four
+    /// nodes) stops at the node whose entry failed, and the
+    /// declaration-level input bytes and work limits keep the declaration's
+    /// span.
+    #[trace("TC-427", "TC-378", "FR-096-AC-4", "FR-096-AC-5", "FR-096-AC-11")]
+    #[test]
+    fn package_checking_locates_a_node_limit_at_its_node_and_a_declaration_limit_at_the_declaration(
+    ) {
+        let declaration = "function f using v(): Boolean pure { not not not true }";
+        let (nodes, region) = package_limit(unit(), CheckingLimits::new(3));
+        assert_eq!(nodes.kind, CheckingLimitKind::Nodes);
+        assert_eq!((nodes.limit, nodes.actual), (3, 4));
+        assert_eq!(unit_text(region), "true");
+
+        let bytes = measure_resolved(&empty_scope(), &unit().functions[0]).input_bytes;
+        let (input, region) = package_limit(
+            unit(),
+            CheckingLimits::default().with_input_bytes(bytes - 1),
+        );
+        assert_eq!(input.kind, CheckingLimitKind::InputBytes);
+        assert_eq!(unit_text(region), declaration);
+
+        let charge = measure_resolved(&empty_scope(), &unit().functions[0]).work_budget;
+        let (work, region) = package_limit(
+            unit(),
+            CheckingLimits::default().with_work_budget(charge - 1),
+        );
+        assert_eq!(work.kind, CheckingLimitKind::WorkBudget);
+        assert_eq!(unit_text(region), declaration);
+    }
+
+    /// FR-096 through package checking: a function with no form spans (one
+    /// synthesized for FR-151 dispatch) in a unit whose regions are
+    /// supplied reaches its node limit with no region.
+    #[trace("TC-378", "FR-096-AC-11")]
+    #[test]
+    fn package_checking_locates_no_limit_in_a_function_without_spans() {
+        let nested = Expression::logical_not(Expression::logical_not(Expression::logical_not(
+            Expression::boolean(true),
+        )));
+        let mut unit = unit();
+        unit.functions = vec![declaration("f", nested)];
+        assert!(unit.functions[0].spans().is_none());
+        let (nodes, region) = package_limit(unit, CheckingLimits::new(3));
+        assert_eq!(nodes.kind, CheckingLimitKind::Nodes);
+        assert_eq!(nodes.region, None);
+        assert_eq!(region, None);
+    }
+
+    /// FR-096-AC-5: a declaration whose work charge a budget `W` denies
+    /// stops with kind work budget, bound `W`, the spend the denied charge
+    /// would have reached, and the declaration's span.
+    #[trace("TC-427", "FR-096-AC-5")]
+    #[test]
+    fn a_denied_work_charge_is_located_at_the_declaration() {
+        let unit = unit();
+        let charge = measure_resolved(&empty_scope(), &unit.functions[0]).work_budget;
+        let bound = charge - 1;
+        let mut meter = Meter::new(ScalarLimits {
+            work_units: bound,
+            ..SCALAR_LIMITS_UNLIMITED
+        });
+        let exceeded = limit(check_unit(
+            &unit,
+            CheckingLimits::default(),
+            limits(),
+            &mut meter,
+        ));
+        assert_eq!(exceeded.kind(), LimitKind::WorkBudget);
+        assert_eq!(exceeded.configured_bound(), bound);
+        assert_eq!(exceeded.actual(), u128::from(charge));
+        let region: &SourceRegion = match exceeded.locus() {
+            Some(Locus::Region(region)) => region,
+            other => panic!("expected a region, got {other:?}"),
+        };
+        assert_eq!(unit.regions().declaration_region(0).as_ref(), Some(region));
+        assert_eq!(
+            text(exceeded.locus(), &unit),
+            "function f using v(): Boolean pure { not not not true }"
+        );
+    }
+    fn measured(value_type: &ValueType) -> (u64, u64) {
+        let mut meter = DeclarationMeter::new();
+        encode_value_type(&mut meter, value_type);
+        (meter.writes, meter.input_bytes)
+    }
+
+    fn metre() -> filament_exact::UnitId {
+        filament_exact::UnitId::declared(fill_key(5))
+    }
+
+    fn bounded(
+        min: Option<filament_exact::Quantity>,
+        max: Option<filament_exact::Quantity>,
+    ) -> ValueType {
+        ValueType::BoundedQuantity(std::sync::Arc::new(
+            filament_exact::BoundedQuantityType::new(metre(), min, max).expect("in the unit"),
+        ))
+    }
+
+    /// A carried quantity is its own type: its tag differs from a bounded
+    /// quantity's, and the carrier is part of its identity (FR-497).
+    #[test]
+    fn a_carried_quantity_is_encoded_with_its_unit_and_carrier() {
+        let carried = |domain: filament_exact::IntegerInterval| {
+            ValueType::CarriedQuantity(std::sync::Arc::new(
+                filament_exact::CarriedQuantityType::new(
+                    metre(),
+                    filament_exact::QuantityCarrier::Integer {
+                        domain,
+                        rounding: filament_exact::RoundingMode::Exact,
+                    },
+                ),
+            ))
+        };
+        let interval = |low: i64, high: i64| {
+            filament_exact::IntegerInterval::spanning(
+                filament_exact::Integer::from(low),
+                filament_exact::Integer::from(high),
+            )
+        };
+        let small = measured(&carried(interval(-2, 2)));
+        let wide = measured(&carried(interval(-200, 2000)));
+        assert_ne!(small, measured(&bounded(None, None)));
+        assert_ne!(small, measured(&ValueType::Quantity(metre())));
+        assert_eq!(small, measured(&carried(interval(-2, 2))));
+        assert!(wide.1 > small.1, "a wider carrier writes more bytes");
+    }
+
+    /// A `Rational[..]` carrier is part of a carried quantity's identity
+    /// (FR-497, FR-505): each bound changes the encoding, and it differs
+    /// from an integer carrier of the same numerator range.
+    #[ix_trace_rs::trace("FR-497-AC-1", "TC-1287")]
+    #[test]
+    fn a_rational_carrier_is_encoded_with_its_numerator_and_denominator_bounds() {
+        let interval = |low: i64, high: i64| {
+            filament_exact::IntegerInterval::spanning(
+                filament_exact::Integer::from(low),
+                filament_exact::Integer::from(high),
+            )
+        };
+        let rational = |numerator: (i64, i64), denominator: (i64, i64)| {
+            ValueType::CarriedQuantity(std::sync::Arc::new(
+                filament_exact::CarriedQuantityType::new(
+                    metre(),
+                    filament_exact::QuantityCarrier::Rational(
+                        filament_exact::RationalDomain::new(
+                            interval(numerator.0, numerator.1),
+                            interval(denominator.0, denominator.1),
+                        )
+                        .expect("a positive denominator"),
+                    ),
+                ),
+            ))
+        };
+        let base = measured(&rational((-3, 7), (1, 12)));
+        assert_eq!(base, measured(&rational((-3, 7), (1, 12))));
+        // Each bound is written: lengthening any one adds bytes.
+        for wider in [
+            rational((-300, 7), (1, 12)),
+            rational((-3, 700), (1, 12)),
+            rational((-3, 7), (10, 12)),
+            rational((-3, 7), (1, 1200)),
+        ] {
+            let wider = measured(&wider);
+            assert_eq!(wider.0, base.0, "the same fields are written");
+            assert!(wider.1 > base.1, "{wider:?} against {base:?}");
+        }
+        // Four bounds are written where an integer carrier writes two.
+        let integer = measured(&ValueType::CarriedQuantity(std::sync::Arc::new(
+            filament_exact::CarriedQuantityType::new(
+                metre(),
+                filament_exact::QuantityCarrier::Integer {
+                    domain: interval(-3, 7),
+                    rounding: filament_exact::RoundingMode::Exact,
+                },
+            ),
+        )));
+        assert_ne!(base, integer);
+        assert!(base.0 > integer.0, "{base:?} against {integer:?}");
+    }
+
+    /// A bounded quantity is its own type, not a `Quantity` (filament-exact
+    /// FR-387): its tag is longer, and each bound adds its presence tag and
+    /// magnitude. No FSL criterion governs the declaration-size figure of
+    /// this type.
+    #[test]
+    fn a_bounded_quantity_is_encoded_with_its_own_tag_and_bound_presence() {
+        let (quantity_writes, quantity_bytes) = measured(&ValueType::Quantity(metre()));
+        let (open_writes, open_bytes) = measured(&bounded(None, None));
+        // "quantity" -> "bounded-quantity" (+8 bytes), plus two "unbounded".
+        assert_eq!(open_writes, quantity_writes + 2);
+        assert_eq!(open_bytes, quantity_bytes + 8 + 2 * (8 + 9));
+        let five = filament_exact::Quantity::new(
+            filament_exact::Rational::from_integer(filament_exact::Integer::from(5_i64)),
+            metre(),
+        );
+        let (min_writes, min_bytes) = measured(&bounded(Some(five.clone()), None));
+        let magnitude = five.magnitude().to_string().len() as u64;
+        // "unbounded" is replaced by "bounded" and the magnitude text.
+        assert_eq!(min_writes, open_writes + 1);
+        assert_eq!(min_bytes, open_bytes - (8 + 9) + (8 + 7) + (8 + magnitude));
+    }
+
+    /// A map is encoded as `"map"`, its key type, its value type, then its
+    /// bound; bound presence and the key type change the figure (filament-exact
+    /// FR-386). The figure is the measured preimage length of FR-062-AC-12.
+    #[trace("TC-432", "FR-062-AC-12")]
+    #[test]
+    fn a_map_is_encoded_with_its_tag_values_and_bound() {
+        let keyed = |key, bound| {
+            ValueType::Map(std::sync::Arc::new(
+                filament_exact::MapType::new(key, ValueType::Boolean, bound).expect("a leaf key"),
+            ))
+        };
+        let map = |bound| keyed(ValueType::Boolean, bound);
+        // "map" (3), the key "boolean" (7), the value "boolean" (7) and
+        // "unbounded" (9), each behind a length.
+        assert_eq!(measured(&map(None)), (4, 4 * 8 + 3 + 7 + 7 + 9));
+        // "bounded" (7) and two `u64` bounds replace "unbounded".
+        let bound = filament_exact::CardinalityBound::new(1, 4).expect("a bound");
+        assert_eq!(
+            measured(&map(Some(bound))),
+            (6, 4 * 8 + 3 + 7 + 7 + 7 + 2 * 8)
+        );
+        // Two maps differing only by key type measure differently.
+        assert_ne!(
+            measured(&keyed(ValueType::Boolean, None)),
+            measured(&keyed(ValueType::String, None))
+        );
+        let sequence = ValueType::collection(filament_exact::CollectionType::new(
+            filament_exact::CollectionKind::Sequence,
+            ValueType::Boolean,
+            None,
+        ));
+        assert_ne!(measured(&map(None)), measured(&sequence));
+    }
+}

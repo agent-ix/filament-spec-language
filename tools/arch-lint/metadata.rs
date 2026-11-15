@@ -19,7 +19,7 @@ pub(crate) fn edges_for_manifest(manifest_path: &Path) -> Result<Vec<Edge>> {
 }
 
 /// Every resolved dependency, in the `cargo metadata` resolution of the crate
-/// at `manifest_path`, on `quire-checked` with its `construct` feature
+/// at `manifest_path`, on `filament-checked` with its `construct` feature
 /// enabled (FR-059; FR-400-AC-3).
 pub(crate) fn construct_edges_for_manifest(manifest_path: &Path) -> Result<Vec<ConstructEdge>> {
     parse_construct_edges(&load(manifest_path)?)
@@ -53,10 +53,10 @@ fn load(manifest_path: &Path) -> Result<Value> {
 }
 
 /// The package name of the checked-term leaf (ADR-011 layer C).
-const CHECKED_LEAF: &str = "quire-checked";
+const CHECKED_LEAF: &str = "filament-checked";
 
 /// The `construct` edges of `document`: one per resolved package of an
-/// ecosystem repository that depends on `quire-checked` when the leaf's
+/// ecosystem repository that depends on `filament-checked` when the leaf's
 /// resolved features include `construct`. Features are the resolution's
 /// unified set, which is what a build of that repository enables.
 fn parse_construct_edges(document: &Value) -> Result<Vec<ConstructEdge>> {
@@ -208,35 +208,35 @@ mod tests {
     use serde_json::json;
 
     /// tc_arch_lint_metadata_001: a minimal synthetic `cargo metadata`
-    /// document with a synthetic IR -> QSL normal edge, the edge the FB-05
+    /// document with a synthetic IR -> FSL normal edge, the edge the FB-05
     /// check exercises, is parsed into exactly that edge.
     #[trace("TC-156")]
     #[test]
-    fn tc_arch_lint_metadata_001_parses_ir_to_qsl_edge() {
+    fn tc_arch_lint_metadata_001_parses_ir_to_fsl_edge() {
         let document = json!({
             "packages": [
-                {"id": "ir 0.1.0", "name": "quire-contract-ir", "source": null},
-                {"id": "qsl 0.2.0", "name": "quire-spec-language",
-                 "source": "git+https://github.com/agent-ix/quire-spec-language?rev=f1700a9#f1700a9"},
+                {"id": "ir 0.1.0", "name": "filament-contract-ir", "source": null},
+                {"id": "fsl 0.2.0", "name": "filament-spec-language",
+                 "source": "git+https://github.com/agent-ix/filament-spec-language?rev=f1700a9#f1700a9"},
             ],
             "resolve": {
                 "nodes": [
                     {"id": "ir 0.1.0", "deps": [
-                        {"name": "quire_spec_language", "pkg": "qsl 0.2.0",
+                        {"name": "filament_spec_language", "pkg": "fsl 0.2.0",
                          "dep_kinds": [{"kind": null, "target": null}]}
                     ]},
-                    {"id": "qsl 0.2.0", "deps": []}
+                    {"id": "fsl 0.2.0", "deps": []}
                 ]
             }
         });
         let edges = parse_edges(&document).unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].from, Repo::Ir);
-        assert_eq!(edges[0].to, Repo::Qsl);
+        assert_eq!(edges[0].to, Repo::Fsl);
         assert_eq!(edges[0].kind, EdgeKind::Normal);
     }
 
-    /// tc_arch_lint_metadata_010: a resolved RT dependency on `quire-checked`
+    /// tc_arch_lint_metadata_010: a resolved RT dependency on `filament-checked`
     /// is a `construct` edge when the leaf's resolved features include
     /// `construct`, and none when they do not (FR-059; FR-400-AC-3).
     #[trace("TC-156", "FR-400-AC-3")]
@@ -245,13 +245,13 @@ mod tests {
         let document = |features: Value| {
             json!({
                 "packages": [
-                    {"id": "rt 0.1.0", "name": "quire-contract-runtime", "source": null},
-                    {"id": "qc 0.1.0", "name": "quire-checked",
-                     "source": "git+https://github.com/agent-ix/quire-eval?branch=main"},
+                    {"id": "rt 0.1.0", "name": "filament-contract-runtime", "source": null},
+                    {"id": "qc 0.1.0", "name": "filament-checked",
+                     "source": "git+https://github.com/agent-ix/filament-eval?branch=main"},
                 ],
                 "resolve": {"nodes": [
                     {"id": "rt 0.1.0", "deps": [
-                        {"name": "quire_checked", "pkg": "qc 0.1.0",
+                        {"name": "filament_checked", "pkg": "qc 0.1.0",
                          "dep_kinds": [{"kind": null, "target": null}]}]},
                     {"id": "qc 0.1.0", "deps": [], "features": features},
                 ]}
@@ -262,7 +262,7 @@ mod tests {
             on,
             vec![ConstructEdge {
                 from: Repo::Rt,
-                via_crate: "quire-contract-runtime".to_owned()
+                via_crate: "filament-contract-runtime".to_owned()
             }]
         );
         assert!(parse_construct_edges(&document(json!(["std"])))
@@ -278,14 +278,14 @@ mod tests {
     fn tc_arch_lint_metadata_002_classifies_dev_edge() {
         let document = json!({
             "packages": [
-                {"id": "qsl 0.2.0", "name": "quire-spec-language", "source": null},
-                {"id": "cg 0.1.0", "name": "quire-contract-codegen",
-                 "source": "git+https://github.com/agent-ix/quire-contract-codegen"},
+                {"id": "fsl 0.2.0", "name": "filament-spec-language", "source": null},
+                {"id": "cg 0.1.0", "name": "filament-contract-codegen",
+                 "source": "git+https://github.com/agent-ix/filament-contract-codegen"},
             ],
             "resolve": {
                 "nodes": [
-                    {"id": "qsl 0.2.0", "deps": [
-                        {"name": "quire_contract_codegen", "pkg": "cg 0.1.0",
+                    {"id": "fsl 0.2.0", "deps": [
+                        {"name": "filament_contract_codegen", "pkg": "cg 0.1.0",
                          "dep_kinds": [{"kind": "dev", "target": null}]}
                     ]},
                     {"id": "cg 0.1.0", "deps": []}
@@ -298,21 +298,21 @@ mod tests {
     }
 
     /// tc_arch_lint_metadata_006 (positive control on real data): resolving
-    /// QSL's own workspace manifest through `edges_for_manifest`, the path
-    /// `direction` takes for `--qsl`, yields QSL's normal edge on the
-    /// git-sourced `quire-contract-model`, classified QSL -> IR. A classifier
+    /// FSL's own workspace manifest through `edges_for_manifest`, the path
+    /// `direction` takes for `--fsl`, yields FSL's normal edge on the
+    /// git-sourced `filament-contract-model`, classified FSL -> IR. A classifier
     /// that stopped recognising the real IR crate would drop the edge and
     /// fail here.
     #[trace("TC-156", "FR-059-AC-6")]
     #[test]
-    fn tc_arch_lint_metadata_006_real_qsl_manifest_yields_qsl_to_ir_model_edge() {
+    fn tc_arch_lint_metadata_006_real_fsl_manifest_yields_fsl_to_ir_model_edge() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let edges = edges_for_manifest(&workspace.join("Cargo.toml")).unwrap();
         let expected = Edge {
-            from: Repo::Qsl,
+            from: Repo::Fsl,
             to: Repo::Ir,
             kind: EdgeKind::Normal,
-            via_crate: "quire-contract-model".to_owned(),
+            via_crate: "filament-contract-model".to_owned(),
         };
         assert!(
             edges.contains(&expected),
@@ -320,56 +320,56 @@ mod tests {
         );
     }
 
-    /// tc_arch_lint_metadata_010 (real data): QSL's own resolved dependency
-    /// graph, read the way `direction` reads `--qsl`, has no edge back into
-    /// QSL, and the FB-05 and FB-11 check over it is clean. A dependency that
-    /// depended on a git-sourced QSL crate would add an edge into QSL and
-    /// fail here. The QSL -> IR assertion keeps the check from passing on an
+    /// tc_arch_lint_metadata_010 (real data): FSL's own resolved dependency
+    /// graph, read the way `direction` reads `--fsl`, has no edge back into
+    /// FSL, and the FB-05 and FB-11 check over it is clean. A dependency that
+    /// depended on a git-sourced FSL crate would add an edge into FSL and
+    /// fail here. The FSL -> IR assertion keeps the check from passing on an
     /// empty graph.
     #[trace("TC-139", "FR-051-AC-6")]
     #[test]
-    fn tc_arch_lint_metadata_010_real_qsl_graph_has_no_edge_back_into_qsl() {
+    fn tc_arch_lint_metadata_010_real_fsl_graph_has_no_edge_back_into_fsl() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let edges = edges_for_manifest(&workspace.join("Cargo.toml")).unwrap();
         assert!(
             edges
                 .iter()
-                .any(|edge| edge.from == Repo::Qsl && edge.to == Repo::Ir),
-            "no QSL -> IR edge among {edges:?}"
+                .any(|edge| edge.from == Repo::Fsl && edge.to == Repo::Ir),
+            "no FSL -> IR edge among {edges:?}"
         );
-        let into_qsl: Vec<_> = edges.iter().filter(|edge| edge.to == Repo::Qsl).collect();
-        assert!(into_qsl.is_empty(), "edges into QSL: {into_qsl:?}");
+        let into_fsl: Vec<_> = edges.iter().filter(|edge| edge.to == Repo::Fsl).collect();
+        assert!(into_fsl.is_empty(), "edges into FSL: {into_fsl:?}");
         let report = crate::graph::check(&edges);
         assert!(report.is_clean(), "{report:?}");
     }
 
-    /// tc_arch_lint_metadata_007: the kernel leaf `quire-exact`, git-sourced
+    /// tc_arch_lint_metadata_007: the kernel leaf `filament-exact`, git-sourced
     /// from its own repository, contributes no repository to the edge graph
     /// (`classify`), so an RT dependency on it yields no edge and no finding; RT's dependency on
-    /// `qsl-eval`, from the same QSL git source, is still an RT -> QSL edge
+    /// `fsl-eval`, from the same FSL git source, is still an RT -> FSL edge
     /// and an FB-05 violation.
     #[trace("TC-156", "FR-059-AC-8")]
     #[test]
-    fn tc_arch_lint_metadata_007_quire_exact_leaf_is_exempt_but_qsl_eval_is_not() {
-        let qsl_git = "git+https://github.com/agent-ix/quire-spec-language?branch=main";
-        let exact_git = "git+https://github.com/agent-ix/quire-exact?branch=main";
+    fn tc_arch_lint_metadata_007_filament_exact_leaf_is_exempt_but_fsl_eval_is_not() {
+        let fsl_git = "git+https://github.com/agent-ix/filament-spec-language?branch=main";
+        let exact_git = "git+https://github.com/agent-ix/filament-exact?branch=main";
         let document = json!({
             "packages": [
-                {"id": "rt 0.1.0", "name": "quire-contract-runtime", "source": null},
-                {"id": "exact 0.1.0", "name": "quire-exact", "source": exact_git},
-                {"id": "eval 0.1.0", "name": "qsl-eval", "source": qsl_git},
+                {"id": "rt 0.1.0", "name": "filament-contract-runtime", "source": null},
+                {"id": "exact 0.1.0", "name": "filament-exact", "source": exact_git},
+                {"id": "eval 0.1.0", "name": "fsl-eval", "source": fsl_git},
             ],
             "resolve": {
                 "nodes": [
                     {"id": "rt 0.1.0", "deps": [
-                        {"name": "quire_exact", "pkg": "exact 0.1.0",
+                        {"name": "filament_exact", "pkg": "exact 0.1.0",
                          "dep_kinds": [{"kind": null, "target": null}]},
-                        {"name": "qsl_eval", "pkg": "eval 0.1.0",
+                        {"name": "fsl_eval", "pkg": "eval 0.1.0",
                          "dep_kinds": [{"kind": null, "target": null}]}
                     ]},
                     {"id": "exact 0.1.0", "deps": []},
                     {"id": "eval 0.1.0", "deps": [
-                        {"name": "quire_exact", "pkg": "exact 0.1.0",
+                        {"name": "filament_exact", "pkg": "exact 0.1.0",
                          "dep_kinds": [{"kind": null, "target": null}]}
                     ]}
                 ]
@@ -378,9 +378,9 @@ mod tests {
         let edges = parse_edges(&document).unwrap();
         let expected = Edge {
             from: Repo::Rt,
-            to: Repo::Qsl,
+            to: Repo::Fsl,
             kind: EdgeKind::Normal,
-            via_crate: "qsl-eval".to_owned(),
+            via_crate: "fsl-eval".to_owned(),
         };
         assert_eq!(edges, vec![expected.clone()]);
         let report = crate::graph::check(&edges);
@@ -389,37 +389,37 @@ mod tests {
         assert!(report.fb11.is_empty(), "{report:?}");
     }
 
-    /// FR-401-AC-7: the leaf `quire-eval`, git-sourced from its own
+    /// FR-401-AC-7: the leaf `filament-eval`, git-sourced from its own
     /// repository, contributes no repository to the edge graph, so an RT
     /// resolved graph with a normal edge to it is clean and closes no FB-11
-    /// cycle through it, even though it depends on `quire-exact` and
-    /// `quire-semantic-value` in turn.
+    /// cycle through it, even though it depends on `filament-exact` and
+    /// `filament-semantic-value` in turn.
     #[trace("FR-401-AC-7", "TC-156")]
     #[test]
-    fn a_normal_edge_to_the_quire_eval_leaf_is_clean() {
-        let eval_git = "git+https://github.com/agent-ix/quire-eval?branch=main";
-        let exact_git = "git+https://github.com/agent-ix/quire-exact?branch=main";
-        let sv_git = "git+https://github.com/agent-ix/quire-semantic-value?branch=main";
+    fn a_normal_edge_to_the_filament_eval_leaf_is_clean() {
+        let eval_git = "git+https://github.com/agent-ix/filament-eval?branch=main";
+        let exact_git = "git+https://github.com/agent-ix/filament-exact?branch=main";
+        let sv_git = "git+https://github.com/agent-ix/filament-semantic-value?branch=main";
         let normal = json!([{"kind": null, "target": null}]);
         let document = json!({
             "packages": [
-                {"id": "rt 0.1.0", "name": "quire-contract-runtime", "source": null},
-                {"id": "eval 0.1.0", "name": "quire-eval", "source": eval_git},
-                {"id": "exact 0.1.0", "name": "quire-exact", "source": exact_git},
-                {"id": "sv 0.1.0", "name": "quire-semantic-value", "source": sv_git},
+                {"id": "rt 0.1.0", "name": "filament-contract-runtime", "source": null},
+                {"id": "eval 0.1.0", "name": "filament-eval", "source": eval_git},
+                {"id": "exact 0.1.0", "name": "filament-exact", "source": exact_git},
+                {"id": "sv 0.1.0", "name": "filament-semantic-value", "source": sv_git},
             ],
             "resolve": {
                 "nodes": [
                     {"id": "rt 0.1.0", "deps": [
-                        {"name": "quire_eval", "pkg": "eval 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_eval", "pkg": "eval 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "eval 0.1.0", "deps": [
-                        {"name": "quire_exact", "pkg": "exact 0.1.0", "dep_kinds": normal},
-                        {"name": "quire_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_exact", "pkg": "exact 0.1.0", "dep_kinds": normal},
+                        {"name": "filament_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "exact 0.1.0", "deps": []},
                     {"id": "sv 0.1.0", "deps": [
-                        {"name": "quire_exact", "pkg": "exact 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_exact", "pkg": "exact 0.1.0", "dep_kinds": normal}
                     ]}
                 ]
             }
@@ -430,43 +430,43 @@ mod tests {
         assert!(report.is_clean(), "{report:?}");
     }
 
-    /// tc_arch_lint_metadata_008: the shared leaf `quire-semantic-value`,
+    /// tc_arch_lint_metadata_008: the shared leaf `filament-semantic-value`,
     /// git-sourced from its own repository, contributes no repository to the
     /// edge graph, so an RT dependency on it yields no edge and no finding.
-    /// RT's dependencies on `qsl-eval` and `qsl-semantics`, from the same QSL
-    /// git source, are still RT -> QSL edges and FB-05 violations.
+    /// RT's dependencies on `fsl-eval` and `fsl-semantics`, from the same FSL
+    /// git source, are still RT -> FSL edges and FB-05 violations.
     #[trace("TC-156", "FR-059-AC-9")]
     #[test]
     fn tc_arch_lint_metadata_008_semantic_value_leaf_is_exempt_but_layers_are_not() {
-        let qsl_git = "git+https://github.com/agent-ix/quire-spec-language?branch=main";
-        let exact_git = "git+https://github.com/agent-ix/quire-exact?branch=main";
-        let sv_git = "git+https://github.com/agent-ix/quire-semantic-value?branch=main";
+        let fsl_git = "git+https://github.com/agent-ix/filament-spec-language?branch=main";
+        let exact_git = "git+https://github.com/agent-ix/filament-exact?branch=main";
+        let sv_git = "git+https://github.com/agent-ix/filament-semantic-value?branch=main";
         let normal = json!([{"kind": null, "target": null}]);
         let document = json!({
             "packages": [
-                {"id": "rt 0.1.0", "name": "quire-contract-runtime", "source": null},
-                {"id": "exact 0.1.0", "name": "quire-exact", "source": exact_git},
-                {"id": "sv 0.1.0", "name": "quire-semantic-value", "source": sv_git},
-                {"id": "sem 0.1.0", "name": "qsl-semantics", "source": qsl_git},
-                {"id": "eval 0.1.0", "name": "qsl-eval", "source": qsl_git},
+                {"id": "rt 0.1.0", "name": "filament-contract-runtime", "source": null},
+                {"id": "exact 0.1.0", "name": "filament-exact", "source": exact_git},
+                {"id": "sv 0.1.0", "name": "filament-semantic-value", "source": sv_git},
+                {"id": "sem 0.1.0", "name": "fsl-semantics", "source": fsl_git},
+                {"id": "eval 0.1.0", "name": "fsl-eval", "source": fsl_git},
             ],
             "resolve": {
                 "nodes": [
                     {"id": "rt 0.1.0", "deps": [
-                        {"name": "quire_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal},
-                        {"name": "qsl_semantics", "pkg": "sem 0.1.0", "dep_kinds": normal},
-                        {"name": "qsl_eval", "pkg": "eval 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal},
+                        {"name": "fsl_semantics", "pkg": "sem 0.1.0", "dep_kinds": normal},
+                        {"name": "fsl_eval", "pkg": "eval 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "exact 0.1.0", "deps": []},
                     {"id": "sv 0.1.0", "deps": [
-                        {"name": "quire_exact", "pkg": "exact 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_exact", "pkg": "exact 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "sem 0.1.0", "deps": [
-                        {"name": "quire_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "eval 0.1.0", "deps": [
-                        {"name": "qsl_semantics", "pkg": "sem 0.1.0", "dep_kinds": normal},
-                        {"name": "quire_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal}
+                        {"name": "fsl_semantics", "pkg": "sem 0.1.0", "dep_kinds": normal},
+                        {"name": "filament_semantic_value", "pkg": "sv 0.1.0", "dep_kinds": normal}
                     ]}
                 ]
             }
@@ -474,56 +474,56 @@ mod tests {
         let edges = parse_edges(&document).unwrap();
         let rt_to = |via: &str| Edge {
             from: Repo::Rt,
-            to: Repo::Qsl,
+            to: Repo::Fsl,
             kind: EdgeKind::Normal,
             via_crate: via.to_owned(),
         };
-        assert_eq!(edges, vec![rt_to("qsl-eval"), rt_to("qsl-semantics")]);
+        assert_eq!(edges, vec![rt_to("fsl-eval"), rt_to("fsl-semantics")]);
         let report = crate::graph::check(&edges);
         let flagged: Vec<_> = report
             .fb05
             .iter()
             .map(|v| v.edge.via_crate.as_str())
             .collect();
-        assert_eq!(flagged, ["qsl-eval", "qsl-semantics"], "{report:?}");
+        assert_eq!(flagged, ["fsl-eval", "fsl-semantics"], "{report:?}");
         assert!(report.fb11.is_empty(), "{report:?}");
     }
 
     /// tc_arch_lint_metadata_009: a crate outside the four ADR-011
-    /// repositories (here `quire-walk`, git-sourced from its own repository)
+    /// repositories (here `filament-walk`, git-sourced from its own repository)
     /// contributes no edge for any backend: IR, RT and CG may each depend on
     /// it with no edge and no finding. CG's dependency
-    /// on `qsl-semantics`, from the QSL git source, is still a CG ->
-    /// QSL edge, and the direction check refuses it, since only the replay
+    /// on `fsl-semantics`, from the FSL git source, is still a CG ->
+    /// FSL edge, and the direction check refuses it, since only the replay
     /// facade's crate is CG's exception.
     #[trace("FR-356-AC-1")]
     #[test]
     fn tc_arch_lint_metadata_009_crate_outside_the_four_repositories_contributes_no_edge() {
-        let qsl_git = "git+https://github.com/agent-ix/quire-spec-language?branch=main";
-        let walk_git = "git+https://github.com/agent-ix/quire-walk?branch=main";
+        let fsl_git = "git+https://github.com/agent-ix/filament-spec-language?branch=main";
+        let walk_git = "git+https://github.com/agent-ix/filament-walk?branch=main";
         let normal = json!([{"kind": null, "target": null}]);
         let document = json!({
             "packages": [
-                {"id": "ir 0.1.0", "name": "quire-contract-ir", "source": null},
-                {"id": "rt 0.1.0", "name": "quire-contract-runtime", "source": null},
-                {"id": "cg 0.1.0", "name": "quire-contract-codegen", "source": null},
-                {"id": "walk 0.1.0", "name": "quire-walk", "source": walk_git},
-                {"id": "sem 0.1.0", "name": "qsl-semantics", "source": qsl_git},
+                {"id": "ir 0.1.0", "name": "filament-contract-ir", "source": null},
+                {"id": "rt 0.1.0", "name": "filament-contract-runtime", "source": null},
+                {"id": "cg 0.1.0", "name": "filament-contract-codegen", "source": null},
+                {"id": "walk 0.1.0", "name": "filament-walk", "source": walk_git},
+                {"id": "sem 0.1.0", "name": "fsl-semantics", "source": fsl_git},
             ],
             "resolve": {
                 "nodes": [
                     {"id": "ir 0.1.0", "deps": [
-                        {"name": "quire_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "rt 0.1.0", "deps": [
-                        {"name": "quire_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "cg 0.1.0", "deps": [
-                        {"name": "quire_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
                     ]},
                     {"id": "walk 0.1.0", "deps": []},
                     {"id": "sem 0.1.0", "deps": [
-                        {"name": "quire_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
+                        {"name": "filament_walk", "pkg": "walk 0.1.0", "dep_kinds": normal}
                     ]}
                 ]
             }
@@ -536,13 +536,13 @@ mod tests {
         document["resolve"]["nodes"][2]["deps"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"name": "qsl_semantics", "pkg": "sem 0.1.0", "dep_kinds": normal}));
+            .push(json!({"name": "fsl_semantics", "pkg": "sem 0.1.0", "dep_kinds": normal}));
         let edges = parse_edges(&document).unwrap();
         let expected = Edge {
             from: Repo::Cg,
-            to: Repo::Qsl,
+            to: Repo::Fsl,
             kind: EdgeKind::Normal,
-            via_crate: "qsl-semantics".to_owned(),
+            via_crate: "fsl-semantics".to_owned(),
         };
         assert_eq!(edges, vec![expected.clone()]);
         let report = crate::graph::check(&edges);
@@ -557,13 +557,13 @@ mod tests {
     fn tc_arch_lint_metadata_003_ignores_non_ecosystem_dependency() {
         let document = json!({
             "packages": [
-                {"id": "qsl 0.2.0", "name": "quire-spec-language", "source": null},
+                {"id": "fsl 0.2.0", "name": "filament-spec-language", "source": null},
                 {"id": "serde 1.0.228", "name": "serde",
                  "source": "registry+https://github.com/rust-lang/crates.io-index"},
             ],
             "resolve": {
                 "nodes": [
-                    {"id": "qsl 0.2.0", "deps": [
+                    {"id": "fsl 0.2.0", "deps": [
                         {"name": "serde", "pkg": "serde 1.0.228",
                          "dep_kinds": [{"kind": null, "target": null}]}
                     ]}

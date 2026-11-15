@@ -3,7 +3,7 @@ id: TC-1087
 title: "A systems interface is no abstraction target"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: verifies
 ---
 # TC-1087: A systems interface is no abstraction target

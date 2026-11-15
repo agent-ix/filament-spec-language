@@ -1,0 +1,92 @@
+[package]
+name = "fsl-package"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "ADR-011 §6.1 layer 4: the S4 checked-package typestate, the filament.checked-package/v2 emitter and the I2 byte reader."
+
+[features]
+# NFR-015: `std` is on by default. With it off the crate is `no_std` + `alloc`
+# and keeps the in-memory checked-IR path; the v2 wire (emitter, I2 reader,
+# `link_with`) needs `filament-contract-model` and is behind `std`.
+default = ["std"]
+std = [
+    "dep:filament-contract-model",
+    "dep:quire-canonical",
+    "dep:serde_json",
+    "dep:thiserror",
+    "fsl-foundation/std",
+    "thiserror/std",
+]
+# `emit_checked_with_fault` and `checked_node_id_of`, the FR-105-AC-6
+# fault-injection seam, are public only under `test-support` (the same
+# pattern fsl-semantics uses, see its Cargo.toml), so a dependent crate's own
+# tests (fsl-replay) can reach them without shipping a test-only hook in the
+# production API. `tests/it/family_outcome_layering.rs`'s
+# `no_shipped_dependency_enables_test_support` refuses a normal or build
+# dependency that enables it.
+test-support = []
+
+# ADR-011 §6.1 layer 4 depends on "3, F, K; `filament-contract-model` for the
+# v2 wire contract" (X-7). The root crate's
+# `tests/it/family_outcome_layering.rs` (TC-390) asserts that this table
+# names no other workspace crate.
+[dependencies]
+# ADR-012 section 9 / FR-064: the `#[string_edge]` marker attribute, exempt
+# from the layer table below (it is a zero-cost marker `xtask string-edge`
+# reads, not a semantic dependency).
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+fsl-foundation = { path = "../fsl-foundation", default-features = false }
+fsl-semantics = { path = "../fsl-semantics" }
+# K: the I2 reader keys the v2 source map by the kernel occurrence `Origin`
+# (ADR-013 O-07).
+filament-exact = { workspace = true }
+# The v2 structural wire vocabulary and the I2 byte reader's IR model.
+filament-contract-model = { workspace = true, optional = true }
+# ADR-013 §2 (ADR-013:113): the one RFC 8785 implementation for
+# canonical checked package bytes.
+quire-canonical = { workspace = true, optional = true }
+# ADR-011 §6.1 layer C: the checked terms the evaluator reads (FR-400).
+filament-checked = { workspace = true }
+# ADR-011 §6.1 layer SV: the expression `Location` and the `CheckingLimits`
+# the emitter reads, and the `UnitTable` the emitter's tests build.
+filament-semantic-value = { workspace = true }
+serde = { version = "1.0.228", features = ["derive"] }
+# The hybrid reader reads an application operation through its public
+# `Serialize` form (the typed carrier keeps its raw record internal).
+serde_json = { version = "1.0.151", optional = true }
+thiserror = { version = "2.0.20", default-features = false, optional = true }
+
+[dev-dependencies]
+# Observe actual thread-local allocations at denied row-adapter boundaries.
+allocation-counter = "0.8.1"
+# The emitter's tests build a one-function `PackageDeclarations`, whose
+# declarations are layer-2 parsed forms. Layer 2 is below this crate, so the
+# edge closes no cycle; TC-390 admits it in this table only.
+fsl-forms = { path = "../fsl-forms" }
+# The S1 -> S2 -> S3 -> S4 round trip (FR-091) parses its unit with S1.
+fsl-cst = { path = "../fsl-cst" }
+# FR-400-AC-9: `filament-checked`'s `test-support` (`DeclarationKey::fixture`, ...). Only this
+# dev-dependency enables it; the root crate's `no_shipped_dependency_enables_test_support`
+# refuses a normal or build dependency that does.
+filament-checked = { workspace = true, features = ["test-support"] }
+# `check::imports` (the reader's tests) is public only under `test-support`.
+# Only this dev-dependency enables it: the root crate's
+# `no_shipped_dependency_enables_test_support` refuses a normal or build
+# dependency that does.
+fsl-semantics = { path = "../fsl-semantics", features = ["test-support"] }
+# The tests build v2 wires and golden preimages as JSON.
+# The tests derive `Deserialize` for FSpec fixture envelopes.
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.151"
+# The X18 test validates FSpec's published definitions file against its schema.
+jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"

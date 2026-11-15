@@ -3,7 +3,7 @@ id: TC-1381
 title: "The JIT names the first construct outside its coverage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-560
+  - target: ix://agent-ix/filament-spec-language/FR-560
     type: verifies
 ---
 # TC-1381: The JIT names the first construct outside its coverage

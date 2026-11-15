@@ -18,18 +18,18 @@
 //! not a second, only-in-memory copy of the case data.
 
 use super::cases::{Case, Input, Row};
-use qsl_replay::spine::{
+use fsl_replay::spine::{
     default_accounting, ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection,
     ClauseRunSource, DependencyInput, SpineLimits,
 };
-use qsl_semantics::model::observation::{
+use fsl_semantics::model::observation::{
     AnchorKind, ClauseSelection, ClauseSelectionInput, DocumentRef, ObservationLimits,
     SelectedAnchor, SelectedObject,
 };
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, io, path::Path};
 
-/// The unit text and domain package, shared with `qsl-package`'s
+/// The unit text and domain package, shared with `fsl-package`'s
 /// emission-to-admission corpus.
 #[path = "spine_unit.rs"]
 mod unit;
@@ -48,8 +48,8 @@ fn population_identity() -> String {
 /// case-suffixed) and by every direct front-end composition comparing
 /// against it (`tests/it/config_version_spine.rs`'s step 6 tests). One
 /// function, not three copies of the same literal (SR-768 FND-005).
-pub fn unit_identity() -> qsl_foundation::SourceIdentity {
-    qsl_foundation::SourceIdentity::new("agent-ix", "ix://example/config-version/spine/unit")
+pub fn unit_identity() -> fsl_foundation::SourceIdentity {
+    fsl_foundation::SourceIdentity::new("agent-ix", "ix://example/config-version/spine/unit")
 }
 
 /// FR-108's own `1-draft` unit text ([`unit::unit_text`]) selecting
@@ -76,7 +76,7 @@ fn model_header() -> Value {
     json!({"identity": PACKAGE_IDENTITY})
 }
 
-/// A `quire.state.snapshot/v1` document over `rows`, `complete` per the
+/// A `filament.state.snapshot/v1` document over `rows`, `complete` per the
 /// case's own population completeness.
 fn snapshot_bytes(case: Case, role: &str, rows: &[Row], complete: bool) -> Vec<u8> {
     let config_version = config_version_type();
@@ -97,7 +97,7 @@ fn snapshot_bytes(case: Case, role: &str, rows: &[Row], complete: bool) -> Vec<u
         })
         .collect();
     json!({
-        "format": "quire.state.snapshot/v1",
+        "format": "filament.state.snapshot/v1",
         "identity": identity_json(case, role),
         "observation": role,
         "anchor": {"kind": "handler", "name": "validate"},
@@ -108,7 +108,7 @@ fn snapshot_bytes(case: Case, role: &str, rows: &[Row], complete: bool) -> Vec<u
     .into_bytes()
 }
 
-/// A `quire.state.invocation/v1` document over `pre`/`post`'s own
+/// A `filament.state.invocation/v1` document over `pre`/`post`'s own
 /// identities and digests, self object `self_key`. FR-108's own operation
 /// (`attemptUpdate`) takes no parameters, returns `Boolean` and its frame
 /// modifies exactly `versionNumber`; `created`/`deleted` are always empty
@@ -117,7 +117,7 @@ fn invocation_bytes(case: Case, self_key: &str, pre: &DocumentRef, post: &Docume
     let identity =
         |label: &DocumentRef| json!({"authority": label.authority, "identity": label.identity});
     json!({
-        "format": "quire.state.invocation/v1",
+        "format": "filament.state.invocation/v1",
         "identity": identity_json(case, "invocation"),
         "model": model_header(),
         "context": config_version_type(),
@@ -140,8 +140,8 @@ fn write_json(directory: &Path, file: &str, bytes: &[u8]) -> io::Result<()> {
 
 /// Every input document [`request`] needs, plus the selection it names.
 struct Written {
-    snapshots: qsl_semantics::model::observation::DocumentProvision,
-    invocations: qsl_semantics::model::observation::DocumentProvision,
+    snapshots: fsl_semantics::model::observation::DocumentProvision,
+    invocations: fsl_semantics::model::observation::DocumentProvision,
     selection: ClauseRunSelection,
 }
 
@@ -333,7 +333,7 @@ pub fn request(directory: &Path, case: Case) -> io::Result<ClauseRunRequest> {
     // leaves `models` empty in `request.json`.
     let packages = if case.spec().include_model {
         let package = std::fs::read(directory.join("spine-model.semantic-ir.json"))?;
-        qsl_semantics::model::intake::package_input([package.as_slice()])
+        fsl_semantics::model::intake::package_input([package.as_slice()])
             .map_err(|refusal| io::Error::other(format!("{refusal:?}")))?
     } else {
         BTreeMap::new()

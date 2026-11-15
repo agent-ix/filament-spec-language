@@ -3,37 +3,37 @@ id: FR-449
 title: "Derive the control-to-temporal activation map from the protocol nodes"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-384
+  - target: ix://agent-ix/filament-spec-language/FR-384
     type: references
-  - target: ix://agent-ix/quire-specification/FR-464
+  - target: ix://agent-ix/filament-specification/FR-464
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-370
+  - target: ix://agent-ix/filament-specification/FR-370
     type: references
-  - target: ix://agent-ix/quire-specification/FR-479
+  - target: ix://agent-ix/filament-specification/FR-479
     type: references
 ---
 # FR-449: Derive the control-to-temporal activation map from the protocol nodes
 
 ## Description
 
-QSL SHALL derive, from the protocol nodes of a checked package (FR-383), the
+FSL SHALL derive, from the protocol nodes of a checked package (FR-383), the
 control-to-temporal activation map of each protocol: which activation of the
-protocol requires which temporal clause. The map is QSpec FR-464's
+protocol requires which temporal clause. The map is FSpec FR-464's
 "Activation relation". The derivation reads the `protocol_clause` node and
 the nodes it references only, so the map derived from the in-process checked
-package equals the map derived from the package read back through QSL's I2
+package equals the map derived from the package read back through FSL's I2
 reader. No node, artifact or document carries the map: S4 writes no
 activation-map wire and no compiled-protocol document (FR-383), and the map
 is a function of the package.
@@ -50,22 +50,22 @@ position. It reads the map from the package and from nothing else.
 
 ## Semantic authority and boundary
 
-QSpec FR-464 owns the clause body (`activation`, `requirements`), the
+FSpec FR-464 owns the clause body (`activation`, `requirements`), the
 derivation rule and the reader's refusals. FR-218 owns the binding of each
 `requires temporal` member to the temporal clause it names, FR-381 the
 protocol's activation, and FR-337 the temporal clause node. This
-requirement specifies what QSL derives and returns. The map selects no
+requirement specifies what FSL derives and returns. The map selects no
 truth: each required temporal clause keeps its own body, activation and
-evaluation (QSpec FR-370; FR-327 to FR-329). An obligation is bound to a row
-only by QSpec FR-479's protocol-obligation activation binding, which the
+evaluation (FSpec FR-370; FR-327 to FR-329). An obligation is bound to a row
+only by FSpec FR-479's protocol-obligation activation binding, which the
 protocol consumer (QProtocol) constructs from the row and its admitted
-trigger observation; QSL derives the rows and constructs no binding.
+trigger observation; FSL derives the rows and constructs no binding.
 
 ## Inputs
 
 - The `protocol_clause` node of one protocol (FR-383) and the nodes its
   `activation` and `requirements` arguments reference: from the in-process
-  `CheckedPackage` or from QSL's I2 read.
+  `CheckedPackage` or from FSL's I2 read.
 
 ## Outputs
 
@@ -74,12 +74,12 @@ trigger observation; QSL derives the rows and constructs no binding.
   (ascending node id). A row names the `protocol_clause` node key,
   the activation (`Origin`, or `Each` with the key of the trigger's
   `value`/`parameter` node) and the temporal clause node key.
-- Or, for a package the I2 reader refuses, that refusal (QSpec FR-464), and
+- Or, for a package the I2 reader refuses, that refusal (FSpec FR-464), and
   no map.
 
 ## Behavior
 
-- QSL SHALL derive a protocol's map from its `protocol_clause` node's
+- FSL SHALL derive a protocol's map from its `protocol_clause` node's
   `activation` and `requirements` arguments only. It SHALL NOT read source
   text, a name, a control or temporal clause position, a matching profile or
   clock, a timestamp or an observation to add, remove or substitute a row.
@@ -94,12 +94,12 @@ trigger observation; QSL derives the rows and constructs no binding.
   the same unit; a source change that leaves the `protocol_clause` node key
   unchanged leaves the map unchanged.
 - If a read-back package holds a `requirements` entry or an `each` trigger
-  whose target is absent from the clause's `dependencies`, then QSL's I2
+  whose target is absent from the clause's `dependencies`, then FSL's I2
   reader SHALL refuse the package with `invalid_semantic_graph` at the
-  clause's `/dependencies` (QSpec FR-322-AC-96, before the protocol step).
+  clause's `/dependencies` (FSpec FR-322-AC-96, before the protocol step).
   If the target names no node, the reader SHALL refuse with
-  `missing_declaration`/`missing-name` at the target (QSpec FR-464-AC-6).
-  In either case QSL SHALL return no map, partial or whole.
+  `missing_declaration`/`missing-name` at the target (FSpec FR-464-AC-6).
+  In either case FSL SHALL return no map, partial or whole.
 - A `requires temporal` name that resolves to no temporal clause of the unit
   is refused at S3 (FR-218), so S4 emits no protocol node and no map exists
   for that unit.
@@ -125,4 +125,4 @@ trigger observation; QSL derives the rows and constructs no binding.
   (the activation).
 - [FR-337](FR-337-emit-a-checked-temporal-clause-as-a-v2-temporal-clause-node.md)
   (the temporal clause node).
-- QSpec FR-464 "Activation relation".
+- FSpec FR-464 "Activation relation".

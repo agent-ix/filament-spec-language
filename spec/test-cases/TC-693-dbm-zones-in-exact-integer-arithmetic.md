@@ -3,7 +3,7 @@ id: TC-693
 title: "Zones as difference-bound matrices in exact integer arithmetic"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-238
+  - target: ix://agent-ix/filament-spec-language/FR-238
     type: verifies
 ---
 # TC-693: Zones as difference-bound matrices in exact integer arithmetic
@@ -16,7 +16,7 @@ Scope: FR-238-AC-1 to FR-238-AC-4.
 
 ## Test Procedure
 
-Fixtures: constant sets of FR-238-AC-1; clocks `x, y`; a seeded generator of DBMs of dimension at most 5; out-of-range clock indices, a reset of the reference clock and DBMs of different dimensions; the bounded-subtraction and diagonal-constraint cases from QSpec FR-415 and TC-371 ZC-15/ZC-16.
+Fixtures: constant sets of FR-238-AC-1; clocks `x, y`; a seeded generator of DBMs of dimension at most 5; out-of-range clock indices, a reset of the reference clock and DBMs of different dimensions; the bounded-subtraction and diagonal-constraint cases from FSpec FR-415 and TC-371 ZC-15/ZC-16.
 
 1. Compute the scale factor and scaled constants for `1/3, 5/2, 1` and for `10^30, 1/7`.
 2. Apply `zero`, `up`, `constrain`, `reset`, emptiness and inclusion as FR-238-AC-2 lists, and the three out-of-shape operations.

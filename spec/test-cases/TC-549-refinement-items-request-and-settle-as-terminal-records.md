@@ -3,7 +3,7 @@ id: TC-549
 title: "Refinement items request one temporal-satisfaction record and settle as one terminal record"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: verifies
 ---
 # TC-549: Refinement items request one temporal-satisfaction record and settle as one terminal record

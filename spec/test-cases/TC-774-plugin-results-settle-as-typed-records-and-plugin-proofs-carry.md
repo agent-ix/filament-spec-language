@@ -3,16 +3,16 @@ id: TC-774
 title: "Plugin results settle as typed records, and plugin proofs carry the trusted label"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-289
+  - target: ix://agent-ix/filament-spec-language/FR-289
     type: verifies
 ---
 # TC-774: Plugin results settle as typed records, and plugin proofs carry the trusted label
 
 ## Description
 
-Verify how a process provider's FR-331 result becomes a QSL terminal record.
+Verify how a process provider's FR-331 result becomes an FSL terminal record.
 
 Scope: FR-290-AC-1 to FR-290-AC-18.
 

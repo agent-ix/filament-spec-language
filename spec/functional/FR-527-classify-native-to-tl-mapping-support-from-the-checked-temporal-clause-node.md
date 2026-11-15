@@ -3,23 +3,23 @@ id: FR-527
 title: "Classify native-to-TL mapping support from the checked temporal clause node and retain the authenticated selection"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-045
+  - target: ix://agent-ix/filament-spec-language/FR-045
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-050
+  - target: ix://agent-ix/filament-spec-language/FR-050
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
-  - target: ix://agent-ix/quire-contract-ir/FR-350
+  - target: ix://agent-ix/filament-contract-ir/FR-350
     type: references
-  - target: ix://agent-ix/quire-specification/FR-095
+  - target: ix://agent-ix/filament-specification/FR-095
     type: depends_on
 ---
 # FR-527: Classify native-to-TL mapping support from the checked temporal clause node and retain the authenticated selection
@@ -48,7 +48,7 @@ compiled-protocol package to ask.
 
 ## Semantic authority and boundary
 
-QSpec FR-095 owns the correspondence contract, FR-045 owns the table, FR-050 the
+FSpec FR-095 owns the correspondence contract, FR-045 owns the table, FR-050 the
 binding, FR-515 the view. The legacy classifier read an admitted `/2` package;
 this one reads the FR-337 node through the view, so the classification has no
 `/1` form. The function sits beside FR-515's views because it needs nothing but
@@ -57,7 +57,7 @@ changes imports and not meaning.
 
 ## Inputs
 
-`qsl_package::checked_views::mapping_support(subject: &TemporalSubjectView<'_>,
+`fsl_package::checked_views::mapping_support(subject: &TemporalSubjectView<'_>,
 surrounding: Closure) -> Result<Classification, MappingRefusal>`.
 
 - `subject`: the view of a `temporal`/`temporal_clause` node (FR-515), from which
@@ -68,7 +68,7 @@ surrounding: Closure) -> Result<Classification, MappingRefusal>`.
   stays until the Contract IR repoint (IR-1005), which maps the legacy value to
   this one. The function takes no decision-scope closure.
 
-`mapping_support` is a QSL owner classifier over its checked view. The function
+`mapping_support` is an FSL owner classifier over its checked view. The function
 SHALL take no caller work budget and return no work receipt, and its work SHALL
 be bounded by the owner default that bounds the view it reads (the
 checked-package reader's work-unit default, FR-515): it reads the view and
@@ -92,11 +92,11 @@ binding issued by the `CheckedPackageV2` owner, the clause's
 `CheckedNodeId` and the definition artifact the clause's `profile_selections`
 row selects. The lock row is `{role, definition: {authority, identity}}`: it has
 no separate revision member, the namespaced revision is the `/vN` suffix of the
-definition identity (`quire.temporal.fixed-sample.false-extension/v1`), and the
+definition identity (`filament.temporal.fixed-sample.false-extension/v1`), and the
 definition artifact's identity is the `authority` and `identity` pair of the
 row. `AuthenticatedSelection` holds no clock parameter map. It has no public
 constructor. The binding is the owner's opaque admission capability, retained
-directly from the checked package through `TemporalSubjectView`; QSL SHALL NOT
+directly from the checked package through `TemporalSubjectView`; FSL SHALL NOT
 reconstruct it from a package name, source bytes, graph equality or an address.
 An owned classification retains that capability after the subject borrow ends.
 Its owner membership check accepts the original admitted package and clones
@@ -121,15 +121,15 @@ view names a definition identity that is none of the five temporal profiles the
 - The classifier SHALL read every operator in `formula()` as reachable from the
   clause root, since FR-515 lists only the operators of the clause.
 - The classifier SHALL NOT treat `not`, `and`, `or` and `implies` as past or
-  future operators, since `formula()` lists the `quire.op.temporal.*` applications
+  future operators, since `formula()` lists the `filament.op.temporal.*` applications
   only.
 - The classifier SHALL treat `eventually`, `always`, `until` and `release` as
   bounded future operators, and `once`, `historically`, `since` and `triggered`
-  as bounded past operators (QSpec FR-092), `once[1,1]` being strong previous.
+  as bounded past operators (FSpec FR-092), `once[1,1]` being strong previous.
 - The classifier SHALL treat a clause with no bounded operator under either
   false-extension profile as FR-045's last row.
 - The classifier SHALL classify a clause selected under
-  `quire.temporal.timed/v1` (FR-234) as `Unsupported` naming `TimedProfile`.
+  `filament.temporal.timed/v1` (FR-234) as `Unsupported` naming `TimedProfile`.
   FR-234 admits the timed profile at check, but FR-045's table lists four
   profiles and no TL target evaluates exact rational time, so the classification
   is sound and incomplete: it claims no support and no correspondence.
@@ -152,7 +152,7 @@ view names a definition identity that is none of the five temporal profiles the
   return the actual owner's `AdmissionBinding`, and its `belongs_to(package)`
   SHALL delegate to `package.retains(binding)`; `Classification::belongs_to`
   SHALL forward the same owner check. The classifier SHALL NOT substitute a
-  QSL identity carrier or a package-name check.
+  FSL identity carrier or a package-name check.
 - The classifier SHALL give the same disposition to the same clause whatever the
   package's route. The two routes are the IR reader applied to the bytes the
   unit's emitter returns in process, and the IR reader applied to the bytes of
@@ -173,7 +173,7 @@ view names a definition identity that is none of the five temporal profiles the
 
 ## Temporal bridge input contract
 
-The QSL input contract for Contract IR FR-350's bridge SHALL be the original
+The FSL input contract for Contract IR FR-350's bridge SHALL be the original
 `CheckedPackageV2`, its FR-515 `TemporalSubjectView`, and this classification.
 The subject's `belongs_to(package)` checks the actual borrowed package; the
 classification's `belongs_to(package)` checks the opaque owner admission that
@@ -202,13 +202,13 @@ consumer SHALL synthesize one from a package name, node order or caller table.
 An absent required owner fact remains absent and cannot discharge a bridge
 premise.
 
-QSL owns this classification and FR-052's native evaluation/report contract.
-The bridge in `quire-integration` owns `project_tl`, strict projection/join
+FSL owns this classification and FR-052's native evaluation/report contract.
+The bridge in `filament-integration` owns `project_tl`, strict projection/join
 reading and correspondence under Contract IR FR-350; it invokes neither the
 native nor TL evaluator. Its native report input is the actual FR-052 owner
 value, and a correction uses that owner's complete direct predecessor and
 non-evaluating validation. A result identifier, equal truth or report label
-alone grants no predecessor authority. QSL SHALL add no bridge-specific mirror
+alone grants no predecessor authority. FSL SHALL add no bridge-specific mirror
 of the classification, package admission, occurrence, report or predecessor,
 and no classifier output is a TL artifact or bridge result. These allocations
 leave TL formula/request/result admission and evaluation with their TL owners.
@@ -238,12 +238,12 @@ leave TL formula/request/result admission and evaluation with their TL owners.
 | FR-527-AC-19 | Classifying one clause twice gives equal results. | Test (TC-1322) |
 | FR-527-AC-20 | The classification code reads no value except the view and `surrounding`: no backend capability report, TL version or formula bytes. | Inspection |
 | FR-527-AC-21 | The reader refuses a package whose lock has no `profile_selections` row for a temporal clause's `temporal_profile` law, so the package yields no `TemporalSubjectView`. | Test (TC-1322) |
-| FR-527-AC-22 | A clause selected under `quire.temporal.timed/v1` returns `Unsupported` naming `TimedProfile` and no TL target. | Test (TC-1322) |
+| FR-527-AC-22 | A clause selected under `filament.temporal.timed/v1` returns `Unsupported` naming `TimedProfile` and no TL target. | Test (TC-1322) |
 | FR-527-AC-23 | A timed clause holding a past and a future operator returns `Unsupported` naming `TimedProfile` and `MixedDirection`. | Test (TC-1322) |
 | FR-527-AC-24 | Over a package whose clause `Gamma` has one occurrence, a supported result and an unsupported result (AC-22's timed clause named `Delta`, with one occurrence) hold the retained name `Some("Gamma")` and `Some("Delta")` respectively, each equal to `name()` of the view; over FR-337-AC-16's package of the two structurally equal clauses `Alpha` and `Beta`, the result holds `None`, equal to `name()` of the view. | Test (TC-1322) |
 | FR-527-AC-25 | The signature of `mapping_support` takes no budget, limit or receipt parameter and returns none; `MappingRefusal` holds no work-limit variant; over a view built at the FR-515 work-unit default exactly, it returns the same classification on a second call, and a view one expansion past that default is refused at view construction (`ViewRefusal::FormulaTooLarge`), never by `mapping_support`. | Test; Inspection |
 | FR-527-AC-26 | For a supported and an unsupported clause, classify the same producer bytes admitted twice independently: package names, content, disposition and retained clause facts are equal, but each selection's owner binding accepts its original admission and its unchanged clone, refuses the other admission, and makes the classifications unequal. Moving the original package preserves binding membership. Dropping the source package and subject borrow does not prevent an owned selection from retaining and comparing its owner binding. | Test (TC-1322) |
-| FR-527-AC-27 | Inspection of the temporal bridge input contract identifies the original checked package/view/classification APIs, distinct borrowed-view and opaque-admission membership checks, full reclassification before trusting public data, and separate QSL/native, integration/bridge and TL owner responsibilities; it introduces no new carrier, callback evaluator or content-derived admission identity. | Inspection |
+| FR-527-AC-27 | Inspection of the temporal bridge input contract identifies the original checked package/view/classification APIs, distinct borrowed-view and opaque-admission membership checks, full reclassification before trusting public data, and separate FSL/native, integration/bridge and TL owner responsibilities; it introduces no new carrier, callback evaluator or content-derived admission identity. | Inspection |
 | FR-527-AC-28 | For two declaration occurrences sharing one clause node, the classification retains the node and no single name, while the bridge input's independently selected occurrence resolves its own name and clock by declaration/role/ordinal. Selected model package identities retain the checked owner's order and no authored model alias map is inferred. A changed public classification field is unequal to reclassification of the original subject even when its sealed selection is unchanged. | Test |
 
 ## Dependencies

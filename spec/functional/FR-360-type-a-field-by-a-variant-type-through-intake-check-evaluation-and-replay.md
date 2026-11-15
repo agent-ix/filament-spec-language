@@ -3,31 +3,31 @@ id: FR-360
 title: "Type a field, parameter or result by a variant type through intake, check, evaluation and replay"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-317
+  - target: ix://agent-ix/filament-spec-language/FR-317
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-359
+  - target: ix://agent-ix/filament-spec-language/FR-359
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-141
+  - target: ix://agent-ix/filament-specification/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-208
+  - target: ix://agent-ix/filament-specification/FR-208
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-360: Type a field, parameter or result by a variant type through intake, check, evaluation and replay
@@ -36,18 +36,18 @@ relationships:
 
 When a field member, an operation parameter or an operation result of an
 admitted domain package has a `typeRef` that names a declaration bound to
-`quire.meaning.model.variant-type/v1`, QSL SHALL admit the member.
+`filament.meaning.model.variant-type/v1`, FSL SHALL admit the member.
 
 When a member is admitted under that rule, the assembler SHALL type it by the
 variant type's enum type.
 
-When a unit or a replay document holds a value of a variant type, QSL SHALL
+When a unit or a replay document holds a value of a variant type, FSL SHALL
 check, evaluate, compare, replay and encode it as the target design below
 states.
 
 FR-056 "Variant types" admits the variant type itself: one `enum` export, one
 `variant` export per case and, per "Effective identity of a variant type", one
-effective identity for the type and one for each case. QSpec FR-208 defines the
+effective identity for the type and one for each case. FSpec FR-208 defines the
 variant type as a closed set of named cases with no payload, value, ordinal or
 supertype. This requirement states what a member, an expression and a replay
 document do with it. A **variant value** is one case of one variant type. A
@@ -78,7 +78,7 @@ element, tuple position or record field whose declared type is a variant type.
    any member names it. The assembler SHALL map the member to the type
    environment's `M::<artifact id>` enum declaration of FR-056 "Effective
    identity of a variant type".
-3. **Presence and multiplicity** SHALL follow FR-056-AC-10 and QSpec FR-322's
+3. **Presence and multiplicity** SHALL follow FR-056-AC-10 and FSpec FR-322's
    "Model-owned members" step 4 unchanged: multiplicity `[1, 1]` gives
    `M::Tier` outright, an `optional` presence wraps it in `Option`, and any
    other multiplicity gives the `Sequence`, `Set`, `Bag` or `OrderedSet` its
@@ -123,7 +123,7 @@ element, tuple position or record field whose declared type is a variant type.
    at the scrutinee (ADR-012 §16.2 admits `case` over a declared union only, and
    §16.5 gives a scrutinee that is not a union this refusal). A quoted
    literal is a String literal (FR-091, "Native scalar literals") and reaches the
-   checker, which refuses it at a variant slot. Under QSpec FR-322's
+   checker, which refuses it at a variant slot. Under FSpec FR-322's
    `option_value` form, S2 SHALL represent `none` as the absent Option value.
    At a variant slot, `none` reaches S3 and the checker SHALL refuse it as
    `ill_typed`/`type-mismatch` at the expression. Since FR-313, `case`
@@ -147,16 +147,16 @@ element, tuple position or record field whose declared type is a variant type.
    negation, decided by the case's identity (item 11), never by name text,
    position or rank. The result SHALL be a Boolean and never a checked-invariant
    fault. A comparison of two different variant static types SHALL refuse
-   `ill_typed`/`type-mismatch` at check, as QSpec FR-141-AC-2 states for
+   `ill_typed`/`type-mismatch` at check, as FSpec FR-141-AC-2 states for
    enumerations of different declarations, so it never reaches evaluation.
    Equality SHALL reach a variant value inside another value by the same rule: a
    record field (under FR-359 item 4), an `Option` payload, a collection element
    and a tuple position. A variant type is **unordered**: `<`, `<=`, `>` and
-   `>=` over it SHALL refuse `ill_typed`/`operator-ineligible` at check (QSpec
+   `>=` over it SHALL refuse `ill_typed`/`operator-ineligible` at check (FSpec
    FR-141-AC-5; the checker's unordered-enum ordering refusal), and no case has a
    rank visible to source. The canonical key order of the cases in a `Set` or `Bag`
    SHALL be the ascending UTF-8 byte order of the case names,
-   which is QSpec FR-144's key for an unordered enumeration and the order FR-056
+   which is FSpec FR-144's key for an unordered enumeration and the order FR-056
    gives the `enum` export's `members`. A collection holds one declaration's
    cases, so FR-359 item 5's declaration-key order between declarations never
    applies. An `OrderedSet` keeps first-occurrence order and a `Sequence` keeps supply
@@ -203,8 +203,8 @@ element, tuple position or record field whose declared type is a variant type.
     identity and each case by its own effective identity (FR-056 "Effective
     identity of a variant type"); equality (item 7) and replay admission
     (item 9) use these. In the checked IR and the kernel, the variant type is
-    the model-owned node of QSpec FR-322 "Model-owned members" step 2 and each
-    case an enum member keyed over that node and the case name (QSpec FR-141);
+    the model-owned node of FSpec FR-322 "Model-owned members" step 2 and each
+    case an enum member keyed over that node and the case name (FSpec FR-141);
     emission (item 12) and the kernel enum declaration use these. Both keys are
     functions of the selected document's identity, the type node and the case
     name alone, never of the alias a unit gives the model (FR-359 item 9). The
@@ -230,18 +230,18 @@ element, tuple position or record field whose declared type is a variant type.
 
 ## Cross-repo requirements
 
-Each owner adds its own specification. QSL does not wait on them to state its
-own behaviour above. The rows below are in `agent-ix/quire-specification`; this
+Each owner adds its own specification. FSL does not wait on them to state its
+own behaviour above. The rows below are in `agent-ix/filament-specification`; this
 requirement cites them by id.
 
-1. **Model-owned variant type node and member identity:** QSpec FR-322-AC-71
-   and QSpec FR-141-AC-7 and FR-141-AC-8.
-2. **Admission of a variant `typeRef` and of a clause naming the type:** QSpec
-   FR-208-AC-15 and QSpec FR-208-AC-16.
-3. **Naming and typing of a variant type and its cases in source:** QSpec
+1. **Model-owned variant type node and member identity:** FSpec FR-322-AC-71
+   and FSpec FR-141-AC-7 and FR-141-AC-8.
+2. **Admission of a variant `typeRef` and of a clause naming the type:** FSpec
+   FR-208-AC-15 and FSpec FR-208-AC-16.
+3. **Naming and typing of a variant type and its cases in source:** FSpec
    FR-208-AC-17.
 
-The cross-repo test cases are QSpec TC-939 to TC-942.
+The cross-repo test cases are FSpec TC-939 to TC-942.
 
 ## Inputs
 
@@ -289,8 +289,8 @@ The cross-repo test cases are QSpec TC-939 to TC-942.
 
 - FR-056 admits the variant type, its exports, its effective identity and the
   type environment declaration; this requirement replaces its placeholder
-  refusals for fields, signatures and clauses. QSpec FR-208 defines the variant
-  type, and QSpec FR-141 and FR-144 the enumeration equality, unordered
+  refusals for fields, signatures and clauses. FSpec FR-208 defines the variant
+  type, and FSpec FR-141 and FR-144 the enumeration equality, unordered
   refusals and unordered key this requirement reuses. FR-359 states the
   record-slot rules it parallels and keeps its alias-independence rule
   (item 11). FR-317 states qualified-name resolution. FR-106 states the replay

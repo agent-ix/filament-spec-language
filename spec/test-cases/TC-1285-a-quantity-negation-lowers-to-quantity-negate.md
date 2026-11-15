@@ -3,7 +3,7 @@ id: TC-1285
 title: "A quantity negation lowers to quantity.negate"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: verifies
 ---
 # TC-1285: A quantity negation lowers to quantity.negate
@@ -11,11 +11,11 @@ relationships:
 ## Description
 
 Verify that a unary `-` over a non-affine quantity checks as the operand's own
-type, lowers to one `quire.op.quantity.negate` node and evaluates to the exact
+type, lowers to one `filament.op.quantity.negate` node and evaluates to the exact
 negation; that a direct or nested negation of a nonzero quantity literal
 proves a quantity divisor nonzero; and that negated zero, a negated parameter,
 and affine-unit or non-quantity operands are refused. Scope: FR-093-AC-49
-(QSpec TC-187 U39, FR-146-AC-9).
+(FSpec TC-187 U39, FR-146-AC-9).
 
 ## Test Procedure
 
@@ -25,13 +25,13 @@ and affine-unit or non-quantity operands are refused. Scope: FR-093-AC-49
 2. Check `n`, `n2`, `k3`, `k4` and `b2`, counting the charges made.
 
 Tag the test `#[trace("FR-093-AC-49", "TC-1285")]`. The expected values are
-QSpec TC-187 U39's, referenced by row ID.
+FSpec TC-187 U39's, referenced by row ID.
 
 ## Expected Results
 
 - Step 1: every function checks; `a` is `-2 m`, `b` is `-1 m`, `c` and `c2` are
   `-3 ms` in `ms` and lower to the same nodes, `z` is `0 m`, `q` is `true` over
-  two nested negate nodes, `r` has a `quire.op.quantity.eq` over `d` and the
+  two nested negate nodes, `r` has a `filament.op.quantity.eq` over `d` and the
   negate node, `k` is `true` at `d = 6 ms` with both dimensionless sides equal
   to `-2`, `k2` is `true` at `d = 6 ms` with both dimensionless sides equal to
   `2`, and `v2` negates in the compound unit. Each negate node has the

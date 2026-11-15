@@ -3,25 +3,25 @@ id: FR-523
 title: "Count temporal evidence work on thirteen named counters and keep a stopped instance apart from a stopped declaration"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/NFR-008
+  - target: ix://agent-ix/filament-spec-language/NFR-008
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
 ---
 # FR-523: Count temporal evidence work on thirteen named counters and keep a stopped instance apart from a stopped declaration
@@ -99,10 +99,10 @@ at each eligible position and one scan per position).
   `valuations` unit), and each window position it then reads, oldest first, an
   `Excluded` one included and up to and including the first undefined one, is one
   `temporal.visit` unit counted in `evaluation_steps` and one `valuations` unit
-  (QSpec FR-414-AC-8's one unit per window position visited). `visited` counts those
+  (FSpec FR-414-AC-8's one unit per window position visited). `visited` counts those
   `valuations` units by its own definition and takes no further unit; `positions` and
   `formula_nodes` are unchanged by a window read, and a window position that is no
-  request position is not visited. A silent sample holds no window position. The atom lookups are charged in addition to the window units of QSpec FR-414-AC-8: a clause that looks an aggregate atom up at four positions and reads windows of 1, 2, 3 and 3 positions charges 4 + 9 = 13 `valuations` units.
+  request position is not visited. A silent sample holds no window position. The atom lookups are charged in addition to the window units of FSpec FR-414-AC-8: a clause that looks an aggregate atom up at four positions and reads windows of 1, 2, 3 and 3 positions charges 4 + 9 = 13 `valuations` units.
 - **Evaluated position visit.** A silent sample is a fixed-sample watermark
   sample with no observation (FR-504); it is not an observed position. Every
   `temporal.visit` charge FR-501-AC-12 lists (a temporal node at its activation, a

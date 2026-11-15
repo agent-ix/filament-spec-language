@@ -3,17 +3,17 @@ id: FR-081
 title: "Preserve immutable model correspondence and original/effective declaration identity"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: references
-  - target: ix://agent-ix/quire-specification/FR-150
+  - target: ix://agent-ix/filament-specification/FR-150
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
-  - target: ix://agent-ix/quire-specification/interface_004
+  - target: ix://agent-ix/filament-specification/interface_004
     type: references
 ---
 # FR-081: Preserve immutable model correspondence and original/effective declaration identity
@@ -31,11 +31,11 @@ correspondence's own parts. No identity, key or ordering the binder
 produces SHALL depend on a display name, a registration order or any state
 held outside the one `DomainPackage` value and limits the caller supplies.
 
-This requirement is QSL's own binding of quire-specification
-[FR-150](ix://agent-ix/quire-specification/FR-150) ("Preserve original and
-effective model declarations") and [AD-006](ix://agent-ix/quire-specification/AD-006)'s
+This requirement is FSL's own binding of filament-specification
+[FR-150](ix://agent-ix/filament-specification/FR-150) ("Preserve original and
+effective model declarations") and [AD-006](ix://agent-ix/filament-specification/AD-006)'s
 model-view decisions into the compiler's actual types and behavior; FR-150
-states the normative rule, this requirement states QSL's binder contract for
+states the normative rule, this requirement states FSL's binder contract for
 it.
 
 ## Inputs
@@ -44,19 +44,19 @@ it.
   builds, each keyed by `(domain package identity, IR node identity)`.
 - The declared `supertypes`, `subsets` and `redefines` edges each original
   declaration carries as an inline property (never a second producer record).
-- The selected `quire.model.complete/v1` definition and its rule manifest
-  `quire.model.complete.rules/v1`.
-- `ModelNormalizationLimitsV1` of `quire.value.accounting/v1`.
+- The selected `filament.model.complete/v1` definition and its rule manifest
+  `filament.model.complete.rules/v1`.
+- `ModelNormalizationLimitsV1` of `filament.value.accounting/v1`.
 
 The selection identities above stay as they are: no consumer's selection
 changes, so FR-056 and every requirement or test that selects them keep their
-text. Only the identity domains `quire.model.effective-declaration/v2`,
-`quire.model.effective-view/v2` and `quire.model.object-universe/v2` and the
-rule identities `quire.model.normalize.inherit/v2`, `.subset/v2` and
-`.redefine/v2` are new. `quire.model.complete/v1`,
-`quire.model.complete.rules/v1`, `quire.value.accounting/v1` and the
+text. Only the identity domains `filament.model.effective-declaration/v2`,
+`filament.model.effective-view/v2` and `filament.model.object-universe/v2` and the
+rule identities `filament.model.normalize.inherit/v2`, `.subset/v2` and
+`.redefine/v2` are new. `filament.model.complete/v1`,
+`filament.model.complete.rules/v1`, `filament.value.accounting/v1` and the
 selection identities of `complete/v1` stay at `/v1` and are edited in place in
-quire-specification to carry them.
+filament-specification to carry them.
 
 ## Outputs
 
@@ -72,8 +72,8 @@ whether one conforms to the other.
 
 ### Original identity never moves
 
-The model binder SHALL treat each original declaration's key as quire-specification
-[FR-150](ix://agent-ix/quire-specification/FR-150) fixes it: never minted,
+The model binder SHALL treat each original declaration's key as filament-specification
+[FR-150](ix://agent-ix/filament-specification/FR-150) fixes it: never minted,
 renamed or merged, and never carrying an edge the domain package does not
 declare. This requirement does not restate FR-150's keying rule; a
 supertype, subset or redefine edge exists in the correspondence only when the
@@ -83,14 +83,14 @@ admitted declaration itself carries it.
 
 The correspondence owner SHALL retain the exact intake inventory and actual
 FCD origins, separately from its effective-entry set. Phase-2 qualification
-applies only to the kinds selected by QSpec `model-complete.md`; a scalar,
+applies only to the kinds selected by FSpec `model-complete.md`; a scalar,
 clause or population without a qualify rule remains an original without a
 fabricated effective entry or fact. Every effective entry and fact input SHALL
 refer to a key from this inventory. Retention introduces no additional
 effective-declaration charge and no effective preimage member.
 
 Each effective declaration's identity is the structural pair
-`{owner_effective_type, original}` of the `quire.model.effective-declaration/v2`
+`{owner_effective_type, original}` of the `filament.model.effective-declaration/v2`
 domain, compared by equality of that pair; no hash of it is computed or
 compared. Its derivation facts are carried separately and are not identity
 components. The model binder SHALL NOT read a `title`, `displayName` or any
@@ -112,7 +112,7 @@ declaration key, so its identity does not depend on the order of the
 ### An identity uses its owner and original declaration key
 
 An effective declaration's identity SHALL be the structural pair
-`{owner_effective_type, original}` defined by quire-specification FR-150.
+`{owner_effective_type, original}` defined by filament-specification FR-150.
 `owner_effective_type` is `null` for an effective type and the effective
 identity of the owning type for an effective member. `original` is the
 original declaration key admitted by FR-056. The identity SHALL NOT include
@@ -169,7 +169,7 @@ SHALL be refused by the strict reader. Every published identity vector is
 replaced; a `/v1` identity is not an identity of the replacement, and the binder SHALL NOT
 add a dual reader, relabelling, compatibility shim or public API alias.
 The exact key grammar belongs to
-[FR-150](ix://agent-ix/quire-specification/FR-150) and the selected
+[FR-150](ix://agent-ix/filament-specification/FR-150) and the selected
 definition; this requirement does not create a second identity writer.
 
 ### Losing redefinitions are retained, not deleted
@@ -192,7 +192,7 @@ apply because no descendant exists to resolve the conflict — the binder
 SHALL refuse normalization for that member with a derivation-conflict cause
 naming the conflicting type, the member and every competing redefiner, and
 SHALL expose no effective member for either reaching redefinition, winning or
-losing. This is quire-specification [FR-150](ix://agent-ix/quire-specification/FR-150)-AC-5's
+losing. This is filament-specification [FR-150](ix://agent-ix/filament-specification/FR-150)-AC-5's
 "conflicting derivations report both rule paths and expose no chosen
 effective member," bound to this compiler's refusal type.
 
@@ -201,7 +201,7 @@ effective member," bound to this compiler's refusal type.
 A completed view SHALL expose, for each state machine type `T` of its domain
 package, `EffectiveView::state_machine(T)`: the effective states and the
 effective transitions of `T`, which are the union of `T`'s own with those of
-every ancestor (quire-specification FR-208). Each entry
+every ancestor (filament-specification FR-208). Each entry
 SHALL carry its declaring machine, its original declaration key and its
 position in that machine's list. A state entry SHALL also carry its name. A
 transition entry SHALL also carry its `from` and `to` state keys, its `trigger`
@@ -233,7 +233,7 @@ above).
 Replaying normalization over the same `DomainPackage` value with its IR
 nodes presented in a different order SHALL produce a byte-identical
 original-to-effective view: the same original keys, the same effective
-identities and the same correspondence ordering. This is quire-specification
+identities and the same correspondence ordering. This is filament-specification
 FR-150-AC-4's order-independence guarantee, bound to this compiler's
 correspondence type.
 
@@ -261,15 +261,15 @@ binder SHALL NOT charge an ancestor path's length for an acyclic package.
 expansion. An effective type's identity is built in phase 3, before
 phase 4, because phase 4's charge order uses it. That identity holds the
 type's own original key with a null owner; its direct edges are retained in
-the charged `inherit/v2` facts. QSL meters no hash: the QSpec limit name
-`hashed_bytes` is QSpec's.
+the charged `inherit/v2` facts. FSL meters no hash: the FSpec limit name
+`hashed_bytes` is FSpec's.
 
 The phase-4 charges are unchanged in kind and count a type's derivation facts
 as its retained facts, its qualify fact and one inherit fact per direct
 supertype: each redefining member charges one `normalize.redefinition-check`
 of `m + r` work units, and each (effective type, redefined member) reached by
 `c >= 2` redefiners charges one `normalize.conflict-check` of
-`Σ (c − 1) × f(o)` work units, as quire-specification
+`Σ (c − 1) × f(o)` work units, as filament-specification
 `value-accounting.md` defines.
 
 ## Constraints
@@ -294,7 +294,7 @@ of `m + r` work units, and each (effective type, redefined member) reached by
 | FR-081-AC-8 | Given two object types, one field, one operation and one scalar admitted by FR-056, the retained original inventory contains exactly their admitted keys and origins. Effective-entry/fact origins are a subset; the scalar with no selected qualify rule creates no qualify fact, effective entry or extra declaration charge. | Test |
 | FR-081-AC-9 | Expanding the retained facts of every effective declaration through its parent identities yields the path-form facts of an independent enumeration over the original declarations, in phase, input and rule order with multiplicity, for a chain, a diamond and a hidden redefinition; a link naming a declaration of the wrong kind, owner or original is refused. | Test (TC-1022) |
 | FR-081-AC-10 | Given two normalized views that differ by a source declaration key, parent edge or phase-4 derivation fact, each affected structural identity changes only when its `owner_effective_type` or `original` component changes, while the changed parent or phase-4 derivation is retained in the corresponding facts and changes the effective view; no two distinct effective declarations in either view share an identity. | Test (TC-1023) |
-| FR-081-AC-11 | **RETIRED (QSL computes no hash).** The closed formulas of this criterion metered the bytes of every identity, universe and view preimage; QSL meters none. | Test (TC-1024), retired |
+| FR-081-AC-11 | **RETIRED (FSL computes no hash).** The closed formulas of this criterion metered the bytes of every identity, universe and view preimage; FSL meters none. | Test (TC-1024), retired |
 | FR-081-AC-12 | For a deterministic single-inheritance chain of 10,000 edges (10,001 effective types) run on a thread with a 524,288-byte (512 KiB) stack, normalization at the NFR-012 default limits eagerly computes every effective identity and the complete view with 20,001 retained facts. | Test (TC-1025) |
 | FR-081-AC-13 | The FR-081-AC-12 case, run in an isolated process, has a peak resident set of at most 21,474,836,480 bytes and a wall time of at most 30 seconds in the release profile on the reference host Terra, each measured from package input admission through retention of the complete result. | Test (TC-1025) |
 | FR-081-AC-16 | Given a variant type with two cases, the effective view holds one effective type and two effective members of it, each derived from the key of its own declaration with one `qualify` fact; permuting the cases changes no effective identity or position. | Test (TC-1003) |
@@ -308,8 +308,8 @@ of `m + r` work units, and each (effective type, redefined member) reached by
 
 - **Upstream:** [FR-056](FR-056-admit-domain-package-model-declarations.md)
   supplies the original declarations this requirement normalizes;
-  quire-specification FR-150 and AD-006 own the normative rule and model-view
-  decisions this requirement binds; quire-specification interface_004 (I04)
+  filament-specification FR-150 and AD-006 own the normative rule and model-view
+  decisions this requirement binds; filament-specification interface_004 (I04)
   is the immutable checked-package boundary the resulting correspondence is
   carried across, as a `correspondence` node.
 - **Downstream:** [FR-082](FR-082-resolve-conformance-subsetting-and-redefinition.md),
@@ -323,6 +323,6 @@ of `m + r` work units, and each (effective type, redefined member) reached by
   [TC-1025](../test-cases/TC-1025-full-size-model-identity-case.md) verify the
   chain-link identity, its uniqueness and its full-size case.
 - [ADR-013](../decisions/ADR-013-canonical-type-package-conversion-ownership.md)
-  O-03 and O-05 record QSL's ownership of original declaration identity and
+  O-03 and O-05 record FSL's ownership of original declaration identity and
   effective declaration identity; this requirement states their behavioral
   contract, not their Rust module placement.

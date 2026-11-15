@@ -3,15 +3,15 @@ id: TC-904
 title: "Scalar-parity claims replay to diverged, agrees, refused and faulted outcomes, and never to Refuted"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-357
+  - target: ix://agent-ix/filament-spec-language/FR-357
     type: verifies
 ---
 # TC-904: Scalar-parity claims replay to diverged, agrees, refused and faulted outcomes, and never to Refuted
 
 ## Description
 
-Verify `qsl_replay::replay_operator_parity` and
-`qsl_replay::replay_value_parity` settle each outcome of FR-357, and that the
+Verify `fsl_replay::replay_operator_parity` and
+`fsl_replay::replay_value_parity` settle each outcome of FR-357, and that the
 predicate arm of `replay` still refuses a non-`Boolean` function.
 
 Scope: FR-357-AC-1 to FR-357-AC-11, FR-357-AC-13, FR-357-AC-19, FR-357-AC-20.

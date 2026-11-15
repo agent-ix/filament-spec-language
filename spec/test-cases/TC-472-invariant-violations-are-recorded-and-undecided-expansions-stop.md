@@ -3,7 +3,7 @@ id: TC-472
 title: "Invariant-violating successors are recorded, and undecided expansions stop the run"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: verifies
 ---
 # TC-472: Invariant-violating successors are recorded, and undecided expansions stop the run
@@ -20,11 +20,11 @@ Scope: FR-120-AC-5, FR-120-AC-6, FR-120-AC-7, FR-120-AC-8, FR-120-AC-9, FR-120-A
 
 ## Test Procedure
 
-Integration tests in `qsl-eval/tests/it/` through `ModelSystem::new`,
+Integration tests in `fsl-eval/tests/it/` through `ModelSystem::new`,
 `explore_model`, `sample_model` and FR-101's `replay`, with TC-471's package
 and compile path. Unless a step says otherwise, the meter budget is the
 FR-100 default, `max_candidates` is 1,000, FR-101's `Limits` are 100 each,
-and the sampler is the `quire.simulation.sampler/v1`
+and the sampler is the `filament.simulation.sampler/v1`
 `DefinitionRef`.
 
 1. `increment` with `pre CanInc { self.value < 2 }`, `post Inc` and
@@ -57,7 +57,7 @@ and the sampler is the `quire.simulation.sampler/v1`
    `pre Never { false }`; `post LowPost { self.ready() }` on `ready` and no
    `pre` clause. Not covered: the `test/tallies` package (`Tally`,
    `touch()`) and the `pre Aaa { false }` name-order case.
-7. QSpec TC-196 D10's two `B/size` clause orders in one unit, with the
+7. FSpec TC-196 D10's two `B/size` clause orders in one unit, with the
    `absent-key` lookup clause (FR-120-AC-20); then the same clauses split
    across two linked source units, in both link orders and with either
    clause in either unit (FR-120-AC-19).

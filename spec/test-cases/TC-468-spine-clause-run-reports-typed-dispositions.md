@@ -3,14 +3,14 @@ id: TC-468
 title: "The spine clause run entry reports typed dispositions and exit codes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: verifies
 ---
 # TC-468: The spine clause run entry reports typed dispositions and exit codes
 
 ## Description
 
-Verify `qsl_replay::spine::run_clause` over one case per stage and category,
+Verify `fsl_replay::spine::run_clause` over one case per stage and category,
 its compiled `package_id`, its FR-100-aligned function selection and its
 exit codes.
 
@@ -34,10 +34,10 @@ Build `ClauseRunRequest`s from FR-108's fixtures, in memory.
    constructs other than `Completed`, pass it through `run_clause`'s mapping
    and through FR-100's, and compare; FR-100's internal failures (the kernel
    `CheckedInvariant` and a `CallFailure::Fault`) among them.
-6. In `qsl-replay`'s tests, built with
-   `cargo test -p qsl-replay --features quire-extraction` (the root crate has
+6. In `fsl-replay`'s tests, built with
+   `cargo test -p fsl-replay --features quire-extraction` (the root crate has
    no `quire-extraction` feature): extract a Markdown document whose one
-   selected fence holds the step 1 unit through `qsl_source::extract`, and
+   selected fence holds the step 1 unit through `fsl_source::extract`, and
    run healthy-parent, violating-parent and missing-model with that
    extracted source as the unit; then healthy-parent with the same unit
    extracted from an `ix:formal` fence.

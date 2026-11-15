@@ -3,7 +3,7 @@ id: TC-993
 title: "Model operations keep and check their own requires and ensures clauses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: verifies
 ---
 # TC-993: Model operations keep and check their own requires and ensures clauses
@@ -14,7 +14,7 @@ Verify that intake keeps a domain-package operation's `pre` and `post` clause
 text as its `requires` and `ensures` clauses with source identity, and that
 the checker evaluates them: a `requires` clause that reads `pre(e)` refuses,
 and an `ensures` clause is bound as the operation's postcondition. These are
-QSpec [TC-235](ix://agent-ix/quire-specification/TC-235) M06 run 7 and M15
+FSpec [TC-235](ix://agent-ix/filament-specification/TC-235) M06 run 7 and M15
 run 6. Scope: FR-103-AC-7 and FR-103-AC-8.
 
 ## Test Procedure

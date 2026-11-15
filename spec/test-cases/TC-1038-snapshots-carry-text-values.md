@@ -3,7 +3,7 @@ id: TC-1038
 title: "Snapshots and invocations carry Text values"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-1038: Snapshots and invocations carry Text values
@@ -160,4 +160,4 @@ FR-106-AC-38.
 ## Traceability
 
 The expected results verify FR-106-AC-33 to FR-106-AC-38 and the Text object's
-profile semantics of QSpec FR-141 at the document edge.
+profile semantics of FSpec FR-141 at the document edge.

@@ -3,7 +3,7 @@ id: TC-604
 title: "EN-1 checks a step relation over every tuple of reachable transitions"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-179
+  - target: ix://agent-ix/filament-spec-language/FR-179
     type: verifies
 ---
 # TC-604: EN-1 checks a step relation over every tuple of reachable transitions

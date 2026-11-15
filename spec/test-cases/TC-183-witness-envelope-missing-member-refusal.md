@@ -3,7 +3,7 @@ id: TC-183
 title: "The witness envelope refuses reconstruction when any one O-25 member is missing"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-183: The witness envelope refuses reconstruction when any one O-25 member is missing

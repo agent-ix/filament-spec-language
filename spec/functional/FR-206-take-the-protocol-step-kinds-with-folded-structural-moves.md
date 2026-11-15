@@ -3,27 +3,27 @@ id: FR-206
 title: "Take the protocol step kinds, with structural moves folded and attempts atomic"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-052
+  - target: ix://agent-ix/filament-specification/FR-052
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-053
+  - target: ix://agent-ix/filament-specification/FR-053
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-170
+  - target: ix://agent-ix/filament-specification/FR-170
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-171
+  - target: ix://agent-ix/filament-specification/FR-171
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-426
+  - target: ix://agent-ix/filament-specification/FR-426
     type: depends_on
 ---
 # FR-206: Take the protocol step kinds, with structural moves folded and attempts atomic
@@ -32,7 +32,7 @@ relationships:
 
 The protocol system SHALL take the step kinds `attempt`, `event`, `send`,
 `receive`, `duplicate`, `lose`, `fork`, `join`, `timeout`, `finish`,
-`fence` and memory steps, each enabled and applied as QSpec FR-426 states
+`fence` and memory steps, each enabled and applied as FSpec FR-426 states
 (ADR-027 ST-1 to ST-10). The protocol system SHALL enable a `fence` step by its memory model's
 fence rule alone and SHALL make it wait on nothing else (ADR-027 SE-5). The protocol system SHALL fold every structural
 move into the step that causes it (ADR-027 FO-1, FO-2). The protocol
@@ -62,9 +62,9 @@ add states that no behaviour distinguishes.
 ## Behavior
 
 - When a step occurs, the protocol system SHALL settle each thread the step
-  moved or created by QSpec FR-426's structural moves until it reaches a
+  moved or created by FSpec FR-426's structural moves until it reaches a
   rest point. A structural move SHALL never be a step and never a position.
-- The protocol system SHALL give the steps of QSpec FR-426's step table,
+- The protocol system SHALL give the steps of FSpec FR-426's step table,
   with its enabledness and effects, including `finish` only once every
   other thread of the instance has left `running` (ADR-027 ST-9).
 - The protocol system SHALL apply each `attempt` through the same FR-120
@@ -81,7 +81,7 @@ add states that no behaviour distinguishes.
 - On an `unordered` channel with overflow `loss head` or `loss tail`, the
   protocol system SHALL order the queued entries by send occurrence, so `head`
   displaces the oldest sent entry still queued and `tail` the newest (ADR-027
-  ST-3, PS-7; QSpec FR-465 "Queue"), and SHALL NOT refuse the channel as
+  ST-3, PS-7; FSpec FR-465 "Queue"), and SHALL NOT refuse the channel as
   unsupported. `receive` still takes any entry of the channel (ADR-027 ST-4).
   Equal entries at different positions are distinct entries: `receive` and
   `lose` give one step per position, steps reaching the same post-state are
@@ -100,7 +100,7 @@ add states that no behaviour distinguishes.
   Predicate joins). The join is enabled when the result is `true` and the
   gate holds, and waits when it is `false`. A result that is the undefined
   value SHALL end the model check with a violation with cause
-  `UndefinedEvaluation{where, cause}` (QSpec FR-426), `where` the join's
+  `UndefinedEvaluation{where, cause}` (FSpec FR-426), `where` the join's
   position, which FR-127 settles as refuted; it is never read as `false` or
   as a disabled step. An evaluation that a resource limit stops SHALL stop
   the exploration with that limit's refusal, as any other evaluation the
@@ -137,10 +137,10 @@ add states that no behaviour distinguishes.
   model seam), FR-218 (checked constructs), FR-262 (the evaluator a predicate
   join's function runs on), FR-127 (the refuted settlement of an undefined
   evaluation).
-- QSpec owns the step kinds, their enabledness and effects, folding and
-  atomicity, and the untimed reading of `await` (ADR-027 QS-2): QSpec
+- FSpec owns the step kinds, their enabledness and effects, folding and
+  atomicity, and the untimed reading of `await` (ADR-027 QS-2): FSpec
   FR-426, over FR-052, FR-053, FR-170 and FR-171.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-426 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-426 (Linear STD-140).

@@ -1,16 +1,16 @@
 ---
 id: TC-707
-title: "QSL writes monitor-agreement, tick-arithmetic and timestamp-contract obligations, and disposes elapsed-time obligations unsupported"
+title: "FSL writes monitor-agreement, tick-arithmetic and timestamp-contract obligations, and disposes elapsed-time obligations unsupported"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-252
+  - target: ix://agent-ix/filament-spec-language/FR-252
     type: verifies
 ---
-# TC-707: QSL writes monitor-agreement, tick-arithmetic and timestamp-contract obligations, and disposes elapsed-time obligations unsupported
+# TC-707: FSL writes monitor-agreement, tick-arithmetic and timestamp-contract obligations, and disposes elapsed-time obligations unsupported
 
 ## Description
 
-Verify the timing obligations QSL writes for CG and the unsupported disposition for obligations outside the code model.
+Verify the timing obligations FSL writes for CG and the unsupported disposition for obligations outside the code model.
 
 Scope: FR-252-AC-1 to FR-252-AC-4.
 

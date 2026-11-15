@@ -3,30 +3,30 @@ id: FR-576
 title: "Emit the operation body into checked packages for backend consumers"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-102
+  - target: ix://agent-ix/filament-spec-language/FR-102
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-494
+  - target: ix://agent-ix/filament-spec-language/FR-494
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-496
+  - target: ix://agent-ix/filament-spec-language/FR-496
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-576: Emit the operation body into checked packages for backend consumers
 
 ## Description
 
-QSpec FR-151 states that "a body is supplied by an `operation-body`
+FSpec FR-151 states that "a body is supplied by an `operation-body`
 declaration". [FR-102](./FR-102-build-state-clause-forms.md) retains that
 declaration's expression tree, [FR-103](./FR-103-admit-model-operations-and-frames-on-the-spine.md)
 associates it with the operation's `DeclarationKey` and sets `has_body`,
@@ -37,22 +37,22 @@ declares a result type, and
 [FR-494](./FR-494-emit-producer-dispatch-decisions-into-checked-packages.md)
 carries a body identity inside a dispatch candidate. None of them makes a
 checked package say, for every operation, whether it has an authored body and
-which checked body it is. A backend consumer (CG, through quire-driver, for a
+which checked body it is. A backend consumer (CG, through filament-driver, for a
 Kani proof subject; QSL-1899) has no producer-stated body to bind to the
 operation and would have to rebuild one. FR-302, FR-094 and FR-103 are
 widened to every body in the same change as this requirement.
 
-This requirement owns the QSL producer side: that `check` builds and checks the
+This requirement owns the FSL producer side: that `check` builds and checks the
 body of every operation with `has_body` that declares a result type, and that emission writes one record per
 operation carrying that body or its explicit absence. It follows the
 [FR-496](./FR-496-emit-model-operation-effects-into-checked-packages.md)
 precedent: the record is a top-level checked-package member, the
 `operation_bodies` member, whose wire shape, closed row schema and reader joins
-QSpec FR-322 owns. QSpec FR-322-AC-288 closes `checked_term_data`, so the
+FSpec FR-322 owns. FSpec FR-322-AC-288 closes `checked_term_data`, so the
 member is not a `checked_term_data` array. This requirement names the content
-QSL emits; it fixes no wire spelling beyond the member name, and the member
-cannot be emitted until QSpec FR-322 admits it (Dependencies). The
-quire-driver typed read and CG's subject emission are owned in their own
+FSL emits; it fixes no wire spelling beyond the member name, and the member
+cannot be emitted until FSpec FR-322 admits it (Dependencies). The
+filament-driver typed read and CG's subject emission are owned in their own
 repositories.
 
 ## Inputs
@@ -111,7 +111,7 @@ repositories.
 - The emitter SHALL write each row so that the row and the graph node it names
   give a reader the operation identity and the body expression with its source
   provenance, with no other input. The reader's typed read belongs to
-  quire-driver.
+  filament-driver.
 
 ## Acceptance Criteria
 
@@ -139,9 +139,9 @@ repositories.
   `has_body`; [FR-494](./FR-494-emit-producer-dispatch-decisions-into-checked-packages.md)
   states the candidate body identity the row equals;
   [FR-496](./FR-496-emit-model-operation-effects-into-checked-packages.md) is
-  the carrier precedent and the key. QSpec FR-322 must admit the
+  the carrier precedent and the key. FSpec FR-322 must admit the
   `operation_bodies` member before this requirement is implemented (STD-660
   ticket for the carrier, blocking QSL-1899).
-- **Downstream:** the quire-driver typed read of the member (quire-driver
+- **Downstream:** the filament-driver typed read of the member (filament-driver
   repository) and CG FR-015-AC-151 subject emission consume it; neither
   reconstructs a body.

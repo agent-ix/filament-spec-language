@@ -3,7 +3,7 @@ id: TC-763
 title: "analyze settles rejected certificates, unreproduced counterexamples, budgets and deadlines without a false verdict"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-281
+  - target: ix://agent-ix/filament-spec-language/FR-281
     type: verifies
 ---
 # TC-763: analyze settles rejected certificates, unreproduced counterexamples, budgets and deadlines without a false verdict
@@ -22,7 +22,7 @@ Scope: FR-281-AC-4 to FR-281-AC-7, FR-281-AC-11, FR-281-AC-12, FR-281-AC-20 and 
 4. Run TC-762 step 2's item with `limits.max_states` 1, and TC-762 step 1's item with `exact_prob.max_states` 1.
 5. Over a finite model with one reachable state at which `x` is 0, run `analyze` with an EN-1 item claiming the invariant `100 / x > 0`, replay the record's counterexample, and map the outcome's category through FR-285.
 6. Run `analyze` with six items, each settled `Supported` on a test engine that refuses it: with a refused `Admission`, `RequiresBound` from an engine advertising (`value-validity`, `bounded`), `Symmetry`, `NotStatistical`, a refusal carrying `unsupported_construct`/`not-yet-implemented`, and a refusal carrying `invalid_runtime_input`/`wrong-value-kind`. Then run a seventh request of one item whose test engine reports an incomplete `Admission`.
-7. Over a model one of whose operations `modifies` a field of type `Integer`, run `analyze` over `Engines::qsl()` with one EN-1 item settled `Supported` on EN-1.
+7. Over a model one of whose operations `modifies` a field of type `Integer`, run `analyze` over `Engines::fsl()` with one EN-1 item settled `Supported` on EN-1.
 8. Build the `compile_fail` doctest that omits `AnalyzeLimits.deadline` and its control. Run a three-item request with `deadline` `Milliseconds(1)` and an uncancelled handle. Run it again with the handle cancelled `CancelCause::Deadline` from a second thread once the first item has settled and the other two remain open. Separately run a request where caller cancellation happens first and one where an engine or accounting limit happens first. Do not use wall-clock sleeps.
 9. Run TC-762 step 2's request with its provision omitting the source the package names, then with the provision holding, under that label, the Counter unit with `P`'s bound changed from `< 2` to `< 5`.
 10. Over step 7's model, run an EN-1 item with an `integer-range` `ProofBound` for the `Integer` field in `temporal.proof_bounds`, then the same item with empty `proof_bounds`.

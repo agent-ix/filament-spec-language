@@ -3,7 +3,7 @@ id: TC-616
 title: "A single-existential witness on a stopped run settles well-definedness unchecked"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-181
+  - target: ix://agent-ix/filament-spec-language/FR-181
     type: verifies
 ---
 # TC-616: A single-existential witness on a stopped run settles well-definedness unchecked

@@ -3,7 +3,7 @@ id: TC-141
 title: "Historical native temporal v2 trigger identity boundary"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-053, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-053, type: references }
 ---
 # TC-141: Historical native temporal v2 trigger identity boundary
 

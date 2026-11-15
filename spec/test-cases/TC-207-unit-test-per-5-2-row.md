@@ -3,7 +3,7 @@ id: TC-207
 title: "One unit test exists and passes per ADR-012 §5.2 row"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: verifies
 ---
 # TC-207: One unit test exists and passes per ADR-012 §5.2 row

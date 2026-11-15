@@ -3,7 +3,7 @@ id: TC-590
 title: "S3 checks state-graph claims, refuses non-state predicates and fairness, and the request carries deadlock-freedom items"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-165
+  - target: ix://agent-ix/filament-spec-language/FR-165
     type: verifies
 ---
 # TC-590: S3 checks state-graph claims, refuses non-state predicates and fairness, and the request carries deadlock-freedom items

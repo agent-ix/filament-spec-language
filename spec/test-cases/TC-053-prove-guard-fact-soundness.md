@@ -3,7 +3,7 @@ id: TC-053
 title: "Check Boolean guard-fact soundness against an independent truth table"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-053: Check Boolean guard-fact soundness against an independent truth table

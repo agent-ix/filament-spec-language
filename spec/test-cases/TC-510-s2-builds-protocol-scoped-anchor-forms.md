@@ -3,7 +3,7 @@ id: TC-510
 title: "S2 builds protocol scoped anchor forms with their scope and segments"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-112
+  - target: ix://agent-ix/filament-spec-language/FR-112
     type: verifies
 ---
 # TC-510: S2 builds protocol scoped anchor forms with their scope and segments

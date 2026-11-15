@@ -3,7 +3,7 @@ id: TC-721
 title: "Every setting raises its limit through the library, the replay request and the CLI"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: verifies
 ---
 # TC-721: Every setting raises its limit through the library, the replay request and the CLI

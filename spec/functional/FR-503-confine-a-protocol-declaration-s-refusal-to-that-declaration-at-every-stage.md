@@ -3,21 +3,21 @@ id: FR-503
 title: "Confine a protocol declaration's refusal to that declaration at every stage, and carry the per-protocol results in the stage failure"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-002
+  - target: ix://agent-ix/filament-spec-language/FR-002
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: depends_on
 ---
 # FR-503: Confine a protocol declaration's refusal to that declaration at every stage, and carry the per-protocol results in the stage failure
@@ -45,7 +45,7 @@ A source unit and the lifecycle operations `parse`, `check` and `compile`
 
 ## Outputs
 
-- From `qsl_cst::parse`: a `ParsedSource` whose recovered CST gives each protocol
+- From `fsl_cst::parse`: a `ParsedSource` whose recovered CST gives each protocol
   declaration its own **delimited span** (from its `protocol` keyword to its
   closing delimiter) and its own diagnostics.
 - From each operation, on failure: `StageFailure::Refused` or `StageFailure::Limit`
@@ -58,7 +58,7 @@ A source unit and the lifecycle operations `parse`, `check` and `compile`
 ## Behavior
 
 - **S1.** When a syntax error lies inside the delimited span of one protocol
-  declaration, `qsl_cst::parse` SHALL recover at that declaration's closing
+  declaration, `fsl_cst::parse` SHALL recover at that declaration's closing
   delimiter and attach the diagnostic to that declaration.
 - Every other declaration SHALL parse as it would have without the error.
 - When the parser cannot delimit the declaration (an unbalanced delimiter that runs to the end
@@ -93,7 +93,7 @@ A source unit and the lifecycle operations `parse`, `check` and `compile`
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-503-AC-1 | `qsl_cst::parse` over a unit of protocols **W**, **X**, **Z** in which **X** holds a missing closing brace inside its own span before the next `protocol` keyword returns a recovered `ParsedSource` with an `invalid_syntax` diagnostic attached to **X**'s declaration, and **W** and **Z** parsed with the CST and diagnostics they have in a unit without **X**. | Test (TC-1298) |
+| FR-503-AC-1 | `fsl_cst::parse` over a unit of protocols **W**, **X**, **Z** in which **X** holds a missing closing brace inside its own span before the next `protocol` keyword returns a recovered `ParsedSource` with an `invalid_syntax` diagnostic attached to **X**'s declaration, and **W** and **Z** parsed with the CST and diagnostics they have in a unit without **X**. | Test (TC-1298) |
 | FR-503-AC-2 | The `parse` operation over AC-1's unit refuses at S1 with `protocol_results` [W `Cleared{S2}`, X `Refused` `invalid_syntax` at **X**'s span, Z `Cleared{S2}`]; over a unit whose header holds a syntax error, and over a unit whose last brace is missing so that it runs to the end of the source, it refuses with no `protocol_results`. | Test (TC-1298) |
 | FR-503-AC-3 | The `compile` operation over AC-1's unit returns a failure whose `protocol_results` are [W `Emitted`, X `Refused`, Z `Emitted`] with **W**'s and **Z**'s nodes byte-identical to compiling each alone, the category `refusal` (exit 20), and no package. | Test (TC-1298) |
 | FR-503-AC-4 | An S2 refusal of **X**'s forms and an S3 refusal in **X** each give **X** a `Refused` result whose locus is **X**'s source index and span (in a two-source unit, the source that holds **X**, not the preceding one), leave **W** `Emitted`, and give the failure the code of the first `Refused` result. | Test (TC-1298) |

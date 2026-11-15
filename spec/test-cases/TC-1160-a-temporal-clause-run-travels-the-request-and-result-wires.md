@@ -3,17 +3,17 @@ id: TC-1160
 title: "A temporal clause run travels the clause-run request and result wires"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-312
+  - target: ix://agent-ix/filament-spec-language/FR-312
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-266
+  - target: ix://agent-ix/filament-spec-language/FR-266
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: verifies
 ---
 # TC-1160: A temporal clause run travels the clause-run request and result wires

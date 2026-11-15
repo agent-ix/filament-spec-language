@@ -3,7 +3,7 @@ id: FR-005
 title: "Link native names to explicit formal declarations"
 type: FR
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/US-002"
+  - target: "ix://agent-ix/filament-spec-language/US-002"
     type: traces_to
 ---
 # FR-005: Link native names to explicit formal declarations

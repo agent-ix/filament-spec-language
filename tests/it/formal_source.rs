@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-014: exact native/IR source correspondence through actual public types.
 
+use filament_contract_model as ir;
+use fsl_command::formal_source::{FormalSource, FormalSourceError};
+use fsl_foundation::{source::MAX_SOURCE_BYTES, Code, Phase, Source, SourceIdentity, Span};
 use ix_trace_rs::trace;
-use qsl_command::formal_source::{FormalSource, FormalSourceError};
-use qsl_foundation::{source::MAX_SOURCE_BYTES, Code, Phase, Source, SourceIdentity, Span};
-use quire_contract_model as ir;
 
 fn source(text: &str) -> Source {
     Source::read(

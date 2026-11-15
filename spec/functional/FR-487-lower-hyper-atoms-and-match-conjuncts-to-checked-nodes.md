@@ -3,35 +3,35 @@ id: FR-487
 title: "Lower a hyper clause's holds atoms and match conjuncts to checked nodes"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-175
+  - target: ix://agent-ix/filament-spec-language/FR-175
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-177
+  - target: ix://agent-ix/filament-spec-language/FR-177
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-178
+  - target: ix://agent-ix/filament-spec-language/FR-178
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-183
+  - target: ix://agent-ix/filament-spec-language/FR-183
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: traces_to
 ---
 # FR-487: Lower a hyper clause's holds atoms and match conjuncts to checked nodes
@@ -46,9 +46,9 @@ seam for these atoms and conjuncts.
 
 Today a body atom is `FormulaNode::Holds { span }` only, and a conjunct is a
 `CheckedStepPredicate` that holds a span and its step-label reads
-(`qsl-semantics/src/check/hyper_clause.rs`). The product reads both through
+(`fsl-semantics/src/check/hyper_clause.rs`). The product reads both through
 the caller seams `HyperLetters` and `StepMatch`
-(`qsl-eval/src/hyper/seam.rs`), which only tests implement, by reading
+(`fsl-eval/src/hyper/seam.rs`), which only tests implement, by reading
 source text. A temporal clause's atoms already have this form:
 `TemporalClauseNode::condition` (FR-337) holds each atom's checked condition
 over its `over` parameter, and `ClauseLetters` runs that condition through
@@ -77,7 +77,7 @@ part of this requirement.
 ## Outputs
 
 ```rust
-// qsl-semantics, on the checked clause (FR-172 "Outputs").
+// fsl-semantics, on the checked clause (FR-172 "Outputs").
 impl CheckedHyperClause {
     /// One entry per atom slot, in slot order.
     pub fn atom_slots(&self) -> &[AtomSlot];
@@ -101,7 +101,7 @@ impl CheckedStepPredicate {
     pub fn condition(&self) -> (CheckedNode<'_>, usize);
 }
 
-// qsl-eval: one atom slot's binding.
+// fsl-eval: one atom slot's binding.
 pub enum HyperSlot {
     /// The parameter's object in the slot's component.
     Bound(Value),
@@ -111,7 +111,7 @@ pub enum HyperSlot {
     Absent { key: ObjectReference, population: String },
 }
 
-// qsl-eval, beside `evaluate_holds` on `CheckedPackageEvaluation` (FR-107).
+// fsl-eval, beside `evaluate_holds` on `CheckedPackageEvaluation` (FR-107).
 fn evaluate_hyper_holds(
     &self,
     clause: &CheckedHyperClause,
@@ -200,7 +200,7 @@ fn evaluate_step_predicate(
     literal, and a comparison with a label of another model.
   - `t.step.receiver` is `Option<Reference<T>>`, `T` being the one object
     type that declares every operation of `t`'s model that has a receiver
-    (FR-172, QSpec FR-395 "Step labels").
+    (FR-172, FSpec FR-395 "Step labels").
   - `t.step.O.p` is `Option<T>` for parameter `p: T` of `O` (FR-172).
 - **Label constants.** The S3 hyper check SHALL check a qualified name that
   resolves to an operation `O` of the alias bound to `t`, written as an
@@ -231,7 +231,7 @@ fn evaluate_step_predicate(
   that have a receiver are declared by more than one object type, then the
   S3 hyper check SHALL refuse a conjunct that reads `t.step.receiver`,
   `unsupported_construct`/`expression-form` at the read. Such a read has no
-  single type `T`, and QSpec FR-395 gives a receiver no union type. FR-172
+  single type `T`, and FSpec FR-395 gives a receiver no union type. FR-172
   states the same narrowing.
 - The S3 hyper check SHALL run FR-104's definedness check over each conjunct
   under the clause's check mode, as it does for an atom.
@@ -301,7 +301,7 @@ fn evaluate_step_predicate(
 
 ### The clause seams
 
-`qsl-eval` SHALL implement `HyperLetters` and `StepMatch` over the lowered
+`fsl-eval` SHALL implement `HyperLetters` and `StepMatch` over the lowered
 nodes as `CheckedHyperLetters` and `CheckedStepMatch`, in its `hyper`
 module beside the traits. They are the production seams through which
 FR-176's product, FR-177's witness product, FR-178's projected product and
@@ -323,7 +323,7 @@ evaluator.
   `AtomStop::Unobservable`, and an evaluator fault to `AtomStop::Fault`.
 - The hyper products SHALL read `AtomStop::Incomplete` as they read
   `Err(Incomplete)` today. They SHALL record any other `AtomStop` in their
-  `Halt`. `qsl-analyze`'s hyper model check SHALL map a recorded stop as its
+  `Halt`. `fsl-analyze`'s hyper model check SHALL map a recorded stop as its
   temporal check maps a letter stop: `Refused` to
   `ModelCheckRefusal::AtomRefused`, `Unobservable` to
   `ModelCheckRefusal::StateUnobservable` and `Fault` to
@@ -418,7 +418,7 @@ evaluator seam is added to `HyperQueryRequest`.
 - The body of a `relation` over model executions (`CheckedModelRelation`,
   HP-1). FR-172 notes that its lowering remains.
 - Writing these nodes into the clause's checked-package v2 `hyperproperty`
-  node (QSpec FR-402) and exposing its occurrence on `CheckedHyperClause`.
+  node (FSpec FR-402) and exposing its occurrence on `CheckedHyperClause`.
   That is Linear QSL-1071, specified by
   [FR-488](FR-488-emit-a-checked-hyper-clause-as-a-v2-hyperproperty-node.md).
   The emitter lowers each condition as
@@ -441,14 +441,14 @@ holds(B) }`, its body atom `B` varying by criterion, read at the instance `n1`.
 | FR-487-AC-2 | `NonInterference`'s conjunct 0, `a.step.op = b.step.op`, has `slots()` `[Operation a, Operation b]`, each lowered as a `String`. Its conjunct 1, `a.step.Vault::step.i = b.step.Vault::step.i`, has two `Option<Int[0, 1]>` slots. In `match { a.step.op = V::Vault::step and b.step.op = stutter }`, conjunct 0 compares its one slot with the literal operation text of `step`, and conjunct 1 compares its one slot with the literal `stutter`. `match { a.step.receiver = b.step.receiver }` over the vault has two `Option<Reference<Vault>>` slots. Each refuses `ill_typed`/`type-mismatch` at the label: `match { a.step.op = "x" }`; `match { size(a.step.op) > 0 }`; `SavesPower` with `match { s.step.op = n.step.op }`, a comparison of labels of two models. | Test (TC-1264) |
 | FR-487-AC-3 | Over ADR-023 §8's secure vault at instance `v`, `evaluate_hyper_holds` for `NonInterference`'s atom gives `Completed(true)` with components `(0, 0)` and `(1, 0)`, and `Completed(false)` with `(0, 1)` and `(0, 0)`. For FR-176-AC-5's atom `1 mod (1 - v.h @ a) = 1 mod (1 - v.h @ b)` with components `(1, 0)` and `(0, 0)`, it gives `Undefined` with cause `division-by-zero`. A meter with a zero budget gives `Incomplete` with `resource_exhausted`/`insufficient-next-charge`. A `slots` vector of length 1 gives `CallFailure::Fault` and charges nothing. Two equal calls give equal evaluations and equal charge logs. | Test (TC-1264) |
 | FR-487-AC-4 | For `NonInterference`'s `match`, `CheckedStepMatch::universal` gives `Holds` over `(step(0), step(0))`, and over `(stutter, stutter)`, where both arguments are absent. It gives `Fails` over `(step(0), step(1))`, with a charge log holding the charges of conjuncts 0 and 1. It gives `Fails` over `(step(0), stutter)`, with a charge log holding conjunct 0's charges only. | Test (TC-1264) |
-| FR-487-AC-5 | `NonInterference` with FR-176-AC-4's conjunct `(if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) else 0) = 0` added as conjunct 2 gives `Undefined { conjunct: 2, cause: division-by-zero }` over `(step(0), step(0))`. With conjunct 2 instead calling a declared function that exhausts the meter, it gives `Err(MatchIncomplete { conjunct: 2, .. })`. With conjunct 2 instead comparing `quire::value::ieee::sqrt` under `Float64[exact]` of a constant that is not a perfect square with a constant (FR-397-AC-20), it gives `Refused { conjunct: 2, outcome }`, `outcome` being the kernel `Refused` `ieee_not_exact` outcome. Over `(step(0), step(1))`, each of the three gives `Fails`, with a charge log holding no charge of conjunct 2. | Test (TC-1264) |
+| FR-487-AC-5 | `NonInterference` with FR-176-AC-4's conjunct `(if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) else 0) = 0` added as conjunct 2 gives `Undefined { conjunct: 2, cause: division-by-zero }` over `(step(0), step(0))`. With conjunct 2 instead calling a declared function that exhausts the meter, it gives `Err(MatchIncomplete { conjunct: 2, .. })`. With conjunct 2 instead comparing `filament::value::ieee::sqrt` under `Float64[exact]` of a constant that is not a perfect square with a constant (FR-397-AC-20), it gives `Refused { conjunct: 2, outcome }`, `outcome` being the kernel `Refused` `ieee_not_exact` outcome. Over `(step(0), step(1))`, each of the three gives `Fails`, with a charge log holding no charge of conjunct 2. | Test (TC-1264) |
 | FR-487-AC-6 | EN-1 (FR-176), run with `CheckedHyperLetters` and `CheckedStepMatch` over ADR-023 §8, gives FR-176-AC-1's outcomes: for the leaky vault, 10 reachable states and `Violated` with the §8.1 `Lockstep` counterexample; for the secure vault, 8 states and `Holds{Exhaustive}`. FR-176-AC-4's added conjunct gives the `Undefined` counterexample that criterion states. | Test (TC-1264) |
 | FR-487-AC-7 | `encode_hyper_query` for `NonInterference` at instance `v` with `InductionStep{depth: 1}` asserts the property at position 0 as `(= s0.a.v.l s0.b.v.l)`, and its violation at position 1 over `s1.a.v.l` and `s1.b.v.l`, both read from the atom's checked condition with slot 0 in copy `a` and slot 1 in copy `b`. `InductionBase{depth: 1}` keeps exactly FR-315-AC-7's three joint disjuncts, each chosen by `CheckedStepMatch::universal` over the disjuncts' labels. `HyperQueryRequest` has no `StepMatch` or `HyperLetters` member. | Test (TC-1264) |
 | FR-487-AC-8 | FR-315-AC-10's request, whose `match` conjunct calls a function that exhausts the meter, refuses `match-conjunct`, naming the conjunct's index in `mu_universal()`, its site `hyper <c> match <k>` and the tuple `(step(0), step(0))`. Placing the conjunct `present(a.step.Vault::step.i) implies value(a.step.Vault::step.i) = 1` directly before the calling conjunct makes the refusal name the calling conjunct and the tuple `(step(1), step(1))`. The new conjunct is false on every tuple whose `a` step is `step(0)`, and `NonInterference`'s equal-input conjunct fails on `(step(1), step(0))`, so `(step(1), step(1))` is the first tuple in joint-step order on which every conjunct before the calling one holds. | Test (TC-1264) |
 | FR-487-AC-9 | `Linked` with `B` = `(let r = v.next in present(r) and deref(value(r)).l = 1) @ a`: S3 records component 0 for the read of `next` and for the read of `l` through `r`. Its condition gives `Completed(true)` with component `a` at `n1.next = n2`, `n2.l = 1` and component `b` at `n1.next` absent, `n2.l = 0`. The same atom with `@ b` gives `Completed(false)` over those components. With component `b`'s state holding no object `n1`, the atom with `@ a` still gives `Completed(true)`. There, with slot (`b`, `v`) bound `HyperSlot::Absent`, `v.l @ b = 0` gives the absent-key reading that `ClauseLetters` gives the temporal atom `v.l = 0` over a state with no `n1`, and `v.l @ a = 0` reads component `a` as before. | Test (TC-1264) |
 | FR-487-AC-10 | `Linked` with `B` = `present(v.p @ a) and value(v.p @ b) = 1` is refused `undefined_expression`/`unproved-presence` at `value(v.p @ b)`: the presence fact is about component `a` only. With `B` = `present(v.p @ a) and value(v.p @ a) = 1`, `Linked` checks. | Test (TC-1264) |
 | FR-487-AC-11 | With FR-172-AC-7's conjunct `f(a.step.Vault::step.i)`, for a declared `f(x: Option<Int[0, 1]>): Boolean` whose body is `present(x)`, the conjunct's `slots()` are `[Argument(a, step, i)]`, and its condition is a call of `f` over that slot. `evaluate_step_predicate` gives `Completed(true)` over `(step(1), step(1))`, where `f` receives the present value 1, and `Completed(false)` over `(stutter, stutter)`, where it receives none. The refusals of a receiver read over two object types and of a call argument that reads state are FR-172-AC-7's. | Test (TC-1264) |
-| FR-487-AC-12 | `NonInterference` with the body `always (holds(v.l @ a = v.l @ b) and holds(S))`, `S` comparing `quire::value::ieee::sqrt` under `Float64[exact]` of a constant that is not a perfect square with a constant (FR-397-AC-20): `CheckedHyperLetters::atom` for `holds(S)` returns `Err(AtomStop::Refused(outcome))`, `outcome` being the kernel `Refused` `ieee_not_exact` outcome, and EN-1 over the secure vault returns `ModelCheckRefusal::AtomRefused` with that outcome, as `qsl-analyze`'s temporal check returns for a refused temporal atom. `CheckedHyperLetters::atom` for `NonInterference`'s own atom returns `Err(AtomStop::Unobservable(..))` for a component state that its component's system cannot observe. | Test (TC-1264) |
+| FR-487-AC-12 | `NonInterference` with the body `always (holds(v.l @ a = v.l @ b) and holds(S))`, `S` comparing `filament::value::ieee::sqrt` under `Float64[exact]` of a constant that is not a perfect square with a constant (FR-397-AC-20): `CheckedHyperLetters::atom` for `holds(S)` returns `Err(AtomStop::Refused(outcome))`, `outcome` being the kernel `Refused` `ieee_not_exact` outcome, and EN-1 over the secure vault returns `ModelCheckRefusal::AtomRefused` with that outcome, as `fsl-analyze`'s temporal check returns for a refused temporal atom. `CheckedHyperLetters::atom` for `NonInterference`'s own atom returns `Err(AtomStop::Unobservable(..))` for a component state that its component's system cannot observe. | Test (TC-1264) |
 
 ## Dependencies
 
@@ -490,13 +490,13 @@ holds(B) }`, its body atom `B` varying by criterion, read at the instance `n1`.
   hyper queries.
 - [FR-488](FR-488-emit-a-checked-hyper-clause-as-a-v2-hyperproperty-node.md)
   writes the lowered nodes into the `hyperproperty` node.
-- ADR-023 HS-3, HS-4, HS-5, HM-3, HM-4, HV-7 and HV-8; QSpec FR-395 ("Step
-  labels"); QSpec FR-402 (the `hyperproperty` node that QSL-1071 emits).
+- ADR-023 HS-3, HS-4, HS-5, HM-3, HM-4, HV-7 and HV-8; FSpec FR-395 ("Step
+  labels"); FSpec FR-402 (the `hyperproperty` node that QSL-1071 emits).
 
 ## References
 
 - Owning ticket: Linear QSL-1072. Consumer: Linear QSL-1010
   (`encode_hyper_query`, FR-315-AC-7 to AC-10), and through it Linear
   IR-974. The interim seam contract on `HyperQueryRequest` was drafted and
-  then withdrawn (quire-spec-language #1484, SR-17048 FND-001 and FND-002).
+  then withdrawn (filament-spec-language #1484, SR-17048 FND-001 and FND-002).
 - Spec review of this requirement: SR-17180 to SR-17186.

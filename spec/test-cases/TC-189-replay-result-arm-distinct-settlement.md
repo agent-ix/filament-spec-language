@@ -3,7 +3,7 @@ id: TC-189
 title: "The replay result keeps the Witness arm and Input arm distinct, each with its own settlement"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: verifies
 ---
 # TC-189: The replay result keeps the Witness arm and Input arm distinct, each with its own settlement
@@ -17,7 +17,7 @@ result types are distinct with no conversion between them — the property
 FR-072 actually builds, and the one CG's separately-owned sealed
 backend-evidence-verdict type (AD-016, owned by the CG parity comparator,
 not by this ticket) depends on. This test does not construct that CG-owned
-sealed type; it verifies the QSL-side type boundary CG's type relies on. A
+sealed type; it verifies the FSL-side type boundary CG's type relies on. A
 wrong implementation this test would catch: a result type with one shared
 `agreed: bool` flag instead of two distinct arm-settlement values; under
 that shape, a caller checking only `agreed` cannot tell a corpus-sourced

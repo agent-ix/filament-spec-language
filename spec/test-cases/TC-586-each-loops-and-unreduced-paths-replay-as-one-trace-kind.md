@@ -3,7 +3,7 @@ id: TC-586
 title: "Each-fairness loops take every identity, and every reduced counterexample is one ordinary trace kind"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-161
+  - target: ix://agent-ix/filament-spec-language/FR-161
     type: verifies
 ---
 # TC-586: Each-fairness loops take every identity, and every reduced counterexample is one ordinary trace kind

@@ -3,7 +3,7 @@ id: TC-031
 title: "Resolve lexical and formal declaration occurrences"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-013
+  - target: ix://agent-ix/filament-spec-language/FR-013
     type: verifies
 ---
 

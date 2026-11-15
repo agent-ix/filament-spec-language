@@ -3,67 +3,67 @@ id: FR-390
 title: "Evaluate a protocol node's expression from a checked package at S6a with shared accounting"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-400
+  - target: ix://agent-ix/filament-spec-language/FR-400
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-569
+  - target: ix://agent-ix/filament-spec-language/FR-569
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-141
+  - target: ix://agent-ix/filament-specification/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-143
+  - target: ix://agent-ix/filament-specification/FR-143
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-149
+  - target: ix://agent-ix/filament-specification/FR-149
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-441
+  - target: ix://agent-ix/filament-specification/FR-441
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-049
+  - target: ix://agent-ix/filament-spec-language/FR-049
     type: references
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-464
+  - target: ix://agent-ix/filament-specification/FR-464
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-465
+  - target: ix://agent-ix/filament-specification/FR-465
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-466
+  - target: ix://agent-ix/filament-specification/FR-466
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-056
+  - target: ix://agent-ix/filament-specification/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-057
+  - target: ix://agent-ix/filament-specification/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-058
+  - target: ix://agent-ix/filament-specification/FR-058
     type: depends_on
-  - target: ix://agent-ix/quire-semantic-value/FR-130
+  - target: ix://agent-ix/filament-semantic-value/FR-130
     type: depends_on
 ---
 # FR-390: Evaluate a protocol node's expression from a checked package at S6a with shared accounting
@@ -74,7 +74,7 @@ S6a SHALL evaluate one expression of one protocol node of a `CheckedPackage`:
 an activation guard, a capture initializer, a retry relation, a recovery
 predicate, a trigger guard, a control's constraint, guard, visible entry or
 `related` end, a finish or terminal condition, a role's lifetime or a channel's
-key. The expression is the term the package holds in the node's body (QSpec
+key. The expression is the term the package holds in the node's body (FSpec
 FR-464, FR-465, FR-466). The caller supplies the value of every binder and
 every captured value the expression reads, and an observation when a supplied
 value names a model object. Evaluation reads the package and the supplied
@@ -82,7 +82,7 @@ values and nothing else.
 
 A capture is a frozen value. The protocol evaluates a registration capture when
 the obligation registers and an activation capture once when it activates
-(QSpec FR-466), and a protocol capture once when the protocol starts; each
+(FSpec FR-466), and a protocol capture once when the protocol starts; each
 result is fixed from then on (FR-218). The evaluator models this one way: a
 capture slot is a call that evaluates the capture's initializer from the
 supply of its own stage and returns the capture's value; every later slot (a
@@ -95,7 +95,7 @@ registration capture at registration, its activation capture at activation, and
 then its trigger guard, retry relation and recovery predicate as the protocol
 reaches them, each as its own call. The calls that the caller gives one
 `Meter` accumulate their charges in it, so a compensation's work is accounted
-once across them (FR-255's ten `quire.value.accounting/v1` counters). A call
+once across them (FR-255's ten `filament.value.accounting/v1` counters). A call
 that passes a fresh meter is accounted alone.
 
 ## Use case
@@ -116,7 +116,7 @@ names the counter or the value that stopped the evaluation.
 
 - One admitted evaluation view of either an in-process `CheckedPackage` or
   the complete package admitted by the contract reader from the v2 protocol
-  nodes FR-383 emits (QSpec FR-464), as the bridge below defines. An
+  nodes FR-383 emits (FSpec FR-464), as the bridge below defines. An
   `ImportView`, a free-standing term and a decoded wire graph are not inputs.
 - A `ProtocolSlot { node, member, index }`:
   - `node` is the node key of a `protocol` node;
@@ -130,7 +130,7 @@ names the counter or the value that stopped the evaluation.
     of FR-106's closed value grammar or `Unavailable(cause)`) and a sequence of
     `ProtocolReferenceOccurrence` entries. Each occurrence pairs a path rooted
     at that binder, expressed with
-    `quire_semantic_value::admission::PathStep`, with the exact checked
+    `filament_semantic_value::admission::PathStep`, with the exact checked
     population declaration `NodeKey` that the caller used to construct that
     reference. The path identifies one reference occurrence in the supplied
     value: the root reference has an empty relative path; a reference inside a
@@ -138,14 +138,14 @@ names the counter or the value that stopped the evaluation.
     option-value or index steps. This is provenance for the value already
     supplied, not a second value, object identity or population-membership
     claim. A captured value is supplied under its capture's binder key;
-  - `observation`: `Option<&'a quire_semantic_value::admission::ObservationAdmission<qsl_package::observation::AdmittedProtocolObservation<'a>>>`,
-    using QSV's existing generic directly as FR-106 defines. Its `Admitted`
+  - `observation`: `Option<&'a filament_semantic_value::admission::ObservationAdmission<fsl_package::observation::AdmittedProtocolObservation<'a>>>`,
+    using FSV's existing generic directly as FR-106 defines. Its `Admitted`
     arm carries a current-snapshot authority for the evaluated view and the
     protocol's selected model; its other arms retain the original admission
     result. It is required exactly when a supplied source value contains a
     reference, including a nested reference. It carries no raw snapshot,
     provision or caller-constructed `Observation`.
-  `ProtocolSuppliedValue` and `ProtocolReferenceOccurrence` are QSL
+  `ProtocolSuppliedValue` and `ProtocolReferenceOccurrence` are FSL
   layer-5 supply wrappers around the existing supplied value and shared path
   vocabulary. They SHALL NOT change `ObjectReference` identity, create a
   second admission result/carrier, contain raw snapshot or call inputs, or
@@ -158,23 +158,23 @@ names the counter or the value that stopped the evaluation.
   node against the selected view, so constructing an occurrence does not
   grant it authority.
 
-The public QSL layer-5 input types SHALL be:
+The public FSL layer-5 input types SHALL be:
 
 ```rust
 pub struct ProtocolReferenceOccurrence {
-    pub path: Vec<quire_semantic_value::admission::PathStep>,
-    pub population: quire_exact::NodeKey,
+    pub path: Vec<filament_semantic_value::admission::PathStep>,
+    pub population: filament_exact::NodeKey,
 }
 
 pub struct ProtocolSuppliedValue {
-    pub value: qsl_eval::value::SuppliedValue,
+    pub value: fsl_eval::value::SuppliedValue,
     pub references: Vec<ProtocolReferenceOccurrence>,
 }
 
 pub struct ProtocolSupply<'view> {
-    pub binders: Vec<(quire_exact::NodeKey, ProtocolSuppliedValue)>,
-    pub observation: Option<&'view quire_semantic_value::admission::ObservationAdmission<
-        qsl_package::observation::AdmittedProtocolObservation<'view>,
+    pub binders: Vec<(filament_exact::NodeKey, ProtocolSuppliedValue)>,
+    pub observation: Option<&'view filament_semantic_value::admission::ObservationAdmission<
+        fsl_package::observation::AdmittedProtocolObservation<'view>,
     >>,
 }
 ```
@@ -182,7 +182,7 @@ pub struct ProtocolSupply<'view> {
 `path` is relative to the source value root and uses the shared typed field,
 option-value and index steps; `population` is the checked declaration node
 key in the selected model. An empty path therefore describes a root
-reference. `value` is the existing QSL supplied-value type; these wrappers add
+reference. `value` is the existing FSL supplied-value type; these wrappers add
 only the occurrence-to-declaration association and do not define a new value
 grammar, result type or checker. `ProtocolSupply` remains the sole supply
 accepted by `evaluate_protocol_slot`.
@@ -193,17 +193,17 @@ failure and meter types:
 ```rust
 pub fn evaluate_protocol_slot(
     &self,
-    slot: &qsl_eval::value::ProtocolSlot,
-    supply: &qsl_eval::value::ProtocolSupply<'_>,
-    meter: &mut quire_exact::Meter,
-) -> Result<qsl_eval::value::ProtocolSlotEvaluation, quire_eval::CallFailure>;
+    slot: &fsl_eval::value::ProtocolSlot,
+    supply: &fsl_eval::value::ProtocolSupply<'_>,
+    meter: &mut filament_exact::Meter,
+) -> Result<fsl_eval::value::ProtocolSlotEvaluation, filament_eval::CallFailure>;
 ```
 
 - A `Meter` (FR-107).
 
 The slots of a protocol node:
 
-| Node | `member` | Stage (QSpec FR-464) | `index` |
+| Node | `member` | Stage (FSpec FR-464) | `index` |
 | --- | --- | --- | --- |
 | clause | `activation.guard` | `protocol-activation` | none |
 | clause | `captures` | `protocol-capture` | the capture's position |
@@ -224,7 +224,7 @@ The slots of a protocol node:
 | `terminal` obligation | `condition` | `terminal` | none |
 
 A `repeat`'s `proof.invariant` and `proof.variant` are not slots: S3 only
-checks and records them, QSL has no prover for them in V1, and a termination
+checks and records them, FSL has no prover for them in V1, and a termination
 claim is their only reader
 (FR-218, ADR-014), so nothing at run time evaluates them.
 
@@ -241,15 +241,15 @@ claim is their only reader
 - `ProtocolSlotEvaluation::Unavailable`, holding the binder supplied as
   `Unavailable`, its cause and the location of the read that met it as an
   `Option`: for a view backed by a reader (a checked-package v2 view), the read's
-  leaf takes its location from its own admitted node (QSpec FR-322-AC-310), and
+  leaf takes its location from its own admitted node (FSpec FR-322-AC-310), and
   the location is `None` when the admitted wire carries no leaf location for
-  that read; QSL never invents one. Category incomplete.
+  that read; FSL never invents one. Category incomplete.
 - `CallFailure::Admission(Box<CallAdmissionFailure>)` for a selection or
   supply refused or left incomplete before S6a. `CallAdmissionFailure` is the
-  one closed `Refused`/`Incomplete` result owned by quire-eval; each variant
-  carries the original shared QSV `AdmissionRecord` and the checked-package
+  one closed `Refused`/`Incomplete` result owned by filament-eval; each variant
+  carries the original shared FSV `AdmissionRecord` and the checked-package
   locus, including a population node where completeness fails, as shared
-  FR-130 requires. No QSL-owned mirror call-admission record or fault type is
+  FR-130 requires. No FSL-owned mirror call-admission record or fault type is
   introduced, and nothing is charged.
 - `CallFailure::Fault(InternalFault)` for an S6a invariant break, as FR-107.
 
@@ -285,9 +285,9 @@ protocol slot.
 
 ### One admitted checked-term view
 
-QSL SHALL define one sealed `qsl_eval::value::CheckedTermView` contract in
+FSL SHALL define one sealed `fsl_eval::value::CheckedTermView` contract in
 layer 5. Its concrete layer-4 input carrier SHALL be
-`qsl_package::evaluation_view::AdmittedEvaluationView<'a>`, with private variants
+`fsl_package::evaluation_view::AdmittedEvaluationView<'a>`, with private variants
 that borrow either `&'a CheckedPackage` or the successful I2 read's retained
 admitted package, source map, effective limits and admitted dependency closure.
 The reader variant MAY retain plain kernel values/types and read descriptors
@@ -295,7 +295,7 @@ projected from that witness; it SHALL retain no newly constructed checked term.
 The in-process entry SHALL be `CheckedPackage::evaluation_view(&self) ->
 AdmittedEvaluationView<'_>`; the successful I2 read SHALL expose
 `evaluation_view(&self) -> Result<AdmittedEvaluationView<'_>, ViewFailure>` over its retained
-`Arc<quire_contract_model::CheckedPackageV2>`. The reader-result entry and its
+`Arc<filament_contract_model::CheckedPackageV2>`. The reader-result entry and its
 IR variant SHALL exist only with `std`. The view contract and in-process
 variant SHALL introduce no IR or `std` dependency into the no_std path.
 
@@ -307,19 +307,19 @@ identity, source-map and dependency associations for its entire lifetime.
 Exposing the successful reader result does not change I2 admission or its
 existing staged refusal vocabulary.
 
-Under `std`, `qsl-package` SHALL expose its existing checked-package v2 read
+Under `std`, `fsl-package` SHALL expose its existing checked-package v2 read
 operation and the successful `V2Read` carrier, with its fields private.
 `V2ReadOutcome` SHALL remain
 `Result<Staged<V2Read>, StageFailure<V2ReadRefusal>>`. The read operation's
-evidence input SHALL be a QSL-owned read-evidence wrapper. It SHALL pair the
+evidence input SHALL be an FSL-owned read-evidence wrapper. It SHALL pair the
 existing IR `CheckedPackageEvidence` used for I2 admission with the authentic
-selected-identity rows produced by QSL's model-selection identity stage
+selected-identity rows produced by FSL's model-selection identity stage
 (QSL-1377). Those rows SHALL be retained from the selected model through the
 checked package and its emission, and SHALL accompany that emission's bytes
 when they are read. The wrapper SHALL NOT derive, reconstruct or infer any
 identity row from package bytes, decoded nodes, display names or source text.
 
-After I2 successfully admits the package, QSL SHALL join the retained producer
+After I2 successfully admits the package, FSL SHALL join the retained producer
 rows to that exact admitted package using IR's `SelectedExactIdentities`
 projection. The resulting identity witness SHALL remain associated with the
 successful `V2Read` for its lifetime. `V2Read::evaluation_view(&self)` SHALL
@@ -334,15 +334,15 @@ the successful I2 read and its staged result intact. A failed I2 read retains
 its existing staged result. This exposes the existing admission result; it
 does not add a second reader.
 
-The protocol-slot selector SHALL be owned by `qsl-package` and SHALL run
+The protocol-slot selector SHALL be owned by `fsl-package` and SHALL run
 behind `AdmittedEvaluationView`. The layer-5 sealed
-`qsl_eval::value::CheckedTermView` resolver SHALL translate the requested
-layer-5 slot into qsl-package's own public, plain-data typed slot descriptor.
-The descriptor SHALL be qsl-package's input type, not a shared layer-C type;
+`fsl_eval::value::CheckedTermView` resolver SHALL translate the requested
+layer-5 slot into fsl-package's own public, plain-data typed slot descriptor.
+The descriptor SHALL be fsl-package's input type, not a shared layer-C type;
 it SHALL contain selection data only, confer no authority, and include no
 layer-5 type. The resolver SHALL delegate that descriptor to the view and
 SHALL NOT perform a second selection or mint a handle. The single
-qsl-package selector SHALL validate the descriptor against the exact admitted
+fsl-package selector SHALL validate the descriptor against the exact admitted
 view and apply the selection and source-ordering rules below. Its result
 SHALL contain the opaque root handle and ordered plain-data source
 descriptors; the layer-5 resolver SHALL forward those as
@@ -351,9 +351,9 @@ descriptors; the layer-5 resolver SHALL forward those as
 `SelectedProtocolTerm` SHALL have private fields and read accessors for the
 selected expression handle and ordered source descriptors. Each descriptor
 SHALL expose the admitted binder's `NodeKey`, level, `ValueType` and read
-location. `TermHandle<'a>` SHALL be an opaque qsl-package-owned value tied to
+location. `TermHandle<'a>` SHALL be an opaque fsl-package-owned value tied to
 the exact borrowed `AdmittedEvaluationView` and owning body. Its fields and
-constructor SHALL be private to the qsl-package module that owns
+constructor SHALL be private to the fsl-package module that owns
 `AdmittedEvaluationView`; its opaque type MAY be named and borrowed through
 public read interfaces. That view SHALL mint a handle only after validating
 the typed descriptor and the selected expression against its admitted owner.
@@ -364,21 +364,21 @@ another view. `ProtocolSlot`, `SelectedProtocolTerm`, source descriptors and
 `CallFailure` SHALL remain layer-5 inputs and results; layer 4 SHALL import
 none of those layer-5 types.
 
-The qsl-package descriptor SHALL not be a mintable authority or a
+The fsl-package descriptor SHALL not be a mintable authority or a
 checked-term construction capability. The public API SHALL expose no
 constructor for a `TermHandle`; it SHALL expose handles only as results of the
-qsl-package view's validated single selector. This module-privacy boundary
-SHALL be verified with external-crate compile-fail probes from both qsl-eval
+fsl-package view's validated single selector. This module-privacy boundary
+SHALL be verified with external-crate compile-fail probes from both fsl-eval
 and an unrelated consumer for direct `TermHandle` construction and for
 attempted construction from a `NodeKey`, `CheckedNode`, decoded graph,
 free-standing term or another view. An API-surface inspection SHALL confirm
-that qsl-eval's sealed resolver only delegates the qsl-package descriptor and
+that fsl-eval's sealed resolver only delegates the fsl-package descriptor and
 cannot mint a handle or invoke a second selector. This design SHALL use no
 unsafe handoff and SHALL not enable checked-term construction.
 
 The layer-4 view SHALL expose
 `read_node<'v>(&'v self, handle: &TermHandle<'v>) ->
-Result<quire_checked::NodeRead<'v, TermHandle<'v>>, InternalFault>`.
+Result<filament_checked::NodeRead<'v, TermHandle<'v>>, InternalFault>`.
 The canonical result and its operation vocabulary SHALL be exactly
 [FR-400](FR-400-separate-checked-terms-from-the-checker.md)'s `NodeRead` and
 generic `NodeKind`, including their borrowed literal, type and location.
@@ -411,8 +411,8 @@ successful value or a new admission authority.
 The bridge SHALL preserve ADR-011 §6.1's layer edges and ADR-016's execution
 arrows: byte admission and typed projection live in layer 4, execution lives
 in layer 5, and the shared checked-term vocabulary stays below both. It SHALL
-NOT enable `quire-checked/construct` outside FR-400's existing allowlist or
-place IR types in `quire-checked`, `quire-eval` or the no_std evaluation closure.
+NOT enable `filament-checked/construct` outside FR-400's existing allowlist or
+place IR types in `filament-checked`, `filament-eval` or the no_std evaluation closure.
 
 ### Typed projection admission and upstream dependencies
 
@@ -421,7 +421,7 @@ literal payloads, operation members and location associations in the admitted
 closure before yielding a view. Resolution SHALL be fallible: IR's general
 value-type vocabulary SHALL NOT be presumed to represent every kernel
 `ValueType`. The view SHALL use the existing kernel `ValueType` as its only
-evaluation type vocabulary, with no QSL-owned type mirror, guessed identity
+evaluation type vocabulary, with no FSL-owned type mirror, guessed identity
 or fallback to an unchecked or serialized interpretation.
 
 Reader view creation SHALL take its selected identity witness from a required
@@ -496,7 +496,7 @@ bare/explicit-dereference semantics). FR-400 owns the canonical checked-term
 read vocabulary. The projections require protocol slot and binder
 identities/levels/types, exact source occurrences and callable/dispatch closure
 associations. IR's `expression::ValueType` is separate from the canonical
-evaluation target `quire_exact::ValueType`; neither a type-name match nor a
+evaluation target `filament_exact::ValueType`; neither a type-name match nor a
 structural `CheckedNodeId` is an admitted identity conversion. IR-1194 must
 supply exact `NodeKey`/`EffectiveId` associations for Composite and Reference
 and `UnitId` identities for Quantity. Evaluator reach is decided as follows:
@@ -504,14 +504,14 @@ and `UnitId` identities for Quantity. Evaluator reach is decided as follows:
 - Native `String`, `UUID` and `Timestamp` are runtime values. A slot may
   receive them from a literal, supplied binder, field read or function result,
   including inside an Option, Collection, Record, Tuple or Union payload.
-  Equality and inequality use the existing QSL FR-056 and QSpec FR-149
+  Equality and inequality use the existing FSL FR-056 and FSpec FR-149
   relations. This adds no ordering, arithmetic, normalization, coercion or
   literal grammar.
 - A Dimension is declaration/type metadata, not a runtime value. It is
   reachable only through a Quantity type: the reader SHALL join the exact
-  admitted unit identity to `quire_exact::UnitId` and retain the declared or
-  compound unit identity required by QSpec FR-142. Dimension equivalence and
-  conversion continue to follow QSpec FR-142; a dimension name or matching
+  admitted unit identity to `filament_exact::UnitId` and retain the declared or
+  compound unit identity required by FSpec FR-142. Dimension equivalence and
+  conversion continue to follow FSpec FR-142; a dimension name or matching
   exponent vector is not an identity witness.
 - An Alias is transparent type syntax, not a runtime value or a distinct
   evaluator type. Projection SHALL resolve its admitted target and use that
@@ -547,10 +547,10 @@ new wire field, operation or mode.
 For AC-11 and TC-1073, the upstream extensions SHALL at least cover Boolean,
 bounded Integer, the Receipt/Attempt/Flag/Tick record types with exact member
 and declaration identities, Node's object type, and Reference<Node> with its
-exact model/object identity, as TC-1070 fixture E defines. A type that QSL emits and evaluates
+exact model/object identity, as TC-1070 fixture E defines. A type that FSL emits and evaluates
 remains subject to complete AC-11 parity: an unsupported projection of such a
 type SHALL count as an unmet dependency, not a passing parity case or a scope
-reduction. Unrelated IR types that QSL cannot evaluate MAY return the typed
+reduction. Unrelated IR types that FSL cannot evaluate MAY return the typed
 unsupported admission above. A source-backed call or JSON inspection SHALL
 NOT stand in for reader-backed parity. Projection MAY traverse already
 admitted typed data, but SHALL NOT repeat admission or give a free-standing
@@ -569,13 +569,13 @@ owning slot. The existing S6a `Machine` SHALL walk those handles; a root is
 never evaluated by a special case of the machine that is keyed on the root's
 kind, and the machine holds no second walker for the reader.
 
-Every operation identity that QSpec FR-322 admits for an expression node and
+Every operation identity that FSpec FR-322 admits for an expression node and
 that FR-400 gives a `NodeKind` SHALL project to that kind. No `NodeKind` variant
 is outside the reader's surface, and a variant FR-400 later adds is covered by
 the exhaustive match of FR-400-AC-11.
 
 A reader `NodeRead` SHALL be derived from the admitted wire alone: the node's
-operation identity, mode, laws, member and leaves (QSpec FR-322), its
+operation identity, mode, laws, member and leaves (FSpec FR-322), its
 `equality_decisions` and `dispatch_tables` sidecar rows, its argument terms and
 its admitted result type. A reader view SHALL NOT consult the source
 package's `CheckedBody`, its node locations, its slot frame or its
@@ -615,7 +615,7 @@ origin name is the slot's, taken in ascending (occurrence ordinal,
 occurrence ordinal and that `term_ordinal` runs across origins). The `Location`
 of a read that is not an application (a literal, a `Local` or other reference, a
 `let` or a conditional) is the one its own admitted node carries (FR-383
-assumption A1, QSpec FR-322-AC-310 to AC-312). A location SHALL NOT
+assumption A1, FSpec FR-322-AC-310 to AC-312). A location SHALL NOT
 be taken from the source package, from a source region, or defaulted.
 
 View creation SHALL pair every slot of every protocol node of the package, and
@@ -633,7 +633,7 @@ visits in that slot, and the producer-defect classification
 origin's first row for that application, or `/checked_term_data/protocol_locations` when
 the origin has none. Because view creation is package-wide, this refusal leaves
 no view of the package, as every other unsupported projection does. A row set the
-QSpec FR-322 reader itself refuses (a missing predecessor ordinal, a duplicate
+FSpec FR-322 reader itself refuses (a missing predecessor ordinal, a duplicate
 key, a foreign or non-application node) is refused at I2 admission under
 FR-322-AC-291, before view creation is attempted.
 
@@ -643,13 +643,13 @@ FR-322 admits for expression nodes. An identity FR-322 admits with no FR-400
 input: no test vector exercises `MissingOperationProjection`, because no package can reach it, and AC-41 is its only check. It remains the typed `ViewFailure::Unsupported`
 reason at that node's locus for such a skew, carrying the package identity, the
 node key, the node location and the operation identity, before a view or meter
-charge exists. Every operation identity QSL emits for a slot expression SHALL
+charge exists. Every operation identity FSL emits for a slot expression SHALL
 project, and an unsupported result for one of them is an unmet dependency under
 AC-11 and AC-15.
 
 ### Source-declared operation calls from the reader
 
-QSL has no slot-expression syntax that applies an operation to arguments. A
+FSL has no slot-expression syntax that applies an operation to arguments. A
 slot reaches an operation only through the operation reference of a protocol
 node: the anchor named by `by <role> on <Type>::<operation>` of a `compensate`
 and by `attempt <name> by <role> on <Type>::<operation>` (TC-1070 fixture E,
@@ -668,7 +668,7 @@ the charge log the source route gives. It is not a typed refusal.
 **Source-operation identity row.** A source-declared operation anchor names no
 model operation member, and FR-400's operation vocabulary resolves an anchor
 only through one, so the reader view cannot recover a source-declared operation
-from the wire alone. QSL therefore SHALL produce, at the model-selection
+from the wire alone. FSL therefore SHALL produce, at the model-selection
 identity stage with the QSL-1377 rows, one source-operation identity row for
 each source-declared `state`/`operation_anchor` node of the emission, distinct
 from the selected-declaration, selected-field, source-record and source-union
@@ -712,7 +712,7 @@ execution, function and dispatch lookup as the source route.
 **Dependency on IR; behavior until it lands.** IR owns the FR-352 witness kind
 and the strict-reader read of it; this requirement edits neither. Until IR
 supplies a witness kind that accepts a source-declared operation anchor
-alongside a model-owned one, and the `ReadIdentityRows` leg that carries the QSL
+alongside a model-owned one, and the `ReadIdentityRows` leg that carries the FSL
 row to it, view creation for a package holding a source-declared operation
 anchor reached by a protocol node reports `ViewFailure::Unsupported` with
 `MissingSelectedJoin` at the `Node` locus of that anchor reference. View
@@ -763,7 +763,7 @@ check with its one record:
    SHALL refuse `missing_declaration`/`missing-name`, naming the member and, for
    an index defect, the index.
 3. The slot's **sources** are the binders its expression reads: the
-   `value`/`parameter` nodes of its dependency closure (QSpec FR-464's closure
+   `value`/`parameter` nodes of its dependency closure (FSpec FR-464's closure
    through `dependencies`, stopping at a binder node and at a function node). A
    protocol, registration or activation capture the expression reads is such a
    binder, so its captured value is a source. A capture slot's own binder is not
@@ -833,7 +833,7 @@ check with its one record:
    order above. When observation admission is required, the call SHALL inspect
    the supplied typed result after checks 1 through 5: `Refused` and
    `Incomplete` retain their respective failure kinds and the entire original
-   QSV admission record; `Fault` returns the original `InternalFault` through
+   FSV admission record; `Fault` returns the original `InternalFault` through
    `CallFailure::Fault`; no non-admitted arm yields an authority. For
    `Admitted`, admission SHALL verify the authority's association with this
    evaluated view and the protocol's selected model using FR-106's retained
@@ -884,7 +884,7 @@ value; check 6 does not apply to it.
 - If evaluation reads a binder supplied as `Unavailable`, then the evaluator
   SHALL stop and return `Unavailable` with that binder and the location of the
   read (`None` for a reader-backed view whose admitted wire carries no leaf
-  location for the read, QSpec FR-322-AC-310), keeping the charges already made. An `Unavailable` binder that
+  location for the read, FSpec FR-322-AC-310), keeping the charges already made. An `Unavailable` binder that
   evaluation does not read has no effect on the result.
 - If the meter denies a charge, then the evaluator SHALL return
   `Outcome::Incomplete` naming the counter, `resource_exhausted`/
@@ -893,7 +893,7 @@ value; check 6 does not apply to it.
 - A family result is mapped as FR-090 and FR-100 map it.
 - A package holds no capture that reads itself, a capture written later or
   another template's capture: S3 refuses each (FR-381) and the contract reader
-  refuses a package whose nodes hold one (QSpec FR-464), so the evaluator is
+  refuses a package whose nodes hold one (FSpec FR-464), so the evaluator is
   never given one.
 
 ### Shared accounting and determinism
@@ -926,13 +926,13 @@ value; check 6 does not apply to it.
 | FR-390-AC-11 | Running one call twice gives equal results and charge logs; a call over the package the contract reader returns for FR-383's emitted nodes gives the same result and charge log as over the checked package that was emitted; a refused call leaves the meter as it was. | Test (TC-1073) |
 | FR-390-AC-12 | A package whose capture initializer reads itself, a later capture or another template's capture is refused at S3 (FR-381) and no package is built; a package mutated in its bytes so an activation capture's initializer reads its own binder, or another template's capture binder, is refused by the contract reader with `missing_declaration`/`missing-name` (`read` `forward` and `foreign`), and no evaluation call is possible. | Test (TC-1074) |
 | FR-390-AC-13 | With the S6a probe variant of FR-107-AC-6 added, the build fails with E0004 at exactly the checked-in S6a seam list: the arm serving state clauses and protocol slots is the one `ProtocolClause` arm. | Test (TC-1074) |
-| FR-390-AC-14 | A consumer can obtain a view from an in-process package and from a successful I2 reader result. The qsl-package view's validated single slot selector returns an opaque `TermHandle` tied to that exact view. External-crate compile-fail probes from qsl-eval and an unrelated consumer prove they cannot construct a `TermHandle` directly or from a `NodeKey`, `CheckedNode`, decoded graph, free-standing term, `ImportView`, raw bytes, integer or another view. API-surface inspection confirms the handle constructor is private to qsl-package and qsl-eval's sealed resolver delegates only the plain-data slot descriptor, with no duplicate selector or handle construction path. A refused, limited, cancelled or faulted read exposes no evaluation view. | Test |
+| FR-390-AC-14 | A consumer can obtain a view from an in-process package and from a successful I2 reader result. The fsl-package view's validated single slot selector returns an opaque `TermHandle` tied to that exact view. External-crate compile-fail probes from fsl-eval and an unrelated consumer prove they cannot construct a `TermHandle` directly or from a `NodeKey`, `CheckedNode`, decoded graph, free-standing term, `ImportView`, raw bytes, integer or another view. API-surface inspection confirms the handle constructor is private to fsl-package and fsl-eval's sealed resolver delegates only the plain-data slot descriptor, with no duplicate selector or handle construction path. A refused, limited, cancelled or faulted read exposes no evaluation view. | Test |
 | FR-390-AC-15 | For every TC-1070 slot, AC-11 compares the in-process view with a view obtained by emitting and actually admitting that package's bytes: the complete result (including value, unavailable binder, catalog code/cause, location and losses) and every ordered charge-log entry are equal. Repeat for unavailable and short-circuited supplies, each AC-9 counter boundary, and AC-10's shared-meter sequence; each selection/supply refusal has the same locus and leaves its meter unchanged. No fixture recompiles source to produce the reader-side evaluation. | Test |
-| FR-390-AC-16 | Inspection finds one qsl-package slot selector behind `AdmittedEvaluationView` and one existing machine/ProtocolClause execution path for both input variants, using FR-400's single generic `NodeKind` read vocabulary and no checked-term reconstruction, new `construct` caller, duplicate qsl-eval selector or second family dispatch. The qsl-package descriptor is its own public plain-data input type and grants no mint authority; qsl-eval's sealed resolver delegates that descriptor and never constructs a `TermHandle`. qsl-package imports no layer-5 selection type. With `std` off the in-process view compiles without IR; the reader-result entry is absent, and the existing no_std closure acquires no dependency on IR or `std`. | Inspection |
+| FR-390-AC-16 | Inspection finds one fsl-package slot selector behind `AdmittedEvaluationView` and one existing machine/ProtocolClause execution path for both input variants, using FR-400's single generic `NodeKind` read vocabulary and no checked-term reconstruction, new `construct` caller, duplicate fsl-eval selector or second family dispatch. The fsl-package descriptor is its own public plain-data input type and grants no mint authority; fsl-eval's sealed resolver delegates that descriptor and never constructs a `TermHandle`. fsl-package imports no layer-5 selection type. With `std` off the in-process view compiles without IR; the reader-result entry is absent, and the existing no_std closure acquires no dependency on IR or `std`. | Inspection |
 | FR-390-AC-17 | An admitted IR type without a kernel representation yields `ViewFailure::Unsupported` before any view exists, with `unknown_required_feature`/`unsupported-feature`, the affected package and `Node` locus containing its `NodeKey` and `Location`, and `MissingTypeRepresentation`; missing, unknown or foreign QSL-1377 producer rows yield `MissingIdentityWitness`, `UnknownIdentityWitness` or `ForeignIdentityWitness`, respectively, at the deterministic `Package` locus after successful I2 admission and before node projection. Each identity-witness refusal yields no partial view or meter charge and leaves successful I2 admission intact. A missing literal, operation or binding projection yields its corresponding typed reason at the affected `Node` locus. A projection-resource limit yields `Limit`, no partial view. A handle from another owner returns an invariant fault rather than a node. | Test |
-| FR-390-AC-18 | Reader views resolve Boolean, bounded Integer, record/composite and Reference<Node> identities of TC-1070 fixture E to the exact kernel values/types of the in-process view, including recursively nested Option/Collection values used by a slot. AC-11/15 fail if a required QSL-emitted type is reported unsupported; unsupported cases cannot replace any required result/log comparison. | Test |
+| FR-390-AC-18 | Reader views resolve Boolean, bounded Integer, record/composite and Reference<Node> identities of TC-1070 fixture E to the exact kernel values/types of the in-process view, including recursively nested Option/Collection values used by a slot. AC-11/15 fail if a required FSL-emitted type is reported unsupported; unsupported cases cannot replace any required result/log comparison. | Test |
 | FR-390-AC-19 | A bare `view.total` read and an explicit `deref(view).total` read over the same observation retain their respective in-process charge logs through emitted-package admission and `NodeRead`, including FR-107's explicit-dereference charge distinction. If the representation erases that distinction, view creation returns `MissingChargeSemantics` before a view or meter charge exists, and AC-11 remains unmet; equal completed values or an unsupported result cannot pass the required parity comparison. | Test |
-| FR-390-AC-20 | TC-1071 row 20 uses a successful immutable observation authority in the typed result; although `n5` exists, `nodes` incomplete returns `CallFailure::Admission` with category incomplete, the population locus and the unchanged QSV FR-106 record. An unrelated incomplete population does not alter the successful call. The meter is unchanged on either admission failure. | Test |
+| FR-390-AC-20 | TC-1071 row 20 uses a successful immutable observation authority in the typed result; although `n5` exists, `nodes` incomplete returns `CallFailure::Admission` with category incomplete, the population locus and the unchanged FSV FR-106 record. An unrelated incomplete population does not alter the successful call. The meter is unchanged on either admission failure. | Test |
 | FR-390-AC-21 | TC-1071 row 21 supplies the `Refused` result of FR-106 current-snapshot admission for another model and returns the original `invalid_model_binding`/`wrong-model-selection` record without a foreign-reference replacement. `Incomplete` preserves its kind/record and `Fault` preserves its `InternalFault`; none supplies successful authority or charges the meter. | Test |
 | FR-390-AC-22 | A malformed slot, duplicate source, unknown source, missing source and wrong-shaped value combined with a refused observation result return the corresponding check-1-through-5 failure before the observation result is inspected. With those defects absent, a reference-valued source and no observation returns the existing unavailable-observation record; a present failed result returns its original arm. All failures leave the caller's existing meter unchanged, and TC-1071 row 22 charges only its successful evaluation. | Test |
 | FR-390-AC-23 | TC-1070's E-P procedure carries one exact population declaration for every root and nested reference occurrence in a supplied source, including record, present-option and sequence paths. Its `Receipt.peer: Reference<Other>` is present in the supplied forward `Receipt` despite the selected initializer reading only `forward.total`; `Other` is not a direct protocol context, while `otherNodes` and `otherSpare` both declare `Other`. A missing, duplicate, extra or non-reference path refuses with the existing cause and typed path before observation inspection; a declaration from another model refuses `invalid_model_binding`/`wrong-model-selection`; wrong normalized identity/type refuses with its existing cause. A ghost key explicitly attributed to an empty `otherSpare` marked incomplete, or to an unlisted `otherSpare`, returns `incomplete_population`/`incomplete-scope` at that declaration node even if a matching object is present in `otherNodes`; the same ghost against a complete empty `otherSpare` returns `dangling_reference`/`absent-target-in-complete-population` for `otherSpare`. An unrelated incomplete population leaves the call admissible. Completing the seeded population then exposes any dangling reference in the recursive reference-field or relationship-end closure in FR-106 walk order. Every refusal/incomplete result retains the original shared FR-106 `AdmissionRecord`, and the meter is unchanged. | Test (TC-1070) |
@@ -951,8 +951,8 @@ value; check 6 does not apply to it.
 | FR-390-AC-36 | In the package of AC-35 no slot of the package has a view, and no meter was charged. | Test (TC-1070) |
 | FR-390-AC-37 | With one retry-origin row for `earlier.tally` inserted directly after the occurrence-1 `earlier.tally` row, keyed to occurrence 1 at `term_ordinal` 1, the next consecutive ordinal of that group (I2 admits it), view creation returns `MissingLocationProjection` at the `Node` locus of the `earlier.tally` application, carrying row index 2, two visits and the pointer to the `Refund` origin's first `earlier.tally` row's `location/origin`, before any view or meter charge. | Test (TC-1070) |
 | FR-390-AC-38 | With one retry-origin row added for the application `order >= 0` of fixture E's `Applied` constraint, at `term_ordinal` 1, the next consecutive ordinal after that group's one ordinal-zero row (I2 admits it), view creation returns `MissingLocationProjection` at the `Node` locus of that application, carrying the retry origin of `Refund`, row index 0, zero visits and the pointer `/checked_term_data/protocol_locations/<index of the added row>/location/origin`, before any view or meter charge. | Test (TC-1070) |
-| FR-390-AC-39 | With the `term_ordinal` of the retry-origin `earlier.tally` row keyed to occurrence 1 changed from 0 to 1 (a group with no ordinal-zero row), the QSpec FR-322 reader refuses at I2 admission with `invalid_package`/`invalid-value` at `/checked_term_data/protocol_locations` (FR-322-AC-291), and no view creation is attempted. | Test (TC-1070) |
-| FR-390-AC-40 | With a retry-origin `earlier.tally` row duplicated (same key, next to the original), the QSpec FR-322 reader refuses at I2 admission with `invalid_package`/`conflicting-definition` at `/checked_term_data/protocol_locations/<index of the duplicate>` (QSpec vector PL-R1-duplicate-term, FR-322-AC-291), and no view creation is attempted. | Test (TC-1070) |
+| FR-390-AC-39 | With the `term_ordinal` of the retry-origin `earlier.tally` row keyed to occurrence 1 changed from 0 to 1 (a group with no ordinal-zero row), the FSpec FR-322 reader refuses at I2 admission with `invalid_package`/`invalid-value` at `/checked_term_data/protocol_locations` (FR-322-AC-291), and no view creation is attempted. | Test (TC-1070) |
+| FR-390-AC-40 | With a retry-origin `earlier.tally` row duplicated (same key, next to the original), the FSpec FR-322 reader refuses at I2 admission with `invalid_package`/`conflicting-definition` at `/checked_term_data/protocol_locations/<index of the duplicate>` (FSpec vector PL-R1-duplicate-term, FR-322-AC-291), and no view creation is attempted. | Test (TC-1070) |
 | FR-390-AC-41 | Inspection finds the identity-to-`NodeKind` map total over the operation identities FR-322 admits for expression nodes, so `MissingOperationProjection` is reachable only through a skew between FR-322 and FR-400; no package can be built that reaches it, so no vector exists. | Inspection |
 | FR-390-AC-42 | Over fixture E-C of TC-1070, slots rooted at a `let`, a conditional and a case evaluate through the reader view to the value and ordered charge log of the checked package, and each position's `Location` equals that of the checked package's term. | Test (TC-1070) |
 | FR-390-AC-43 | Over fixture E-C, slots rooted at a dereference and at integer arithmetic (add, negate and divide) and an explicit widening coercion evaluate to the value and ordered charge log of the checked package, with equal `Location` values. | Test (TC-1070) |
@@ -976,7 +976,7 @@ value; check 6 does not apply to it.
 | FR-390-AC-61 | In fixture E-C, the handle of the `let` node of `Composed.let` reads the `Location` of its own admitted node, equal to the checked package's, and no row names it. | Test (TC-1070) |
 | FR-390-AC-62 | In fixture E-C, the handle of the conditional node of `Composed.if` reads the `Location` of its own admitted node, equal to the checked package's, and no row names it. | Test (TC-1070) |
 | FR-390-AC-63 | In fixture E-C, the handle of the case node of `Composed.case` reads the `Location` of its own admitted node, equal to the checked package's, and no row names it. | Test (TC-1070) |
-| FR-390-AC-64 | The `Unavailable` result's read location is `Some(location)` for a view backed by the in-process checked package, and for a reader-backed view `Some(location)` when the read's leaf node carries a location of its own (QSpec FR-322-AC-310) and `None` when the admitted wire carries none for it; QSL supplies no location the wire did not. Over TC-1072 row 1 read through each backing, the first two give the read of `activated` located and the third gives `Unavailable` naming the binder and the cause with `None`. | Test (TC-1072) |
+| FR-390-AC-64 | The `Unavailable` result's read location is `Some(location)` for a view backed by the in-process checked package, and for a reader-backed view `Some(location)` when the read's leaf node carries a location of its own (FSpec FR-322-AC-310) and `None` when the admitted wire carries none for it; FSL supplies no location the wire did not. Over TC-1072 row 1 read through each backing, the first two give the read of `activated` located and the third gives `Unavailable` naming the binder and the cause with `None`. | Test (TC-1072) |
 | FR-390-AC-65 | For every slot of TC-1070 fixtures E, E-C and L the source route's selected descriptor and the bytes route's agree on the triple (node, member, index), the root node key and the origin; the bytes route's descriptor carries no span, and in fixture L `Decide.visible[0]` and `Decide.cases.guard[1]`, which share the root `got.ready`, select distinct origins. | Test (TC-1070) |
 | FR-390-AC-66 | The bytes route reports `MissingIdentityWitness`, `ForeignIdentityWitness`, `UnknownIdentityWitness` and the three equality-witness reasons as `CallAdmissionLocus::Package`, and the in-process reader view reports the same three identity-witness reasons as the `Package` locus of `UnsupportedView`; neither reports a `Node` or `Binder` locus for them. | Test (TC-1070) |
 | FR-390-AC-67 | View creation reports the first unsupported projection by package identity, then locus (`Package` before `Node`), then node key, then reason. A package with a `MissingTypeRepresentation` at a `Node` locus and a `ForeignIdentityWitness` reports `ForeignIdentityWitness`; with `MissingLiteralProjection` at a `Node` locus and `MissingEqualityWitness` reports `MissingEqualityWitness`; with `ForeignIdentityWitness` and `MissingEqualityWitness` (both `Package`) reports `ForeignIdentityWitness`, the reason order breaking the tie; with `MissingIdentityWitness` and `MissingEqualityWitness` reports `MissingIdentityWitness`. The three equality-witness reasons never co-occur over one supply: over a slot that reaches an equality application, a supply with no equality rows reports `MissingEqualityWitness` alone; rows of another package report `ForeignEqualityWitness` alone, also when those rows hold no row of the application; and the package's own rows with the row of the reached application removed report `UnknownEqualityWitness` alone. The equality-witness reasons are at the `Package` locus and charge nothing. | Test (TC-1070) |
@@ -1007,20 +1007,20 @@ value; check 6 does not apply to it.
   protocol and its frozen captures.
 - [FR-383](FR-383-emit-a-checked-protocol-as-v2-protocol-nodes.md): the emitted
   protocol nodes and their read-back.
-- QSpec FR-464, FR-465, FR-466 (the protocol node bodies, the stages and the
+- FSpec FR-464, FR-465, FR-466 (the protocol node bodies, the stages and the
   slots that bar model state), FR-322 (the checked package), FR-056, FR-057,
   FR-058 (compensation registration, commit, retry and recovery).
 - IR FR-352 (Contract IR; IR-1213, QSL-1398): the capability kind that
   witnesses an operation anchor for the reader. IR owns it and today witnesses
   only model-owned operation anchors. Source-declared operation calls
   (FR-390 "Source-declared operation calls from the reader", QSL-1400) require
-  IR to add a witness kind that accepts the QSL source-operation identity row
+  IR to add a witness kind that accepts the FSL source-operation identity row
   (`source_authority`, `source_identity`, `anchor_id`) and its strict-reader
-  join; QSL edits no IR file. QSL-852 AC-11 does not depend on it.
+  join; FSL edits no IR file. QSL-852 AC-11 does not depend on it.
 - [FR-531](FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md)
   and [FR-517](FR-517-write-a-checked-package-handoff-directory-from-source-in-process.md):
   the `source_operations` and `source_objects` members of `identities.json`
   (`identities/4`).
-- [FR-569](FR-569-declare-object-types-populations-and-operations-in-qsl-source.md):
+- [FR-569](FR-569-declare-object-types-populations-and-operations-in-fsl-source.md):
   the source `object` declaration that declares a source-declared operation,
   and the source-object identity rows.

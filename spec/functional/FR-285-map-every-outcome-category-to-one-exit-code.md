@@ -3,33 +3,33 @@ id: FR-285
 title: "Map every outcome category to one exit code through one total function"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-301"
+  - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
 ---
 # FR-285: Map every outcome category to one exit code through one total function
 
 ## Description
 
-QSL F `diagnostic`, which holds the ADR-013 O-16 category type, SHALL define
+FSL F `diagnostic`, which holds the ADR-013 O-16 category type, SHALL define
 one total function from an O-16 category to an exit code (ADR-029 CB-4).
 
-The category type is `Category`, in `qsl-foundation`'s `diagnostic` module.
+The category type is `Category`, in `fsl-foundation`'s `diagnostic` module.
 It is the one O-16 category type: a stage or call outcome's category and a
 terminal record's category (ADR-013 O-24) are both `Category`, and no proof
 result has a category type of its own.
-Every frontend takes its exit code from this function only: QSL's `command`
+Every frontend takes its exit code from this function only: FSL's `command`
 operation (FR-027, FR-100), the driver's `quire` binary and a qualified
 binary.
 
@@ -63,14 +63,14 @@ the trace lacks the data to decide the claim. It exits 11, a code of its own, so
 a script that tests for exit 10 does not read it as a violation and one that
 tests for 0 does not read it as success. The code sits in the evaluation-result
 decade beside 10 and ranks below it in severity, so an indeterminate item never
-hides a violation in a multi-item outcome. QSpec FR-301 owns the exit-code
+hides a violation in a multi-item outcome. FSpec FR-301 owns the exit-code
 catalog; it must add 11 and the order below (see References).
 
-QSpec FR-301 gives exit 22 to an incomplete result and exit 0 to a run
+FSpec FR-301 gives exit 22 to an incomplete result and exit 0 to a run
 that completed without violation. An inconclusive proof or `analyze` item
 did not settle its claim, so it is incomplete and exits 22. A supplied-trace
 clause still pending when the trace ends (FR-283) observed no violation, so
-it has the category pending, a category of its own that is not QSpec's
+it has the category pending, a category of its own that is not FSpec's
 inconclusive, and exits 0. The machine-output record of a pending item SHALL
 carry the status `pending` and the ids of the pending clauses, so that a
 consumer can tell "no violation observed" from "all obligations discharged".
@@ -78,8 +78,8 @@ consumer can tell "no violation observed" from "all obligations discharged".
 ### The catalog owns the label and the exit
 
 `Category` is the shared semantic catalog's type
-(`quire_semantic_value::catalog::Category`), which holds exactly the ten values of
-the table, `Pending` and `Indeterminate` included. QSL reads the label (`as_str`)
+(`filament_semantic_value::catalog::Category`), which holds exactly the ten values of
+the table, `Pending` and `Indeterminate` included. FSL reads the label (`as_str`)
 and the exit (`exit_code`) of every temporal and every other outcome from the
 catalog's `Category` and keeps no local mapping from an outcome to a label or an
 exit: a pending outcome has `Category::Pending` (label `pending`, exit 0) and not
@@ -93,7 +93,7 @@ unsupported, incomplete, pending, indeterminate, inconclusive, internal-failure,
 are 0, 10, 10, 20, 21, 22, 0, 11, 22, 30, and they equal the table above.
 
 A multi-item outcome exits with the most severe code present, in the order
-30, 20, 21, 22, 10, 11, 0 (QSpec FR-301's order with 11 added below 10).
+30, 20, 21, 22, 10, 11, 0 (FSpec FR-301's order with 11 added below 10).
 
 A `StageFailure::Refused` or `StageFailure::Limit` that carries `protocol_results`
 (FR-503) takes its category from its own cause alone: the first `Refused` result
@@ -123,7 +123,7 @@ One exit code.
 - The exit function shall map each O-16 category to the code the table
   states.
 - The exit function shall map the category indeterminate to 11.
-- The QSL entry shall read the label and the exit of every outcome from the
+- The FSL entry shall read the label and the exit of every outcome from the
   catalog's `Category` and shall keep no local mapping, and the run path and the
   multi-item ranking shall read the catalog and no other table.
 - The exit of a category shall equal its trace exit for every category.
@@ -137,9 +137,9 @@ One exit code.
   the Description states.
 - A non-proof evaluation item whose category is undefined shall keep the
   label `undefined` in its machine-output record.
-- Each QSL frontend shall derive its exit code from this function only.
-- Every QSL outcome and terminal record shall report its category as the
-  one `qsl-foundation` `Category`.
+- Each FSL frontend shall derive its exit code from this function only.
+- Every FSL outcome and terminal record shall report its category as the
+  one `fsl-foundation` `Category`.
 
 ## Acceptance Criteria
 
@@ -155,7 +155,7 @@ One exit code.
 | FR-285-AC-8 | A `StageFailure::Refused` carrying `protocol_results` [W `Emitted`, X `Refused` with an `ill_typed` cause] exits 20, one whose first `Refused` result has a profile-gated cause exits 21, and a `StageFailure::Limit` carrying [W `Emitted`, Z `Incomplete`] exits 22; removing the payload from each changes neither category nor exit. | Test (TC-769) |
 | FR-285-AC-9 | A clause pending when its supplied trace ends has `Category::Pending`, exits 0 with the label `pending`, not `Category::Inconclusive`; its machine-output record carries the status `pending` and the ids of the pending clauses, and a run whose clauses are all discharged carries no pending status and no pending ids; a `monitor` OutcomeDocument whose only item is a pending clause (FR-286-AC-8) has category pending, exits 0 and names the clause. | Test (TC-769, TC-770) |
 | FR-285-AC-10 | The label and exit that `run_clause` reports for a finite-window `Pending`, `Indeterminate`, `Completed(true)`, `Completed(false)` and `Incomplete` outcome equal the label and exit the multi-item ranking reads for the same outcome. | Test (TC-769) |
-| FR-285-AC-11 | The label and exit of a finite-window `Pending` and `Indeterminate` outcome equal the catalog's `Category::Pending.as_str()` and `exit_code()` (`pending`, 0) and `Category::Indeterminate.as_str()` and `exit_code()` (`indeterminate`, 11), and QSL production source holds no local mapping: it contains no literal `("pending", 0)` or `("indeterminate", 11)` label and exit pair and no `match` over a temporal or trace outcome (`TemporalCategory`, `ClauseDisposition` or an equivalent) that yields a label or an exit code, every label and exit being obtained by calling the catalog's `as_str`, `exit_code` or `trace_exit_code` on a `Category` value. | Test (TC-769) |
+| FR-285-AC-11 | The label and exit of a finite-window `Pending` and `Indeterminate` outcome equal the catalog's `Category::Pending.as_str()` and `exit_code()` (`pending`, 0) and `Category::Indeterminate.as_str()` and `exit_code()` (`indeterminate`, 11), and FSL production source holds no local mapping: it contains no literal `("pending", 0)` or `("indeterminate", 11)` label and exit pair and no `match` over a temporal or trace outcome (`TemporalCategory`, `ClauseDisposition` or an equivalent) that yields a label or an exit code, every label and exit being obtained by calling the catalog's `as_str`, `exit_code` or `trace_exit_code` on a `Category` value. | Test (TC-769) |
 | FR-285-AC-12 | A finite-window `Pending`, `Indeterminate`, `Completed(true)`, `Completed(false)` and `Incomplete` outcome has the label and exit `pending`/0, `indeterminate`/11, `success`/0, `violation`/10 and `incomplete`/22. | Test (TC-769) |
 
 ## Dependencies
@@ -163,19 +163,19 @@ One exit code.
 - ADR-029 CB-4: the exit table, ruling RU-1.
 - ADR-013 O-16, T-4: the categories and the failure types.
 - ADR-011 §5: one total exit function.
-- **Delivery:** FR-285-AC-11 and TC-769 step 10, and the category-and-exit half of FR-285-AC-9, are delivered by QSL-1574, which removes QSL's local temporal outcome-to-category mapping. The monitor half of FR-285-AC-9 (a `monitor` OutcomeDocument built from clause runs whose only item is a pending clause, exit 0) is delivered by QSL-1622 through FR-286-AC-8 and FR-286-AC-9.
-- The shared semantic catalog (`quire-semantic-value`): the ten-value `Category`
+- **Delivery:** FR-285-AC-11 and TC-769 step 10, and the category-and-exit half of FR-285-AC-9, are delivered by QSL-1574, which removes FSL's local temporal outcome-to-category mapping. The monitor half of FR-285-AC-9 (a `monitor` OutcomeDocument built from clause runs whose only item is a pending clause, exit 0) is delivered by QSL-1622 through FR-286-AC-8 and FR-286-AC-9.
+- The shared semantic catalog (`filament-semantic-value`): the ten-value `Category`
   with `Pending` and `Indeterminate`, `exit_code` and `trace_exit_code`;
   FR-285-AC-11.
-- [FR-027](FR-027-export-compiled-native-package.md), [FR-100](FR-100-run-a-named-function-through-the-spine.md): QSL `command`'s exit codes.
-- QSpec FR-301: the six exit codes and the severity order, with undefined at
-  10 as the QSpec half in References aligns it.
+- [FR-027](FR-027-export-compiled-native-package.md), [FR-100](FR-100-run-a-named-function-through-the-spine.md): FSL `command`'s exit codes.
+- FSpec FR-301: the six exit codes and the severity order, with undefined at
+  10 as the FSpec half in References aligns it.
 
 ## References
 
 - QSL-390 (ARCH-50): ruling RU-1, recorded on the ticket, and the
   team-leader decision ADR-029's References records, which reconciles RU-1
   with the QSL-366 ruling for proof items.
-- QSpec FR-301-AC-2 (STD-141): the QSpec half. QSpec must add exit 11 for the
+- FSpec FR-301-AC-2 (STD-141): the FSpec half. FSpec must add exit 11 for the
   category indeterminate and the order 30, 20, 21, 22, 10, 11, 0 to its exit
   table; the mirror is tracked on QSL-1500.

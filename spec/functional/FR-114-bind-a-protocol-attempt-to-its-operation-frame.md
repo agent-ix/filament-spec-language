@@ -3,19 +3,19 @@ id: FR-114
 title: "Bind a protocol attempt to its operation's anchor and frame"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-006
+  - target: ix://agent-ix/filament-spec-language/US-006
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-013
+  - target: ix://agent-ix/filament-specification/FR-013
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-340
+  - target: ix://agent-ix/filament-specification/FR-340
     type: depends_on
 ---
 # FR-114: Bind a protocol attempt to its operation's anchor and frame
@@ -25,7 +25,7 @@ relationships:
 A protocol operation is an `attempt N by R on M::T::op contracts [...]`
 event node. Its frame is the frame of the model operation it attempts: the
 `modifies`, `creates` and `deletes` that FR-103 admits from the domain
-package into the operation's `OperationEffect`. QSpec gives an attempt no
+package into the operation's `OperationEffect`. FSpec gives an attempt no
 frame of its own: an attempt runs "without bypassing the operation's
 model/frame contract" (`choreography-surface.md`), and "a caller cannot
 substitute a more permissive frame" (`state-contract.md`, FR-013).
@@ -78,7 +78,7 @@ FR-105's and are pending STD-111, as FR-105's are.
 - If a `contracts` entry names an invariant, or a `pre` or `post` clause
   anchored at another operation anchor, then the checker SHALL refuse
   `wrong_snapshot`/`wrong-anchor` at the entry, naming the attempt's anchor
-  and the clause's anchor (QSpec: "Listed state pre/postcondition
+  and the clause's anchor (FSpec: "Listed state pre/postcondition
   declarations must match this operation and its invocation anchors").
 - The checker SHALL admit an empty `contracts` list, and the attempt still
   binds its operation's anchor and frame.
@@ -105,6 +105,6 @@ FR-105's and are pending STD-111, as FR-105's are.
 - FR-103 (operations and their frames at I1 and E3), FR-104 (operation
   resolution, frame requirement records), FR-105 (the one anchor and frame
   node per operation), FR-113 (the protocol's scope check).
-- QSpec FR-013 (a caller cannot enlarge a frame), FR-340 (frame body),
+- FSpec FR-013 (a caller cannot enlarge a frame), FR-340 (frame body),
   `choreography-surface.md` (the `attempt` row), `state-contract.md`.
-- STD-111 (QSpec) for the emitted spellings, as FR-105 states.
+- STD-111 (FSpec) for the emitted spellings, as FR-105 states.

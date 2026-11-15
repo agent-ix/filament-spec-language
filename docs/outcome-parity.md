@@ -1,7 +1,7 @@
 # Outcome parity: the lifecycle conformance matrix
 
-`qsl-conformance` publishes the cases that both halves of FR-564 run: this
-repository through the library, the driver repository through the `quire` CLI.
+`fsl-conformance` publishes the cases that both halves of FR-564 run: this
+repository through the library, the driver repository through the `fsl` CLI.
 The crate holds the only copy of a case (FR-565).
 
 ## Shape
@@ -34,12 +34,12 @@ The crate holds the only copy of a case (FR-565).
   diagnostic, which `analyze` settles as `Unsupported`. The `prove` unsupported cell is EN-1's
   `RequiresBound` refusal over a model with an unbounded `Integer` field.
 - `run_case(case)` runs the library operation with an empty registry and
-  `Engines::qsl()`; `run_case_with(case, registry, engines)` takes the
-  driver's registry (it links the Kani backend, QSL cannot) and engines. Both
+  `Engines::fsl()`; `run_case_with(case, registry, engines)` takes the
+  driver's registry (it links the Kani backend, FSL cannot) and engines. Both
   read no file and return a `CaseOutcome`: the typed FR-286 `OutcomeDocument`
   (for the `prove` row, the `OutcomeItem`), the terminal records an `analyze`
   or `prove` case settled, for an `execute` case the typed
-  `qsl_eval::execution::execute` result (the `CallFailure` FR-564-AC-3 names;
+  `fsl_eval::execution::execute` result (the `CallFailure` FR-564-AC-3 names;
   it is a separate call from the document's, because no public function
   derives the FR-286 document from a typed result, and `ExecuteResult` has no
   equality, because `Evaluation` has none),
@@ -49,9 +49,9 @@ The crate holds the only copy of a case (FR-565).
 - Every source is read under the case's explicit `source_authority` and
   `source_identity`. A file name locates bytes; it does not supply their authored
   label. The driver must pass the same labels in its request. Published parse
-  and format syntax is `quire parse <authority> <identity> <file>` and
-  `quire format <authority> <identity> <file>`; compile and run take request
-  files carrying their labels. Machine output remains one `quire-outcome/1`
+  and format syntax is `fsl parse <authority> <identity> <file>` and
+  `fsl format <authority> <identity> <file>`; compile and run take request
+  files carrying their labels. Machine output remains one `filament-outcome/1`
   document. This crate publishes library lifecycle cases; it does not wire
   additional driver verbs.
 
@@ -68,7 +68,7 @@ The crate holds the only copy of a case (FR-565).
   version is a compile-time constant. The test covers the first half only and
   carries no `FR-567-AC-5` tag.
 - FR-567's `parity` part reports `no-backend`: FR-563's runner arrives from the
-  jit lane's branch and moves into `qsl-conformance` after this lands.
+  jit lane's branch and moves into `fsl-conformance` after this lands.
 
 ## What the driver companion exposes
 
@@ -100,7 +100,7 @@ theirs through `MonitorOutcome::document`, `MonitorRefusal::document`,
 settles carries its FR-272 diagnostic as the item's `diagnostic` member,
 `{code, cause, detail}` with `detail` keyed by FR-272 payload names, and for
 `unsupported` no `cause` (FR-286). A `declined` invalid-request item carries
-both `cause` and `diagnostic` (QSpec FR-331).
+both `cause` and `diagnostic` (FSpec FR-331).
 
 A whole-request refusal, a cancel before the first stage and a fault write
 `last_stage` `null`; the front-end operations write the stage they reached.

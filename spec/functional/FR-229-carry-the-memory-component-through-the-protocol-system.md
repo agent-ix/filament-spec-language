@@ -3,27 +3,27 @@ id: FR-229
 title: "Carry the memory component through the protocol system's memory-model seam"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-216
+  - target: ix://agent-ix/filament-spec-language/FR-216
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-434
+  - target: ix://agent-ix/filament-specification/FR-434
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-426
+  - target: ix://agent-ix/filament-specification/FR-426
     type: depends_on
 ---
 # FR-229: Carry the memory component through the protocol system's memory-model seam
@@ -54,7 +54,7 @@ matters.
 
 ## Outputs
 
-- The memory member of `ProtocolKey` (FR-205) in QSpec FR-181's typed
+- The memory member of `ProtocolKey` (FR-205) in FSpec FR-181's typed
   canonical form: buffers as sequences; message sequences in mo; views as
   maps from location to message position; the SC event graph; the race
   summary.
@@ -87,7 +87,7 @@ matters.
   branch-local location's thread value.
 - `flush(b)` SHALL be a position observed with a `memory` anchor naming the
   step, and memory steps and fence steps SHALL be uncounted for intervals
-  (QSpec FR-431, FR-435-AC-6).
+  (FSpec FR-431, FR-435-AC-6).
 
 ### Terminal states
 
@@ -135,10 +135,10 @@ matters.
 - [FR-120](FR-120-simulate-a-checked-package-s-state-family.md) (the
   application rule), FR-205 (the state key), FR-215 (the seam), FR-216
   (footprints), FR-220 (classification).
-- QSpec owns the memory-model contributions, the memory member of the state
-  key and the memory-step transition identity forms (QSpec FR-434, FR-426,
+- FSpec owns the memory-model contributions, the memory member of the state
+  key and the memory-step transition identity forms (FSpec FR-434, FR-426,
   FR-181).
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-434, FR-426 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-434, FR-426 (Linear STD-138).

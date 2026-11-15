@@ -3,19 +3,19 @@ id: FR-202
 title: "Replay a probabilistic witness"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-200
+  - target: ix://agent-ix/filament-spec-language/FR-200
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: depends_on
 ---
 # FR-202: Replay a probabilistic witness
@@ -27,7 +27,7 @@ WS-1 to WS-4): the initial state and binding, the bound, the witness
 scheduler over every scheduler, and evidence that is either a prefix-free
 set of finite paths whose exact probabilities sum past the bound, or a
 `Lower` or `Upper` certificate on the chain the witness induces.
-`qsl_replay::replay_probabilistic_witness`, a layer-6 facade entry beside
+`fsl_replay::replay_probabilistic_witness`, a layer-6 facade entry beside
 `replay_model_trace`, SHALL re-execute that evidence through `ModelSystem`
 and settle the item `refuted` only when it agrees (WS-5).
 
@@ -46,7 +46,7 @@ pub struct ProbabilisticCounterexample {
     pub initial_state: u32,
     pub binding: Option<Binding>,
     pub bound: Bound,
-        pub scheduler: Option<WitnessScheduler>,     // present over every scheduler and under a workload with free delays (QSpec FR-413)
+        pub scheduler: Option<WitnessScheduler>,     // present over every scheduler and under a workload with free delays (FSpec FR-413)
 
     pub evidence: WitnessEvidence,
 }
@@ -87,7 +87,7 @@ row order, each row's `given` and `free` name exactly the given and the free
 racing identities sorted by full schedule bytes, and each free delay lies in
 its identity's window; any other FreeDelays body is a disabled choice and
 refuses. This race-policy form cannot name IdleObserve or change a fixed
-workload weight. No guessed QSpec wire spelling is adopted by this semantic
+workload weight. No guessed FSpec wire spelling is adopted by this semantic
 contract.
 
 EN-5 SHALL form the WitnessScheduler from the optimizer's attaining policy on
@@ -113,7 +113,7 @@ race gives that post-key and elapsed amount.
   expected-reward refutations SHALL use certificate evidence.
 - For a quantile claim, replay SHALL classify each path as violating or
   not activated, sum their exact probabilities into `V` and `N`, and apply
-  QSpec FR-413's two-mass rule: `quantile q of M <= c` refutes when
+  FSpec FR-413's two-mass rule: `quantile q of M <= c` refutes when
   `V > (1 − q) · (1 − N)`; `quantile q of M >= c` refutes when `V > 0` and
   `V >= q · (1 − N)`. A path set that fails the rule SHALL settle
   `inconclusive`, `ReplayParity`. Subsystem evidence for a quantile claim
@@ -149,7 +149,7 @@ rather than accept an engine-supplied predicate or threshold.
 Typed evidence SHALL retain actual semantic action identities, resolved
 `ModelTransition` content and draws, initial and post-state content, and complete
 canonical product keys. The entry SHALL reuse the qualified semantic types
-(`ScheduledIdentity` and `ModelTransition`) without importing `qsl-analyze`
+(`ScheduledIdentity` and `ModelTransition`) without importing `fsl-analyze`
 product/action types or treating local state/action numbers as identities.
 The core SHALL independently re-enumerate enabled transitions, evaluate target
 predicates, check the scheduler, and recompute exact path mass and prefix freedom
@@ -274,7 +274,7 @@ an alias, fabricated parameter node or engine-supplied predicate SHALL NOT
 replace it. The existing item/package and binding checks and reproduced-token
 settlement contract apply unchanged.
 
-The core SHALL use `qsl-eval`'s qualified bounded-monitor initialization, step,
+The core SHALL use `fsl-eval`'s qualified bounded-monitor initialization, step,
 canonical key and terminal false-extension operations. It SHALL read position 0
 once, advance one position per actual resolved model step, include position h,
 and stop a path at its first decided verdict. Complete initial and post-product
@@ -330,7 +330,7 @@ unreplayed engine results and certificate acceptance alone SHALL NOT become a
 bounded refutation or reproduced token. Expansion/work/storage/arithmetic
 exhaustion and cancellation, including the final acceptance poll, SHALL preserve
 their original non-truth outcomes with no token or accepted probabilistic
-evidence in a refuted record. The global QSpec FR-413 witness wire still lacks
+evidence in a refuted record. The global FSpec FR-413 witness wire still lacks
 the closed bound, scheduler-choice and semantic product-action/key contracts
 needed by this slice. Its facade remains blocked on that shared-owner work;
 this increment specifies native typed overload behavior only and introduces no
@@ -409,7 +409,7 @@ JSON spelling, wire schema or transport capability.
 | FR-202-AC-13 | AC-12 initial and one-failure states share model content but carry different complete formula keys with remaining contexts 2 and 1. Changing a supplied key to a model-only key, null/local-index monitor, another remaining horizon or binding prevents a token. Rebinding to a changed source package, horizon, threshold, claim occurrence, actual S3 over-parameter node or selected instance prevents reuse of the original token/evidence as an accepted refutation of that item. A checked source with two possible object values is restricted to one admitted over binding; replay uses that object's predicate and actual S3 node, never a fabricated binding node. | Test |
 | FR-202-AC-14 | At horizon 0, initially true P gives an empty accepting path of mass 1 refuting AtMost 1/2, while initially false P gives an empty rejecting path refuting AtLeast 1/2; opposite-verdict empty paths yield parity. At horizon 2, a terminal initially false P closes by false extension with mass 1 and no fabricated stutter step, refuting AtLeast 1/2. A live undecided prefix after one failure does not refute; after two failures horizon rejection does, even though another model action is enabled. An initial true P path extended by an operation cannot reproduce. | Test |
 | FR-202-AC-15 | In AC-12 a missing represented path cannot be counted, equal-threshold represented mass yields parity, and a changed action/draw/post-state, duplicated draw-cylinder, overlapping path or inconsistent choice at one full key cannot produce a token. First-hit masses under slow are only 3/4 and cannot refute AtMost 4/5. A policy may choose different enabled actions at the same model content with different remaining horizons; this is a consistent full-product policy. | Test |
-| FR-202-AC-16 | AC-12 replay with pre-cancellation, cancellation at its final acceptance poll, or each configured expansion/work/storage/arithmetic budget exhausted returns its typed incomplete cause with no truth, token or accepted evidence in a refuted record. A refused predicate preserves its typed refusal; FR-197 Bounds and PrecisionBudget, unsupported bounded until/always/reward/timed/fair inputs, subsystem evidence and nonreplayed exact results produce no bounded reproduced token. The native entry needs neither S4 emission nor QSpec FR-413 document transport. | Test |
+| FR-202-AC-16 | AC-12 replay with pre-cancellation, cancellation at its final acceptance poll, or each configured expansion/work/storage/arithmetic budget exhausted returns its typed incomplete cause with no truth, token or accepted evidence in a refuted record. A refused predicate preserves its typed refusal; FR-197 Bounds and PrecisionBudget, unsupported bounded until/always/reward/timed/fair inputs, subsystem evidence and nonreplayed exact results produce no bounded reproduced token. The native entry needs neither S4 emission nor FSpec FR-413 document transport. | Test |
 | FR-202-AC-17 | Until fixture: initial A-and-not-B has actions a and b reaching B-and-not-A with probabilities 1/4 and 3/4, otherwise neither-A-nor-B followed by terminal B. At threshold 1/2, a's rejecting cylinder of mass 3/4 refutes minimum AtLeast, and b's accepting cylinder of mass 3/4 refutes maximum AtMost. Equal-weight resolved workload has accepting and rejecting mass 1/2 each: its rejecting cylinders refute AtLeast 3/5 and accepting cylinders refute AtMost 2/5. All four produce only their matching reproduced token and retain semantic evidence; repeat replay gives equal outcomes. The failure prefix stops before its later B; the B-and-not-A path accepts. | Test |
 | FR-202-AC-18 | Always fixture: initial nonterminal P has actions a and b reaching terminal P with probabilities 1/4 and 3/4, otherwise not-P followed by terminal P. At threshold 1/2, a's not-P cylinder of mass 3/4 refutes minimum AtLeast and b's terminal-P cylinder of mass 3/4 refutes maximum AtMost. Equal-weight resolved workload refutes AtLeast 3/5 with rejecting mass 1/2 and AtMost 2/5 with accepting mass 1/2. Later P cannot repair the not-P prefix; the initial live P alone cannot be accepted. | Test |
 | FR-202-AC-19 | With admitted threshold 1/2, empty paths of mass 1 refute AtMost for initial B-and-not-A until and initial terminal-P always; empty paths refute AtLeast for initial neither-A-nor-B until, terminal A-and-not-B until, and initial not-P always even with a later terminal P successor. Terminal A-and-not-B has until probability 0 and terminal P has always probability 1 without a fabricated stutter step. Source threshold endpoints remain refused; probabilities 0 and 1 are admitted. | Test |
@@ -427,6 +427,6 @@ JSON spelling, wire schema or transport capability.
 
 ## References
 
-- QSpec half, which owns the witness wire and its replay rules: QSpec
+- FSpec half, which owns the witness wire and its replay rules: FSpec
   FR-413 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

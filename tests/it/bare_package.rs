@@ -3,17 +3,17 @@
 //! package read from its bytes alone, `BarePackage` and
 //! `EvidencePackage::from_package`, against the two routes that hold a source.
 
+use filament_contract_model::CheckedPackageV2;
+use fsl_eval::temporal::evidence::{ActivationState, EvidencePackage, Truth};
+use fsl_package::{BarePackage, IdentityFileRefusal, IdentityMember, ReadIdentityRows};
 use ix_trace_rs::trace;
-use qsl_eval::temporal::evidence::{ActivationState, EvidencePackage, Truth};
-use qsl_package::{BarePackage, IdentityFileRefusal, IdentityMember, ReadIdentityRows};
-use quire_contract_model::CheckedPackageV2;
 use serde_json::{json, Value};
 
 use super::checked_handoff::{admitted, request, tree, KINDS};
 use super::temporal_package_route::{
     clause_ids, event_clauses, event_clauses_over, recipe, request as evidence_request, run,
 };
-use quire_spec_language::checked_handoff::{evidence, write, Corpus};
+use filament_spec_language::checked_handoff::{evidence, write, Corpus};
 
 use super::bare_equality::tc1070 as population_fixture;
 
@@ -21,10 +21,10 @@ use super::bare_equality::tc1070 as population_fixture;
 /// `Incomplete` counter of FR-523, over `clause`.
 fn matrix(
     package: &EvidencePackage<'_>,
-    clause: &quire_contract_model::CheckedNodeId,
-) -> Vec<(String, qsl_eval::temporal::evidence::EvidenceRequest)> {
-    use qsl_eval::temporal::evidence::{EvidenceCounter, TemporalEvidenceLimits};
-    use qsl_eval::temporal::Valuation;
+    clause: &filament_contract_model::CheckedNodeId,
+) -> Vec<(String, fsl_eval::temporal::evidence::EvidenceRequest)> {
+    use fsl_eval::temporal::evidence::{EvidenceCounter, TemporalEvidenceLimits};
+    use fsl_eval::temporal::Valuation;
     let base = evidence_request(package, clause, None, 3);
     let mut requests = vec![("true".to_owned(), base.clone())];
     let mut falsified = base.clone();
@@ -36,9 +36,9 @@ fn matrix(
     requests.push(("false".to_owned(), falsified));
     let mut pending = base.clone();
     pending.decision_progress = Some(0);
-    pending.decision_closure = Some(qsl_eval::temporal::ProgressClosure::Open);
+    pending.decision_closure = Some(fsl_eval::temporal::ProgressClosure::Open);
     pending.surrounding_progress = Some(0);
-    pending.surrounding_closure = Some(qsl_eval::temporal::ProgressClosure::Open);
+    pending.surrounding_closure = Some(fsl_eval::temporal::ProgressClosure::Open);
     pending.positions.truncate(1);
     requests.push(("pending".to_owned(), pending));
     let mut inactive = base.clone();
@@ -80,18 +80,18 @@ fn the_bare_route_gives_the_results_and_charges_of_the_two_source_routes() {
         let emitted = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("emission");
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("read");
         let bare = BarePackage::new(read.admitted());
         let bytes = EvidencePackage::from_package(
             &bare,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("bare");
         assert_eq!(emitted.rows(), bytes.rows());
@@ -170,13 +170,13 @@ fn the_progress_binding_names_the_package_and_no_source_label() {
     let emitted = EvidencePackage::from_emission(
         &built.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("emission");
     let bare = BarePackage::new(read.admitted());
     let bytes = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     for clause in clause_ids(&bytes) {
@@ -208,18 +208,18 @@ fn a_shared_holds_node_is_one_atom_on_every_route() {
         let emitted = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("emission");
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("read");
         let bare = BarePackage::new(read.admitted());
         let bytes = EvidencePackage::from_package(
             &bare,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("bare");
         let [clause] = clause_ids(&bytes).try_into().expect("one clause");
@@ -243,7 +243,7 @@ fn a_shared_holds_node_is_one_atom_on_every_route() {
     // The shared clause has one more node, its `and`, which is one visit and
     // one formula node; a repeated operand adds no lookup, no valuation and
     // no step.
-    let counter = |usage: &qsl_eval::temporal::evidence::EvidenceUsage, name: &str| {
+    let counter = |usage: &fsl_eval::temporal::evidence::EvidenceUsage, name: &str| {
         usage
             .entries()
             .iter()
@@ -297,7 +297,7 @@ fn a_handoff_directory_gives_a_bare_package_and_an_identity_file() {
     let bare = BarePackage::new(&package);
     let evaluation = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     let due = clause_ids(&evaluation)
@@ -316,12 +316,12 @@ fn a_handoff_directory_gives_a_bare_package_and_an_identity_file() {
     assert!(!charges.is_empty());
 
     let file: Value = serde_json::from_slice(&files["identities.json"]).expect("JSON");
-    assert_eq!(file["format"], "quire.checked-handoff.identities/3");
+    assert_eq!(file["format"], "filament.checked-handoff.identities/3");
     assert!(files["identities.json"].ends_with(b"}\n"));
     let rows = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("reads");
     assert_eq!(rows.package_name(), package.name());
@@ -357,8 +357,8 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
         serde_json::to_vec(&population_fixture::document()).unwrap(),
     )
     .unwrap();
-    let asked = quire_spec_language::checked_handoff::CheckedHandoffRequest {
-        emit: quire_spec_language::emit_checked_v2::Request {
+    let asked = filament_spec_language::checked_handoff::CheckedHandoffRequest {
+        emit: filament_spec_language::emit_checked_v2::Request {
             source,
             package_name: "record-handoff".into(),
             models: vec![model],
@@ -368,7 +368,7 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
             out: None,
         },
         corpus: Corpus::None,
-        native_join: qsl_package::V2ReadLimits::fixture().native_join_limits(),
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
     };
     let out = holder.path().join("handoff");
     write(&asked, &out).expect("the genuine source-record protocol handoff writes");
@@ -377,7 +377,7 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
     let rows = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .unwrap();
     let original = rows
@@ -389,8 +389,8 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
                 .is_some_and(|name| name.as_ref() == "Pair")
         })
         .expect("the original Pair row");
-    let equality = qsl_package::ReadEqualityRows::read(&files["equality.json"], &package).unwrap();
-    let graph = qsl_semantics::check::wire_id::WireGraph::new(
+    let equality = fsl_package::ReadEqualityRows::read(&files["equality.json"], &package).unwrap();
+    let graph = fsl_semantics::check::wire_id::WireGraph::new(
         package
             .resolved_graph()
             .nodes
@@ -413,7 +413,7 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
         })
         .unwrap();
     let descriptor = |index| {
-        qsl_package::ProtocolSlotDescriptor::new(
+        fsl_package::ProtocolSlotDescriptor::new(
             graph.key(&protocol.node_id).unwrap(),
             "captures",
             Some(index),
@@ -421,11 +421,11 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
     };
     let bare = BarePackage::new(&package)
         .with_supply(
-            qsl_package::BareSupply {
+            fsl_package::BareSupply {
                 identities: &rows,
                 equality: Some(&equality),
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let kept = bare.select_protocol_slot(&descriptor(0)).unwrap();
@@ -434,7 +434,7 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
         .expect("the native opaque record projects");
     assert_eq!(
         projection.value_type(projection.root()),
-        Some(&quire_exact::ValueType::Composite(
+        Some(&filament_exact::ValueType::Composite(
             original.record_key.clone()
         ))
     );
@@ -444,12 +444,12 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
         .expect("the observable source-record binder field projects");
     assert_eq!(
         projected_field.value_type(projected_field.root()),
-        Some(&quire_exact::ValueType::Integer)
+        Some(&filament_exact::ValueType::Integer)
     );
     assert!(
         matches!(
             projected_field.kind(projected_field.root()),
-            Some(quire_checked::node::NodeKind::Field {
+            Some(filament_checked::node::NodeKind::Field {
                 optional: false,
                 ..
             })
@@ -465,15 +465,15 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
     );
     let bare = BarePackage::new(&package)
         .with_supply(
-            qsl_package::BareSupply {
+            fsl_package::BareSupply {
                 identities: &missing,
                 equality: Some(&equality),
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the fixture budget admits the supply");
     let selected = bare.select_protocol_slot(&descriptor(0)).unwrap();
-    let qsl_package::BareSelectionFailure::Unsupported(view) =
+    let fsl_package::BareSelectionFailure::Unsupported(view) =
         (match bare.project_protocol_slot(&selected) {
             Err(error) => error,
             Ok(_) => panic!("a missing record witness must not become a structural-key success"),
@@ -483,7 +483,7 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
     };
     assert_eq!(
         view.reason(),
-        &qsl_package::UnsupportedReason::MissingTypeRepresentation
+        &fsl_package::UnsupportedReason::MissingTypeRepresentation
     );
     assert_eq!(view.locus().key(), Some(selected.root()));
 }
@@ -500,7 +500,7 @@ fn the_identity_file_refuses_what_it_cannot_join() {
         ReadIdentityRows::read(
             &serde_json::to_vec(value).expect("bytes"),
             &package,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
     };
     let rows = read(&good).expect("the genuine file reads");
@@ -510,7 +510,7 @@ fn the_identity_file_refuses_what_it_cannot_join() {
         ReadIdentityRows::read(
             b"not json",
             &package,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
         malformed(IdentityMember::File)
     );
@@ -527,16 +527,16 @@ fn the_identity_file_refuses_what_it_cannot_join() {
         ReadIdentityRows::read(
             repeated.as_bytes(),
             &package,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
         malformed(IdentityMember::Repeated("fields"))
     );
     let mut format = good.clone();
-    format["format"] = json!("quire.checked-handoff.identities/1");
+    format["format"] = json!("filament.checked-handoff.identities/1");
     assert_eq!(
         read(&format),
         Err(IdentityFileRefusal::Format(
-            "quire.checked-handoff.identities/1".to_owned()
+            "filament.checked-handoff.identities/1".to_owned()
         ))
     );
 
@@ -581,7 +581,7 @@ fn the_identity_file_refuses_what_it_cannot_join() {
     };
     assert_eq!(
         refusal.code,
-        quire_contract_model::ExactTypeProjectionErrorCode::MismatchedIdentityWitness
+        filament_contract_model::ExactTypeProjectionErrorCode::MismatchedIdentityWitness
     );
     assert_eq!(
         read(&unit_row(
@@ -717,11 +717,11 @@ fn every_evaluation_method_has_an_inventory_row() {
         .filter_map(|line| line.split('|').nth(1))
         .collect();
     let mut methods = method_names(
-        &read_source("qsl-eval/src/temporal/evidence/package.rs"),
+        &read_source("fsl-eval/src/temporal/evidence/package.rs"),
         "EvidencePackage",
     );
     methods.extend(method_names(
-        &read_source("qsl-eval/src/value/expression/mod.rs"),
+        &read_source("fsl-eval/src/value/expression/mod.rs"),
         "CheckedPackageEvaluation",
     ));
     assert!(methods.len() >= 12, "{methods:?}");
@@ -745,8 +745,8 @@ fn every_evaluation_method_has_an_inventory_row() {
 #[trace("FR-531-AC-2", "TC-1331")]
 #[test]
 fn no_bare_signature_names_the_source_side() {
-    let bare = read_source("qsl-package/src/bare.rs");
-    let package = read_source("qsl-eval/src/temporal/evidence/package.rs");
+    let bare = read_source("fsl-package/src/bare.rs");
+    let package = read_source("fsl-eval/src/temporal/evidence/package.rs");
     let signatures = bare
         .lines()
         .filter(|line| line.trim_start().starts_with("pub "))
@@ -778,7 +778,7 @@ fn no_bare_signature_names_the_source_side() {
 #[trace("TC-1332")]
 #[test]
 fn from_package_returns_only_the_ambiguous_name_mismatch() {
-    let package = read_source("qsl-eval/src/temporal/evidence/package.rs");
+    let package = read_source("fsl-eval/src/temporal/evidence/package.rs");
     let body = package
         .split("pub fn from_package")
         .nth(1)
@@ -808,7 +808,7 @@ fn from_package_returns_only_the_ambiguous_name_mismatch() {
 #[test]
 fn the_evaluator_reads_the_clause_only_through_the_facts() {
     let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("qsl-eval/src/temporal/evidence");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval/src/temporal/evidence");
     for entry in std::fs::read_dir(&directory).expect("the evidence sources") {
         let path = entry.expect("entry").path();
         let text = std::fs::read_to_string(&path).expect("source");
@@ -821,7 +821,7 @@ fn the_evaluator_reads_the_clause_only_through_the_facts() {
             assert!(!code.contains(forbidden), "{}: {forbidden}", path.display());
         }
     }
-    let ledger = read_source("qsl-eval/src/temporal/ledger.rs");
+    let ledger = read_source("fsl-eval/src/temporal/ledger.rs");
     let binding = ledger
         .split("pub struct LedgerBinding")
         .nth(1)
@@ -870,7 +870,7 @@ fn a_node_that_is_no_temporal_clause_is_unresolved_over_the_bare_package() {
     let bare = BarePackage::new(&package);
     let evaluation = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     let due = clause_ids(&evaluation)
@@ -902,10 +902,10 @@ fn a_node_that_is_no_temporal_clause_is_unresolved_over_the_bare_package() {
 }
 
 /// The `reason` a `clause-unreadable` refusal names.
-fn reason(failure: &quire_eval::CallFailure) -> String {
+fn reason(failure: &filament_eval::CallFailure) -> String {
     match failure {
-        quire_eval::CallFailure::Admission(failure) => match &**failure {
-            quire_eval::CallAdmissionFailure::Refused(record) => record
+        filament_eval::CallFailure::Admission(failure) => match &**failure {
+            filament_eval::CallAdmissionFailure::Refused(record) => record
                 .record
                 .fields
                 .get("reason")
@@ -937,12 +937,12 @@ fn a_record_typed_capture_projects_with_the_source_identities() {
     let emitted = EvidencePackage::from_emission(
         &built.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("emission");
     let back = EvidencePackage::from_read(
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("read");
     let [clause] = clause_ids(&emitted).try_into().expect("one clause");
@@ -973,7 +973,7 @@ fn a_record_typed_capture_projects_with_the_source_identities() {
     let bare = BarePackage::new(read.admitted());
     let bytes = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     let refused = bytes
@@ -991,7 +991,7 @@ fn a_record_typed_capture_projects_with_the_source_identities() {
 fn forged(
     built: &super::temporal_package_route::Built,
     edit: impl Fn(&mut serde_json::Value),
-) -> qsl_package::Emission {
+) -> fsl_package::Emission {
     let mut wire: serde_json::Value =
         serde_json::from_slice(built.emission.package().bytes()).expect("JSON");
     edit(&mut wire);
@@ -1021,8 +1021,8 @@ fn the_reader_refuses_the_packages_that_would_meet_the_defensive_reasons() {
     assert!(format!("{refused:?}").contains("/temporal_clause_names"));
     let infinite = forged(&built, |wire| {
         let text = wire.to_string().replace(
-            "quire.temporal.event-position.false-extension/v1",
-            "quire.temporal.infinite-trace/v1",
+            "filament.temporal.event-position.false-extension/v1",
+            "filament.temporal.infinite-trace/v1",
         );
         *wire = serde_json::from_str(&text).expect("JSON");
     });
@@ -1041,13 +1041,13 @@ fn the_supplied_identity_rows_project_a_record_typed_capture_on_the_bare_route()
         .emission
         .identity_rows(
             read.admitted(),
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("final identity rows");
-    let mut budget = qsl_package::V2ReadLimits::fixture().native_join_budget();
+    let mut budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
     let bare = BarePackage::new(read.admitted())
         .with_supply(
-            qsl_package::BareSupply {
+            fsl_package::BareSupply {
                 identities: &rows,
                 equality: None,
             },
@@ -1056,7 +1056,7 @@ fn the_supplied_identity_rows_project_a_record_typed_capture_on_the_bare_route()
         .expect("the fixture budget admits the supply");
     let package = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     let [clause] = clause_ids(&package).try_into().expect("one clause");
@@ -1083,14 +1083,14 @@ fn the_supplied_identity_rows_project_a_record_typed_capture_on_the_bare_route()
 }
 
 const LEAF: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.model.complete/v1\";\n\
+    profile v = \"filament.model.complete/v1\";\n\
     model Config = \"example/config-version\";\n\
     predicate Leaf using v (x: Boolean): Boolean { x }";
 
 fn through(import: &str, name: &str, callee: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
          {import}\nmodel Config = \"example/config-version\";\n\
          predicate {name} using v (x: Boolean): Boolean {{ {callee}(x) }}"
     )
@@ -1165,13 +1165,13 @@ const ONE_CLAUSE: &str =
 fn with_interval(
     built: &super::temporal_package_route::Built,
     interval: serde_json::Value,
-) -> qsl_package::Emission {
+) -> fsl_package::Emission {
     forged(built, |wire| {
         for node in wire["semantic_graph"]["nodes"]
             .as_array_mut()
             .expect("nodes")
         {
-            if node["body"]["operation"]["identity"] == "quire.op.temporal.always" {
+            if node["body"]["operation"]["identity"] == "filament.op.temporal.always" {
                 node["body"]["operation"]["member"]["interval"] = interval.clone();
             }
         }
@@ -1195,7 +1195,7 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     let genuine_bare = BarePackage::new(genuine_read.admitted());
     let genuine = EvidencePackage::from_package(
         &genuine_bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     let [clause] = clause_ids(&genuine).try_into().expect("one clause");
@@ -1209,7 +1209,7 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     let bare = BarePackage::new(read.admitted());
     let package = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     let (refused, charges) = run(&package, &clause, &asked);
@@ -1226,9 +1226,9 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
         EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
-        Err(qsl_eval::temporal::evidence::PackageMismatch::Bindings)
+        Err(fsl_eval::temporal::evidence::PackageMismatch::Bindings)
     ));
 
     // One finite interval replaced by another: the bytes drive the result,
@@ -1238,7 +1238,7 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     let bare = BarePackage::new(read.admitted());
     let package = EvidencePackage::from_package(
         &bare,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("bare");
     let (baseline, _) = run(&genuine, &clause, &asked);
@@ -1253,13 +1253,13 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     for source_route in [
         EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("read"),
         EvidencePackage::from_emission(
             &longer,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("emission"),
     ] {
@@ -1314,8 +1314,8 @@ fn the_reader_refuses_absent_clock_rows_and_a_missing_profile_row() {
 #[trace("FR-532-AC-3", "TC-1332")]
 #[test]
 fn every_temporal_operator_gives_the_same_result_over_the_three_routes() {
-    use qsl_eval::temporal::evidence::EvidencePosition;
-    use qsl_eval::temporal::Valuation;
+    use fsl_eval::temporal::evidence::EvidencePosition;
+    use fsl_eval::temporal::Valuation;
     let p = "holds(c.versionNumber >= 1)";
     let q = "holds(c.versionNumber >= 2)";
     let bodies = [
@@ -1351,18 +1351,18 @@ fn every_temporal_operator_gives_the_same_result_over_the_three_routes() {
         let emitted = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("emission");
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("read");
         let bare = BarePackage::new(read.admitted());
         let bytes = EvidencePackage::from_package(
             &bare,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("bare");
         let [clause] = clause_ids(&bytes).try_into().expect("one clause");
@@ -1372,7 +1372,7 @@ fn every_temporal_operator_gives_the_same_result_over_the_three_routes() {
                 .iter()
                 .enumerate()
                 .map(|(index, (first, second))| EvidencePosition {
-                    observation: qsl_eval::temporal::evidence::EvidenceRef::named(format!(
+                    observation: fsl_eval::temporal::evidence::EvidenceRef::named(format!(
                         "obs{index}"
                     )),
                     position: index as u64,
@@ -1437,7 +1437,7 @@ fn the_replay_binding_names_the_package_the_source_emits() {
         let bare = BarePackage::new(read.admitted());
         let package = EvidencePackage::from_package(
             &bare,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("bare");
         for clause in clause_ids(&package) {
@@ -1456,8 +1456,8 @@ fn the_replay_binding_names_the_package_the_source_emits() {
 /// native work and storage one join of them takes (FR-358): the measured
 /// requirement the exhaustion tests stand on.
 fn record_rows(
-    read: &qsl_package::AdmittedPackageRead<'_>,
-) -> (ReadIdentityRows, quire_contract_model::NativeJoinCharge) {
+    read: &fsl_package::AdmittedPackageRead<'_>,
+) -> (ReadIdentityRows, filament_contract_model::NativeJoinCharge) {
     let graph = read.source().graph();
     let rows = ReadIdentityRows::of_rows(
         read.admitted(),
@@ -1466,10 +1466,10 @@ fn record_rows(
         Vec::new(),
         Vec::new(),
     );
-    let mut measure = quire_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
+    let mut measure = filament_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
     BarePackage::new(read.admitted())
         .with_supply(
-            qsl_package::BareSupply {
+            fsl_package::BareSupply {
                 identities: &rows,
                 equality: None,
             },
@@ -1488,50 +1488,50 @@ fn record_rows(
 /// "Observation admission"): the catalog's own work and entries, which are not
 /// added to the budget afterwards.
 pub(crate) fn catalog_room(
-    package: &quire_contract_model::CheckedPackageV2,
-) -> quire_contract_model::NativeJoinCharge {
+    package: &filament_contract_model::CheckedPackageV2,
+) -> filament_contract_model::NativeJoinCharge {
     let catalog = package
         .selected_model_population_catalog(
-            quire_contract_model::CheckedModelPopulationCatalogLimits {
+            filament_contract_model::CheckedModelPopulationCatalogLimits {
                 work: u64::MAX / 2,
                 entries: u64::MAX / 2,
             },
         )
         .expect("an ample allowance reads the catalog");
-    quire_contract_model::NativeJoinCharge {
+    filament_contract_model::NativeJoinCharge {
         work: catalog.work(),
         storage: catalog.entries(),
     }
 }
 
 fn supply_on<'p>(
-    read: &'p qsl_package::AdmittedPackageRead<'_>,
+    read: &'p fsl_package::AdmittedPackageRead<'_>,
     rows: &'p ReadIdentityRows,
-    budget: &mut quire_contract_model::NativeJoinBudget,
-) -> Result<BarePackage<'p>, quire_contract_model::ExactTypeProjectionError> {
+    budget: &mut filament_contract_model::NativeJoinBudget,
+) -> Result<BarePackage<'p>, filament_contract_model::ExactTypeProjectionError> {
     BarePackage::new(read.admitted())
         .with_supply(
-            qsl_package::BareSupply {
+            fsl_package::BareSupply {
                 identities: rows,
                 equality: None,
             },
             budget,
         )
         .map_err(|failure| match failure.native() {
-            qsl_package::NativeJoinFailure::Projection(error) => (**error).clone(),
-            qsl_package::NativeJoinFailure::Equality(error) => {
+            fsl_package::NativeJoinFailure::Projection(error) => (**error).clone(),
+            fsl_package::NativeJoinFailure::Equality(error) => {
                 panic!("identity-only fixture has no equality read: {error:?}")
             }
-            qsl_package::NativeJoinFailure::Rows(error) => {
+            fsl_package::NativeJoinFailure::Rows(error) => {
                 panic!("retained identity-only supply performs no producer row copy: {error:?}")
             }
-            qsl_package::NativeJoinFailure::UnitDefinitions { .. } => {
+            fsl_package::NativeJoinFailure::UnitDefinitions { .. } => {
                 panic!("identity-only fixture has no unit rows")
             }
-            qsl_package::NativeJoinFailure::PopulationCatalog { .. } => {
+            fsl_package::NativeJoinFailure::PopulationCatalog { .. } => {
                 panic!("identity-only fixture selects no model population")
             }
-            qsl_package::NativeJoinFailure::Limit(_) => unreachable!("native unwraps the envelope"),
+            fsl_package::NativeJoinFailure::Limit(_) => unreachable!("native unwraps the envelope"),
         })
 }
 
@@ -1541,7 +1541,7 @@ fn supply_on<'p>(
 #[trace("TC-1331", "FR-531-AC-21")]
 #[test]
 fn with_supply_is_admitted_at_the_measured_budget_and_refused_one_short() {
-    use quire_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
+    use filament_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
     let built = record_capture();
     let read = built.read(&built.emission);
     let (rows, need) = record_rows(&read);
@@ -1572,12 +1572,12 @@ fn with_supply_is_admitted_at_the_measured_budget_and_refused_one_short() {
     let denied = supply_on(&read, &rows, &mut short_work).expect_err("denied");
     assert_eq!(denied.code, Code::ExhaustedWork);
     assert_eq!(
-        qsl_semantics::model::intake::native_budget_setting(&denied).map(|setting| setting.name()),
+        fsl_semantics::model::intake::native_budget_setting(&denied).map(|setting| setting.name()),
         Some("i2.work_units")
     );
     assert_eq!(
         short_work.first_unpaid().map(|unpaid| unpaid.kind),
-        Some(quire_contract_model::NativeJoinChargeKind::Work)
+        Some(filament_contract_model::NativeJoinChargeKind::Work)
     );
     assert!(short_work.consumed().work < need.work);
 
@@ -1585,12 +1585,12 @@ fn with_supply_is_admitted_at_the_measured_budget_and_refused_one_short() {
     let denied = supply_on(&read, &rows, &mut short_storage).expect_err("denied");
     assert_eq!(denied.code, Code::ExhaustedStorage);
     assert_eq!(
-        qsl_semantics::model::intake::native_budget_setting(&denied).map(|setting| setting.name()),
+        fsl_semantics::model::intake::native_budget_setting(&denied).map(|setting| setting.name()),
         Some("i2.native_join_storage")
     );
     assert_eq!(
         short_storage.first_unpaid().map(|unpaid| unpaid.kind),
-        Some(quire_contract_model::NativeJoinChargeKind::Storage)
+        Some(filament_contract_model::NativeJoinChargeKind::Storage)
     );
 }
 
@@ -1602,8 +1602,8 @@ fn with_supply_is_admitted_at_the_measured_budget_and_refused_one_short() {
 #[trace("FR-531-AC-22", "TC-1331")]
 #[test]
 fn witness_defects_stay_deferred_and_a_denial_is_not_an_unknown_witness() {
-    use qsl_package::{BareSelectionFailure, IdentityWitnessRefusal};
-    use quire_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
+    use filament_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
+    use fsl_package::{BareSelectionFailure, IdentityWitnessRefusal};
     let built = record_capture();
     let read = built.read(&built.emission);
     let graph = read.source().graph();
@@ -1660,7 +1660,7 @@ fn witness_defects_stay_deferred_and_a_denial_is_not_an_unknown_witness() {
 #[trace("FR-531-AC-23", "TC-1331")]
 #[test]
 fn two_joins_on_one_budget_are_charged_cumulatively() {
-    use quire_contract_model::NativeJoinBudget;
+    use filament_contract_model::NativeJoinBudget;
     let built = record_capture();
     let read = built.read(&built.emission);
     let (rows, need) = record_rows(&read);
@@ -1672,8 +1672,8 @@ fn two_joins_on_one_budget_are_charged_cumulatively() {
     let second = supply_on(&read, &rows, &mut budget).expect_err("denied");
     assert!(matches!(
         second.code,
-        quire_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork
-            | quire_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage
+        filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork
+            | filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage
     ));
     assert!(budget.first_unpaid().is_some());
     assert!(budget.consumed().work <= need.work + room.work);
@@ -1695,17 +1695,17 @@ fn two_joins_on_one_budget_are_charged_cumulatively() {
 #[trace("TC-1331", "FR-531-AC-24")]
 #[test]
 fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
-    use qsl_eval::temporal::evidence::PackageMismatch;
-    use quire_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
+    use filament_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
+    use fsl_eval::temporal::evidence::PackageMismatch;
     let built = record_capture();
     let ample = built.read(&built.emission);
     // View creation runs one native pass: the source supplier's identities
     // (the emission's row production and joins), the reader's validation of
     // them, then the retained Exact projection of every node. Measure those
     // steps on one ledger.
-    use qsl_package::EvaluationWitnessSupplier;
+    use fsl_package::EvaluationWitnessSupplier;
     let mut view_measure = NativeJoinBudget::new(1 << 30, 1 << 30);
-    let rebound = qsl_package::SourceWitnessSupplier::new(&built.emission)
+    let rebound = fsl_package::SourceWitnessSupplier::new(&built.emission)
         .supply(ample.admitted(), &mut view_measure)
         .expect("the supplier joins its rows")
         .identities
@@ -1720,7 +1720,7 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
     let view_need = view_measure.consumed();
     assert!(view_need.storage > 1);
     let limits = |work: u64, storage: u64| {
-        qsl_package::V2ReadLimits::fixture()
+        fsl_package::V2ReadLimits::fixture()
             .with_work(work)
             .with_storage(storage)
     };
@@ -1740,10 +1740,10 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
             .try_read_under(&built.emission, limits(work, storage))
             .expect("the reader admits before native view admission");
         match short.evaluation_view() {
-            Err(qsl_package::ViewFailure::Exhausted(denial)) => {
-                use quire_semantic_value::catalog::CatalogCoded;
+            Err(fsl_package::ViewFailure::Exhausted(denial)) => {
+                use filament_semantic_value::catalog::CatalogCoded;
                 assert!(
-                    matches!(&denial.native, qsl_package::NativeJoinFailure::Projection(native) if native.code == code)
+                    matches!(&denial.native, fsl_package::NativeJoinFailure::Projection(native) if native.code == code)
                 );
                 let (bound, setting) = if code == Code::ExhaustedWork {
                     (work, "i2.work_units")
@@ -1784,7 +1784,7 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
             match construct(&mut one_short) {
                 Err(PackageMismatch::Exhausted(denial)) => {
                     assert!(
-                        matches!(denial.native(), qsl_package::NativeJoinFailure::Projection(native) if native.code == code)
+                        matches!(denial.native(), fsl_package::NativeJoinFailure::Projection(native) if native.code == code)
                     );
                     assert!(denial.limit().is_some());
                 }
@@ -1801,8 +1801,8 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
 #[trace("TC-1331", "FR-531-AC-24")]
 #[test]
 fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join() {
-    use quire_contract_model::ExactTypeProjectionErrorCode as Code;
-    use quire_spec_language::checked_handoff::{Error, ErrorCode};
+    use filament_contract_model::ExactTypeProjectionErrorCode as Code;
+    use filament_spec_language::checked_handoff::{Error, ErrorCode};
     let scratch = tempfile::tempdir().expect("tempdir");
     let built = recipe("event_position");
     let read = built.read(&built.emission);
@@ -1812,12 +1812,12 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
     let mut same_request = request("event_position", Corpus::None);
     same_request.emit.package_name = package_name.clone();
     assert_eq!(
-        quire_spec_language::emit_checked_v2::emit(&same_request.emit)
+        filament_spec_language::emit_checked_v2::emit(&same_request.emit)
             .expect("actual public writer emission"),
         built.emission.package().bytes(),
         "the budget oracle and writer must use exactly the same producer package",
     );
-    let mut measure = quire_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
+    let mut measure = filament_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
     built
         .emission
         .identity_rows(read.admitted(), &mut measure)
@@ -1826,11 +1826,11 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
     assert!(need.work > 0 && need.storage > 0);
     for (limits, code) in [
         (
-            qsl_package::NativeJoinLimits::new(need.work - 1, need.storage),
+            fsl_package::NativeJoinLimits::new(need.work - 1, need.storage),
             Code::ExhaustedWork,
         ),
         (
-            qsl_package::NativeJoinLimits::new(need.work, need.storage - 1),
+            fsl_package::NativeJoinLimits::new(need.work, need.storage - 1),
             Code::ExhaustedStorage,
         ),
     ] {
@@ -1844,7 +1844,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
                 let Error::NativeJoinExhausted(denial) = error else {
                     unreachable!()
                 };
-                let qsl_package::NativeJoinFailure::Rows(native) = &denial.native else {
+                let fsl_package::NativeJoinFailure::Rows(native) = &denial.native else {
                     panic!(
                         "the final producer copy retains its compact cause: {:?}",
                         denial.native
@@ -1853,15 +1853,15 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
                 assert_eq!(
                     native.code(),
                     if code == Code::ExhaustedWork {
-                        qsl_package::NativeRowErrorCode::WorkLimit
+                        fsl_package::NativeRowErrorCode::WorkLimit
                     } else {
-                        qsl_package::NativeRowErrorCode::StorageLimit
+                        fsl_package::NativeRowErrorCode::StorageLimit
                     }
                 );
                 assert_eq!(
                     native.locus(),
-                    Some(quire_contract_model::NativeJoinLocus {
-                        source: quire_contract_model::NativeJoinLocusSource::Package,
+                    Some(filament_contract_model::NativeJoinLocus {
+                        source: filament_contract_model::NativeJoinLocusSource::Package,
                         form: "identity_package_output",
                     })
                 );
@@ -1900,17 +1900,17 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         (
             complete_need.work - 1,
             complete_need.storage,
-            qsl_package::NativeRowErrorCode::WorkLimit,
+            fsl_package::NativeRowErrorCode::WorkLimit,
             "i2.work_units",
         ),
         (
             complete_need.work,
             complete_need.storage - 1,
-            qsl_package::NativeRowErrorCode::StorageLimit,
+            fsl_package::NativeRowErrorCode::StorageLimit,
             "i2.native_join_storage",
         ),
     ] {
-        let mut oracle = quire_contract_model::NativeJoinBudget::new(work, storage);
+        let mut oracle = filament_contract_model::NativeJoinBudget::new(work, storage);
         built
             .emission
             .identity_rows(read.admitted(), &mut oracle)
@@ -1924,11 +1924,11 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         assert_eq!(expected.locus(), oracle.first_unpaid_locus());
         let mut asked = request("event_position", Corpus::None);
         asked.emit.package_name = package_name.clone();
-        asked.native_join = qsl_package::NativeJoinLimits::new(work, storage);
+        asked.native_join = fsl_package::NativeJoinLimits::new(work, storage);
         let target = scratch.path().join(format!("complete-{work}-{storage}"));
         match write(&asked, &target) {
             Err(Error::NativeJoinExhausted(denial)) => {
-                let qsl_package::NativeJoinFailure::Rows(actual) = &denial.native else {
+                let fsl_package::NativeJoinFailure::Rows(actual) = &denial.native else {
                     panic!("the public writer retains the measured equality denial");
                 };
                 assert_eq!(*actual, expected, "resource, amount, locus and full bound");
@@ -1948,7 +1948,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
     let mut exact = request("event_position", Corpus::None);
     exact.emit.package_name = package_name;
     exact.native_join =
-        qsl_package::NativeJoinLimits::new(complete_need.work, complete_need.storage);
+        fsl_package::NativeJoinLimits::new(complete_need.work, complete_need.storage);
     write(&exact, &target).expect("exact complete work and storage write the directory");
     assert!(target.join("identities.json").exists());
     assert_eq!(
@@ -1965,9 +1965,9 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
 #[trace("TC-1331", "FR-531-AC-24")]
 #[test]
 fn opaque_caller_budgets_preserve_original_bounds_after_prior_joins() {
-    use qsl_eval::temporal::evidence::{EvidencePackage, PackageMismatch};
-    use qsl_package::{NativeJoinFailure, NativeJoinLimits};
-    use quire_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
+    use filament_contract_model::{ExactTypeProjectionErrorCode as Code, NativeJoinBudget};
+    use fsl_eval::temporal::evidence::{EvidencePackage, PackageMismatch};
+    use fsl_package::{NativeJoinFailure, NativeJoinLimits};
     let built = record_capture();
     let read = built.read(&built.emission);
     let (rows, _) = record_rows(&read);
@@ -1976,7 +1976,7 @@ fn opaque_caller_budgets_preserve_original_bounds_after_prior_joins() {
             if entry == 0 {
                 BarePackage::new(read.admitted())
                     .with_supply(
-                        qsl_package::BareSupply {
+                        fsl_package::BareSupply {
                             identities: &rows,
                             equality: None,
                         },
@@ -2003,7 +2003,7 @@ fn opaque_caller_budgets_preserve_original_bounds_after_prior_joins() {
         let room = if entry == 0 {
             catalog_room(read.admitted())
         } else {
-            quire_contract_model::NativeJoinCharge::default()
+            filament_contract_model::NativeJoinCharge::default()
         };
         let mut exact =
             NativeJoinBudget::new(2 * need.work + room.work, 2 * need.storage + room.storage);

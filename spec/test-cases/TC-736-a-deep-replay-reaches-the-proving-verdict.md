@@ -3,9 +3,9 @@ id: TC-736
 title: "A deep source and value replay to the proving run's verdict"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-263
+  - target: ix://agent-ix/filament-spec-language/FR-263
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-736: A deep source and value replay to the proving run's verdict

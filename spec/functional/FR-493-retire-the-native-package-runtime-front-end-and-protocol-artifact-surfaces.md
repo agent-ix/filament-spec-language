@@ -3,33 +3,33 @@ id: FR-493
 title: "Retire the native package, runtime-input, front-end and protocol-artifact surfaces"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: references
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-490
+  - target: ix://agent-ix/filament-spec-language/FR-490
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-049
+  - target: ix://agent-ix/filament-spec-language/FR-049
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-362
+  - target: ix://agent-ix/filament-spec-language/FR-362
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-042
+  - target: ix://agent-ix/filament-spec-language/FR-042
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-050
+  - target: ix://agent-ix/filament-spec-language/FR-050
     type: references
 ---
 # FR-493: Retire the native package, runtime-input, front-end and protocol-artifact surfaces
 
 ## Description
 
-QSL runs a source only through the spine stages `check`, `package` and
-`execute`. Following ADR-012 §15.8 step 2 and ADR-011 §7.3 M-6c, QSL SHALL
+FSL runs a source only through the spine stages `check`, `package` and
+`execute`. Following ADR-012 §15.8 step 2 and ADR-011 §7.3 M-6c, FSL SHALL
 remove the native compiled-package, runtime-input and `0-draft` front-end
 paths and the compiled-protocol read side, each in the change that makes it
 unreachable, so that no two paths to the same behavior exist side by side.
@@ -46,41 +46,41 @@ this requirement says it has none:
 
 | Retired path | Replacement |
 | --- | --- |
-| A `NativePackage` and the `native-linked-package/1` document | `quire.checked-package/v2`, produced by [FR-027](FR-027-export-compiled-native-package.md) and read by QSL's I2 reader ([FR-264](FR-264-emit-and-read-v2-packages-at-schema-fixed-depth.md)) |
+| A `NativePackage` and the `native-linked-package/1` document | `filament.checked-package/v2`, produced by [FR-027](FR-027-export-compiled-native-package.md) and read by FSL's I2 reader ([FR-264](FR-264-emit-and-read-v2-packages-at-schema-fixed-depth.md)) |
 | Native runtime-input artifacts (`native-state-input/1`) and their construction, byte intake and validation | Snapshot and invocation admission by [FR-106](FR-106-admit-snapshots-and-invocations.md), and the clause environment of [FR-107](FR-107-evaluate-state-clauses-at-s6a.md) |
 | Native selected-package execution and `runtime::execute` | The spine clause run of [FR-109](FR-109-run-a-state-clause-through-the-spine.md) and function run of [FR-100](FR-100-run-a-named-function-through-the-spine.md) |
 | Native `compile` of a `0-draft` source | None. The `0-draft` edition and the native rule-model authoring profile are retired as a whole; a `0-draft` source refuses `unknown_edition` ([FR-027-AC-7](FR-027-export-compiled-native-package.md), [FR-100-AC-2](FR-100-run-a-named-function-through-the-spine.md)) |
 | The `0-draft` parser, native syntax arena, `linking::native`, native `checking`, `model_source` and `located_json` | The CST parser, S2 forms, S3 checker and S4 emission of the spine ([FR-362](FR-362-produce-the-checked-graph-and-the-type-report-from-one-source.md)) |
-| The compiled-protocol v1, v2 and v3 read side (`protocol_artifact::{read, v2, v3, wire, validate}`) | Protocol nodes of `quire.checked-package/v2`, emitted by [FR-383](FR-383-emit-a-checked-protocol-as-v2-protocol-nodes.md) and read by I2 |
+| The compiled-protocol v1, v2 and v3 read side (`protocol_artifact::{read, v2, v3, wire, validate}`) | Protocol nodes of `filament.checked-package/v2`, emitted by [FR-383](FR-383-emit-a-checked-protocol-as-v2-protocol-nodes.md) and read by I2 |
 
 ## Behavior
 
-- The root QSL package SHALL have no `package` module, `NativePackage` type or
+- The root FSL package SHALL have no `package` module, `NativePackage` type or
   `native-linked-package/1` wire format, and no schema, example, fixture or
   document that describes them.
-- The root QSL package SHALL have no `runtime` module, no construction, byte
+- The root FSL package SHALL have no `runtime` module, no construction, byte
   intake or validation of native runtime-input artifacts, no
   `native-state-input/1` wire format, and no schema or document that describes
   them.
 - When the root command receives a `compile` request whose source declares
-  `edition "0-draft"`, QSL SHALL refuse it with `unknown_edition` as FR-027 and
+  `edition "0-draft"`, FSL SHALL refuse it with `unknown_edition` as FR-027 and
   FR-100 specify, and SHALL NOT compile, lower or run it by any other route.
-- The root QSL package SHALL have no `0-draft` parser entry point, arena
+- The root FSL package SHALL have no `0-draft` parser entry point, arena
   `syntax`, `linking::native`, native `checking`, `model_source` or
   `located_json` module, and no build gate, example or Makefile target SHALL
   invoke one.
-- QSL SHALL keep `formal_source` and `native_model` until the slice that
+- FSL SHALL keep `formal_source` and `native_model` until the slice that
   removes their last importer, as ADR-012 §15.8 steps 2 and 3 order; this
   requirement neither deletes nor forbids them.
-- The root QSL package SHALL have no module that reads or validates
+- The root FSL package SHALL have no module that reads or validates
   compiled-protocol v1, v2 or v3 bytes, and no documentation of those formats.
   The strict reader was called by the retired handoff writers
   ([FR-042](FR-042-publish-compiled-protocol-artifacts.md)-AC-15 and
   [FR-050](FR-050-publish-authenticated-temporal-artifacts.md)-AC-8; deleted by
-  QSL-840) and is still called by the composed emission, so QSL SHALL delete it
+  QSL-840) and is still called by the composed emission, so FSL SHALL delete it
   in the slice that deletes the last of them (M-6d, ADR-011 SEAM-3), not
   before.
-- QSL SHALL contain no compatibility alias, re-export, shim, fallback or
+- FSL SHALL contain no compatibility alias, re-export, shim, fallback or
   feature-gated duplicate of any retired item, and SHALL delete a retired path
   in the same change that makes its last caller unreachable, never before the
   replacement above works.
@@ -141,7 +141,7 @@ The slice that deletes the path changes the citation in the same change.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-493-AC-1 | A downstream Rust crate cannot import the root package's `package` or `runtime` modules, `NativePackage`, or `runtime::execute`; and the `WireFormat` of `qsl-foundation` has no variant for either wire format. | Test (TC-1276) |
+| FR-493-AC-1 | A downstream Rust crate cannot import the root package's `package` or `runtime` modules, `NativePackage`, or `runtime::execute`; and the `WireFormat` of `fsl-foundation` has no variant for either wire format. | Test (TC-1276) |
 | FR-493-AC-2 | A `compile` request whose source declares `edition "0-draft"`, or any other edition the spine does not admit, refuses `unknown_edition` at stage `profile` with exit code 20 and no package bytes; the `1-draft` compile cases are unchanged. | Test (TC-1276) |
 | FR-493-AC-3 | In the later front-end slice, a downstream crate cannot import the root package's `0-draft` parser entry points, arena `syntax`, `linking::native`, native `checking`, `model_source` or `located_json`; every Makefile target, `xtask` lane and example still builds and runs without them. The `composed` modules, `formal_source` and `native_model` remain importable until their own slices. | Test (TC-1276, later slice) |
 | FR-493-AC-4 | In the slice that deletes the handoff writers and composed emission, a downstream crate cannot import a root module that reads or validates compiled-protocol v1, v2 or v3 bytes; a protocol-bearing package still reads through the I2 reader and round-trips as TC-1063 specifies. | Test (TC-1276, TC-1063, later slice) |

@@ -3,7 +3,7 @@ id: TC-491
 title: "library::bundle links a complete-V1 bundle and refuses each closure, facet and limit defect"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-111
+  - target: ix://agent-ix/filament-spec-language/FR-111
     type: verifies
 ---
 # TC-491: library::bundle links a complete-V1 bundle and refuses each closure, facet and limit defect
@@ -15,8 +15,8 @@ Verify `library::bundle::link_bundle` over a caller-supplied
 FR-111-AC-7. These are the
 scenarios the former `tests/it/complete_package.rs` and
 `complete::package_tests` covered against the retired resolver, moved to
-the relocated module with their QSpec tags (`QSpec-FR-131-AC-1` to
-`QSpec-FR-131-AC-3`, `QSpec-FR-339-AC-3`).
+the relocated module with their FSpec tags (`FSpec-FR-131-AC-1` to
+`FSpec-FR-131-AC-3`, `FSpec-FR-339-AC-3`).
 
 ## Test Procedure
 
@@ -53,4 +53,4 @@ dependency edges between them.
 - Step 5 admits each bound and refuses one past it with
   `resource_exhausted`/`insufficient-next-charge`; the raised ceiling
   admits.
-- Step 6: every pair is listed by `quire.native.diagnostics/v1`.
+- Step 6: every pair is listed by `filament.native.diagnostics/v1`.

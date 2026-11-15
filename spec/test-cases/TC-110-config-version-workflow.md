@@ -3,7 +3,7 @@ id: TC-110
 title: "Generate concrete ConfigVersion cases"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-032
+  - target: ix://agent-ix/filament-spec-language/FR-032
     type: verifies
 ---
 ## Description

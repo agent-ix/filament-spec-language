@@ -3,21 +3,21 @@ id: FR-411
 title: "Emit a checked model terminal declaration as a v2 terminal node"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-281
+  - target: ix://agent-ix/filament-spec-language/FR-281
     type: depends_on
 ---
 # FR-411: Emit a checked model terminal declaration as a v2 terminal node
@@ -26,12 +26,12 @@ relationships:
 
 The S4 package emitter (ADR-011 layer 4 `package`, edge E4) SHALL emit each
 checked model `terminal` declaration (FR-124) as one
-`quire.checked-semantic-graph/v2` node with `node_tag: "temporal"` and
-`semantic_form: "terminal"`, whose body is the aggregate QSpec FR-476 states,
-and QSL's I2 reader SHALL read that node back. QSpec FR-476 owns the body,
+`filament.checked-semantic-graph/v2` node with `node_tag: "temporal"` and
+`semantic_form: "terminal"`, whose body is the aggregate FSpec FR-476 states,
+and FSL's I2 reader SHALL read that node back. FSpec FR-476 owns the body,
 the declaration path, the identity rules and the reader's refusals; this
-requirement states what QSL's emitter writes from its checked
-`TerminalDeclaration`, what its I2 reader returns, and how QSL settlement
+requirement states what FSL's emitter writes from its checked
+`TerminalDeclaration`, what its I2 reader returns, and how FSL settlement
 joins a deadlock-freedom verdict to the declaration it was decided under.
 
 ## Use case
@@ -41,7 +41,7 @@ self.value = 3 };` for a counter that stops at 3 and runs its deadlock-freedom
 item. The package carries the declaration, so the model checker, the deadlock
 classifier and replay of a deadlock counterexample all read the same intended
 terminal states from the recompiled package. The item's obligation identity
-is the same with and without the declaration, so QSL settlement, not the
+is the same with and without the declaration, so FSL settlement, not the
 identity, keeps a verdict decided under one declaration from settling the
 item under another.
 
@@ -53,9 +53,9 @@ item under another.
 
 ## Outputs
 
-- One `temporal`/`terminal` node per checked declaration, body as QSpec
+- One `temporal`/`terminal` node per checked declaration, body as FSpec
   FR-476 states, with `semantic_type` the package's `scalar_type`/`boolean`
-  node, no `declaration` (QSpec FR-476: the node is content-addressed and
+  node, no `declaration` (FSpec FR-476: the node is content-addressed and
   nested under its model by its `model` reference), and one occurrence of
   role `claim` at the declaration's span.
 - For `When(clause)`: the clause's `expression` node, its body the predicate's
@@ -64,7 +64,7 @@ item under another.
 - No node for `TerminalDeclaration::None`.
 - From the I2 reader: the model's `TerminalDeclaration`, or FR-476's refusal
   with its locus.
-- From QSL settlement: the deadlock-freedom item settled under the recompiled
+- From FSL settlement: the deadlock-freedom item settled under the recompiled
   package's declaration, or `stale_dependency`/`content-mismatch` when the
   verdict was decided under another one.
 
@@ -106,12 +106,12 @@ arguments and their domains are record fields. A model's `terminal`
 declaration is in neither, so two packages that differ only in the
 declaration give the item equal identities and equal record fields.
 
-- QSL settlement SHALL own the join of a deadlock-freedom verdict over a
+- FSL settlement SHALL own the join of a deadlock-freedom verdict over a
   model subject to the request item it answers: the FR-281 derived-item
   adapters of EN-1 (`derived_model_item`) and EN-6 (`derived_zone_item`),
   and the FR-128 replay refusal those adapters wrap around the
   counterexample replay. The FR-127 and FR-235 settlement maps take no part
-  in it: they settle what the adapter hands them. CG retains only opaque QSL
+  in it: they settle what the adapter hands them. CG retains only opaque FSL
   bytes (ADR-013) and SHALL NOT be relied on for this join.
 - FR-281's public `model_item`, `protocol_item` and `zone_item` SHALL refuse
   a derived item's run (deadlock, race or time-lock freedom) with
@@ -121,11 +121,11 @@ declaration give the item equal identities and equal record fields.
   request item's `item_kind` and with the item the run and its certificate
   check decide; for EN-1, the obligation's subject identity (FR-336) with
   the run's and the check's subjects; and the request item's claim, the
-  `model_root` anchor that is the node of the 3-tuple (QSpec FR-368), with
+  `model_root` anchor that is the node of the 3-tuple (FSpec FR-368), with
   the `model_root` nodes of the packages the run and the check are over. A
   derived item has one item per kind and subject, so the model identity
   and the ordinal follow from the anchor and the kind. It has no arguments
-  and no domains (QSpec FR-368: unbounded, no extent bounds), so no further
+  and no domains (FSpec FR-368: unbounded, no extent bounds), so no further
   record field is compared.
 - The request writer SHALL write, on a model subject's derived
   deadlock-freedom request item, the record field `terminals`: the terminal
@@ -159,7 +159,7 @@ declaration give the item equal identities and equal record fields.
 | FR-411-AC-1 | Compiling FR-126-AC-9's `Counter` unit with `terminal Done using v on Counter when { self.value = 3 };` emits one `temporal`/`terminal` node with `mode` `when`, `parameters` an aggregate holding one reference to the `self` parameter node, `condition` a reference to the `expression` node of `self.value = 3`, no `declaration` and one `claim` occurrence at the declaration's span; with `terminal Halt using v on Counter any;` it emits `mode` `any` with empty `parameters` and `condition`; without a declaration it emits no terminal node. The I2 reader returns `When`, `Any` and `None` respectively. No checked declaration is refused as not emitted. | Test (TC-1142) |
 | FR-411-AC-2 | AC-1's `when` and `any` terminal nodes have different node ids; renaming `Done` to `Stop` keeps the node id. | Test (TC-1142) |
 | FR-411-AC-3 | **RETIRED (staleness check withdrawn).** There is no `PackageIdMismatch` refusal for a replay over an edited terminal declaration. | Test (TC-1142), retired |
-| FR-411-AC-4 | Fed to QSL's I2 reader, with `dependencies` set to the body's targets, AC-1's `when` node with `mode` `some` refuses `invalid_package`/`invalid-value`, and with `condition` the empty aggregate refuses `invalid_semantic_graph`, each at FR-476's locus. | Test (TC-1142) |
+| FR-411-AC-4 | Fed to FSL's I2 reader, with `dependencies` set to the body's targets, AC-1's `when` node with `mode` `some` refuses `invalid_package`/`invalid-value`, and with `condition` the empty aggregate refuses `invalid_semantic_graph`, each at FR-476's locus. | Test (TC-1142) |
 | FR-411-AC-5 | AC-1's `when` and no-declaration packages give the deadlock-freedom item equal obligation identities, and the `when` package and one declaring `terminal Done using v on Counter when { self.value = 2 };` have different terminal node keys. For a request item written over the `when` package, an EN-1 run and certificate check over the no-declaration package refuse `stale_dependency`/`content-mismatch` naming model alias `v`, the `when` terminal node key and `none`; so does a certificate check alone over it, a run alone over it, and a run and check over the `value = 2` package (naming both keys); a `when` run for an item written over the no-declaration package refuses the same way. The run over the `when` package settles `proved`, and over the no-declaration package for its own item `refuted`. That refutation, replayed against the `value = 2` package, under which it reproduces, settles `inconclusive` with cause `replay_refused`. | Test (TC-1142) |
 | FR-411-AC-6 | `model_item` given the Counter's deadlock-freedom run, `protocol_item` given a protocol subject's deadlock-freedom or race-freedom run, and `zone_item` given a timed deadlock-freedom run each refuse `DerivedRun`. `derived_model_item` given the dense `Rpc`'s derived deadlock-freedom item with the Counter's obligation and run refuses `OtherAnchor` naming the item's anchor. Over FR-430-AC-3's latching timers, for the timed deadlock-freedom item written over the package with no declaration, a symmetry-reduced EN-6 run over the package declaring `terminal Done using v on M when { true };` refuses `TerminalDeclaration` naming `none` and that package's key, though the certificate request is over the written package, and so does a certificate request alone over the `when` package; the same reduced run for the item written over the `when` package settles `Proved{Reduced}`; and `derived_zone_item` given the timers' derived deadlock-freedom item with a run and certificate request over a package of another model refuses `OtherAnchor`. | Test (TC-1142) |
 
@@ -179,6 +179,6 @@ declaration give the item equal identities and equal record fields.
 
 ## References
 
-- QSpec FR-476 (checked-package model terminal declaration body), FR-366
+- FSpec FR-476 (checked-package model terminal declaration body), FR-366
   (the declaration and deadlock freedom), FR-322.
 - Owning ticket: Linear STD-303.

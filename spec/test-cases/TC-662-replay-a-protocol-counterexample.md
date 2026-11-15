@@ -3,7 +3,7 @@ id: TC-662
 title: "The replay facade replays a protocol counterexample through ProtocolSystem"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-217
+  - target: ix://agent-ix/filament-spec-language/FR-217
     type: verifies
 ---
 # TC-662: The replay facade replays a protocol counterexample through ProtocolSystem

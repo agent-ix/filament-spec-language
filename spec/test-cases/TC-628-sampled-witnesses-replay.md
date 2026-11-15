@@ -3,7 +3,7 @@ id: TC-628
 title: "Sampled witnesses are kept in trace order and replay through the model"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-193
+  - target: ix://agent-ix/filament-spec-language/FR-193
     type: verifies
 ---
 # TC-628: Sampled witnesses are kept in trace order and replay through the model

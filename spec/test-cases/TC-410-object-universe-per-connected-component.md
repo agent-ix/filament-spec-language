@@ -3,7 +3,7 @@ id: TC-410
 title: "Each connected supertype component has its own object universe, and a reference key carries the authored object identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: verifies
 ---
 # TC-410: Each connected supertype component has its own object universe, and a reference key carries the authored object identity
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify FR-084-AC-7. An object universe is one connected component of the
-supertype graph restricted to object types (quire-specification
+supertype graph restricted to object types (filament-specification
 `model-complete.md`, "Object universe"; ADR-013 O-05, OQ-C and OQ-E
 rulings). A model with two disconnected components has two universes, each
 the structural universe key over the model selection and
@@ -20,7 +20,7 @@ component is the authored object identity. Scope:
 FR-084-AC-7.
 
 This catches three faults: one universe per model over every root type
-(`qsl-semantics/src/model/normalize.rs:1819-1832`), one universe per root type, and a
+(`fsl-semantics/src/model/normalize.rs:1819-1832`), one universe per root type, and a
 rewritten object component.
 
 ## Test Procedure
@@ -36,7 +36,7 @@ rewritten object component.
    `allInstances<X>(p3)`, and read the reference keys of `b1`, `e1` and
    `x1`.
 4. Compute the expected universes independently: the structural universe key
-   `{version: quire.model.object-universe/v2, model_selection, root_types}`
+   `{version: filament.model.object-universe/v2, model_selection, root_types}`
    with `root_types` equal to `[A]`, to `[C, D]` in ascending effective
    identity order, and to `[X]`, each as effective identities.
 

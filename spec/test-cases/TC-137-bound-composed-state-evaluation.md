@@ -3,8 +3,8 @@ id: TC-137
 title: "Bound checked-term evaluation and retry immutable inputs"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-049, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/NFR-009, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-049, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/NFR-009, type: verifies }
 ---
 # TC-137: Bound checked-term evaluation and retry immutable inputs
 
@@ -20,8 +20,8 @@ accumulation is exercised in TC-1073.
 ## Test Procedure
 
 Use public checked-term/family entry points over admitted checked packages and
-immutable inputs, driving each through a `quire-exact::Meter` built with the
-`quire-exact` `test-support` feature, so that the meter's admitted-charge log
+immutable inputs, driving each through a `filament-exact::Meter` built with the
+`filament-exact` `test-support` feature, so that the meter's admitted-charge log
 and `consumed` counters give an oracle that does not come from the evaluator
 under test. Compute each semantic-size counter independently from every
 charge point reached by the fixture, then take its specified high-water
@@ -38,7 +38,7 @@ output occurrences; temporary intermediate values are not retained results.
 
 For each of the ten counters of FR-255's accounting table, build one fixture
 whose evaluation reaches the applicable charge points in the second column
-(the points are `quire-exact`'s named `ChargePoint`s). Derive each fixture's
+(the points are `filament-exact`'s named `ChargePoint`s). Derive each fixture's
 expected amount independently using the formulas in the third column. Then run
 the fixture with only that counter set
 to zero (when the fixture requires work), to its counted quantity and to one
@@ -105,7 +105,7 @@ affected counter and charge point and expose no completed value. TC-1073 separat
 across sequential protocol-slot calls on one shared meter.
 
 The protocol-slot boundary trace is
-`qsl-eval/tests/it/protocol_slots.rs::protocol_slot_calls_share_meter_usage_and_obey_work_boundaries`.
+`fsl-eval/tests/it/protocol_slots.rs::protocol_slot_calls_share_meter_usage_and_obey_work_boundaries`.
 It measures a successful result, completes at the exact work-unit limit,
 refuses one unit short without charging the denied unit, refuses at zero, and
 repeats the immutable call with a fresh meter to verify the same result and

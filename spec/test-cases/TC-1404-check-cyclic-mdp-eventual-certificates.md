@@ -3,11 +3,11 @@ id: TC-1404
 title: "Check cyclic MDP eventual probability certificates"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: verifies
 ---
 # TC-1404: Check cyclic MDP eventual probability certificates
@@ -55,7 +55,7 @@ policies, action ordinals and qualitative labels are not authorities.
    independently. Include initial P, and all-zero eventual values with
    an admitted interior maximum threshold.
 4. Encode valid documents and check them in a fresh process without
-   qsl-analyze/provider linkage. Independently mutate the AC-41 objective,
+   fsl-analyze/provider linkage. Independently mutate the AC-41 objective,
    identity, binding, rational/JSON/key, member, ordering, value,
    zero-support and ranking controls. Assert the precise rule/locus, not
    just nonacceptance. Keep old acyclic and cyclic DTMC bytes/verdicts and

@@ -3,17 +3,17 @@ id: FR-395
 title: "Associate the selected call's requirement items through the replay facade"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-394
+  - target: ix://agent-ix/filament-spec-language/FR-394
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: traces_to
 ---
 # FR-395: Associate the selected call's requirement items through the replay facade
@@ -26,9 +26,9 @@ belong to the function it ran. `run` (FR-100) returns the package id and
 the call's outcome and no checked graph; `items_from_requirements`
 (FR-075) writes one item per record of the whole package, with no link to a
 function; an item's identity is its package occurrence key. A consumer must
-not rebuild that link, because it would re-derive an association QSL's check
+not rebuild that link, because it would re-derive an association FSL's check
 stage already decided, and ADR-011 T12 and FR-060 forbid it to name
-`qsl_replay::spine`.
+`fsl_replay::spine`.
 
 This requirement adds the replay-owned entry that runs a call as FR-100
 does and returns, with the outcome, the identities of the requirement items
@@ -103,7 +103,7 @@ package the call ran against; nothing is recomputed.
   `occurrence()` equals the member's key; a different `package_id` is the
   consumer's refusal, which the consumer's own specification states.
 - **Typed refusals.** The facade SHALL refuse with an existing `RunRefusal`
-  arm, FR-100's stage, code and category and QSpec FR-272's cause, and SHALL
+  arm, FR-100's stage, code and category and FSpec FR-272's cause, and SHALL
   return no `CallRequirements`, in these cases:
   - the source, a model, a library or a dependency does not compile, so there
     is no checked graph: `Compile` (FR-100);
@@ -127,22 +127,22 @@ package the call ran against; nothing is recomputed.
   picks one.
 - **Facade boundary.** The facade SHALL expose the entry and its result
   types (`run_with_requirements`, `RunWithRequirements`, `CallRequirements`
-  and `CallRequirement`) at the `qsl_replay` root, where a consumer reaches
+  and `CallRequirement`) at the `fsl_replay` root, where a consumer reaches
   them. The root SHALL also re-export every type of `run`'s signature and
   result that it does not export today, so that a consumer calls the entry
-  and reads its result without naming `qsl_replay::spine`: `Call`,
+  and reads its result without naming `fsl_replay::spine`: `Call`,
   `CallArgument`, `CallOutcome`, `CallValue`, `CallRefusal`,
   `CallLocus` (the locus of `CallRefusal`'s record) and `CallIncomplete` (the
   payloads of `CallOutcome::Refused` and `::Incomplete`), `RunRefusal` and
   `CompileRefusal` (the payload of `RunRefusal::Compile`), `SpineLimits`, `PackageId` (from
-  `qsl_semantics::library`), `ObjectEnvironment` (from `qsl_semantics`' model
-  object environment) and `Cancel` (with `CancelCause`, from `quire_exact`).
-  `Call.supplied` is `quire_semantic_value::supplied_stop::SuppliedLimits`,
+  `fsl_semantics::library`), `ObjectEnvironment` (from `fsl_semantics`' model
+  object environment) and `Cancel` (with `CancelCause`, from `filament_exact`).
+  `Call.supplied` is `filament_semantic_value::supplied_stop::SuppliedLimits`,
   which a consumer imports from its owner: the root re-exports no moved
   vocabulary (FR-403).
   `DependencyInput` and `SourceIdentity` are already on the root and are not
-  listed. `qsl_replay::spine` stays internal, a consumer names neither it nor
-  `qsl_semantics`' checked graph (FR-060, T12-A), as for `compile_admitted`
+  listed. `fsl_replay::spine` stays internal, a consumer names neither it nor
+  `fsl_semantics`' checked graph (FR-060, T12-A), as for `compile_admitted`
   (FR-394), and `run` keeps its signature and result (FR-100).
 - **Relation to settlement.** The association settles nothing. Mapping a
   provider's result for an item to a terminal (QSL-655) takes an item by the
@@ -175,7 +175,7 @@ functions have none.
 | FR-395-AC-6 | For the calls of AC-1, AC-3 and AC-5 over K, the returned `package_id` equals the `package_id` of `run` and of `compile_package` over the same source, models, libraries and limits, and the returned outcome equals `run`'s outcome. | Test (TC-1089) |
 | FR-395-AC-7 | The function `nope`, the empty name, `inc.x` and `1inc` refuse `MissingDeclaration` with code `missing_declaration`; a source that does not parse refuses `Compile`; none returns a member. | Test (TC-1089) |
 | FR-395-AC-8 | A cancelled handle refuses `Cancelled` with no members. | Test (TC-1089) |
-| FR-395-AC-9 | A consumer reaches the entry, its result types and FR-100's call types through the `qsl_replay` root alone, without naming `qsl_replay::spine`, except `Call.supplied`'s `SuppliedLimits`, which the consumer imports from `quire_semantic_value::supplied_stop`; FR-060's T12-A rule reports no call site outside its allowed callers for them. | Test (TC-1089) |
+| FR-395-AC-9 | A consumer reaches the entry, its result types and FR-100's call types through the `fsl_replay` root alone, without naming `fsl_replay::spine`, except `Call.supplied`'s `SuppliedLimits`, which the consumer imports from `filament_semantic_value::supplied_stop`; FR-060's T12-A rule reports no call site outside its allowed callers for them. | Test (TC-1089) |
 | FR-395-AC-10 | The association step, run directly on a checked package whose record map has a `value-validity` record with no owner, refuses `Fault` with stage `spine-run` and invariant `requirement-owner-known`; the same for a record whose owner names no function of the package; neither returns a partial member list. | Test (TC-1089) |
 | FR-395-AC-11 | Two `Call`s of `add` of FR-062 RR-3 (`function add using v(x: Int[0, 9], y: Int[0, 9]): Int[0, 18] pure { x + y }`) whose arguments arrive as `x`, `y` and as `y`, `x` are equal calls and return equal members. | Test (TC-1089) |
 | FR-395-AC-12 | Over a unit that holds an operation `body` doing arithmetic over the ConfigVersion domain package (`body renamed using v on Config::ConfigVersion::add(n) { n + deref(self).versionNumber }` with the `add` operation of `dispatch_link_compile.rs`) and `function inc using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }`, `inc` with `x = 3` completes with one member, the owner of the `body`'s record is that synthesized function, and no call faults. | Test (TC-1089) |

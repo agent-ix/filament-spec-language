@@ -3,7 +3,7 @@ id: TC-730
 title: "Intake judges a deep package document on its content"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-260
+  - target: ix://agent-ix/filament-spec-language/FR-260
     type: verifies
 ---
 # TC-730: Intake judges a deep package document on its content

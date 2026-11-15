@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use qsl_conformance::{lifecycle_matrix, run_case, MatrixCell};
+use fsl_conformance::{lifecycle_matrix, run_case, MatrixCell};
 use serde::Serialize;
 
 use crate::error::Result;
@@ -62,8 +62,8 @@ impl PartReport {
 /// The inputs of [`run`].
 #[derive(Debug)]
 pub struct QualifyInputs {
-    /// The QSpec checkout the corpus schema is read from.
-    pub qspec: PathBuf,
+    /// The FSpec checkout the corpus schema is read from.
+    pub fspec: PathBuf,
     /// The `qualify` command's operands.
     pub operands: Vec<OsString>,
     /// A replacement matrix cell set. A test may make the `lifecycle-matrix`
@@ -102,10 +102,10 @@ fn lifecycle_matrix_part(cells: &[MatrixCell]) -> PartReport {
 /// The `parity` part (FR-563, FR-567).
 ///
 /// Known gap: FR-563's runner (`run_parity`) is not in this repository yet.
-/// It arrives from the jit lane's branch and moves into `qsl-conformance`
+/// It arrives from the jit lane's branch and moves into `fsl-conformance`
 /// after this lands. Until then the part cannot run a backend, so it reports
 /// `no-backend`, which is true only while the workspace links none (it does
-/// not: `qsl-conformance` does not depend on `qsl-jit`). The code does not
+/// not: `fsl-conformance` does not depend on `fsl-jit`). The code does not
 /// compute that from the linked backends, so the part must be replaced, not
 /// left in place, when a backend is linked. FR-567-AC-1's linked delegating
 /// backend, AC-3's `parity/jit` and AC-4's `reference-fault` case have no
@@ -126,7 +126,7 @@ pub(crate) fn lifecycle_and_parity_parts(replacement: Option<&[MatrixCell]>) -> 
     ]
 }
 
-/// Run the gate: the corpus against QSL, the lifecycle matrix and the parity
+/// Run the gate: the corpus against FSL, the lifecycle matrix and the parity
 /// of the linked backends, with the verdict `qualified` only when all three
 /// pass (FR-567). The exit contract is FR-353's.
 ///
@@ -139,6 +139,6 @@ pub fn run(inputs: &QualifyInputs) -> Result<Outcome> {
     let replacement = inputs.matrix.as_deref();
     #[cfg(not(feature = "test-support"))]
     let replacement = None;
-    qualification::execute_with_parts(&inputs.qspec, &inputs.operands, replacement)
+    qualification::execute_with_parts(&inputs.fspec, &inputs.operands, replacement)
         .map(|execution| execution.outcome)
 }

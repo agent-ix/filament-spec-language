@@ -3,7 +3,7 @@ id: TC-1318
 title: "Count temporal evidence work on thirteen named counters and keep a stopped instance apart from a stopped declaration"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: verifies
 ---
 # TC-1318: Count temporal evidence work on thirteen named counters and keep a stopped instance apart from a stopped declaration

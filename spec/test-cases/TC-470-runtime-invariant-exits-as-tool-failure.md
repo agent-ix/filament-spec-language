@@ -3,7 +3,7 @@ id: TC-470
 title: "runtime_invariant exits 30 and outranks other diagnostics"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-470: runtime_invariant exits 30 and outranks other diagnostics

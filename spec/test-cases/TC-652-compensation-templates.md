@@ -3,7 +3,7 @@ id: TC-652
 title: "Compensations register, activate, attempt, close and end with their recovery status"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-207
+  - target: ix://agent-ix/filament-spec-language/FR-207
     type: verifies
 ---
 # TC-652: Compensations register, activate, attempt, close and end with their recovery status

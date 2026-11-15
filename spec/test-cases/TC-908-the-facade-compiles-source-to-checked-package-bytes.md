@@ -1,25 +1,25 @@
 ---
 id: TC-908
-title: "The replay facade compiles QSL source to the checked-package bytes the spine emits"
+title: "The replay facade compiles FSL source to the checked-package bytes the spine emits"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: verifies
 ---
-# TC-908: The replay facade compiles QSL source to the checked-package bytes the spine emits
+# TC-908: The replay facade compiles FSL source to the checked-package bytes the spine emits
 
 ## Description
 
-Verify `qsl_replay::compile_package` emits the same package bytes and
+Verify `fsl_replay::compile_package` emits the same package bytes and
 `package_id` as the spine, and refuses as the spine does.
 
 Scope: FR-060-AC-5 to FR-060-AC-7.
 
 ## Test Procedure
 
-From an integration test. The facade calls reach only the `qsl_replay` root;
+From an integration test. The facade calls reach only the `fsl_replay` root;
 the oracle that produces the expected bytes, `package_id` and refusals runs
-the spine (`qsl_replay::spine`, `qsl_semantics`, `quire_exact`) directly:
+the spine (`fsl_replay::spine`, `fsl_semantics`, `filament_exact`) directly:
 
 1. Compile `record List { next: List?; }` and `record Tree { kids:
    Sequence<Tree>[0, 3]; }` through `compile_package`. Run the spine's

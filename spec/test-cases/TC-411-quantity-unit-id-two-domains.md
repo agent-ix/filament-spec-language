@@ -3,14 +3,14 @@ id: TC-411
 title: "A quantity UnitId is a declared unit's node key or a compound unit's term list, and the two never compare equal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-411: A quantity UnitId is a declared unit's node key or a compound unit's term list, and the two never compare equal
 
 ## Description
 
-Verify FR-088-AC-12. QSL's kernel `UnitId` preserves the distinct identities
+Verify FR-088-AC-12. FSL's kernel `UnitId` preserves the distinct identities
 for declared and compound units and compares the arm tag before the key
 (ADR-013 T-6, OQ-B ruling). The compound `UnitId` is its ordered term list,
 compared by equality. Scope: FR-088-AC-12.

@@ -4,13 +4,13 @@
 //! package has the same semantic facts as the classification from the package
 //! read back with the reader, while each retains its own admission binding.
 
-use ix_trace_rs::trace;
-use qsl_package::checked_views::{
+use filament_contract_model::{CheckedNodeId, CheckedNodeKind, CheckedPackageV2, TemporalForm};
+use filament_spec_language::checked_handoff::{evidence, write, Corpus};
+use filament_spec_language::emit_checked_v2;
+use fsl_package::checked_views::{
     mapping_support, temporal_subject, Classification, Closure, Support, Target, Unmatched,
 };
-use quire_contract_model::{CheckedNodeId, CheckedNodeKind, CheckedPackageV2, TemporalForm};
-use quire_spec_language::checked_handoff::{evidence, write, Corpus};
-use quire_spec_language::emit_checked_v2;
+use ix_trace_rs::trace;
 
 use super::checked_handoff::{admitted, request, tree, KINDS};
 
@@ -96,7 +96,7 @@ fn the_in_process_and_the_read_back_package_classify_alike() {
                         Closure::Open => Target::OnlinePrefix,
                     },
                     total_sample_valuation: false,
-                    premises: qsl_package::checked_views::OUTSTANDING_PREMISES,
+                    premises: fsl_package::checked_views::OUTSTANDING_PREMISES,
                 },
                 "fixed_sample" => Support::Supported {
                     target: match closure {
@@ -104,7 +104,7 @@ fn the_in_process_and_the_read_back_package_classify_alike() {
                         Closure::Open => Target::OnlinePrefix,
                     },
                     total_sample_valuation: true,
-                    premises: qsl_package::checked_views::OUTSTANDING_PREMISES,
+                    premises: fsl_package::checked_views::OUTSTANDING_PREMISES,
                 },
                 _ => Support::Unsupported {
                     dimensions: vec![Unmatched::FiniteWindow],

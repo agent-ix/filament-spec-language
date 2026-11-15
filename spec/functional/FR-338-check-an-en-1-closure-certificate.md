@@ -3,28 +3,28 @@ id: FR-338
 title: "Check an EN-1 closure certificate"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-225
+  - target: ix://agent-ix/filament-spec-language/FR-225
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: references
-  - target: ix://agent-ix/quire-specification/FR-370
+  - target: ix://agent-ix/filament-specification/FR-370
     type: references
 ---
 # FR-338: Check an EN-1 closure certificate
 
 ## Description
 
-`qsl-replay`'s `check_closure` SHALL accept a `ClosureCertificate` that EN-1
+`fsl-replay`'s `check_closure` SHALL accept a `ClosureCertificate` that EN-1
 returns with a safety proof exactly when the certificate's product states
 contain every initial product state, are closed under expansion, and hold
 no bad state, and its checker-owned non-progress check below finds no
@@ -73,7 +73,7 @@ pub struct ProtocolCertificateRequest<'a> {
 
 ```rust
 pub struct ProductStateRef {
-    pub model_state: StateKey,             // quire.simulation.state-key/v1
+    pub model_state: StateKey,             // filament.simulation.state-key/v1
     pub automaton_state: AutomatonStateKey, // the translation's canonical key
 }
 pub struct ClosureCertificate {
@@ -123,7 +123,7 @@ subject does not admit (`Fairness`), or an internal invariant of the checker
 broke (`Fault`). A refusal is never an acceptance.
 
 `AutomatonStateKey` is the property-automaton translation's canonical
-encoding of an automaton state (`qsl-eval`, ADR-018 LA-2), the same for
+encoding of an automaton state (`fsl-eval`, ADR-018 LA-2), the same for
 every order in which the states are materialized.
 
 This requirement carries an `AutomatonStateKey` as the bytes of its
@@ -145,9 +145,9 @@ loci of its hyper checker; those failures are not all product-state failures.
 
 ### Rejection spellings
 
-QSpec FR-331 carries a `CertificateRejection` as `certificate-rejected{rule,
+FSpec FR-331 carries a `CertificateRejection` as `certificate-rejected{rule,
 at}`, and its Certification table owns every spelling: each locus form, its
-`at` spelling, and the rules admitted at that form. QSL SHALL write a
+`at` spelling, and the rules admitted at that form. FSL SHALL write a
 rejection with exactly those spellings and SHALL add none of its own.
 
 Each `CertificateLocus` alternative is one FR-331 locus form, and only the
@@ -181,12 +181,12 @@ is FR-314's command number as a `U64String`.
   defect of the checker, not of the certificate.
 - Before it writes a `certificate-rejected` cause, the outcome writer
   (FR-286) SHALL check that FR-331's table lists the rule at the locus
-  form, and that a `ModelState` outside the `quire.simulation.state-key/v1`
-  domain carries `Malformed`. A pair the table does not list SHALL be QSL's internal fault,
+  form, and that a `ModelState` outside the `filament.simulation.state-key/v1`
+  domain carries `Malformed`. A pair the table does not list SHALL be FSL's internal fault,
   `InternalFault` (`runtime_invariant`, FR-096) with invariant
   `certificate-rejection-pair`, and SHALL NOT be written. No caller input
   carries the pair, so it is never an `invalid_runtime_input` refusal.
-- QSL reads no `certificate-rejected` cause. FR-290's reader returns
+- FSL reads no `certificate-rejected` cause. FR-290's reader returns
   `Unsupported` for a plugin's, whether or not FR-331 lists its pair,
   because no in-core checker binds a plugin proof (FR-331-AC-26).
 
@@ -199,7 +199,7 @@ below for its canonical state; a private cache, address, graph index,
 materialization counter or provider-selected encoding is not a member.
 
 `AutomatonStateKey` SHALL be the RFC 8785 canonical UTF-8 octets of
-`["quire.automaton-state-key/v1", context, state]`, through ADR-013's one
+`["filament.automaton-state-key/v1", context, state]`, through ADR-013's one
 `quire-canonical` encoder. There is no BOM, whitespace, trailing newline
 in this array. Equality SHALL compare complete octets; order SHALL be ascending unsigned
 lexicographic octet order. FR-331's base64url is a transport of these
@@ -207,7 +207,7 @@ octets, not a second state identity.
 
 `context` is `[root, profile, activation, binding]`. For a clause, `root`
 is `[node,role,ordinal]`: `node` is FR-322's existing NodeId object,
-carried exactly as the QSpec FR-322 node `id` member spells it;
+carried exactly as the FSpec FR-322 node `id` member spells it;
 `role` and `ordinal` are the checked clause's O-07 occurrence role and
 ordinal encoded as a JSON string in the checked O-07 u64 domain. Its
 lexical form is `"0"` or `[1-9][0-9]*`, with value at most
@@ -225,11 +225,11 @@ item's actual concrete over/argument binding, with NodeId as above.
 For a parameter bound to an instance (an `over` parameter, FR-125
 "Instancing"), `bound_value` is the closed array `["instance",key]`: `key`
 is the JSON string whose value is the instance's key. An instance is
-identified by its key alone (QSpec FR-361), so the context carries no
+identified by its key alone (FSpec FR-361), so the context carries no
 population, no object type and no `UniverseId`: a key that several
 overlapping populations list gives one context, and two subjects that
 admit the key with different types give the same context. For every other
-parameter, `bound_value` is QSpec FR-181's complete typed canonical
+parameter, `bound_value` is FSpec FR-181's complete typed canonical
 value. Parameter order is the
 checked item's binding order; a genuinely parameter-free item uses `[]`.
 No absent/default binding is synthesized. The property state is separate
@@ -491,7 +491,7 @@ configuration of the negated formula with generalized Büchi membership.
 A bounded monitor determinizes the finite branches: at the closure of its
 final counted-distance region any
 unfulfilled least-fixed-point finite debt rejects and fulfilled branches
-accept, with QSpec FR-091's closed boundary rules. `on each` adds the root
+accept, with FSpec FR-091's closed boundary rules. `on each` adds the root
 activation at every activation position (a model position or an
 infinite-trace stutter position, never a terminal false-extension position)
 and retains every prior live debt;
@@ -510,7 +510,7 @@ clause adds no state alternative and no certificate member; a TP-4 clause
 uses the `guarded-buchi` alternative ("Guarded TP-4 clause" below).
 
 - The condition is the `guard` term of the clause node's activation
-  argument (QSpec FR-370). The context's root names that clause node, whose
+  argument (FSpec FR-370). The context's root names that clause node, whose
   content identity covers the guard term, so the root binds the condition,
   and the activation member `"each-when"` selects the guarded reading. A key
   carries neither the condition nor any reading of it.
@@ -782,7 +782,7 @@ run budgets are not substituted for state facts.
 
 Let `C` be the rederived context of the checked formula named in each
 vector. Write `K_C(S)` for the **exact UTF-8 JCS encoding** of
-`["quire.automaton-state-key/v1",C,S]`; C is supplied by that checked
+`["filament.automaton-state-key/v1",C,S]`; C is supplied by that checked
 fixture, not an invented value. The following state bodies are exact
 ASCII octets, with no invisible suffix. The full key embeds the body
 after the encoded C and comma and ends with one additional `]`.
@@ -808,14 +808,14 @@ subject with no terminal declaration and ADR-018 DL-3's derived
 G root has this **complete** UTF-8 key (one line, no newline in the key):
 
 ```json
-["quire.automaton-state-key/v1",[["deadlock-freedom"],"quire.temporal.infinite-trace/v1","infinite",[]],["safety",[[[[[],"positive"]],[],[],[]]]]]
+["filament.automaton-state-key/v1",[["deadlock-freedom"],"filament.temporal.infinite-trace/v1","infinite",[]],["safety",[[[[[],"positive"]],[],[],[]]]]]
 ```
 
 Every character is ASCII, so the displayed character sequence itself is
 the independent octet oracle, without invoking the encoder under test.
 The derived root has no clause ordinal and this item is genuinely
 parameter-free; its binding is exactly `[]`. Replacing the profile with
-`quire.temporal.event-position.false-extension/v1` changes the bytes and
+`filament.temporal.event-position.false-extension/v1` changes the bytes and
 refuses for this derived item. Changing only the activation to `origin`
 also refuses. The clause-root lexical vector above independently checks
 string ordinal zero/max versus number zero/overflow.
@@ -875,7 +875,7 @@ different materialization orders SHALL produce identical full octets.
 ## Behavior
 
 - The checker SHALL rebuild the item's property automaton with
-  `qsl-eval`'s translation, and SHALL read nothing from the engine but the
+  `fsl-eval`'s translation, and SHALL read nothing from the engine but the
   certificate.
 - If an `AutomatonStateKey` in a certificate state is admitted by no
   instance's translation context (a listed admission negative; an item's
@@ -979,7 +979,7 @@ Note: a rejected certificate settles `inconclusive`, `CertificateRejected`
 | FR-338-AC-9 | Over a subject with populations `P1` and `P2` of `Counter`, each with the universe `["a"]` and `a` admitted, the claim `always holds(c.value <= 1000)` with `over (c: Counter)` has one instance, whose `context` is `[root, profile, "infinite", [[N, ["instance", "a"]]]]` with `N` the `over` parameter's NodeId; renaming `P1` or `P2` leaves the context's octets unchanged. Over populations `P1` with universe `["a"]` and `P2` with universe `["b"]`, the two instances' contexts differ exactly in the key, and a certificate state carrying `a`'s context is not admitted under `b`'s instance (a foreign context, AC-5). Each of these replacements of `["instance", "a"]` in a product state's key refuses `ShapeMismatch` at `ProductState`: FR-181's `{"type":"reference",...}` value of the key's object; the three-element `["instance", T, "a"]` with `T` the JSON string of `P1`'s declaration identity text; and `["instance", {"type":"text","value":"a"}]`. The context carries no type: over two subjects with population `P1` of `Counter` and universe `["a"]`, one whose initial state holds a `Counter` under `a` and one whose initial state holds a `Fast` (a subtype of `Counter`) under `a`, the instance's context octets are equal. | Test (TC-1164) |
 | FR-338-AC-10 | Fixture: the `Counter` subject (no `terminal` declaration) and a checked package of its unit that carries the guarded clause's `temporal`/`temporal_clause` node in the shape S4 emits (FR-337-AC-6: activation aggregate `kind` `each`, `trigger` the `on each` parameter's node, `guard` the clause's Boolean guard term), built by the test so that its letters can supply readings no checked source guard gives, as in FR-126-AC-16; the same package supplies the engine's clause and stands as the request's recompiled package, and each `when` condition is read by the test's own letters as in FR-126-AC-16. `always holds(c.value <= 1)` under infinite-trace `on each` with the condition `c.value = 7` returns `Holds` whose certificate holds values 0 to 3, each with activation `"each-when"` and state body `["safety",[[[],[],[],[]]]]`, and `check_closure` accepts it, so FR-127 settles `proved`. `eventually[0,1] holds(c.value = 3)` under event-position false-extension `on each` with the condition `c.value >= 2` returns `Holds` whose certificate `check_closure` accepts, its value-0 and value-1 states having body `["bounded",["each"],[[[],[],[],[]]]]` and its value-2 state body `["bounded",["each"],[[[],[],[[[],"positive","deadline","1"]],[]]]]`; that certificate with the value-2 state's body replaced by `["bounded",["each"],[[[],[],[],[]]]]` (the condition misread as false) is rejected `SuccessorMissing` at the value-2 product state with the deadline body; the same certificate with the misread value-2 state added beside the deadline one is accepted; the accepted certificate with every key's activation replaced by `"each"` is rejected `ShapeMismatch` at the least refused `ProductStateRef` (AC-8's order). With the condition false at values 0 and 1 and undefined at value 2, the certificate holding exactly the value-0 and value-1 states, each with activation `"each-when"` and body `["bounded",["each"],[[[],[],[],[]]]]`, is rejected `BadState` at the value-1 product state, whose expansion reads the undefined condition at value 2. | Test (TC-525) |
 | FR-338-AC-11 | **RETIRED (staleness check withdrawn).** The certificate carries no `package_id` and the checker compares no package identity. | Test (TC-1141), retired |
-| FR-338-AC-12 | Rejection spellings. The outcome writer writes `CertificateRejected{SuccessorMissing, ProductState(s)}` with `rule` `successor-missing` and `at` the product-state form of `s`; `{QueryMismatch, Query{Unrolling}}` with `at` `"unrolling"`; `{ShapeMismatch, Query{Step{row: Some(3)}}}` with `at` `"step/3"`; `{NotRefutation, Query{Step{row: None}}}` with `at` `"step"`; `{ProofStepInvalid, ProofStep{Step{row: Some(4)}, 41}}` with `at` `{"part":"step/4","index":"41"}`; and `{RankMissing, ModelState(d)}` with `at` the state form of `d`. QSpec FR-331's schema admits each written cause. | Test (TC-1197) |
+| FR-338-AC-12 | Rejection spellings. The outcome writer writes `CertificateRejected{SuccessorMissing, ProductState(s)}` with `rule` `successor-missing` and `at` the product-state form of `s`; `{QueryMismatch, Query{Unrolling}}` with `at` `"unrolling"`; `{ShapeMismatch, Query{Step{row: Some(3)}}}` with `at` `"step/3"`; `{NotRefutation, Query{Step{row: None}}}` with `at` `"step"`; `{ProofStepInvalid, ProofStep{Step{row: Some(4)}, 41}}` with `at` `{"part":"step/4","index":"41"}`; and `{RankMissing, ModelState(d)}` with `at` the state form of `d`. FSpec FR-331's schema admits each written cause. | Test (TC-1197) |
 | FR-338-AC-13 | Unlisted pairs. Writing `CertificateRejected` with `BadState` at `Query{Base}`, `QueryMismatch` at `ProofStep{Unrolling, 0}`, `ProofStepInvalid` at `Query{Step{row: None}}` or `WitnessFails` at `ModelState(d)` each returns `InternalFault` (`runtime_invariant`) with invariant `certificate-rejection-pair` and writes no `certificate-rejected` cause; `NotRefutation` at `Query{Base}`, `NotRefutation` at `ProofStep{Base, 2}` and `Malformed` at `Query{Unrolling}` are written. A plugin result entry whose cause is `certificate-rejected` with `query-mismatch` at `unrolling`, and one with `bad-state` at `base`, each reads `Unsupported` (FR-290). | Test (TC-1197) |
 | FR-338-AC-14 | Checker binding. Every rejection that the rejected vectors of FR-338-AC-2, AC-3 and AC-8, FR-314-AC-2 and AC-4, FR-169-AC-10, AC-11 and AC-14, FR-201-AC-6 and FR-245-AC-7 return names a `CertificateLocus` alternative that the Rejection spellings table assigns to the checker that returned it, and a rule FR-331 lists at that locus form. | Test (TC-1197) |
 | FR-338-AC-16 | Over FR-339-AC-5's fixture (the clause `eventually holds(c.versionNumber = 2)` `on each` with the condition `c.versionNumber = 1`, activation `"each-when"`), binding `a`'s waiting state at `(0,0)` has body `["guarded-buchi","waiting",[[],[],[],[]]]` and its active state at `(1,0)` has body `["guarded-buchi","active",[[[[],"negative"]],[],[],[]]]`. Each of these is refused `ShapeMismatch` at `ProductState`: that active key rewritten as `["buchi",[[[[],"negative"]],[],[],[]]]`; that waiting key with `branch` `[[[[],"negative"]],[],[],[]]` under phase `"waiting"`; a `guarded-buchi` key under the same clause's context with activation `"infinite"`; the phase `"selected"`. With the condition undefined at version 0, the empty certificate is rejected `BadState` at `ProductState` with the initial model state `(0,0)` and binding `a`'s key `K_C(["guarded-buchi","waiting",[[],[],[],[]]])`, the waiting configuration before position 0's letter is read (binding `a`, the first in canonical instance order); and FR-339-AC-5's accepted certificate under that condition is rejected `BadState` at binding `a`'s waiting state at `(0,0)`, the least certificate state carrying that model state. | Test (TC-525) |

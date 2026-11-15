@@ -3,7 +3,7 @@ id: TC-708
 title: "Delay distributions check, windows are exact and the race resolves ties by the workload"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-253
+  - target: ix://agent-ix/filament-spec-language/FR-253
     type: verifies
 ---
 # TC-708: Delay distributions check, windows are exact and the race resolves ties by the workload

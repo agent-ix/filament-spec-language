@@ -3,7 +3,7 @@ id: TC-606
 title: "A single-existential claim is proved by a lasso witness and refuted by a trap"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-181
+  - target: ix://agent-ix/filament-spec-language/FR-181
     type: verifies
 ---
 # TC-606: A single-existential claim is proved by a lasso witness and refuted by a trap

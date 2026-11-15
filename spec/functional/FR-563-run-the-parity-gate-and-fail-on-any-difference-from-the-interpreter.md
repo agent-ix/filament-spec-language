@@ -3,23 +3,23 @@ id: FR-563
 title: "Run the parity gate over every non-interpreter backend and fail on any difference from the interpreter"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-296
+  - target: ix://agent-ix/filament-spec-language/FR-296
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-560
+  - target: ix://agent-ix/filament-spec-language/FR-560
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-350
+  - target: ix://agent-ix/filament-spec-language/FR-350
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-306"
+  - target: "ix://agent-ix/filament-specification/FR-306"
     type: depends_on
 ---
 # FR-563: Run the parity gate over every non-interpreter backend and fail on any difference from the interpreter
@@ -33,7 +33,7 @@ it and its failure policy.
 
 ### The runner
 
-The runner is a library operation in `qsl-conformance`, a QSL crate outside
+The runner is a library operation in `fsl-conformance`, an FSL crate outside
 the qualified core (ADR-029 CB-3 item 3, as amended):
 
 ```rust
@@ -49,12 +49,12 @@ pub fn run_parity(
 FR-350 reads it), the generator seed (default FR-295's
 `0x51534C2D4A495431`) and count (default 10,000). The reference is always
 the interpreter: a test may substitute a reference only through
-`run_parity_with_reference`, which exists only under `qsl-conformance`'s
+`run_parity_with_reference`, which exists only under `fsl-conformance`'s
 `test-support` feature, and `make parity` never enables it. `BackendCoverage`
-is the seam type FR-560 defines in `qsl-eval`, and `qsl-conformance` does not
-depend on `qsl-jit`. `make parity` runs the same operation over `quire-aot`, a QSL crate
+is the seam type FR-560 defines in `fsl-eval`, and `fsl-conformance` does not
+depend on `fsl-jit`. `make parity` runs the same operation over `fsl-aot`, an FSL crate
 (Overlap). `make parity` runs `cargo xtask parity`, which links every
-non-interpreter backend the QSL workspace has and calls `run_parity` with the
+non-interpreter backend the FSL workspace has and calls `run_parity` with the
 defaults.
 
 ### Parity cases
@@ -108,7 +108,7 @@ unit's source bytes, the entry, the arguments and both results.
 - `make parity` exits 0 when the report has no finding, 1 when it has any,
   and 2 on a `ParityRefusal`, the exit convention of FR-353.
 - `make ci` lists `parity` as a prerequisite in the change that adds
-  `qsl-jit` to the workspace.
+  `fsl-jit` to the workspace.
 
 ## Inputs
 
@@ -165,17 +165,17 @@ or `ParityRefusal`.
 - [FR-294](FR-294-run-every-execution-backend-behind-one-seam.md), [FR-296](FR-296-select-the-execution-backend-in-the-request.md): the seam and the supplied backends.
 - [FR-295](FR-295-return-interpreter-outcomes-from-jit-and-aot.md): the compared members, the corpus and the generator.
 - [FR-560](FR-560-translate-the-jit-coverage-set-and-report-every-other-construct-untranslatable.md): the JIT coverage.
-- [FR-350](FR-350-run-the-conformance-corpus-against-qsl.md): reading the corpus in place.
+- [FR-350](FR-350-run-the-conformance-corpus-against-fsl.md): reading the corpus in place.
 - [FR-100](FR-100-run-a-named-function-through-the-spine.md): the `run` operation whose vectors become parity cases.
-- QSpec FR-306-AC-1: parity over the conformance corpus and generated
+- FSpec FR-306-AC-1: parity over the conformance corpus and generated
   programs.
 
 ## Overlap
 
-`xtask parity` runs `run_parity` over `quire-aot`, a QSL crate, and gates the
-AOT backend on it, constructing it with the fixture generator of `qsl-conformance` and
-the toolchain the run names (ADR-029 EB-6); the gate never calls the driver's or CG's `generate` (ADR-011 FB-11). The driver depends on `qsl-conformance` for the CLI half of the
-matrix and for the real-generator AOT parity run: the driver repository owns that run, composing `quire-aot` with its real generator and comparing it with the interpreter over the same parity cases (the driver's requirement tracked as IR-1540). QSL's own run, with the fixture generator, qualifies the backend's build-and-run harness, and the two runs together satisfy FR-295 and ADR-029 EB-5 for AOT.
+`xtask parity` runs `run_parity` over `fsl-aot`, an FSL crate, and gates the
+AOT backend on it, constructing it with the fixture generator of `fsl-conformance` and
+the toolchain the run names (ADR-029 EB-6); the gate never calls the driver's or CG's `generate` (ADR-011 FB-11). The driver depends on `fsl-conformance` for the CLI half of the
+matrix and for the real-generator AOT parity run: the driver repository owns that run, composing `fsl-aot` with its real generator and comparing it with the interpreter over the same parity cases (the driver's requirement tracked as IR-1540). FSL's own run, with the fixture generator, qualifies the backend's build-and-run harness, and the two runs together satisfy FR-295 and ADR-029 EB-5 for AOT.
 
 ## References
 

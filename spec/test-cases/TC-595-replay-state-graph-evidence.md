@@ -3,7 +3,7 @@ id: TC-595
 title: "The replay facade replays witnesses, traps and path pairs through ModelSystem"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-170
+  - target: ix://agent-ix/filament-spec-language/FR-170
     type: verifies
 ---
 # TC-595: The replay facade replays witnesses, traps and path pairs through ModelSystem

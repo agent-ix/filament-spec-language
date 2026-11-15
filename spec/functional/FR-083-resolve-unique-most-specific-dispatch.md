@@ -3,15 +3,15 @@ id: FR-083
 title: "Resolve unique most-specific dispatch with no partial substitute"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
 ---
 # FR-083: Resolve unique most-specific dispatch with no partial substitute
@@ -120,7 +120,7 @@ catalog has no `family-steps` cause.
 - **Upstream:** [FR-081](FR-081-preserve-model-correspondence-and-declaration-identity.md)
   and [FR-082](FR-082-resolve-conformance-subsetting-and-redefinition.md)
   supply the effective declarations and conformance relation this requirement
-  dispatches over; quire-specification FR-151 owns the normative dispatch
+  dispatches over; filament-specification FR-151 owns the normative dispatch
   rule ("registration, source or declaration order never resolves
   ambiguity, and no linearization is applied") and AD-006 owns the model-view
   decision to keep closed dispatch sets in the checked model view.

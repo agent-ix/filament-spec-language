@@ -3,7 +3,7 @@ id: TC-232
 title: "A relationship between two object types carries no systems-model kind"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: verifies
 ---
 # TC-232: A relationship between two object types carries no systems-model kind

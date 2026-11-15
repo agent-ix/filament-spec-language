@@ -3,9 +3,9 @@ id: TC-663
 title: "S3 checks every protocol control construct and records scopes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-663: S3 checks every protocol control construct and records scopes

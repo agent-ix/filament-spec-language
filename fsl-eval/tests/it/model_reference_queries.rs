@@ -1,0 +1,4541 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-198 continued: `allInstances<T>(p)` and `lookup<T>(p, r) absent m`
+//! (FR-153) as complete-V1 *source forms*, exercised through the real
+//! checker/evaluator boundary (`CheckedPackage::check_expression` and
+//! `CheckedPackage::evaluate`), never by calling
+//! `crate::model::population::all_instances`/`lookup` directly.
+//!
+//! `tests/model_population.rs`'s L01-L08 already back FR-153 at the
+//! `crate::model::population` layer; those calls never pass through
+//! `Expression::AllInstances`/`Expression::Lookup`, the `Typer`, `NodeKind`,
+//! `Machine` or `crate::value::model_query`'s own identity bridge — the
+//! layer FSL #120 slice 1a actually adds. This file is L12 onward: the same
+//! TC-195 F1 model (`model.A`, `model.B`, generalization `B -> A`) and TC-198
+//! P1 population document, run as real source expressions with a
+//! `Value::Population` parameter and, for `lookup`, a `Value::Reference`
+//! argument bridged through `filament_exact::ObjectReference`/`UniverseId` and
+//! the object type's `EffectiveId` exactly as `crate::value::model_query`
+//! does (ADR-013 §8 OQ-C ruling).
+
+use filament_checked::key::DeclarationKey;
+use filament_eval::{CallFailure, Evaluation};
+use filament_eval::{FamilyOutcome, FamilyResult};
+use filament_exact::NodeKey;
+use filament_exact::{
+    CardinalityBound, ChargePoint, CollectionKind, Integer, LimitKind, Meter, Outcome, ScalarLimits,
+};
+use filament_exact::{CollectionType, Value, ValueType};
+use filament_exact::{IllTypedCause, ObjectId, ObjectReference, Presence, UniverseId};
+use filament_semantic_value::absence::AbsenceMode;
+use filament_semantic_value::call::InputRefusal;
+use filament_semantic_value::call::WrongSnapshotCause;
+use filament_semantic_value::catalog::UndefinedReason;
+use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::declaration::{
+    CompositeDeclaration, CompositeShape, DeclarationCause, EnvironmentFailure, FieldDeclaration,
+    FieldRef, ObjectTypeDeclaration, TypeEnvironment,
+};
+use filament_semantic_value::location::{
+    ExpressionLocation as Location, ExpressionOwner as Origin,
+};
+use filament_semantic_value::object_closure::ObjectClosure;
+use fsl_eval::value::{undefined_contract_code, CheckedPackageEvaluation, QualifiedName};
+use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::{
+    AdmittedModel, CheckCause, CheckRefusal, CheckedExpression, PackageDeclarations,
+};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::dispatch::GeneralizationClosure;
+use fsl_semantics::model::domain_package::{
+    DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, FieldMemberRecord, Multiplicity,
+    ObjectTypeRecord, OperationEffect, PopulationRecord, ValueTypeRef,
+};
+use fsl_semantics::model::key::EffectiveId;
+use fsl_semantics::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
+use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::model::population::{
+    admit_binding, admit_invocation, AdmissionMeter, AdmissionOutcome, InvocationContext,
+    InvocationDelta, PopulationAdmissionLimits, PopulationBinding, PopulationDocument,
+    PopulationMember,
+};
+use ix_trace_rs::trace;
+
+const MULTIPLICITY_0_1: Multiplicity = Multiplicity {
+    lower: 0,
+    upper: Some(1),
+    ordered: false,
+    unique: true,
+};
+
+const SCALAR_UNLIMITED: ScalarLimits = ScalarLimits {
+    integer_bits: u64::MAX,
+    decimal_digits: u64::MAX,
+    scale_expansion: u64::MAX,
+    text_input_bytes: u64::MAX,
+    text_scalars: u64::MAX,
+    normalized_scalars: u64::MAX,
+    unit_edges: u64::MAX,
+    value_occurrences: u64::MAX,
+    work_units: u64::MAX,
+    result_units: u64::MAX,
+};
+
+fn object_type(identity: &str, supertypes: Vec<&str>) -> DomainPackageRecord {
+    DomainPackageRecord::ObjectType(ObjectTypeRecord {
+        key: DeclarationKey::fixture(identity),
+        interface_features: None,
+        abstract_type: false,
+        supertypes: supertypes
+            .into_iter()
+            .map(DeclarationKey::fixture)
+            .collect(),
+    })
+}
+
+fn field_member(identity: &str, owner: &str, value_type: &str) -> DomainPackageRecord {
+    DomainPackageRecord::FieldMember(FieldMemberRecord {
+        key: DeclarationKey::fixture(identity),
+        owner: DeclarationKey::fixture(owner),
+        value_type: ValueTypeRef::Package(DeclarationKey::fixture(value_type)),
+        multiplicity: MULTIPLICITY_0_1,
+        presence: filament_exact::Presence::Required,
+        subsets: Vec::new(),
+        redefines: None,
+        position: 0,
+    })
+}
+
+/// TC-195 F1, imported as `M` by TC-198 (see `tests/model_population.rs`):
+/// types `A`, `B`; field `A.x` of `A`; generalization `B -> A`; plus its own
+/// FR-153 population declaration `model.pop.p1` (member types `A`, `B`),
+/// closed, which [`admit_binding`]/[`admit_invocation`] resolve by
+/// [`p1_population_key`] rather than take as a caller-supplied record.
+fn fixture_f1() -> DomainPackage {
+    DomainPackage::new(
+        DomainPackageRef::fixture("bundle.n01"),
+        vec![
+            object_type("model.A", vec![]),
+            object_type("model.B", vec!["model.A"]),
+            field_member("model.A.x", "model.A", "model.A"),
+            DomainPackageRecord::Population(PopulationRecord {
+                key: DeclarationKey::fixture("model.pop.p1"),
+                member_types: vec![
+                    DeclarationKey::fixture("model.A"),
+                    DeclarationKey::fixture("model.B"),
+                ],
+                extent: Extent::Closed,
+                symmetric: false,
+            }),
+        ],
+    )
+}
+
+fn view_of(domain_package: &DomainPackage) -> EffectiveView {
+    match normalize(domain_package, ModelNormalizationLimits::UNLIMITED) {
+        NormalizeOutcome::Completed(view) => view,
+        other => panic!("expected a completed effective view, got {other:?}"),
+    }
+}
+
+fn type_id(view: &EffectiveView, identity: &str) -> EffectiveId {
+    view.type_identities()
+        .get(&DeclarationKey::fixture(identity))
+        .cloned()
+        .unwrap_or_else(|| panic!("{identity} has no type-level effective declaration"))
+}
+
+fn member(object: &str, type_identity: &str) -> PopulationMember {
+    PopulationMember {
+        object: object.to_owned(),
+        type_identity: DeclarationKey::fixture(type_identity),
+        field_values: Vec::new(),
+    }
+}
+
+/// FCD FR-121 document P1: members `a1`/`a2` of `model.A`, `b1` of `model.B`.
+fn p1(model_identity: &str) -> PopulationDocument {
+    PopulationDocument {
+        model_identity: model_identity.to_owned(),
+        members: vec![
+            member("a1", "model.A"),
+            member("a2", "model.A"),
+            member("b1", "model.B"),
+        ],
+    }
+}
+
+/// [`fixture_f1`]'s own `model.pop.p1` declaration key, backing [`p1`]/
+/// [`p1_minus_a2`].
+fn p1_population_key() -> DeclarationKey {
+    DeclarationKey::fixture("model.pop.p1")
+}
+
+/// [`fixture_f1_with_second_population`]'s own second population
+/// declaration key, `model.pop.second` -- FR-089-AC-1's own distinct-
+/// `population_key` case (TC-291, TC-293) needs two population
+/// declarations on the *same* domain package. Same key spelling as
+/// `fsl-semantics/tests/it/model_population.rs`'s own `SECOND_POPULATION` (PR #326
+/// review finding S4): the two files' `fixture_f1_with_second_population`
+/// helpers build on each file's own separately authored `fixture_f1`, so
+/// they are not merged into one shared helper, but nothing justifies them
+/// naming the same declared population differently.
+fn p2_population_key() -> DeclarationKey {
+    DeclarationKey::fixture("model.pop.second")
+}
+
+/// [`fixture_f1`], plus a second `Population` declaration
+/// ([`p2_population_key`], same member types) alongside its own
+/// `model.pop.p1` -- FR-089-AC-1/AC-3's tests admit two distinct bindings
+/// against the same domain package under two different population keys.
+fn fixture_f1_with_second_population() -> DomainPackage {
+    let mut domain_package = fixture_f1();
+    domain_package
+        .records
+        .push(DomainPackageRecord::Population(PopulationRecord {
+            key: p2_population_key(),
+            member_types: vec![
+                DeclarationKey::fixture("model.A"),
+                DeclarationKey::fixture("model.B"),
+            ],
+            extent: Extent::Closed,
+            symmetric: false,
+        }));
+    domain_package
+}
+
+fn admitted_binding(view: &EffectiveView, document: &PopulationDocument) -> PopulationBinding {
+    let mut admission = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    match admit_binding(
+        view,
+        document,
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        Some(3),
+        &mut admission,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted binding, got {other:?}"),
+    }
+}
+
+/// A model type/universe/object identity as a checked
+/// `filament_exact::ObjectReference`, exactly as
+/// `crate::value::model_query::to_object_reference` converts a real
+/// `all_instances`/`lookup` result: the type is the same `EffectiveId`, and
+/// the universe is the same `filament_exact::UniverseId` (ADR-013 §8 OQ-C
+/// ruling). Test-side construction of an argument `Value::Reference`, not a
+/// re-implementation of the module under test.
+fn object_reference(
+    universe: &UniverseId,
+    type_identity: &EffectiveId,
+    object: &str,
+) -> ObjectReference {
+    ObjectReference::new(
+        universe.clone(),
+        type_identity.clone(),
+        ObjectId::new(object).unwrap(),
+    )
+}
+
+/// A well-formed 32-byte universe digest that is never `scenario.universe`
+/// (ADR-013 §8 OQ-C ruling: `filament_exact::UniverseId` is a fixed 32-byte
+/// digest, so a byte-length other than 32 can no longer reach this layer at
+/// all -- only a well-formed but different digest remains representable).
+fn foreign_universe_id() -> UniverseId {
+    crate::support::ids::universe_id([0x07])
+}
+
+struct Scenario {
+    universe: UniverseId,
+    a: EffectiveId,
+    b: EffectiveId,
+    binding: PopulationBinding,
+    /// FR-094: `M`, admitted with its own effective view, whose
+    /// declarations `check` keys `Reference<M::A>` and `Population<M::A>`
+    /// by.
+    model: AdmittedModel,
+}
+
+fn scenario() -> Scenario {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let universe = view_of(&domain_package)
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+    let binding = admitted_binding(&view, &p1("test/orders"));
+    let model = AdmittedModel::new(&domain_package, &view).unwrap();
+    Scenario {
+        universe,
+        a,
+        b,
+        binding,
+        model,
+    }
+}
+
+/// TC-227's S6a case: population admission is valid (closed extent and every
+/// actual member is declared), but its declaration omits effective subtypes
+/// of the queried `model.A`.
+fn subtype_incomplete_scenario() -> Scenario {
+    let domain_package = DomainPackage::new(
+        DomainPackageRef::fixture("bundle.tc-227"),
+        vec![
+            object_type("model.A", vec![]),
+            object_type("model.B", vec!["model.A"]),
+            object_type("model.C", vec!["model.A"]),
+            DomainPackageRecord::Population(PopulationRecord {
+                key: p1_population_key(),
+                member_types: vec![DeclarationKey::fixture("model.B")],
+                extent: Extent::Closed,
+                symmetric: false,
+            }),
+        ],
+    );
+    let view = view_of(&domain_package);
+    let universe = view
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+    let document = PopulationDocument {
+        model_identity: "test/orders".to_owned(),
+        members: vec![member("b1", "model.B")],
+    };
+    let binding = admitted_binding(&view, &document);
+    let model = AdmittedModel::new(&domain_package, &view).unwrap();
+    Scenario {
+        universe,
+        a,
+        b,
+        binding,
+        model,
+    }
+}
+
+/// TC-198 P1 (see [`p1`]) after `model.A.remove` deletes `a2`: `a1`/`b1`
+/// survive unchanged.
+fn p1_minus_a2(model_identity: &str) -> PopulationDocument {
+    PopulationDocument {
+        model_identity: model_identity.to_owned(),
+        members: vec![member("a1", "model.A"), member("b1", "model.B")],
+    }
+}
+
+/// TC-198 L07's own scenario, as a real invocation admission: pre P1,
+/// post P1-without-`a2`, under `model.A.remove`'s declared frame
+/// `{modifies: [], creates: [], deletes: [model.A]}`. The returned
+/// `Scenario`'s `binding` is the admitted *post* binding with the admitted
+/// *pre* binding attached as its `pre_anchor` -- exactly the
+/// `Value::Population` argument a real `pre(..)` source expression reads.
+fn l07_scenario() -> Scenario {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let universe = view_of(&domain_package)
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+    let effect = OperationEffect {
+        modifies: Vec::new(),
+        creates: Vec::new(),
+        deletes: vec![DeclarationKey::fixture("model.A")],
+        ..Default::default()
+    };
+    let population = p1_population_key();
+    let context = InvocationContext {
+        view: &view,
+        population: &population,
+        subtype_closure: GeneralizationClosure::Closed,
+        declared_maximum: Some(3),
+    };
+    let declared = InvocationDelta {
+        effect: &effect,
+        declared_created: &[],
+        declared_deleted: &["a2".to_owned()],
+    };
+    let mut pre_meter = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let mut post_meter = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let binding = match admit_invocation(
+        context,
+        &p1("test/orders"),
+        &p1_minus_a2("test/orders"),
+        &declared,
+        &mut pre_meter,
+        &mut post_meter,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted invocation, got {other:?}"),
+    };
+    let model = AdmittedModel::new(&domain_package, &view).unwrap();
+    Scenario {
+        universe,
+        a,
+        b,
+        binding,
+        model,
+    }
+}
+
+/// A checked package whose `TypeEnvironment` declares `M::A`/`M::B` as
+/// object types under `scenario`'s own `EffectiveId`s (ADR-013 O-05) —
+/// required for `ValueType::Reference`
+/// to check at all: `TypeEnvironment::type_refusal` refuses any
+/// `Reference<T>` whose `T` is not a declared object type. `M::B`'s
+/// supertype `M::A` mirrors `fixture_f1`'s own `model.B -> model.A`, so
+/// check time and the runtime binding agree on conformance.
+fn types(scenario: &Scenario) -> TypeEnvironment {
+    TypeEnvironment::new(
+        [],
+        [
+            ObjectTypeDeclaration::new(scenario.a.clone(), "M::A", vec![]),
+            ObjectTypeDeclaration::new(scenario.b.clone(), "M::B", vec![])
+                .with_supertypes(vec![scenario.a.clone()]),
+        ],
+    )
+    .unwrap()
+}
+
+fn package(scenario: &Scenario) -> CheckedPackage {
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types(scenario);
+        declarations.models = vec![scenario.model.clone()];
+        declarations
+    }
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap();
+    CheckedPackage::link(graph)
+}
+
+/// Like [`package`], plus one declared function `F(p: Population<M::A>[3]):
+/// Integer { size(allInstances<M::A>(p)) }` -- for item 2's `pre(F(p))`
+/// test. `F`'s own body is never itself a postcondition (a function body is
+/// checked with `postcondition: false`, `CheckedPackage::check`'s own
+/// comment at its `Typer::new` call sites), so this package alone already
+/// proves a function body cannot see `pre(...)`; the `pre(F(p))` test below
+/// proves the complementary runtime half, that calling `F` from inside a
+/// `pre(...)` operand does not leak the caller's pre anchor into `F`'s own
+/// body.
+fn package_with_function(scenario: &Scenario) -> CheckedPackage {
+    package_with_size_function(scenario, 3)
+}
+
+/// Like [`package_with_function`], with `p: Population<M::A>[maximum]`.
+fn package_with_size_function(scenario: &Scenario, maximum: u64) -> CheckedPackage {
+    let target = ValueType::Reference(scenario.a.clone());
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types(scenario);
+        declarations.models = vec![scenario.model.clone()];
+        declarations.functions = vec![FunctionDeclaration::new(
+            "F",
+            vec![(
+                "p".to_owned(),
+                crate::support::type_form::type_form(&ValueType::Population(Some(maximum)))
+                    .with_arguments(vec![crate::support::type_form::named_type_form("M::A")]),
+            )],
+            crate::support::type_form::type_form(&ValueType::Integer),
+            None,
+            Expression::size(all_instances(target)),
+        )];
+        declarations
+    }
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap();
+    CheckedPackage::link(graph)
+}
+
+/// Like [`package`], plus one declared function `F2(elements:
+/// Set<Reference<M::A>>[0,3]): Integer { size(elements) }` -- the review's
+/// required positive counterpart to the finding-1 refusal test: `elements`'
+/// declared type is exactly `allInstances<M::A>(p)`'s own checked result
+/// type, so `pre(F2(allInstances(p)))` passes an eligible read (the
+/// `AllInstances` node itself, not the bare parameter `p`) as the call's
+/// argument -- FR-042-AC-1's `pre(P(self.version, delta))` analogue, legal
+/// because the eligible read happens before the call, not inside `F2`'s own
+/// body (which, like `F`'s, is checked as `ClauseKind::Body` and could
+/// never see `pre(...)` regardless).
+fn package_with_collection_function(scenario: &Scenario) -> CheckedPackage {
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types(scenario);
+        declarations.models = vec![scenario.model.clone()];
+        declarations.functions = vec![FunctionDeclaration::new(
+            "F2",
+            vec![(
+                "elements".to_owned(),
+                TypeForm::collection(CollectionKind::Set, crate::support::type_form::SPAN)
+                    .with_arguments(vec![crate::support::type_form::named_type_form("M::A")])
+                    .with_bounds(vec!["0".to_owned(), "3".to_owned()]),
+            )],
+            crate::support::type_form::type_form(&ValueType::Integer),
+            None,
+            Expression::size(Expression::name("elements".to_owned())),
+        )];
+        declarations
+    }
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap();
+    CheckedPackage::link(graph)
+}
+
+/// A real object world containing every object these tests pass as a
+/// `lookup<T>(p, r)` argument, `b1` (a member of the closed population `p`)
+/// and `c9` (not a member of `p`, but still a real object of the wider
+/// world) alike: `Value::validate`'s parameter admission refuses a
+/// dangling `Value::Reference` argument against this environment
+/// regardless of the separate, narrower `PopulationBinding` `lookup`
+/// itself checks membership against — the two are deliberately different
+/// checks over different scopes.
+fn objects(scenario: &Scenario) -> ObjectEnvironment {
+    ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types(scenario),
+            [
+                (
+                    object_reference(&scenario.universe, &scenario.b, "b1"),
+                    vec![],
+                ),
+                (
+                    object_reference(&scenario.universe, &scenario.a, "c9"),
+                    vec![],
+                ),
+            ],
+            &[],
+        )
+        .unwrap(),
+    )
+    .with_population(scenario.binding.clone())
+    .unwrap()
+}
+
+/// FR-089: the `Value::Population` argument a real source expression's `p`
+/// parameter reads -- `scenario.binding`'s own minted `PopulationId`, never
+/// the binding itself, which the evaluator now resolves by lookup in the
+/// recorded correspondence ([`population_environment`]) rather than reading
+/// directly off the `Value`.
+fn population_argument(scenario: &Scenario) -> Value {
+    Value::Population(scenario.binding.population_id())
+}
+
+/// An otherwise-empty `ObjectEnvironment` recording `scenario.binding`'s own
+/// FR-089 `PopulationId` correspondence -- what a bare `ObjectEnvironment::
+/// default()` supplied before the evaluator needed a correspondence to
+/// resolve [`population_argument`] through.
+fn population_environment(scenario: &Scenario) -> ObjectEnvironment {
+    ObjectEnvironment::default()
+        .with_population(scenario.binding.clone())
+        .unwrap()
+}
+
+fn check(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+) -> CheckedExpression {
+    let parameters = parameters
+        .iter()
+        .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))
+        .collect();
+    package
+        .graph()
+        .check_expression(
+            parameters,
+            expression,
+            None,
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+        )
+        .unwrap()
+}
+
+/// Like [`check`], for a checked program findings 1/5 expect the checker to
+/// refuse outright -- `Population` named anywhere FR-153 does not give it
+/// Outputs, or a non-`Population` operand where `allInstances`/`lookup`
+/// require one.
+fn check_refusal(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+) -> CheckRefusal {
+    let parameters = parameters
+        .iter()
+        .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))
+        .collect();
+    match package.graph().check_expression(
+        parameters,
+        expression,
+        None,
+        CheckMode::Kernel,
+        CheckingLimits::default(),
+    ) {
+        Err(refusal) => refusal,
+        Ok(checked) => panic!(
+            "expected a check refusal, got a checked {:?}",
+            checked.value_type()
+        ),
+    }
+}
+
+/// Like [`check`], but as an operation's postcondition (`pre(...)` legal;
+/// see [`CheckedPackage::check_postcondition_expression`]'s own docs) --
+/// every `pre(..)` test in this file needs this instead of [`check`], since
+/// [`check`] itself must stay a non-postcondition context (it backs every
+/// other test in this file, several of which now double as negative
+/// coverage that `pre` is refused outside a postcondition).
+fn check_postcondition(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+) -> CheckedExpression {
+    let parameters = parameters
+        .iter()
+        .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))
+        .collect();
+    package
+        .graph()
+        .check_postcondition_expression(
+            parameters,
+            expression,
+            None,
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+        )
+        .unwrap()
+}
+
+/// Like [`check_refusal`], but as an operation's postcondition (via
+/// [`CheckedPackage::check_postcondition_expression`]) -- every negative
+/// `pre(...)`-eligibility test in this file needs this instead of
+/// [`check_refusal`], since a plain [`check`]/[`check_refusal`] context
+/// already refuses `pre(...)` outright on clause context alone (see
+/// `pre_refuses_outside_a_postcondition_context`), which would mask the
+/// eligible-operand refusal these tests exist to pin.
+fn check_refusal_as_postcondition(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+) -> CheckRefusal {
+    let parameters = parameters
+        .iter()
+        .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))
+        .collect();
+    match package.graph().check_postcondition_expression(
+        parameters,
+        expression,
+        None,
+        CheckMode::Kernel,
+        CheckingLimits::default(),
+    ) {
+        Err(refusal) => refusal,
+        Ok(checked) => panic!(
+            "expected a check refusal, got a checked {:?}",
+            checked.value_type()
+        ),
+    }
+}
+
+/// A stable `NodeKey` distinct from any `scenario()` type, for a record
+/// declaration this file constructs -- finding 1's record-field case
+/// (checked at `TypeEnvironment::new` time, never through an expression).
+fn fixed_key(byte: u8) -> NodeKey {
+    crate::support::ids::node_key([byte])
+}
+
+/// A stable object-type `EffectiveId` distinct from any `scenario()` type,
+/// for an object type this file declares but never admits into
+/// `fixture_f1`'s model -- finding 1's object-attribute case and finding 2's
+/// package-declared-but-not-in-the-model case need one each.
+fn fixed_type(byte: u8) -> EffectiveId {
+    crate::support::ids::effective_id([byte])
+}
+
+/// Unwraps a completed kernel evaluation, panicking on any family-owned
+/// refusal/undefined result. Every call site in this file that reaches a
+/// family cause (an absent-key lookup, a `pre(..)` anchor refusal) uses
+/// [`run_family`]/[`run_postcondition_family`] instead, so this panic never
+/// fires on those paths.
+fn evaluated(evaluation: Evaluation) -> Outcome<Value> {
+    match evaluation.outcome {
+        FamilyOutcome::Evaluated(outcome) => outcome,
+        other => panic!("expected FamilyOutcome::Evaluated(_), got {other:?}"),
+    }
+}
+
+/// Unwraps a family-owned `Refused` result's catalog code -- every
+/// `crate::model::population::lookup`/`allInstances` refusal (foreign
+/// universe, absent-key-refused, type-mismatch on an undeclared model type)
+/// is carried in `FamilyResult::Refused`, not the kernel's own
+/// `Outcome::Refused` (ADR-013 O-16).
+fn refused_catalog_code(evaluation: Evaluation) -> filament_semantic_value::catalog::CatalogCode {
+    match evaluation.outcome {
+        FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) => cause.catalog_code(),
+        other => panic!("expected FamilyOutcome::FamilyEvaluated(Refused(_)), got {other:?}"),
+    }
+}
+
+fn run(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+    arguments: Vec<Value>,
+    limits: ScalarLimits,
+    objects: &ObjectEnvironment,
+) -> (Outcome<Value>, Meter) {
+    let (evaluation, meter) =
+        run_family(package, parameters, expression, arguments, limits, objects);
+    (evaluated(evaluation), meter)
+}
+
+/// Like [`run`], returning the raw [`Evaluation`] instead of unwrapping its
+/// `outcome`, for the call sites that assert on a family-owned cause
+/// (`FamilyResult::Undefined`/`FamilyResult::Refused`) rather than a kernel
+/// `Outcome`, or on `location`.
+fn run_family(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+    arguments: Vec<Value>,
+    limits: ScalarLimits,
+    objects: &ObjectEnvironment,
+) -> (Evaluation, Meter) {
+    let checked = check(package, parameters, expression);
+    let mut meter = Meter::new(limits);
+    let evaluation = package
+        .evaluate(&checked, arguments, objects, &mut meter)
+        .unwrap();
+    (evaluation, meter)
+}
+
+/// Like [`run`], checked as a postcondition (via [`check_postcondition`])
+/// so `pre(...)` is legal.
+fn run_postcondition(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+    arguments: Vec<Value>,
+    limits: ScalarLimits,
+    objects: &ObjectEnvironment,
+) -> (Outcome<Value>, Meter) {
+    let (evaluation, meter) =
+        run_postcondition_family(package, parameters, expression, arguments, limits, objects);
+    (evaluated(evaluation), meter)
+}
+
+/// Like [`run_postcondition`], returning the raw [`Evaluation`] -- see
+/// [`run_family`].
+fn run_postcondition_family(
+    package: &CheckedPackage,
+    parameters: &[(&str, ValueType)],
+    expression: &Expression,
+    arguments: Vec<Value>,
+    limits: ScalarLimits,
+    objects: &ObjectEnvironment,
+) -> (Evaluation, Meter) {
+    let checked = check_postcondition(package, parameters, expression);
+    let mut meter = Meter::new(limits);
+    let evaluation = package
+        .evaluate(&checked, arguments, objects, &mut meter)
+        .unwrap();
+    (evaluation, meter)
+}
+
+fn population_name() -> Expression {
+    Expression::name("p".to_owned())
+}
+
+/// `all_instances`/`lookup`'s own `target` is always a
+/// `ValueType::Reference` naming one of this file's own fixed object types
+/// ("M::A", "M::B", or the one-off foreign "M::C" fixture,
+/// `all_instances_expression_target_declared_but_not_in_model_is_type_mismatch`'s
+/// own `foreign_key`) -- recovering the declared name a bare `ValueType::
+/// Reference`'s digest cannot itself carry by comparing it against those
+/// three fixed keys, each a deterministic pure function of literal data, so
+/// every existing `all_instances(ValueType::Reference(...))`/`lookup(...)`
+/// call site keeps passing the same `ValueType` it always did.
+fn reference_type_form(target: &ValueType) -> TypeForm {
+    let ValueType::Reference(key) = target else {
+        panic!("all_instances/lookup's own target is always a Reference, got {target:?}");
+    };
+    let fixture = scenario();
+    if *key == fixture.a {
+        crate::support::type_form::named_type_form("M::A")
+    } else if *key == fixture.b {
+        crate::support::type_form::named_type_form("M::B")
+    } else if *key == fixed_type(0xCC) {
+        crate::support::type_form::named_type_form("M::C")
+    } else {
+        panic!(
+            "all_instances/lookup target names an object type this file's fixtures don't \
+             recognize: {key:?}"
+        );
+    }
+}
+
+fn all_instances(target: ValueType) -> Expression {
+    Expression::all_instances(reference_type_form(&target), population_name())
+}
+
+fn lookup(target: ValueType, absence: AbsenceMode) -> Expression {
+    Expression::lookup(
+        reference_type_form(&target),
+        population_name(),
+        Expression::name("r".to_owned()),
+        absence,
+    )
+}
+
+/// `pre(inner)` (FR-153).
+fn pre(inner: Expression) -> Expression {
+    Expression::pre(inner)
+}
+
+/// `Value` deliberately has no structural `PartialEq` (equality is the
+/// FR-149 relation, not `==`), so tests compare the one field that matters
+/// through its own comparable accessor instead: every element of an
+/// `allInstances` result is a bare `Value::Reference`, and `ObjectReference`
+/// does derive `PartialEq`.
+fn reference_elements(value: &Value) -> Vec<ObjectReference> {
+    match value {
+        Value::Collection(collection) => collection
+            .elements()
+            .iter()
+            .map(|element| match element {
+                Value::Reference(reference) => reference.clone(),
+                other => panic!("a reference element, not {other:?}"),
+            })
+            .collect(),
+        other => panic!("a collection, not {other:?}"),
+    }
+}
+
+/// TC-198 L12: `allInstances<M::A>(p)` as a real source expression selects
+/// every current member whose most-specific type conforms to `M::A` —
+/// `b1` (via the closed `B -> A` generalization) then `a1`, `a2` — in
+/// canonical reference order, backing FR-153-AC-1 (closed population),
+/// FR-153-AC-5 (bounded, typed `Set<Reference<T>>` result) directly through
+/// the checker/evaluator, and FR-153-AC-6 (`b1`'s reference is identical whether
+/// selected under `M::A` or queried directly under `M::B`).
+#[test]
+#[trace(
+    "FSpec-TC-198",
+    "FSpec-FR-153-AC-1",
+    "FSpec-FR-153-AC-5",
+    "FSpec-FR-153-AC-6",
+    "FSpec-TC-188",
+    "FSpec-FR-143-AC-11"
+)]
+fn l12_all_instances_expression_selects_subtype_population_once() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = all_instances(ValueType::Reference(scenario.a.clone()));
+    let arguments = vec![population_argument(&scenario)];
+
+    let checked = check(&package, &parameters, &expression);
+    let collection_type = match checked.value_type() {
+        ValueType::Collection(collection_type) => collection_type.clone(),
+        other => panic!("expected a checked collection result type, got {other:?}"),
+    };
+    let bound = collection_type.bound().expect("a bounded population's set");
+    assert_eq!(bound.minimum(), 0);
+    assert_eq!(bound.maximum(), 3);
+    assert_eq!(
+        collection_type.element(),
+        &ValueType::Reference(scenario.a.clone())
+    );
+
+    let (outcome, meter) = run(
+        &package,
+        &parameters,
+        &expression,
+        arguments,
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    let value = match outcome {
+        Outcome::Completed(value) => value,
+        other => panic!("expected a completed collection, got {other:?}"),
+    };
+    // Canonical reference-key order: the universe, then the member's
+    // effective type identity, then the object bytes.
+    let mut expected = vec![
+        object_reference(&scenario.universe, &scenario.a, "a1"),
+        object_reference(&scenario.universe, &scenario.a, "a2"),
+        object_reference(&scenario.universe, &scenario.b, "b1"),
+    ];
+    expected.sort();
+    assert_eq!(reference_elements(&value), expected);
+    assert!(meter.consumed(LimitKind::WorkUnits) > 0);
+
+    // FR-153-AC-6: the same object, `b1`, selected under `M::B` directly, is the
+    // identical reference the `M::A` selection above already carries.
+    let arguments_b = vec![population_argument(&scenario)];
+    let expression_b = all_instances(ValueType::Reference(scenario.b.clone()));
+    let (outcome_b, _) = run(
+        &package,
+        &parameters,
+        &expression_b,
+        arguments_b,
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    let value_b = match outcome_b {
+        Outcome::Completed(value) => value,
+        other => panic!("expected a completed collection, got {other:?}"),
+    };
+    let b1_via_b = object_reference(&scenario.universe, &scenario.b, "b1");
+    assert_eq!(reference_elements(&value_b), vec![b1_via_b.clone()]);
+    assert!(
+        reference_elements(&value).contains(&b1_via_b),
+        "the M::A selection carries the identical b1 reference"
+    );
+}
+
+/// FR-084-AC-2 / FR-090-AC-21 / TC-227: successful object admission does not
+/// let an incomplete subtype set become a partial collection at S6a.
+#[test]
+#[trace("TC-1308", "TC-227", "FR-084-AC-2", "FR-090-AC-21", "FR-513-AC-14")]
+fn tc_227_incomplete_subtype_closure_is_undefined_through_checked_evaluate() {
+    let scenario = subtype_incomplete_scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = all_instances(ValueType::Reference(scenario.a.clone()));
+    let checked = check(&package, &parameters, &expression);
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let evaluation = package
+        .evaluate(
+            &checked,
+            vec![population_argument(&scenario)],
+            &population_environment(&scenario),
+            &mut meter,
+        )
+        .expect("an admitted population's incomplete subtype closure is an evaluation result");
+
+    let cause = match evaluation.outcome {
+        FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => cause,
+        other => panic!(
+            "expected S6a FamilyResult::Undefined for incomplete subtype closure, got {other:?}"
+        ),
+    };
+    let record = cause.undefined_record();
+    assert_eq!(record.reason, UndefinedReason::IncompleteClosure);
+    assert_eq!(record.fields.get("closure"), Some(&"subtype".to_owned()));
+    assert_eq!(
+        record.fields.get("queried_type"),
+        Some(&"model.A".to_owned())
+    );
+    assert_eq!(
+        record.fields.get("uncovered_subtypes"),
+        Some(&"model.A".to_owned())
+    );
+    let code = undefined_contract_code(record.reason).expect("a contract-boundary code");
+    assert_eq!(
+        (code.code(), code.cause()),
+        ("incomplete_population", "unclosed-subtypes")
+    );
+}
+
+/// TC-227: checked evaluation uses reflexive conformance for coverage before
+/// member walking. With a zero-step bound, querying the declared type itself
+/// completes without an ancestor walk, including for an empty population.
+#[test]
+#[trace("TC-227", "FR-084-AC-2", "FR-090-AC-21")]
+fn tc_227_checked_evaluate_uses_reflexive_coverage_without_query_walk() {
+    let domain_package = DomainPackage::new(
+        DomainPackageRef::fixture("bundle.tc-227-reflexive-coverage"),
+        vec![
+            object_type("model.A", vec![]),
+            object_type("model.B", vec!["model.A"]),
+            DomainPackageRecord::Population(PopulationRecord {
+                key: p1_population_key(),
+                member_types: vec![DeclarationKey::fixture("model.B")],
+                extent: Extent::Closed,
+                symmetric: false,
+            }),
+        ],
+    );
+    let view = view_of(&domain_package);
+    let document = PopulationDocument {
+        model_identity: "test/orders".to_owned(),
+        members: Vec::new(),
+    };
+    let mut admission =
+        AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED.with_ancestor_steps(0));
+    let binding = match admit_binding(
+        &view,
+        &document,
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        Some(3),
+        &mut admission,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted empty population, got {other:?}"),
+    };
+    let scenario = Scenario {
+        universe: view
+            .object_universe()
+            .identity()
+            .expect("the universe has an identity"),
+        a: type_id(&view, "model.A"),
+        b: type_id(&view, "model.B"),
+        binding,
+        model: AdmittedModel::new(&domain_package, &view).unwrap(),
+    };
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = all_instances(ValueType::Reference(scenario.b.clone()));
+    let checked = check(&package, &parameters, &expression);
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let evaluation = package
+        .evaluate(
+            &checked,
+            vec![population_argument(&scenario)],
+            &population_environment(&scenario),
+            &mut meter,
+        )
+        .expect("reflexive coverage completes without an ancestor walk");
+
+    let outcome = match evaluation.outcome {
+        FamilyOutcome::Evaluated(outcome) => outcome,
+        other => panic!("a declared type covers itself without an ancestor walk, got {other:?}"),
+    };
+    let Outcome::Completed(value) = outcome else {
+        panic!("reflexive coverage should complete the empty selection, got {outcome:?}");
+    };
+    assert!(reference_elements(&value).is_empty());
+}
+
+/// TC-198 L13: `allInstances<M::A>(p)` still charges `population.visit` per
+/// candidate and `collection.bound`/`collection.result-retain` for the
+/// materialized result through the real evaluator, so a low `work_units`
+/// ceiling denies exactly the same way the direct `crate::model::population`
+/// call already does (`tests/model_population.rs`'s
+/// `l01_all_instances_incomplete_at_result_retain`) — backing FR-153-AC-3
+/// (accounting) at the expression layer, not only at the model layer.
+///
+/// Pins the exact totals `tests/model_population.rs`'s L01 already proves at
+/// the model layer (3 `population.visit` + 1 `collection.bound` + 1
+/// `collection.result-retain` charge = 5 work units; the `n + 1 = 4`
+/// `result_units` the retain charge sizes for a 3-element selection), so a
+/// regression that adds or drops a charge at the expression layer -- rather
+/// than only at evaluation of the bridge around it -- fails here too, then
+/// pins the low-limit denial to the exact same charge point L01 denies at.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-3")]
+fn l13_all_instances_expression_incomplete_under_a_low_work_limit() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = all_instances(ValueType::Reference(scenario.a.clone()));
+
+    let (outcome, meter) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    match outcome {
+        Outcome::Completed(_) => {}
+        other => panic!("expected a completed collection under no limit, got {other:?}"),
+    }
+    assert_eq!(meter.consumed(LimitKind::WorkUnits), 5);
+    assert_eq!(meter.consumed(LimitKind::ResultUnits), 4);
+
+    let limited = ScalarLimits {
+        work_units: 4,
+        ..SCALAR_UNLIMITED
+    };
+    let (outcome, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![population_argument(&scenario)],
+        limited,
+        &population_environment(&scenario),
+    );
+    match outcome {
+        Outcome::Incomplete(incomplete) => {
+            assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(incomplete.limit, 4);
+            assert_eq!(incomplete.consumed, 4);
+            assert_eq!(incomplete.next_charge, Integer::from(1_u64));
+            assert_eq!(incomplete.charge_point, ChargePoint::CollectionResultRetain);
+        }
+        other => panic!("expected Incomplete under a work_units:4 ceiling, got {other:?}"),
+    }
+}
+
+/// TC-198 L14: `lookup<M::A>(p, r) absent undefined` through the real
+/// checker/evaluator returns the present member's reference for a member
+/// key and `Outcome::Undefined` for an absent one, backing FR-153-AC-2
+/// (per-mode presence) and FR-153-AC-4 (typed present-result Outputs) at the
+/// expression layer.
+#[test]
+#[trace(
+    "TC-1308",
+    "FSpec-TC-198",
+    "TC-408",
+    "FSpec-FR-153-AC-2",
+    "FSpec-FR-153-AC-4",
+    "FR-090-AC-12",
+    "FR-513-AC-14"
+)]
+fn l14_lookup_expression_undefined_mode() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let expression = lookup(
+        ValueType::Reference(scenario.a.clone()),
+        AbsenceMode::Undefined,
+    );
+
+    let present_reference = object_reference(&scenario.universe, &scenario.b, "b1");
+    let (present, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![
+            population_argument(&scenario),
+            Value::Reference(present_reference.clone()),
+        ],
+        SCALAR_UNLIMITED,
+        &objects(&scenario),
+    );
+    match present {
+        Outcome::Completed(Value::Reference(reference)) => {
+            assert_eq!(reference, present_reference);
+        }
+        other => panic!("expected a completed reference, got {other:?}"),
+    }
+
+    let absent_reference = object_reference(&scenario.universe, &scenario.a, "c9");
+    let parameters_absent = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.a.clone())),
+    ];
+    let (absent, _) = run_family(
+        &package,
+        &parameters_absent,
+        &lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Undefined,
+        ),
+        vec![
+            population_argument(&scenario),
+            Value::Reference(absent_reference),
+        ],
+        SCALAR_UNLIMITED,
+        &objects(&scenario),
+    );
+    // The lookup is the checked expression's root, so its locus is the
+    // root's: `Origin::Expression`, an empty path.
+    assert_eq!(absent.location, Some(Location::root(Origin::Expression)));
+    match absent.outcome {
+        FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
+            let record = cause.undefined_record();
+            assert_eq!(record.reason, UndefinedReason::AbsentKey);
+            assert_eq!(record.fields.get("key").map(String::as_str), Some("c9"));
+            let binding = scenario.binding.population_id().node().to_string();
+            assert_eq!(
+                record.fields.get("binding").map(String::as_str),
+                Some(binding.as_str())
+            );
+        }
+        other => panic!(
+            "expected FamilyEvaluated(Undefined(AbsentKey)) for an absent key, got {other:?}"
+        ),
+    }
+}
+
+/// TC-198 L15: `lookup<M::A>(p, r) absent empty` wraps a present member's
+/// reference as `Option::present` and an absent key as `Option::none`,
+/// through the real checker/evaluator — backing FR-153-AC-2 and FR-153-AC-4's
+/// `Option<Reference<T>>` Outputs shape for `empty` mode specifically.
+#[test]
+#[trace(
+    "FSpec-TC-198",
+    "FSpec-FR-153-AC-2",
+    "FSpec-FR-153-AC-4",
+    "FSpec-TC-188",
+    "FSpec-FR-143-AC-11"
+)]
+fn l15_lookup_expression_empty_mode() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let expression = lookup(target.clone(), AbsenceMode::Empty);
+
+    let present_reference = object_reference(&scenario.universe, &scenario.b, "b1");
+    let (present, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![
+            population_argument(&scenario),
+            Value::Reference(present_reference.clone()),
+        ],
+        SCALAR_UNLIMITED,
+        &objects(&scenario),
+    );
+    match present {
+        Outcome::Completed(Value::Option(option)) => {
+            assert_eq!(option.payload_type(), &target);
+            match option.payload() {
+                Some(Value::Reference(reference)) => assert_eq!(*reference, present_reference),
+                other => panic!("expected a present reference payload, got {other:?}"),
+            }
+        }
+        other => panic!("expected a completed option, got {other:?}"),
+    }
+
+    let absent_reference = object_reference(&scenario.universe, &scenario.a, "c9");
+    let parameters_absent = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.a.clone())),
+    ];
+    let (absent, _) = run(
+        &package,
+        &parameters_absent,
+        &lookup(target.clone(), AbsenceMode::Empty),
+        vec![
+            population_argument(&scenario),
+            Value::Reference(absent_reference),
+        ],
+        SCALAR_UNLIMITED,
+        &objects(&scenario),
+    );
+    match absent {
+        Outcome::Completed(Value::Option(option)) => {
+            assert_eq!(option.payload_type(), &target);
+            assert!(option.payload().is_none());
+        }
+        other => panic!("expected a completed none option, got {other:?}"),
+    }
+}
+
+/// FR-143-AC-18 (TC-188): `(lookup<M::A>(p, r) absent empty) = absent` takes
+/// the `none` of the lookup's `Option<Reference<M::A>>`: true for a key the
+/// population does not hold and false for one it holds.
+#[test]
+#[trace("FSpec-TC-188", "FSpec-FR-143-AC-18")]
+fn the_empty_lookup_equals_absent_exactly_when_the_key_is_not_held() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let expression = equal(lookup(target, AbsenceMode::Empty), Expression::absent());
+    for (reference_type, object, expected) in
+        [(&scenario.b, "b1", false), (&scenario.a, "c9", true)]
+    {
+        let parameters = [
+            ("p", ValueType::Population(Some(3))),
+            ("r", ValueType::Reference(reference_type.clone())),
+        ];
+        let (outcome, _) = run(
+            &package,
+            &parameters,
+            &expression,
+            vec![
+                population_argument(&scenario),
+                Value::Reference(object_reference(&scenario.universe, reference_type, object)),
+            ],
+            SCALAR_UNLIMITED,
+            &objects(&scenario),
+        );
+        let Outcome::Completed(Value::Boolean(held)) = outcome else {
+            panic!("{object}: a completed Boolean, not {outcome:?}");
+        };
+        assert_eq!(held, expected, "{object}");
+    }
+}
+
+/// TC-198 L16: `lookup<M::A>(p, r) absent refused` refuses outright on an
+/// absent key, and the real evaluator's `Outcome::Refused` carries the
+/// exact same closed `code`/`cause` pair
+/// (`invalid_runtime_input`/`absent-key`) `crate::model::population::lookup`
+/// itself raises — backing FR-153-AC-2 (per-mode presence, `refused` mode)
+/// through the identity bridge's refusal path
+/// (`crate::value::model_query::model_refusal`), not only its success path.
+#[test]
+#[trace(
+    "FSpec-TC-198",
+    "TC-408",
+    "FSpec-FR-153-AC-2",
+    "FSpec-FR-153-AC-4",
+    "FR-090-AC-12"
+)]
+fn l16_lookup_expression_refused_mode() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let absent_reference = object_reference(&scenario.universe, &scenario.a, "c9");
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.a.clone())),
+    ];
+    let expression = lookup(target, AbsenceMode::Refused);
+
+    let (outcome, _) = run_family(
+        &package,
+        &parameters,
+        &expression,
+        vec![
+            population_argument(&scenario),
+            Value::Reference(absent_reference),
+        ],
+        SCALAR_UNLIMITED,
+        &objects(&scenario),
+    );
+    let code = refused_catalog_code(outcome);
+    assert_eq!(code.code(), "invalid_runtime_input");
+    assert_eq!(code.cause(), "absent-key");
+}
+
+/// [`package`], plus an object type `M::C` ([`fixed_type`] `0xCC`) with no
+/// generalization relation to `M::A` or `M::B`.
+fn package_with_unrelated_type(scenario: &Scenario) -> CheckedPackage {
+    let types = TypeEnvironment::new(
+        [],
+        [
+            ObjectTypeDeclaration::new(scenario.a.clone(), "M::A", vec![]),
+            ObjectTypeDeclaration::new(scenario.b.clone(), "M::B", vec![])
+                .with_supertypes(vec![scenario.a.clone()]),
+            ObjectTypeDeclaration::new(fixed_type(0xCC), "M::C", vec![]),
+        ],
+    )
+    .unwrap();
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types;
+        declarations.models = vec![scenario.model.clone()];
+        declarations
+    }
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap();
+    CheckedPackage::link(graph)
+}
+
+fn equal(left: Expression, right: Expression) -> Expression {
+    Expression::binary(BinaryOperator::Equal, left, right)
+}
+
+/// V1-TYPE-022: equal empty object payloads do not replace explicit object
+/// identity, and a matching label from another universe cannot name a
+/// member of the selected population.
+#[test]
+#[trace(
+    "FSpec-V1-TYPE-022",
+    "FSpec-FR-009-AC-1",
+    "FSpec-FR-009-AC-3",
+    "FSpec-V1-EXPR-017",
+    "TC-129",
+    "TC-136",
+    "FR-047-AC-2",
+    "FR-049-AC-5"
+)]
+fn explicit_object_references_use_identity_and_refuse_foreign_universes() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let left = object_reference(&scenario.universe, &scenario.a, "a1");
+    let right = object_reference(&scenario.universe, &scenario.a, "a2");
+    let world = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types(&scenario),
+            [(left.clone(), vec![]), (right.clone(), vec![])],
+            &[],
+        )
+        .unwrap(),
+    );
+    let parameters = [
+        ("left", ValueType::Reference(scenario.a.clone())),
+        ("right", ValueType::Reference(scenario.a.clone())),
+    ];
+    let expression = equal(Expression::name("left"), Expression::name("right"));
+    for (candidate, expected) in [(left.clone(), true), (right, false)] {
+        let (outcome, _) = run(
+            &package,
+            &parameters,
+            &expression,
+            vec![Value::Reference(left.clone()), Value::Reference(candidate)],
+            SCALAR_UNLIMITED,
+            &world,
+        );
+        match outcome {
+            Outcome::Completed(Value::Boolean(equal)) => assert_eq!(equal, expected),
+            other => panic!("expected identity equality, got {other:?}"),
+        }
+    }
+
+    let foreign = object_reference(&foreign_universe_id(), &scenario.a, "a1");
+    let foreign_world = ObjectEnvironment::new(
+        ObjectClosure::new(&types(&scenario), [(foreign.clone(), vec![])], &[]).unwrap(),
+    )
+    .with_population(scenario.binding.clone())
+    .unwrap();
+    let (outcome, _) = run_family(
+        &package,
+        &[
+            ("p", ValueType::Population(Some(3))),
+            ("r", ValueType::Reference(scenario.a.clone())),
+        ],
+        &lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Refused,
+        ),
+        vec![population_argument(&scenario), Value::Reference(foreign)],
+        SCALAR_UNLIMITED,
+        &foreign_world,
+    );
+    let code = refused_catalog_code(outcome);
+    assert_eq!(code.code(), "foreign_reference");
+    assert_eq!(code.cause(), "foreign-universe");
+}
+
+/// V1-TYPE-022: a surviving object keeps its identity when the same
+/// population is read through pre and post observations.
+#[test]
+#[trace(
+    "FSpec-V1-TYPE-022",
+    "FSpec-FR-009-AC-2",
+    "FSpec-V1-EXPR-017",
+    "TC-129",
+    "TC-136",
+    "FR-047-AC-3",
+    "FR-049-AC-5"
+)]
+fn a_surviving_object_compares_equal_across_pre_and_post() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let expression = equal(
+        pre(lookup(target.clone(), AbsenceMode::Refused)),
+        lookup(target, AbsenceMode::Refused),
+    );
+    let reference = object_reference(&scenario.universe, &scenario.a, "a1");
+    let world = ObjectEnvironment::new(
+        ObjectClosure::new(&types(&scenario), [(reference.clone(), vec![])], &[]).unwrap(),
+    )
+    .with_population(scenario.binding.clone())
+    .unwrap();
+    let (outcome, _) = run_postcondition(
+        &package,
+        &[
+            ("p", ValueType::Population(Some(3))),
+            ("r", ValueType::Reference(scenario.a.clone())),
+        ],
+        &expression,
+        vec![population_argument(&scenario), Value::Reference(reference)],
+        SCALAR_UNLIMITED,
+        &world,
+    );
+    match outcome {
+        Outcome::Completed(Value::Boolean(equal)) => assert!(equal),
+        other => panic!("expected identity equality across observations, got {other:?}"),
+    }
+}
+
+/// TC-198 L08: `(lookup<M::A>(p, r) absent refused) = r`
+/// with `r: Reference<M::B>` checks, although the operands' static types are
+/// `Reference<M::A>` and `Reference<M::B>`: `M::B` conforms to `M::A`. Both
+/// operands denote `b1`, so the comparison is `true`; the same query for a
+/// reference to `a1` against `b1` is `false`.
+#[test]
+#[trace(
+    "FSpec-TC-198",
+    "FSpec-FR-153-AC-6",
+    "FSpec-FR-149-AC-6",
+    "FSpec-TC-188",
+    "FSpec-FR-143-AC-11"
+)]
+fn l08_upcast_lookup_result_equals_the_subtype_reference() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let expression = equal(
+        lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Refused,
+        ),
+        Expression::name("r".to_owned()),
+    );
+    assert_eq!(
+        *check(&package, &parameters, &expression).value_type(),
+        ValueType::Boolean
+    );
+    let b1 = object_reference(&scenario.universe, &scenario.b, "b1");
+    let (outcome, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![population_argument(&scenario), Value::Reference(b1)],
+        SCALAR_UNLIMITED,
+        &objects(&scenario),
+    );
+    match outcome {
+        Outcome::Completed(Value::Boolean(same)) => assert!(same, "b1 upcast equals b1"),
+        other => panic!("expected a completed Boolean, got {other:?}"),
+    }
+
+    // The reverse operand order checks too, and compares identity: `c9`
+    // (an `M::A`) against `b1` through `lookup<M::A>` is `false`.
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+        ("q", ValueType::Reference(scenario.a.clone())),
+    ];
+    let expression = equal(
+        Expression::name("q".to_owned()),
+        lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Refused,
+        ),
+    );
+    let (outcome, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![
+            population_argument(&scenario),
+            Value::Reference(object_reference(&scenario.universe, &scenario.b, "b1")),
+            Value::Reference(object_reference(&scenario.universe, &scenario.a, "c9")),
+        ],
+        SCALAR_UNLIMITED,
+        &objects(&scenario),
+    );
+    match outcome {
+        Outcome::Completed(Value::Boolean(same)) => assert!(!same, "c9 is not b1"),
+        other => panic!("expected a completed Boolean, got {other:?}"),
+    }
+}
+
+/// A checked package over `M::A`/`M::B` with `a_fields` on `M::A` and
+/// `b_fields` on `M::B`, and an object world holding `b1` with `b1_slots`.
+fn attribute_world(
+    scenario: &Scenario,
+    a_fields: Vec<FieldDeclaration>,
+    b_fields: Vec<FieldDeclaration>,
+    b1_slots: Vec<(&str, filament_exact::FieldValue)>,
+) -> (CheckedPackage, ObjectEnvironment) {
+    attribute_world_of(
+        scenario,
+        a_fields,
+        b_fields,
+        vec![(
+            object_reference(&scenario.universe, &scenario.b, "b1"),
+            b1_slots,
+        )],
+    )
+}
+
+/// [`attribute_world`] with the object world given whole.
+fn attribute_world_of(
+    scenario: &Scenario,
+    a_fields: Vec<FieldDeclaration>,
+    b_fields: Vec<FieldDeclaration>,
+    world: Vec<(ObjectReference, Vec<(&str, filament_exact::FieldValue)>)>,
+) -> (CheckedPackage, ObjectEnvironment) {
+    let types = TypeEnvironment::new(
+        [],
+        [
+            ObjectTypeDeclaration::new(scenario.a.clone(), "M::A", a_fields),
+            ObjectTypeDeclaration::new(scenario.b.clone(), "M::B", b_fields)
+                .with_supertypes(vec![scenario.a.clone()]),
+        ],
+    )
+    .unwrap();
+    let objects = ObjectEnvironment::new(ObjectClosure::new(&types, world, &[]).unwrap())
+        .with_population(scenario.binding.clone())
+        .unwrap();
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types;
+        declarations.models = vec![scenario.model.clone()];
+        declarations
+    }
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap();
+    (CheckedPackage::link(graph), objects)
+}
+
+/// `deref(lookup<M::A>(p, r) absent refused).field`, `r: Reference<M::B>`
+/// holding `b1`: a `Reference<M::A>` that holds a `B`.
+fn read_through_a(package: &CheckedPackage, objects: &ObjectEnvironment, field: &str) -> Value {
+    let scenario = scenario();
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let expression = Expression::field(
+        Expression::deref(lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Refused,
+        )),
+        field.to_owned(),
+    );
+    let (outcome, _) = run(
+        package,
+        &parameters,
+        &expression,
+        vec![
+            population_argument(&scenario),
+            Value::Reference(object_reference(&scenario.universe, &scenario.b, "b1")),
+        ],
+        SCALAR_UNLIMITED,
+        objects,
+    );
+    match outcome {
+        Outcome::Completed(value) => value,
+        other => panic!("expected a completed value, got {other:?}"),
+    }
+}
+
+fn integer_field(name: &str) -> FieldDeclaration {
+    FieldDeclaration::new(name, ValueType::Integer, Presence::Required)
+}
+
+fn present(value: i64) -> filament_exact::FieldValue {
+    filament_exact::FieldValue::Present(Value::Integer(Integer::from(value)))
+}
+
+fn integer_of(value: Value) -> Integer {
+    match value {
+        Value::Integer(value) => value,
+        other => panic!("expected an integer, got {other:?}"),
+    }
+}
+
+/// TC-198 L11: `deref(r).x` for a `Reference<M::A>` that
+/// holds a `B` resolves `x`, a field `A` declares and `B` inherits, and
+/// reads `b1`'s inherited slot.
+#[test]
+#[trace(
+    "FSpec-TC-198",
+    "FSpec-FR-153-AC-6",
+    "FSpec-TC-188",
+    "FSpec-FR-143-AC-11"
+)]
+fn l11_deref_through_a_supertype_reference_reads_an_inherited_field() {
+    let scenario = scenario();
+    let (package, objects) = attribute_world(
+        &scenario,
+        vec![integer_field("x")],
+        vec![integer_field("y")],
+        vec![("x", present(7)), ("y", present(8))],
+    );
+    assert_eq!(
+        integer_of(read_through_a(&package, &objects, "x")),
+        Integer::from(7_i64)
+    );
+}
+
+/// SR-750 FND-008 regression: `deref(r).x`, a `Value`-family read (not S6a
+/// evaluation of a `ProtocolClause`), charges no `model.deref`/
+/// `model.navigate` -- those are FR-107's own S6a accounting rule
+/// (`value-accounting.md`), never a `Value`-family one
+/// (`fsl-eval/src/value/expression/evaluate.rs:1072-1081`). Before the fix
+/// this `Attribute` node charged both unconditionally, adding two charge
+/// units to every `Value`-family attribute read that had none before FR-107.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
+fn deref_field_read_charges_no_model_family_charge_outside_a_protocol_clause() {
+    let scenario = scenario();
+    let (package, objects) = attribute_world(
+        &scenario,
+        vec![integer_field("x")],
+        vec![integer_field("y")],
+        vec![("x", present(7)), ("y", present(8))],
+    );
+    let (value, meter) = {
+        let parameters = [
+            ("p", ValueType::Population(Some(3))),
+            ("r", ValueType::Reference(scenario.b.clone())),
+        ];
+        let expression = Expression::field(
+            Expression::deref(lookup(
+                ValueType::Reference(scenario.a.clone()),
+                AbsenceMode::Refused,
+            )),
+            "x".to_owned(),
+        );
+        run(
+            &package,
+            &parameters,
+            &expression,
+            vec![
+                population_argument(&scenario),
+                Value::Reference(object_reference(&scenario.universe, &scenario.b, "b1")),
+            ],
+            SCALAR_UNLIMITED,
+            &objects,
+        )
+    };
+    assert_eq!(
+        integer_of(match value {
+            Outcome::Completed(value) => value,
+            other => panic!("expected Completed, got {other:?}"),
+        }),
+        Integer::from(7_i64)
+    );
+    // The baseline this call always charged, unrelated to the attribute
+    // read: `FunctionCall` (the call itself) and `DispatchSelect` (the
+    // dynamic-dispatch generalization lookup `deref(r)` resolves through).
+    // Neither `ChargePoint::ModelDeref` nor `ChargePoint::ModelNavigate`
+    // (FR-107's own S6a accounting rule) adds to it outside a
+    // `ProtocolClause` evaluation (SR-750 FND-008); a regression that
+    // re-adds either unconditionally raises this total above 2.
+    assert_eq!(
+        meter.consumed(LimitKind::WorkUnits),
+        2,
+        "a Value-family attribute read's charge total is unchanged from \
+         main: FunctionCall + DispatchSelect only, no model.deref/ \
+         model.navigate (SR-750 FND-008)"
+    );
+}
+
+/// TC-198 L11 with FR-151 redefinition: `B.x` redefines
+/// `A.x`, so `deref(r).x` for a `Reference<M::A>` holding `b1` reads `B.x`'s
+/// one slot. With the redefinition renamed, `B.z` redefining `A.x`, the same
+/// expression reads `B.z`'s slot.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
+#[trace("FSpec-TC-196", "FSpec-FR-151-AC-1")]
+fn l11_deref_through_a_supertype_reference_reads_the_redefiner() {
+    let scenario = scenario();
+    let redefines = || FieldRef::new(scenario.a.clone(), "x");
+    let (package, objects) = attribute_world(
+        &scenario,
+        vec![integer_field("x")],
+        vec![integer_field("x").with_redefines(redefines())],
+        vec![("x", present(2))],
+    );
+    assert_eq!(
+        integer_of(read_through_a(&package, &objects, "x")),
+        Integer::from(2_i64)
+    );
+
+    let (package, objects) = attribute_world(
+        &scenario,
+        vec![integer_field("x")],
+        vec![integer_field("z").with_redefines(redefines())],
+        vec![("z", present(3))],
+    );
+    assert_eq!(
+        integer_of(read_through_a(&package, &objects, "x")),
+        Integer::from(3_i64)
+    );
+}
+
+/// TC-198 L11 with a reference field: `B.o: Reference<M::A>?`
+/// redefines `A.o: Reference<M::A>?`, the one reference redefinition the
+/// checker admits, and `b1.o` holds the `A` object `a1`. `deref(r).o` for a
+/// `Reference<M::A>` holding `b1` completes with `a1`, never
+/// `CheckedInvariant`. The narrowing `B.o: Reference<M::B>?` is refused at
+/// admission (`type_environment_model.rs`), since evaluation matches a
+/// reference's object type exactly.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
+#[trace("FSpec-TC-196", "FSpec-FR-151-AC-2")]
+fn l11_deref_through_a_supertype_reference_reads_a_redefined_reference_field() {
+    let scenario = scenario();
+    let reference_to_a = || {
+        FieldDeclaration::new(
+            "o",
+            ValueType::Reference(scenario.a.clone()),
+            Presence::Optional,
+        )
+    };
+    let a1 = object_reference(&scenario.universe, &scenario.a, "a1");
+    let (package, objects) = attribute_world_of(
+        &scenario,
+        vec![reference_to_a()],
+        vec![reference_to_a().with_redefines(FieldRef::new(scenario.a.clone(), "o"))],
+        vec![
+            (a1.clone(), vec![]),
+            (
+                object_reference(&scenario.universe, &scenario.b, "b1"),
+                vec![(
+                    "o",
+                    filament_exact::FieldValue::Present(Value::Reference(a1.clone())),
+                )],
+            ),
+        ],
+    );
+    match read_through_a(&package, &objects, "o") {
+        Value::Option(option) => match option.payload() {
+            Some(Value::Reference(read)) => assert_eq!(*read, a1),
+            other => panic!("expected a1, got {other:?}"),
+        },
+        other => panic!("expected a present option, got {other:?}"),
+    }
+}
+
+/// TC-198 L08's adverse case: references to two object types
+/// with no generalization relation still refuse `=` at check time,
+/// `ill_typed`/`type-mismatch`.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-149-AC-6")]
+fn l08_references_to_unrelated_object_types_refuse_equality_at_check_time() {
+    let scenario = scenario();
+    let package = package_with_unrelated_type(&scenario);
+    let parameters = [
+        ("r", ValueType::Reference(scenario.b)),
+        ("q", ValueType::Reference(fixed_type(0xCC))),
+    ];
+    let expression = equal(
+        Expression::name("r".to_owned()),
+        Expression::name("q".to_owned()),
+    );
+    let refusal = check_refusal(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    );
+}
+
+/// TC-198 L03: `lookup<M::A>(p, r)` with `r: Reference<M::B>`
+/// is admitted at check time because `M::B` conforms to `M::A` in the
+/// package's own environment, and its result is typed `Reference<M::A>`.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-3")]
+fn lookup_expression_admits_a_conforming_reference_type_at_check_time() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b)),
+    ];
+    let checked = check(
+        &package,
+        &parameters,
+        &lookup(target.clone(), AbsenceMode::Undefined),
+    );
+    assert_eq!(*checked.value_type(), target);
+}
+
+/// TC-198 L03's last case: `lookup<M::A>(p, r)` with `r`
+/// statically typed to `M::C`, which does not conform to `M::A`, refuses at
+/// check time, `ill_typed`/`type-mismatch` at `r`'s own location, before any
+/// evaluation or charge, not only at evaluation. The reverse direction, `lookup<M::B>(p, r)` with
+/// `r: Reference<M::A>`, refuses the same way: a supertype does not conform
+/// to its subtype.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-3")]
+fn lookup_expression_refuses_a_non_conforming_reference_type_at_check_time() {
+    let scenario = scenario();
+    let package = package_with_unrelated_type(&scenario);
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(fixed_type(0xCC))),
+    ];
+    let refusal = check_refusal(
+        &package,
+        &parameters,
+        &lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Undefined,
+        ),
+    );
+    assert_state_model_ill_typed(&refusal, IllTypedCause::TypeMismatch, "type-mismatch");
+    assert_eq!(refusal.location, Location::at(Origin::Expression, &[1]));
+
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.a)),
+    ];
+    let refusal = check_refusal(
+        &package,
+        &parameters,
+        &lookup(ValueType::Reference(scenario.b), AbsenceMode::Undefined),
+    );
+    assert_state_model_ill_typed(&refusal, IllTypedCause::TypeMismatch, "type-mismatch");
+}
+
+fn assert_state_model_ill_typed(refusal: &CheckRefusal, expected: IllTypedCause, raw: &str) {
+    let CheckCause::StateModel(owner) = &refusal.cause else {
+        panic!("StateModel ownership: {refusal:?}");
+    };
+    assert_eq!(
+        owner.family(),
+        fsl_semantics::family::FamilyKind::StateModel
+    );
+    assert_eq!(owner.cause, CheckCause::IllTyped(expected));
+    let code = owner.catalog_code().unwrap();
+    assert_eq!((code.code(), code.cause()), ("ill_typed", raw));
+    assert_eq!(code.prefix(), Some("state-model"));
+    assert_eq!(
+        fsl_foundation::diagnostic::category_of(&code),
+        Some(filament_semantic_value::catalog::Category::Refusal)
+    );
+}
+
+/// FR-153 names a population binding only as the direct operand of
+/// `allInstances`/`lookup`, or a bare parameter's own declared type; every
+/// other named-type context refuses it, never merely leaving `p == p` (or an
+/// `Option`/collection/record/object-type context that names it) to reach
+/// `Refusal::CheckedInvariant` at evaluation for an admitted program.
+#[test]
+fn population_refused_as_equality_operand() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression =
+        Expression::binary(BinaryOperator::Equal, population_name(), population_name());
+    let refusal = check_refusal(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+    );
+}
+
+#[test]
+fn population_refused_as_option_payload() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = Expression::convert(
+        crate::support::type_form::type_form(&ValueType::option(ValueType::Population(Some(3)))),
+        Expression::boolean(true),
+    );
+    let refusal = check_refusal(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+    );
+}
+
+#[test]
+fn population_refused_as_collection_element() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = Expression::convert(
+        crate::support::type_form::type_form(&ValueType::collection(CollectionType::new(
+            CollectionKind::Set,
+            ValueType::Population(Some(3)),
+            Some(CardinalityBound::new(0, 3).unwrap()),
+        ))),
+        Expression::boolean(true),
+    );
+    let refusal = check_refusal(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+    );
+}
+
+/// Unlike the cases above, a record field or object-type attribute names its
+/// member types at declaration time, checked once by
+/// `TypeEnvironment::new`'s own `check_member_types` walk, never by
+/// `check_expression` -- this is a different entry point into the same
+/// `TypeEnvironment::type_refusal` this file's other `population_refused_*`
+/// cases exercise through the checker.
+#[test]
+fn population_refused_as_record_field() {
+    let scenario = scenario();
+    let declaration = CompositeDeclaration::new(
+        fixed_key(0xAA),
+        "Holder",
+        CompositeShape::Record(vec![FieldDeclaration::new(
+            "value",
+            ValueType::Population(Some(3)),
+            Presence::Required,
+        )]),
+    );
+    let result = TypeEnvironment::new(
+        [declaration],
+        [
+            ObjectTypeDeclaration::new(scenario.a.clone(), "M::A", vec![]),
+            ObjectTypeDeclaration::new(scenario.b, "M::B", vec![])
+                .with_supertypes(vec![scenario.a]),
+        ],
+    );
+    match result {
+        Err(EnvironmentFailure::Refused(invalid)) => assert_eq!(
+            invalid.cause,
+            DeclarationCause::Type(IllTypedCause::OperatorIneligible)
+        ),
+        other => {
+            panic!("expected a refused declaration for a Population record field, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn population_refused_as_object_attribute() {
+    let scenario = scenario();
+    let declaration = ObjectTypeDeclaration::new(
+        fixed_type(0xBB),
+        "M::Holder",
+        vec![FieldDeclaration::new(
+            "value",
+            ValueType::Population(Some(3)),
+            Presence::Required,
+        )],
+    );
+    let result = TypeEnvironment::new(
+        [],
+        [
+            ObjectTypeDeclaration::new(scenario.a.clone(), "M::A", vec![]),
+            ObjectTypeDeclaration::new(scenario.b, "M::B", vec![])
+                .with_supertypes(vec![scenario.a]),
+            declaration,
+        ],
+    );
+    match result {
+        Err(EnvironmentFailure::Refused(invalid)) => assert_eq!(
+            invalid.cause,
+            DeclarationCause::Type(IllTypedCause::OperatorIneligible)
+        ),
+        other => panic!(
+            "expected a refused declaration for a Population object attribute, got {other:?}"
+        ),
+    }
+}
+
+/// FR-153/TC-198 L06: the population operand is the wrong *kind*, not merely
+/// the wrong type name, so both `allInstances`/`lookup` refuse it
+/// `ill_typed`/`operator-ineligible`, never `type-mismatch`.
+#[test]
+fn all_instances_refuses_non_population_operand_as_ineligible() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Integer)];
+    let expression = all_instances(ValueType::Reference(scenario.a));
+    let refusal = check_refusal(&package, &parameters, &expression);
+    assert_state_model_ill_typed(
+        &refusal,
+        IllTypedCause::OperatorIneligible,
+        "operator-ineligible",
+    );
+}
+
+#[test]
+fn lookup_refuses_non_population_operand_as_ineligible() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [
+        ("p", ValueType::Integer),
+        ("r", ValueType::Reference(scenario.a.clone())),
+    ];
+    let expression = lookup(ValueType::Reference(scenario.a), AbsenceMode::Undefined);
+    let refusal = check_refusal(&package, &parameters, &expression);
+    assert_state_model_ill_typed(
+        &refusal,
+        IllTypedCause::OperatorIneligible,
+        "operator-ineligible",
+    );
+}
+
+/// FR-153-AC-3: a package may declare an object type its checked
+/// `TypeEnvironment` admits that a particular runtime `PopulationBinding`'s
+/// model never exports -- the checker cannot decide that (the
+/// "TypeEnvironment island", `crate::value::model_query`'s module docs), so
+/// `crate::value::model_query::resolve_target` must itself refuse it at
+/// evaluation, `ill_typed`/`type-mismatch`, the same cause
+/// `crate::model::population::all_instances`'s own `is_object_type` gives a
+/// declared type the model doesn't recognize -- never
+/// `Refusal::CheckedInvariant`.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-3")]
+fn all_instances_expression_target_declared_but_not_in_model_is_type_mismatch() {
+    let scenario = scenario();
+    let foreign_key = fixed_type(0xCC);
+    let types = TypeEnvironment::new(
+        [],
+        [
+            ObjectTypeDeclaration::new(scenario.a.clone(), "M::A", vec![]),
+            ObjectTypeDeclaration::new(scenario.b.clone(), "M::B", vec![])
+                .with_supertypes(vec![scenario.a.clone()]),
+            ObjectTypeDeclaration::new(foreign_key.clone(), "M::C", vec![]),
+        ],
+    )
+    .unwrap();
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types;
+        declarations
+    }
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap();
+    let package = CheckedPackage::link(graph);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = all_instances(ValueType::Reference(foreign_key));
+
+    let (outcome, _) = run_family(
+        &package,
+        &parameters,
+        &expression,
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    let code = refused_catalog_code(outcome);
+    assert_eq!(code.code(), "ill_typed");
+    assert_eq!(code.cause(), "type-mismatch");
+}
+
+/// FR-153-AC-3: `lookup`'s own `ModelIndex::conforms(S, T)` runs "before any
+/// charge" (TC-198 L03), so a foreign reference cannot skip it -- the
+/// checked static type `S` (`M::B`) must still conform to the queried `T`
+/// (`M::A`) for this probe to reach `crate::model::population::lookup` at
+/// all. The reference names a well-formed but foreign universe (a 32-byte
+/// digest, never equal to this model's own `filament.model.object-universe/v2`
+/// digest); a byte-length other than 32 can no longer reach this layer at
+/// all, since `filament_exact::UniverseId` fixes the shape at construction
+/// (ADR-013 §8 OQ-C ruling) -- `fsl-semantics/tests/it/model_population.rs`'s
+/// `l04b_lookup_wrong_length_universe_refuses_as_foreign` covers a
+/// wrong-length universe directly, at `crate::model::population::lookup`'s
+/// own byte-comparison layer.
+/// `crate::value::model_query::bridge_lookup_key` carries the foreign
+/// universe's own bytes, so `lookup` itself -- the single owner of the
+/// FR-153 lookup order -- reaches this same outcome by its own byte
+/// comparison: the same `ModelIndex::conforms` check, the same single `lookup.key`
+/// charge, then `foreign-universe` -- reporting the bytes actually supplied,
+/// not a fabricated complement.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-3")]
+fn lookup_expression_foreign_universe_is_foreign_universe_after_one_work_unit() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let expression = lookup(target, AbsenceMode::Undefined);
+
+    let foreign_reference = ObjectReference::new(
+        foreign_universe_id(),
+        scenario.b.clone(),
+        ObjectId::new("b1").unwrap(),
+    );
+    let object_world = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types(&scenario),
+            [(foreign_reference.clone(), vec![])],
+            &[],
+        )
+        .unwrap(),
+    )
+    .with_population(scenario.binding.clone())
+    .unwrap();
+
+    let (outcome, meter) = run_family(
+        &package,
+        &parameters,
+        &expression,
+        vec![
+            population_argument(&scenario),
+            Value::Reference(foreign_reference),
+        ],
+        SCALAR_UNLIMITED,
+        &object_world,
+    );
+    let code = refused_catalog_code(outcome);
+    assert_eq!(code.code(), "foreign_reference");
+    assert_eq!(code.cause(), "foreign-universe");
+    assert_eq!(meter.consumed(LimitKind::WorkUnits), 1);
+}
+
+// PR #158's two `[0xFF, 0xFE]`-identity and 5-byte-universe "malformed
+// reference" regression guards (originally
+// `lookup_expression_malformed_identity_is_none_in_empty_mode`,
+// `lookup_expression_malformed_identity_never_aliases_a_lossy_decoded_member`
+// and the `lookup_expression_malformed_and_absent_well_formed_references_
+// are_indistinguishable` table) are removed here, not adapted: ADR-013 §8's
+// OQ-C ruling fixes `filament_exact::ObjectId` as non-empty, exact UTF-8 with
+// one validating constructor and `filament_exact::UniverseId` as a fixed
+// 32-byte digest, so a `Value::Reference` can no longer carry invalid-UTF-8
+// or wrong-length bytes at all -- the PR #158 lossy-decode vulnerability
+// these tests guarded against is now prevented at construction, not
+// detected at evaluation, and there is no longer a "malformed" `ObjectId`/
+// `UniverseId` value to construct for them to exercise. The byte-level
+// defense they exercised through this full evaluator path still lives, and
+// is still tested directly, in `crate::model::population::lookup` itself:
+// see `fsl-semantics/tests/it/model_population.rs`'s
+// `l03_lookup_refused_mode_malformed_identity_reports_hex_detail`, which
+// builds a `LookupKey` with `object: vec![0xFF, 0xFE]` directly, bypassing
+// `ObjectReference` entirely, exactly as a wire/replay caller that skipped
+// `ObjectId` validation would have to.
+
+/// PR #158 round-3 review finding (MEDIUM), still guarded now that
+/// `crate::model::population::lookup` is the single owner of the FR-153
+/// lookup order for every reference (#166): a well-formed but absent
+/// identity naming a universe that is not this binding's own must refuse
+/// `foreign_reference`/`foreign-universe`, exactly like a well-formed
+/// present-shaped reference naming that same foreign universe, in every
+/// absence mode -- never fall through to that mode's absence outcome.
+/// `lookup` checks the universe immediately after `lookup.key` and before
+/// membership, so this ordering holds regardless of whether the object
+/// identity would otherwise be present or absent.
+#[test]
+#[trace(
+    "FSpec-TC-198",
+    "FSpec-FR-153-AC-2",
+    "FSpec-FR-153-AC-3",
+    "FSpec-FR-153-AC-4"
+)]
+fn lookup_expression_absent_identity_in_a_foreign_universe_is_refused_not_absent() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.a.clone())),
+    ];
+
+    let foreign_reference = ObjectReference::new(
+        foreign_universe_id(),
+        scenario.a.clone(),
+        ObjectId::new("zz9-never-admitted").unwrap(),
+    );
+    let object_world = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types(&scenario),
+            [(foreign_reference.clone(), vec![])],
+            &[],
+        )
+        .unwrap(),
+    )
+    .with_population(scenario.binding.clone())
+    .unwrap();
+
+    for absence in [
+        AbsenceMode::Undefined,
+        AbsenceMode::Refused,
+        AbsenceMode::Empty,
+    ] {
+        let (outcome, meter) = run_family(
+            &package,
+            &parameters,
+            &lookup(target.clone(), absence),
+            vec![
+                population_argument(&scenario),
+                Value::Reference(foreign_reference.clone()),
+            ],
+            SCALAR_UNLIMITED,
+            &object_world,
+        );
+        let code = refused_catalog_code(outcome);
+        assert_eq!(
+            (code.code(), code.cause()),
+            ("foreign_reference", "foreign-universe"),
+            "expected a refused foreign-universe lookup in {absence:?} mode"
+        );
+        assert_eq!(meter.consumed(LimitKind::WorkUnits), 1);
+    }
+}
+
+/// PR #158 re-review finding 3 (LOW): `set[lookup<M::A>(p, r) absent
+/// refused]` preserves the looked-up reference's own runtime most-specific
+/// type inside the checked `Set<Reference<M::A>>` -- the collection's single
+/// element has `object_type` `M::B`, not `M::A`, even though the collection's
+/// declared/checked element type is `Reference<M::A>`. FR-143's identity
+/// triple and FR-153's Outputs both require the most-specific type (TC-198
+/// L01); `OptionValue::from_admitted`'s soundness chain (its own doc comment)
+/// is exactly why this collection-literal path is sound too --
+/// `filament_exact::from_admitted` bypasses `admits()` the same way
+/// for the identical reason.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-143", "FSpec-FR-153-AC-5")]
+fn lookup_expression_inside_a_set_literal_keeps_the_most_specific_element_type() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let expression = Expression::collection(
+        CollectionKind::Set,
+        vec![lookup(target.clone(), AbsenceMode::Refused)],
+    );
+    let expected = ValueType::collection(CollectionType::new(
+        CollectionKind::Set,
+        target,
+        Some(CardinalityBound::new(1, 1).unwrap()),
+    ));
+
+    let present_reference = object_reference(&scenario.universe, &scenario.b, "b1");
+    let checked = package
+        .graph()
+        .check_expression(
+            parameters
+                .iter()
+                .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))
+                .collect(),
+            &expression,
+            Some(&expected),
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+        )
+        .unwrap();
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let evaluation = package
+        .evaluate(
+            &checked,
+            vec![
+                population_argument(&scenario),
+                Value::Reference(present_reference.clone()),
+            ],
+            &objects(&scenario),
+            &mut meter,
+        )
+        .unwrap();
+    match evaluated(evaluation) {
+        Outcome::Completed(value) => {
+            let elements = reference_elements(&value);
+            assert_eq!(elements.len(), 1);
+            assert_eq!(elements[0], present_reference);
+            assert_eq!(elements[0].object_type(), &scenario.b);
+        }
+        other => panic!("expected a completed collection, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TC-198 L07: `pre(..)` as a real source expression (EXPR-020/021/022)
+// ---------------------------------------------------------------------------
+
+/// TC-198 L07: `allInstances<M::A>(p)` reads the post population (`a2`
+/// deleted), and `pre(allInstances<M::A>(p))` reads the invocation's pre
+/// population (`a2` still present) -- the identical expression, differing
+/// only in whether it is wrapped in `pre(..)`, over the identical
+/// `Value::Population` argument (`l07_scenario`'s post binding, carrying its
+/// pre anchor).
+///
+/// Mutation used: in `Machine::select_anchor`, changed `Anchor::Pre =>
+/// binding.pre_anchor().ok_or_else(invariant)` to always return `Ok(binding)`
+/// (ignoring the anchor entirely). `pre(allInstances(p))`'s result went from
+/// `[a1, a2, b1]` to `[a1, b1]`, so the assertion below on the pre-anchored
+/// result went red as expected; reverted.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-7", "FSpec-V1-EXPR-020")]
+fn l07_pre_all_instances_reads_the_invocation_pre_population() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let target = ValueType::Reference(scenario.a.clone());
+
+    let (post_outcome, _) = run(
+        &package,
+        &parameters,
+        &all_instances(target.clone()),
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    // Canonical reference-key order, by effective type identity.
+    let mut post_expected = vec![
+        object_reference(&scenario.universe, &scenario.a, "a1"),
+        object_reference(&scenario.universe, &scenario.b, "b1"),
+    ];
+    post_expected.sort();
+    match post_outcome {
+        Outcome::Completed(value) => assert_eq!(reference_elements(&value), post_expected),
+        other => panic!("expected a completed post-anchored collection, got {other:?}"),
+    }
+
+    let (pre_outcome, _) = run_postcondition(
+        &package,
+        &parameters,
+        &pre(all_instances(target)),
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    let mut pre_expected = vec![
+        object_reference(&scenario.universe, &scenario.a, "a1"),
+        object_reference(&scenario.universe, &scenario.a, "a2"),
+        object_reference(&scenario.universe, &scenario.b, "b1"),
+    ];
+    pre_expected.sort();
+    match pre_outcome {
+        Outcome::Completed(value) => assert_eq!(reference_elements(&value), pre_expected),
+        other => panic!("expected a completed pre-anchored collection, got {other:?}"),
+    }
+}
+
+/// TC-198 L07: `lookup<M::A>(p, r2) absent empty` is `none` for the deleted
+/// `a2` over the post population, and `pre(lookup<M::A>(p, r2) absent
+/// empty)` is present, `a2` keeping its pre most-specific type `M::A`.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-7", "FSpec-V1-EXPR-020")]
+fn l07_pre_lookup_reads_the_invocation_pre_population_and_a2_keeps_its_pre_type() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.a.clone())),
+    ];
+    let r2 = object_reference(&scenario.universe, &scenario.a, "a2");
+    let object_world = ObjectEnvironment::new(
+        ObjectClosure::new(&types(&scenario), [(r2.clone(), vec![])], &[]).unwrap(),
+    )
+    .with_population(scenario.binding.clone())
+    .unwrap();
+
+    let (post_outcome, _) = run(
+        &package,
+        &parameters,
+        &lookup(target.clone(), AbsenceMode::Empty),
+        vec![population_argument(&scenario), Value::Reference(r2.clone())],
+        SCALAR_UNLIMITED,
+        &object_world,
+    );
+    match post_outcome {
+        Outcome::Completed(Value::Option(option)) => assert!(option.payload().is_none()),
+        other => panic!("expected a completed none option for the deleted a2, got {other:?}"),
+    }
+
+    let (pre_outcome, _) = run_postcondition(
+        &package,
+        &parameters,
+        &pre(lookup(target.clone(), AbsenceMode::Empty)),
+        vec![population_argument(&scenario), Value::Reference(r2.clone())],
+        SCALAR_UNLIMITED,
+        &object_world,
+    );
+    match pre_outcome {
+        Outcome::Completed(Value::Option(option)) => {
+            assert_eq!(option.payload_type(), &target);
+            match option.payload() {
+                Some(Value::Reference(reference)) => {
+                    assert_eq!(*reference, r2);
+                    assert_eq!(reference.object_type(), &scenario.a);
+                }
+                other => panic!("expected a present a2 payload, got {other:?}"),
+            }
+        }
+        other => panic!("expected a completed present option for pre(a2), got {other:?}"),
+    }
+}
+
+/// EXPR-021: a `pre(..)` anchor's effect is scoped exactly to its own
+/// operand -- once `pre(allInstances(p))` finishes evaluating (bound to
+/// `pre_count` here), a sibling `allInstances(p)` in the same body reads the
+/// post population again, not a drifted pre anchor left over from the
+/// preceding `let` value.
+///
+/// Mutation used: in `Machine::eval`'s `NodeKind::Pre` arm, dropped the
+/// `Task::RestoreAnchor` push (only setting `self.anchor = Anchor::Pre`,
+/// never restoring it). The body's `allInstances(p)` then also read the pre
+/// population (3 members, matching `pre_count`), so the `NotEqual` assertion
+/// below went red as expected (`false`, not `true`); reverted.
+#[test]
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-7", "FSpec-V1-EXPR-020")]
+fn pre_anchor_does_not_leak_into_a_sibling_post_anchored_query() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let pre_count = size(pre(allInstances(p))) in
+    //   size(allInstances(p)) != pre_count
+    let expression = Expression::let_in(
+        "pre_count".to_owned(),
+        Expression::size(pre(all_instances(target.clone()))),
+        Expression::binary(
+            BinaryOperator::NotEqual,
+            Expression::size(all_instances(target)),
+            Expression::name("pre_count".to_owned()),
+        ),
+    );
+
+    let (outcome, _) = run_postcondition(
+        &package,
+        &parameters,
+        &expression,
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    match outcome {
+        Outcome::Completed(Value::Boolean(result)) => assert!(
+            result,
+            "post-anchored allInstances(p) after a pre(..) sibling must not drift to the \
+             pre population (expected 2 post members != 3 pre members)"
+        ),
+        other => panic!("expected a completed boolean, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PR #168 review: `pre(...)`'s eligible-operand rule, clause-context gating
+// and `Call`'s anchor reset (FR-042, shared-grammar.md).
+// ---------------------------------------------------------------------------
+
+/// Item 1's first capture-drift shape: `let v = allInstances(p) in pre(v)`
+/// must refuse -- `v`'s own value was already read eagerly against the
+/// *post* population before `pre(..)` ever runs, so re-tagging it `pre`
+/// would return post data under a `pre` label (FR-042-AC-3's capture-drift
+/// refusal) rather than actually re-evaluating the query against the pre
+/// population. `pre`'s operand here is a bare `Name`, which
+/// `contains_pre_eligible_read` never treats as eligible (only a direct
+/// `allInstances`/`lookup`/`pre`/`Call` node is).
+///
+/// Mutation used: in `Typer::infer_form`'s `Expression::Pre` arm, removed
+/// the `contains_pre_eligible_read` guard (keeping only the postcondition
+/// guard). This test went red as expected (a checked expression instead of
+/// a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-3", "FSpec-V1-EXPR-021")]
+fn pre_refuses_a_let_bound_query_result_capture_drift() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let v = allInstances(p) in pre(v)
+    let expression = Expression::let_in(
+        "v".to_owned(),
+        all_instances(target),
+        pre(Expression::name("v".to_owned())),
+    );
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 2, finding 4: `let q = p in pre(size(allInstances(q)))`
+/// must refuse the same way `pre(p)` itself does -- FR-042-AC-3's own `let s
+/// = self in pre(s.version)` analogue. `q` is a `let`-bound alias of the
+/// parameter `p`, captured *before* `pre(...)`'s own boundary; re-anchoring
+/// a query over `q` inside `pre(...)` would look eligible to a purely
+/// syntactic reader (`allInstances(q)` is a direct `AllInstances` node,
+/// exactly the shape `contains_pre_eligible_read` treats as eligible), but
+/// `q` was never re-bound at the `pre(...)` boundary, so this must still
+/// refuse: `contains_captured_pre_alias` walks `size(allInstances(q))`,
+/// finds `allInstances`'s `population` operand is the bare `Name("q")`, and
+/// resolves `q` against `Typer`'s own local scope to a `let`-bound
+/// (`LocalKind::Bound`) alias whose slot predates the `pre(...)`'s boundary
+/// -- a captured alias, not a parameter reference (`pre(p)`'s own bare-name
+/// case) and not a `let` introduced inside the `pre(...)` operand itself
+/// (which `contains_captured_pre_alias`'s shadowing tracking exempts).
+///
+/// Mutation used: in `Typer`'s `Expression::Pre` arm, dropped the
+/// `contains_captured_pre_alias` check (keeping only the `contains_pre_-
+/// eligible_read` guard). This test went red as expected (a checked
+/// expression instead of a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-3", "FSpec-V1-EXPR-021")]
+fn pre_refuses_a_let_bound_population_alias_capture_drift() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let q = p in pre(size(allInstances(q)))
+    let expression = Expression::let_in(
+        "q".to_owned(),
+        population_name(),
+        pre(Expression::size(Expression::all_instances(
+            reference_type_form(&target),
+            Expression::name("q".to_owned()),
+        ))),
+    );
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 3, finding 1 (alias-of-alias): `let q = p in
+/// pre(let r = q in size(allInstances(r)))` must refuse the same way
+/// `pre(size(allInstances(q)))` itself does -- `r` is a `let` introduced
+/// *inside* the `pre(...)` operand, but its own value is a bare reference to
+/// `q`, itself a captured alias of the parameter `p`. Aliasing an alias is
+/// still aliasing, transitively, however many `let`s sit in between:
+/// `contains_captured_pre_alias` must carry `q`'s alias status onto `r`,
+/// never treat `r`'s binding as a fresh, unrelated shadow the way a `let`
+/// over a genuinely fresh value (say `allInstances(other)`) would be.
+///
+/// Mutation used: in `contains_captured_pre_alias`'s `Expression::Let` arm,
+/// changed `bindings.push((name.clone(), is_captured_alias(value)))` to
+/// always push `false` (as the original, pre-round-3 code effectively did,
+/// treating every `let` introduced inside the operand as a fresh, safe
+/// shadow regardless of its own value). This test went red as expected (a
+/// checked, evaluated `Completed(Integer(3))`, the pre population's size,
+/// instead of a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-3", "FSpec-V1-EXPR-021")]
+fn pre_refuses_a_let_bound_alias_of_a_let_bound_population_alias() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let q = p in pre(let r = q in size(allInstances(r)))
+    let expression = Expression::let_in(
+        "q".to_owned(),
+        population_name(),
+        pre(Expression::let_in(
+            "r".to_owned(),
+            Expression::name("q".to_owned()),
+            Expression::size(Expression::all_instances(
+                reference_type_form(&target),
+                Expression::name("r".to_owned()),
+            )),
+        )),
+    );
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 4, finding 1, shape 1: the alias can hide behind a
+/// `let` written *directly as* `allInstances`'s own operand, not only
+/// behind a `let` that wraps the whole `pre(...)` body the way the
+/// alias-of-alias test above does. `let q = p in
+/// pre(size(allInstances(let s = q in s)))`: `allInstances`'s operand is
+/// itself `let s = q in s`, not a bare `Name`, so the old direct check
+/// (`Expression::Name` only) never looked inside it at all.
+/// `resolves_to_captured_alias`'s own `Expression::Let` arm now resolves
+/// through the operand's value (`q`, a captured alias) and carries that
+/// status onto `s`, so the operand as a whole still resolves to a captured
+/// alias.
+///
+/// Mutation used: in `resolves_to_captured_alias`'s `Expression::Let` arm,
+/// forced `alias` to always be `false` rather than
+/// `self.resolves_to_captured_alias(value, boundary, bindings)` (treating a
+/// `let` value as never itself an alias, the same blind spot the
+/// alias-of-alias fix closed for `contains_captured_pre_alias`'s own `Let`
+/// arm, but here inside the operand-resolution helper instead). This test
+/// went red as expected (a checked, evaluated `Completed(Integer(3))`
+/// instead of a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-3", "FSpec-V1-EXPR-021")]
+fn pre_refuses_a_let_expression_used_directly_as_the_all_instances_operand() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let q = p in pre(size(allInstances(let s = q in s)))
+    let expression = Expression::let_in(
+        "q".to_owned(),
+        population_name(),
+        pre(Expression::size(Expression::all_instances(
+            reference_type_form(&target),
+            Expression::let_in(
+                "s".to_owned(),
+                Expression::name("q".to_owned()),
+                Expression::name("s".to_owned()),
+            ),
+        ))),
+    );
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 4, finding 1, shape 2: the alias can hide behind an
+/// `if` written directly as `allInstances`'s own operand, both arms naming
+/// the same captured alias. `let q = p in
+/// pre(size(allInstances(if true then q else q)))`: `resolves_to_captured_-
+/// alias`'s own `Expression::If` arm resolves `true` when either branch
+/// does, so an operand that is an `if` over a captured alias on both arms
+/// still resolves to one.
+///
+/// Mutation used: removed `resolves_to_captured_alias`'s `Expression::If`
+/// arm entirely, so an `if` operand falls through to the catch-all `_ =>
+/// false` arm instead (recreating the exact pre-fix blind spot: the old
+/// helper only ever recognized a bare `Expression::Name`). This test went
+/// red as expected (a checked, evaluated `Completed(Integer(3))` instead of
+/// a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-3", "FSpec-V1-EXPR-021")]
+fn pre_refuses_an_if_expression_used_directly_as_the_all_instances_operand() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let q = p in pre(size(allInstances(if true then q else q)))
+    let expression = Expression::let_in(
+        "q".to_owned(),
+        population_name(),
+        pre(Expression::size(Expression::all_instances(
+            reference_type_form(&target),
+            Expression::if_then_else(
+                Expression::boolean(true),
+                Expression::name("q".to_owned()),
+                Expression::name("q".to_owned()),
+            ),
+        ))),
+    );
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 4, finding 1, shape 3: the alias can hide behind an
+/// `if` whose result is then bound by a `let` introduced *inside* the
+/// `pre(...)` operand, one level removed from `allInstances`'s own operand
+/// (a bare `Name`). `let q = p in pre(let r = if true then q else q in
+/// size(allInstances(r)))`: `contains_captured_pre_alias`'s own
+/// `Expression::Let` arm now computes `r`'s own alias status via
+/// `resolves_to_captured_alias(value, ..)`, where `value` is the `if`
+/// expression -- resolving `true` via the same `Expression::If` arm shape 2
+/// exercises -- and carries it onto `r`, so `allInstances(r)`'s direct
+/// check (`r` looked up in `bindings`) still finds the alias.
+///
+/// Mutation used: same as
+/// `pre_refuses_an_if_expression_used_directly_as_the_all_instances_operand`'s
+/// own (removing `resolves_to_captured_alias`'s `Expression::If` arm
+/// entirely) -- `r`'s own value resolution goes through the same helper and
+/// the same `If` arm, one call site further out than the direct-operand
+/// case. This test went red as expected (a checked, evaluated
+/// `Completed(Integer(3))` instead of a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-3", "FSpec-V1-EXPR-021")]
+fn pre_refuses_a_let_bound_if_expression_alias_of_a_population_alias() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let q = p in pre(let r = if true then q else q in size(allInstances(r)))
+    let expression = Expression::let_in(
+        "q".to_owned(),
+        population_name(),
+        pre(Expression::let_in(
+            "r".to_owned(),
+            Expression::if_then_else(
+                Expression::boolean(true),
+                Expression::name("q".to_owned()),
+                Expression::name("q".to_owned()),
+            ),
+            Expression::size(Expression::all_instances(
+                reference_type_form(&target),
+                Expression::name("r".to_owned()),
+            )),
+        )),
+    );
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 4, finding 1, shape 4: the alias can hide behind a
+/// further nested `let`, itself the value of a `let` introduced inside the
+/// `pre(...)` operand. `let q = p in pre(let r = (let s = q in s) in
+/// size(allInstances(r)))`: `r`'s own value is `let s = q in s`, so
+/// resolving `r`'s alias status requires `resolves_to_captured_alias`'s own
+/// `Expression::Let` arm to recurse into a nested `Let`, not just a bare
+/// `Name` -- the same recursive shape shape 1 exercises for `allInstances`'s
+/// own operand, exercised here one level further out.
+///
+/// Mutation used: same as
+/// `pre_refuses_a_let_expression_used_directly_as_the_all_instances_operand`'s
+/// own (`resolves_to_captured_alias`'s `Expression::Let` arm's own `alias`
+/// computation forced to `false` instead of recursing) -- `r`'s value
+/// resolution goes through the same helper and the same `Let` arm, one call
+/// site further out than shape 1's direct-operand case (`contains_captured_-
+/// pre_alias`'s own `Let` arm, computing `r`'s pushed binding, versus
+/// `resolves_to_captured_alias`'s own `Let` arm, computing `s`'s). This test
+/// went red as expected (a checked, evaluated `Completed(Integer(3))`
+/// instead of a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-3", "FSpec-V1-EXPR-021")]
+fn pre_refuses_a_let_bound_nested_let_alias_of_a_population_alias() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let q = p in pre(let r = (let s = q in s) in size(allInstances(r)))
+    let expression = Expression::let_in(
+        "q".to_owned(),
+        population_name(),
+        pre(Expression::let_in(
+            "r".to_owned(),
+            Expression::let_in(
+                "s".to_owned(),
+                Expression::name("q".to_owned()),
+                Expression::name("s".to_owned()),
+            ),
+            Expression::size(Expression::all_instances(
+                reference_type_form(&target),
+                Expression::name("r".to_owned()),
+            )),
+        )),
+    );
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 3, finding 2: FSpec FR-012-AC-4's positive
+/// retention half -- "a captured post reference retains its observation
+/// inside `pre`" -- stays legal and correct, the complement to the
+/// capture-drift refusals above. `let v = size(allInstances(p)) in
+/// pre(size(allInstances(p)) != v)`: `v` is bound to the *post* population's
+/// size (2) before `pre(...)` is ever reached, and is not itself a bare
+/// alias of a raw population (its value is already a computed `Integer`,
+/// not a `Name`), so referencing `v` inside `pre(...)` never re-anchors it
+/// -- it keeps observing exactly the post value it captured. The sibling
+/// `size(allInstances(p))` written directly inside `pre(...)` does read the
+/// *pre* population (3), so the comparison is `3 != 2`, `true`.
+///
+/// Mutation used: in `select_anchor`, changed the `Anchor::Pre` arm to
+/// `Ok(binding)` (the same binding `Anchor::Post` already returns), so
+/// `pre(...)` would silently read the post population instead of the pre
+/// one. `v` (2, the post size) is unaffected either way -- it was already
+/// resolved before `pre(...)` ran -- but the sibling `size(allInstances(p))`
+/// written directly inside `pre(...)` then also reads 2, so the comparison
+/// becomes `2 != 2`, `false`. This test went red as expected; reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-2", "FSpec-V1-EXPR-021", "FSpec-FR-012-AC-4")]
+fn pre_of_a_captured_post_reference_retains_its_post_observation() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    // let v = size(allInstances(p)) in pre(size(allInstances(p)) != v)
+    let expression = Expression::let_in(
+        "v".to_owned(),
+        Expression::size(all_instances(target.clone())),
+        pre(Expression::binary(
+            BinaryOperator::NotEqual,
+            Expression::size(all_instances(target)),
+            Expression::name("v".to_owned()),
+        )),
+    );
+    let (outcome, _) = run_postcondition(
+        &package,
+        &parameters,
+        &expression,
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    match outcome {
+        Outcome::Completed(Value::Boolean(result)) => assert!(
+            result,
+            "v must keep observing the post population's size (2) even though it is read \
+             inside pre(...), so pre's own size(allInstances(p)) (3) must compare unequal"
+        ),
+        other => panic!("expected a completed boolean, got {other:?}"),
+    }
+}
+
+/// Item 1's second capture-drift shape: `pre(p)` itself (a bare population
+/// *parameter*, not a direct `allInstances`/`lookup` call) refuses -- FR-042
+/// refuses `pre` on a bare parameter/constant/capture directly, never only
+/// on what a later query does with it. `let q = pre(p) in allInstances(q)`
+/// (the review's own literal shape) never gets past this same check: `q`'s
+/// own initializer, `pre(p)`, already refuses before the `let`'s body is
+/// even considered.
+///
+/// Mutation used: same as
+/// `pre_refuses_a_let_bound_query_result_capture_drift`'s own (removing
+/// `contains_pre_eligible_read`'s guard from `Typer::infer_form`'s
+/// `Expression::Pre` arm). This test went red the same way (a checked
+/// `Population(3)` instead of a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-4")]
+fn pre_refuses_a_bare_population_parameter() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    let expression = pre(Expression::name("p".to_owned()));
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// Item 1's third shape: `pre(1)`, a bare integer literal, refuses the same
+/// way -- FR-042's Behavior clause never gives `pre` a bare constant
+/// operand.
+///
+/// Mutation used: same as
+/// `pre_refuses_a_let_bound_query_result_capture_drift`'s own. This test
+/// went red the same way (a checked `Integer` instead of a refusal);
+/// reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-4")]
+fn pre_of_an_integer_literal_is_refused() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let parameters: [(&str, ValueType); 0] = [];
+
+    let expression = pre(Expression::integer(Integer::from(1_u64)));
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// Item 2: `pre(...)` is refused anywhere outside a postcondition context --
+/// [`check`] (unlike [`check_postcondition`]) checks as a non-postcondition
+/// expression, so `pre(allInstances(p))`, otherwise eligible, still refuses
+/// here purely on clause context. FR-208 applies FR-042 to invariants and
+/// preconditions and names this same wrong-clause case `forbidden-pre-read`
+/// explicitly -- this is a checker-decided refusal over `pre(...)`'s own
+/// syntax, never the runtime-only `wrong-anchor` cause `select_anchor`
+/// reserves for a population value with no attached pre binding.
+///
+/// Mutation used: in `CheckedPackage::check_expression`, changed its
+/// delegating `check_expression_as(..., false)` call to pass `true`
+/// (treating every plain `check_expression` call as a postcondition). This
+/// test went red as expected (a checked expression instead of a refusal);
+/// reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-4", "FSpec-V1-EXPR-019", "FSpec-FR-012-AC-8")]
+fn pre_refuses_outside_a_postcondition_context() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    let refusal = check_refusal(&package, &parameters, &pre(all_instances(target)));
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// Item 1/2: nested `pre` is idempotent (FR-042-AC-2) -- `pre(pre(e))`
+/// checks (the outer `pre`'s operand is itself a `Pre` node, which
+/// `contains_pre_eligible_read` always treats as eligible) and evaluates to
+/// exactly the same result as the single `pre(e)`.
+#[test]
+#[trace(
+    "FSpec-FR-042-AC-2",
+    "FSpec-TC-198",
+    "FSpec-FR-153-AC-7",
+    "FSpec-V1-EXPR-020"
+)]
+fn nested_pre_is_idempotent() {
+    let scenario = l07_scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    let (single, _) = run_postcondition(
+        &package,
+        &parameters,
+        &pre(all_instances(target.clone())),
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    let (nested, _) = run_postcondition(
+        &package,
+        &parameters,
+        &pre(pre(all_instances(target))),
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    match (single, nested) {
+        (Outcome::Completed(single), Outcome::Completed(nested)) => {
+            assert_eq!(reference_elements(&single), reference_elements(&nested));
+        }
+        other => panic!("expected two completed collections, got {other:?}"),
+    }
+}
+
+/// PR #168 review round 2, finding 1: `pre(F(p))` -- a bare population
+/// *parameter* passed as a call argument, never itself an eligible read --
+/// must refuse the same way a bare `pre(p)` does. `contains_pre_eligible_read`
+/// no longer treats `Expression::Call` itself as eligible (only
+/// `AllInstances`/`Lookup`/`Pre` are direct-eligible); a call's own
+/// arguments are still reached through `Expression::children()`'s ordinary
+/// recursion, but here the sole argument is the bare `Name("p")`, which is
+/// never eligible on its own. Admitting `pre(F(p))` here would have silently
+/// returned `F`'s *post*-anchored result (`F`'s own body is checked with
+/// `postcondition: false` and always reads the post population, per
+/// `package_with_function`'s own doc) under a `pre(...)` label, exactly the
+/// silent-no-op hazard FR-042 exists to refuse.
+///
+/// Mutation used: in `contains_pre_eligible_read`, re-added
+/// `Expression::Call { .. }` to the direct `matches!` arm. This test went
+/// red as expected (a checked, evaluated `Completed(Integer(2))` instead of
+/// a refusal); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-4", "FSpec-TC-198")]
+fn pre_of_a_function_call_over_a_bare_parameter_argument_refuses_forbidden_pre_read() {
+    let scenario = l07_scenario();
+    let package = package_with_function(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    let expression = pre(Expression::call("F".to_owned(), vec![population_name()]));
+    let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
+    assert_eq!(
+        refusal.cause,
+        CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
+    );
+}
+
+/// PR #168 review round 2, finding 1's positive counterpart: `pre(F2(elements))`
+/// where `elements` is itself an eligible read (`allInstances(p)`, passed as
+/// the call's argument, not `p` itself) stays legal -- FR-042-AC-1's
+/// `pre(P(self.version, delta))` analogue. `Expression::children()`'s
+/// ordinary recursion into `Call`'s `arguments` still finds this eligible
+/// read even though `Call` itself is no longer direct-eligible, so
+/// `pre(F2(allInstances(p)))` checks and evaluates `allInstances(p)` against
+/// the *pre* population (3 members) before handing that already-pre-read
+/// collection into `F2`'s own (always post-anchored) body, which merely
+/// takes its `size`.
+///
+/// Mutation used: in `contains_pre_eligible_read`, changed the direct
+/// `matches!` arm to always return `false` (as if no read were ever
+/// eligible). This test went red as expected (a refusal instead of a
+/// completed integer); reverted.
+#[test]
+#[trace("FSpec-FR-042-AC-1", "FSpec-TC-198", "FSpec-FR-153-AC-7")]
+fn pre_of_a_function_call_over_an_eligible_read_argument_stays_legal() {
+    let scenario = l07_scenario();
+    let package = package_with_collection_function(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    let expression = pre(Expression::call(
+        "F2".to_owned(),
+        vec![all_instances(target)],
+    ));
+    let (outcome, _) = run_postcondition(
+        &package,
+        &parameters,
+        &expression,
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    match outcome {
+        Outcome::Completed(Value::Integer(size)) => assert_eq!(
+            size,
+            Integer::from(3_u64),
+            "F2's argument must read the pre population (3 members) before F2's own always- \
+             post-anchored body takes its size"
+        ),
+        other => panic!("expected a completed integer, got {other:?}"),
+    }
+}
+
+/// FR-090-AC-7 (TC-388): evaluating `pre(allInstances(p))` against a population admitted directly
+/// by [`admit_binding`] (never through [`admit_invocation`], so it carries
+/// no `pre_anchor` at all) is a real, caller-input-reachable
+/// `FamilyResult::Refused` naming `wrong_snapshot`/`wrong-anchor` -- never
+/// `Refusal::CheckedInvariant`, which is reserved for a genuinely broken
+/// evaluator invariant. The checker only gates `pre(...)`'s own syntax
+/// (clause context, operand eligibility -- this file's
+/// `check_postcondition`); it has no way to see, at checking time, which
+/// admission path a caller's runtime population argument will actually
+/// take, so `select_anchor`'s missing-pre-anchor case is exactly the one
+/// `wrong-anchor` case this crate's checker cannot decide for itself.
+#[test]
+#[trace("FR-090-AC-7", "FSpec-FR-042-AC-4", "FSpec-TC-198", "TC-388")]
+fn pre_of_a_binding_with_no_pre_anchor_refuses_wrong_anchor() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [("p", ValueType::Population(Some(3)))];
+
+    let (outcome, _) = run_postcondition_family(
+        &package,
+        &parameters,
+        &pre(all_instances(target)),
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = outcome.outcome else {
+        panic!("expected FamilyOutcome::FamilyEvaluated(Refused(_))");
+    };
+    let code = cause.catalog_code();
+    assert_eq!(
+        (code.code(), code.cause()),
+        ("wrong_snapshot", "wrong-anchor"),
+        "expected a family-owned Refused(wrong_snapshot/wrong-anchor) for a pre(..) anchor with \
+         no admitted pre binding"
+    );
+    // SR-670 FND-004: the evaluator site spells the anchor it required
+    // (`pre`) and the one the binding was admitted with (`post`); a swap
+    // would still be `wrong-anchor`.
+    let fields = cause.catalog_fields().expect("a key-table row");
+    assert_eq!(
+        fields.into_iter().collect::<Vec<_>>(),
+        [
+            ("required", "pre".to_owned()),
+            ("supplied", "post".to_owned())
+        ]
+    );
+}
+
+/// TC-293 (FR-089-AC-3): the evaluator resolves a `Value::Population`
+/// argument to the exact admitted `PopulationBinding` its own `PopulationId`
+/// was minted for, by lookup in the recorded correspondence
+/// (`ObjectEnvironment::resolve_population`) -- never a payload the `Value`
+/// itself carries. Two distinct bindings, `B1` (`population_key` K1) and
+/// `B2` (K2), are admitted and recorded in the *same* environment; an
+/// `allInstances(p)`-shaped expression bound to `B1`'s id reads exactly
+/// `B1`'s members, and the identical expression shape bound to `B2`'s id
+/// reads exactly `B2`'s -- catching an evaluator that resolved every
+/// `PopulationId` to whichever binding was admitted last.
+#[test]
+#[trace("TC-293", "FR-089-AC-3")]
+fn tc_293_evaluator_resolves_population_id_through_recorded_correspondence() {
+    let domain_package = fixture_f1_with_second_population();
+    let view = view_of(&domain_package);
+    let universe = view_of(&domain_package)
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+
+    let b1_document = PopulationDocument {
+        model_identity: "test/orders".to_owned(),
+        members: vec![member("a1", "model.A")],
+    };
+    let b2_document = PopulationDocument {
+        model_identity: "test/orders".to_owned(),
+        members: vec![member("a9", "model.A")],
+    };
+    let mut meter1 = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let b1_binding = match admit_binding(
+        &view,
+        &b1_document,
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        Some(3),
+        &mut meter1,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted B1 binding, got {other:?}"),
+    };
+    let mut meter2 = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let b2_binding = match admit_binding(
+        &view,
+        &b2_document,
+        &p2_population_key(),
+        GeneralizationClosure::Closed,
+        Some(3),
+        &mut meter2,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted B2 binding, got {other:?}"),
+    };
+    let id1 = b1_binding.population_id();
+    let id2 = b2_binding.population_id();
+    assert_ne!(
+        id1, id2,
+        "two distinct population_keys must mint distinct ids"
+    );
+
+    let scenario = Scenario {
+        universe: universe.clone(),
+        a: a.clone(),
+        b,
+        binding: b1_binding.clone(),
+        model: AdmittedModel::new(&domain_package, &view).unwrap(),
+    };
+    let environment = ObjectEnvironment::default()
+        .with_population(b1_binding)
+        .unwrap()
+        .with_population(b2_binding)
+        .unwrap();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = all_instances(ValueType::Reference(a.clone()));
+
+    let (outcome1, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![Value::Population(id1)],
+        SCALAR_UNLIMITED,
+        &environment,
+    );
+    match outcome1 {
+        Outcome::Completed(value) => {
+            assert_eq!(
+                reference_elements(&value),
+                vec![object_reference(&universe, &a, "a1")]
+            );
+        }
+        other => panic!("expected B1's own member for id1, got {other:?}"),
+    }
+
+    let (outcome2, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![Value::Population(id2)],
+        SCALAR_UNLIMITED,
+        &environment,
+    );
+    match outcome2 {
+        Outcome::Completed(value) => {
+            assert_eq!(
+                reference_elements(&value),
+                vec![object_reference(&universe, &a, "a9")]
+            );
+        }
+        other => panic!("expected B2's own member for id2, got {other:?}"),
+    }
+}
+
+/// TC-294 (FR-089-AC-4): a `Value::Population(population_id)` whose
+/// `population_id` names no binding recorded in the current evaluation's
+/// correspondence refuses at argument admission -- `InputRefusal::
+/// WrongValueKind`, naming the parameter, never a panic and never
+/// `Undefined`. PR #326 review finding F1: this now runs inside
+/// `CheckedPackage::evaluate`'s own `validate` (which already receives
+/// `objects: &ObjectEnvironment` for the analogous `DanglingReference`
+/// check), not only inside the evaluator's `Machine::resolve_population` --
+/// `ValueType::admits` alone cannot perform it, since it has no access to
+/// the recorded correspondence, so admission by presence alone let this
+/// case through whenever nothing in the body consumed the parameter (see
+/// [`tc_294_unresolved_population_id_refuses_even_when_unconsumed`]).
+/// `scenario.binding`'s own minted id is genuine (admitted by a real
+/// `admit_binding` call), but the environment this evaluation actually
+/// runs against never recorded it -- exactly TC-294's "a distinct,
+/// independently-admitted identity from a separate evaluation run".
+#[test]
+#[trace("TC-294", "FR-089-AC-4")]
+fn tc_294_unresolved_population_id_refuses_typed() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = all_instances(ValueType::Reference(scenario.a));
+    let unresolved_id = scenario.binding.population_id();
+
+    let checked = check(&package, &parameters, &expression);
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let result = package.evaluate(
+        &checked,
+        vec![Value::Population(unresolved_id)],
+        &ObjectEnvironment::default(),
+        &mut meter,
+    );
+    match result {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter })) => {
+            assert_eq!(parameter, 0)
+        }
+        other => {
+            panic!("expected Err(CallFailure::Input(InputRefusal::WrongValueKind)), got {other:?}")
+        }
+    }
+}
+
+/// TC-294 (FR-089-AC-4)/FR-049-AC-2, PR #326 review finding F1: the same
+/// unresolved id refuses at admission even when the checked body never
+/// reads the parameter at all. Before this fix, `ValueType::admits`'s own
+/// presence-only check let an unresolved (or mismatched-maximum, see
+/// [`tc_295_population_maximum_mismatch_refuses_even_when_unconsumed`])
+/// population argument through whenever nothing consumed it, completing
+/// with the body's own unrelated value (the review's own probe: "a
+/// population parameter that is never consumed... `Completed(Boolean(true))`").
+/// A body that ignores `p` entirely still refuses now.
+#[test]
+#[trace("TC-294", "FR-089-AC-4", "FR-049-AC-2")]
+fn tc_294_unresolved_population_id_refuses_even_when_unconsumed() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [("p", ValueType::Population(Some(3)))];
+    let expression = Expression::boolean(true);
+    let unresolved_id = scenario.binding.population_id();
+
+    let checked = check(&package, &parameters, &expression);
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let result = package.evaluate(
+        &checked,
+        vec![Value::Population(unresolved_id)],
+        &ObjectEnvironment::default(),
+        &mut meter,
+    );
+    match result {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter })) => {
+            assert_eq!(parameter, 0)
+        }
+        other => {
+            panic!("expected Err(CallFailure::Input(InputRefusal::WrongValueKind)), got {other:?}")
+        }
+    }
+}
+
+/// TC-295 (FR-089-AC-5): the FSL layer treats `ValueType::Population(maximum)`
+/// as admitting a `Value::Population(population_id)` exactly when the
+/// binding `population_id` resolves to (through the recorded correspondence)
+/// has a declared maximum equal to `maximum`. A binding admitted with
+/// declared maximum 5 is admitted under `Population<5>` and refused under
+/// `Population<6>` -- the same resolved binding both times, only the
+/// checked parameter's own declared maximum differs, catching an
+/// implementation that admits every `Value::Population(_)` regardless of
+/// `maximum`.
+#[test]
+#[trace("TC-295", "FR-089-AC-5")]
+fn tc_295_population_type_pairing_checks_the_resolved_maximum() {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let universe = view_of(&domain_package)
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+
+    let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let binding = match admit_binding(
+        &view,
+        &p1("test/orders"),
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        Some(5),
+        &mut meter,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted binding, got {other:?}"),
+    };
+    let id = binding.population_id();
+    let scenario = Scenario {
+        universe,
+        a: a.clone(),
+        b,
+        binding: binding.clone(),
+        model: AdmittedModel::new(&domain_package, &view).unwrap(),
+    };
+    let environment = ObjectEnvironment::default()
+        .with_population(binding)
+        .unwrap();
+    let package = package(&scenario);
+    let expression = all_instances(ValueType::Reference(a));
+
+    let parameters_5 = [("p", ValueType::Population(Some(5)))];
+    let (outcome_5, _) = run(
+        &package,
+        &parameters_5,
+        &expression,
+        vec![Value::Population(id.clone())],
+        SCALAR_UNLIMITED,
+        &environment,
+    );
+    match outcome_5 {
+        Outcome::Completed(_) => {}
+        other => panic!("expected admission under a matching Population<5>, got {other:?}"),
+    }
+
+    let parameters_6 = [("p", ValueType::Population(Some(6)))];
+    let checked_6 = check(&package, &parameters_6, &expression);
+    let mut meter_6 = Meter::new(SCALAR_UNLIMITED);
+    let result_6 = package.evaluate(
+        &checked_6,
+        vec![Value::Population(id)],
+        &environment,
+        &mut meter_6,
+    );
+    match result_6 {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter })) => {
+            assert_eq!(parameter, 0)
+        }
+        other => panic!(
+            "expected Err(CallFailure::Input(InputRefusal::WrongValueKind)) under a mismatched \
+             Population<6>, got {other:?}"
+        ),
+    }
+}
+
+/// TC-295 (FR-089-AC-5)/FR-049-AC-2, PR #326 review finding F1: the same
+/// declared-maximum mismatch refuses at admission even when the checked
+/// body never reads the parameter at all -- companion to
+/// [`tc_294_unresolved_population_id_refuses_even_when_unconsumed`] for the
+/// "resolved, wrong maximum" case rather than "not recorded".
+#[test]
+#[trace("TC-295", "FR-089-AC-5", "FR-049-AC-2")]
+fn tc_295_population_maximum_mismatch_refuses_even_when_unconsumed() {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let universe = view_of(&domain_package)
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+
+    let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let binding = match admit_binding(
+        &view,
+        &p1("test/orders"),
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        Some(5),
+        &mut meter,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted binding, got {other:?}"),
+    };
+    let id = binding.population_id();
+    let scenario = Scenario {
+        universe,
+        a,
+        b,
+        binding: binding.clone(),
+        model: AdmittedModel::new(&domain_package, &view).unwrap(),
+    };
+    let environment = ObjectEnvironment::default()
+        .with_population(binding)
+        .unwrap();
+    let package = package(&scenario);
+    let expression = Expression::boolean(true);
+
+    let parameters_6 = [("p", ValueType::Population(Some(6)))];
+    let checked = check(&package, &parameters_6, &expression);
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let result = package.evaluate(
+        &checked,
+        vec![Value::Population(id)],
+        &environment,
+        &mut meter,
+    );
+    match result {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter })) => {
+            assert_eq!(parameter, 0)
+        }
+        other => {
+            panic!("expected Err(CallFailure::Input(InputRefusal::WrongValueKind)), got {other:?}")
+        }
+    }
+}
+
+/// TC-294 (FR-089-AC-4)/S3 (PR #326 review): the same unresolved-id
+/// admission refusal holds for `lookup<T>(p, r)`, not only `allInstances`
+/// -- the two consumption sites `evaluate.rs`'s `Machine::resolve_population`
+/// doc names (`:921`/`:934`). `admits_a_valid_reference_but_unresolved_
+/// population` supplies a well-formed `r` (present in the environment, so
+/// `DanglingReference` never fires) alongside an unresolved `p`, isolating
+/// the population check from the reference check.
+#[test]
+#[trace("TC-294", "FR-089-AC-4")]
+fn tc_294_lookup_refuses_an_unresolved_population_id() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let target = ValueType::Reference(scenario.a.clone());
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let expression = lookup(target, AbsenceMode::Empty);
+    let unresolved_id = scenario.binding.population_id();
+    let present_reference = object_reference(&scenario.universe, &scenario.b, "b1");
+    let environment = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types(&scenario),
+            [(present_reference.clone(), vec![])],
+            &[],
+        )
+        .unwrap(),
+    );
+
+    let checked = check(&package, &parameters, &expression);
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let result = package.evaluate(
+        &checked,
+        vec![
+            Value::Population(unresolved_id),
+            Value::Reference(present_reference),
+        ],
+        &environment,
+        &mut meter,
+    );
+    match result {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter })) => {
+            assert_eq!(parameter, 0)
+        }
+        other => {
+            panic!("expected Err(CallFailure::Input(InputRefusal::WrongValueKind)), got {other:?}")
+        }
+    }
+}
+
+/// TC-391 (FR-090-AC-10): `CheckedPackage::call` -- not only `evaluate`,
+/// which TC-294 already covers above -- refuses a `Value::Population`
+/// argument whose id names no recorded binding as `Err(CallFailure::
+/// Input(_))`, before S6a runs and before any charge. `F`'s own declared
+/// parameter is `p: Population<M::A>[3]` ([`package_with_function`]).
+#[test]
+#[trace("TC-391", "FR-090-AC-10")]
+fn tc_391_call_refuses_an_unresolved_population_id_at_admission() {
+    let scenario = scenario();
+    let package = package_with_function(&scenario);
+    let unresolved_id = scenario.binding.population_id();
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+
+    let result = package.call(
+        &QualifiedName::unqualified("F").unwrap(),
+        vec![Value::Population(unresolved_id)],
+        &ObjectEnvironment::default(),
+        &mut meter,
+    );
+    match result {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter })) => {
+            assert_eq!(parameter, 0)
+        }
+        other => {
+            panic!("expected Err(CallFailure::Input(InputRefusal::WrongValueKind)), got {other:?}")
+        }
+    }
+    assert!(
+        meter.admitted_charges().is_empty(),
+        "admission refuses before any charge"
+    );
+}
+
+/// TC-391 (FR-090-AC-10): the companion admission refusal, a resolved
+/// binding whose own declared maximum (2) differs from `F`'s declared
+/// `Population<3>` -- also `Err(CallFailure::Input(_))` from `call`, before
+/// S6a runs and before any charge.
+#[test]
+#[trace("TC-391", "FR-090-AC-10")]
+fn tc_391_call_refuses_a_population_maximum_mismatch_at_admission() {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let universe = view_of(&domain_package)
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+    let mut admission = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let binding = match admit_binding(
+        &view,
+        &p1("test/orders"),
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        Some(2),
+        &mut admission,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted binding, got {other:?}"),
+    };
+    let id = binding.population_id();
+    let scenario = Scenario {
+        universe,
+        a,
+        b,
+        binding: binding.clone(),
+        model: AdmittedModel::new(&domain_package, &view).unwrap(),
+    };
+    let objects = ObjectEnvironment::default()
+        .with_population(binding)
+        .unwrap();
+    let package = package_with_function(&scenario);
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+
+    let result = package.call(
+        &QualifiedName::unqualified("F").unwrap(),
+        vec![Value::Population(id)],
+        &objects,
+        &mut meter,
+    );
+    match result {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter })) => {
+            assert_eq!(parameter, 0)
+        }
+        other => {
+            panic!("expected Err(CallFailure::Input(InputRefusal::WrongValueKind)), got {other:?}")
+        }
+    }
+    assert!(
+        meter.admitted_charges().is_empty(),
+        "admission refuses before any charge"
+    );
+}
+
+/// TC-389 (FR-090-AC-8): a closed `p: Population<A>[1]` whose binding holds
+/// two `A` members. `allInstances<A>(p)` through `CheckedPackage::evaluate`
+/// is `FamilyEvaluated(Refused(cause))` whose catalog code is
+/// `cardinality_out_of_bound`/`above-maximum`, the same code
+/// `model::population::all_instances`'s own `ModelRefusal` gives for that
+/// binding, and never a kernel `Evaluated(Refused(_))`. Step 4 (the carried
+/// refusal holds no native-v1 `Code`) is
+/// `value::expression::causes`'s `model_query_refusal_carries_no_native_code`.
+#[test]
+#[trace("FR-090-AC-8", "TC-389")]
+fn model_query_refusal_reaches_the_caller_with_its_own_code() {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let document = PopulationDocument {
+        model_identity: "test/orders".to_owned(),
+        members: vec![member("a1", "model.A"), member("a2", "model.A")],
+    };
+    let mut admission = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    let binding = match admit_binding(
+        &view,
+        &document,
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        Some(1),
+        &mut admission,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted binding, got {other:?}"),
+    };
+    let scenario = Scenario {
+        universe: view_of(&domain_package)
+            .object_universe()
+            .identity()
+            .expect("the universe has an identity"),
+        a: type_id(&view, "model.A"),
+        b: type_id(&view, "model.B"),
+        binding,
+        model: AdmittedModel::new(&domain_package, &view).unwrap(),
+    };
+    let package = package(&scenario);
+
+    let mut direct_meter = Meter::new(SCALAR_UNLIMITED);
+    let direct = match fsl_semantics::model::population::all_instances(
+        &scenario.binding,
+        &DeclarationKey::fixture("model.A"),
+        &mut direct_meter,
+    ) {
+        fsl_semantics::model::population::AllInstancesOutcome::Refused(refusal) => {
+            refusal.catalog_code()
+        }
+        other => panic!("expected all_instances to refuse two members above [0,1], got {other:?}"),
+    };
+
+    let (evaluation, _) = run_family(
+        &package,
+        &[("p", ValueType::Population(Some(1)))],
+        &all_instances(ValueType::Reference(scenario.a.clone())),
+        vec![population_argument(&scenario)],
+        SCALAR_UNLIMITED,
+        &population_environment(&scenario),
+    );
+    let code = refused_catalog_code(evaluation);
+    assert_eq!(
+        code,
+        filament_semantic_value::catalog::CatalogCode::new(
+            "cardinality_out_of_bound",
+            "above-maximum"
+        )
+    );
+    assert_eq!(code, direct);
+}
+
+/// TC-385 (FR-090-AC-4): both `FamilyOutcome` arms reach a
+/// `CheckedPackage::call` caller through the S6a seam. `F(p:
+/// Population<M::A>[1]) = size(allInstances<M::A>(p))` over a binding
+/// declared `[0,1]` that holds two `A` members is
+/// `FamilyEvaluated(Refused(_))` with `cardinality_out_of_bound`/
+/// `above-maximum`; the same `F` over a one-member binding is
+/// `Evaluated(Completed(1))`.
+#[test]
+#[trace("FR-090-AC-4", "TC-385")]
+fn both_family_outcome_arms_reach_a_caller_through_the_s6a_seam() {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let bind = |members: Vec<PopulationMember>| {
+        let document = PopulationDocument {
+            model_identity: "test/orders".to_owned(),
+            members,
+        };
+        let mut admission = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+        match admit_binding(
+            &view,
+            &document,
+            &p1_population_key(),
+            GeneralizationClosure::Closed,
+            Some(1),
+            &mut admission,
+        ) {
+            AdmissionOutcome::Admitted(binding) => binding,
+            other => panic!("expected an admitted binding, got {other:?}"),
+        }
+    };
+    let call = |binding: PopulationBinding| {
+        let scenario = Scenario {
+            universe: view_of(&domain_package)
+                .object_universe()
+                .identity()
+                .expect("the universe has an identity"),
+            a: type_id(&view, "model.A"),
+            b: type_id(&view, "model.B"),
+            binding,
+            model: AdmittedModel::new(&domain_package, &view).unwrap(),
+        };
+        let package = package_with_size_function(&scenario, 1);
+        let mut meter = Meter::new(SCALAR_UNLIMITED);
+        package
+            .call(
+                &QualifiedName::unqualified("F").unwrap(),
+                vec![population_argument(&scenario)],
+                &population_environment(&scenario),
+                &mut meter,
+            )
+            .expect("admission accepts the population argument and S6a keeps its invariants")
+    };
+
+    let refused = call(bind(vec![member("a1", "model.A"), member("a2", "model.A")]));
+    match refused.outcome {
+        FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) => assert_eq!(
+            cause.catalog_code(),
+            filament_semantic_value::catalog::CatalogCode::new(
+                "cardinality_out_of_bound",
+                "above-maximum"
+            )
+        ),
+        other => panic!("expected FamilyEvaluated(Refused(_)), got {other:?}"),
+    }
+
+    let completed = call(bind(vec![member("a1", "model.A")]));
+    match completed.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(size))) => {
+            assert_eq!(size, Integer::from(1_i64))
+        }
+        other => panic!("expected Evaluated(Completed(Integer(1))), got {other:?}"),
+    }
+}
+
+/// `document` admitted under `p1`'s population key with no declared
+/// maximum: an unbounded population (FSpec FR-153-AC-9, ADR-014 §2).
+fn unbounded_binding(view: &EffectiveView, document: &PopulationDocument) -> PopulationBinding {
+    let mut admission = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+    match admit_binding(
+        view,
+        document,
+        &p1_population_key(),
+        GeneralizationClosure::Closed,
+        None,
+        &mut admission,
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("expected an admitted binding, got {other:?}"),
+    }
+}
+
+/// TC-441 (ADR-014 §2, N-3): `allInstances` over a `Population(None)`
+/// parameter checks to an unbounded `Set`, and evaluates, through
+/// admission and S6a's own maximum match, over a binding admitted with no
+/// declared maximum.
+#[test]
+#[trace("TC-441", "FR-097-AC-8")]
+fn tc_441_all_instances_over_an_unbounded_population_is_unbounded() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let domain_package = fixture_f1();
+    let binding = unbounded_binding(&view_of(&domain_package), &p1("test/orders"));
+    assert_eq!(binding.declared_maximum(), None);
+    let parameters = [("p", ValueType::Population(None))];
+    let expression = all_instances(ValueType::Reference(scenario.a));
+
+    let checked = check(&package, &parameters, &expression);
+    let ValueType::Collection(collection_type) = checked.value_type() else {
+        panic!("a checked collection result type");
+    };
+    assert_eq!(collection_type.bound(), None);
+
+    let objects = ObjectEnvironment::default()
+        .with_population(binding.clone())
+        .unwrap();
+    let (outcome, _) = run(
+        &package,
+        &parameters,
+        &expression,
+        vec![Value::Population(binding.population_id())],
+        SCALAR_UNLIMITED,
+        &objects,
+    );
+    let Outcome::Completed(value) = outcome else {
+        panic!("expected a completed collection, got {outcome:?}");
+    };
+    assert_eq!(reference_elements(&value).len(), 3);
+}
+
+/// TC-441: a population's declared maximum matches exactly at admission,
+/// absence included: an unbounded parameter refuses a binding with a
+/// maximum, and a bounded parameter refuses an unbounded binding.
+#[test]
+#[trace("TC-441", "FR-097-AC-8")]
+fn tc_441_population_maximum_absence_must_match_at_admission() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let domain_package = fixture_f1();
+    let unbounded = unbounded_binding(&view_of(&domain_package), &p1("test/orders"));
+    for (parameter_type, binding) in [
+        (ValueType::Population(None), scenario.binding.clone()),
+        (ValueType::Population(Some(3)), unbounded),
+    ] {
+        let parameters = [("p", parameter_type)];
+        let checked = check(&package, &parameters, &Expression::boolean(true));
+        let objects = ObjectEnvironment::default()
+            .with_population(binding.clone())
+            .unwrap();
+        let mut meter = Meter::new(SCALAR_UNLIMITED);
+        let result = package.evaluate(
+            &checked,
+            vec![Value::Population(binding.population_id())],
+            &objects,
+            &mut meter,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(CallFailure::Input(InputRefusal::WrongValueKind {
+                    parameter: 0
+                }))
+            ),
+            "expected an input refusal, got {result:?}"
+        );
+    }
+}
+
+/// TC-428 (FR-096-AC-6): a declared function `G(p, r) = lookup<M::A>(p, r)
+/// absent refused`, read from a unit (its forms carry spans), called with a
+/// reference that is no member of the population. The refusal builds a
+/// `RefusalRecord` with code `invalid_runtime_input`/`absent-key`, category
+/// refusal, fields `binding` (the population's identity) and `key` (`c9`),
+/// and `Locus::Region` over the span of the `lookup` expression, the
+/// function body's root. An evaluation whose location is `None` builds a
+/// record with no locus.
+#[test]
+#[trace("TC-428", "FR-096-AC-6")]
+fn a_refused_lookup_builds_a_record_at_the_lookup_expression() {
+    use filament_semantic_value::catalog::Category;
+    use fsl_forms::{DeclarationSpans, ExpressionSpans};
+    use fsl_foundation::diagnostic::Locus;
+    use fsl_foundation::source::provenance::SourceRegion;
+    use fsl_foundation::Span;
+
+    let scenario = scenario();
+    let source = fsl_semantics::check::fixture_source();
+    let whole = Span { start: 40, end: 66 };
+    let mut body_spans = ExpressionSpans::new(whole).unwrap();
+    let root = body_spans.root();
+    body_spans
+        .push_child(root, Span { start: 59, end: 60 })
+        .unwrap();
+    body_spans
+        .push_child(root, Span { start: 62, end: 63 })
+        .unwrap();
+    let function = FunctionDeclaration::new(
+        "G",
+        vec![
+            (
+                "p".to_owned(),
+                crate::support::type_form::type_form(&ValueType::Population(Some(3)))
+                    .with_arguments(vec![crate::support::type_form::named_type_form("M::A")]),
+            ),
+            (
+                "r".to_owned(),
+                crate::support::type_form::named_type_form("M::A"),
+            ),
+        ],
+        crate::support::type_form::named_type_form("M::A"),
+        None,
+        lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Refused,
+        ),
+    )
+    .with_spans(DeclarationSpans {
+        declaration: Span { start: 0, end: 70 },
+        body: body_spans,
+        measure: None,
+    })
+    .expect("the spans have the body's shape");
+    let package = CheckedPackage::link(
+        {
+            let mut declarations = PackageDeclarations::new(
+                source.clone(),
+                "fixture".to_owned(),
+                fsl_foundation::IdentityLimits::default(),
+            );
+            declarations.types = types(&scenario);
+            declarations.models = vec![scenario.model.clone()];
+            declarations.functions = vec![function];
+            declarations
+        }
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("the unit checks"),
+    );
+    let world = objects(&scenario)
+        .with_population(scenario.binding.clone())
+        .unwrap();
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let evaluation = package
+        .call(
+            &QualifiedName::unqualified("G").unwrap(),
+            vec![
+                population_argument(&scenario),
+                Value::Reference(object_reference(&scenario.universe, &scenario.a, "c9")),
+            ],
+            &world,
+            &mut meter,
+        )
+        .expect("the call runs");
+
+    let record =
+        fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))
+            .expect("a family refusal builds a record");
+    assert_eq!(
+        record.code(),
+        filament_semantic_value::catalog::CatalogCode::new("invalid_runtime_input", "absent-key")
+    );
+    assert_eq!(record.category(), Category::Refusal);
+    let binding = scenario.binding.population_id().node().to_string();
+    assert_eq!(
+        record
+            .fields()
+            .iter()
+            .map(|(k, v)| (*k, v.as_str()))
+            .collect::<Vec<_>>(),
+        [("binding", binding.as_str()), ("key", "c9")]
+    );
+    assert_eq!(
+        record.locus(),
+        Some(&Locus::Region(SourceRegion::new(source, 40, 66).unwrap()))
+    );
+
+    let unlocated = Evaluation {
+        location: None,
+        ..evaluation
+    };
+    let record =
+        fsl_eval::value::refusal_record(&unlocated, |location| package.graph().region(location))
+            .expect("a family refusal builds a record");
+    assert_eq!(record.locus(), None);
+}
+
+/// TC-428 (FR-096-AC-6, AC-7): a `lookup` with a reference of another
+/// universe raises `foreign_reference`/`foreign-universe`, and its record
+/// carries the required (the binding's) and supplied (the reference's)
+/// universes. The lookup is a standalone expression, so it has no locus.
+#[test]
+#[trace("TC-428", "FR-096-AC-6", "FR-096-AC-7")]
+fn a_foreign_universe_lookup_builds_a_record_with_both_universes() {
+    let scenario = scenario();
+    let package = package(&scenario);
+    let parameters = [
+        ("p", ValueType::Population(Some(3))),
+        ("r", ValueType::Reference(scenario.b.clone())),
+    ];
+    let foreign_reference = ObjectReference::new(
+        foreign_universe_id(),
+        scenario.b.clone(),
+        ObjectId::new("b1").unwrap(),
+    );
+    let object_world = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types(&scenario),
+            [(foreign_reference.clone(), vec![])],
+            &[],
+        )
+        .unwrap(),
+    )
+    .with_population(scenario.binding.clone())
+    .unwrap();
+    let (evaluation, _) = run_family(
+        &package,
+        &parameters,
+        &lookup(
+            ValueType::Reference(scenario.a.clone()),
+            AbsenceMode::Undefined,
+        ),
+        vec![
+            population_argument(&scenario),
+            Value::Reference(foreign_reference),
+        ],
+        SCALAR_UNLIMITED,
+        &object_world,
+    );
+    let record =
+        fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))
+            .expect("foreign-universe has a key-table row");
+    assert_eq!(
+        record.code(),
+        filament_semantic_value::catalog::CatalogCode::new("foreign_reference", "foreign-universe")
+    );
+    assert_eq!(
+        record
+            .fields()
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect::<Vec<_>>(),
+        [
+            ("required", scenario.universe.root_type().to_string()),
+            ("supplied", foreign_universe_id().root_type().to_string()),
+        ]
+    );
+    assert_eq!(record.locus(), None);
+}
+
+/// TC-428 (FR-096-AC-8): a kernel `Refused` builds the record its catalog
+/// code gives when it has one (`CardinalityOutOfBound`), and none for a
+/// cause with no catalog code, or for `CheckedInvariant`, which is an
+/// internal fault and never a refusal record.
+#[test]
+#[trace("TC-428", "FR-096-AC-8")]
+fn a_kernel_refusal_builds_a_record_only_where_the_catalog_has_a_code() {
+    use filament_exact::{BoundViolation, Refusal};
+    let scenario = scenario();
+    let package = package(&scenario);
+    let evaluation = |refusal| Evaluation {
+        outcome: FamilyOutcome::Evaluated(Outcome::Refused(refusal)),
+        location: None,
+        losses: Vec::new(),
+    };
+    let cardinality = evaluation(Refusal::CardinalityOutOfBound {
+        violation: BoundViolation::AboveMaximum,
+        kind: CollectionKind::Set,
+        bound: CardinalityBound::new(1, 2).unwrap(),
+        count: 3,
+    });
+    let record =
+        fsl_eval::value::refusal_record(&cardinality, |location| package.graph().region(location))
+            .expect("cardinality_out_of_bound has a code");
+    assert_eq!(
+        record.code(),
+        filament_semantic_value::catalog::CatalogCode::new(
+            "cardinality_out_of_bound",
+            "above-maximum"
+        )
+    );
+    assert_eq!(
+        record
+            .fields()
+            .iter()
+            .map(|(k, v)| (*k, v.as_str()))
+            .collect::<Vec<_>>(),
+        [("bound", "[1, 2]"), ("collection", "set"), ("count", "3")]
+    );
+    // `CheckedInvariant` is an internal fault, never a refusal record.
+    let invariant = evaluation(Refusal::CheckedInvariant {
+        cause: filament_exact::CheckedInvariantCause::CollectionElementNotAdmitted,
+    });
+    assert_eq!(
+        fsl_eval::value::refusal_record(&invariant, |location| package.graph().region(location)),
+        None
+    );
+}
+
+/// TC-428 (FR-096-AC-8): the kernel `ForeignReference` variant now
+/// carries both universes, so `kernel_refusal_record` builds
+/// `foreign_reference`/`foreign-universe` with `required`/`supplied` exactly
+/// as the family `ForeignUniverse` row does -- a mutant that swaps which
+/// universe lands in which field fails this assertion.
+#[test]
+#[trace("TC-428", "FR-096-AC-8")]
+fn a_kernel_foreign_reference_builds_a_record_with_both_universes() {
+    use filament_exact::Refusal;
+    let scenario = scenario();
+    let package = package(&scenario);
+    let evaluation = Evaluation {
+        outcome: FamilyOutcome::Evaluated(Outcome::Refused(Refusal::ForeignReference {
+            required: scenario.universe.clone(),
+            supplied: foreign_universe_id(),
+        })),
+        location: None,
+        losses: Vec::new(),
+    };
+    let record =
+        fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))
+            .expect("foreign_reference has a code");
+    assert_eq!(
+        record.code(),
+        filament_semantic_value::catalog::CatalogCode::new("foreign_reference", "foreign-universe")
+    );
+    assert_eq!(
+        record
+            .fields()
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect::<Vec<_>>(),
+        [
+            ("required", scenario.universe.root_type().to_string()),
+            ("supplied", foreign_universe_id().root_type().to_string()),
+        ]
+    );
+}
+
+#[test]
+#[trace(
+    "TC-919",
+    "FR-090-AC-13",
+    "FR-090-AC-16",
+    "FR-090-AC-17",
+    "FR-401-AC-9"
+)]
+fn empty_admitted_member_faults_through_public_call_and_evaluate_with_exact_prefixes() {
+    let domain = fixture_f1();
+    let view = view_of(&domain);
+    for object in ["", "valid"] {
+        let mut admission = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+        let document = PopulationDocument {
+            model_identity: "test/orders".to_owned(),
+            members: vec![member(object, "model.A")],
+        };
+        let binding = match admit_binding(
+            &view,
+            &document,
+            &p1_population_key(),
+            GeneralizationClosure::Closed,
+            Some(1),
+            &mut admission,
+        ) {
+            AdmissionOutcome::Admitted(binding) => binding,
+            other => panic!("member admission must reach the bridge: {other:?}"),
+        };
+        let scenario = Scenario {
+            universe: view
+                .object_universe()
+                .identity()
+                .expect("the universe has an identity"),
+            a: type_id(&view, "model.A"),
+            b: type_id(&view, "model.B"),
+            binding,
+            model: AdmittedModel::new(&domain, &view).unwrap(),
+        };
+        let query = all_instances(ValueType::Reference(scenario.a.clone()));
+        let graph = {
+            let mut declarations = PackageDeclarations::new(
+                fsl_semantics::check::fixture_source(),
+                "fixture".to_owned(),
+                fsl_foundation::IdentityLimits::default(),
+            );
+            declarations.types = types(&scenario);
+            declarations.models = vec![scenario.model.clone()];
+            declarations.functions = vec![FunctionDeclaration::new(
+                "F",
+                vec![(
+                    "p".to_owned(),
+                    TypeForm::new(
+                        fsl_forms::TypeFormHead::Population,
+                        crate::support::type_form::SPAN,
+                    )
+                    .with_arguments(vec![TypeForm::name(
+                        "M::A",
+                        crate::support::type_form::SPAN,
+                    )])
+                    .with_bounds(vec!["1".to_owned()]),
+                )],
+                TypeForm::collection(CollectionKind::Set, crate::support::type_form::SPAN)
+                    .with_arguments(vec![TypeForm::builtin(
+                        fsl_forms::BuiltinType::Reference,
+                        crate::support::type_form::SPAN,
+                    )
+                    .with_arguments(vec![TypeForm::name(
+                        "M::A",
+                        crate::support::type_form::SPAN,
+                    )])])
+                    .with_bounds(vec!["0".to_owned(), "1".to_owned()]),
+                None,
+                query.clone(),
+            )];
+            declarations
+        }
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap();
+        let package = CheckedPackage::link(graph);
+        let expression = check(&package, &[("p", ValueType::Population(Some(1)))], &query);
+        let objects = population_environment(&scenario);
+        for call in [false, true] {
+            let mut prefix = vec![];
+            if call {
+                prefix.push(ChargePoint::FunctionCall);
+            }
+            prefix.extend([
+                ChargePoint::PopulationVisit,
+                ChargePoint::CollectionBound,
+                ChargePoint::CollectionResultRetain,
+            ]);
+            let mut input_meter = Meter::new(SCALAR_UNLIMITED);
+            let input = if call {
+                package.call(
+                    &QualifiedName::unqualified("F").unwrap(),
+                    vec![Value::Boolean(true)],
+                    &objects,
+                    &mut input_meter,
+                )
+            } else {
+                package.evaluate(
+                    &expression,
+                    vec![Value::Boolean(true)],
+                    &objects,
+                    &mut input_meter,
+                )
+            };
+            assert!(matches!(
+                input,
+                Err(CallFailure::Input(InputRefusal::WrongValueKind { .. }))
+            ));
+            assert!(input_meter.admitted_charges().is_empty());
+            for cause in [
+                filament_exact::CancelCause::Requested,
+                filament_exact::CancelCause::Deadline,
+            ] {
+                let cancel = filament_exact::Cancel::new();
+                cancel.cancel(cause);
+                let mut cancelled = Meter::new(SCALAR_UNLIMITED).with_cancel(cancel.clone());
+                let result = if call {
+                    package.call(
+                        &QualifiedName::unqualified("F").unwrap(),
+                        vec![population_argument(&scenario)],
+                        &objects,
+                        &mut cancelled,
+                    )
+                } else {
+                    package.evaluate(
+                        &expression,
+                        vec![population_argument(&scenario)],
+                        &objects,
+                        &mut cancelled,
+                    )
+                }
+                .expect("an earlier cancelled charge cannot reach the bridge fault");
+                assert!(matches!(
+                    result.outcome,
+                    FamilyOutcome::Evaluated(Outcome::Incomplete(_))
+                ));
+                assert!(cancelled.admitted_charges().is_empty());
+                assert_eq!(cancel.tripped(), Some(cause));
+            }
+            // Cancel at each later ordinary charge, not merely before entry.
+            // The observer trips the real cancellation token on that poll;
+            // neither the kernel result nor the bridge fault is substituted.
+            for stopped in 1..prefix.len() {
+                for cause in [
+                    filament_exact::CancelCause::Requested,
+                    filament_exact::CancelCause::Deadline,
+                ] {
+                    let token =
+                        std::sync::Arc::new(std::sync::Mutex::new(None::<filament_exact::Cancel>));
+                    let observed = std::sync::Arc::downgrade(&token);
+                    let polls = std::sync::atomic::AtomicUsize::new(0);
+                    let cancel = filament_exact::Cancel::observing(move || {
+                        if polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == stopped {
+                            if let Some(token) = observed.upgrade() {
+                                token.lock().unwrap().as_ref().unwrap().cancel(cause);
+                            }
+                        }
+                    });
+                    *token.lock().unwrap() = Some(cancel.clone());
+                    let mut meter = Meter::new(SCALAR_UNLIMITED).with_cancel(cancel.clone());
+                    let result = if call {
+                        package.call(
+                            &QualifiedName::unqualified("F").unwrap(),
+                            vec![population_argument(&scenario)],
+                            &objects,
+                            &mut meter,
+                        )
+                    } else {
+                        package.evaluate(
+                            &expression,
+                            vec![population_argument(&scenario)],
+                            &objects,
+                            &mut meter,
+                        )
+                    }
+                    .expect("later cancellation precedes the bridge fault");
+                    let FamilyOutcome::Evaluated(Outcome::Incomplete(record)) = result.outcome
+                    else {
+                        panic!("later cancellation must stay Incomplete");
+                    };
+                    assert_eq!(record.charge_point, prefix[stopped]);
+                    assert_eq!(
+                        crate::support::admitted_charge_points(&meter),
+                        prefix[..stopped]
+                    );
+                    assert_eq!(cancel.tripped(), Some(cause));
+                }
+            }
+            // Every earlier denied charge wins over a producer not reached.
+            for denied in 0..=prefix.len() {
+                let mut meter = Meter::new(SCALAR_UNLIMITED);
+                if denied < prefix.len() {
+                    meter = meter.with_injected_denial(filament_exact::InjectedDenial {
+                        point: prefix[denied],
+                        occurrence: std::num::NonZeroU64::new(1).unwrap(),
+                    });
+                }
+                let arguments = vec![population_argument(&scenario)];
+                let result = if call {
+                    package.call(
+                        &QualifiedName::unqualified("F").unwrap(),
+                        arguments,
+                        &objects,
+                        &mut meter,
+                    )
+                } else {
+                    package.evaluate(&expression, arguments, &objects, &mut meter)
+                };
+                if denied < prefix.len() {
+                    let evaluation = result.expect("earlier denial stays an evaluation");
+                    let FamilyOutcome::Evaluated(Outcome::Incomplete(record)) = evaluation.outcome
+                    else {
+                        panic!("denied query charge must remain Incomplete");
+                    };
+                    assert_eq!(record.charge_point, prefix[denied]);
+                    assert_eq!(
+                        crate::support::admitted_charge_points(&meter),
+                        prefix[..denied]
+                    );
+                } else {
+                    assert_eq!(crate::support::admitted_charge_points(&meter), prefix);
+                    assert_eq!(meter.consumed(LimitKind::ResultUnits), 2);
+                    if object.is_empty() {
+                        let CallFailure::Fault(fault) =
+                            result.expect_err("empty member reaches the real bridge")
+                        else {
+                            panic!("bridge failure is a Fault, never Input");
+                        };
+                        assert_eq!(fault.stage(), "S6a");
+                        assert_eq!(fault.invariant(), "model-query-object-identity-empty");
+                        assert_eq!(fault.kernel_cause(), None);
+                        assert_eq!(
+                            fault.category(),
+                            filament_semantic_value::catalog::Category::InternalFailure
+                        );
+                    } else {
+                        let evaluation = result.expect("valid identity completes");
+                        let Outcome::Completed(value) = evaluated(evaluation) else {
+                            panic!("valid member completes its collection");
+                        };
+                        assert_eq!(reference_elements(&value).len(), 1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[trace("TC-916", "FR-090-AC-14", "FR-090-AC-16")]
+fn model_query_shapes_fault_at_the_real_producers_without_added_query_charges() {
+    use fsl_semantics::value::model_query::{
+        evaluate_all_instances, evaluate_lookup, ModelQueryHalt,
+    };
+    let scenario = scenario();
+    let mut meter = Meter::new(SCALAR_UNLIMITED);
+    let wrong = CollectionType::new(
+        CollectionKind::Set,
+        ValueType::Boolean,
+        Some(CardinalityBound::new(0, 3).unwrap()),
+    );
+    let result = evaluate_all_instances(&scenario.binding, &wrong, &mut meter);
+    let Err(ModelQueryHalt::Fault(fault)) = result else {
+        panic!("wrong element shape faults");
+    };
+    assert_eq!(fault.invariant(), "model-query-reference-element-expected");
+    assert_eq!(fault.kernel_cause(), None);
+    assert!(meter.admitted_charges().is_empty());
+    let result = evaluate_lookup(
+        &scenario.binding,
+        scenario.a.clone(),
+        scenario.a.clone(),
+        Value::Boolean(true),
+        AbsenceMode::Empty,
+        &ValueType::Boolean,
+        &mut meter,
+    );
+    let Err(ModelQueryHalt::Fault(fault)) = result else {
+        panic!("wrong reference shape faults");
+    };
+    assert_eq!(fault.invariant(), "model-query-reference-value-expected");
+    assert!(meter.admitted_charges().is_empty());
+    for object in ["a1", "missing"] {
+        for correct in [false, true] {
+            let result_type = if correct {
+                ValueType::option(ValueType::Reference(scenario.a.clone()))
+            } else {
+                ValueType::Reference(scenario.a.clone())
+            };
+            let mut meter = Meter::new(SCALAR_UNLIMITED);
+            let result = evaluate_lookup(
+                &scenario.binding,
+                scenario.a.clone(),
+                scenario.a.clone(),
+                Value::Reference(object_reference(&scenario.universe, &scenario.a, object)),
+                AbsenceMode::Empty,
+                &result_type,
+                &mut meter,
+            );
+            assert_eq!(
+                crate::support::admitted_charge_points(&meter),
+                [ChargePoint::LookupKey, ChargePoint::LookupResultRetain]
+            );
+            assert_eq!(
+                meter.consumed(LimitKind::ResultUnits),
+                if object == "a1" { 2 } else { 1 }
+            );
+            if correct {
+                let Value::Option(option) = result.expect("correct option completes") else {
+                    panic!("option result");
+                };
+                assert_eq!(option.payload().is_some(), object == "a1");
+            } else {
+                let Err(ModelQueryHalt::Fault(fault)) = result else {
+                    panic!("actual post-query wrapping faults");
+                };
+                assert_eq!(fault.stage(), "S6a");
+                assert_eq!(fault.invariant(), "model-query-option-result-expected");
+                assert_eq!(fault.kernel_cause(), None);
+            }
+            for point in [ChargePoint::LookupKey, ChargePoint::LookupResultRetain] {
+                let mut denied = Meter::new(SCALAR_UNLIMITED).with_injected_denial(
+                    filament_exact::InjectedDenial {
+                        point,
+                        occurrence: std::num::NonZeroU64::new(1).unwrap(),
+                    },
+                );
+                let result = evaluate_lookup(
+                    &scenario.binding,
+                    scenario.a.clone(),
+                    scenario.a.clone(),
+                    Value::Reference(object_reference(&scenario.universe, &scenario.a, object)),
+                    AbsenceMode::Empty,
+                    &result_type,
+                    &mut denied,
+                );
+                let Err(ModelQueryHalt::Stop(filament_semantic_value::stop::Stop::Incomplete(
+                    record,
+                ))) = result
+                else {
+                    panic!("denial before wrapping remains Incomplete");
+                };
+                assert_eq!(record.charge_point, point);
+                assert_eq!(
+                    crate::support::admitted_charge_points(&denied),
+                    if point == ChargePoint::LookupKey {
+                        &[][..]
+                    } else {
+                        &[ChargePoint::LookupKey][..]
+                    }
+                );
+            }
+        }
+    }
+}
+
+/// FR-262-AC-11, FR-089-AC-5: the reference adapter validates a body's nested
+/// request for a `Population<T>[N]` parameter by the resolved binding's
+/// declared maximum, as argument admission does. A binding admitted with
+/// maximum 5 is a member of `Population<5>` and refused under `Population<6>`,
+/// and an id no binding resolves is refused. (A storage failure of the
+/// membership walk is not reachable from here: the kernel's reservation hook
+/// is private, so that branch is `filament-eval`'s toy-closure test.)
+#[test]
+#[trace("FR-262-AC-11", "FR-089-AC-5")]
+fn the_adapter_validates_a_population_request_by_its_declared_maximum() {
+    use filament_eval::{CheckedClosure, RequestRefusal};
+    use fsl_eval::value::PackageClosure;
+
+    let domain_package = fixture_f1_with_second_population();
+    let view = view_of(&domain_package);
+    let universe = view_of(&domain_package)
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let (a, b) = (type_id(&view, "model.A"), type_id(&view, "model.B"));
+    let admit = |key: DeclarationKey, maximum: Option<u64>| {
+        let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED);
+        match admit_binding(
+            &view,
+            &p1("test/orders"),
+            &key,
+            GeneralizationClosure::Closed,
+            maximum,
+            &mut meter,
+        ) {
+            AdmissionOutcome::Admitted(binding) => binding,
+            other => panic!("expected an admitted binding, got {other:?}"),
+        }
+    };
+    let (five, other) = (
+        admit(p1_population_key(), Some(5)),
+        admit(p2_population_key(), Some(5)),
+    );
+    let scenario = Scenario {
+        universe,
+        a,
+        b,
+        binding: five.clone(),
+        model: AdmittedModel::new(&domain_package, &view).unwrap(),
+    };
+    let environment = ObjectEnvironment::default()
+        .with_population(five.clone())
+        .unwrap();
+    let unresolved = other.population_id();
+
+    for (declared, argument, expected) in [
+        (5, five.population_id(), Ok(())),
+        (6, five.population_id(), Err(RequestRefusal::NotAdmitted)),
+        (5, unresolved, Err(RequestRefusal::NotAdmitted)),
+    ] {
+        let package = package_with_size_function(&scenario, declared);
+        let key = package.graph().callable("F").unwrap().identity;
+        let closure = PackageClosure::<&CheckedPackage, &CheckedExpression>::new(&package);
+        assert_eq!(
+            closure.admit_request(&key, &[Value::Population(argument)], &environment),
+            expected,
+            "Population<{declared}>"
+        );
+    }
+}

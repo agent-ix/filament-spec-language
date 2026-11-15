@@ -3,7 +3,7 @@ id: TC-600
 title: "The evaluator reads a hyper body over a tuple of lassos in lockstep"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-175
+  - target: ix://agent-ix/filament-spec-language/FR-175
     type: verifies
 ---
 # TC-600: The evaluator reads a hyper body over a tuple of lassos in lockstep

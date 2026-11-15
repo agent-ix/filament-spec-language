@@ -3,7 +3,7 @@ id: TC-396
 title: "S2 refuses unrepresented constructs, and the check stage refuses another family's construct with that family's cause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-396: S2 refuses unrepresented constructs, and the check stage refuses another family's construct with that family's cause
@@ -32,7 +32,7 @@ alias is `v`.
    that construct, and run S2: `xs[0]`; `none`; `reaches(a, b, M::R)`.
 2. Run S2 on `a div b`, `a rem b`, `a mod b` and
    `if true then 1 else a mod b`, each under a state-only declaration
-   without `quire.value.complete/v1`; pass the resulting forms to check.
+   without `filament.value.complete/v1`; pass the resulting forms to check.
 3. For each body `B` of `deref(x)`, `allInstances<M::T>(x)` and `pre(x)`,
    build an admissible unit, with no admitted domain package, whose one
    declaration is `function f using v(x: Int[0, 9]): Boolean pure { B }`.

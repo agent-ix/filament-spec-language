@@ -3,7 +3,7 @@ id: TC-1040
 title: "A clause evaluation reports its receiver path and the runtime value path of each field read"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: verifies
 ---
 # TC-1040: A clause evaluation reports its receiver path and the runtime value path of each field read
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify FR-107's `receiver_path()` and `reads()`: which selections record an
-entry, in what order, and the QSpec FR-207 runtime value path of each: the
+entry, in what order, and the FSpec FR-207 runtime value path of each: the
 observation, the object, receiver, parameter or built-collection subject, and
 the member, field, option-value, reference and index steps.
 
@@ -68,7 +68,7 @@ snapshot `q1` the context `{placed: true, cancelled: true}`.
    (TC-1045 lists the documents) selected by `Context` side `post`:
    `receiver_path()`; `reads()`.
 7. `FlagsPlaced`, admitted by FR-106 over `i1`: `reads()`; then compare its path with the path of
-   the `Consistent` read of `self.placed`, and serialize both by QSpec FR-207's
+   the `Consistent` read of `self.placed`, and serialize both by FSpec FR-207's
    wire form.
 8. `PlaceRequires` over `i1` (pre snapshot `p1`), then over a pre-call
    observation (snapshot `p1`, no invocation): `receiver_path()`; `reads()`.

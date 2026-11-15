@@ -3,14 +3,14 @@ id: TC-1143
 title: "A step relation emits a v2 step-relation claim node"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-180
+  - target: ix://agent-ix/filament-spec-language/FR-180
     type: verifies
 ---
 # TC-1143: A step relation emits a v2 step-relation claim node
 
 ## Description
 
-Verify that S4 emits a checked HP-1 step relation as one QSpec FR-477
+Verify that S4 emits a checked HP-1 step relation as one FSpec FR-477
 `claim`/`step_relation` node that references every code-claim premise, and
 that the I2 reader refuses a node with a premise missing.
 
@@ -25,7 +25,7 @@ postcondition and a declared invariant.
    the binding; read each `claim`/`step_relation` node, and compare `x`'s and
    `y`'s binder nodes and the nodes the body reads.
 2. Remove `x`'s precondition from its `preconditions` aggregate in step 1's
-   bound node; separately apply each of QSpec TC-962's mutations RN-07 to
+   bound node; separately apply each of FSpec TC-962's mutations RN-07 to
    RN-12 and RN-14. After each edit set `dependencies` to the body's
    targets, recompute the node key and the
    `package_id`, and feed the package to the I2 reader.

@@ -3,28 +3,28 @@ id: FR-156
 title: "Expand ample sets with the breadth-first cycle proviso"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-162
+  - target: ix://agent-ix/filament-spec-language/FR-162
     type: depends_on
 ---
 # FR-156: Expand ample sets with the breadth-first cycle proviso
 
 ## Description
 
-Under partial-order reduction, QSL's `model_check` SHALL expand at each
+Under partial-order reduction, FSL's `model_check` SHALL expand at each
 product state an ample subset `A(s)` of the enabled transitions `E(s)` that
 satisfies Peled's conditions C0 to C3 (ADR-021 POR-6), chosen
 deterministically from stubborn-set candidates (POR-7), with C3 in its
@@ -105,7 +105,7 @@ proves the claim (US-019).
 ## Dependencies
 
 - ADR-021 POR-5 to POR-9, PT-2 (POR column), §2 "POR and deadlocks".
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (canonical transition order), [FR-123](FR-123-check-fairness-and-interval-operators-of-infinite-trace-clauses.md)
   (atoms), [FR-124](FR-124-declare-intended-terminal-states-and-derive-deadlock-freedom.md)
   (`deadlocked`), [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
@@ -115,10 +115,10 @@ proves the claim (US-019).
   (the reduced expansion).
 - ADR-027 FT-1 to FT-5 (protocol footprints, enabling footprints and
   visibility).
-- QSpec owns ample sets C0 to C3 and the breadth-first revisit proviso as
+- FSpec owns ample sets C0 to C3 and the breadth-first revisit proviso as
   normative semantics (ADR-021 QS-2).
 
 ## References
 
-- QSpec half: QSpec FR-383 (Linear STD-134; ADR-021 §9 QS-2). Protocol transition system:
+- FSpec half: FSpec FR-383 (Linear STD-134; ADR-021 §9 QS-2). Protocol transition system:
   ADR-027, Linear QSL-396. Owning ticket: Linear QSL-368.

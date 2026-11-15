@@ -3,7 +3,7 @@ id: TC-045
 title: "Bound model construction and native linkage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: verifies
 ---
 # TC-045: Bound model construction and native linkage

@@ -1,41 +1,41 @@
 ---
 id: FR-401
-title: "Host the evaluation interface in the quire-eval leaf and place the vocabulary it names"
+title: "Host the evaluation interface in the filament-eval leaf and place the vocabulary it names"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-400
+  - target: ix://agent-ix/filament-spec-language/FR-400
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-059
+  - target: ix://agent-ix/filament-spec-language/FR-059
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-272"
+  - target: "ix://agent-ix/filament-specification/FR-272"
     type: depends_on
 ---
-# FR-401: Host the evaluation interface in the quire-eval leaf and place the vocabulary it names
+# FR-401: Host the evaluation interface in the filament-eval leaf and place the vocabulary it names
 
 ## Description
 
 [FR-262](FR-262-evaluate-values-and-calls-at-any-depth.md) states the shared
 evaluation interface: register a host body, begin an application, step a
-session, resume a body. It places that interface in a QSL-owned leaf crate in
-its own repository, with no dependency on QSL's checker, package, model
+session, resume a body. It places that interface in an FSL-owned leaf crate in
+its own repository, with no dependency on FSL's checker, package, model
 intake, routing, replay or backend crates. The interface's inputs and results
-are QSL's existing evaluation vocabulary: the meter, the cancellation handle,
+are FSL's existing evaluation vocabulary: the meter, the cancellation handle,
 the evaluation, the call failure and its arm payloads, the input refusal, the
 object environment, the callable identity and its admitted signature. The
-leaf may not depend on the crates that define several of them: `qsl-eval`
-(`Evaluation`, `CallFailure`), `qsl-semantics`' `family` (the S6a result
+leaf may not depend on the crates that define several of them: `fsl-eval`
+(`Evaluation`, `CallFailure`), `fsl-semantics`' `family` (the S6a result
 types) and `value::supplied` (the supplied-value stop records), and
-`qsl-foundation` (the catalog vocabulary `CallFailure` and the S6a result
+`fsl-foundation` (the catalog vocabulary `CallFailure` and the S6a result
 types carry: `InternalFault`, `CatalogCoded`, `UndefinedCoded`,
 `Category`).
 
@@ -44,7 +44,7 @@ This requirement names the leaf crate, its repository, its
 §6.1 layer and its dependencies, and places every type the interface names in
 a crate the leaf may depend on. It depends on
 [FR-400](FR-400-separate-checked-terms-from-the-checker.md), which creates
-the repository's checked-term crate `quire-checked` at ADR-011 layer C, the
+the repository's checked-term crate `filament-checked` at ADR-011 layer C, the
 layer directly below E. It fixes how the leaf reads a checked closure, and
 which moves belong to slice S0 (IR-583), slice S1 (IR-585) and slice S2
 (IR-586). Every moved type keeps its meaning, so every evaluation, refusal
@@ -52,46 +52,46 @@ record and call failure is the same before and after the move.
 
 ## Inputs
 
-- The types FR-262's Operational interface names, at their QSL paths before
+- The types FR-262's Operational interface names, at their FSL paths before
   the move.
-- The dependency tables of the QSL workspace and of the backend repositories,
+- The dependency tables of the FSL workspace and of the backend repositories,
   read by TC-390's table check and FR-059's direction check.
 
 ## Outputs
 
-- The crate `quire-eval`, holding the FR-262 interface and the evaluation
+- The crate `filament-eval`, holding the FR-262 interface and the evaluation
   result vocabulary.
-- `quire-semantic-value` (SV) holding the catalog vocabulary, the
+- `filament-semantic-value` (SV) holding the catalog vocabulary, the
   supplied-value stop records and the snapshot cause moved down to it.
-- Every QSL caller repointed at the new paths in the change that moves an
+- Every FSL caller repointed at the new paths in the change that moves an
   item, with no re-export at the old path (ADR-011 §7.2).
 
 ## Behavior
 
 ### Crate, repository and layer
 
-1. The shared evaluation-core leaf SHALL be the crate `quire-eval`, in the
-   repository `agent-ix/quire-eval`, which also holds FR-400's checked-term
-   crate `quire-checked`. Its ADR-011 §6.1 layer is E: a shared leaf above C
-   (`quire-checked`), SV, K and W, and below QSL layer 5, RT and CG.
+1. The shared evaluation-core leaf SHALL be the crate `filament-eval`, in the
+   repository `agent-ix/filament-eval`, which also holds FR-400's checked-term
+   crate `filament-checked`. Its ADR-011 §6.1 layer is E: a shared leaf above C
+   (`filament-checked`), SV, K and W, and below FSL layer 5, RT and CG.
 2. The repository SHALL carry the AGPL-3.0-or-later licence, the CLA and the
-   CONTENT_RIGHTS controls that `agent-ix/quire-walk` carries. Its licence,
+   CONTENT_RIGHTS controls that `agent-ix/filament-walk` carries. Its licence,
    CLA and content-rights checks SHALL pass before it is made public.
-3. `quire-eval` SHALL be `#![no_std]` with `alloc`, with no `std` feature,
+3. `filament-eval` SHALL be `#![no_std]` with `alloc`, with no `std` feature,
    and SHALL forbid unsafe code. Its own gate SHALL build it for
    `thumbv7em-none-eabi`.
-4. `quire-eval`'s `[dependencies]` SHALL be drawn only from
-   `quire-checked` (C), `quire-semantic-value` (SV), `quire-exact` (K),
-   `quire-walk` (W) and `thiserror`, each without `std`, and SHALL declare
+4. `filament-eval`'s `[dependencies]` SHALL be drawn only from
+   `filament-checked` (C), `filament-semantic-value` (SV), `filament-exact` (K),
+   `filament-walk` (W) and `thiserror`, each without `std`, and SHALL declare
    each only when its source names an item of it. It SHALL NOT depend on any
-   crate of the QSL repository, in any dependency table.
-5. QSL SHALL take `quire-eval` as a git dependency at `branch = "main"`, as
-   it takes `quire-walk`. The QSL crates whose shipped code names its items,
-   `qsl-eval`, `qsl-replay` and `qsl-bench`, add it to their
+   crate of the FSL repository, in any dependency table.
+5. FSL SHALL take `filament-eval` as a git dependency at `branch = "main"`, as
+   it takes `filament-walk`. The FSL crates whose shipped code names its items,
+   `fsl-eval`, `fsl-replay` and `fsl-bench`, add it to their
    `[dependencies]`; another crate at layer 5 or above adds it when it names
-   an item. `qsl-foundation`, `qsl-cst`, `qsl-source`, `qsl-forms`,
-   `qsl-semantics`, `qsl-package` and `qsl-route` do not depend on it.
-6. `quire-eval` joins ADR-011 FB-05's shared-leaf class. RT and CG MAY take
+   an item. `fsl-foundation`, `fsl-cst`, `fsl-source`, `fsl-forms`,
+   `fsl-semantics`, `fsl-package` and `fsl-route` do not depend on it.
+6. `filament-eval` joins ADR-011 FB-05's shared-leaf class. RT and CG MAY take
    a normal edge to it. Because the repository is its own dependency source,
    FR-059's direction check classifies an edge into it as no ecosystem
    repository, with no change to that check.
@@ -100,59 +100,59 @@ record and call failure is the same before and after the move.
 
 Each type the FR-262 interface names SHALL be defined in exactly one crate,
 at the path below, and SHALL leave no copy or re-export at a former path. A
-former path is any path of a QSL crate at which the type was defined or
-re-exported before the move, including the `qsl-replay` facade's
-`qsl_replay::Category`. No QSL crate SHALL re-export a moved type at a new
-path either. A consumer outside QSL, CG included, names a moved type at its
-new path: CG names `Category` as `quire_semantic_value::catalog::Category`.
-`quire-semantic-value` and `quire-eval` are shared leaves in their own
-repositories, not QSL crates for FR-059 or FR-060 T12-A, so CG's edge to
+former path is any path of an FSL crate at which the type was defined or
+re-exported before the move, including the `fsl-replay` facade's
+`fsl_replay::Category`. No FSL crate SHALL re-export a moved type at a new
+path either. A consumer outside FSL, CG included, names a moved type at its
+new path: CG names `Category` as `filament_semantic_value::catalog::Category`.
+`filament-semantic-value` and `filament-eval` are shared leaves in their own
+repositories, not FSL crates for FR-059 or FR-060 T12-A, so CG's edge to
 them needs no facade.
 
 FR-390's `ProtocolSuppliedValue` and `ProtocolReferenceOccurrence` are
-QSL layer-5 admission inputs, not FR-262 evaluator-interface types. QSL SHALL
+FSL layer-5 admission inputs, not FR-262 evaluator-interface types. FSL SHALL
 validate each occurrence against the checked slot and admitted observation
 before starting S6a, then provide the existing typed value and object
-environment to the `quire-eval` execution path. `quire-eval` SHALL NOT import
+environment to the `filament-eval` execution path. `filament-eval` SHALL NOT import
 these wrappers, select a population, read snapshot or relationship data, or
 implement FR-106 checks 7 or 8. This keeps reference-population admission in
-QSL and preserves the S4/E dependency boundary.
+FSL and preserves the S4/E dependency boundary.
 
 | Type | Owner and path | Moved by |
 | --- | --- | --- |
-| `Meter`, `Charge`, `ChargePoint`, `Incomplete`, `ScalarLimits` (the `quire.value.accounting/v1` meter the evaluator charges) | K, `quire_exact` | none. `qsl-semantics`' `model::accounting::Meter` is FR-150's normalization meter, not the evaluation meter, and is not part of the interface |
-| `Cancel`, `CancelCause` | K, `quire_exact` | none |
-| `Value`, `ValueType`, `Outcome`, `NodeKey` | K, `quire_exact` | none |
-| `InputRefusal` | SV, `quire_semantic_value::call` | none |
-| `ExpressionLocation`, `ExpressionOwner`, `ValueLoss`, `LocatedLoss` | SV, `quire_semantic_value::{location, loss}` | none |
-| `EnvironmentFailure` (`CallFailure::Storage`'s payload and `BodyFailure::QsvEnvironment`'s payload) | SV, `quire_semantic_value::declaration` | none |
-| `ObjectClosure` | SV, `quire_semantic_value::object_closure` | none |
-| `Category`, `CatalogCode`, `CatalogCoded`, `UndefinedCoded`, `UndefinedRecord`, `UndefinedReason`, `InternalFault` | SV, `quire_semantic_value::catalog` | S0, from `qsl_foundation::diagnostic` |
-| The supplied-value stop records: `SuppliedFailure`, `SuppliedStop`, `SuppliedContext`, `SuppliedCause`, `SuppliedPhase`, `SuppliedEvent`, `SuppliedLocus`, `SuppliedLimit`, `SuppliedLimitKind`, `AttemptedCount`, `SuppliedNumericOperand`, `SuppliedStorage`, `SuppliedStorageUnit`, `UnsupportedHelperStop`, and the limit-field name constants `SuppliedLimitKind::field` returns | SV, `quire_semantic_value::supplied_stop` | S0, from `qsl_semantics::value::supplied` |
-| `FamilyOutcome`, `FamilyResult`, `EvalOutcome` (the S6a result vocabulary) | E, `quire_eval` | S0, from `qsl_semantics::family` |
-| `Evaluation`, `CallFailure` | E, `quire_eval` | S0, from `qsl-eval`'s `value::expression`, public at `qsl_eval::value` |
-| `UnsupportedEntry`, `UnsupportedCause`, `UntranslatableConstruct` and `ExecutionBackendChoice` (`CallFailure::Unsupported`'s payload, FR-294 and FR-296) | E, `quire_eval` | S0, new |
-| The registry, its admission result (`Accepted`, `RegistrySealed`, `CallableNotAdmitted`, `SignatureMismatch`, `DuplicateBinding`), the admitted signature, the session, the step result, the body factory and invocation-state contract, and the child request | E, `quire_eval` | S0, new |
-| `PrepareLimitReached`, `PrepareSetting` (`CallFailure::Limit`'s payload, FR-279 and FR-294) | E, `quire_eval` | S0, new |
-| `BodyFailure` (`Body::resume`'s typed failure, including SV environment failure distinct from a body invariant fault) | E, `quire_eval` | new |
-| `WrongSnapshotCause` | SV, `quire_semantic_value::call` | S1, from `qsl_semantics::check::refusal`, unless FR-400's X-13 has moved it |
+| `Meter`, `Charge`, `ChargePoint`, `Incomplete`, `ScalarLimits` (the `filament.value.accounting/v1` meter the evaluator charges) | K, `filament_exact` | none. `fsl-semantics`' `model::accounting::Meter` is FR-150's normalization meter, not the evaluation meter, and is not part of the interface |
+| `Cancel`, `CancelCause` | K, `filament_exact` | none |
+| `Value`, `ValueType`, `Outcome`, `NodeKey` | K, `filament_exact` | none |
+| `InputRefusal` | SV, `filament_semantic_value::call` | none |
+| `ExpressionLocation`, `ExpressionOwner`, `ValueLoss`, `LocatedLoss` | SV, `filament_semantic_value::{location, loss}` | none |
+| `EnvironmentFailure` (`CallFailure::Storage`'s payload and `BodyFailure::FsvEnvironment`'s payload) | SV, `filament_semantic_value::declaration` | none |
+| `ObjectClosure` | SV, `filament_semantic_value::object_closure` | none |
+| `Category`, `CatalogCode`, `CatalogCoded`, `UndefinedCoded`, `UndefinedRecord`, `UndefinedReason`, `InternalFault` | SV, `filament_semantic_value::catalog` | S0, from `fsl_foundation::diagnostic` |
+| The supplied-value stop records: `SuppliedFailure`, `SuppliedStop`, `SuppliedContext`, `SuppliedCause`, `SuppliedPhase`, `SuppliedEvent`, `SuppliedLocus`, `SuppliedLimit`, `SuppliedLimitKind`, `AttemptedCount`, `SuppliedNumericOperand`, `SuppliedStorage`, `SuppliedStorageUnit`, `UnsupportedHelperStop`, and the limit-field name constants `SuppliedLimitKind::field` returns | SV, `filament_semantic_value::supplied_stop` | S0, from `fsl_semantics::value::supplied` |
+| `FamilyOutcome`, `FamilyResult`, `EvalOutcome` (the S6a result vocabulary) | E, `filament_eval` | S0, from `fsl_semantics::family` |
+| `Evaluation`, `CallFailure` | E, `filament_eval` | S0, from `fsl-eval`'s `value::expression`, public at `fsl_eval::value` |
+| `UnsupportedEntry`, `UnsupportedCause`, `UntranslatableConstruct` and `ExecutionBackendChoice` (`CallFailure::Unsupported`'s payload, FR-294 and FR-296) | E, `filament_eval` | S0, new |
+| The registry, its admission result (`Accepted`, `RegistrySealed`, `CallableNotAdmitted`, `SignatureMismatch`, `DuplicateBinding`), the admitted signature, the session, the step result, the body factory and invocation-state contract, and the child request | E, `filament_eval` | S0, new |
+| `PrepareLimitReached`, `PrepareSetting` (`CallFailure::Limit`'s payload, FR-279 and FR-294) | E, `filament_eval` | S0, new |
+| `BodyFailure` (`Body::resume`'s typed failure, including SV environment failure distinct from a body invariant fault) | E, `filament_eval` | new |
+| `WrongSnapshotCause` | SV, `filament_semantic_value::call` | S1, from `fsl_semantics::check::refusal`, unless FR-400's X-13 has moved it |
 
-These stay where they are and are not part of the leaf: `qsl-foundation`'s
+These stay where they are and are not part of the leaf: `fsl-foundation`'s
 `Code`, `RefusalRecord`, `Locus`, `kernel_refusal_record`, `category_of`,
 `catalog_category` and the `CatalogCode` constants such as
-`ALLOCATION_FAILED`; `qsl-semantics`' `FamilyKind` and `FamilyContract`
+`ALLOCATION_FAILED`; `fsl-semantics`' `FamilyKind` and `FamilyContract`
 (the family contract the checker implements), `SuppliedRun`,
 `SuppliedLimits` and the supplied-value admission, which S6 moves to SV
-([FR-403](FR-403-implement-the-no-std-evaluator-in-quire-eval.md));
+([FR-403](FR-403-implement-the-no-std-evaluator-in-filament-eval.md));
 `model::object_environment`
 (`ObjectEnvironment`, `ObservedRead`, `ReadLog`) and `PopulationBinding`;
-and `qsl-eval`'s `QualifiedName`, `supplied_stop_code` and
+and `fsl-eval`'s `QualifiedName`, `supplied_stop_code` and
 `supplied_stop_cause`.
 
 ### Body-side SV failures
 
 `Body::resume` SHALL return `Result<Transition, BodyFailure>`. The public
-`BodyFailure` SHALL have two distinct arms: `QsvEnvironment { failure,
+`BodyFailure` SHALL have two distinct arms: `FsvEnvironment { failure,
 cancellation }`, where `failure` is the unchanged SV
 `EnvironmentFailure` and `cancellation` is `Option<CancelCause>`, and
 `Fault(InternalFault)`, for an actual body invariant fault. A body-side SV
@@ -162,7 +162,7 @@ from membership is not an error. The leaf SHALL surface `BodyFailure` through
 a distinct `CallFailure::Body(BodyFailure)` arm without converting a SV
 failure into `InternalFault`, `CallFailure::Input`, or an evaluation.
 
-`QsvEnvironment` SHALL retain all four `EnvironmentFailure` variants and
+`FsvEnvironment` SHALL retain all four `EnvironmentFailure` variants and
 their full payloads unchanged: `Limit(EnvironmentLimit)` retains its kind,
 configured bound and actual count; `Refused(InvalidDeclaration)` retains the
 declaration rejection; `Allocation(StorageRequest)` and
@@ -185,27 +185,27 @@ entry point for tests of environment construction and membership at the same
 reservation sites production uses. It SHALL let tests produce the typed
 `Allocation` and `Capacity` variants through those operations without
 accepting a preconstructed `EnvironmentFailure`, fabricating a declaration or
-changing production constructors' ordinary reservation behavior. QSL's
+changing production constructors' ordinary reservation behavior. FSL's
 public application tests SHALL use this entry point to show that the leaf and
-replay facade preserve those variants. QSL SHALL not copy SV environment
+replay facade preserve those variants. FSL SHALL not copy SV environment
 construction or membership code.
 
 These methods change owner because their types move and the method names a
 type, or is called from a crate, that does not:
 
 - `CatalogCoded`'s provided `refusal_record` method builds a
-  `RefusalRecord` at a `Locus`, which stay in `qsl-foundation`. It SHALL
-  become a `qsl-foundation` function over a `&dyn CatalogCoded` and a
+  `RefusalRecord` at a `Locus`, which stay in `fsl-foundation`. It SHALL
+  become a `fsl-foundation` function over a `&dyn CatalogCoded` and a
   locus, returning the same record.
-- `Evaluation::refusal_record` SHALL become a free function in `qsl-eval`
+- `Evaluation::refusal_record` SHALL become a free function in `fsl-eval`
   over the evaluation and a region resolver, a function from `ExpressionLocation` to
   an optional `SourceRegion`, returning the same FR-096 record, as FR-400's
   Source locations states. Its callers pass the checker-side record's
-  resolver, so `qsl-eval` names no checker-side type.
+  resolver, so `fsl-eval` names no checker-side type.
 - The private helpers `SuppliedEvent::of_membership`, `SuppliedEvent::of_part`,
   `SuppliedStorage::of_request` and `SuppliedStorage::of_arena`, which the
   staying `SuppliedRun` calls, SHALL become private free functions in
-  `qsl-semantics`' `value::supplied` with the same results, and move with
+  `fsl-semantics`' `value::supplied` with the same results, and move with
   `SuppliedRun` in S6 (FR-403); they add no public SV API.
 
 `CallFailure` has the arm `Unsupported(UnsupportedEntry)`: an entry the
@@ -216,9 +216,9 @@ chosen execution backend cannot run
 (`NotSupplied`, or `Untranslatable { construct, location }` with an
 `UntranslatableConstruct` that names a form name, a K `ValueType` or a K
 `NodeKey`, and an SV `ExpressionLocation`), so
-the leaf depends on no QSL crate for them, and QSL names them at their
-`quire_eval` paths. `CallFailure::category` returns `Category::Unsupported` for the arm,
-and its catalog code is `unimplemented_capability`. Its QSpec FR-272 cause
+the leaf depends on no FSL crate for them, and FSL names them at their
+`filament_eval` paths. `CallFailure::category` returns `Category::Unsupported` for the arm,
+and its catalog code is `unimplemented_capability`. Its FSpec FR-272 cause
 is `backend-not-supplied` for `NotSupplied` and `untranslatable-entry` for
 `Untranslatable`; the diagnostic carries the payload key `backend`, the
 backend's lower-case name (`interpreter`, `aot` or `jit`), and for
@@ -235,9 +235,9 @@ unchanged. A moved type keeps its
 `#[cfg(seam_probe)]` probe variant (`FamilyOutcome`'s and
 `WrongSnapshotCause`'s), and the receiving crate declares the `seam_probe`
 cfg, so FR-063's probe builds, whose `RUSTFLAGS` also reach git
-dependencies, still make every QSL match over the type non-exhaustive. `qsl-foundation`
+dependencies, still make every FSL match over the type non-exhaustive. `fsl-foundation`
 names the moved catalog vocabulary through its dependency on SV; SV depends on
-no QSL crate, so that edge closes no cycle.
+no FSL crate, so that edge closes no cycle.
 
 `CallFailure` has the arm `Limit(PrepareLimitReached)`: a `PrepareLimits`
 bound that `execute`'s `prepare` reached (FR-279, FR-294).
@@ -245,17 +245,17 @@ bound that `execute`'s `prepare` reached (FR-279, FR-294).
 (`CompileWorkUnits` or `CodeBytes`, whose `name()` is
 `prepare.compile_work_units` or `prepare.code_bytes`), the configured bound
 and the counter the refused charge reached, as `u64`s, and no `Locus`, so
-the leaf depends on no QSL crate for it. `CallFailure::category` returns
+the leaf depends on no FSL crate for it. `CallFailure::category` returns
 `Category::Incomplete` for the arm, and its catalog code is
 `stage_limit_exceeded`. No evaluator in the leaf returns it; only `execute`
-does, from `qsl-eval`'s `PrepareFailure::Limit(LimitExceeded)`.
+does, from `fsl-eval`'s `PrepareFailure::Limit(LimitExceeded)`.
 
 ### The checked closure the leaf reads
 
-`quire-eval` MAY name C's checked terms, since layer E sits above C. It
-SHALL NOT name a QSL item: `CheckedPackage`, `ObjectEnvironment`, the
-checker-side record that FR-400 keeps in `qsl-semantics`, or any other type
-of a QSL crate. It SHALL define the contract an evaluator implementation
+`filament-eval` MAY name C's checked terms, since layer E sits above C. It
+SHALL NOT name an FSL item: `CheckedPackage`, `ObjectEnvironment`, the
+checker-side record that FR-400 keeps in `fsl-semantics`, or any other type
+of an FSL crate. It SHALL define the contract an evaluator implementation
 supplies for one checked closure, and read the closure only through it:
 
 1. **Callable identity.** A callable is identified by the kernel `NodeKey`
@@ -289,7 +289,7 @@ supplies for one checked closure, and read the closure only through it:
    that host body wherever the call site is: the root application, a host
    body's child request, or a source application inside an interpreted
    body; that evaluator never evaluates a callee's interpreted body itself.
-   For the std reference evaluator behind `qsl-eval`'s adapter, which runs
+   For the std reference evaluator behind `fsl-eval`'s adapter, which runs
    one interpreted frame to its terminal result in one transition, a call
    site whose callee identity has a bound host body SHALL dispatch to that
    host body at the root application and at a host body's child request; a
@@ -299,8 +299,8 @@ supplies for one checked closure, and read the closure only through it:
    checked closure and hold it. Begin takes the registry, not a separate
    closure, so no session pairs a registry with another closure.
 
-The std reference adapter SHALL be in `qsl-eval`. It implements the contract
-over `qsl_package::CheckedPackage` and `qsl-semantics`' `ObjectEnvironment`.
+The std reference adapter SHALL be in `fsl-eval`. It implements the contract
+over `fsl_package::CheckedPackage` and `fsl-semantics`' `ObjectEnvironment`.
 Its admitted callables are the functions of the package's checked graph and
 of its dependency closure that are callable by name, each identified by its
 `CallableFunction` identity, with the parameter and result `ValueType`s that
@@ -325,7 +325,7 @@ cause. For `call` that charge is the call's `function.call`. An evaluation
 that makes no meter charge returns the result it returns with an
 uncancelled meter. The meter's handle is polled only at meter charges, so a
 handle that trips at its n-th poll stops at the n-th charge. FR-262-AC-12
-binds `quire-eval`'s Begin with contract admission, not these entries.
+binds `filament-eval`'s Begin with contract admission, not these entries.
 
 Which of C's checked terms the leaf's contract names, and the
 representation the `no_std` evaluator reads, are fixed by S6 (IR-590), not
@@ -335,7 +335,7 @@ supplies.
 ### Object environment
 
 Begin's admitted object environment is the implementation's environment type.
-For the reference adapter it is `qsl-semantics`' `ObjectEnvironment`, whose
+For the reference adapter it is `fsl-semantics`' `ObjectEnvironment`, whose
 core object closure is SV's `ObjectClosure` (ADR-011 X-11) and whose
 populations map holds `model`'s `PopulationBinding`. The environment SHALL
 stay in layer-3 `model`: `PopulationBinding` holds a domain package and a
@@ -345,14 +345,14 @@ model index, which are not leaf vocabulary. No slice of this requirement moves
 ### Slice scope and order
 
 - **S0 (IR-583)** SHALL move the catalog vocabulary and the supplied-value
-  stop records into SV, then add `quire-eval` with the S6a result vocabulary,
+  stop records into SV, then add `filament-eval` with the S6a result vocabulary,
   `Evaluation`, `CallFailure` and the FR-262 interface, and the reference
-  adapter in `qsl-eval`. The SV move precedes the QSL change that repoints
+  adapter in `fsl-eval`. The SV move precedes the FSL change that repoints
   callers at it. S0 carries these moves because the interface's signature
-  names them and the leaf can import neither `qsl-foundation` nor a QSL layer.
-- **S1 (IR-585)** SHALL move `WrongSnapshotCause` from `qsl-semantics`'
+  names them and the leaf can import neither `fsl-foundation` nor an FSL layer.
+- **S1 (IR-585)** SHALL move `WrongSnapshotCause` from `fsl-semantics`'
   `check::refusal` to SV's `call` module, so the checker's `CheckCause` and
-  `qsl-eval`'s runtime snapshot cause both name it there. That is S1's
+  `fsl-eval`'s runtime snapshot cause both name it there. That is S1's
   complete item set, and S0 does not move it. When FR-400's X-13 has
   already moved it to the same place, S1 moves nothing.
 - **Item sets.** Each item SHALL move once, to the place this requirement or
@@ -360,26 +360,26 @@ model index, which are not leaf vocabulary. No slice of this requirement moves
   result vocabulary, `Evaluation` and `CallFailure`) and S1's set
   (`WrongSnapshotCause`) are disjoint, and neither overlaps FR-400's F values
   and layer-2 premise enums. The first change that moves an F item into SV,
-  S0's (ADR-011 X-14) or S2's (X-13), SHALL add `qsl-foundation`'s SV
+  S0's (ADR-011 X-14) or S2's (X-13), SHALL add `fsl-foundation`'s SV
   dependency; the other reuses it. Neither slice waits for the other.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-401-AC-1 | `quire-eval`'s manifest names as normal dependencies only crates from `quire-checked`, `quire-semantic-value`, `quire-exact`, `quire-walk` and `thiserror`, each with default features off, and only those its source names an item of, and names no QSL crate in any table; its crate root is `#![no_std]`, its manifest forbids unsafe code, and it builds for `thumbv7em-none-eabi`. | Test |
-| FR-401-AC-2 | In QSL, TC-390's table check asserts that `qsl-eval` and `qsl-replay` name `quire-eval` in `[dependencies]` and that `qsl-foundation`, `qsl-cst`, `qsl-source`, `qsl-forms`, `qsl-semantics`, `qsl-package` and `qsl-route` name it in no table; a fixture manifest in which `qsl-semantics` depends on `quire-eval` fails the check, naming the crate and the table. | Test |
-| FR-401-AC-3 | `quire_eval::{Evaluation, CallFailure, FamilyOutcome, FamilyResult, EvalOutcome}`, `quire_semantic_value::catalog::{Category, CatalogCode, CatalogCoded, UndefinedCoded, UndefinedRecord, UndefinedReason, InternalFault}`, `quire_semantic_value::supplied_stop::{SuppliedFailure, SuppliedStop, UnsupportedHelperStop}` and `quire_semantic_value::call::WrongSnapshotCause` resolve; `qsl_eval::value::Evaluation`, `qsl_eval::value::CallFailure`, `qsl_semantics::family::FamilyOutcome`, `qsl_semantics::family::FamilyResult`, `qsl_semantics::family::EvalOutcome`, `qsl_foundation::diagnostic::InternalFault`, `qsl_foundation::InternalFault`, `qsl_semantics::value::supplied::SuppliedStop`, `qsl_semantics::check::WrongSnapshotCause` and `qsl_replay::Category` each fail to compile from another crate. | Test |
-| FR-401-AC-4 | With no edit to any expected value, the `qsl-eval`, `qsl-replay` and `qsl-analyze` suites, `qsl-bench`'s build, the FR-262 tests, the FR-096 refusal-record tests and the QSL conformance run over the QSpec checked-package fixtures pass: every `Evaluation` outcome, location and loss list (including the located `incomplete` result of a charge a cancelled handle denies, which FR-262 keeps as an evaluation rather than `CallFailure::Cancelled`), every `CallFailure` arm and category, and every refusal record built through the `qsl-foundation` and `qsl-eval` functions that replace the two moved methods equal the values before the move. | Test |
+| FR-401-AC-1 | `filament-eval`'s manifest names as normal dependencies only crates from `filament-checked`, `filament-semantic-value`, `filament-exact`, `filament-walk` and `thiserror`, each with default features off, and only those its source names an item of, and names no FSL crate in any table; its crate root is `#![no_std]`, its manifest forbids unsafe code, and it builds for `thumbv7em-none-eabi`. | Test |
+| FR-401-AC-2 | In FSL, TC-390's table check asserts that `fsl-eval` and `fsl-replay` name `filament-eval` in `[dependencies]` and that `fsl-foundation`, `fsl-cst`, `fsl-source`, `fsl-forms`, `fsl-semantics`, `fsl-package` and `fsl-route` name it in no table; a fixture manifest in which `fsl-semantics` depends on `filament-eval` fails the check, naming the crate and the table. | Test |
+| FR-401-AC-3 | `filament_eval::{Evaluation, CallFailure, FamilyOutcome, FamilyResult, EvalOutcome}`, `filament_semantic_value::catalog::{Category, CatalogCode, CatalogCoded, UndefinedCoded, UndefinedRecord, UndefinedReason, InternalFault}`, `filament_semantic_value::supplied_stop::{SuppliedFailure, SuppliedStop, UnsupportedHelperStop}` and `filament_semantic_value::call::WrongSnapshotCause` resolve; `fsl_eval::value::Evaluation`, `fsl_eval::value::CallFailure`, `fsl_semantics::family::FamilyOutcome`, `fsl_semantics::family::FamilyResult`, `fsl_semantics::family::EvalOutcome`, `fsl_foundation::diagnostic::InternalFault`, `fsl_foundation::InternalFault`, `fsl_semantics::value::supplied::SuppliedStop`, `fsl_semantics::check::WrongSnapshotCause` and `fsl_replay::Category` each fail to compile from another crate. | Test |
+| FR-401-AC-4 | With no edit to any expected value, the `fsl-eval`, `fsl-replay` and `fsl-analyze` suites, `fsl-bench`'s build, the FR-262 tests, the FR-096 refusal-record tests and the FSL conformance run over the FSpec checked-package fixtures pass: every `Evaluation` outcome, location and loss list (including the located `incomplete` result of a charge a cancelled handle denies, which FR-262 keeps as an evaluation rather than `CallFailure::Cancelled`), every `CallFailure` arm and category, and every refusal record built through the `fsl-foundation` and `fsl-eval` functions that replace the two moved methods equal the values before the move. | Test |
 | FR-401-AC-5 | Through the reference adapter over a checked package with a function `f(x: Int[0, 9]): Boolean`, an FR-151 dispatched member call whose synthesized dispatch candidate is not callable by name, and a dependency package with a function `g(): Integer`, each registration into a fresh registry returns: for `f`'s `NodeKey` with signature `([Int[0, 9]], Boolean)`, `Accepted`; for `f`'s key with `([Int[0, 10]], Boolean)`, `SignatureMismatch`; for `g`'s key with `([], Integer)`, `Accepted`; for the synthesized candidate's key with its recorded signature, `CallableNotAdmitted`; for a `NodeKey` no function of the closure has, `CallableNotAdmitted`. | Test |
-| FR-401-AC-6 | The Begin operation takes the registry and no separate closure or `Cancel` argument, and `quire-eval`'s source names no item of a QSL crate, including `CheckedPackage`, `ObjectEnvironment` and FR-400's checker-side record. | Inspection |
-| FR-401-AC-7 | FR-059's direction check reports an RT resolved graph with a normal edge to `quire-eval` sourced from `agent-ix/quire-eval` as clean, and reports no FB-11 cycle through it. | Test |
+| FR-401-AC-6 | The Begin operation takes the registry and no separate closure or `Cancel` argument, and `filament-eval`'s source names no item of an FSL crate, including `CheckedPackage`, `ObjectEnvironment` and FR-400's checker-side record. | Inspection |
+| FR-401-AC-7 | FR-059's direction check reports an RT resolved graph with a normal edge to `filament-eval` sourced from `agent-ix/filament-eval` as clean, and reports no FB-11 cycle through it. | Test |
 | FR-401-AC-8 | Through an evaluator that implements the closure contract's interpreted transition by returning each source application as a child request, over a checked package with `f(x: Int[0, 9]): Integer`, whose body is `x`, and an interpreted `g(x: Int[0, 9]): Integer` whose body is `f(x) + 1`, with a host body registered for `f`'s `NodeKey` that returns `7`: a session over `f(3)` returns `7`; a session over `g(3)` returns `8`; and a session over a second registered body that requests `f(3)` resumes that body with `7`. In each run the factory for `f` is invoked once per application of `f`, `f`'s interpreted body makes no charge, and each application of `f` makes one `function.call` charge. The test fails if any run evaluates `f`'s interpreted body. Through the std reference evaluator, the runs over `f(3)` and over the requesting body hold as stated, and the run over `g(3)` is not part of this criterion. | Test |
 | FR-401-AC-9 | With a meter whose installed handle is cancelled with `Requested` or `Deadline` before the call: over the TC-918 `Compare` package (`equality_matrix.rs`, `invariants.rs`), `call` returns `Ok` with `FamilyOutcome::Evaluated(Outcome::Incomplete(record))` where `record.charge_point` is `ChargePoint::FunctionCall`; over the FR-090 population query of `model_reference_queries.rs`, `call` and `evaluate` each return `Ok` with `FamilyOutcome::Evaluated(Outcome::Incomplete(_))`. In every run no charge is admitted, `tripped()` equals the cause and no run returns `CallFailure::Cancelled`. Over the population query, with a handle that trips at its n-th poll, `call` and `evaluate` stop at the n-th charge point of the suite's expected prefix, with the prefix before it admitted. | Test (TC-1191) |
 | FR-401-AC-10 | Over a package whose call's first meter charge is `function.call` (the TC-918 `Compare` package, and the two-argument `g(x: Int[0, 9], y: Int[0, 9]): Boolean` package): `call_supplied` with a supplied-value run over an uncancelled handle and a meter whose installed handle is a different handle cancelled with `Requested` or `Deadline` returns `Ok` with `FamilyOutcome::Evaluated(Outcome::Incomplete(record))` where `record.charge_point` is `ChargePoint::FunctionCall`; no charge is admitted, the meter's `tripped()` equals the cause, the run's handle is not tripped, and the result is never `CallFailure::Cancelled`. With the caller's run over a handle cancelled with `Requested` and the meter's handle not cancelled, `call_supplied` returns `CallFailure::Cancelled` with cause `Requested`, since admission under the caller's run polls that run's handle at FR-277's poll points; the meter's consumed counters are all zero and no charge is admitted. | Test (TC-1191) |
-| FR-401-AC-11 | `quire_eval::{UnsupportedEntry, UnsupportedCause, UntranslatableConstruct, ExecutionBackendChoice}` resolve; `quire_eval::CallFailure::Unsupported(UnsupportedEntry { backend: ExecutionBackendChoice::Jit, cause: UnsupportedCause::Untranslatable { construct: UntranslatableConstruct::ExpressionForm("let"), location } })` constructs from an SV `ExpressionLocation`, and with cause `NotSupplied`; for both, `category()` is `Category::Unsupported` and the catalog code is `unimplemented_capability`; `cargo tree -p quire-eval` lists no QSL crate; and the `no_std` evaluator's suite over FR-403's vectors returns no `CallFailure::Unsupported`. Serialized in an FR-286 document, the `Untranslatable` arm's diagnostic has code `unimplemented_capability`, cause `untranslatable-entry`, `backend` `jit`, `construct` `expression-form`, `construct_name` `let` and `location` the constructed `ExpressionLocation`; with `ValueType(Decimal)` and `Operation(k)`, `construct` is `value-type` with `construct_name` `Decimal`, and `operation` with `construct_name` the node key `k`; and the `NotSupplied` arm's has cause `backend-not-supplied`, `backend` `jit` and no `location`. | Test |
-| FR-401-AC-12 | A public `Body` returns each SV `EnvironmentFailure` variant through `BodyFailure::QsvEnvironment`, and the scheduler returns it as `CallFailure::Body` with the same variant and payload; `BodyFailure::Fault` remains a distinct internal fault. `Refused` is refusal, `Limit`/`Allocation`/`Capacity` are incomplete, and membership `Ok(false)` remains distinct from every error. For `Limit(WorkUnits)`, the exact supplied handle's `CancelCause` appears only when that handle is tripped; an ordinary work ceiling remains cause-free. No body-side SV failure creates an `Evaluation` or expression location; preceding meter charges remain admitted and the failure itself adds none. | Test |
-| FR-401-AC-13 | A public SV `TypeEnvironment` reservation-control entry point exercises the actual construction and membership reservation sites and produces typed `Allocation` and `Capacity` failures without a caller-constructed failure or fabricated declaration. An external QSL application consumer uses this entry point to drive both variants through `BodyFailure` and `CallFailure::Body`; production constructors continue to use their ordinary reservation policy. | Test |
+| FR-401-AC-11 | `filament_eval::{UnsupportedEntry, UnsupportedCause, UntranslatableConstruct, ExecutionBackendChoice}` resolve; `filament_eval::CallFailure::Unsupported(UnsupportedEntry { backend: ExecutionBackendChoice::Jit, cause: UnsupportedCause::Untranslatable { construct: UntranslatableConstruct::ExpressionForm("let"), location } })` constructs from an SV `ExpressionLocation`, and with cause `NotSupplied`; for both, `category()` is `Category::Unsupported` and the catalog code is `unimplemented_capability`; `cargo tree -p filament-eval` lists no FSL crate; and the `no_std` evaluator's suite over FR-403's vectors returns no `CallFailure::Unsupported`. Serialized in an FR-286 document, the `Untranslatable` arm's diagnostic has code `unimplemented_capability`, cause `untranslatable-entry`, `backend` `jit`, `construct` `expression-form`, `construct_name` `let` and `location` the constructed `ExpressionLocation`; with `ValueType(Decimal)` and `Operation(k)`, `construct` is `value-type` with `construct_name` `Decimal`, and `operation` with `construct_name` the node key `k`; and the `NotSupplied` arm's has cause `backend-not-supplied`, `backend` `jit` and no `location`. | Test |
+| FR-401-AC-12 | A public `Body` returns each SV `EnvironmentFailure` variant through `BodyFailure::FsvEnvironment`, and the scheduler returns it as `CallFailure::Body` with the same variant and payload; `BodyFailure::Fault` remains a distinct internal fault. `Refused` is refusal, `Limit`/`Allocation`/`Capacity` are incomplete, and membership `Ok(false)` remains distinct from every error. For `Limit(WorkUnits)`, the exact supplied handle's `CancelCause` appears only when that handle is tripped; an ordinary work ceiling remains cause-free. No body-side SV failure creates an `Evaluation` or expression location; preceding meter charges remain admitted and the failure itself adds none. | Test |
+| FR-401-AC-13 | A public SV `TypeEnvironment` reservation-control entry point exercises the actual construction and membership reservation sites and produces typed `Allocation` and `Capacity` failures without a caller-constructed failure or fabricated declaration. An external FSL application consumer uses this entry point to drive both variants through `BodyFailure` and `CallFailure::Body`; production constructors continue to use their ordinary reservation policy. | Test |
 
 ## Dependencies
 
@@ -398,7 +398,7 @@ model index, which are not leaf vocabulary. No slice of this requirement moves
   checked type-environment limits and refusal behavior whose typed owner
   failures the body-side channel preserves. The SV reservation-control
   entry point itself is an external shared-leaf contract and must be present
-  before QSL's allocation/capacity application tests can pass.
+  before FSL's allocation/capacity application tests can pass.
 - [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
   §6.1 layer E, FB-05 and §7.3 X-14 and X-15.
 - AD-001 slices S0 (IR-583), S1 (IR-585) and S2 (IR-586).

@@ -1,0 +1,45 @@
+[package]
+name = "fsl-source"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "ADR-011 §6.1 layer I3: the S0 intake adapter over Quire's pinned Rust extractor -- verified extracted-fence bytes plus their document source map."
+
+[features]
+default = []
+# The whole adapter is behind this feature; without it the crate is empty and
+# names no dependency. `fsl-replay` enables this feature through its own
+# `quire-extraction` feature.
+quire-extraction = [
+    "dep:ix-trace-rs",
+    "dep:fsl-foundation",
+    "dep:quire-rs",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:thiserror",
+]
+
+[dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main", optional = true }
+fsl-foundation = { path = "../fsl-foundation", optional = true }
+quire-rs = { git = "https://github.com/agent-ix/quire-rs", rev = "5b4be36d594a488b21c854051f05116eb9302d78", optional = true, default-features = false }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+serde_json = { version = "1.0.151", optional = true }
+thiserror = { version = "2.0.20", optional = true }
+
+[dev-dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["quire-extraction"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"

@@ -6,19 +6,19 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use ix_trace_rs::trace;
-use quire_contract_model::{
+use filament_contract_model::{
     read_checked_package, CheckedNodeKind, CheckedPackageDispatchResult, CheckedPackageEvidence,
     CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageRefusalCause,
     CheckedPackageRefusalCode, CheckedPackageV2, ClockConfiguration, ClockExactNumber,
     ProtocolForm, TemporalForm,
 };
-use quire_spec_language::checked_handoff::{
+use filament_spec_language::checked_handoff::{
     evidence, write, write_with, CheckedHandoffRequest, Corpus, Environment, Error, ErrorCode,
     Inventory, InventoryReadError, InventoryRow, RealEnvironment, Selection, SelectionAxis,
     SelectionRefusal,
 };
-use quire_spec_language::emit_checked_v2::{self, ClockSelection, Request};
+use filament_spec_language::emit_checked_v2::{self, ClockSelection, Request};
+use ix_trace_rs::trace;
 use serde_json::Value;
 
 const DIR: &str = "examples/checked-handoff";
@@ -106,7 +106,7 @@ pub(super) fn request(kind: &str, corpus: Corpus) -> CheckedHandoffRequest {
             out: None,
         },
         corpus,
-        native_join: qsl_package::V2ReadLimits::fixture().native_join_limits(),
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
     }
 }
 
@@ -136,7 +136,7 @@ pub(super) fn integer_model() -> Value {
             serde_json::json!({"module": "agent-ix/checked-handoff", "name": "value_type"}),
         );
         for constraint in object["constraints"].as_array_mut().unwrap() {
-            constraint["appliesTo"] = "ix://quire/native/Integer".into();
+            constraint["appliesTo"] = "ix://filament/native/Integer".into();
         }
     }
     model
@@ -296,7 +296,7 @@ fn package_node_ids(package: &[u8]) -> Vec<Value> {
 }
 
 /// FR-517-AC-11: R's directory holds `inventory.json` in the format
-/// `quire.checked-handoff.inventory/1` with the formal identity the file name
+/// `filament.checked-handoff.inventory/1` with the formal identity the file name
 /// selects, non-empty rows, `observed_count` equal to their number, every
 /// requirement row naming a node of `checked-package.json`, the requirement
 /// records before the pending obligations; two writes give equal files.
@@ -308,11 +308,11 @@ fn each_directory_holds_the_inventory_of_its_unit() {
     let bytes = &files["inventory.json"];
     assert_eq!(bytes.last(), Some(&b'\n'));
     let file: Value = serde_json::from_slice(bytes).unwrap();
-    assert_eq!(file["format"], "quire.checked-handoff.inventory/1");
-    assert_eq!(file["owner"], "qsl");
+    assert_eq!(file["format"], "filament.checked-handoff.inventory/1");
+    assert_eq!(file["owner"], "fsl");
     assert_eq!(
         file["scope"],
-        "qsl_checked_requirements_and_pending_obligations"
+        "fsl_checked_requirements_and_pending_obligations"
     );
     assert_eq!(
         file["source"],
@@ -346,10 +346,10 @@ fn each_directory_holds_the_inventory_of_its_unit() {
     assert_eq!(tree(&second)["inventory.json"], *bytes);
 }
 
-/// The unit of the inventory vector of FR-517: `qsl_inventory` over it returns
+/// The unit of the inventory vector of FR-517: `fsl_inventory` over it returns
 /// two requirement records and two pending obligations.
 const VECTOR_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     function f using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x + 1 }\n";
 
 /// The directory written for the vector unit, and the wire node id strings of
@@ -379,7 +379,7 @@ fn unit_directory(name: &str, text: &str) -> (tempfile::TempDir, BTreeMap<String
             out: None,
         },
         corpus: Corpus::None,
-        native_join: qsl_package::V2ReadLimits::fixture().native_join_limits(),
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
     };
     let out = dir.path().join("handoff");
     write(&request, &out).expect("the vector handoff is written");
@@ -391,9 +391,9 @@ fn unit_directory(name: &str, text: &str) -> (tempfile::TempDir, BTreeMap<String
 fn vector_bytes(n0: &str, n1: &str) -> String {
     format!(
         r#"{{
-  "format": "quire.checked-handoff.inventory/1",
-  "owner": "qsl",
-  "scope": "qsl_checked_requirements_and_pending_obligations",
+  "format": "filament.checked-handoff.inventory/1",
+  "owner": "fsl",
+  "scope": "fsl_checked_requirements_and_pending_obligations",
   "source": {{
     "document": "unit.native",
     "revision": 1
@@ -592,7 +592,7 @@ fn the_reader_refuses_each_vector() {
     ));
     match refused(&swap("inventory/1", "inventory/2")) {
         InventoryReadError::Format(format) => {
-            assert_eq!(format, "quire.checked-handoff.inventory/2")
+            assert_eq!(format, "filament.checked-handoff.inventory/2")
         }
         other => panic!("{other:?}"),
     }
@@ -610,16 +610,16 @@ fn the_reader_refuses_each_vector() {
     ));
     assert!(matches!(
         refused(&swap(
-            "\"owner\": \"qsl\",",
-            "\"owner\": \"qsl\", \"owner\": \"qsl\","
+            "\"owner\": \"fsl\",",
+            "\"owner\": \"fsl\", \"owner\": \"fsl\","
         )),
         InventoryReadError::Malformed(_)
     ));
     assert!(matches!(refused(""), InventoryReadError::Malformed(_)));
     // The format decides before the shape: a /2 file of another shape is `Format`.
-    match refused(r#"{"format": "quire.checked-handoff.inventory/2", "rows": 7}"#) {
+    match refused(r#"{"format": "filament.checked-handoff.inventory/2", "rows": 7}"#) {
         InventoryReadError::Format(format) => {
-            assert_eq!(format, "quire.checked-handoff.inventory/2")
+            assert_eq!(format, "filament.checked-handoff.inventory/2")
         }
         other => panic!("{other:?}"),
     }
@@ -674,13 +674,13 @@ fn the_written_package_is_admitted_and_matches_its_sidecar() {
         // has a protocol clause), the selected library, and the domain
         // package whose document the evidence holds.
         let temporal = match kind {
-            "event_position" => "quire.temporal.event-position.false-extension/v1",
-            "fixed_sample" => "quire.temporal.fixed-sample.false-extension/v1",
-            _ => "quire.temporal.timestamped-event.finite-window/v1",
+            "event_position" => "filament.temporal.event-position.false-extension/v1",
+            "fixed_sample" => "filament.temporal.fixed-sample.false-extension/v1",
+            _ => "filament.temporal.timestamped-event.finite-window/v1",
         };
         let mut expected_roles = Vec::new();
         if kind == "event_position" {
-            expected_roles.push(("protocol_profile", "quire.protocol.finite-global/v1"));
+            expected_roles.push(("protocol_profile", "filament.protocol.finite-global/v1"));
         }
         expected_roles.push(("temporal_profile", temporal));
         let lock = serde_json::to_value(package.lock()).unwrap();
@@ -887,7 +887,7 @@ fn the_recipe_emits_the_protocol_the_compensations_and_the_three_clock_kinds() {
 #[trace("FR-519-AC-14", "FR-519-AC-16", "TC-1314")]
 #[test]
 fn the_recipe_compensations_read_attempts_maximum_three_through_the_view() {
-    use qsl_package::protocol_view::{attempts_maximum, ViewRefusal};
+    use fsl_package::protocol_view::{attempts_maximum, ViewRefusal};
 
     let (_holder, out) = written("event_position", Corpus::None, &Double::default());
     let files = tree(&out);
@@ -960,7 +960,7 @@ fn the_signed_64_extrema_are_package_values_within_their_declared_bounds() {
 #[trace("TC-1312", "FR-517-AC-12")]
 #[test]
 fn the_extreme_rationals_are_package_values() {
-    use quire_contract_model::{
+    use filament_contract_model::{
         BoundedDomainForm, CheckedLiteralValue, CheckedTerm, LiteralKind, ScalarTypeForm,
     };
 
@@ -1256,7 +1256,7 @@ fn a_refusal_or_difference_writes_nothing() {
     let target = fresh.path().join("handoff");
     let mut bad = request("event_position", Corpus::None);
     let unit = fresh.path().join("bad.native");
-    std::fs::write(&unit, "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.model.complete/v1\";\nmodel M = \"agent-ix/checked-handoff\";\nfunction f using v(x: Boolean): Boolean pure { 1 }\n").unwrap();
+    std::fs::write(&unit, "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = \"agent-ix/checked-handoff\";\nfunction f using v(x: Boolean): Boolean pure { 1 }\n").unwrap();
     bad.emit.source = unit;
     bad.emit.temporal_selections.clear();
     let error = write(&bad, &target).unwrap_err();
@@ -1631,7 +1631,7 @@ fn the_manifest_lists_every_case_in_table_order() {
     for kind in KINDS {
         let (_holder, out) = written(kind, Corpus::Standard, &Double::default());
         let manifest = manifest_of(&out);
-        assert_eq!(manifest["format"], "quire.checked-handoff.mutations/1");
+        assert_eq!(manifest["format"], "filament.checked-handoff.mutations/1");
         assert_eq!(manifest["base_package"], "checked-package.json");
         assert_eq!(manifest["selection"], "selection.json");
         let files = tree(&out);
@@ -2017,7 +2017,7 @@ fn swapped_source() -> String {
     )
 }
 
-/// QSL-1705, QSpec FR-322-AC-305: each sidecar compensation row names its
+/// QSL-1705, FSpec FR-322-AC-305: each sidecar compensation row names its
 /// own template's node, however the template declaration order and the
 /// package's node order relate. Over a unit declaring `Partial` before
 /// `Full`, the row of each template names the package node that carries its
@@ -2214,14 +2214,16 @@ fn the_clause_name_has_no_package_side_value() {
 /// Selection::read refuses bytes that are not a sidecar of this format.
 #[test]
 fn a_sidecar_that_does_not_parse_is_refused() {
-    use quire_spec_language::checked_handoff::SelectionReadError as E;
+    use filament_spec_language::checked_handoff::SelectionReadError as E;
     assert!(matches!(Selection::read(b"not json"), Err(E::Malformed(_))));
     assert!(matches!(Selection::read(b"{}"), Err(E::Malformed(_))));
     let (mut sidecar, _package) = sidecar_fixture();
-    sidecar["format"] = "quire.checked-handoff.selection/2".into();
+    sidecar["format"] = "filament.checked-handoff.selection/2".into();
     let error = Selection::read(&serde_json::to_vec(&sidecar).unwrap()).unwrap_err();
-    assert!(matches!(&error, E::Format(format) if format == "quire.checked-handoff.selection/2"));
-    sidecar["format"] = "quire.checked-handoff.selection/1".into();
+    assert!(
+        matches!(&error, E::Format(format) if format == "filament.checked-handoff.selection/2")
+    );
+    sidecar["format"] = "filament.checked-handoff.selection/1".into();
     sidecar["extra"] = 1.into();
     assert!(matches!(
         Selection::read(&serde_json::to_vec(&sidecar).unwrap()),
@@ -2322,7 +2324,7 @@ fn a_differing_declared_clause_name_is_refused_on_clause_name() {
     );
 }
 
-/// The identity of every `quire.op.collection.sum.*` operation in `value`.
+/// The identity of every `filament.op.collection.sum.*` operation in `value`.
 fn sum_identities(value: &Value, found: &mut Vec<String>) {
     match value {
         Value::Object(members) => {
@@ -2330,7 +2332,7 @@ fn sum_identities(value: &Value, found: &mut Vec<String>) {
                 match member.as_str() {
                     Some(identity)
                         if name == "identity"
-                            && identity.starts_with("quire.op.collection.sum.") =>
+                            && identity.starts_with("filament.op.collection.sum.") =>
                     {
                         found.push(identity.to_owned());
                     }
@@ -2344,8 +2346,8 @@ fn sum_identities(value: &Value, found: &mut Vec<String>) {
 }
 
 /// FR-517-AC-13: the `Amount` and `Total` scalars of R carry the unit `U`:
-/// each is an alias of `ix://quire/unit/U` whose `min` and `max` name the
-/// alias (QSpec FR-154 "Unit bounds"). The written event-position package
+/// each is an alias of `ix://filament/unit/U` whose `min` and `max` name the
+/// alias (FSpec FR-154 "Unit bounds"). The written event-position package
 /// holds the node of `U`, types both captures by it and lowers each of R's
 /// receipt sums to the quantity family.
 #[trace("FR-517-AC-13", "TC-1312")]
@@ -2357,7 +2359,7 @@ fn amount_and_total_carry_the_unit_u() {
     for (scalar, lower, upper) in [("Amount", "1", "20"), ("Total", "0", "100")] {
         let declared = declared_type(&model, scalar);
         assert_eq!(declared["kind"], "alias", "{scalar}");
-        assert_eq!(declared["target"], "ix://quire/unit/U", "{scalar}");
+        assert_eq!(declared["target"], "ix://filament/unit/U", "{scalar}");
         let bounds: Vec<_> = declared["constraints"]
             .as_array()
             .unwrap()
@@ -2394,7 +2396,7 @@ fn amount_and_total_carry_the_unit_u() {
     let mut sums = Vec::new();
     sum_identities(&wire["semantic_graph"], &mut sums);
     assert_eq!(
-        sums, ["quire.op.collection.sum.quantity"; 3],
+        sums, ["filament.op.collection.sum.quantity"; 3],
         "Healthy, Full and Partial, whose two equal sums are one node"
     );
 }
@@ -2431,7 +2433,7 @@ fn unit_model(dir: &Path) -> PathBuf {
         let object = declared.as_object_mut().unwrap();
         object.remove("scalar");
         object.insert("kind".into(), "alias".into());
-        object.insert("target".into(), "ix://quire/unit/U".into());
+        object.insert("target".into(), "ix://filament/unit/U".into());
         for constraint in object["constraints"].as_array_mut().unwrap() {
             constraint["appliesTo"] = identity.clone();
         }
@@ -2449,7 +2451,7 @@ fn unit_request(dir: &Path, body: &str) -> CheckedHandoffRequest {
         &source,
         format!(
             "language \"ix:native\" edition \"1-draft\";\n\
-             profile v = \"quire.model.complete/v1\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
              model M = \"agent-ix/checked-handoff\";\n\
              dimension Money;\nunit U : Money = rational(1, 1);\n{body}\n"
         ),
@@ -2466,7 +2468,7 @@ fn unit_request(dir: &Path, body: &str) -> CheckedHandoffRequest {
             out: None,
         },
         corpus: Corpus::None,
-        native_join: qsl_package::V2ReadLimits::fixture().native_join_limits(),
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
     }
 }
 
@@ -2485,7 +2487,7 @@ fn unit_wire(body: &str) -> Value {
     serde_json::from_slice(&tree(&out)["checked-package.json"]).unwrap()
 }
 
-/// The `quire.op.collection.sum.*` application nodes of `wire`: each one's
+/// The `filament.op.collection.sum.*` application nodes of `wire`: each one's
 /// identity, rounding mode and the semantic type its `type_argument` names.
 fn sum_applications(wire: &Value) -> Vec<(String, Value, Value)> {
     wire["semantic_graph"]["nodes"]
@@ -2495,13 +2497,15 @@ fn sum_applications(wire: &Value) -> Vec<(String, Value, Value)> {
         .filter_map(|node| {
             let operation = &node["body"]["operation"];
             let identity = operation["identity"].as_str()?;
-            identity.starts_with("quire.op.collection.sum.").then(|| {
-                (
-                    identity.to_owned(),
-                    operation["mode"].clone(),
-                    operation["member"]["declaration"].clone(),
-                )
-            })
+            identity
+                .starts_with("filament.op.collection.sum.")
+                .then(|| {
+                    (
+                        identity.to_owned(),
+                        operation["mode"].clone(),
+                        operation["member"]["declaration"].clone(),
+                    )
+                })
         })
         .collect()
 }
@@ -2524,7 +2528,7 @@ fn the_unit_on_amount_and_total_is_written_with_its_comparison_and_its_sum() {
     let sums = sum_applications(&wire);
     assert_eq!(sums.len(), 1, "{sums:?}");
     let (identity, mode, type_argument) = &sums[0];
-    assert_eq!(identity, "quire.op.collection.sum.quantity");
+    assert_eq!(identity, "filament.op.collection.sum.quantity");
     assert_eq!(
         mode,
         &serde_json::json!({"kind": "rounding", "value": "exact"})
@@ -2563,10 +2567,13 @@ fn decimal_and_rational_sums_lower_to_their_family_identity() {
         sums,
         [
             (
-                "quire.op.collection.sum.decimal".to_owned(),
+                "filament.op.collection.sum.decimal".to_owned(),
                 serde_json::json!({"kind": "rounding", "value": "toward-zero"}),
             ),
-            ("quire.op.collection.sum.rational".to_owned(), Value::Null),
+            (
+                "filament.op.collection.sum.rational".to_owned(),
+                Value::Null
+            ),
         ]
     );
 }
@@ -2608,9 +2615,9 @@ fn model_alias_names_resolve_for_captures_and_quantity_sums() {
     std::fs::write(
         &request.emit.source,
         source.replace(
-            "profile v = \"quire.model.complete/v1\";",
-            "profile v = \"quire.model.complete/v1\";\n\
-             profile p = \"quire.protocol.finite-global/v1\";",
+            "profile v = \"filament.model.complete/v1\";",
+            "profile v = \"filament.model.complete/v1\";\n\
+             profile p = \"filament.protocol.finite-global/v1\";",
         ),
     )
     .unwrap();
@@ -2620,7 +2627,7 @@ fn model_alias_names_resolve_for_captures_and_quantity_sums() {
     let written_model: Value = serde_json::from_slice(&files["models/0.json"]).unwrap();
     for (name, lower, upper) in [("Amount", "1", "20"), ("Total", "0", "100")] {
         let alias = declared_type(&written_model, name);
-        assert_eq!(alias["target"], "ix://quire/unit/U");
+        assert_eq!(alias["target"], "ix://filament/unit/U");
         let bounds: Vec<_> = alias["constraints"]
             .as_array()
             .unwrap()
@@ -2660,7 +2667,7 @@ fn model_alias_names_resolve_for_captures_and_quantity_sums() {
         1,
         "the alias name resolves and the sum checks: {sums:?}"
     );
-    assert_eq!(sums[0].0, "quire.op.collection.sum.quantity");
+    assert_eq!(sums[0].0, "filament.op.collection.sum.quantity");
 }
 
 /// Model type references root U without an expression reading a quantity.
@@ -2760,7 +2767,7 @@ fn the_recover_conditions_compare_the_receipt_sum_with_the_target() {
                     .iter()
                     .map(|argument| render(nodes, argument))
                     .collect();
-                let operation = identity.strip_prefix("quire.op.").unwrap_or(identity);
+                let operation = identity.strip_prefix("filament.op.").unwrap_or(identity);
                 format!("{operation}({})", arguments.join(", "))
             }
             "binding" => format!(

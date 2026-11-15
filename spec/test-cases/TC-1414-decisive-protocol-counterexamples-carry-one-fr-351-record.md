@@ -3,11 +3,11 @@ id: TC-1414
 title: "Decisive protocol counterexamples carry one FR-351 record with a pinned value path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-574
+  - target: ix://agent-ix/filament-spec-language/FR-574
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-351
+  - target: ix://agent-ix/filament-specification/FR-351
     type: references
-  - target: ix://agent-ix/quire-specification/FR-207
+  - target: ix://agent-ix/filament-specification/FR-207
     type: references
 ---
 # TC-1414: Decisive protocol counterexamples carry one FR-351 record with a pinned value path

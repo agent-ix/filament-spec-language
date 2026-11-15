@@ -3,7 +3,7 @@ id: TC-140
 title: "Historical native temporal request/result owner boundary"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-052, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-052, type: references }
 ---
 # TC-140: Historical native temporal request/result owner boundary
 

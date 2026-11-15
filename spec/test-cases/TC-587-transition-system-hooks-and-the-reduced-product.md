@@ -3,7 +3,7 @@ id: TC-587
 title: "TransitionSystem hooks offer reductions, the product delegates them, and simulation stays unreduced"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-162
+  - target: ix://agent-ix/filament-spec-language/FR-162
     type: verifies
 ---
 # TC-587: TransitionSystem hooks offer reductions, the product delegates them, and simulation stays unreduced

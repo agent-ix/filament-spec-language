@@ -25,7 +25,7 @@ fn main() {
     calls.push_str(&format!(
         "{}\t{}\n",
         selection,
-        std::env::var("QSPEC_DIR").unwrap()
+        std::env::var("FSPEC_DIR").unwrap()
     ));
     fs::write(log, calls).unwrap();
     println!("selected: {selection}");
@@ -54,7 +54,7 @@ fn main() {
         ),
     }
     if mode == "skip" {
-        println!("skipped: QSPEC_DIR not set");
+        println!("skipped: FSPEC_DIR not set");
     }
     std::process::exit(if mode == "nonzero" { 23 } else { 0 });
 }

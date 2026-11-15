@@ -3,27 +3,27 @@ id: FR-266
 title: "Report a clause run's settlement basis and separating witness"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-265
+  - target: ix://agent-ix/filament-spec-language/FR-265
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-243
+  - target: ix://agent-ix/filament-specification/FR-243
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-351
+  - target: ix://agent-ix/filament-specification/FR-351
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
 ---
 # FR-266: Report a clause run's settlement basis and separating witness
 
 ## Description
 
-FR-109's `ClauseRunReport` SHALL carry a settlement basis (QSpec FR-243) on
-every report and the separating witness record (QSpec FR-351) exactly when
+FR-109's `ClauseRunReport` SHALL carry a settlement basis (FSpec FR-243) on
+every report and the separating witness record (FSpec FR-351) exactly when
 that basis is decisive, as ADR-031 SW-3, SW-10 and its basis ruling decide.
 A `Clause` selection takes both from FR-265's derivation. The basis is the
 clause run's own; a model-check verdict's basis is FR-127's (ADR-031 SW-3).
@@ -38,7 +38,7 @@ clause run's own; a model-check verdict's basis is FR-127's (ADR-031 SW-3).
 
 `ClauseRunReport` gains two members:
 
-- `basis`: one QSpec FR-243 label, present on every report;
+- `basis`: one FSpec FR-243 label, present on every report;
 - `witness`: `Option<SeparatingWitnessRecord>`, present exactly when
   `basis` is `decisive-counterexample` or `decisive-witness`.
 
@@ -89,10 +89,10 @@ clause run's own; a model-check verdict's basis is FR-127's (ADR-031 SW-3).
   (the frame selection), [FR-265](FR-265-derive-a-state-clause-separating-witness.md)
   (the derivation), [FR-108](FR-108-run-the-configversion-spine-corpus.md)
   (the corpus).
-- QSpec FR-243 (basis labels) and QSpec FR-351 (the record).
+- FSpec FR-243 (basis labels) and FSpec FR-351 (the record).
 
 ## References
 
 - Owning ticket: Linear QSL-389. Implementation: Linear QSL-45.
-- QSpec half (Linear STD-144): QSpec FR-352-AC-6 (the basis label on
+- FSpec half (Linear STD-144): FSpec FR-352-AC-6 (the basis label on
   `native-run-result/2`).

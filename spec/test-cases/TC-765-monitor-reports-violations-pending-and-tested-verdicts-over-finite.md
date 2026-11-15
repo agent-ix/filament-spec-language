@@ -3,7 +3,7 @@ id: TC-765
 title: "monitor reports violations, pending and tested verdicts over finite traces and lassos"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-283
+  - target: ix://agent-ix/filament-spec-language/FR-283
     type: verifies
 ---
 # TC-765: monitor reports violations, pending and tested verdicts over finite traces and lassos
@@ -14,7 +14,7 @@ Verify offline `monitor` verdicts under ADR-014 A-4.
 
 Scope: FR-283-AC-1, FR-283-AC-2, FR-283-AC-5, FR-283-AC-7, FR-283-AC-9, FR-283-AC-10, FR-283-AC-11, FR-283-AC-14, FR-283-AC-15, FR-283-AC-16.
 
-Unless a step names another shape, each trace is a `Document` trace: a `quire.monitor-trace/1` document whose positions are snapshot `DocumentRef`s in the request's `snapshots` provision; a finite trace has `prefix` only, and a lasso has `prefix` and `loop`. Step 9 uses a `Samples` trace and step 10 a `Typed` `Timestamped` trace. Every request's `sources` holds the unit's source.
+Unless a step names another shape, each trace is a `Document` trace: a `filament.monitor-trace/1` document whose positions are snapshot `DocumentRef`s in the request's `snapshots` provision; a finite trace has `prefix` only, and a lasso has `prefix` and `loop`. Step 9 uses a `Samples` trace and step 10 a `Typed` `Timestamped` trace. Every request's `sources` holds the unit's source.
 
 ## Test Procedure
 

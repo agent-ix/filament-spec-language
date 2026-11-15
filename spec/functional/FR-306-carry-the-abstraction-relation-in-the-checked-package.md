@@ -3,23 +3,23 @@ id: FR-306
 title: "Carry the abstraction relation in the checked package"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-031
+  - target: ix://agent-ix/filament-spec-language/US-031
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-353
+  - target: ix://agent-ix/filament-specification/FR-353
     type: depends_on
 ---
 # FR-306: Carry the abstraction relation in the checked package
@@ -28,7 +28,7 @@ relationships:
 
 When the S4 emitter writes a checked package whose unit declares an
 abstraction relation, the emitter SHALL write the `CheckedAbstractionRelation`
-as one `quire.checked-package/v2` node, so the relation enters the
+as one `filament.checked-package/v2` node, so the relation enters the
 `package_id`, and the checked package SHALL be the relation's only authority.
 
 ## Inputs
@@ -46,8 +46,8 @@ emitted package.
 
 ### One authority
 
-The relation SHALL be emitted as the v2 node whose tag, form and body QSpec
-spells for the QSpec FR-353 relation (QSpec FR-451), carrying ADR-017 AR-2's
+The relation SHALL be emitted as the v2 node whose tag, form and body FSpec
+spells for the FSpec FR-353 relation (FSpec FR-451), carrying ADR-017 AR-2's
 keys and values. Its node ids enter the `package_id` (ADR-013 O-02). Kani and
 Verus generation read the relation only from the v2 bytes (ADR-011 FB-05).
 
@@ -56,12 +56,12 @@ Verus generation read the relation only from the v2 bytes (ADR-011 FB-05).
 Changing any binding changes the relation node and so the `package_id`.
 Every generated contract carries the `package_id` it was generated from
 (ADR-013 O-25), so a rebinding is a new relation revision and never
-reinterprets a contract generated from the earlier package (QSpec
+reinterprets a contract generated from the earlier package (FSpec
 FR-353-AC-5).
 
 ### The relation is a premise, not a claim
 
-The relation SHALL record no requirement record (QSpec FR-290: it has no
+The relation SHALL record no requirement record (FSpec FR-290: it has no
 capability kind; [FR-057](FR-057-admit-shared-capability-kinds.md)-AC-10).
 Each claim that references bound elements keeps its own kind
 (`operation-contract` or `value-validity`) and its extent, and `route`
@@ -80,8 +80,8 @@ through S6a (ADR-012 §8; ADR-017 AR-5).
 
 ## Dependencies
 
-- **Upstream:** QSpec FR-353 and FR-290 own the relation's semantics and its
-  absence of a capability kind; QSpec FR-451 spells the v2 node; ADR-017
+- **Upstream:** FSpec FR-353 and FR-290 own the relation's semantics and its
+  absence of a capability kind; FSpec FR-451 spells the v2 node; ADR-017
   AR-4 and AR-5 fix the authority and the dispatch rules.
 - **Downstream:** [FR-307](FR-307-export-the-bindings-each-item-references.md)
   exports bindings from the checked package; CG's Kani and Verus generators
@@ -90,5 +90,5 @@ through S6a (ADR-012 §8; ADR-017 AR-5).
 ## References
 
 - ADR-017 §3 AR-4 ("One authority", "Relation revision") and AR-5.
-- QSpec FR-451 (specification ticket STD-116, Q-2).
+- FSpec FR-451 (specification ticket STD-116, Q-2).
 - Linear QSL-388 (specification), QSL-36 (implementation).

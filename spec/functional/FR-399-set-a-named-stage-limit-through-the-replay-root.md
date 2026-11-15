@@ -3,15 +3,15 @@ id: FR-399
 title: "Set a named stage limit through the replay root"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-394
+  - target: ix://agent-ix/filament-spec-language/FR-394
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-263
+  - target: ix://agent-ix/filament-spec-language/FR-263
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: traces_to
 ---
 # FR-399: Set a named stage limit through the replay root
@@ -19,13 +19,13 @@ relationships:
 ## Description
 
 `compile_admitted` (FR-394) and the replay entry points take a `StageLimits`
-(FR-263). A consumer of QSL builds one from `(Setting, u64)` pairs, but
-`Setting` is a `qsl-foundation` type, and ADR-011 T-12 forbids a consumer such
-as the contract generator a direct dependency on `qsl-foundation`. A consumer
+(FR-263). A consumer of FSL builds one from `(Setting, u64)` pairs, but
+`Setting` is a `fsl-foundation` type, and ADR-011 T-12 forbids a consumer such
+as the contract generator a direct dependency on `fsl-foundation`. A consumer
 with a finite fixture source larger than the default `s1.input_bytes`
 (1 MiB) therefore cannot raise the input allowance. This requirement adds a
 `StageLimits` constructor that takes FR-255's setting name, so a consumer
-sets a named limit through the `qsl_replay` root alone and names no
+sets a named limit through the `fsl_replay` root alone and names no
 foundation type.
 
 ## Inputs
@@ -66,7 +66,7 @@ foundation type.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-399-AC-1 | A consumer that names only the `qsl_replay` root compiling a source larger than 1 MiB through `compile_admitted` with default limits is refused as `AdmittedResource::StageLimit` naming the `s1.input_bytes` ceiling. | Test (TC-1093) |
+| FR-399-AC-1 | A consumer that names only the `fsl_replay` root compiling a source larger than 1 MiB through `compile_admitted` with default limits is refused as `AdmittedResource::StageLimit` naming the `s1.input_bytes` ceiling. | Test (TC-1093) |
 | FR-399-AC-2 | With `s1.input_bytes` raised by `with_named` above the default `ReplayLimits`, the compile refuses as `AdmittedResource::AboveReader`. | Test (TC-1093) |
 | FR-399-AC-3 | With `s1.input_bytes` raised by `with_named` and `ReplayLimits::with_input_bytes` raised to match, a comment-padded source larger than 1 MiB compiles. | Test (TC-1093) |
 | FR-399-AC-4 | A source of real declarations larger than 1 MiB, with `s1.input_bytes` and the reader limit raised, is refused naming the `s1.tokens` ceiling; with `s1.tokens` also raised, naming the `s1.nodes` ceiling; and it compiles only with `s1.input_bytes`, `s1.tokens`, `s1.nodes` and the reader limit all raised. | Test (TC-1093) |

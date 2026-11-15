@@ -3,9 +3,9 @@ id: TC-1172
 title: "Choice and repeat proofs charge the S3 work budget"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-1172: Choice and repeat proofs charge the S3 work budget

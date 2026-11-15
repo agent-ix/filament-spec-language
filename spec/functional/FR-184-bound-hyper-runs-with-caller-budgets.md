@@ -3,15 +3,15 @@ id: FR-184
 title: "Bound hyper runs with caller-set budgets: max_witness_set and max_relation_tuples"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
 ---
 # FR-184: Bound hyper runs with caller-set budgets: max_witness_set and max_relation_tuples
@@ -21,7 +21,7 @@ relationships:
 `ModelCheckLimits` SHALL gain two budgets for hyper items (ADR-023 HC-10):
 `max_witness_set`, the members one HP-3 witness set may reach, and
 `max_relation_tuples`, the tuples one HP-1 run may evaluate. Like every
-EN-1 limit they are ADR-014 B-5 budgets of QSL's own provider that the
+EN-1 limit they are ADR-014 B-5 budgets of FSL's own provider that the
 request sets, each with a published default that applies only when the
 request sets none. They are resource budgets, never modelling limits: no
 form, formula size, arity or depth is capped. Reaching one stops the run
@@ -100,9 +100,9 @@ pub enum ModelCheckLimit {
 - [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (`ModelCheckLimits`, `ModelCheckLimit`).
 - FR-177, FR-179 and FR-183 count the budgets; FR-182 settles them V-7.
-- QSpec owns the two budgets with their defaults and their V-7 settlement
+- FSpec owns the two budgets with their defaults and their V-7 settlement
   (ADR-023 QS-5).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-399 (Linear STD-136; ADR-023 QS-5).
+- ADR-023. FSpec half: FSpec FR-399 (Linear STD-136; ADR-023 QS-5).

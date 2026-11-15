@@ -3,25 +3,25 @@ id: FR-219
 title: "Declare the memory model of a parallel in source and select it in the request"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-112
+  - target: ix://agent-ix/filament-spec-language/FR-112
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-052
+  - target: ix://agent-ix/filament-specification/FR-052
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-434
+  - target: ix://agent-ix/filament-specification/FR-434
     type: depends_on
 ---
 # FR-219: Declare the memory model of a parallel in source and select it in the request
@@ -48,7 +48,7 @@ own obligation, so a proof under `sc` never answers a request under `tso`.
 ## Inputs
 
 - The parsed `memory` clause of each `parallel`.
-- The request's `memory: [{parallel, model}]` member (QSpec FR-331's
+- The request's `memory: [{parallel, model}]` member (FSpec FR-331's
   spelling), each entry naming a control by its scoped path (FR-112).
 
 ## Outputs
@@ -83,7 +83,7 @@ own obligation, so a proof under `sc` never answers a request under `tso`.
 - When a `memory` entry names a nested `parallel` or a control that is not a
   `parallel`, or two entries name the same `parallel`, the model checker
   SHALL refuse the request `invalid_runtime_input`/`invalid-value`, naming
-  the entry, or both entries (QSpec FR-434).
+  the entry, or both entries (FSpec FR-434).
 - When a request selects `tso` or `ra` for a `parallel` whose join is not
   `all` with no `outstanding` clause, the pre-check SHALL add a
   `WeakAccessShape.failures` entry `{site, transition: None, shape: JoinPolicy}`
@@ -100,15 +100,15 @@ own obligation, so a proof under `sc` never answers a request under `tso`.
 - The request writer SHALL write the effective memory model of every
   outermost `parallel`, the request's selection or else the source
   default, into the request, and that model SHALL be part of the request's
-  obligation identity (ADR-013 O-09), beside the subject, as QSpec FR-434
+  obligation identity (ADR-013 O-09), beside the subject, as FSpec FR-434
   states. A defaulted model SHALL be written as explicitly as a selected
   one. Two requests that resolve every `parallel` to the same models SHALL
   carry the same identity, whether the models came from source or from the
   request.
 - The source `memory` clause SHALL enter the checked package's identity as
   source content, and the obligation identity only through the effective
-  model (QSpec FR-434).
-- The state key's `memory` member (QSpec FR-181) SHALL hold the memory
+  model (FSpec FR-434).
+- The state key's `memory` member (FSpec FR-181) SHALL hold the memory
   component under the effective model (FR-229).
 
 ## Acceptance Criteria
@@ -126,10 +126,10 @@ own obligation, so a proof under `sc` never answers a request under `tso`.
 - ADR-025 §1 MM-1 to MM-5; ADR-013 O-09; ADR-027 SE-4.
 - [FR-112](FR-112-build-protocol-scoped-anchor-forms.md) (scoped paths),
   FR-205 (the protocol subject), FR-218 (checked `parallel`).
-- QSpec owns the `memory` clause's grammar, the request's `memory` member
+- FSpec owns the `memory` clause's grammar, the request's `memory` member
   and the resolved models in the obligation identity, and the catalog
-  spelling of the refusals (QSpec FR-434, FR-052, FR-331).
+  spelling of the refusals (FSpec FR-434, FR-052, FR-331).
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-434 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-434 (Linear STD-138).

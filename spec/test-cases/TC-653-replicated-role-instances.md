@@ -3,7 +3,7 @@ id: TC-653
 title: "Replicated role instances spawn under max, act, retire by lifetime and key by object"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-208
+  - target: ix://agent-ix/filament-spec-language/FR-208
     type: verifies
 ---
 # TC-653: Replicated role instances spawn under max, act, retire by lifetime and key by object

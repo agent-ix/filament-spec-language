@@ -3,7 +3,7 @@ id: TC-526
 title: "An EN-1 component certificate is accepted or rejected by the core checker"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-339
+  - target: ix://agent-ix/filament-spec-language/FR-339
     type: verifies
 ---
 # TC-526: An EN-1 component certificate is accepted or rejected by the core checker

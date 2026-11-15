@@ -3,24 +3,24 @@ id: FR-130
 title: "Decide strong fairness on the explicit-state product by SCC refinement"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-016
+  - target: ix://agent-ix/filament-spec-language/US-016
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-129
+  - target: ix://agent-ix/filament-spec-language/FR-129
     type: depends_on
 ---
 # FR-130: Decide strong fairness on the explicit-state product by SCC refinement
 
 ## Description
 
-The `model_check` module of `qsl-analyze` (ADR-018 LA-1) SHALL decide a liveness (TP-4) item whose
+The `model_check` module of `fsl-analyze` (ADR-018 LA-1) SHALL decide a liveness (TP-4) item whose
 fairness set holds strong constraints by recursive SCC refinement of the
 retained product graph (ADR-019 FS-1 to FS-7). It extends FR-126's second
 phase: the fairness filter becomes one recursive function over a set of
@@ -128,7 +128,7 @@ constraint.
 
 ## References
 
-- QSpec FR-362 (strong fairness semantics) and FR-365 (the canonical
-  counterexample): the QSpec half of ADR-019 (Linear STD-132).
+- FSpec FR-362 (strong fairness semantics) and FR-365 (the canonical
+  counterexample): the FSpec half of ADR-019 (Linear STD-132).
 - E. A. Emerson and C.-L. Lei, 1987, and T. Latvala and K. Heljanko, 2000,
   as ADR-019 cites them.

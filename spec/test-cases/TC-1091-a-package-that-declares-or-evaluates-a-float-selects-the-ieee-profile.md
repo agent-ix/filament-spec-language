@@ -3,9 +3,9 @@ id: TC-1091
 title: "A package that declares or evaluates a float selects the IEEE profile"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-397
+  - target: ix://agent-ix/filament-spec-language/FR-397
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-1091: A package that declares or evaluates a float selects the IEEE profile
@@ -13,12 +13,12 @@ relationships:
 ## Description
 
 Verify that the IEEE nodes carry the `ieee_profile` law, whose `definition` is the
-QSpec definition prose's `DefinitionRef` for that role, that
+FSpec definition prose's `DefinitionRef` for that role, that
 the V2 reader admits the emitted packages, and that every float source form
 (bit constructors, arithmetic, comparison operators, the reserved intrinsic
 calls and the conversions into and out of a float) checks, lowers and evaluates
 as FR-397 states, with the ill-formed inputs refused, and that each IEEE node
-charges the meter as the owned `quire_exact` operation does. Scope: FR-397-AC-1 to
+charges the meter as the owned `filament_exact` operation does. Scope: FR-397-AC-1 to
 FR-397-AC-8 and FR-397-AC-10 to FR-397-AC-28, FR-091-AC-48 and FR-091-AC-49
 (FR-397-AC-9 is TC-917's).
 
@@ -48,7 +48,7 @@ FR-397-AC-8 and FR-397-AC-10 to FR-397-AC-28, FR-091-AC-48 and FR-091-AC-49
     the `totalOrder`, `bitIdentical` and `numericEqual` vectors of
     FR-397-AC-16; read the lowered nodes.
 11. Check the malformed intrinsic calls of FR-397-AC-16, including a supplied
-    library that exports a function under `quire::value::ieee::sqrt`.
+    library that exports a function under `filament::value::ieee::sqrt`.
 12. Compile the conversions of FR-397-AC-8 and run the conversion vectors
     of FR-397-AC-17 (exact types to floats, float to float).
 13. Check and run the conversions of FR-397-AC-18 (float to exact, and the
@@ -72,7 +72,7 @@ FR-397-AC-8 and FR-397-AC-10 to FR-397-AC-28, FR-091-AC-48 and FR-091-AC-49
     the spend of `sqrt(p)`, `sqrt(q)`, `p` and `q` alone, check the equality of
     FR-397-AC-26, then run each sqrt body under a work limit equal to and one
     below its spend; repeat with a NaN operand.
-22. Write each vector of QSpec TC-193 F24, F25, F27, F28, F31, F32 and F33 as
+22. Write each vector of FSpec TC-193 F24, F25, F27, F28, F31, F32 and F33 as
     the source form FR-397-AC-27 names. Evaluate each with the row's limit
     tuple as the meter's remaining budget at the conversion or negation node,
     and read the node's outcome and its entries in the meter's charge log.
@@ -80,15 +80,15 @@ FR-397-AC-8 and FR-397-AC-10 to FR-397-AC-28, FR-091-AC-48 and FR-091-AC-49
     of FR-397-AC-28 with the F17 tuple, then with `work_units: 1` and with
     `value_occurrences: 0`, as the meter's remaining budget at the
     `numeric_equal` node; read the node's outcome and charge-log entries and
-    compare them with `quire_exact::compare_ieee` over the same operands and
+    compare them with `filament_exact::compare_ieee` over the same operands and
     meter. Repeat over `Float64` constants.
 
 ## Expected Results
 
-1. `quire.op.ieee.float64.add` and
-   `quire.op.ieee.float32.add` nodes carry the law and mode `nearest-even`.
+1. `filament.op.ieee.float64.add` and
+   `filament.op.ieee.float32.add` nodes carry the law and mode `nearest-even`.
 2. (Retired.)
-3. The conversion lowers to `quire.op.ieee.to_rational` with the law.
+3. The conversion lowers to `filament.op.ieee.to_rational` with the law.
 4. The V2 reader admits each package.
 5. `unknown_profile`/`wrong-selection-role` both times.
 6. Each constructor body gives one `FloatBits` with the width and bits listed;

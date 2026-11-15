@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The S6a value evaluator (ADR-011 §6.1 layer 5).
+//!
+//! The layer-3 value semantics this evaluator runs over -- the §6.2
+//! `semantic_value` submodules and `value::model_query` -- live in the `fsl-semantics` crate's own
+//! `value` module (X-6b). This module re-exports none of them
+//! (ADR-011 §7.2): callers name them at `fsl_semantics::value::...`. It holds
+//! `value::expression`, which `fsl-eval` takes at X-8, and re-exports only
+//! its own items. The layer-4 `CheckedPackage` it evaluates is
+//! `fsl_package::CheckedPackage` (X-7), re-exported by none of this
+//! crate.
+
+mod expression;
+pub(crate) use expression::evaluate_clause_set_with_cancel;
+
+// `CheckedPackageEvaluation` is the trait that carries `call` and `evaluate`
+// over the foreign-to-`value` `CheckedPackage` typestate, since an inherent
+// impl here is E0116: `CheckedPackage` is `fsl-package`'s own type (X-7).
+pub use expression::bare_evaluate_selected_protocol_slot;
+pub use expression::collection_write::{Provenance, WrittenCollection};
+pub(crate) use expression::evaluate_over_admitted_environment;
+pub use expression::object_environment_refusal;
+pub use expression::{
+    admit_arguments, evaluate_activation_guard, evaluate_activation_guard_at_absent_key,
+    evaluate_capture, evaluate_closed_with_frame, evaluate_history_update, evaluate_join_predicate,
+    evaluate_protocol_slot, evaluate_refinement_row, evaluate_reward, evaluate_state_predicate,
+    evaluate_state_predicate_at_absent_key, evaluate_state_predicate_with,
+    evaluate_terminal_predicate, input_refusal_code, refusal_record, supplied_stop_cause,
+    supplied_stop_code, undefined_contract_code, AdmittedEvaluationViewEvaluation,
+    ApplicationObservation, ApplicationObservationOptions, BinderCharges, ChargeAmounts,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseRead, ClauseSetEntry, ClauseSetEvaluation,
+    ClauseSetOutcome, FrameEvaluation, InvalidQualifiedName, InvocationBinding,
+    ObservationIdentity, OperationCharge, OperationLedger, PackageClosure, PackageTask,
+    ProtocolReferenceOccurrence, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue,
+    ProtocolSupply, QualifiedName, RuntimeValuePath, Separation, SeparationStep, StopReport,
+    SuppliedValue, TruncatedOperationLedger, ValueInvariantEvaluation, ValueInvariantOutcome,
+    ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim, BINDER_ACCOUNTING_VERSION,
+};

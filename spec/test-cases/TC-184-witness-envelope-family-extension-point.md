@@ -3,7 +3,7 @@ id: TC-184
 title: "A family adds a typed witness payload through a typed extension point, not an untyped map"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-184: A family adds a typed witness payload through a typed extension point, not an untyped map

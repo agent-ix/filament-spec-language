@@ -3,14 +3,14 @@ id: TC-136
 title: "Admit checked-term inputs and preserve typed outcomes"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-049, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-036, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-110, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-046, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-047, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-106, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-049, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-036, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-110, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-046, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-047, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-106, type: references }
 ---
 # TC-136: Admit checked-term inputs and preserve typed outcomes
 
@@ -79,7 +79,7 @@ Exercise the four identity roles (document, model, profile and configuration) at
 (1) compile the source document through FR-036 and admit the model fixture
 `{"objects": ["Order", "Line"], "id": "orders-model"}` as the selected
 FR-056 `ModelSelection`, using its identity from the parsed package;
-(2) select `quire.value.complete/v1` by a source profile and verify FR-110's
+(2) select `filament.value.complete/v1` by a source profile and verify FR-110's
 resolved identity in the checked package; (3) change only compile resource
 configuration and verify FR-036-AC-5 retains the provenance change without
 changing static meaning; (4) admit an FR-106 snapshot and invocation using
@@ -125,6 +125,6 @@ The executable trace is distributed across the tagged cases named in the
 FR-049 verification cells: value-shape and availability cases, graph identity
 cases in TC-129, owner-specific source/model/profile/configuration admission
 cases in TC-115, TC-138, TC-465 and TC-490, and protocol-slot short-circuit
-cases in `qsl-eval/tests/it/protocol_slots.rs`. These cases preserve their
+cases in `fsl-eval/tests/it/protocol_slots.rs`. These cases preserve their
 owning FR tags; TC-136 is the shared test-case classification, not a claim that
 one test function covers every owner.

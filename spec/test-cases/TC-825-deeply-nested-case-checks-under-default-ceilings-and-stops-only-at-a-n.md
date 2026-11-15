@@ -3,7 +3,7 @@ id: TC-825
 title: "Deeply nested case checks under default ceilings and stops only at a named ceiling"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-318
+  - target: ix://agent-ix/filament-spec-language/FR-318
     type: verifies
 ---
 # TC-825: Deeply nested case checks under default ceilings and stops only at a named ceiling

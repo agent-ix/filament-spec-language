@@ -3,7 +3,7 @@ id: TC-149
 title: "Preserve opaque trigger identity on the checked-package route"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-053, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-053, type: verifies }
 ---
 # TC-149: Preserve opaque trigger identity on the checked-package route
 
@@ -11,11 +11,11 @@ relationships:
 
 Verify FR-053-AC-7 to FR-053-AC-9 (with FR-044-AC-1, AC-2 and AC-8's identity
 rules) where the Layer-4 checked-package route accepts semantic-trigger
-identities. That is the evidence route, `qsl_eval::temporal::evidence`
+identities. That is the evidence route, `fsl_eval::temporal::evidence`
 (`EvidenceRequest`, `TriggerDelivery`, `SemanticTriggerIdentity`,
 `evaluate_temporal_evidence` and `activate`; FR-516, FR-524, FR-526), not
-`qsl_replay::spine::run_clause`, whose request has no trigger input. The observation owner supplies the
-expected opaque identities; QSL does not authenticate that owner or construct QProtocol's FR-479 binding.
+`fsl_replay::spine::run_clause`, whose request has no trigger input. The observation owner supplies the
+expected opaque identities; FSL does not authenticate that owner or construct QProtocol's FR-479 binding.
 
 Catches two triggers aliased because their receipts or payloads match, a
 duplicate delivery that creates a second instance, a same-identity delivery with
@@ -24,7 +24,7 @@ declaration position used as identity, an empty or missing identity accepted,
 and an identity with a version-like prefix translated to another one.
 
 Executable controls live in the module `checked_route_trigger` in
-`qsl-eval/tests/it`. Identities are opaque byte strings; the test
+`fsl-eval/tests/it`. Identities are opaque byte strings; the test
 compares bytes and never parses them.
 
 ## Test Procedure
@@ -49,4 +49,4 @@ activated `on each` by an event trigger carrying capture `amount`. Identities:
   subject, FR-044-AC-8 for the origin case).
 - Every invalid identity yields a typed outcome without an instance and without
   temporal evaluation.
-- Test code carries the tags FR-053-AC-7 to AC-9 and TC-149, in `qsl-eval`.
+- Test code carries the tags FR-053-AC-7 to AC-9 and TC-149, in `fsl-eval`.

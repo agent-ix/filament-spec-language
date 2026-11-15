@@ -3,25 +3,25 @@ id: FR-068
 title: "Split value::expression: checking moves to layer-3 check, evaluation stays at layer 5"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-009
+  - target: ix://agent-ix/filament-spec-language/US-009
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: traces_to
 ---
 # FR-068: Split value::expression: checking moves to layer-3 check, evaluation stays at layer 5
 
 ## Description
 
-ADR-011 §7.3 M-5 requires QSL to split `value::expression`: the checking half
+ADR-011 §7.3 M-5 requires FSL to split `value::expression`: the checking half
 moves to a new top-level layer-3 `check` module (S3), and the evaluation half
 stays in layer-5 `value::expression` (S6a). ADR-011 §6.2's module table names
 the move exactly: `value::expression::check`, `facts`, `termination` and `ir`
 move to `check` (`ir` is the checked expression output); the "check causes"
 content of `value::expression::refusal` moves to `check`, except the
 expression location (`Location`, `Origin`), which with `InputRefusal` is
-defined in the layer-SV leaf `quire-semantic-value` and shared with a
+defined in the layer-SV leaf `filament-semantic-value` and shared with a
 backend; and
 `value::expression::evaluate` and `CheckedPackage::call` stay at layer 5,
 unchanged in stage. The split is the whole point of this requirement: both
@@ -33,16 +33,16 @@ only on the original's absence.
 requirement) → M-2.** M-5 comes before M-2, not after; the ADR row's
 "after M-2 and M-3" is withdrawn by the ruling and is corrected in ADR-011 by
 PR #271, which this requirement does not duplicate or race. Both prerequisites
-— X-1 (the `quire-exact` extraction) and M-3a (the S2 `forms` core)
-— have landed: the `forms` core exists (the `qsl-forms` crate) and `LoweredSourceGraph` is absent from
+— X-1 (the `filament-exact` extraction) and M-3a (the S2 `forms` core)
+— have landed: the `forms` core exists (the `fsl-forms` crate) and `LoweredSourceGraph` is absent from
 `src/` repo-wide. This requirement does not depend on `semantic_value`, M-2's
 own module, in the *outbound* direction: verified at import level, file by
 file, over `refusal.rs`, `ir.rs`, `termination.rs` and `facts.rs` — every
-`use` resolves to a K-designated sibling, an F module, `quire_exact`, `std`,
+`use` resolves to a K-designated sibling, an F module, `filament_exact`, `std`,
 or intra-`expression`. `check.rs` additionally imports nine further
 K-designated `value::` siblings (`collection`, `comparison`, `composite`,
 `decimal`, `equality`, `ieee`, `node`, `numeric`, `rational`) that X-1 has not
-yet physically relocated into `quire-exact`, and `check.rs:15,20`
+yet physically relocated into `filament-exact`, and `check.rs:15,20`
 (`super::super::enumeration::{EnumDeclaration, EnumValue}` and
 `super::super::quantity::{check_comparable, result_unit, UnitOperation}`) is
 the sole non-K exception; none of these is a blocker (see Behavior,
@@ -85,14 +85,14 @@ retired. `check` is bounded by a module-level layer rule instead (Behavior,
 
 The PR #282 review ruling that kept `check` from importing
 `value::text::TextType` is superseded. `check` imports `TextType` from
-`quire_exact`, and the rule does not bound which kernel items `check`
+`filament_exact`, and the rule does not bound which kernel items `check`
 imports.
 
-The layer rule is a source-scan gate. Since the `qsl-semantics` extraction
+The layer rule is a source-scan gate. Since the `fsl-semantics` extraction
 (ADR-011 §6.1 crate map, §7.3 X-6), Cargo's dependency graph enforces the
 direction between crates: `check` cannot import a later layer's module, since
-every such module is in a crate that depends on `qsl-semantics`. The scan stays
-for the order inside `qsl-semantics`, which Cargo does not see.
+every such module is in a crate that depends on `fsl-semantics`. The scan stays
+for the order inside `fsl-semantics`, which Cargo does not see.
 
 **The *inbound* direction was not checked by the QSL-139 ruling, and it matters
 just as much: `model` imports symbols this requirement relocates.** The
@@ -137,9 +137,9 @@ that inconsistency is recorded, not resolved, here.
   accessors; `value::expression` names the type through one `pub use` and
   implements `call` over those accessors, so
   `value::expression::CheckedPackage::call` is the contract, not a second
-  type. (§4 as amended: once `CheckedPackage` is in `qsl-package`, the
+  type. (§4 as amended: once `CheckedPackage` is in `fsl-package`, the
   `pub use` is a root-crate re-export of a moved item, so it is deleted and
-  callers name `qsl_package::CheckedPackage`.) §4 decides this mechanism only, not which layer owns `CheckedPackage`:
+  callers name `fsl_package::CheckedPackage`.) §4 decides this mechanism only, not which layer owns `CheckedPackage`:
   §4's own text names `package` (layer 4) as the S4 type's owner, while this
   requirement places `CheckedPackage`/`CheckedExpression`/`CheckedFunction` in
   `check` (layer 3) instead. This requirement applies §4's mechanism (private
@@ -161,8 +161,8 @@ that inconsistency is recorded, not resolved, here.
 
 ## Outputs
 
-- A top-level `check` module of the layer-3 crate `qsl-semantics`
-  (`qsl-semantics/src/check/`, declared in `qsl-semantics/src/lib.rs` beside
+- A top-level `check` module of the layer-3 crate `fsl-semantics`
+  (`fsl-semantics/src/check/`, declared in `fsl-semantics/src/lib.rs` beside
   `family`, `library`, `model` and `value`) at the layer-3 position ADR-011
   §6.1 assigns it, holding: `check.rs`, `facts.rs`, `ir.rs`, `termination.rs`
   (each moved as a whole module, unchanged in file boundary); `family.rs`'s
@@ -189,10 +189,10 @@ that inconsistency is recorded, not resolved, here.
   their constructors private to `check` (ADR-011 §4). The expression
   location (`Location`, `Origin`) and `CheckMode`, the parameter type of the
   three `check_*_expression` methods, are defined in the layer-SV leaf
-  `quire-semantic-value` (`location` and `checking`), which `check` imports;
+  `filament-semantic-value` (`location` and `checking`), which `check` imports;
   none of them is defined in `value::expression`.
 - `value::expression` (layer 5) retaining exactly: `evaluate.rs`;
-  `input_refusal_code`, which maps `quire-semantic-value`'s `InputRefusal` to
+  `input_refusal_code`, which maps `filament-semantic-value`'s `InputRefusal` to
   the catalog `Code` beside `CheckedPackage::call`'s admission code;
   `CheckedPackage::call`, `CheckedPackage::evaluate` and the argument-admission
   logic (today's `CheckedPackage::validate`), rewritten to operate over
@@ -296,19 +296,19 @@ slots, parameters, scope, dispatch tables): ADR-011 §4 leaves `package`'s own
 accessor list equally unitemized, and this requirement follows the same
 precedent rather than inventing a stricter one.
 
-### The refusal split: check causes in `check`; the shared vocabulary in `quire-semantic-value`
+### The refusal split: check causes in `check`; the shared vocabulary in `filament-semantic-value`
 
 The nine check-cause types (`CheckCause`, `CheckRefusal`, `Obligation`,
 `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`,
 `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `ProvedInterval`) SHALL
 be defined in `check`. `WrongSnapshotCause`, the runtime snapshot cause that
 `CheckCause` and the evaluator both name, SHALL be defined in
-`quire-semantic-value`'s `call` module (FR-401 S1). The expression location
+`filament-semantic-value`'s `call` module (FR-401 S1). The expression location
 (`Location`, `Origin`) locates a check cause, an evaluation outcome and a
 loss record alike, so it SHALL be defined in the layer-SV leaf
-`quire-semantic-value` (ADR-011 §6.1), in its `location` module.
+`filament-semantic-value` (ADR-011 §6.1), in its `location` module.
 `InputRefusal`, the refusal argument admission makes before S6a, SHALL be
-defined in `quire-semantic-value`'s `call` module, naming its catalog code as
+defined in `filament-semantic-value`'s `call` module, naming its catalog code as
 a string and its closed cause tag. `value::expression` SHALL map it to the
 catalog `Code` enum (`input_refusal_code`) beside `CheckedPackage::call`'s and
 `CheckedPackage::evaluate`'s admission step. `check` SHALL NOT define
@@ -324,13 +324,13 @@ module not on it fails even when the module is not on the forbidden list.
 
 `check` MAY import:
 
-- K: `quire_exact`.
-- SV: `quire_semantic_value` (the shared leaf ADR-011 §6.1 places between
+- K: `filament_exact`.
+- SV: `filament_semantic_value` (the shared leaf ADR-011 §6.1 places between
   K and layer 3: `semantic_node`'s refusal vocabulary, `stop`, `quantity`,
   `unit`'s and `enumeration`'s runtime halves, `declaration` (the
   declared-type registry, `TypeEnvironment` and `ObjectTypeDeclaration`)
   and `containment`).
-- F: `qsl_foundation`.
+- F: `fsl_foundation`.
 - Layer 2: `forms`.
 - Layer 3 before `check` core, per ADR-011 §6.1's order `semantic_value <
   model < library < check core`:
@@ -350,11 +350,11 @@ module not on it fails even when the module is not on the forbidden list.
   outcome type ADR-011 §6.1 lists in `check` core; ADR-012 §2 defines the
   contract).
 - There is no `value` K-copy module: every §6.2 kernel-row type and
-  operation `check` needs is reached through `quire_exact`.
+  operation `check` needs is reached through `filament_exact`.
 
 `check` MUST NOT import any later layer:
 
-- layer 4: `package` (the crate `qsl-package`);
+- layer 4: `package` (the crate `fsl-package`);
 - layer 5: `value::expression`;
 - R: `route`;
 - layer 6: `replay`;
@@ -364,7 +364,7 @@ A `value` submodule this section does not name is unlisted, and an import into i
 ADR-011 §6.2 and an edit to this list.
 
 **Scope: shipped code.** The rule covers every `use` line and every
-`crate::`-rooted path outside `#[cfg(test)]` items under `qsl-semantics/src/check/`. A
+`crate::`-rooted path outside `#[cfg(test)]` items under `fsl-semantics/src/check/`. A
 fully-qualified inline path is covered as well as a `use` line, because an
 inline path into a later layer is the same edge. This includes a `use`
 inside a function body, a path written inside a macro invocation's
@@ -373,11 +373,11 @@ crate::value;` followed by `value::Presence`). A `use` that binds a module
 by name (`use crate::library;`) is classified on that module. A
 `super::` or `self::` path is resolved relative to its file before it is
 classified. The rule
-classifies this crate's own modules and the workspace crates `quire_exact`,
-`quire_semantic_value` and `qsl_foundation`; `std` and third-party crates (`serde_json`,
+classifies this crate's own modules and the workspace crates `filament_exact`,
+`filament_semantic_value` and `fsl_foundation`; `std` and third-party crates (`serde_json`,
 `ix_trace_rs`) are governed by the Cargo manifest, not by this rule. Test code is excluded
 because the Cargo dependency graph that replaces this gate governs shipped
-code only; the S3-to-S4 handoff is tested in `qsl-package`, which links a
+code only; the S3-to-S4 handoff is tested in `fsl-package`, which links a
 `CheckedPackage` from a checked graph. FR-068-AC-3's `value::expression` prohibition
 is separate and still covers test code.
 
@@ -461,7 +461,7 @@ exact thirteen names.
 **`src/value/outcome.rs` no longer exists (it has been deleted); this
 section describes a since-completed step, not a live edge.** At the time
 this requirement was implemented, `src/value/outcome.rs` — a `value` kernel
-submodule the module table assigned to K (`quire-exact`) — imported
+submodule the module table assigned to K (`filament-exact`) — imported
 `WrongSnapshotCause` from `super::expression`. ADR-011 §6.1 named this exact
 edge (`value/outcome.rs:10,13`) among those "X-1 must cut" so that K stays a
 leaf; X-1 was reported landed while this one edge remained present on disk
@@ -470,7 +470,7 @@ defining module from `value::expression` to `check`; `value::outcome.rs`'s
 import was updated to name the new module (`crate::check::WrongSnapshotCause`)
 so the crate kept compiling, and this requirement made no other change to
 `value::outcome.rs`, per its original SHALL NOT. The K→3 direction of the edge was later cut
-outright, by deleting `value::outcome.rs` and repointing every caller onto `quire_exact::{Outcome, Refusal, Undefined}`
+outright, by deleting `value::outcome.rs` and repointing every caller onto `filament_exact::{Outcome, Refusal, Undefined}`
 directly — the removal FR-068 itself was scoped not to attempt (see
 FR-068-AC-8, retired).
 
@@ -480,8 +480,8 @@ FR-068-AC-8, retired).
 | --- | --- | --- | --- |
 | FR-068-CON-1 | This requirement's implementation moves `check.rs`, `facts.rs`, `ir.rs`, `termination.rs`, `refusal.rs`'s check-cause content, and `value::expression::mod.rs`'s checking methods and checked-output types into a new `check` module in the same change that removes them from `value::expression`; no change under this requirement leaves a moved item defined in both modules at once, and no change leaves `value::expression` still declaring `mod check;`, `mod facts;`, `mod ir;` or `mod termination;`. | Process | Test (TC-170) |
 | FR-068-CON-2 | This requirement's scope is exactly ADR-011 §7.3 M-5: the checking/evaluation split of `value::expression`. It does not implement M-2 (moving `model::checked_dispatch` or `model::conformance::check_field_refinement_obligation` into `check`, or relabeling `enumeration`/`quantity`/`text`/siblings as `semantic_value`), M-4 (the S4 v2 emitter in `package`), or M-2c (relocating the `value` K copies and `semantic_value` modules `check` imports from). A change under this requirement that performs any of these adjacent moves exceeds this requirement's scope even where the ADR eventually requires them. **Scoping note (FR-074, ADR-011 §7.3 M-2, 2026-09-21): this constraint bound FR-068's *own* implementation only, not the ecosystem's ability to do M-2 later under its own requirement.** FR-074 has since implemented M-2 (moving both named items into `check`); this constraint's "does not implement M-2" clause remains an accurate historical statement about FR-068's own change, and was never a prohibition on a later, separately-specified requirement doing that work. | Design | Inspection |
-| FR-068-CON-3 | Each moved item is defined exactly once. `check` defines `CheckCause`, `CheckRefusal`, `Obligation`, `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`, `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `ProvedInterval`, `CheckedGraph`, `CheckedExpression`, `CheckedFunction`, `PackageDeclarations`, `DispatchOperation` and `EnumBinding`. The layer-SV leaf `quire-semantic-value`, in its own repository `agent-ix/quire-semantic-value` so that QSL defines none of these, defines `Location` and `Origin` (`location`), `WrongSnapshotCause` (`call`), and `CheckingLimits`, `DEFAULT_CHECKING_NODES`, `DEFAULT_CHECKING_INPUT_BYTES`, `DEFAULT_CHECKING_WORK_BUDGET` and `CheckMode` (`checking`). No variant or field of any of them differs from its pre-move definition. The only visibility changes are a constructor private to `check` where this requirement's Behavior section requires one, and `Location::child`, which is public so `check` calls it across the crate boundary. | Design | Test (TC-170) |
-| FR-068-CON-4 | `value::mod.rs` (and any other re-exporter **other than `model/checked_dispatch.rs` and `model/conformance.rs`, which FR-068-CON-5 governs instead**) may resolve `crate::value::{CheckCause, CheckRefusal, ...}` by re-exporting from `crate::check` (for the check-cause types) or from `crate::value::expression` (for `Evaluation`, `CallFailure` and `input_refusal_code`). `InputRefusal`, `LocatedLoss` and `ValueLoss` are re-exported by neither: callers name them at `quire_semantic_value::call` and `quire_semantic_value::loss`. This is `value`'s own aggregation path, the same pattern FR-067's `forms` move follows, and is not a compatibility shim: no old defining location (`value::expression::refusal`, `value::expression::check`) remains reachable. | Design | Test (TC-173) |
+| FR-068-CON-3 | Each moved item is defined exactly once. `check` defines `CheckCause`, `CheckRefusal`, `Obligation`, `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`, `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `ProvedInterval`, `CheckedGraph`, `CheckedExpression`, `CheckedFunction`, `PackageDeclarations`, `DispatchOperation` and `EnumBinding`. The layer-SV leaf `filament-semantic-value`, in its own repository `agent-ix/filament-semantic-value` so that FSL defines none of these, defines `Location` and `Origin` (`location`), `WrongSnapshotCause` (`call`), and `CheckingLimits`, `DEFAULT_CHECKING_NODES`, `DEFAULT_CHECKING_INPUT_BYTES`, `DEFAULT_CHECKING_WORK_BUDGET` and `CheckMode` (`checking`). No variant or field of any of them differs from its pre-move definition. The only visibility changes are a constructor private to `check` where this requirement's Behavior section requires one, and `Location::child`, which is public so `check` calls it across the crate boundary. | Design | Test (TC-170) |
+| FR-068-CON-4 | `value::mod.rs` (and any other re-exporter **other than `model/checked_dispatch.rs` and `model/conformance.rs`, which FR-068-CON-5 governs instead**) may resolve `crate::value::{CheckCause, CheckRefusal, ...}` by re-exporting from `crate::check` (for the check-cause types) or from `crate::value::expression` (for `Evaluation`, `CallFailure` and `input_refusal_code`). `InputRefusal`, `LocatedLoss` and `ValueLoss` are re-exported by neither: callers name them at `filament_semantic_value::call` and `filament_semantic_value::loss`. This is `value`'s own aggregation path, the same pattern FR-067's `forms` move follows, and is not a compatibility shim: no old defining location (`value::expression::refusal`, `value::expression::check`) remains reachable. | Design | Test (TC-173) |
 | FR-068-CON-5 | **RETIRED by FR-074 (ADR-011 §7.3 M-2, 2026-09-21).** `model/checked_dispatch.rs` and `model/conformance.rs` import their thirteen relocated names (see Behavior, "The interim `model` → `check` edge") directly from `crate::check`, never through `crate::value`'s aggregate re-export, so the interim `model` → `check` edge stays visible to a textual scan of `model`'s own `use` lines. This is the one place FR-068-CON-4's aggregation-continues allowance does NOT apply, precisely because applying it here would hide a genuinely forbidden-until-M-2 reverse edge behind `value`'s indirection. This constraint described the interim edge's own shape while it existed; FR-074 closed the edge by moving both files' relocated code into `check` itself, so there is no longer a `model/checked_dispatch.rs` or a `model/conformance.rs` importing from `crate::check` at all (FR-074-AC-3: the edge is bounded to zero files and zero names, not thirteen). This constraint is false by design from FR-074 onward and is retired, not amended: see FR-074-AC-3 and TC-262, its closer. | Design | Test (TC-176), superseded by TC-262 |
 
 ## Acceptance Criteria
@@ -490,14 +490,14 @@ FR-068-AC-8, retired).
 | --- | --- | --- |
 | FR-068-AC-1 | After this requirement's implementation, `check.rs`, `facts.rs`, `ir.rs` and `termination.rs` are defined exactly once, under `check`, and `value::expression` no longer declares `mod check;`, `mod facts;`, `mod ir;` or `mod termination;`. A module-tree scan of the compiled crate confirms both halves: presence under `check`, and absence of the four module declarations under `value::expression`. This criterion fails on a copy that adds the four modules under `check` while leaving `value::expression`'s original `mod` declarations in place, not only on their outright absence from the tree. | Test (TC-170) |
 | FR-068-AC-2 | `CheckedPackage`, `CheckedExpression` and `CheckedFunction` are defined exactly once, in `check`, and at their `check`-module definition site none of their fields, and neither struct's constructor, carries any visibility qualifier — not `pub`, not `pub(crate)`, not `pub(super)` or `pub(in path)`; the only `pub` surface these three types expose is `check`'s own named accessor methods. This criterion is verified by Inspection, not by a compiled negative test: `compile_fail` is a doctest-only attribute in this crate (every existing `compile_fail` site — `src/package.rs:188`, `src/temporal/mapping.rs:125` and the rest — is a doctest), there is no `trybuild`/`compiletest` dependency to run a compile_fail check from inside the crate instead, and a doctest links the crate externally — the same external vantage `tests/` has, from which these three types' fields are already unconstructible today (module-private, not even `pub(crate)`, at `value/expression/mod.rs:58-79` on the pre-move baseline) for a reason unrelated to this move; a doctest-based before/after comparison would therefore pass identically pre- and post-move and could not demonstrate the flip a Rust-internal (descendant-to-sibling) visibility change produces. A direct visibility scan of the three types' declarations, together with confirming `value::expression`'s `CheckedPackage::call`, `CheckedPackage::evaluate` and the argument-admission logic reach these types' state only through `check`'s named accessor methods — never through a re-exported field or a module-path trick — is this criterion's actual verification method. **Amended by FR-087 (owner ruling on QSL-158, 2026-09-21): `CheckedPackage` is relocated out of `check` into layer-4 `package`** (ADR-013 T-1; FR-087-AC-1 restates this criterion's privacy claim for `CheckedPackage` at its new site). This criterion continues to hold, and is not superseded, for `CheckedExpression` and `CheckedFunction`, which stay in `check` unchanged; it no longer applies to `CheckedPackage`, which this requirement's own text placed here as a real disagreement with ADR-011 §4 that the ruling resolved in §4/T-1's favor once `CheckedGraph` (`check`'s own S3 output, absent when this requirement was implemented) existed for `check` to return instead (see FR-087 Description, item 2). | Inspection (TC-171); superseded in part by FR-087-AC-1 for `CheckedPackage` |
-| FR-068-AC-3 | The compiled crate's real `use` lines — not a table in the ADR or a prose claim — show that no module under `check` imports anything at all from `value::expression`, and that `check` and the pre-existing `checking` module (`src/checking.rs` and `src/checking/`) remain two distinct modules with no content moved between them. A source scan of every `use` statement in every file under `qsl-semantics/src/check/`, resolved at the post-macro-expansion level, fails this criterion if any import resolves into any part of `value::expression` — `Machine`, `Callable`, `Evaluation`, `InputRefusal`, `LocatedLoss` and `ValueLoss` are illustrative examples of such an import, not an exhaustive deny-list to match textually against — or if `src/checking.rs` or any file under `src/checking/` gained, lost, or changed content as part of this change. `CheckMode` is not one of these examples: it is defined in the layer-SV leaf `quire-semantic-value` (`checking`, see Outputs and FR-068-CON-3), and `check` imports it from there. **Amended (X-7).** `value::expression` and `checking` are modules of the root crate `quire-spec-language`, which depends on `qsl-semantics`, where `check` is. Cargo refuses a normal or build dependency from `qsl-semantics` back to the root crate as a cycle, and TC-390's dependency check (`no_crate_below_layer_three_depends_on_the_check_core`) refuses a dev-dependency, which Cargo would accept. Together they enforce this criterion's import half: no file under `qsl-semantics/src/check/` can import either module, so the source scan described above could never fire and is deleted. The `src/checking/` unchanged-content half was a one-time check on the M-5 diff and is historical. | Test (TC-172, TC-390) |
-| FR-068-AC-4 | `check` defines the nine check-cause types (`CheckCause`, `CheckRefusal`, `Obligation`, `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`, `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `ProvedInterval`). The layer-SV leaf `quire-semantic-value` defines the expression location `Location` and `Origin` (`location`), the runtime snapshot cause `WrongSnapshotCause` (`call`), the call-admission refusal `InputRefusal` with its catalog code string and cause tag (`call`), and the loss records `ValueLoss` and `LocatedLoss` (`loss`). `value::expression` maps `InputRefusal` to the catalog `Code` (`input_refusal_code`) beside `CheckedPackage::call`'s and `CheckedPackage::evaluate`'s admission code. A type-definition scan over every scanned source tree confirms each name is defined exactly once, in its owning module. It fails if a check-cause type is left in `value::expression`, if any `quire-semantic-value` name is defined anywhere else, or if any name is defined twice. | Test (TC-173) |
+| FR-068-AC-3 | The compiled crate's real `use` lines — not a table in the ADR or a prose claim — show that no module under `check` imports anything at all from `value::expression`, and that `check` and the pre-existing `checking` module (`src/checking.rs` and `src/checking/`) remain two distinct modules with no content moved between them. A source scan of every `use` statement in every file under `fsl-semantics/src/check/`, resolved at the post-macro-expansion level, fails this criterion if any import resolves into any part of `value::expression` — `Machine`, `Callable`, `Evaluation`, `InputRefusal`, `LocatedLoss` and `ValueLoss` are illustrative examples of such an import, not an exhaustive deny-list to match textually against — or if `src/checking.rs` or any file under `src/checking/` gained, lost, or changed content as part of this change. `CheckMode` is not one of these examples: it is defined in the layer-SV leaf `filament-semantic-value` (`checking`, see Outputs and FR-068-CON-3), and `check` imports it from there. **Amended (X-7).** `value::expression` and `checking` are modules of the root crate `filament-spec-language`, which depends on `fsl-semantics`, where `check` is. Cargo refuses a normal or build dependency from `fsl-semantics` back to the root crate as a cycle, and TC-390's dependency check (`no_crate_below_layer_three_depends_on_the_check_core`) refuses a dev-dependency, which Cargo would accept. Together they enforce this criterion's import half: no file under `fsl-semantics/src/check/` can import either module, so the source scan described above could never fire and is deleted. The `src/checking/` unchanged-content half was a one-time check on the M-5 diff and is historical. | Test (TC-172, TC-390) |
+| FR-068-AC-4 | `check` defines the nine check-cause types (`CheckCause`, `CheckRefusal`, `Obligation`, `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`, `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `ProvedInterval`). The layer-SV leaf `filament-semantic-value` defines the expression location `Location` and `Origin` (`location`), the runtime snapshot cause `WrongSnapshotCause` (`call`), the call-admission refusal `InputRefusal` with its catalog code string and cause tag (`call`), and the loss records `ValueLoss` and `LocatedLoss` (`loss`). `value::expression` maps `InputRefusal` to the catalog `Code` (`input_refusal_code`) beside `CheckedPackage::call`'s and `CheckedPackage::evaluate`'s admission code. A type-definition scan over every scanned source tree confirms each name is defined exactly once, in its owning module. It fails if a check-cause type is left in `value::expression`, if any `filament-semantic-value` name is defined anywhere else, or if any name is defined twice. | Test (TC-173) |
 | FR-068-AC-5 | Given a domain package with at least one pair of functions that differ from each other in parameter count, slot count and dispatch-table membership, whose functions and dispatch tables `PackageDeclarations::check` (now in `check`) admits without refusal, calling each function's `CheckedPackage::call` (still in `value::expression`) with valid arguments through an unchanged object environment and meter produces the same `Evaluation` result — including the correct function's own `slots` count reflected in the result — the pre-move code produced for the identical inputs; given a package `PackageDeclarations::check` refuses, the same `CheckRefusal` set is produced before and after the move. The discriminating fixture (two functions differing in shape, not one) is required because this criterion's own named wrong implementation — an accessor returning a different function's `slots` — is unobservable with only one function or with functions of identical shape; a before/after regression test run against such a fixture, comparing results field for field, fails on a split whose module-shape criteria (AC-1 through AC-4) pass but whose accessor plumbing silently swapped which function's `slots`, `body`, or dispatch table feeds `call`, `evaluate` or argument validation. | Test (TC-174) |
-| FR-068-AC-6 | Every shipped (non-`#[cfg(test)]`) import under `qsl-semantics/src/check/` into this crate's own modules or the workspace crates `quire_exact`, `quire_semantic_value` and `qsl_foundation`, whether a `use` line or a `crate::`-rooted inline path, resolves into a module `check` MAY import (Behavior, "`check`'s import rule: modules by layer"): `quire_exact`; `quire_semantic_value`; `qsl_foundation`; `forms`; `check` and `family`; `model` and `value::model_query`; `library`; the §6.2 `semantic_value` modules `value::definition`, `value::enumeration`, `value::unit`, `value::semantic_node`, `value::environment_stage` and `value::member`. There is no `value` K-copy module; `check` reaches every kernel item through `quire_exact`. The bound is per module: any item of a permitted module may be imported. Every `value` import names its submodule (`crate::value::<submodule>::Name`), never `value`'s flat aggregate. No shipped import resolves into layer-4 `package` (the crate `qsl-package`), the root crate's SEAM-1 `package`, `value::expression`, `route`, `replay` or `lowering`: each is in a crate that depends on `qsl-semantics` (ADR-011 §7.3 X-6, X-7), so Cargo's dependency graph refuses the import. A scan of `qsl-semantics/src/check/` checks the order inside `qsl-semantics`, which Cargo does not see: it fails, naming file, line and resolved module, if a shipped import resolves into a module of `qsl-semantics` outside the permitted list or through `value`'s flat aggregate. It classifies a path rooted at `qsl_semantics` the same as a `crate::` path. **Amended by the layer-rule ruling (2026-09-22)**; the reasons are in Description, "Amendment (layer-rule ruling, 2026-09-22)". | Test (TC-175) |
+| FR-068-AC-6 | Every shipped (non-`#[cfg(test)]`) import under `fsl-semantics/src/check/` into this crate's own modules or the workspace crates `filament_exact`, `filament_semantic_value` and `fsl_foundation`, whether a `use` line or a `crate::`-rooted inline path, resolves into a module `check` MAY import (Behavior, "`check`'s import rule: modules by layer"): `filament_exact`; `filament_semantic_value`; `fsl_foundation`; `forms`; `check` and `family`; `model` and `value::model_query`; `library`; the §6.2 `semantic_value` modules `value::definition`, `value::enumeration`, `value::unit`, `value::semantic_node`, `value::environment_stage` and `value::member`. There is no `value` K-copy module; `check` reaches every kernel item through `filament_exact`. The bound is per module: any item of a permitted module may be imported. Every `value` import names its submodule (`crate::value::<submodule>::Name`), never `value`'s flat aggregate. No shipped import resolves into layer-4 `package` (the crate `fsl-package`), the root crate's SEAM-1 `package`, `value::expression`, `route`, `replay` or `lowering`: each is in a crate that depends on `fsl-semantics` (ADR-011 §7.3 X-6, X-7), so Cargo's dependency graph refuses the import. A scan of `fsl-semantics/src/check/` checks the order inside `fsl-semantics`, which Cargo does not see: it fails, naming file, line and resolved module, if a shipped import resolves into a module of `fsl-semantics` outside the permitted list or through `value`'s flat aggregate. It classifies a path rooted at `fsl_semantics` the same as a `crate::` path. **Amended by the layer-rule ruling (2026-09-22)**; the reasons are in Description, "Amendment (layer-rule ruling, 2026-09-22)". | Test (TC-175) |
 | FR-068-AC-7 | **RETIRED by FR-074 (ADR-011 §7.3 M-2, 2026-09-21).** After this requirement's implementation, `model::checked_dispatch` and `model::conformance::check_field_refinement_obligation` remain defined in `model`, unchanged, and are absent from `check`. A type/function-definition scan over `check` confirms neither symbol appears there; this criterion fails on an implementation that moves either one into `check` ahead of M-2, even if every other criterion in this requirement passes. This criterion asserted FR-068's own scope boundary (M-5 before M-2). FR-074 is M-2: both symbols are now defined in `check` and absent from `model`, the exact inverse of what this criterion required. This criterion is false by design from FR-074 onward and is retired, not amended: see FR-074-AC-1/FR-074-AC-2 and TC-261, its closer. | Test (TC-175), superseded by TC-261 |
-| FR-068-AC-8 | **RETIRED (2026-09-23): `value/outcome.rs` is deleted.** `value::outcome.rs`'s import of `WrongSnapshotCause` resolves to `crate::check::WrongSnapshotCause` after this requirement's implementation, and the crate compiles with this one import path updated and no other change to `value::outcome.rs`. This criterion was satisfied by the path update alone; it did not require, and a correct implementation did not attempt, removing the K→3 direction of this edge (ADR-011 §6.1's X-1 obligation). `value/outcome.rs` no longer exists: the module is deleted and every caller repointed onto `quire_exact::{Outcome, Refusal, Undefined}` directly (TC-390), so the file and the one import path this criterion named are both gone, not relocated. The criterion's claim was true when made and is now permanently unfalsifiable rather than false; it is retired, not amended, since there is no successor file or edge for it to describe. | Test (TC-173), retired |
+| FR-068-AC-8 | **RETIRED (2026-09-23): `value/outcome.rs` is deleted.** `value::outcome.rs`'s import of `WrongSnapshotCause` resolves to `crate::check::WrongSnapshotCause` after this requirement's implementation, and the crate compiles with this one import path updated and no other change to `value::outcome.rs`. This criterion was satisfied by the path update alone; it did not require, and a correct implementation did not attempt, removing the K→3 direction of this edge (ADR-011 §6.1's X-1 obligation). `value/outcome.rs` no longer exists: the module is deleted and every caller repointed onto `filament_exact::{Outcome, Refusal, Undefined}` directly (TC-390), so the file and the one import path this criterion named are both gone, not relocated. The criterion's claim was true when made and is now permanently unfalsifiable rather than false; it is retired, not amended, since there is no successor file or edge for it to describe. | Test (TC-173), retired |
 | FR-068-AC-9 | **RETIRED by FR-074 (ADR-011 §7.3 M-2, 2026-09-21).** The resolved import graph shows `model` → `check` bounded to exactly two files and exactly thirteen names: `model/checked_dispatch.rs` importing `DispatchCandidate`, `DispatchOperation`, `DispatchTable`, `PackageDeclarations` directly from `crate::check`, and `model/conformance.rs` importing `established_field_fact`, `Connective`, `Established`, `Location`, `Node`, `NodeKind`, `OrderedKind`, `Origin`, `ProvedInterval` directly from `crate::check` — neither file routed through `crate::value`'s aggregate re-export for these thirteen names. This criterion fails if a third `model` file gains a `check` import, if either named file's import list grows beyond its own name count (`checked_dispatch.rs`: four; `conformance.rs`: nine), or if either file reaches these names indirectly through `crate::value` instead of directly, since the indirect form would satisfy a textual `use`-line scan of `model` while hiding the edge from it — this criterion requires the resolved-level check to also hold, not only the textual one. FR-074 closed the edge this criterion bounded: `model/checked_dispatch.rs` and `model/conformance.rs` no longer exist as import sites for `crate::check` at all (the code that needed the import moved to `check` itself), so the resolved `model` → `check` edge is now bounded to zero files and zero names, not two and thirteen. This criterion is false by design from FR-074 onward and is retired, not amended: see FR-074-AC-3 and TC-262, its closer. | Test (TC-176), superseded by TC-262 |
-| FR-068-AC-10 | **RETIRED (ADR-011 §7.2, lead ruling R3 2026-09-23): the change removes `value::expression`'s `pub use crate::check::CheckedExpression;`.** `value::expression`'s own re-export of the relocated checked-output types is exactly `pub use crate::check::{CheckedPackage, CheckedExpression};` — a closed, two-name list naming `check` by its crate-absolute path (since `check` is a top-level sibling of `value`, not a name in scope by a bare `check::` path from inside `value::expression`), never a glob (`pub use crate::check::*;`) and never a third name. A source scan of `value::expression`'s `pub use crate::check::{...}` line fails this criterion if it names anything other than exactly `CheckedPackage` and `CheckedExpression`, if it is a glob import, or if it does not use the `crate::check` path. **Amended by FR-087 (owner ruling on QSL-158, 2026-09-21): the two-name re-export splits into two single-name re-exports from two different crate-absolute paths, because `CheckedPackage` no longer lives in `check`.** After FR-087, `value::expression` names `CheckedExpression` through `pub use crate::check::{CheckedExpression};` (this criterion, narrowed to one name) and `CheckedPackage` through `pub use crate::checked_package::CheckedPackage;` (layer-4 `package`'s interim module until X-7, ADR-011 §6.2; a new re-export, FR-087-AC-9's own closed-list assertion, not a third name added to this criterion's `crate::check` line). This criterion no longer governs `CheckedPackage`'s re-export path. `check` is in the `qsl-semantics` crate, and ADR-011 §7.2 ("The root crate re-exports no moved item") and the X-6 extraction's own acceptance criteria forbid the root crate re-exporting it; they are the later and more specific rules. `value::expression` now imports `CheckedExpression` from `crate::check` without re-exporting it, and every caller names it at `check::CheckedExpression`, its one public path. This criterion existed so callers could name the type; the direct path still does that. It is retired, not amended, because the re-export line it describes no longer exists. FR-087-AC-9's `CheckedPackage` re-export was not affected; it was later removed for the same reason. | Test (TC-172), retired |
+| FR-068-AC-10 | **RETIRED (ADR-011 §7.2, lead ruling R3 2026-09-23): the change removes `value::expression`'s `pub use crate::check::CheckedExpression;`.** `value::expression`'s own re-export of the relocated checked-output types is exactly `pub use crate::check::{CheckedPackage, CheckedExpression};` — a closed, two-name list naming `check` by its crate-absolute path (since `check` is a top-level sibling of `value`, not a name in scope by a bare `check::` path from inside `value::expression`), never a glob (`pub use crate::check::*;`) and never a third name. A source scan of `value::expression`'s `pub use crate::check::{...}` line fails this criterion if it names anything other than exactly `CheckedPackage` and `CheckedExpression`, if it is a glob import, or if it does not use the `crate::check` path. **Amended by FR-087 (owner ruling on QSL-158, 2026-09-21): the two-name re-export splits into two single-name re-exports from two different crate-absolute paths, because `CheckedPackage` no longer lives in `check`.** After FR-087, `value::expression` names `CheckedExpression` through `pub use crate::check::{CheckedExpression};` (this criterion, narrowed to one name) and `CheckedPackage` through `pub use crate::checked_package::CheckedPackage;` (layer-4 `package`'s interim module until X-7, ADR-011 §6.2; a new re-export, FR-087-AC-9's own closed-list assertion, not a third name added to this criterion's `crate::check` line). This criterion no longer governs `CheckedPackage`'s re-export path. `check` is in the `fsl-semantics` crate, and ADR-011 §7.2 ("The root crate re-exports no moved item") and the X-6 extraction's own acceptance criteria forbid the root crate re-exporting it; they are the later and more specific rules. `value::expression` now imports `CheckedExpression` from `crate::check` without re-exporting it, and every caller names it at `check::CheckedExpression`, its one public path. This criterion existed so callers could name the type; the direct path still does that. It is retired, not amended, because the re-export line it describes no longer exists. FR-087-AC-9's `CheckedPackage` re-export was not affected; it was later removed for the same reason. | Test (TC-172), retired |
 
 ## Dependencies
 
@@ -529,7 +529,7 @@ FR-068-AC-8, retired).
 - **Resolved (2026-09-23): `value::outcome.rs` is deleted, so
   the edge this question asked about no longer exists to be open or closed.**
   The module was removed entirely and every caller repointed onto
-  `quire_exact::{Outcome, Refusal, Undefined}` directly, which cuts the
+  `filament_exact::{Outcome, Refusal, Undefined}` directly, which cuts the
   edge's direction, not only its path — the question below, preserved for
   its reasoning, is answered: the X-1 successor's scope did cover this line.
 - **The `value::outcome.rs` → `WrongSnapshotCause` edge is still live on

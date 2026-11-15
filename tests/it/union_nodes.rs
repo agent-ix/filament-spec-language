@@ -4,23 +4,23 @@
 //! retained source, and its `case` arm's claim is a requested item of the
 //! emitted package.
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
+use fsl_foundation::bound::DomainKind;
+use fsl_foundation::{BackendId, Setting, SourceIdentity};
+use fsl_replay::spine::DependencyInput;
+use fsl_replay::{compile_package, ReplayLimits, StageLimits};
+use fsl_route::request::items_from_requirements;
+use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, Registry};
+use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
-use qsl_foundation::bound::DomainKind;
-use qsl_foundation::{BackendId, Setting, SourceIdentity};
-use qsl_replay::spine::DependencyInput;
-use qsl_replay::{compile_package, ReplayLimits, StageLimits};
-use qsl_route::request::items_from_requirements;
-use qsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, Registry};
-use qsl_semantics::check::Capability;
 use serde_json::Value;
 
 use crate::support::front_end::emitted;
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n\
     function area using v(s: Shape): Integer pure \
     { case s { Empty: 0; Circle(r): r; Rect(w, h): w * h; } }\n\
@@ -61,7 +61,7 @@ fn a_union_unit_recompiles_to_its_emitted_package() {
 
     let stages: StageLimits = [(Setting::S1InputBytes, 1 << 20)].into_iter().collect();
     let recompiled = compile_package(
-        qsl_replay::CompileUnit {
+        fsl_replay::CompileUnit {
             source: identity(),
             package_name: "union-nodes".to_owned(),
             path: "unit.native",
@@ -79,7 +79,7 @@ fn a_union_unit_recompiles_to_its_emitted_package() {
 /// TC-828 step 1: `area`'s one claim, the multiplication in the `Rect` arm,
 /// is a `value-validity` item of the emitted package, and the `case` node
 /// names it. The IR and CG arms that settle such an item `unsupported` are
-/// not part of this repository, so QSL's side is that it requests the item
+/// not part of this repository, so FSL's side is that it requests the item
 /// and records no settlement of its own.
 #[trace("FR-320-AC-3", "TC-828")]
 #[test]
@@ -93,7 +93,7 @@ fn a_claim_inside_a_case_arm_is_requested_as_a_value_validity_item() {
     )
     .expect("the unit compiles and emits");
     let mut wire: Value = serde_json::from_slice(original.package().bytes()).expect("a JSON wire");
-    qsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
         .expect("every operand slot names a row entry");
 
     let descriptor = BackendDescriptor::new(
@@ -108,15 +108,15 @@ fn a_claim_inside_a_case_arm_is_requested_as_a_value_validity_item() {
     registry.register(descriptor).expect("one registration");
 
     // The checked package the emission was written from.
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "unit.native",
         UNIT.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
-    let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let graph = qsl_semantics::check::PackageDeclarations::assemble(
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let graph = fsl_semantics::check::PackageDeclarations::assemble(
         parsed.source().reference().clone(),
         "union-nodes".to_string(),
         unit,
@@ -126,7 +126,7 @@ fn a_claim_inside_a_case_arm_is_requested_as_a_value_validity_item() {
     .expect("the unit assembles")
     .check(
         CheckMode::Linked,
-        quire_semantic_value::checking::CheckingLimits::default(),
+        filament_semantic_value::checking::CheckingLimits::default(),
     )
     .expect("the unit checks");
     let items = items_from_requirements(graph.requirements(), &registry, None);
@@ -135,7 +135,7 @@ fn a_claim_inside_a_case_arm_is_requested_as_a_value_validity_item() {
     };
     assert_eq!(item.kind(), Capability::ValueValidity);
 
-    let node = qsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
+    let node = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
         .expect("the emitted graph")
         .wire_value(item.node())
         .expect("the item's node is written to the package");

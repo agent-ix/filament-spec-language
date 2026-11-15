@@ -3,7 +3,7 @@ id: TC-226
 title: "Population admission distinguishes unknown closure from a genuine refusal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: verifies
 ---
 # TC-226: Population admission distinguishes unknown closure from a genuine refusal

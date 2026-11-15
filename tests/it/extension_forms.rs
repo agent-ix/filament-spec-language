@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A selected extension's declaration form checks against its typed-node
 //! schema and packages as an `extension`/`extension_form` node (FR-354
-//! "Admission" and "Emission"; TC-882 steps 1 to 3; QSpec FR-467, FR-469).
+//! "Admission" and "Emission"; TC-882 steps 1 to 3; FSpec FR-467, FR-469).
 use std::collections::BTreeSet;
 
-use ix_trace_rs::trace;
-use qsl_foundation::diagnostic::Code;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::{
+use filament_exact::Cancel;
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{
     admission_evidence, check, core_vocabulary, package, parse_selecting_extensions, select,
     AdmittedModels, CheckedUnit, CompileRefusal, DependencyInput, EmittedUnit, PackageLimits,
     ParseRequest, ProfileCatalogInput, SpineLimits,
 };
-use qsl_semantics::check::{CheckCause, ExtensionCause, NamedDeclaration};
-use qsl_semantics::library::bundle::{
+use fsl_semantics::check::{CheckCause, ExtensionCause, NamedDeclaration};
+use fsl_semantics::library::bundle::{
     Definition, DefinitionCatalog, DefinitionRole, PackageLimits as CatalogLimits, ReaderAuthority,
 };
-use quire_exact::Cancel;
+use ix_trace_rs::trace;
 use serde_json::Value;
 
-const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"quire.value.complete/v1\";\nprofile Retention = \"retention\";\n";
+const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\nprofile Retention = \"retention\";\n";
 const FORM: &str = "retention Audit { subject: \"audit\", days: 30 }";
 
 /// TC-882's `retention` extension whose node kind is `node_kind`, held after
@@ -87,7 +87,7 @@ fn compile_parts(
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let refusal = |failure| {
-        qsl_replay::spine::refusal_or_fault(failure)
+        fsl_replay::spine::refusal_or_fault(failure)
             .unwrap_or_else(|fault| panic!("the front end faulted: {fault:?}"))
     };
     let source_identity = identity();
@@ -108,7 +108,7 @@ fn compile_parts(
     .into_value();
     let models = select(
         &parsed,
-        &qsl_semantics::model::intake::PackageInput::default(),
+        &fsl_semantics::model::intake::PackageInput::default(),
         limits.model,
         &cancel,
     )
@@ -449,7 +449,7 @@ fn compile_two_units(
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let refusal = |failure| {
-        qsl_replay::spine::refusal_or_fault(failure)
+        fsl_replay::spine::refusal_or_fault(failure)
             .unwrap_or_else(|fault| panic!("the front end faulted: {fault:?}"))
     };
     let identities = [
@@ -477,17 +477,17 @@ fn compile_two_units(
         );
     }
     let dependencies = DependencyInput::default();
-    let admitted = qsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies)?;
-    let models = qsl_replay::spine::select_units(
+    let admitted = fsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies)?;
+    let models = fsl_replay::spine::select_units(
         &admitted,
-        &qsl_semantics::model::intake::PackageInput::default(),
+        &fsl_semantics::model::intake::PackageInput::default(),
         limits.model,
         limits.source,
         &cancel,
     )
     .map_err(refusal)?
     .into_value();
-    qsl_replay::spine::check_units(
+    fsl_replay::spine::check_units(
         &admitted,
         "extension-forms".to_owned(),
         &models,
@@ -529,11 +529,11 @@ fn compile_with_library(library: &str) -> Result<(), Box<CompileRefusal>> {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let refusal = |failure| {
-        qsl_replay::spine::refusal_or_fault(failure)
+        fsl_replay::spine::refusal_or_fault(failure)
             .unwrap_or_else(|fault| panic!("the front end faulted: {fault:?}"))
     };
     let catalog = held("retention");
-    let dependencies = DependencyInput::new([qsl_replay::spine::SuppliedLibrary {
+    let dependencies = DependencyInput::new([fsl_replay::spine::SuppliedLibrary {
         identity: "test/lib".to_owned(),
         source: SourceIdentity::new("test", "extension-forms:lib"),
         path: "lib.native".to_owned(),
@@ -542,7 +542,7 @@ fn compile_with_library(library: &str) -> Result<(), Box<CompileRefusal>> {
     .expect("the library is supplied once");
     let identity = identity();
     let root = format!("{HEADER}import \"test/lib\" as l;\nrecord W {{ lo: Integer; }}\n");
-    let parsed = qsl_replay::spine::parse(
+    let parsed = fsl_replay::spine::parse(
         &ParseRequest {
             source: &identity,
             path: "unit.native",
@@ -555,13 +555,13 @@ fn compile_with_library(library: &str) -> Result<(), Box<CompileRefusal>> {
     .into_value();
     let models = select(
         &parsed,
-        &qsl_semantics::model::intake::PackageInput::default(),
+        &fsl_semantics::model::intake::PackageInput::default(),
         limits.model,
         &cancel,
     )
     .map_err(refusal)?
     .into_value();
-    qsl_replay::spine::check_with_profile_catalog(
+    fsl_replay::spine::check_with_profile_catalog(
         &parsed,
         "extension-forms".to_owned(),
         &models,
@@ -575,7 +575,7 @@ fn compile_with_library(library: &str) -> Result<(), Box<CompileRefusal>> {
     )
     .map(|_| ())
     .map_err(|failure| match failure {
-        qsl_replay::spine::ProfileCheckFailure::Check { failure, .. } => refusal(failure),
+        fsl_replay::spine::ProfileCheckFailure::Check { failure, .. } => refusal(failure),
         other => panic!("expected a check failure, got {other:?}"),
     })
 }
@@ -615,7 +615,7 @@ fn extension_rows_end_the_lock_ascending_by_identity() {
     .unwrap();
     let source = format!(
         "{}profile B = \"ext.b\";\nprofile A = \"ext.a\";\nrecord Window {{ lo: Integer; }}\n",
-        "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"quire.value.complete/v1\";\n"
+        "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n"
     );
     let emitted = compile_source(&catalog, &source).expect("the unit compiles");
     let wire = wire(&emitted);
@@ -638,7 +638,7 @@ fn extension_rows_end_the_lock_ascending_by_identity() {
 }
 
 const EXTENSION_HEADER: &str =
-    "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"quire.value.complete/v1\";\n";
+    "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n";
 
 #[trace("TC-490", "FR-110-AC-15")]
 #[test]
@@ -958,12 +958,12 @@ fn refusal_cause_first(refusal: &CompileRefusal) -> &ExtensionCause {
 #[test]
 fn the_core_vocabulary_holds_every_keyword_s2_dispatches_on_and_every_node_tag() {
     let vocabulary = core_vocabulary();
-    let keywords: Vec<_> = qsl_forms::leading_keywords().collect();
+    let keywords: Vec<_> = fsl_forms::leading_keywords().collect();
     assert!(!keywords.is_empty());
     for keyword in keywords {
         assert!(vocabulary.contains_keyword(keyword), "`{keyword}`");
     }
-    for tag in qsl_semantics::check::NodeTag::ALL {
+    for tag in fsl_semantics::check::NodeTag::ALL {
         assert!(
             vocabulary.contains_node_kind(tag.as_str()),
             "`{}`",
@@ -985,7 +985,7 @@ fn an_extension_keyword_equal_to_a_core_leading_keyword_refuses_conflicting_defi
 #[trace("TC-884", "FR-354-AC-5")]
 #[test]
 fn the_package_reads_back_under_admission_evidence_and_not_without_the_definition() {
-    use quire_contract_model::{
+    use filament_contract_model::{
         read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
         CheckedPackageReadLimits, CheckedPackageRefusalCode,
     };
@@ -997,7 +997,7 @@ fn the_package_reads_back_under_admission_evidence_and_not_without_the_definitio
         &checked,
         &emitted,
         SpineLimits::default().imports,
-        qsl_package::EmitLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
     )
     .expect("the admission evidence assembles");
     let read = read_checked_package(bytes, CheckedPackageReadLimits::bounded(), &evidence);
@@ -1046,7 +1046,7 @@ fn the_package_reads_back_under_admission_evidence_and_not_without_the_definitio
 #[trace("TC-884", "FR-354-AC-5")]
 #[test]
 fn a_unit_selecting_no_extension_has_one_identity_over_catalogs_with_and_without_it() {
-    let source = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"quire.value.complete/v1\";\nrecord Window { lo: Integer; }\n";
+    let source = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\nrecord Window { lo: Integer; }\n";
     let with = compile_source(&held("retention"), source).expect("compiles over the held catalog");
     let without = compile_source(&DefinitionCatalog::new(Vec::new()).unwrap(), source)
         .expect("compiles over an empty catalog");

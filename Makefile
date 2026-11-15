@@ -21,14 +21,14 @@ check-spec-validation:
 # modules must fail with the CLI's configuration diagnostic instead.
 
 # QSL#214 (FR-063-AC-5): demonstrated on every full-gate run, not only when
-# run by hand. Runs three normal builds (the root crate, qsl-route and
-# qsl-eval) and five probe builds (qsl-semantics, the root crate, qsl-route,
-# qsl-eval and qsl-replay under `RUSTFLAGS=--cfg seam_probe`) on their own, independent
+# run by hand. Runs three normal builds (the root crate, fsl-route and
+# fsl-eval) and five probe builds (fsl-semantics, the root crate, fsl-route,
+# fsl-eval and fsl-replay under `RUSTFLAGS=--cfg seam_probe`) on their own, independent
 # of whatever feature set the caller's own `cargo build`/`clippy` steps used.
 seam-probe:
 	cargo run --package xtask -- seam-probe
 
-# QSL#214 (FR-064): scans the QSL crates' non-test source for a
+# QSL#214 (FR-064): scans the FSL crates' non-test source for a
 # string comparison or string `match` outside a `#[string_edge]`-marked
 # function. Part of `ci:` -- the lint gate FR-064 requires it to run in.
 string-edge:
@@ -44,7 +44,7 @@ pre-push:
 	cargo run --locked --package xtask -- string-edge
 
 # FR-080-AC-3: scans the #185 registry crate (every file under
-# qsl-route/src) for a static, OnceLock or thread_local! item -- ADR-012
+# fsl-route/src) for a static, OnceLock or thread_local! item -- ADR-012
 # §5.3's registry evidence requires the registry stay an ordinary value,
 # never ambient state.
 route-lint:
@@ -56,7 +56,7 @@ route-lint:
 checked-input:
 	cargo run --package xtask -- checked-input
 
-# QSL-608 (FR-272): every `/// quire:canonical` type has one definition across
+# QSL-608 (FR-272): every `/// filament:canonical` type has one definition across
 # the workspace's dependency graph. Part of `ci:`.
 canonical-types:
 	cargo run --locked --package xtask -- canonical-types
@@ -93,7 +93,7 @@ qualify:
 # (deny.toml), so a future contributor cannot repopulate the registry through
 # a link-time/plugin-discovery mechanism instead of the ordinary value FR-075
 # requires. ADR-013 §2: deny.toml's `quire-canonical` entry denies a second
-# copy of QSL's one RFC 8785 implementation. The recipe runs with
+# copy of FSL's one RFC 8785 implementation. The recipe runs with
 # `--workspace`, so both checks cover every workspace crate, not only the
 # root package's graph. Scoped to `check bans` -- deny.toml configures no
 # license or advisory policy.
@@ -106,7 +106,7 @@ qualify:
 # the three banned registry-discovery crates (PR #305 review round 2,
 # finding 4). There is no `SKIP_CARGO_DENY`-style opt-out.
 #
-# The `cargo-deny`-backed trigger test in `qsl-route/tests/it/route_registry.rs`
+# The `cargo-deny`-backed trigger test in `fsl-route/tests/it/route_registry.rs`
 # (`cargo_deny_bans_the_three_registry_crates`) still skips, rather than
 # fails, when the binary is absent: it is a network/tool test exercising the
 # same binary this target already requires, so this target failing first is
@@ -145,15 +145,15 @@ cargo-deny-bans:
 # =============================================================================
 
 SIBLINGS ?= $(shell cd "$$(git rev-parse --path-format=absolute --git-common-dir)/../.." && pwd -P)
-ifeq ($(origin QSPEC_DIR),undefined)
-QSPEC_DIR := $(SIBLINGS)/quire-specification
+ifeq ($(origin FSPEC_DIR),undefined)
+FSPEC_DIR := $(SIBLINGS)/filament-specification
 endif
 # Freeze the raw caller value before Make can expand literal '$' path bytes.
 # `override` and `export` stay separate statements: GNU Make 3.81 (macOS) turns a
 # combined `override export V :=` into a recursive variable that expands the `$`.
-override QSPEC_DIR := $(value QSPEC_DIR)
-export QSPEC_DIR
-LOCAL_PATCHES ?= quire-contract-ir:quire-contract-model:crates/quire-contract-model \
+override FSPEC_DIR := $(value FSPEC_DIR)
+export FSPEC_DIR
+LOCAL_PATCHES ?= filament-contract-ir:filament-contract-model:crates/filament-contract-model \
 	quire-canonical:quire-canonical:. \
 	ix-trace-rs:ix-trace-rs:.
 
@@ -200,20 +200,20 @@ use-remote:
 	rm -f .cargo/config.toml
 	@if [ -f .cargo/Cargo.lock.pre-local ]; then mv .cargo/Cargo.lock.pre-local Cargo.lock; echo "restored Cargo.lock from the pre-local snapshot"; fi
 
-# QSL #154: default-feature build of `--all-targets` (including `tests/`) is
+# FSL #154: default-feature build of `--all-targets` (including `tests/`) is
 # its own gate, separate from the `--all-features` one below.
 #
 # A workspace-wide build unifies features across every package, dev-
-# dependencies included. `quire-spec-language`'s dev-dependency turns on
-# `qsl-semantics/test-support`, `qsl-forms`'s turns on
-# `qsl-cst/test-support`, and several crates' turn on
-# `quire-exact/test-support` (the charge log, from the `quire-exact`
+# dependencies included. `filament-spec-language`'s dev-dependency turns on
+# `fsl-semantics/test-support`, `fsl-forms`'s turns on
+# `fsl-cst/test-support`, and several crates' turn on
+# `filament-exact/test-support` (the charge log, from the `filament-exact`
 # repository), so `--workspace` builds those crates with `test-support` on
 # even here. The `-p` runs below build each crate alone, with the feature
 # off: they lint the `not(feature = "test-support")` code paths under
 # `-D warnings`, and check that the modules of each crate's own `tests/it`
 # not gated on the feature compile and pass without it. These are the only
-# two workspace crates with a `test-support` feature; `quire-exact`'s own
+# two workspace crates with a `test-support` feature; `filament-exact`'s own
 # default-feature gate runs in its repository.
 # Explicit children keep feature-lane executables separate even on warm runs.
 # Every command receives its lane's directory; tooling outside these lanes
@@ -233,10 +233,10 @@ ci-default-features:
 	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo fmt --all -- --check
 	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo clippy --locked --workspace --all-targets -- -D warnings
 	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo run --locked --package xtask -- test-suites default-workspace --locked --workspace
-	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo clippy --locked -p qsl-semantics --all-targets -- -D warnings
-	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo run --locked --package xtask -- test-suites default-qsl-semantics --locked -p qsl-semantics
-	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo clippy --locked -p qsl-cst --all-targets -- -D warnings
-	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo run --locked --package xtask -- test-suites default-qsl-cst --locked -p qsl-cst
+	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo clippy --locked -p fsl-semantics --all-targets -- -D warnings
+	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo run --locked --package xtask -- test-suites default-fsl-semantics --locked -p fsl-semantics
+	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo clippy --locked -p fsl-cst --all-targets -- -D warnings
+	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo run --locked --package xtask -- test-suites default-fsl-cst --locked -p fsl-cst
 
 ci-all-features:
 	CARGO_TARGET_DIR="$${CI_ALL_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-all-features}" cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -247,7 +247,7 @@ ci-all-features:
 # They run in the default lane's artifact directory with the same
 # `--workspace` feature selection as `ci-default-features`, so the test
 # executables that lane already built are reused. `--tests` selects the test
-# targets implicitly, so a target whose required features are off (qsl-source's
+# targets implicitly, so a target whose required features are off (fsl-source's
 # `it`) is skipped as in that lane; naming `--test it` would make it an error.
 # Nothing is recompiled in a directory of its own. Each name must still select exactly one ignored test.
 # Run the full-depth cases with three threads to shorten this lane's wall
@@ -292,7 +292,7 @@ endif
 
 ci-clean-build:
 	cargo build --locked --workspace --no-default-features --target-dir "$${CI_CLEAN_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/clean}"
-	cargo check --locked -p quire-spec-language --lib --no-default-features --features checked-handoff --target-dir "$${CI_CLEAN_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/clean}"
+	cargo check --locked -p filament-spec-language --lib --no-default-features --features checked-handoff --target-dir "$${CI_CLEAN_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/clean}"
 
 # NFR-015: each no_std-capable crate builds with `std` off. A closure-tier row
 # builds for the governed target (its sysroot has no `std`); a `std` path added
@@ -300,12 +300,12 @@ ci-clean-build:
 # lane's artifacts are reused (NFR-013).
 build-no-std:
 	rustup target add --toolchain 1.98 thumbv7em-none-eabi
-	rustup run 1.98 cargo build --locked -p qsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
-	rustup run 1.98 cargo clippy --locked -p qsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std" -- -D warnings
-	cargo test --locked -p qsl-foundation --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
-	cargo check --locked -p qsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
-	cargo clippy --locked -p qsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std" -- -D warnings
-	cargo test --locked -p qsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
+	rustup run 1.98 cargo build --locked -p fsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
+	rustup run 1.98 cargo clippy --locked -p fsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std" -- -D warnings
+	cargo test --locked -p fsl-foundation --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
+	cargo check --locked -p fsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
+	cargo clippy --locked -p fsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std" -- -D warnings
+	cargo test --locked -p fsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
 
 # PLAT-856: `rustdoc::broken_intra_doc_links` and `missing_docs` are only
 # enforced fully under a real `cargo doc` build -- clippy never runs
@@ -315,11 +315,11 @@ ci-docs:
 
 # The deep-input fuzz target (FR-356-AC-7, TC-903) over the S1 parser and
 # the S3 checker: 10,000 generated sources nested 1 to 100,000 levels deep.
-# Depths are spread over orders of magnitude (`qsl_bench::deep_input`).
+# Depths are spread over orders of magnitude (`fsl_bench::deep_input`).
 # It resolves against the root `Cargo.lock`, copied in (fuzz/Cargo.lock is
 # gitignored), and builds on the caller's active toolchain (selected by
 # `rust-toolchain.toml`), with no sanitizer:
-# QSL's crates forbid `unsafe`, so the run checks panics, aborts
+# FSL's crates forbid `unsafe`, so the run checks panics, aborts
 # and stack overflows. Needs `cargo install cargo-fuzz`. Not part of `ci:`.
 FUZZ_RUNS ?= 10000
 fuzz-deep-input:
@@ -329,10 +329,10 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-qsl arch-lint-qualified-core build-no-std
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
-# canonicalizes QSPEC_DIR for every child lane.
+# canonicalizes FSPEC_DIR for every child lane.
 # Incremental compilation metadata is a multi-gigabyte part of this workspace's
 # local CI target tree, while the gate runs complete, fingerprinted checks
 # rather than edit/compile cycles. Disable that metadata and dev/test debug
@@ -347,7 +347,7 @@ ci: export CARGO_PROFILE_TEST_DEBUG_ASSERTIONS := true
 ci: check-spec-validation
 	@$(CONFORMANCE_XTASK) ci
 
-# The internal graph is used by xtask after it has canonicalized QSPEC_DIR.
+# The internal graph is used by xtask after it has canonicalized FSPEC_DIR.
 # Scope the input prerequisite to this graph, so standalone targets such as
 # ci-clean-build retain their own process oracle.
 .PHONY: ci-internal
@@ -356,9 +356,9 @@ ifneq ($(filter ci-internal,$(MAKECMDGOALS)),)
 $(CI_TARGETS): check-conformance-input
 endif
 
-# Resolve and validate the raw QSPEC_DIR inside xtask. The exported Make value
+# Resolve and validate the raw FSPEC_DIR inside xtask. The exported Make value
 # reaches the recipe shell as data; Rust canonicalizes it before child Cargo runs.
-CONFORMANCE_XTASK = QSPEC_DIR="$$QSPEC_DIR" cargo run --locked --package xtask --
+CONFORMANCE_XTASK = FSPEC_DIR="$$FSPEC_DIR" cargo run --locked --package xtask --
 .PHONY: check-conformance-input
 check-conformance-input:
 	@$(CONFORMANCE_XTASK) conformance-input
@@ -367,7 +367,7 @@ conformance: check-conformance-input
 	@$(CONFORMANCE_XTASK) conformance
 
 # FR-059/FR-060 (ADR-011 §7.1 T-12, #215): architecture-conformance
-# checks over the QSL/IR/RT/CG ecosystem.
+# checks over the FSL/IR/RT/CG ecosystem.
 #
 # `arch-lint-direction` (FR-059, FB-05/FB-11) needs real local checkouts of
 # the three backend repositories; point IR_CLONE/RT_CLONE/CG_CLONE at them.
@@ -377,52 +377,52 @@ conformance: check-conformance-input
 # `check`/`model` (ADR-013 OBS-018 and FB-13) are a named, shrinking debt
 # list, reported as debt, not failures.
 # `arch-lint-api-surface`'s T12-A rule is CG-side (#249 review, HIGH-2/
-# MEDIUM-4): it scans CG_CLONE for calls into the `qsl-replay` facade crate.
+# MEDIUM-4): it scans CG_CLONE for calls into the `fsl-replay` facade crate.
 # Without CG_CLONE, T12-A reports NOT EVALUATED, T12-B, T12-C and T12-D still
 # run and report, and the target exits 2 (usage) for the missing input.
-# `arch-lint-api-surface-qsl` passes `--qsl-only`, which skips T12-A, so the
-# QSL-tree rules gate `ci:` without CG_CLONE.
+# `arch-lint-api-surface-fsl` passes `--fsl-only`, which skips T12-A, so the
+# FSL-tree rules gate `ci:` without CG_CLONE.
 #
 # `arch-lint` runs the checks that need only this repository:
-# api-surface-qsl and qualified-core.
+# api-surface-fsl and qualified-core.
 IR_CLONE ?=
 RT_CLONE ?=
 CG_CLONE ?=
 
-.PHONY: arch-lint-direction arch-lint-api-surface arch-lint-api-surface-qsl arch-lint arch-lint-qualified-core
+.PHONY: arch-lint-direction arch-lint-api-surface arch-lint-api-surface-fsl arch-lint arch-lint-qualified-core
 
 arch-lint-direction:
 	cargo run --locked -p arch-lint -- direction \
-		--qsl . --ir $(IR_CLONE) --rt $(RT_CLONE) --cg $(CG_CLONE)
+		--fsl . --ir $(IR_CLONE) --rt $(RT_CLONE) --cg $(CG_CLONE)
 
 arch-lint-api-surface:
-	cargo run --locked -p arch-lint -- api-surface --qsl . $(if $(CG_CLONE),--cg $(CG_CLONE))
+	cargo run --locked -p arch-lint -- api-surface --fsl . $(if $(CG_CLONE),--cg $(CG_CLONE))
 
-# The API-surface rules over QSL's own tree only (T12-B to T12-E and
+# The API-surface rules over FSL's own tree only (T12-B to T12-E and
 # FR-100-AC-8), with T12-A, which scans CG_CLONE, skipped. Needs only this
 # repository, so it is part of `ci:`.
-arch-lint-api-surface-qsl:
-	cargo run --locked -p arch-lint -- api-surface --qsl . --qsl-only
+arch-lint-api-surface-fsl:
+	cargo run --locked -p arch-lint -- api-surface --fsl . --fsl-only
 
-# FR-284 (ADR-029 CB-2, CB-3): no QSL core crate depends on a crate above
+# FR-284 (ADR-029 CB-2, CB-3): no FSL core crate depends on a crate above
 # the core, a CG or RT crate, or a frontend crate, and no core crate's
 # shipped source reads ambient input or writes to the process. Needs only
 # this repository and passes on it, so it is part of `ci:`.
 arch-lint-qualified-core:
-	cargo run --locked -p arch-lint -- qualified-core --qsl .
+	cargo run --locked -p arch-lint -- qualified-core --fsl .
 
 # Runs the two checks that need only this repository.
 # `arch-lint-direction` needs IR_CLONE/RT_CLONE/CG_CLONE, and
 # `arch-lint-api-surface` needs CG_CLONE (see above); each runs separately.
-arch-lint: arch-lint-api-surface-qsl arch-lint-qualified-core
+arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 
 
-# The committed performance benchmarks (`qsl-bench/`), one
+# The committed performance benchmarks (`fsl-bench/`), one
 # criterion bench per axis, each runnable by name. `make bench` runs all
 # six; `make bench-probe` prints the counts, refusal boundaries and one-shot
 # large-input timings (with peak RSS) the criterion benches do not record.
 # Compare a candidate with current main in one interleaved session; see
-# `qsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
+# `fsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
 # Pass criterion options through BENCH_ARGS, e.g. `BENCH_ARGS='--noplot'`.
 # Not part of `ci:`
 # -- timing is not a pass/fail gate.
@@ -434,10 +434,10 @@ BENCH_AXES := parser checker cst model evaluator text_cluster
 bench: $(addprefix bench-,$(BENCH_AXES))
 
 $(addprefix bench-,$(BENCH_AXES)): bench-%:
-	cargo bench --locked -p qsl-bench --bench $* -- $(BENCH_ARGS)
+	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
 
 # One process per `check`/`eval` size: peak RSS is process-wide.
-BENCH_PROBE := cargo run --locked --release -q -p qsl-bench --bin qsl-bench-probe --
+BENCH_PROBE := cargo run --locked --release -q -p fsl-bench --bin fsl-bench-probe --
 bench-probe:
 	$(BENCH_PROBE) parse
 	$(BENCH_PROBE) cst

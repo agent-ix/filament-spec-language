@@ -3,26 +3,26 @@ id: FR-174
 title: "Reduce hyper products: preservation rows and compiler-checked copy-swap symmetry"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-178
+  - target: ix://agent-ix/filament-spec-language/FR-178
     type: depends_on
 ---
 # FR-174: Reduce hyper products: preservation rows and compiler-checked copy-swap symmetry
 
 ## Description
 
-QSL SHALL settle a reduction a request selects for a hyper item by
+FSL SHALL settle a reduction a request selects for a hyper item by
 ADR-023 §5's row for the item's form (ADR-023 PH-1 to PH-6): a row that reads
 "no" settles it V-6 `ReductionNotPreserving`, and a row that reads "yes"
 settles it V-8 `unsupported-requested-capability`, since EN-1 builds no such
@@ -173,9 +173,9 @@ swap.
   products it reduces).
 - The reductions themselves, their selection and their identity rule are
   ADR-021's.
-- QSpec owns the preservation rows and copy-swap's detection rule,
+- FSpec owns the preservation rows and copy-swap's detection rule,
   admission and `CopySwap` basis member (ADR-023 QS-8).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-403 (Linear STD-136; ADR-023 QS-8).
+- ADR-023. FSpec half: FSpec FR-403 (Linear STD-136; ADR-023 QS-8).

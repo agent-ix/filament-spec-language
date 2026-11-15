@@ -3,14 +3,14 @@ id: TC-1315
 title: "Evaluate state and compensation expressions through the checked-package evaluation entry points"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-520
+  - target: ix://agent-ix/filament-spec-language/FR-520
     type: verifies
 ---
 # TC-1315: Evaluate state and compensation expressions through the checked-package evaluation entry points
 
 ## Description
 
-Verify the slot evaluation quire-protocol's compensation engine relies on.
+Verify the slot evaluation filament-protocol's compensation engine relies on.
 Scope: FR-520-AC-1 to FR-520-AC-13. **R** is the package of FR-517.
 
 ## Test Procedure
@@ -25,7 +25,7 @@ Scope: FR-520-AC-1 to FR-520-AC-13. **R** is the package of FR-517.
 | 6 | 5 | target 11; receipts `[3,5]` with target 10; the other relation's slot; a record with only a successful operation and an outcome `successful` | each changes the true result to false or to no result; no true from the record alone |
 | 7 | 6 | recovery supply with an incomplete population reference; missing target; missing achieved state; `Unavailable` binder | `Admission`, `Unavailable` or `Incomplete`, never `Completed(true)` |
 | 8 | 7 | three slot calls on one meter vs three on fresh meters; `retry.relation` at exact usage and one below | per counter, the sum for `work_units` and `result_units` and the maximum for the other eight; completed / `Incomplete` |
-| 9 | 8 | `cargo tree` of qsl-eval and qsl-package evaluation path; run under a denied-syscall harness | no I/O dependency; completes |
+| 9 | 8 | `cargo tree` of fsl-eval and fsl-package evaluation path; run under a denied-syscall harness | no I/O dependency; completes |
 | 10 | 9 | each slot of both compensations, in-process and read back | equal results and charge logs |
 | 11 | 10 | search the root crate for a `state` module and for the four retired names in their `state::` form | none; the `evaluate_v2` of `src/temporal.rs` and the `ACCOUNTING_VERSION` of `src/linking/composed/binding_work.rs` remain |
 | 12 | 11 | a slot call over three binders, one `Unavailable`; the same call twice; a literal-only subexpression before and after a binder read; an operation over two binders and its commuted form; an operation over one binder after another binder was read; a call to a function before any binder is read; a one-argument call after a two-argument call over other binders; a call over two binders; a let-bound value used by a later operation; a dispatched call over a receiver binder; a query, `seq` and fold element binding; a caller-enabled meter interval holding a charge at entry | per-binder entries for the binders read, none for the unread one; entries combined with unattributed equal the total; equal logs; `accounting_version` present; the literal-only and two-binder charges are unattributed and the commuted form's log is identical; the single-binder operation is on its own binder; the callee's parameter slot registers no binder; each call's body, a let-bound use and a dispatched body are on the binder their arguments derive from, and a call over two binders is unattributed; the query, `seq` and fold element slots carry the owner of their source; the log excludes the caller's interval, which the call drains, and capture is left as found |

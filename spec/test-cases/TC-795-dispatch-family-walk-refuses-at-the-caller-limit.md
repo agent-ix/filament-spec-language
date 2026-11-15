@@ -3,7 +3,7 @@ id: TC-795
 title: "Unit compile refuses a dispatch family past the caller's family_steps limit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: verifies
 ---
 # TC-795: Unit compile refuses a dispatch family past the caller's family_steps limit

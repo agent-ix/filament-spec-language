@@ -1,19 +1,19 @@
 ---
 id: TC-447
-title: "Duplicate backend identity registration matches quire-specification TC-282 under every order"
+title: "Duplicate backend identity registration matches filament-specification TC-282 under every order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: verifies
 ---
-# TC-447: Duplicate backend identity registration matches quire-specification TC-282 under every order
+# TC-447: Duplicate backend identity registration matches filament-specification TC-282 under every order
 
 ## Description
 
-Mirror quire-specification's TC-282 vectors DB-01 through DB-08 (FR-290-AC-9,
-FR-290-AC-10) against `qsl-route`'s real `Registry`, run under every ordering
+Mirror filament-specification's TC-282 vectors DB-01 through DB-08 (FR-290-AC-9,
+FR-290-AC-10) against `fsl-route`'s real `Registry`, run under every ordering
 of each vector's registrations, checking that the registry snapshot, its
 registration refusals, and every named candidate set agree with TC-282's
 expected result regardless of order. Scope: FR-075-AC-4, FR-075-AC-7.
@@ -42,7 +42,7 @@ registrations, its registration refusals (via `Registry::refusals`) in
 reported order, and the candidate set of a `value-validity` item that names
 no backend, one that names `a`, and (where relevant) one that names `b`.
 Compare every ordering's record with the first ordering's record and with
-quire-specification TC-282's expected result. Additionally, register two
+filament-specification TC-282's expected result. Additionally, register two
 descriptors for identity `p`, both advertising `probabilistic-satisfaction`
 with the same mode, but with evidence-kind sets `{statistical}` and `{exact}`.
 Exercise both registration orders and confirm this evidence-only descriptor
@@ -52,7 +52,7 @@ permuted pool.
 
 ## Vectors
 
-quire-specification TC-282's vectors and expected results, over the fixtures
+filament-specification TC-282's vectors and expected results, over the fixtures
 above:
 
 | Vector | Registrations | Expected result |

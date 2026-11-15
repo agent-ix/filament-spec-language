@@ -3,7 +3,7 @@ id: TC-114
 title: "Bind exact composed dependencies and declaration-owned roles"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: verifies
 ---
 # TC-114: Bind exact composed dependencies and declaration-owned roles
@@ -55,11 +55,11 @@ claims runtime observations or family evaluation.
    accounting boundary. Retry with sufficient budget and inspect the original
    source/model inputs and prior report for mutation. Never infer the expected
    exact limit from the run's own reported consumption.
-7. Through `qsl_replay::spine::parse`, `select` and `check`, compile
-   `protocol P using ob` with `ob` selecting `quire.observation.binding/v1`
+7. Through `fsl_replay::spine::parse`, `select` and `check`, compile
+   `protocol P using ob` with `ob` selecting `filament.observation.binding/v1`
    against the exact registered definition inventory. Inspect the typed
    per-use profile outcome on the check result: it retains the exact
-   `quire.protocol.finite-global/v1` dependency and its transitive requirements,
+   `filament.protocol.finite-global/v1` dependency and its transitive requirements,
    while the protocol site separately refuses `WrongProfileKind`. Repeat with
    the required protocol definition omitted, conflicting or incompatible; the
    per-use outcome retains the typed closure cause and the declaration remains

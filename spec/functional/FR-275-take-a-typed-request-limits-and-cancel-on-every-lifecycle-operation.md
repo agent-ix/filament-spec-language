@@ -3,36 +3,36 @@ id: FR-275
 title: "Take a typed request, caller limits and a cancellation handle on every lifecycle operation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: references
 ---
 # FR-275: Take a typed request, caller limits and a cancellation handle on every lifecycle operation
 
 ## Description
 
-QSL SHALL expose its lifecycle stages as typed library operations with one
-call shape (ADR-029 LC-2, OP-1). The QSL-owned operations are `parse`,
+FSL SHALL expose its lifecycle stages as typed library operations with one
+call shape (ADR-029 LC-2, OP-1). The FSL-owned operations are `parse`,
 `format`, `select`, `check`, `check_fences`, `package`, `execute`,
 `analyze`, `monitor`, `replay`, `inspect` and `render`. `format` lives in the core library, layer 1
-`qsl_cst::format`; the driver's `format` verb (ADR-029 CB-5) and the
+`fsl_cst::format`; the driver's `format` verb (ADR-029 CB-5) and the
 qualification runner call it. The driver-owned operations `lower`, `generate` and
-`prove` reach QSL through FR-280.
+`prove` reach FSL through FR-280.
 
 | Operation | Takes | Returns | Behaviour |
 | --- | --- | --- | --- |
@@ -67,7 +67,7 @@ identity and the profile it runs under; its limits value; `&Cancel`.
 
 ## Behavior
 
-- Each QSL lifecycle operation shall take its typed request, its limits value
+- Each FSL lifecycle operation shall take its typed request, its limits value
   and `&Cancel` as its parameters.
 - Each operation that consumes an earlier stage's output shall take that
   output's own type (`ParsedSource`, `AdmittedModels`, `CheckedPackage`,
@@ -102,11 +102,11 @@ identity and the profile it runs under; its limits value; `&Cancel`.
 - [FR-276](FR-276-cancel-a-lifecycle-operation.md): `Cancel`.
 - [FR-277](FR-277-bound-every-lifecycle-operation-by-caller-limits.md): limits.
 - [FR-098](FR-098-execute-a-replay-request.md): `replay`'s behaviour.
-- QSpec FR-300: the typed lifecycle API, limits and cancellation on every
-  request, and wrong-stage input refusal, as the QSpec half in References aligns it.
+- FSpec FR-300: the typed lifecycle API, limits and cancellation on every
+  request, and wrong-stage input refusal, as the FSpec half in References aligns it.
 
 ## References
 
 - QSL-393 (V1-A06): typed library APIs.
 - QSL-390 (ARCH-50): ADR-029.
-- QSpec FR-300 (STD-141): the QSpec half.
+- FSpec FR-300 (STD-141): the FSpec half.

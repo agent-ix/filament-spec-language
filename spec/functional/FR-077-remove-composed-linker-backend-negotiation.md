@@ -3,18 +3,18 @@ id: FR-077
 title: "Remove backend negotiation from the composed linker"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-011
+  - target: ix://agent-ix/filament-spec-language/US-011
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: traces_to
 ---
 # FR-077: Remove backend negotiation from the composed linker
 
 ## Description
 
-The composed linker performed no backend negotiation in its request-report path: it recorded requested capability pairs as data only, took no `Backend` parameter and produced no `UnsupportedCapability` or `UnsupportedFamily` disposition. This is ADR-010 OBS-003 as resolved by ADR-012 §10: candidates and routing live only in the registry (FR-075), and dispositions live only in `quire-contract-codegen`'s `negotiate_*`.
+The composed linker performed no backend negotiation in its request-report path: it recorded requested capability pairs as data only, took no `Backend` parameter and produced no `UnsupportedCapability` or `UnsupportedFamily` disposition. This is ADR-010 OBS-003 as resolved by ADR-012 §10: candidates and routing live only in the registry (FR-075), and dispositions live only in `filament-contract-codegen`'s `negotiate_*`.
 
 **QSL-499 disposition:** the composed linker and its `requests::report` function are deleted under ADR-011, ADR-033 and FR-499, so the criteria below are retained as migration history and are not active acceptance obligations. The behavior is owned by FR-057: its admission entry point takes no registry or backend parameter, admitted pairs and static meaning do not depend on registered backends, a pair keeps its declaration, kind, `required` flag and request index, and `absent-kind` and `unknown-kind` remain admission-time refusals (FR-057-AC-4, AC-5).
 

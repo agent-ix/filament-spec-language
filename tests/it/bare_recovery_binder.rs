@@ -3,16 +3,16 @@
 //! `recovery.predicate`, whose body holds the `sum(receipt in ...)`
 //! comprehension, evaluated through the bare route over the handoff files.
 
+use filament_exact::{FieldValue, Meter, NodeKey, Value, ValueType};
+use filament_spec_language::checked_handoff::Corpus;
+use fsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot, ProtocolSupply, SuppliedValue};
+use fsl_package::{BarePackage, BareSupply, ProtocolSlotDescriptor};
 use ix_trace_rs::trace;
-use qsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot, ProtocolSupply, SuppliedValue};
-use qsl_package::{BarePackage, BareSupply, ProtocolSlotDescriptor};
-use quire_exact::{FieldValue, Meter, NodeKey, Value, ValueType};
-use quire_spec_language::checked_handoff::Corpus;
 
 use super::checked_handoff::{admitted, request, tree};
-use quire_spec_language::checked_handoff::{evidence, write};
+use filament_spec_language::checked_handoff::{evidence, write};
 
-const UNLIMITED: quire_exact::ScalarLimits = quire_exact::ScalarLimits {
+const UNLIMITED: filament_exact::ScalarLimits = filament_exact::ScalarLimits {
     integer_bits: u64::MAX,
     decimal_digits: u64::MAX,
     scale_expansion: u64::MAX,
@@ -32,9 +32,9 @@ fn int(value: i64) -> Value {
 /// The recipe R handoff files and the key of its compensation `name`.
 struct Recipe {
     _holder: tempfile::TempDir,
-    package: Box<quire_contract_model::CheckedPackageV2>,
-    identities: qsl_package::ReadIdentityRows,
-    equality: qsl_package::ReadEqualityRows,
+    package: Box<filament_contract_model::CheckedPackageV2>,
+    identities: fsl_package::ReadIdentityRows,
+    equality: fsl_package::ReadEqualityRows,
 }
 
 fn recipe() -> Recipe {
@@ -72,7 +72,7 @@ fn recipe_with_declarations(condition: Option<&str>, declarations: &str) -> Reci
 
 fn read_recipe(
     holder: tempfile::TempDir,
-    request: &quire_spec_language::checked_handoff::CheckedHandoffRequest,
+    request: &filament_spec_language::checked_handoff::CheckedHandoffRequest,
 ) -> Recipe {
     let out = holder.path().join("handoff");
     write(request, &out).expect("the handoff is written");
@@ -81,14 +81,14 @@ fn read_recipe(
         &files["checked-package.json"],
         &evidence(request).expect("evidence"),
     );
-    let identities = qsl_package::ReadIdentityRows::read(
+    let identities = fsl_package::ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("rows");
     let equality =
-        qsl_package::ReadEqualityRows::read(&files["equality.json"], &package).expect("rows");
+        fsl_package::ReadEqualityRows::read(&files["equality.json"], &package).expect("rows");
     Recipe {
         _holder: holder,
         package,
@@ -105,7 +105,7 @@ impl Recipe {
                     identities: &self.identities,
                     equality: Some(&self.equality),
                 },
-                &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
             )
             .expect("the fixture budget admits the supply")
     }
@@ -121,7 +121,7 @@ impl Recipe {
                     })
             })
             .expect("compensation node");
-        qsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
+        fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .expect("wire ids")
             .key(&node.node_id)
             .expect("key")
@@ -132,8 +132,8 @@ impl Recipe {
         let ValueType::Quantity(unit) = of else {
             panic!("R's amounts are quantities, not {of:?}");
         };
-        Value::Quantity(quire_exact::Quantity::new(
-            quire_exact::Rational::from_integer(value.into()),
+        Value::Quantity(filament_exact::Quantity::new(
+            filament_exact::Rational::from_integer(value.into()),
             unit.clone(),
         ))
     }
@@ -146,7 +146,8 @@ impl Recipe {
             .composites()
             .find(|record| record.name().ends_with("Recovery"))
             .expect("Recovery is declared");
-        let quire_semantic_value::declaration::CompositeShape::Record(fields) = declaration.shape()
+        let filament_semantic_value::declaration::CompositeShape::Record(fields) =
+            declaration.shape()
         else {
             panic!("Recovery is a record");
         };
@@ -169,7 +170,8 @@ impl Recipe {
             .composites()
             .find(|record| record.name().ends_with("Recovery"))
             .expect("Recovery is declared");
-        let quire_semantic_value::declaration::CompositeShape::Record(fields) = declaration.shape()
+        let filament_semantic_value::declaration::CompositeShape::Record(fields) =
+            declaration.shape()
         else {
             panic!("Recovery is a record");
         };
@@ -191,7 +193,7 @@ impl Recipe {
                 declaration.key(),
                 vec![(
                     "receipts",
-                    FieldValue::Present(quire_exact::from_admitted(
+                    FieldValue::Present(filament_exact::from_admitted(
                         (**collection).clone(),
                         elements,
                     )),
@@ -207,7 +209,7 @@ impl Recipe {
         receipts: &[i64],
         target: i64,
         activated: bool,
-    ) -> Result<quire_exact::Value, String> {
+    ) -> Result<filament_exact::Value, String> {
         let bare = self.bare();
         let node = self.compensation(name);
         let slot = ProtocolSlot {
@@ -243,11 +245,11 @@ impl Recipe {
         };
         let mut meter = Meter::new(UNLIMITED);
         match bare.evaluate_protocol_slot(&slot, &given, &mut meter) {
-            Ok(qsl_eval::value::ProtocolSlotEvaluation::Evaluated(evaluation, _)) => {
+            Ok(fsl_eval::value::ProtocolSlotEvaluation::Evaluated(evaluation, _)) => {
                 match evaluation.outcome {
-                    quire_eval::FamilyOutcome::Evaluated(quire_exact::Outcome::Completed(
-                        value,
-                    )) => Ok(value),
+                    filament_eval::FamilyOutcome::Evaluated(
+                        filament_exact::Outcome::Completed(value),
+                    ) => Ok(value),
                     other => Err(format!("{other:?}")),
                 }
             }
@@ -355,7 +357,7 @@ fn a_malformed_recovery_supply_is_refused() {
         let mut meter = Meter::new(UNLIMITED);
         let result = bare.evaluate_protocol_slot(&slot, &given, &mut meter);
         assert!(
-            matches!(result, Err(quire_eval::CallFailure::Admission(_))),
+            matches!(result, Err(filament_eval::CallFailure::Admission(_))),
             "{name} is refused at admission: {result:?}"
         );
     }
@@ -466,7 +468,7 @@ fn a_supply_for_an_introduced_binder_is_refused_as_unknown() {
         .expect("selects");
     let nodes = &recipe.package.resolved_graph().nodes;
     let graph =
-        qsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
+        fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .expect("wire ids");
     let introduced = nodes
         .iter()
@@ -506,17 +508,17 @@ fn a_supply_for_an_introduced_binder_is_refused_as_unknown() {
         observation: None,
     };
     let mut meter = Meter::new(UNLIMITED);
-    let Err(quire_eval::CallFailure::Admission(refusal)) =
+    let Err(filament_eval::CallFailure::Admission(refusal)) =
         bare.evaluate_protocol_slot(&slot, &given, &mut meter)
     else {
         panic!("the extra supply is refused");
     };
-    let quire_eval::CallAdmissionFailure::Refused(refused) = *refusal else {
+    let filament_eval::CallAdmissionFailure::Refused(refused) = *refusal else {
         panic!("a refusal");
     };
     assert_eq!(refused.record.catalog.code(), "invalid_runtime_input");
     assert_eq!(refused.record.catalog.cause(), "unknown-member");
-    for counter in quire_exact::LimitKind::ALL {
+    for counter in filament_exact::LimitKind::ALL {
         assert_eq!(meter.consumed(counter), 0, "{counter:?}");
     }
 }
@@ -644,10 +646,10 @@ fn a_selected_union_with_an_unrepresented_payload_refuses_before_charging() {
         .expect_err(
             "the selected union requires its payload's representation even for a nullary variant",
         );
-    let quire_eval::CallFailure::Admission(failure) = failure else {
+    let filament_eval::CallFailure::Admission(failure) = failure else {
         panic!("the missing projection refuses during admission")
     };
-    let quire_eval::CallAdmissionFailure::Refused(record) = *failure else {
+    let filament_eval::CallAdmissionFailure::Refused(record) = *failure else {
         panic!("the missing projection produces a typed refusal")
     };
     assert_eq!(
@@ -660,9 +662,9 @@ fn a_selected_union_with_an_unrepresented_payload_refuses_before_charging() {
 fn assert_case_arm_union(
     unrelated: &str,
     omitted_union: Option<&str>,
-) -> Vec<Vec<quire_exact::AdmittedCharge>> {
-    use qsl_foundation::SourceIdentity;
-    use qsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary};
+) -> Vec<Vec<filament_exact::AdmittedCharge>> {
+    use fsl_foundation::SourceIdentity;
+    use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary};
 
     let holder = tempfile::tempdir().expect("directory");
     let mut request = request("event_position", Corpus::None);
@@ -686,7 +688,7 @@ fn assert_case_arm_union(
         .iter()
         .map(|path| std::fs::read(path).expect("the recipe's model"))
         .collect::<Vec<_>>();
-    let packages = qsl_semantics::model::intake::package_input(models.iter().map(Vec::as_slice))
+    let packages = fsl_semantics::model::intake::package_input(models.iter().map(Vec::as_slice))
         .expect("the selected model");
     let dependencies = DependencyInput::new(
         request
@@ -703,7 +705,7 @@ fn assert_case_arm_union(
     )
     .expect("the selected library");
     let limits = SpineLimits::default();
-    let cancel = quire_exact::Cancel::new();
+    let cancel = filament_exact::Cancel::new();
     let parsed = spine::parse(
         &ParseRequest {
             source: &source,
@@ -762,7 +764,8 @@ fn assert_case_arm_union(
     );
     let bare = recipe.bare();
     for declaration in source.graph().scope().types().composites() {
-        let quire_semantic_value::declaration::CompositeShape::Union(members) = declaration.shape()
+        let filament_semantic_value::declaration::CompositeShape::Union(members) =
+            declaration.shape()
         else {
             continue;
         };
@@ -779,7 +782,7 @@ fn assert_case_arm_union(
     for declaration in source.graph().scope().types().composites() {
         if matches!(
             declaration.shape(),
-            quire_semantic_value::declaration::CompositeShape::Union(_)
+            filament_semantic_value::declaration::CompositeShape::Union(_)
         ) {
             if Some(declaration.name()) == omitted_union {
                 assert!(
@@ -800,7 +803,7 @@ fn assert_case_arm_union(
         member: "recovery.predicate".to_owned(),
         index: None,
     };
-    let missing_union_rows = qsl_package::ReadIdentityRows::of_rows(
+    let missing_union_rows = fsl_package::ReadIdentityRows::of_rows(
         &recipe.package,
         recipe.identities.declarations().to_vec(),
         recipe.identities.fields().to_vec(),
@@ -813,7 +816,7 @@ fn assert_case_arm_union(
                 identities: &missing_union_rows,
                 equality: Some(&recipe.equality),
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("omitting union rows is a missing projection, not a malformed package");
     let selected = bare
@@ -891,11 +894,11 @@ fn assert_case_arm_union(
         let bare_result = bare
             .evaluate_protocol_slot(&bare_slot, &bare_supply, &mut bare_meter)
             .expect("the bare route constructs and matches the source union");
-        let qsl_eval::value::ProtocolSlotEvaluation::Evaluated(bare_evaluation, _) = bare_result
+        let fsl_eval::value::ProtocolSlotEvaluation::Evaluated(bare_evaluation, _) = bare_result
         else {
             panic!("the bare route returns an evaluation")
         };
-        let qsl_eval::value::ProtocolSlotEvaluation::Evaluated(source_evaluation, _) =
+        let fsl_eval::value::ProtocolSlotEvaluation::Evaluated(source_evaluation, _) =
             source_result
         else {
             panic!("the source returns an evaluation")
@@ -915,10 +918,10 @@ fn assert_case_arm_union(
         let failure = missing_union
             .evaluate_protocol_slot(&bare_slot, &bare_supply, &mut missing_meter)
             .expect_err("a union without its original declaration projection refuses");
-        let quire_eval::CallFailure::Admission(failure) = failure else {
+        let filament_eval::CallFailure::Admission(failure) = failure else {
             panic!("the missing projection refuses during admission")
         };
-        let quire_eval::CallAdmissionFailure::Refused(record) = *failure else {
+        let filament_eval::CallAdmissionFailure::Refused(record) = *failure else {
             panic!("the missing projection produces a typed refusal")
         };
         assert_eq!(
@@ -945,11 +948,11 @@ fn a_binder_the_body_never_reads_is_no_source() {
     );
 }
 
-fn completed_boolean(outcome: &quire_eval::FamilyOutcome<Value>) -> Option<bool> {
+fn completed_boolean(outcome: &filament_eval::FamilyOutcome<Value>) -> Option<bool> {
     match outcome {
-        quire_eval::FamilyOutcome::Evaluated(quire_exact::Outcome::Completed(Value::Boolean(
-            value,
-        ))) => Some(*value),
+        filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(
+            Value::Boolean(value),
+        )) => Some(*value),
         _ => None,
     }
 }
@@ -1049,11 +1052,11 @@ impl Recipe {
         };
         let mut meter = Meter::new(UNLIMITED);
         match bare.evaluate_protocol_slot(&slot, &given, &mut meter) {
-            Ok(qsl_eval::value::ProtocolSlotEvaluation::Evaluated(evaluation, _)) => {
+            Ok(fsl_eval::value::ProtocolSlotEvaluation::Evaluated(evaluation, _)) => {
                 match evaluation.outcome {
-                    quire_eval::FamilyOutcome::Evaluated(quire_exact::Outcome::Completed(
-                        Value::Boolean(held),
-                    )) => held,
+                    filament_eval::FamilyOutcome::Evaluated(
+                        filament_exact::Outcome::Completed(Value::Boolean(held)),
+                    ) => held,
                     other => panic!("{name}: a completed Boolean, not {other:?}"),
                 }
             }
@@ -1085,9 +1088,9 @@ impl Recipe {
     /// equality file's own source-unit rows.
     fn equality_with(
         &self,
-        source_units: Vec<quire_contract_model::SelectedSourceUnitRow>,
-    ) -> qsl_package::ReadEqualityRows {
-        qsl_package::ReadEqualityRows::of_rows(
+        source_units: Vec<filament_contract_model::SelectedSourceUnitRow>,
+    ) -> fsl_package::ReadEqualityRows {
+        fsl_package::ReadEqualityRows::of_rows(
             &self.package,
             self.equality.applications().to_vec(),
             self.equality.facts().to_vec(),
@@ -1098,14 +1101,14 @@ impl Recipe {
     /// The bare package over this recipe's identity rows and `equality`.
     fn bare_over<'a>(
         &'a self,
-        equality: &'a qsl_package::ReadEqualityRows,
-    ) -> Result<BarePackage<'a>, qsl_package::NativeJoinFailure> {
+        equality: &'a fsl_package::ReadEqualityRows,
+    ) -> Result<BarePackage<'a>, fsl_package::NativeJoinFailure> {
         BarePackage::new(&self.package).with_supply(
             BareSupply {
                 identities: &self.identities,
                 equality: Some(equality),
             },
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
     }
 }
@@ -1144,7 +1147,7 @@ impl Recipe {
     /// equality file: the supply's, the world's, or `None` when the world holds.
     fn refusal_over(
         &self,
-        rows: Vec<quire_contract_model::SelectedSourceUnitRow>,
+        rows: Vec<filament_contract_model::SelectedSourceUnitRow>,
     ) -> Option<String> {
         let equality = self.equality_with(rows);
         match self.bare_over(&equality) {
@@ -1154,7 +1157,7 @@ impl Recipe {
     }
 
     /// R's one source-unit row.
-    fn unit_row(&self) -> quire_contract_model::SelectedSourceUnitRow {
+    fn unit_row(&self) -> filament_contract_model::SelectedSourceUnitRow {
         let [row] = self.equality.source_units() else {
             panic!("R declares one source unit");
         };
@@ -1171,12 +1174,12 @@ impl Recipe {
 fn a_source_unit_row_naming_no_defined_unit_refuses_the_bare_route() {
     let recipe = recipe();
     let row = recipe.unit_row();
-    let foreign = quire_contract_model::SelectedSourceUnitRow::new(
+    let foreign = filament_contract_model::SelectedSourceUnitRow::new(
         row.structural_node.clone(),
         row.source_authority.clone(),
         row.source_identity.clone(),
         row.qualified_declaration.clone(),
-        quire_exact::UnitId::Declared(recipe.compensation("Full")),
+        filament_exact::UnitId::Declared(recipe.compensation("Full")),
     );
     let refused = recipe.refusal_over(vec![foreign]).expect("a refusal");
     assert!(refused.contains("Identity(Unknown)"), "{refused}");
@@ -1199,7 +1202,7 @@ fn a_source_unit_row_naming_no_unit_node_refuses_the_bare_route() {
         .expect("a compensation node")
         .node_id
         .clone();
-    let wrong = quire_contract_model::SelectedSourceUnitRow::new(
+    let wrong = filament_contract_model::SelectedSourceUnitRow::new(
         protocol,
         row.source_authority.clone(),
         row.source_identity.clone(),
@@ -1232,7 +1235,7 @@ fn a_repeated_source_unit_row_refuses_the_bare_route() {
 fn the_unit_definition_read_is_charged_to_the_native_budget() {
     let recipe = recipe();
     let attempt = |work: u64| {
-        let mut budget = qsl_package::NativeJoinLimits::new(work, u64::MAX).budget();
+        let mut budget = fsl_package::NativeJoinLimits::new(work, u64::MAX).budget();
         BarePackage::new(&recipe.package)
             .with_supply(
                 BareSupply {
@@ -1259,7 +1262,7 @@ fn the_unit_definition_read_is_charged_to_the_native_budget() {
             Err(failure)
                 if matches!(
                     failure.native(),
-                    qsl_package::NativeJoinFailure::UnitDefinitions { .. }
+                    fsl_package::NativeJoinFailure::UnitDefinitions { .. }
                 ) =>
             {
                 Some(failure)
@@ -1267,6 +1270,6 @@ fn the_unit_definition_read_is_charged_to_the_native_budget() {
             _ => None,
         })
         .expect("an allowance pays the join but not the unit read");
-    assert_eq!(denial.setting(), Some(qsl_foundation::Setting::I2WorkUnits));
+    assert_eq!(denial.setting(), Some(fsl_foundation::Setting::I2WorkUnits));
     assert!(denial.limit().is_some(), "{denial:?}");
 }

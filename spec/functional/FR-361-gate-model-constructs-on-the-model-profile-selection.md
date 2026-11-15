@@ -3,56 +3,56 @@ id: FR-361
 title: "Gate every model construct on the unit's selection of the model profile"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-102
+  - target: ix://agent-ix/filament-spec-language/FR-102
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-309
+  - target: ix://agent-ix/filament-spec-language/FR-309
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-001
+  - target: ix://agent-ix/filament-specification/FR-001
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-271
+  - target: ix://agent-ix/filament-specification/FR-271
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-272
+  - target: ix://agent-ix/filament-specification/FR-272
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-453
+  - target: ix://agent-ix/filament-specification/FR-453
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-450
+  - target: ix://agent-ix/filament-specification/FR-450
     type: depends_on
-  - target: ix://agent-ix/quire-specification/ADR-006
+  - target: ix://agent-ix/filament-specification/ADR-006
     type: depends_on
 ---
 # FR-361: Gate every model construct on the unit's selection of the model profile
 
 ## Description
 
-When a unit's header selects `quire.model.complete/v1`, QSL SHALL admit the
+When a unit's header selects `filament.model.complete/v1`, FSL SHALL admit the
 model constructs this requirement lists. When a unit's header selects no
-header profile that resolves to `quire.model.complete/v1`, QSL SHALL refuse
+header profile that resolves to `filament.model.complete/v1`, FSL SHALL refuse
 each such construct the unit itself writes with `unsupported_construct`, at
 the construct, and SHALL produce no checked package.
 
-QSpec's shared grammar states the rule for the `operation-body`, the
-dispatched operation call and `lookup` form, and QSpec FR-450-AC-3 states it
-for the `abstraction-decl`; QSL FR-304 applies it to the abstraction form.
+FSpec's shared grammar states the rule for the `operation-body`, the
+dispatched operation call and `lookup` form, and FSpec FR-450-AC-3 states it
+for the `abstraction-decl`; FSL FR-304 applies it to the abstraction form.
 
 A **model construct** is a syntactic form listed in item 5. The unit
 **selects the model profile** when at least one of its header `profile`
-declarations names the identity of the layer table's `quire.model.complete/v1` layer
+declarations names the identity of the layer table's `filament.model.complete/v1` layer
 (FR-110), or names the identity of a layer whose `requires` closure names it, which is
-`quire.temporal.complete/v1` (item 18).
+`filament.temporal.complete/v1` (item 18).
 
 ## Target design
 
@@ -62,22 +62,22 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
    selected layers are the union of every layer named by its header `profile`
    declarations and every layer in each named layer's transitive `requires`
    closure (FR-110). The unit selects the model profile exactly when that union
-   contains `quire.model.complete/v1`. Thus a header naming
-   `quire.temporal.complete/v1` selects the model profile because that layer's
-   `requires` closure names it; the header need not name both layers. QSL SHALL
+   contains `filament.model.complete/v1`. Thus a header naming
+   `filament.temporal.complete/v1` selects the model profile because that layer's
+   `requires` closure names it; the header need not name both layers. FSL SHALL
    NOT infer the selection from a construct, from a `model` declaration, from
    a supplied domain package, from an alias or from the fixture a unit belongs
    to. `model_gate::selects_model` SHALL determine selection from this
-   requires-expanded union, so selecting `quire.temporal.complete/v1` selects
-   `quire.model.complete/v1`. It SHALL NOT fall back to
-   `quire.value.complete/v1` when the selection is absent.
+   requires-expanded union, so selecting `filament.temporal.complete/v1` selects
+   `filament.model.complete/v1`. It SHALL NOT fall back to
+   `filament.value.complete/v1` when the selection is absent.
 2. **One resolution path.** E3 resolves the identity against the same
    layer table FR-110 uses for all six layers. The
    model profile adds no second header-profile mechanism and no new refusal
-   code. The six rows (`quire.state.core/v1`, `quire.state.queries/v1`,
-   `quire.state.graph/v1`, `quire.value.complete/v1`,
-   `quire.model.complete/v1` and `quire.temporal.complete/v1`) are
-   header-selectable (FR-110, QSpec FR-453).
+   code. The six rows (`filament.state.core/v1`, `filament.state.queries/v1`,
+   `filament.state.graph/v1`, `filament.value.complete/v1`,
+   `filament.model.complete/v1` and `filament.temporal.complete/v1`) are
+   header-selectable (FR-110, FSpec FR-453).
    Every other header identity keeps FR-110's routing: a clause profile
    resolves in its clause family's catalog (FR-110, ADR-011), and an identity
    no catalog holds refuses `unknown_profile`/`unsupported-selection`, while
@@ -92,9 +92,9 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
 
 ### Model construct families
 
-5. QSL SHALL treat these as the model constructs, each with its refusal
-   cause. QSpec's shared grammar names the first, third and fourth rows, and
-   QSpec FR-450-AC-3 names the second.
+5. FSL SHALL treat these as the model constructs, each with its refusal
+   cause. FSpec's shared grammar names the first, third and fourth rows, and
+   FSpec FR-450-AC-3 names the second.
 
    | Family | Construct | Cause |
    | --- | --- | --- |
@@ -103,49 +103,49 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
    | `dispatch-call` | a postfix `receiver.member(args)` operation call | `expression-form` |
    | `lookup` | the `lookup<T>(p, r) absent m` expression | `expression-form` |
 
-6. **The `model` declaration is ungated.** QSpec states no gate for the
-   `model` declaration, and QSL adds none. State clauses (`invariant`, `pre`
+6. **The `model` declaration is ungated.** FSpec states no gate for the
+   `model` declaration, and FSL adds none. State clauses (`invariant`, `pre`
    and `post`) name a model alias, so a unit that selects any of the five
    other layers writes them against a model declared in that unit and is
    admitted (FR-110 "Layer selection": state core admits them). The gate is
    on the forms the unit itself writes. A unit that does not select the model
    profile can still name a model through an import `as` alias of a library
-   that selects it (QSpec's shared grammar allows an import `as` alias as the
+   that selects it (FSpec's shared grammar allows an import `as` alias as the
    model alias); the forms of item 5 that the unit writes against that alias
    are refused, but the leak by which the unit reaches the library's model
-   through clauses is not closed by this requirement, and no QSpec row is
+   through clauses is not closed by this requirement, and no FSpec row is
    requested for it.
-7. **Forms this requirement does not gate.** QSL does not gate the
+7. **Forms this requirement does not gate.** FSL does not gate the
    `Population<T>` type, `allInstances`, field or relationship navigation, the
    `hyper`, `relation` and state-graph clauses, or the state-clause family.
-   For `Population<T>`, `allInstances` and navigation this is QSL's reading:
-   QSpec's shared grammar closes its model-forms paragraph with a refusal
+   For `Population<T>`, `allInstances` and navigation this is FSL's reading:
+   FSpec's shared grammar closes its model-forms paragraph with a refusal
    rule that can be read to cover those forms along with navigation, and
-   leaves open which of them it covers. A QSpec clarification of that is
-   requested; until it arrives QSL gates exactly the families of
+   leaves open which of them it covers. An FSpec clarification of that is
+   requested; until it arrives FSL gates exactly the families of
    item 5. FR-110's layer rule still refuses a form outside a selected
    layer's admitted-form set (for example `reaches`, which state core
    refuses). The object navigation forms `deref` and `reaches` are gated by
    that layer rule alone, with no exception: item 17 states it.
 8. **Protocol, memory and timed forms are not gated by this requirement.**
-   QSpec's shared grammar (its facet grammar section) names
-   `quire.protocol.complete/v1` as the facet of the protocol forms, including
-   the memory clause, memory order and fence (QSpec ADR-006 makes it the one
-   protocol admission profile), and `quire.temporal.complete/v1` as the
-   facet of the timed forms. Neither is a model construct. QSL's
+   FSpec's shared grammar (its facet grammar section) names
+   `filament.protocol.complete/v1` as the facet of the protocol forms, including
+   the memory clause, memory order and fence (FSpec ADR-006 makes it the one
+   protocol admission profile), and `filament.temporal.complete/v1` as the
+   facet of the timed forms. Neither is a model construct. FSL's
    the layer table has a row for the temporal facet (item 18) and
    none for the protocol facet. The timed forms are gated by FR-230's "Timed facet gate" on the unit's
-   selection of `quire.temporal.complete/v1`, not by item 11. QSL adds no
+   selection of `filament.temporal.complete/v1`, not by item 11. FSL adds no
    layer and no gate for the protocol facet here; FR-308 and FR-309
    name the protocol facet accordingly.
-9. **Why the test is on the unit.** QSpec's shared grammar says a recognised
+9. **Why the test is on the unit.** FSpec's shared grammar says a recognised
    construct whose required facet is absent receives a located
-   `unsupported_construct` for a package, and QSpec FR-001 refuses a form with
+   `unsupported_construct` for a package, and FSpec FR-001 refuses a form with
    `unsupported_construct` naming the unit's selected layers. FR-110's
    per-alias layer rule alone would leave a construct with no `using` alias
    (for example `abstraction-decl`) ungated. FR-110 and FR-453 state no
-   unit-level model rule themselves; the unit-level reading is QSpec's
-   package-level wording, applied by QSL to the families of item 5.
+   unit-level model rule themselves; the unit-level reading is FSpec's
+   package-level wording, applied by FSL to the families of item 5.
 
 ### Stage, precedence and origin
 
@@ -158,12 +158,12 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
 11. **S3 refuses.** S3 SHALL refuse each model construct in a unit that does
     not select the model profile, in source order, and SHALL report every
     such construct, not the first. Each refusal is `unsupported_construct`
-    (QSpec FR-271) with the cause of item 5 (QSpec FR-272, native-diagnostics).
+    (FSpec FR-271) with the cause of item 5 (FSpec FR-272, native-diagnostics).
     Its origin is the construct's source span: the declaration's span for a
     declaration form, the expression's span for an expression form. The
     refusal retains the recognised form's family, the owning declaration, the
     header layers the unit selected in source order, and the required layer
-    `quire.model.complete/v1`. The refusal is S3's, so a unit with an E3
+    `filament.model.complete/v1`. The refusal is S3's, so a unit with an E3
     refusal (FR-110) reports that one and produces no S3 refusal.
 12. **One refusal per construct.** In a unit that does not select the model
     profile, the refusal of item 11 is the only refusal a construct of item 5
@@ -175,7 +175,7 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
     `using` alias resolves to a lower layer is refused by FR-110's layer rule
     alone, and this requirement reports nothing, except for a model construct
     in a function or predicate body. When the unit selects the model profile,
-    S3 SHALL derive `quire.model.complete/v1` as the family's body layer for
+    S3 SHALL derive `filament.model.complete/v1` as the family's body layer for
     a function or predicate body that writes a model construct. Its
     declaration and `decreases` measure remain checked under its declared
     `using` selection. A helper body that cannot resolve or assemble a model
@@ -183,7 +183,7 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
     family SHALL NOT admit an unsupported helper. Without a selected model
     profile, item 11 still refuses each model construct.
 13. **Presence in unreachable syntax counts.** A model construct in a
-    declaration nothing uses is refused the same way (QSpec
+    declaration nothing uses is refused the same way (FSpec
     native-diagnostics: presence in unreachable syntax does not erase the
     refusal).
 14. **Per unit.** The test applies to the unit being compiled and, separately,
@@ -207,33 +207,33 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
 
 ### Retiring the object navigation exception
 
-17. **The `quire.value.complete/v1` admitted-form set holds no object
-    navigation form.** QSpec's `quire.state.graph/v1` adds the object
-    navigation forms (`deref`, `reaches`) and `quire.value.complete/v1` does
+17. **The `filament.value.complete/v1` admitted-form set holds no object
+    navigation form.** FSpec's `filament.state.graph/v1` adds the object
+    navigation forms (`deref`, `reaches`) and `filament.value.complete/v1` does
     not require it. FR-110 records a temporary exception by which the
-    admitted-form set of `quire.value.complete/v1` also holds them. The
+    admitted-form set of `filament.value.complete/v1` also holds them. The
     exception is deleted as one change with the gate, and the deletion covers:
     (a) the `ObjectNavigation` entry of the `ValueComplete` row of the layer
     table, with the comment that records the exception;
     (b) the FR-110 bullet that records the exception; and
     (c) the fixtures whose declaration writes `deref` or `reaches` against a
-    `using` alias that resolves to `quire.value.complete/v1`, each of which
-    moves to an alias that resolves to `quire.state.graph/v1` or
-    `quire.model.complete/v1` (both admit the forms), whatever other profiles
+    `using` alias that resolves to `filament.value.complete/v1`, each of which
+    moves to an alias that resolves to `filament.state.graph/v1` or
+    `filament.model.complete/v1` (both admit the forms), whatever other profiles
     the unit's header selects.
     After the deletion a declaration that writes `deref` or `reaches` is
     admitted exactly when its `using` alias resolves to a layer whose
-    `requires` closure names `quire.state.graph/v1`, and otherwise is refused
+    `requires` closure names `filament.state.graph/v1`, and otherwise is refused
     by FR-110's layer rule naming that layer. No model-gate refusal (item 11)
     applies to the forms.
 
 ### The timed-model layer
 
-18. **`quire.temporal.complete/v1` is a header-selectable layer.** E3
-    resolves a header profile naming `quire.temporal.complete/v1` through the
+18. **`filament.temporal.complete/v1` is a header-selectable layer.** E3
+    resolves a header profile naming `filament.temporal.complete/v1` through the
     same layer table as the other layers (FR-110), with no
     second mechanism and no new refusal code. The row requires
-    `quire.model.complete/v1`. Selecting it therefore selects the model
+    `filament.model.complete/v1`. Selecting it therefore selects the model
     profile (item 1) and admits the forms of the model layer's `requires`
     closure (item 4), and a unit needs no second header profile for model
     constructs or value-complete forms.
@@ -242,29 +242,29 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
     selected-layer union including `requires` closure, so a unit selecting
     only the temporal layer passes the model gate; FR-230's "Timed facet
     gate" separately tests whether that union contains the temporal layer.
-    A unit selecting only `quire.model.complete/v1` passes the model gate but
+    A unit selecting only `filament.model.complete/v1` passes the model gate but
     is refused each timed construct it writes by FR-230.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-361-AC-1 | A unit with the header profile `quire.value.complete/v1`, a `model` declaration with an operation and one `body` declaration for it refuses once, `unsupported_construct`/`declaration-form` at the body declaration's span, retaining the family `operation-body`, the owning declaration, the selected header layers and the required layer `quire.model.complete/v1`, and produces no package. The same unit with the header profile `quire.model.complete/v1` compiles and sets `has_body`. | Test (TC-1012) |
+| FR-361-AC-1 | A unit with the header profile `filament.value.complete/v1`, a `model` declaration with an operation and one `body` declaration for it refuses once, `unsupported_construct`/`declaration-form` at the body declaration's span, retaining the family `operation-body`, the owning declaration, the selected header layers and the required layer `filament.model.complete/v1`, and produces no package. The same unit with the header profile `filament.model.complete/v1` compiles and sets `has_body`. | Test (TC-1012) |
 | FR-361-AC-2 | A value-profile unit that holds a `model` declaration and calls `receiver.operation(args)` refuses once, `unsupported_construct`/`expression-form` at the call's span with the family `dispatch-call`; one that holds a population binding and `lookup<T>(p, r) absent m` refuses once the same way with the family `lookup` at that expression's span. The same two units with the model profile compile: the call resolves to the receiver's effective operation and the lookup reads the population binding. | Test (TC-1013) |
 | FR-361-AC-3 | A value-profile unit that holds a `model` declaration and an `abstraction-decl` refuses once, `unsupported_construct`/`declaration-form` at the declaration's span with the family `abstraction`; with the model profile it compiles to the same `CheckedAbstractionRelation` FR-304-AC-1 gives. A declaration with no binding refuses `invalid_syntax` before this check under either profile. | Test (TC-1014) |
-| FR-361-AC-4 | A unit with the header profile `quire.value.complete/v1` that holds a `pre`, a `post` and an `invariant` against a model alias compiles. For `Population<T>`, `allInstances`, field navigation and a `hyper`, `relation` or state-graph clause, the same unit with the model profile is not refused by the model-profile gate (a checked `hyper` clause over `behaviours` is emitted as a `claim`/`hyperproperty` node and is refused `NotEmitted` only in the cases of FR-488 "Clauses S4 does not emit", and a `relation` clause over model operations is emitted, FR-180), and with the value profile the refusal, if any, is FR-110's layer rule naming the selected layer and retains no family of item 5. | Test (TC-1015) |
-| FR-361-AC-5 | A unit that holds a `model` declaration and `pre`, `post` and `invariant` clauses against its alias, and whose header profile is each of `quire.state.core/v1`, `quire.state.queries/v1`, `quire.state.graph/v1` and `quire.value.complete/v1`, compiles with no model-gate refusal. | Test (TC-1016) |
+| FR-361-AC-4 | A unit with the header profile `filament.value.complete/v1` that holds a `pre`, a `post` and an `invariant` against a model alias compiles. For `Population<T>`, `allInstances`, field navigation and a `hyper`, `relation` or state-graph clause, the same unit with the model profile is not refused by the model-profile gate (a checked `hyper` clause over `behaviours` is emitted as a `claim`/`hyperproperty` node and is refused `NotEmitted` only in the cases of FR-488 "Clauses S4 does not emit", and a `relation` clause over model operations is emitted, FR-180), and with the value profile the refusal, if any, is FR-110's layer rule naming the selected layer and retains no family of item 5. | Test (TC-1015) |
+| FR-361-AC-5 | A unit that holds a `model` declaration and `pre`, `post` and `invariant` clauses against its alias, and whose header profile is each of `filament.state.core/v1`, `filament.state.queries/v1`, `filament.state.graph/v1` and `filament.value.complete/v1`, compiles with no model-gate refusal. | Test (TC-1016) |
 | FR-361-AC-6 | A value-profile unit holding a construct of every family of item 5 refuses once per construct, in source order, every refusal retaining the selected layers and the required layer; a construct inside a declaration nothing uses is refused too. A library that selects the model profile imported by a unit that does not, and the reverse, each give the lacking unit its refusals; the importing unit's own forms written against the library's import alias are refused. | Test (TC-1017) |
 | FR-361-AC-7 | The selection is the header and nothing else: a unit with no header profile naming the model identity, a `model` declaration, a supplied domain package and a model construct refuses the construct and never compiles. | Test (TC-1017) |
 | FR-361-AC-8 | **RETIRED (the layer selection rows are withdrawn).** The criterion asserted the layer rows only; no replacement. | Test (TC-1017), retired |
 | FR-361-AC-9 | In a unit that also holds model constructs, a header profile naming a qualification definition (for example the `ieee_profile` identity) refuses `unknown_profile`/`wrong-selection-role`, and one naming `test:unknown-profile` (held by no catalog) refuses `unknown_profile`/`unsupported-selection`; the E3 refusal is the only one reported. An identity a clause family's catalog holds routes to that catalog (FR-110, ADR-011) and is not covered here. | Test (TC-1017) |
-| FR-361-AC-10 | **RETIRED (no layer-table comparison).** QSL no longer compares the model layer of its layer table with QSpec's definition files. | Test (TC-1017), retired |
+| FR-361-AC-10 | **RETIRED (no layer-table comparison).** FSL no longer compares the model layer of its layer table with FSpec's definition files. | Test (TC-1017), retired |
 | FR-361-AC-11 | In a value-profile unit, S2 builds the forms of all four families and reports no refusal; the refusals of AC-1 to AC-3 are S3's. | Test (TC-1017) |
-| FR-361-AC-12 | A `body ... using V` where `V` resolves to `quire.value.complete/v1` in a unit that selects only that profile receives one refusal (the family refusal of item 11), not two; the same declaration in a unit that also selects the model profile through another alias receives FR-110's layer refusal alone. | Test (TC-1017) |
-| FR-361-AC-13 | A declaration that writes a `deref` and a declaration that writes a `reaches`, each with a `using` alias that resolves to `quire.value.complete/v1`, are each refused once by FR-110's layer rule naming that layer and retain no family of item 5; the same declarations with an alias that resolves to `quire.state.graph/v1` and with one that resolves to `quire.model.complete/v1` compile, and a declaration whose alias resolves to `quire.value.complete/v1` is still refused in a unit whose header also selects `quire.state.graph/v1` through a second alias. | Test (TC-1015) |
-| FR-361-AC-14 | A unit whose only header profile names `quire.temporal.complete/v1`, with a `model` declaration and a `body` declaration, a dispatched call, a `lookup` and an `abstraction-decl`, compiles with no model-gate refusal because its selected-layer union contains `quire.model.complete/v1` through the temporal layer's `requires` closure; the same unit whose header profile names only `quire.value.complete/v1` refuses each construct as AC-1 to AC-3 state. A unit that selects `quire.model.complete/v1` and holds a `time` member is refused it by FR-230's gate and is not refused its model constructs. | Test (TC-1017) |
-| FR-361-AC-15 | **RETIRED (no layer-table comparison).** QSL no longer compares the temporal layer of its layer table with QSpec's definition files; AC-14 asserts the emitted rows. | Test (TC-1017), retired |
-| FR-361-AC-16 | In a unit selecting `quire.model.complete/v1`, helper functions `isDog` and `ageOK` whose `using` alias selects `quire.value.complete/v1`, where `isDog` performs the population lookup disjunction and `ageOK` reads a model field, are admitted with their declaration and any `decreases` measure checked under `quire.value.complete/v1` and their bodies checked under the derived `quire.model.complete/v1` family. The guarded property of FR-125-AC-17 proves, and the unguarded property refutes `undefined-evaluation`/`absent-key`. Without a selected model profile, the model constructs in those helper bodies receive the S3 refusal of item 11. A body construct that still cannot resolve or assemble retains its ordinary located refusal. | Test (TC-520) |
+| FR-361-AC-12 | A `body ... using V` where `V` resolves to `filament.value.complete/v1` in a unit that selects only that profile receives one refusal (the family refusal of item 11), not two; the same declaration in a unit that also selects the model profile through another alias receives FR-110's layer refusal alone. | Test (TC-1017) |
+| FR-361-AC-13 | A declaration that writes a `deref` and a declaration that writes a `reaches`, each with a `using` alias that resolves to `filament.value.complete/v1`, are each refused once by FR-110's layer rule naming that layer and retain no family of item 5; the same declarations with an alias that resolves to `filament.state.graph/v1` and with one that resolves to `filament.model.complete/v1` compile, and a declaration whose alias resolves to `filament.value.complete/v1` is still refused in a unit whose header also selects `filament.state.graph/v1` through a second alias. | Test (TC-1015) |
+| FR-361-AC-14 | A unit whose only header profile names `filament.temporal.complete/v1`, with a `model` declaration and a `body` declaration, a dispatched call, a `lookup` and an `abstraction-decl`, compiles with no model-gate refusal because its selected-layer union contains `filament.model.complete/v1` through the temporal layer's `requires` closure; the same unit whose header profile names only `filament.value.complete/v1` refuses each construct as AC-1 to AC-3 state. A unit that selects `filament.model.complete/v1` and holds a `time` member is refused it by FR-230's gate and is not refused its model constructs. | Test (TC-1017) |
+| FR-361-AC-15 | **RETIRED (no layer-table comparison).** FSL no longer compares the temporal layer of its layer table with FSpec's definition files; AC-14 asserts the emitted rows. | Test (TC-1017), retired |
+| FR-361-AC-16 | In a unit selecting `filament.model.complete/v1`, helper functions `isDog` and `ageOK` whose `using` alias selects `filament.value.complete/v1`, where `isDog` performs the population lookup disjunction and `ageOK` reads a model field, are admitted with their declaration and any `decreases` measure checked under `filament.value.complete/v1` and their bodies checked under the derived `filament.model.complete/v1` family. The guarded property of FR-125-AC-17 proves, and the unguarded property refutes `undefined-evaluation`/`absent-key`. Without a selected model profile, the model constructs in those helper bodies receive the S3 refusal of item 11. A body construct that still cannot resolve or assemble retains its ordinary located refusal. | Test (TC-520) |
 
 ## Dependencies
 
@@ -279,9 +279,9 @@ declarations names the identity of the layer table's `quire.model.complete/v1` l
   facet, which this requirement does not gate. FR-056 states the `model`
   declaration and domain-package intake, FR-103 the model operations.
 - FR-230 states the timed forms the temporal layer admits and the gate on
-  them; QSpec `temporal-complete.md` states
+  them; FSpec `temporal-complete.md` states
   the layer.
-- QSpec ADR-006, shared grammar (its facet grammar and model forms
+- FSpec ADR-006, shared grammar (its facet grammar and model forms
   sections), `model-complete.md`,
   `native-diagnostics.md` (the `unsupported_construct` causes), FR-001,
   FR-271, FR-272, FR-450-AC-3 and FR-453.

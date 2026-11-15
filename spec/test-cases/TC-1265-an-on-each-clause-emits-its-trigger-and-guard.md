@@ -3,7 +3,7 @@ id: TC-1265
 title: "An on each clause emits its trigger and guard, and S3 checks the guard"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: verifies
 ---
 # TC-1265: An on each clause emits its trigger and guard, and S3 checks the guard
@@ -12,7 +12,7 @@ relationships:
 
 Verify that S3 checks an `on each` activation's `when` guard with the
 existing causes, and that S4 emits an `on each` clause, guarded or not, as
-QSpec FR-370's `temporal`/`temporal_clause` node, whose activation argument
+FSpec FR-370's `temporal`/`temporal_clause` node, whose activation argument
 carries the trigger binder's own parameter node, which the guard may read, and, only when written, the
 guard term, so a guard-less clause and a `when (true)` clause have
 different keys.

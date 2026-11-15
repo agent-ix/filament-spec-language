@@ -3,7 +3,7 @@ id: TC-1056
 title: "S3 checks channels, relationships, requirements and the owner and visible facts of a decision"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: verifies
 ---
 # TC-1056: S3 checks channels, relationships, requirements and the owner and visible facts of a decision

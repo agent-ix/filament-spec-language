@@ -3,7 +3,7 @@ id: TC-727
 title: "Checker defaults admit any depth that fits, and its limit outcomes name the setting"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-258
+  - target: ix://agent-ix/filament-spec-language/FR-258
     type: verifies
 ---
 # TC-727: Checker defaults admit any depth that fits, and its limit outcomes name the setting

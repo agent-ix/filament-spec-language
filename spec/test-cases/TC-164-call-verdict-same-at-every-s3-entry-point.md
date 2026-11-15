@@ -3,7 +3,7 @@ id: TC-164
 title: "A call receives the same verdict from a declaration body and from a clause expression"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: verifies
 ---
 # TC-164: A call receives the same verdict from a declaration body and from a clause expression

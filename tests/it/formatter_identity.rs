@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-003: actual checked identities through S1, S2, S3 and S4.
 
-use qsl_package::EmitLimits;
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
+use fsl_package::EmitLimits;
 use std::collections::BTreeMap;
 
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::DependencyInput;
 
 use crate::support::front_end::emitted;
 
@@ -19,17 +19,17 @@ fn exact_format_output_bound_keeps_the_original_checked_identity() {
         include_str!("../fixtures/spine-compile.native")
     );
     let source = SourceIdentity::new("test", "format-output-bound");
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         source.clone(),
         "unit.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .unwrap();
     assert!(parsed.is_admissible());
-    let complete = qsl_cst::format::format_with_limits(
+    let complete = fsl_cst::format::format_with_limits(
         &parsed,
-        qsl_cst::format::FormatLimits::default().with_output_bytes(usize::MAX),
+        fsl_cst::format::FormatLimits::default().with_output_bytes(usize::MAX),
     )
     .unwrap();
     let packages = BTreeMap::new();
@@ -43,20 +43,20 @@ fn exact_format_output_bound_keeps_the_original_checked_identity() {
     )
     .expect("the original fixture reaches public S4");
     for bound in [complete.len(), complete.len() + 1] {
-        let limits = qsl_cst::format::FormatLimits::default().with_output_bytes(bound);
-        let formatted = qsl_cst::format::format_with_limits(&parsed, limits).unwrap();
+        let limits = fsl_cst::format::FormatLimits::default().with_output_bytes(bound);
+        let formatted = fsl_cst::format::format_with_limits(&parsed, limits).unwrap();
         assert_eq!(formatted, complete);
         let identity = SourceIdentity::new("test", "format-output-bound");
-        let reparsed = qsl_cst::parse(
+        let reparsed = fsl_cst::parse(
             identity.clone(),
             "unit.native",
             formatted.as_bytes(),
-            qsl_cst::Limits::default(),
+            fsl_cst::Limits::default(),
         )
         .unwrap();
         assert!(reparsed.is_admissible());
         assert_eq!(
-            qsl_cst::format::format_with_limits(&reparsed, limits).unwrap(),
+            fsl_cst::format::format_with_limits(&reparsed, limits).unwrap(),
             formatted
         );
         emitted(
@@ -70,7 +70,7 @@ fn exact_format_output_bound_keeps_the_original_checked_identity() {
     }
 }
 
-#[path = "../../qsl-semantics/tests/it/model_operations.rs"]
+#[path = "../../fsl-semantics/tests/it/model_operations.rs"]
 #[expect(
     dead_code,
     reason = "two model APIs belong to the owning observation tests"
@@ -78,8 +78,8 @@ fn exact_format_output_bound_keeps_the_original_checked_identity() {
 mod semantic_models;
 
 mod protocol_attempt_fixture {
-    use qsl_semantics as semantics;
-    include!("../../qsl-semantics/tests/fixtures/protocol_attempt.rs");
+    use fsl_semantics as semantics;
+    include!("../../fsl-semantics/tests/fixtures/protocol_attempt.rs");
 }
 
 fn private_tc465_identity(document: Vec<u8>) {
@@ -92,11 +92,11 @@ fn private_state_source_identity(document: Vec<u8>, body: &str) {
     let graph = declarations
         .check(
             CheckMode::Linked,
-            quire_semantic_value::checking::CheckingLimits::default(),
+            filament_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("original private TC465 S3: {refusals:?}"));
-    let original = qsl_package::emit_checked(
-        &qsl_package::CheckedPackage::link(graph),
+    let original = fsl_package::emit_checked(
+        &fsl_package::CheckedPackage::link(graph),
         EmitLimits::fixture(),
     )
     .unwrap_or_else(|refusal| panic!("original private TC465 public S4: {refusal:?}"));
@@ -178,16 +178,16 @@ private_argument_cases! {
 fn protocol_attempt_identity(declarations: &str) {
     let text = format!("{}{declarations}\n", protocol_attempt_fixture::HEADER);
     let compile = |text: &str, revision: &str| {
-        let parsed = qsl_cst::parse(
+        let parsed = fsl_cst::parse(
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
-            qsl_cst::Limits::default(),
+            fsl_cst::Limits::default(),
         )
         .unwrap();
         assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-        let forms = qsl_forms::build_unit(&parsed).unwrap();
-        let declarations = qsl_semantics::check::PackageDeclarations::assemble(
+        let forms = fsl_forms::build_unit(&parsed).unwrap();
+        let declarations = fsl_semantics::check::PackageDeclarations::assemble(
             parsed.source().reference().clone(),
             "fixture".to_string(),
             forms,
@@ -198,11 +198,11 @@ fn protocol_attempt_identity(declarations: &str) {
         let graph = declarations
             .check(
                 CheckMode::Linked,
-                quire_semantic_value::checking::CheckingLimits::default(),
+                filament_semantic_value::checking::CheckingLimits::default(),
             )
             .unwrap_or_else(|refusals| panic!("{revision}: protocol S3 refuses: {refusals:?}"));
-        let emission = qsl_package::emit_checked(
-            &qsl_package::CheckedPackage::link(graph),
+        let emission = fsl_package::emit_checked(
+            &fsl_package::CheckedPackage::link(graph),
             EmitLimits::fixture(),
         )
         .unwrap_or_else(|refusal| panic!("{revision}: protocol public S4 refuses: {refusal:?}"));
@@ -210,10 +210,10 @@ fn protocol_attempt_identity(declarations: &str) {
         parsed
     };
     let parsed = compile(&text, "1");
-    let formatted = qsl_cst::format::format_with_limit(&parsed, usize::MAX).unwrap();
+    let formatted = fsl_cst::format::format_with_limit(&parsed, usize::MAX).unwrap();
     let reparsed = compile(&formatted, "1-formatted");
     assert_eq!(
-        qsl_cst::format::format_with_limit(&reparsed, usize::MAX).unwrap(),
+        fsl_cst::format::format_with_limit(&reparsed, usize::MAX).unwrap(),
         formatted,
         "private protocol second-pass bytes"
     );
@@ -234,7 +234,7 @@ fn private_protocol_shared_binder_keeps_format_identity() {
 #[trace("FR-003-AC-9")]
 #[test]
 fn private_protocol_named_contract_keeps_format_identity() {
-    let source = include_str!("../../qsl-semantics/src/check/protocol_clause/tests/attempts.rs");
+    let source = include_str!("../../fsl-semantics/src/check/protocol_clause/tests/attempts.rs");
     let template = function_literal(
         source,
         "an_empty_contracts_list_binds_with_no_refusal",
@@ -257,12 +257,12 @@ fn state_fixture(case: usize) -> (Vec<u8>, String) {
     use semantic_models as models;
     use serde_json::json;
 
-    let fixture = include_str!("../../qsl-semantics/tests/it/state_clauses.rs");
+    let fixture = include_str!("../../fsl-semantics/tests/it/state_clauses.rs");
     let update = || {
         models::operation(
             "attemptUpdate",
             json!([]),
-            Some("ix://quire/native/Boolean"),
+            Some("ix://filament/native/Boolean"),
             json!({
                 "modifies": [models::config_version_identity("versionNumber")],
                 "creates": [], "deletes": []
@@ -298,7 +298,7 @@ fn state_fixture(case: usize) -> (Vec<u8>, String) {
                 models::operation(
                     "attemptUpdate",
                     json!([]),
-                    Some("ix://quire/native/Boolean"),
+                    Some("ix://filament/native/Boolean"),
                     json!({
                         "modifies": [models::config_version_identity("versionNumber"),
                             models::config_version_identity("parent")],
@@ -340,13 +340,13 @@ fn state_fixture(case: usize) -> (Vec<u8>, String) {
                 models::operation(
                     "isStable",
                     json!([]),
-                    Some("ix://quire/native/Boolean"),
+                    Some("ix://filament/native/Boolean"),
                     models::empty_frame(),
                 ),
                 models::operation(
                     "versionTotal",
                     json!([]),
-                    Some("ix://quire/native/Integer"),
+                    Some("ix://filament/native/Integer"),
                     models::empty_frame(),
                 ),
             ]),
@@ -360,13 +360,13 @@ fn state_fixture(case: usize) -> (Vec<u8>, String) {
                 models::operation(
                     "isStable",
                     json!([]),
-                    Some("ix://quire/native/Boolean"),
+                    Some("ix://filament/native/Boolean"),
                     models::empty_frame(),
                 ),
                 models::operation(
                     "isFresh",
                     json!([]),
-                    Some("ix://quire/native/Boolean"),
+                    Some("ix://filament/native/Boolean"),
                     models::empty_frame(),
                 ),
             ]);
@@ -424,15 +424,15 @@ fn state_fixture_identity(case: usize) {
         .expect("the owning original state fixture assembles")
         .check(
             CheckMode::Linked,
-            quire_semantic_value::checking::CheckingLimits::default(),
+            filament_semantic_value::checking::CheckingLimits::default(),
         )
         .unwrap_or_else(|refusals| panic!("state fixture {case}: original S3: {refusals:?}"));
     if case == 13 {
         let (source, _) = semantic_models::config_unit_with_body(&document, &body);
         subtype_fixture_diagnostics(&graph, &source);
     }
-    let original = qsl_package::emit_checked(
-        &qsl_package::CheckedPackage::link(graph),
+    let original = fsl_package::emit_checked(
+        &fsl_package::CheckedPackage::link(graph),
         EmitLimits::fixture(),
     )
     .unwrap_or_else(|refusal| panic!("state fixture {case}: original public S4: {refusal:?}"));
@@ -451,8 +451,8 @@ fn state_fixture_identity(case: usize) {
     .unwrap_or_else(|refusal| panic!("state fixture {case}: formatter spine: {refusal:?}"));
 }
 
-fn subtype_fixture_diagnostics(graph: &qsl_semantics::check::CheckedGraph, source: &str) {
-    use quire_semantic_value::location::{
+fn subtype_fixture_diagnostics(graph: &fsl_semantics::check::CheckedGraph, source: &str) {
+    use filament_semantic_value::location::{
         ExpressionLocation as Location, ExpressionOwner as Origin,
     };
 
@@ -532,19 +532,19 @@ fn subtype_fixture_diagnostics(graph: &qsl_semantics::check::CheckedGraph, sourc
     );
     assert_eq!(graph.requirements().len(), 1, "one original subtype claim");
     let record = graph.requirements().values().next().unwrap();
-    let qsl_semantics::family::ClaimExtent::Unbounded(domains) = record.requirements().extent()
+    let fsl_semantics::family::ClaimExtent::Unbounded(domains) = record.requirements().extent()
     else {
         panic!("the original subtype is covered by an unbounded population");
     };
     assert_eq!(domains.len(), 1, "one original covering population");
     let (domain, kind) = domains.iter().next().unwrap();
-    assert_eq!(kind, qsl_foundation::bound::DomainKind::Population);
-    let qsl_foundation::bound::DomainKey::Population { member_type, .. } = domain else {
+    assert_eq!(kind, fsl_foundation::bound::DomainKind::Population);
+    let fsl_foundation::bound::DomainKey::Population { member_type, .. } = domain else {
         panic!("the requirement names its population's own member type");
     };
     let member = member_type.clone();
     let node = graph.semantic_graph().node(member.clone()).unwrap();
-    let Some(qsl_semantics::check::Owner::Model(owner)) = node.owner() else {
+    let Some(fsl_semantics::check::Owner::Model(owner)) = node.owner() else {
         panic!("the population member is the original model-owned type");
     };
     assert_eq!(owner.identity(), "example/config-version");
@@ -632,7 +632,7 @@ state_identity_tests! {
 #[trace("FR-093")]
 #[test]
 fn state_generated_occurrences_have_authored_regions() {
-    use quire_semantic_value::location::ExpressionOwner as Origin;
+    use filament_semantic_value::location::ExpressionOwner as Origin;
 
     let (document, body) = state_fixture(0);
     let (source, _) = semantic_models::config_unit_with_body(&document, &body);
@@ -640,7 +640,7 @@ fn state_generated_occurrences_have_authored_regions() {
         .unwrap()
         .check(
             CheckMode::Linked,
-            quire_semantic_value::checking::CheckingLimits::default(),
+            filament_semantic_value::checking::CheckingLimits::default(),
         )
         .expect("the original three clauses check before emission");
     let authored_names = ["ParentOrder", "NoCycle", "VersionUnchanged"];
@@ -738,8 +738,8 @@ fn state_generated_occurrences_have_authored_regions() {
         selected_model_roots > 0,
         "selected model object declarations have generated alias occurrences"
     );
-    let original = qsl_package::emit_checked(
-        &qsl_package::CheckedPackage::link(graph),
+    let original = fsl_package::emit_checked(
+        &fsl_package::CheckedPackage::link(graph),
         EmitLimits::fixture(),
     )
     .expect("actual public S4 requires all original occurrences to be located");
@@ -801,7 +801,7 @@ fn function_literal(test_source: &str, function: &str, prefix: &str) -> String {
 }
 
 // Instantiate the named substitutions of an owning Rust format! literal.
-// Braces in that literal are Rust's escaped braces, not newly authored QSL.
+// Braces in that literal are Rust's escaped braces, not newly authored FSL.
 fn fixture_text(mut template: String, substitutions: &[(&str, &str)]) -> String {
     for (name, value) in substitutions {
         let placeholder = format!("{{{name}}}");
@@ -876,17 +876,17 @@ fn replay_fixture(text: &str) {
 
 /// S1–S4 under the evaluator's actual post-S2 profile injection.
 fn ieee_fixture_identity(text: &str) {
-    use qsl_semantics::check::PackageDeclarations;
-    use qsl_semantics::value::{admit_ieee_profile, DefinitionRole};
+    use fsl_semantics::check::PackageDeclarations;
+    use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
     let compile = |text: &str, revision: &str| {
-        let parsed = qsl_cst::parse(
+        let parsed = fsl_cst::parse(
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
-            qsl_cst::Limits::default(),
+            fsl_cst::Limits::default(),
         )
         .unwrap();
-        let built = qsl_forms::build_unit(&parsed).unwrap();
+        let built = fsl_forms::build_unit(&parsed).unwrap();
         let mut declarations = PackageDeclarations::assemble(
             parsed.source().reference().clone(),
             "fixture".to_string(),
@@ -900,11 +900,11 @@ fn ieee_fixture_identity(text: &str) {
         let graph = declarations
             .check(
                 CheckMode::Linked,
-                quire_semantic_value::checking::CheckingLimits::default(),
+                filament_semantic_value::checking::CheckingLimits::default(),
             )
             .expect("the owning IEEE profile admits the fixture");
-        let emission = qsl_package::emit_checked(
-            &qsl_package::CheckedPackage::link(graph),
+        let emission = fsl_package::emit_checked(
+            &fsl_package::CheckedPackage::link(graph),
             EmitLimits::fixture(),
         )
         .unwrap();
@@ -915,23 +915,23 @@ fn ieee_fixture_identity(text: &str) {
         );
     };
     compile(text, "1");
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .unwrap();
-    let formatted = qsl_cst::format::format(&parsed).unwrap();
-    let reparsed = qsl_cst::parse(
+    let formatted = fsl_cst::format::format(&parsed).unwrap();
+    let reparsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
         formatted.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .unwrap();
     assert_eq!(
-        qsl_cst::format::format(&reparsed).unwrap(),
+        fsl_cst::format::format(&reparsed).unwrap(),
         formatted,
         "IEEE second pass"
     );
@@ -941,7 +941,7 @@ fn ieee_fixture_identity(text: &str) {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn all_evaluator_rounding_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-eval/tests/it/float_rounding.rs");
+    let fixture = include_str!("../../fsl-eval/tests/it/float_rounding.rs");
     let template = function_literal(fixture, "add", "language ");
     for float in [
         "Float64[nearest-even]",
@@ -958,7 +958,7 @@ fn all_evaluator_rounding_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn both_evaluator_name_variants_keep_format_identity() {
-    let fixture = include_str!("../../qsl-eval/tests/it/evaluation_ignores_display_strings.rs");
+    let fixture = include_str!("../../fsl-eval/tests/it/evaluation_ignores_display_strings.rs");
     let template = function_literal(fixture, "unit", "{HEADER}");
     let header = source_literal(fixture, "HEADER");
     for (alias, inner, parameter, outer) in [
@@ -981,7 +981,7 @@ fn both_evaluator_name_variants_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn evaluator_enum_and_predicate_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-eval/tests/it/source_call.rs");
+    let fixture = include_str!("../../fsl-eval/tests/it/source_call.rs");
     let template = function_literal(fixture, "package_of", "language ");
     let declarations = literal_fixture_arguments(fixture, &["package_of"]);
     assert_eq!(
@@ -1000,7 +1000,7 @@ fn evaluator_enum_and_predicate_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn emitter_authored_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-package/src/emit/tests.rs");
+    let fixture = include_str!("../../fsl-package/src/emit/tests.rs");
     plain_fixture(&source_literal(fixture, "SPINE_TEXT"));
     let template = function_literal(fixture, "package_from_text", "language ");
     for declarations in literal_fixture_arguments(
@@ -1027,7 +1027,7 @@ fn emitter_authored_units_keep_format_identity() {
     let field = source_literal(fixture, "FIELD_ACCESS");
     let equality = source_literal(fixture, "CONFORMING_EQUALITY");
     let document = include_bytes!("../fixtures/spine-model.semantic-ir.json");
-    let packages = qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     for removed in [
         &[field.as_str(), equality.as_str()][..],
         &[field.as_str()][..],
@@ -1054,7 +1054,7 @@ fn emitter_authored_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn checked_claim_and_extent_fixture_units_keep_format_identity() {
-    let claims = include_str!("../../qsl-semantics/src/check/claims/tests.rs");
+    let claims = include_str!("../../fsl-semantics/src/check/claims/tests.rs");
     let header = source_literal(claims, "HEADER");
     let declarations: Vec<_> = function_literals(claims, "fixtures")
         .into_iter()
@@ -1097,7 +1097,7 @@ fn checked_claim_and_extent_fixture_units_keep_format_identity() {
     {
         plain_fixture(&format!("{header}{declarations}\n"));
     }
-    let extent = include_str!("../../qsl-package/src/emit/extent_agreement.rs");
+    let extent = include_str!("../../fsl-package/src/emit/extent_agreement.rs");
     let header = source_literal(extent, "HEADER");
     for declarations in literal_fixture_arguments(extent, &["emit_text"]) {
         plain_fixture(&format!("{header}{declarations}\n"));
@@ -1107,7 +1107,7 @@ fn checked_claim_and_extent_fixture_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn assembler_checked_owner_and_declaration_variants_keep_format_identity() {
-    let fixture = include_str!("../../qsl-semantics/src/check/assemble/tests.rs");
+    let fixture = include_str!("../../fsl-semantics/src/check/assemble/tests.rs");
     let profile = source_literal(fixture, "PROFILE_V");
     let header = format!("language \"ix:native\" edition \"1-draft\";\n{profile}");
     for (function, prefix) in [
@@ -1212,7 +1212,7 @@ fn syntax_and_legacy_file_fixtures_have_observed_original_refusals() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn lifecycle_generated_bodies_keep_format_identity() {
-    let fixture = include_str!("../../qsl-replay/src/spine/lifecycle/tests.rs");
+    let fixture = include_str!("../../fsl-replay/src/spine/lifecycle/tests.rs");
     let header = source_literal(fixture, "HEADER");
     let identity = || SourceIdentity::new("agent-ix", "test:lifecycle");
     let compile = |source: &str, limits| {
@@ -1236,7 +1236,7 @@ fn lifecycle_generated_bodies_keep_format_identity() {
         source.push_str(&function_literal(fixture, "sum", " }"));
         source
     };
-    compile(&sum(40), qsl_replay::spine::SpineLimits::default());
+    compile(&sum(40), fsl_replay::spine::SpineLimits::default());
     let mut source = format!("{header}function d0 using v(): Integer pure {{ 1 }}\n");
     let line = function_literal(fixture, "doubling", "function d{level}");
     for level in 1..24 {
@@ -1249,13 +1249,13 @@ fn lifecycle_generated_bodies_keep_format_identity() {
         ));
         source.push('\n');
     }
-    compile(&source, qsl_replay::spine::SpineLimits::default());
+    compile(&source, fsl_replay::spine::SpineLimits::default());
     let source = sum(3_000);
-    let mut limits = qsl_replay::spine::SpineLimits::default();
+    let mut limits = fsl_replay::spine::SpineLimits::default();
     limits.source.source_bytes = source.len();
     limits.source.tokens = usize::MAX / 2;
     limits.source.nodes = usize::MAX / 2;
-    limits.checking = quire_semantic_value::checking::CheckingLimits::new(u64::MAX)
+    limits.checking = filament_semantic_value::checking::CheckingLimits::new(u64::MAX)
         .with_input_bytes(u64::MAX)
         .with_work_budget(u64::MAX);
     compile(&source, limits);
@@ -1319,7 +1319,7 @@ fn lifecycle_seeded_admitted_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn lifecycle_large_declaration_unit_keeps_format_identity() {
-    let fixture = include_str!("../../qsl-replay/src/spine/lifecycle/tests.rs");
+    let fixture = include_str!("../../fsl-replay/src/spine/lifecycle/tests.rs");
     let mut source = source_literal(fixture, "HEADER");
     let line = function_literal(fixture, "declarations", "function f{index}");
     // This is the one measured declaration-volume case bounded for root IT;
@@ -1331,11 +1331,11 @@ fn lifecycle_large_declaration_unit_keeps_format_identity() {
         ));
         source.push('\n');
     }
-    let mut limits = qsl_replay::spine::SpineLimits::default();
+    let mut limits = fsl_replay::spine::SpineLimits::default();
     limits.source.source_bytes = source.len();
     limits.source.tokens = usize::MAX / 2;
     limits.source.nodes = usize::MAX / 2;
-    limits.checking = quire_semantic_value::checking::CheckingLimits::new(u64::MAX)
+    limits.checking = filament_semantic_value::checking::CheckingLimits::new(u64::MAX)
         .with_input_bytes(u64::MAX)
         .with_work_budget(u64::MAX);
     limits.package = limits.package.with_output_bytes(u64::MAX);
@@ -1351,7 +1351,7 @@ fn lifecycle_large_declaration_unit_keeps_format_identity() {
 }
 
 fn deep_source_generator_keeps_format_identity(label: &str) {
-    let fixture = include_str!("../../qsl-package/src/emit/tests/deep_bodies.rs");
+    let fixture = include_str!("../../fsl-package/src/emit/tests/deep_bodies.rs");
     let header = source_literal(fixture, "HEADER");
     let mut source = fixture_text(
         function_literal(fixture, "deep_source", "{HEADER}"),
@@ -1368,16 +1368,16 @@ fn deep_source_generator_keeps_format_identity(label: &str) {
     }
     source.push_str(&end);
     let bytes = source.len();
-    let mut limits = qsl_replay::spine::SpineLimits::default();
+    let mut limits = fsl_replay::spine::SpineLimits::default();
     limits.source.source_bytes = limits.source.source_bytes.max(bytes);
     limits.source.tokens = limits.source.tokens.max(bytes);
     limits.source.nodes = limits.source.nodes.max(bytes.saturating_mul(16));
-    limits.checking = quire_semantic_value::checking::CheckingLimits::new(u64::MAX)
+    limits.checking = filament_semantic_value::checking::CheckingLimits::new(u64::MAX)
         .with_input_bytes(u64::MAX)
         .with_work_budget(u64::MAX);
     limits.package = limits.package.with_output_bytes(u64::MAX);
     if label == "sum" {
-        let parsed = qsl_cst::parse(
+        let parsed = fsl_cst::parse(
             SourceIdentity::new("a", "u"),
             "unit.native",
             source.as_bytes(),
@@ -1388,7 +1388,7 @@ fn deep_source_generator_keeps_format_identity(label: &str) {
         let formatted = std::thread::Builder::new()
             .name("deep-formatter-small-stack".to_owned())
             .stack_size(256 * 1024)
-            .spawn(move || qsl_cst::format::format(&parsed))
+            .spawn(move || fsl_cst::format::format(&parsed))
             .expect("the small-stack formatter thread starts")
             .join()
             .expect("the iterative formatter fits on a 256 KiB stack")
@@ -1433,9 +1433,9 @@ fn deep_let_source_generator_keeps_format_identity() {
 #[test]
 #[ignore = "runs in make test-deep-format (part of make ci)"]
 fn replay_large_source_generator_keeps_format_identity() {
-    let fixture = include_str!("../../qsl-replay/src/execute/tests/composite.rs");
+    let fixture = include_str!("../../fsl-replay/src/execute/tests/composite.rs");
     let profile = source_literal(
-        include_str!("../../qsl-replay/src/execute/tests.rs"),
+        include_str!("../../fsl-replay/src/execute/tests.rs"),
         "PROFILE",
     );
     let sum = vec!["l.head"; 100_000].join(" + ");
@@ -1448,14 +1448,14 @@ fn replay_large_source_generator_keeps_format_identity() {
         &[("sum", &sum)],
     );
     let source = format!("language \"ix:native\" edition \"1-draft\";\n{profile}{body}");
-    let mut limits = qsl_replay::spine::SpineLimits {
-        source: qsl_cst::Limits {
+    let mut limits = fsl_replay::spine::SpineLimits {
+        source: fsl_cst::Limits {
             source_bytes: 1 << 28,
             tokens: 1 << 28,
             nodes: 1 << 28,
             work_units: 1 << 20,
         },
-        ..qsl_replay::spine::SpineLimits::default()
+        ..fsl_replay::spine::SpineLimits::default()
     };
     limits.checking = limits
         .checking
@@ -1477,8 +1477,8 @@ fn replay_large_source_generator_keeps_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn longest_admitted_and_chain_keeps_format_identity() {
-    use qsl_semantics::check::PackageDeclarations;
-    let fixture = include_str!("../../qsl-package/src/emit/tests/deep_bodies.rs");
+    use fsl_semantics::check::PackageDeclarations;
+    let fixture = include_str!("../../fsl-package/src/emit/tests/deep_bodies.rs");
     let template = function_literal(fixture, "and_chain", "language ");
     let text = |levels: usize| {
         template
@@ -1491,18 +1491,18 @@ fn longest_admitted_and_chain_keeps_format_identity() {
     // maximum through S3/S4, rather than substituting a smaller sample.
     let admits = |levels| {
         let text = text(levels);
-        let Ok(parsed) = qsl_cst::parse(
+        let Ok(parsed) = fsl_cst::parse(
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
-            qsl_cst::Limits::default(),
+            fsl_cst::Limits::default(),
         ) else {
             return false;
         };
         if !parsed.is_admissible() {
             return false;
         }
-        let Ok(forms) = qsl_forms::build_unit(&parsed) else {
+        let Ok(forms) = fsl_forms::build_unit(&parsed) else {
             return false;
         };
         PackageDeclarations::assemble(
@@ -1514,7 +1514,7 @@ fn longest_admitted_and_chain_keeps_format_identity() {
         )
         .is_ok()
     };
-    let (mut admitted, mut refused) = (1, qsl_cst::Limits::default().nodes);
+    let (mut admitted, mut refused) = (1, fsl_cst::Limits::default().nodes);
     assert!(admits(admitted) && !admits(refused));
     while refused - admitted > 1 {
         let middle = admitted + (refused - admitted) / 2;
@@ -1531,7 +1531,7 @@ fn longest_admitted_and_chain_keeps_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn replay_execute_generators_keep_format_identity() {
-    let fixture = include_str!("../../qsl-replay/src/execute/tests.rs");
+    let fixture = include_str!("../../fsl-replay/src/execute/tests.rs");
     let profile = source_literal(fixture, "PROFILE");
     for function in [
         "proved",
@@ -1562,9 +1562,9 @@ fn replay_execute_generators_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn replay_composite_and_model_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-replay/src/execute/tests/composite.rs");
+    let fixture = include_str!("../../fsl-replay/src/execute/tests/composite.rs");
     let profile = source_literal(
-        include_str!("../../qsl-replay/src/execute/tests.rs"),
+        include_str!("../../fsl-replay/src/execute/tests.rs"),
         "PROFILE",
     );
     let header = format!("language \"ix:native\" edition \"1-draft\";\n{profile}");
@@ -1592,14 +1592,14 @@ fn replay_composite_and_model_units_keep_format_identity() {
         "{header}function t using v(b: Boolean): Boolean pure {{ b }}\n"
     ));
     let document = include_bytes!("../fixtures/spine-model.semantic-ir.json");
-    let packages = qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let body = function_literal(
         fixture,
         "tc_906_a_reference_replays_by_identity_and_a_dereference_completes_no_value",
         "function ",
     );
     let model_profile = source_literal(
-        include_str!("../../qsl-replay/src/execute/tests.rs"),
+        include_str!("../../fsl-replay/src/execute/tests.rs"),
         "MODEL_PROFILE",
     );
     let source = fixture_text(
@@ -1616,7 +1616,7 @@ fn replay_composite_and_model_units_keep_format_identity() {
     .unwrap();
     let source = fixture_text(
         function_literal(
-            include_str!("../../qsl-replay/src/execute/tests.rs"),
+            include_str!("../../fsl-replay/src/execute/tests.rs"),
             "tc_444_a_domain_package_comes_from_the_byte_provision",
             "language ",
         ),
@@ -1635,8 +1635,8 @@ fn replay_composite_and_model_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn dependency_library_and_scalar_variants_keep_format_identity() {
-    use qsl_replay::spine::SuppliedLibrary;
-    let fixture = include_str!("../../qsl-replay/src/spine/dependency_tests.rs");
+    use fsl_replay::spine::SuppliedLibrary;
+    let fixture = include_str!("../../fsl-replay/src/spine/dependency_tests.rs");
     let header = source_literal(fixture, "HEADER");
     let h = source_literal(fixture, "H");
     let compile = |body: &str, caller: &str| {
@@ -1724,8 +1724,8 @@ fn dependency_library_and_scalar_variants_keep_format_identity() {
 #[ignore = "runs in make test-deep-format (part of make ci)"]
 fn dependency_chain_and_order_variants_keep_format_identity() {
     use crate::support::front_end::dependency_fixture_identity;
-    use qsl_replay::spine::SuppliedLibrary;
-    let fixture = include_str!("../../qsl-replay/src/spine/dependency_tests.rs");
+    use fsl_replay::spine::SuppliedLibrary;
+    let fixture = include_str!("../../fsl-replay/src/spine/dependency_tests.rs");
     let header = source_literal(fixture, "HEADER");
     let h = source_literal(fixture, "H");
     let library = |identity: &str, name: &str, body: &str| SuppliedLibrary {
@@ -1795,8 +1795,8 @@ fn dependency_chain_and_order_variants_keep_format_identity() {
 #[test]
 fn replay_importing_and_call_mapping_units_keep_format_identity() {
     use crate::support::front_end::dependency_fixture_identity;
-    use qsl_replay::spine::SuppliedLibrary;
-    let fixture = include_str!("../../qsl-replay/src/execute/tests.rs");
+    use fsl_replay::spine::SuppliedLibrary;
+    let fixture = include_str!("../../fsl-replay/src/execute/tests.rs");
     let profile = source_literal(fixture, "PROFILE");
     let header = format!("language \"ix:native\" edition \"1-draft\";\n{profile}");
     {
@@ -1810,7 +1810,7 @@ fn replay_importing_and_call_mapping_units_keep_format_identity() {
         dependency_fixture_identity(SourceIdentity::new("agent-ix", "test:replay"), "test:replay",
             &format!("{header}import \"test/units\" as u;\nfunction q using v(x: Int[0, 9]): Boolean pure {{ u::big(x) }}\n"), vec![library]);
     }
-    let fixture = include_str!("../../qsl-replay/src/spine/call/tests.rs");
+    let fixture = include_str!("../../fsl-replay/src/spine/call/tests.rs");
     let source = source_literal(fixture, "FIXTURE_F");
     emitted(
         SourceIdentity::new("agent-ix", "spine-run-fixture"),
@@ -1854,15 +1854,15 @@ fn source_literal(test_source: &str, name: &str) -> String {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn checker_family_authored_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-semantics/src/check/family.rs");
+    let fixture = include_str!("../../fsl-semantics/src/check/family.rs");
     plain_fixture(&source_literal(fixture, "UNIT"));
     let terms = vec!["1"; 1_000].join(" + ");
     let source = fixture_text(
         function_literal(fixture, "sum_unit", "language "),
         &[("terms", &terms)],
     );
-    let limits = qsl_replay::spine::SpineLimits {
-        checking: quire_semantic_value::checking::CheckingLimits::new(5_000),
+    let limits = fsl_replay::spine::SpineLimits {
+        checking: filament_semantic_value::checking::CheckingLimits::new(5_000),
         ..Default::default()
     };
     crate::support::front_end::emitted_with_authority(
@@ -1879,7 +1879,7 @@ fn checker_family_authored_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn call_site_authored_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-replay/src/call_site.rs");
+    let fixture = include_str!("../../fsl-replay/src/call_site.rs");
     for constant in ["UNIT", "PREDICATE_UNIT"] {
         plain_fixture(&source_literal(fixture, constant));
     }
@@ -1889,7 +1889,7 @@ fn call_site_authored_units_keep_format_identity() {
         "language ",
     ));
     plain_fixture(&source_literal(
-        include_str!("../../qsl-replay/tests/declared_domain_facade.rs"),
+        include_str!("../../fsl-replay/tests/declared_domain_facade.rs"),
         "UNIT",
     ));
 }
@@ -1897,13 +1897,13 @@ fn call_site_authored_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn compile_facade_authored_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-replay/tests/compile_package_facade.rs");
+    let fixture = include_str!("../../fsl-replay/tests/compile_package_facade.rs");
     let header = source_literal(fixture, "HEADER");
     for constant in ["LIST", "TREE"] {
         plain_fixture(&format!("{header}{}", source_literal(fixture, constant)));
     }
     let document = include_bytes!("../fixtures/spine-model.semantic-ir.json");
-    let packages = qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let source = fixture_text(
         function_literal(
             fixture,
@@ -1925,9 +1925,9 @@ fn compile_facade_authored_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn admission_corpus_authored_units_keep_format_identity() {
-    let fixture = include_str!("../../qsl-package/src/emit/tests/admission_corpus.rs");
+    let fixture = include_str!("../../fsl-package/src/emit/tests/admission_corpus.rs");
     let header = function_literal(
-        include_str!("../../qsl-package/src/emit/tests.rs"),
+        include_str!("../../fsl-package/src/emit/tests.rs"),
         "package_from_text",
         "language ",
     );
@@ -1938,7 +1938,7 @@ fn admission_corpus_authored_units_keep_format_identity() {
         ));
     }
     let document = include_bytes!("../fixtures/systems-interface.semantic-ir.json");
-    let packages = qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let source = fixture_text(
         format!(
             "{}{}",
@@ -1960,7 +1960,7 @@ fn admission_corpus_authored_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn package_dependent_library_keeps_format_identity() {
-    let fixture = include_str!("../../qsl-replay/src/spine/dependency_tests.rs");
+    let fixture = include_str!("../../fsl-replay/src/spine/dependency_tests.rs");
     let document = include_bytes!("../fixtures/spine-model.semantic-ir.json");
     let body = fixture_text(
         function_literal(
@@ -1975,7 +1975,7 @@ fn package_dependent_library_keeps_format_identity() {
         SourceIdentity::new("a", "geometry"),
         "geometry.native",
         source.as_bytes(),
-        &qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap(),
+        &fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap(),
         &DependencyInput::default(),
     )
     .expect("the reached library checks under its original selected model");
@@ -1985,7 +1985,7 @@ fn package_dependent_library_keeps_format_identity() {
 #[test]
 fn evaluator_source_call_fixture_keeps_checked_identity() {
     let source = source_literal(
-        include_str!("../../qsl-eval/tests/it/source_call.rs"),
+        include_str!("../../fsl-eval/tests/it/source_call.rs"),
         "UNIT",
     );
     emitted(
@@ -2001,13 +2001,13 @@ fn evaluator_source_call_fixture_keeps_checked_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn replay_composite_fixture_keeps_checked_identity() {
-    use qsl_replay::spine::SpineLimits;
+    use fsl_replay::spine::SpineLimits;
     let profile = source_literal(
-        include_str!("../../qsl-replay/src/execute/tests.rs"),
+        include_str!("../../fsl-replay/src/execute/tests.rs"),
         "PROFILE",
     );
     let body = source_literal(
-        include_str!("../../qsl-replay/src/execute/tests/composite_parity.rs"),
+        include_str!("../../fsl-replay/src/execute/tests/composite_parity.rs"),
         "UNIT",
     );
     let source = format!("language \"ix:native\" edition \"1-draft\";\n{profile}{body}");
@@ -2028,7 +2028,7 @@ fn wide_integer_fixture_units_keep_checked_identity() {
     // The repository-native TC-909 admitted vectors, including its comment
     // between unary minus and the i128::MIN magnitude.
     let header = source_literal(
-        include_str!("../../qsl-replay/src/spine/wide_integer_tests.rs"),
+        include_str!("../../fsl-replay/src/spine/wide_integer_tests.rs"),
         "HEADER",
     );
     for (parameter, body) in [
@@ -2054,7 +2054,7 @@ fn wide_integer_fixture_units_keep_checked_identity() {
 fn checked_file_fixtures_keep_package_identity_and_second_pass_bytes() {
     let spine_model = crate::support::spine_model::unit();
     let document = include_bytes!("../fixtures/spine-model.semantic-ir.json");
-    let packages = qsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     for (name, bytes) in [
         (
             "spine-compile.native",
@@ -2089,7 +2089,7 @@ fn generated_config_version_unit_keeps_checked_identity() {
         crate::support::config_version_spine::spine::unit_identity(),
         "config-version.native",
         source.as_bytes(),
-        &qsl_semantics::model::intake::package_input([
+        &fsl_semantics::model::intake::package_input([
             crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes(),
         ])
         .unwrap(),

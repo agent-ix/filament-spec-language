@@ -3,7 +3,7 @@ id: TC-972
 title: "same_kind compares all capability labels exactly"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-972: same_kind compares all capability labels exactly

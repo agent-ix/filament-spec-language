@@ -1,0 +1,3789 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-106: admit `filament.state.snapshot/v1` and `filament.state.invocation/v1`
+//! documents into one typed [`AdmittedObservations`] value for S6a (FR-107),
+//! running the eleven ordered admission checks FR-106's Behavior section
+//! states, in order, stopping at the first failing condition.
+//!
+//! # Design note: re-deriving the domain package's effective view
+//!
+//! `check::CheckedGraph` resolves a state clause's context and operation
+//! frame only as opaque [`EffectiveId`]s (ADR-013 O-05): the raw producer
+//! identity strings, population declarations and operation effect frames
+//! that admission needs to validate a document against are not retained on
+//! the checked package once S3 finishes (they are `check`-internal,
+//! consumed by `Lowering` and discarded). This module (which the model ->
+//! check import edge must stay empty, FR-074-AC-3, so it never names that
+//! type directly) re-admits and re-normalizes each of the caller's own
+//! `check::CheckedGraph::model_selections()`'s domain packages, passed in
+//! as [`ClauseFacts`] and `&[DomainPackageRef]`, through the same
+//! [`crate::model::intake`]/[`crate::model::normalize`]
+//! pipeline `crate::model::intake::admit_unit` already runs at compile time
+//! (the caller supplies the same package input FR-056 already requires),
+//! and reads population/type/field identities from the resulting
+//! [`EffectiveView`]s. This is not a second, divergent source of truth: it
+//! is the same admission and normalization `compile` already performed,
+//! re-run against the same bytes, so it always succeeds for a package that
+//! already compiled -- a re-admission failure is therefore an
+//! [`InternalFault`], never a document defect.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use filament_exact::{
+    CollectionKind, EffectiveId, Identifier, ObjectId, ObjectReference, UniverseId, Value,
+};
+pub use filament_semantic_value::admission::{AdmissionRecord, PathStep};
+use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, InternalFault};
+use fsl_forms::StateClauseKind;
+use fsl_foundation::diagnostic::{BudgetDenial, Code, LimitExceeded, ALLOCATION_FAILED};
+use fsl_foundation::Setting;
+
+use crate::model::accounting::ModelNormalizationLimits;
+use crate::model::domain_package::{DomainPackage, DomainPackageRef, OperationEffect};
+use crate::model::intake::{admit_selections, read_records, PackageInput};
+use crate::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
+use crate::model::object_environment::ObjectEnvironment;
+use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
+use filament_checked::key::DeclarationKey;
+use filament_semantic_value::declaration::TypeEnvironment;
+
+// ---------------------------------------------------------------------------
+// Clause facts (the model -> check edge must stay empty, FR-074-AC-3): the
+// plain model-level facts a caller reads off its own `check::
+// CheckedStateClause`/`check::CheckedGraph` and passes in here, so this
+// module depends on no `check` type. `fsl-replay/src/spine/clause.rs`
+// builds these from the checked package it already holds.
+// ---------------------------------------------------------------------------
+
+/// The one operation a precondition's or postcondition's clause names
+/// (`check::ClauseOperation`'s own two model-level fields, copied out by
+/// the caller).
+pub struct OperationFacts {
+    /// The object type that declares the operation.
+    pub declaring: EffectiveId,
+    /// The operation itself.
+    pub declaration: OperationDeclaration,
+}
+
+/// The facts [`admit_observations`] needs about the selected state clause
+/// (FR-104's own `check::CheckedStateClause`, read by the caller before
+/// this call: `fsl-replay/src/spine/clause.rs` builds this from
+/// `CheckedGraph::state_clause`).
+pub struct ClauseFacts {
+    /// The clause's own minted node identity (FR-107's own lookup key).
+    pub identity: filament_exact::NodeKey,
+    /// Invariant, precondition or postcondition.
+    pub kind: StateClauseKind,
+    /// The context object type, by its effective identity.
+    pub context: EffectiveId,
+    /// The operation a precondition or postcondition names; `None` for an
+    /// invariant.
+    pub operation: Option<OperationFacts>,
+    /// The package's declared operations. An invariant of a state machine
+    /// selected by [`ClauseSelectionInput::Context`] names no operation, and
+    /// the invocation's own is resolved in the machine it names (FR-106
+    /// check 5).
+    pub operations: OperationTable,
+    /// The domain-package populations the clause names (FR-391), by
+    /// declaration identity, each with the observation it reads them at:
+    /// FR-106 requires each complete in that observation's snapshot.
+    /// `check::CheckedStateClause::named_reads` gives them.
+    pub named_populations: Vec<(String, crate::model::clause_observation::Observation)>,
+}
+
+// ---------------------------------------------------------------------------
+// Limits
+// ---------------------------------------------------------------------------
+
+/// FR-106 Inputs: the document-shape ceilings the read enforces, each named
+/// by its setting (FR-255). No ceiling bounds nesting depth: a document of
+/// any depth is read under its byte, object and value limits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObservationLimits {
+    /// The document byte ceiling, `observation.input_bytes` (default 1 MiB).
+    pub document_bytes: u64,
+    /// The objects-per-document ceiling, `observation.objects` (default
+    /// 10,000).
+    pub objects_per_document: u64,
+    /// The values-per-document ceiling, `observation.values` (default
+    /// 100,000): every value form of the document counts, nested ones
+    /// included.
+    pub values_per_document: u64,
+    /// How an out-of-range post-state integer is admitted (default
+    /// [`PostStateRange::Refuse`]).
+    pub post_state: PostStateRange,
+}
+
+/// FR-106 check 6.5's post-state rule: inputs are refused, outputs are
+/// evidence. A pre-state value and an operation argument outside the
+/// declared `Int[lower, upper]` are always refused `invalid_runtime_input`/
+/// `invalid-value`. A postcondition invocation's post snapshot is what the
+/// subject produced, so an integer outside its declared range there can be
+/// admitted exactly, as an [`OutOfRange`] observation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PostStateRange {
+    /// Refuse the post snapshot's out-of-range integer, as for any input.
+    #[default]
+    Refuse,
+    /// Admit it exactly, never coerced or clamped, and report it in
+    /// [`Observation::out_of_range`].
+    Witness,
+}
+
+/// One integer a post snapshot holds outside its declared `Int[lower,
+/// upper]` range: the witness of a violation of the operation's contract
+/// (FR-106 check 6.5). The value is the exact one the document holds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutOfRange {
+    /// The object holding the field.
+    pub object: ObjectReference,
+    /// The field: its declaring object type and declared name.
+    pub field: filament_semantic_value::declaration::FieldRef,
+    /// The position of the offending element when the field is a
+    /// sequence, `None` for a scalar field.
+    pub index: Option<usize>,
+    /// The field's declared range.
+    pub range: filament_exact::IntegerInterval,
+    /// The value observed.
+    pub observed: filament_exact::Integer,
+    /// For an integer inside a record value, the record field names from the
+    /// field (or sequence element) down to it, outermost first; empty
+    /// otherwise.
+    pub steps: Vec<PathStep>,
+}
+
+impl Default for ObservationLimits {
+    fn default() -> Self {
+        Self {
+            document_bytes: 1_048_576,
+            objects_per_document: 10_000,
+            values_per_document: 100_000,
+            post_state: PostStateRange::Refuse,
+        }
+    }
+}
+
+impl ObservationLimits {
+    /// These limits with `observation.input_bytes` set to `bound`.
+    #[must_use]
+    pub const fn with_document_bytes(mut self, bound: u64) -> Self {
+        self.document_bytes = bound;
+        self
+    }
+
+    /// These limits with `observation.objects` set to `bound`.
+    #[must_use]
+    pub const fn with_objects_per_document(mut self, bound: u64) -> Self {
+        self.objects_per_document = bound;
+        self
+    }
+
+    /// These limits with `observation.values` set to `bound`.
+    #[must_use]
+    pub const fn with_values_per_document(mut self, bound: u64) -> Self {
+        self.values_per_document = bound;
+        self
+    }
+}
+
+/// FR-255: the one mapping from each field to its setting.
+impl fsl_foundation::SettingLimits for ObservationLimits {
+    fn bounds(&self) -> Vec<(fsl_foundation::Setting, u64)> {
+        use fsl_foundation::Setting;
+        vec![
+            (Setting::ObservationInputBytes, self.document_bytes),
+            (Setting::ObservationObjects, self.objects_per_document),
+            (Setting::ObservationValues, self.values_per_document),
+        ]
+    }
+
+    fn set_bound(&mut self, setting: fsl_foundation::Setting, bound: u64) -> bool {
+        use fsl_foundation::Setting;
+        match setting {
+            Setting::ObservationInputBytes => self.document_bytes = bound,
+            Setting::ObservationObjects => self.objects_per_document = bound,
+            Setting::ObservationValues => self.values_per_document = bound,
+            _ => return false,
+        }
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Document identity and selection
+// ---------------------------------------------------------------------------
+
+/// FR-001's two source labels, naming one admitted document (FR-106's
+/// `DocumentRef`). A document is addressed by these labels alone.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DocumentRef {
+    /// The `authority` label.
+    pub authority: String,
+    /// The `identity` label.
+    pub identity: String,
+}
+
+/// The anchor an invariant's current snapshot names: `{kind, name}`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedAnchor {
+    /// `initialization` or `handler`.
+    pub kind: AnchorKind,
+    /// The named initialization or handler.
+    pub name: String,
+}
+
+/// The anchor kind (FR-106 "Document forms").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnchorKind {
+    /// `initialization`.
+    Initialization,
+    /// `handler`.
+    Handler,
+}
+
+impl AnchorKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Initialization => "initialization",
+            Self::Handler => "handler",
+        }
+    }
+}
+
+/// An object reference by population and key (FR-106's `ObjectRef`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedObject {
+    /// The population identity.
+    pub population: String,
+    /// The object's declared key.
+    pub key: String,
+}
+
+/// FR-106's `ClauseSelection`: names the clause by its `QualifiedName` and
+/// one observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClauseSelection {
+    /// The selected clause's declared name.
+    pub name: String,
+    /// The selected observation input.
+    pub input: ClauseSelectionInput,
+}
+
+/// [`ClauseSelection`]'s observation half.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClauseSelectionInput {
+    /// An invariant's current snapshot, anchor and self object.
+    Current {
+        /// The current snapshot document.
+        snapshot: DocumentRef,
+        /// The selected anchor.
+        anchor: SelectedAnchor,
+        /// The selected self object: none for a clause whose receiver is a
+        /// state machine's context, which has no object identity.
+        self_object: Option<SelectedObject>,
+    },
+    /// A precondition's pre-call observation: the operation's pre state,
+    /// the self object and the parameter values, before the operation
+    /// runs. It has no post snapshot, result or delta.
+    PreCall {
+        /// The pre snapshot document.
+        snapshot: DocumentRef,
+        /// The selected self object: none for a clause whose receiver is a
+        /// state machine's context.
+        self_object: Option<SelectedObject>,
+        /// Each declared parameter's value, by parameter name.
+        parameters: BTreeMap<Identifier, SnapshotValue>,
+    },
+    /// A precondition's or postcondition's invocation document.
+    Invocation {
+        /// The invocation document.
+        invocation: DocumentRef,
+    },
+    /// The invariant of a state machine over one side of an invocation of
+    /// one of its operations: the machine's context in the invocation's `pre`
+    /// or its `post` snapshot (FSpec FR-208-AC-10).
+    Context {
+        /// The invocation document.
+        invocation: DocumentRef,
+        /// Which of the invocation's snapshots the invariant is read in.
+        side: ContextSide,
+    },
+}
+
+/// The snapshot of an invocation a [`ClauseSelectionInput::Context`] reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContextSide {
+    /// The invocation's `pre` snapshot.
+    Pre,
+    /// The invocation's `post` snapshot.
+    Post,
+}
+
+impl ClauseSelection {
+    /// The selection with every declaration name it spells rewritten to the
+    /// declaration it names (FR-106 "Document forms").
+    fn resolved(&self, views: &[ModelView]) -> Self {
+        let names = DeclarationNames::new(views);
+        let rename = |name: &str| names.resolve(name);
+        let object = |object: &Option<SelectedObject>| {
+            object.as_ref().map(|object| SelectedObject {
+                population: rename(&object.population),
+                key: object.key.clone(),
+            })
+        };
+        let input = match &self.input {
+            ClauseSelectionInput::Current {
+                snapshot,
+                anchor,
+                self_object,
+            } => ClauseSelectionInput::Current {
+                snapshot: snapshot.clone(),
+                anchor: anchor.clone(),
+                self_object: object(self_object),
+            },
+            ClauseSelectionInput::PreCall {
+                snapshot,
+                self_object,
+                parameters,
+            } => ClauseSelectionInput::PreCall {
+                snapshot: snapshot.clone(),
+                self_object: object(self_object),
+                parameters: parameters
+                    .iter()
+                    .map(|(name, value)| {
+                        let mut value = value.clone();
+                        value.rename_populations(&rename);
+                        (name.clone(), value)
+                    })
+                    .collect(),
+            },
+            other => other.clone(),
+        };
+        Self {
+            name: self.name.clone(),
+            input,
+        }
+    }
+}
+
+impl ClauseSelectionInput {
+    /// Which of the four observation forms this input is.
+    pub fn form(&self) -> ObservationForm {
+        match self {
+            Self::Current { .. } => ObservationForm::Current,
+            Self::PreCall { .. } => ObservationForm::PreCall,
+            Self::Invocation { .. } => ObservationForm::Invocation,
+            Self::Context { .. } => ObservationForm::Context,
+        }
+    }
+}
+
+/// The form of a [`ClauseSelectionInput`], without its documents.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObservationForm {
+    /// A current snapshot, its anchor and the self object.
+    Current,
+    /// A pre snapshot, the self object and the parameters.
+    PreCall,
+    /// An invocation document.
+    Invocation,
+    /// One side of an invocation document, for a state machine's invariant.
+    Context,
+}
+
+impl std::fmt::Display for ObservationForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Current => "current",
+            Self::PreCall => "pre-call",
+            Self::Invocation => "invocation",
+            Self::Context => "context",
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Admission failure
+// ---------------------------------------------------------------------------
+
+/// Build the shared FR-130 record at the FR-106 classification site.
+pub(crate) fn admission_record(code: Code, cause: &'static str) -> AdmissionRecord {
+    AdmissionRecord {
+        catalog: CatalogCode::new(code.as_str(), cause),
+        fields: BTreeMap::new(),
+        path: Vec::new(),
+        kernel: None,
+    }
+}
+
+pub(crate) trait AdmissionRecordExt {
+    fn with(self, key: &'static str, value: impl Into<String>) -> Self;
+    fn at(self, path: Vec<PathStep>) -> Self;
+    fn kernel_class(self, class: filament_exact::ConstructionCause) -> Self;
+}
+
+impl AdmissionRecordExt for AdmissionRecord {
+    fn with(mut self, key: &'static str, value: impl Into<String>) -> Self {
+        self.fields.insert(key, value.into());
+        self
+    }
+
+    fn at(mut self, path: Vec<PathStep>) -> Self {
+        self.path = path;
+        self
+    }
+
+    fn kernel_class(mut self, class: filament_exact::ConstructionCause) -> Self {
+        self.kernel = Some(class);
+        self
+    }
+}
+
+/// FR-106 Outputs: admission's non-`Ok` result.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum AdmissionFailure {
+    /// A real input defect: no `AdmittedObservations` and no truth value.
+    #[error("admission refused: {}/{}", .0.catalog.code(), .0.catalog.cause())]
+    Refused(Box<AdmissionRecord>),
+    /// Missing evidence, or an unresolved object/subtype closure: no
+    /// `AdmittedObservations`, distinct from a refusal (FR-106 checks 1.1,
+    /// 7).
+    #[error("admission incomplete: {}/{}", .0.catalog.code(), .0.catalog.cause())]
+    Incomplete(Box<AdmissionRecord>),
+    /// A broken invariant of admission itself (never a document defect):
+    /// the re-supplied domain packages do not re-normalize the way the
+    /// already-compiled package did.
+    #[error("internal fault in admission: {}: {}", .0.stage(), .0.invariant())]
+    Fault(InternalFault),
+}
+
+fn refuse(record: AdmissionRecord) -> AdmissionFailure {
+    AdmissionFailure::Refused(Box::new(record))
+}
+
+fn incomplete(record: AdmissionRecord) -> AdmissionFailure {
+    AdmissionFailure::Incomplete(Box::new(record))
+}
+
+fn fault(invariant: &'static str) -> AdmissionFailure {
+    AdmissionFailure::Fault(InternalFault::new("observation-admission", invariant))
+}
+
+// ---------------------------------------------------------------------------
+// Admitted output
+// ---------------------------------------------------------------------------
+
+/// One admitted observation instant (current, pre or post): its document
+/// identity and an [`ObjectEnvironment`] holding every field value of every
+/// admitted object of that instant, plus which populations were admitted
+/// `complete`.
+#[derive(Clone, Debug)]
+pub struct Observation {
+    /// The document's identity.
+    pub identity: DocumentRef,
+    /// Every field value of every object this instant admitted.
+    pub environment: ObjectEnvironment,
+    /// The populations this instant admitted, each with whether it was
+    /// declared `complete`.
+    pub populations: BTreeMap<String, bool>,
+    /// Every integer this instant holds outside its declared range, in
+    /// walk order: empty unless this is a post instant admitted under
+    /// [`PostStateRange::Witness`].
+    pub out_of_range: Vec<OutOfRange>,
+}
+
+/// Recheck explicit protocol-reference population provenance against an
+/// admitted current snapshot, including FR-106's retained recursive closure.
+/// Each tuple is `(reference, exact population node, value-relative path)`.
+/// The population is never inferred from a reference's present membership.
+pub fn admit_protocol_reference_seeds(
+    types: &TypeEnvironment,
+    observation: &Observation,
+    seeds: &[(ObjectReference, filament_exact::NodeKey, Vec<PathStep>)],
+) -> Result<(), AdmissionFailure> {
+    let environment = &observation.environment;
+    let mut required: Vec<(String, Vec<PathStep>)> = Vec::new();
+    for (reference, node, path) in seeds {
+        let Some(provenance) = environment.population_provenance(node) else {
+            let mut record = admission_record(Code::InvalidModelBinding, "wrong-model-selection")
+                .with("population", format!("{node:?}"));
+            record.path = path.clone();
+            return Err(refuse(record));
+        };
+        let compatible = provenance.member_types().iter().any(|(member, universe)| {
+            reference.universe() == universe
+                && types.conforms(reference.object_type().clone(), member.clone())
+        });
+        if !compatible {
+            let mut record = admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
+                .with("population", provenance.declaration().node.clone());
+            record.path = path.clone();
+            return Err(refuse(record));
+        }
+        let identity = provenance.declaration().node.clone();
+        if !required.iter().any(|(held, _)| *held == identity) {
+            required.push((identity, path.clone()));
+        }
+    }
+
+    let mut index = 0;
+    while index < required.len() {
+        let (population, path) = required[index].clone();
+        let Some(closure) = environment.population_reference_closure(&population) else {
+            return Err(fault("admitted-population-has-reference-closure"));
+        };
+        for nested in closure {
+            if !required.iter().any(|(held, _)| held == nested) {
+                required.push((nested.clone(), path.clone()));
+            }
+        }
+        index += 1;
+    }
+
+    // FR-106-AC-65: a seed population with no snapshot row is a missing
+    // required artifact; a listed row not marked `complete` is incomplete
+    // scope. Both stop admission before check 8.
+    for (population, path) in &required {
+        let cause = match environment.population_completeness().get(population) {
+            Some(true) => continue,
+            Some(false) => "incomplete-scope",
+            None => "missing-required-artifact",
+        };
+        let mut record = admission_record(Code::IncompletePopulation, cause)
+            .with("population", population.clone());
+        record.path = path.clone();
+        return Err(incomplete(record));
+    }
+
+    for (reference, node, path) in seeds {
+        let Some(provenance) = environment.population_provenance(node) else {
+            return Err(fault("validated-protocol-population-stays-admitted"));
+        };
+        let population = &provenance.declaration().node;
+        let present = environment
+            .population_members(population)
+            .is_some_and(|members| members.contains(reference));
+        if !present {
+            let mut record = admission_record(
+                Code::DanglingReference,
+                "absent-target-in-complete-population",
+            )
+            .with("population", population.clone())
+            .with("object", reference.object().to_string());
+            record.path = path.clone();
+            return Err(refuse(record));
+        }
+    }
+    Ok(())
+}
+
+/// The amount [`ObservationLimits`]' three document-shape ceilings actually
+/// consumed, across every document one [`admit_observations`] or
+/// [`admit_current_snapshot`] call successfully read (FR-109 Outputs'
+/// "the admission work", distinct from `filament_exact::LimitKind`, which
+/// counts `filament-exact`'s own value-family scalar charges: admission has
+/// no analogue of `integer_bits`/`work_units`, so reusing that enum would
+/// misreport kinds admission never touches, SR-751 FND-002 round 2).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AdmissionUsage {
+    /// The sum of every admitted document's byte length.
+    pub document_bytes: u64,
+    /// The sum of every admitted document's object count.
+    pub objects: u64,
+    /// The sum of every admitted document's value-form count, nested forms
+    /// included.
+    pub values: u64,
+}
+
+impl AdmissionUsage {
+    fn merged_with(self, other: Self) -> Self {
+        Self {
+            document_bytes: self.document_bytes + other.document_bytes,
+            objects: self.objects + other.objects,
+            values: self.values + other.values,
+        }
+    }
+}
+
+/// What `self` is in an admitted observation set (FR-107 "The receiver path").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelfKind {
+    /// An object with a declared object identity (FSpec FR-204).
+    Object,
+    /// A state machine's context, with no declared object identity.
+    Context,
+}
+
+impl SelfKind {
+    fn of(state_machine: bool) -> Self {
+        if state_machine {
+            Self::Context
+        } else {
+            Self::Object
+        }
+    }
+}
+
+/// FR-106 Outputs: one typed observation set admitted for S6a.
+#[derive(Clone, Debug)]
+pub struct AdmittedObservations {
+    /// FR-109 Outputs' admission usage, summed over every document this
+    /// call actually read (`current` alone, or `pre` and/or `post`).
+    pub usage: AdmissionUsage,
+    /// The node identity of the state clause these observations were
+    /// admitted for (FR-107's `ObservationsMismatch` check).
+    pub clause: filament_exact::NodeKey,
+    /// The observation an invariant is evaluated in: a current snapshot, or
+    /// for a state machine's invariant selected by `Context` the snapshot of
+    /// the selected side, holding the machine's one context.
+    pub current: Option<Observation>,
+    /// The pre observation: an invocation's pre snapshot, or a pre-call
+    /// observation's one snapshot.
+    pub pre: Option<Observation>,
+    /// The post observation: present for an invocation selected for a
+    /// postcondition; absent for a current observation and for a pre-call
+    /// observation, whether selected by `PreCall` or by `Invocation`.
+    pub post: Option<Observation>,
+    /// The selected self object's reference.
+    pub self_object: ObjectReference,
+    /// The selected invocation, whatever kind `self` is: some for a
+    /// postcondition and for a precondition selected by `Invocation`, none
+    /// for an invariant and for a precondition selected by `PreCall`.
+    /// Evaluators root receiver, parameter and result value paths at it.
+    pub invocation: Option<DocumentRef>,
+    /// Whether `self` is an object with a declared object identity or a
+    /// state machine's context, which has none (FSpec FR-208).
+    pub self_kind: SelfKind,
+    /// The pre-observation receiver context's evaluator reference, when
+    /// this is a state-machine invocation.
+    pub receiver_pre: Option<ObjectReference>,
+    /// The post-observation receiver context's evaluator reference, when
+    /// this is a state-machine invocation with a post observation.
+    pub receiver_post: Option<ObjectReference>,
+    /// The parameter values of an invocation or a pre-call observation, in
+    /// declared order (empty for an invariant).
+    pub parameters: Vec<(String, Value)>,
+    /// The invocation's result value, or `None` for an operation with no
+    /// result (empty for an invariant).
+    pub result: Option<Value>,
+    /// The invocation's admitted `created` object references.
+    pub created: Vec<ObjectReference>,
+    /// The invocation's admitted `deleted` object references.
+    pub deleted: Vec<ObjectReference>,
+}
+
+// ---------------------------------------------------------------------------
+// Raw value grammar (FR-106 "Document forms")
+// ---------------------------------------------------------------------------
+
+/// One value in FR-106's snapshot value form ("Document forms"): an object
+/// field's value in a snapshot, a parameter or result of an invocation, or
+/// a parameter of a `PreCall` selection. An integer keeps its FR-038
+/// decimal spelling; admission checks it against the declared type.
+///
+/// A value of any depth is held in one flat arena, so building, cloning,
+/// comparing, printing and dropping it never recurse with its nesting
+/// (FR-261, ADR-030): [`Self::form`] views the root, and each nested value
+/// is reached through a [`RawValue`] handle.
+#[derive(Clone, Debug)]
+pub struct SnapshotValue {
+    nodes: Vec<RawNode>,
+    root: usize,
+}
+
+/// One value form of a [`SnapshotValue`]'s arena; a nested value is the
+/// index of its own node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RawNode {
+    Boolean(bool),
+    Integer(String),
+    /// A value object with a `kind` member, kept as read so admission judges
+    /// it in the native payload order.
+    Native(NativeObject),
+    Absent,
+    Present(usize),
+    Reference(SelectedObject),
+    /// `{"sequence" | "set" | "bag" | "ordered-set": [<value>, ...]}`: the
+    /// kind and the index of each item's node, in document order.
+    Collection {
+        kind: CollectionKind,
+        items: Vec<usize>,
+    },
+    /// `{"record": {"type": .., "fields": {..}}}`: the record's `type`
+    /// identity and its fields in document order, each the index of its
+    /// value's node.
+    Record {
+        type_identity: String,
+        fields: Vec<(String, usize)>,
+    },
+    /// `{"variant": {"type": .., "case": ..}}` as read: each of the two
+    /// members when present, and whether the payload holds any other member
+    /// (FR-360 item 9 judges those defects in its own order).
+    Variant {
+        type_identity: Option<String>,
+        case: Option<String>,
+        extra_member: bool,
+    },
+}
+
+/// The form of one value of a [`SnapshotValue`], with nested values as
+/// handles.
+#[derive(Clone, Copy, Debug)]
+pub enum RawForm<'v> {
+    /// `{"boolean": true|false}`.
+    Boolean(bool),
+    /// `{"integer": "<decimal>"}`.
+    Integer(&'v str),
+    /// A value object with a `kind` member: `{"kind": "string", "text": ..}`,
+    /// `{"kind": "uuid", "text": ..}` or `{"kind": "timestamp",
+    /// "nanoseconds": ..}`, or a defective one, as read.
+    Native(RawNative<'v>),
+    /// `{"absent": {}}`.
+    Absent,
+    /// `{"present": <value>}`.
+    Present(RawValue<'v>),
+    /// `{"reference": {"population": ..., "key": ...}}`.
+    Reference(&'v SelectedObject),
+    /// `{"sequence": [..]}`, `{"set": [..]}`, `{"bag": [..]}` or
+    /// `{"ordered-set": [..]}`: the kind its tag names and its items in
+    /// document order.
+    Collection(CollectionKind, RawItems<'v>),
+    /// `{"record": {"type": <declaration identity>, "fields": {..}}}`.
+    Record(RawRecord<'v>),
+    /// `{"variant": {"type": <declaration identity>, "case": <case name>}}`.
+    Variant(RawVariant<'v>),
+}
+
+/// The collection kind a value form's single tag names: `sequence`, `set`,
+/// `bag` or `ordered-set` (FR-106 "Document forms"), or `None` for any other
+/// tag.
+#[must_use]
+#[ix_trace_rs::string_edge]
+pub fn collection_kind_of_tag(tag: &str) -> Option<CollectionKind> {
+    match tag {
+        "sequence" => Some(CollectionKind::Sequence),
+        "set" => Some(CollectionKind::Set),
+        "bag" => Some(CollectionKind::Bag),
+        "ordered-set" => Some(CollectionKind::OrderedSet),
+        _ => None,
+    }
+}
+
+/// The wire tag of a collection kind: the inverse of
+/// [`collection_kind_of_tag`].
+#[must_use]
+pub fn collection_tag(kind: CollectionKind) -> &'static str {
+    match kind {
+        CollectionKind::Sequence => "sequence",
+        CollectionKind::Set => "set",
+        CollectionKind::Bag => "bag",
+        CollectionKind::OrderedSet => "ordered-set",
+    }
+}
+
+/// A `variant` value as read: the members of its payload, whichever it
+/// holds (FR-360 item 9).
+#[derive(Clone, Copy, Debug)]
+pub struct RawVariant<'v> {
+    type_identity: Option<&'v str>,
+    case: Option<&'v str>,
+    extra_member: bool,
+}
+
+impl<'v> RawVariant<'v> {
+    /// The `type` member: the IR node identity of the variant type, if the
+    /// payload has one.
+    #[must_use]
+    pub fn type_identity(self) -> Option<&'v str> {
+        self.type_identity
+    }
+
+    /// The `case` member: the exact declared case name, if the payload has
+    /// one.
+    #[must_use]
+    pub fn case(self) -> Option<&'v str> {
+        self.case
+    }
+
+    /// Whether the payload holds a member other than `type` and `case`.
+    #[must_use]
+    pub fn has_extra_member(self) -> bool {
+        self.extra_member
+    }
+}
+
+/// The kind of a native payload value (FR-056's K2 canonical native
+/// payloads).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeKind {
+    /// `"string"`.
+    String,
+    /// `"uuid"`.
+    Uuid,
+    /// `"timestamp"`.
+    Timestamp,
+    /// `"text"`: admitted only into a `Text[min, max; profile]` slot; every
+    /// other slot refuses it `wrong-value-kind` (FR-106-AC-35).
+    Text,
+    /// `"quantity"`: admitted only into a `Quantity<u>` slot of its unit
+    /// (FR-106 "A Quantity value").
+    Quantity,
+    /// `"rational"`: read only as a Quantity's magnitude.
+    Rational,
+    /// `"decimal"`: read only as a Quantity's magnitude.
+    Decimal,
+}
+
+/// A native payload object's `kind` member as read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RawNativeKind {
+    /// Not a JSON string.
+    NotText,
+    /// A string that names no native kind.
+    Unknown,
+    /// A native kind.
+    Known(NativeKind),
+}
+
+/// A native payload object as read, outside its `kind` member: every other
+/// member in document order, its text or `None` where it is not a JSON
+/// string.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NativeObject {
+    kind: RawNativeKind,
+    members: Vec<(String, Option<String>)>,
+    /// Each member that is itself a payload object (a Quantity's
+    /// `magnitude`), by name; it is also in `members`, with no text.
+    objects: Vec<(String, NativeObject)>,
+}
+
+/// A native payload object as read (see [`RawForm::Native`]).
+#[derive(Clone, Copy, Debug)]
+pub struct RawNative<'v> {
+    kind: RawNativeKind,
+    members: &'v [(String, Option<String>)],
+    objects: &'v [(String, NativeObject)],
+}
+
+impl<'v> RawNative<'v> {
+    /// The `kind` member.
+    #[must_use]
+    pub fn kind(self) -> RawNativeKind {
+        self.kind
+    }
+
+    /// Every member other than `kind`, in document order: its name and its
+    /// text, `None` where it is not a JSON string.
+    pub fn members(self) -> impl Iterator<Item = (&'v str, Option<&'v str>)> {
+        self.members
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_deref()))
+    }
+
+    /// The member `name` when it is itself a payload object.
+    #[must_use]
+    #[ix_trace_rs::string_edge]
+    pub fn object(self, name: &str) -> Option<RawNative<'v>> {
+        self.objects
+            .iter()
+            .find(|(held, _)| held == name)
+            .map(|(_, object)| object.as_raw())
+    }
+}
+
+impl NativeObject {
+    fn as_raw(&self) -> RawNative<'_> {
+        RawNative {
+            kind: self.kind,
+            members: &self.members,
+            objects: &self.objects,
+        }
+    }
+}
+
+/// One value inside a [`SnapshotValue`].
+#[derive(Clone, Copy, Debug)]
+pub struct RawValue<'v> {
+    arena: &'v SnapshotValue,
+    index: usize,
+}
+
+/// A `record` value: the identity of its most-specific record type and its
+/// fields in document order.
+#[derive(Clone, Copy, Debug)]
+pub struct RawRecord<'v> {
+    arena: &'v SnapshotValue,
+    type_identity: &'v str,
+    fields: &'v [(String, usize)],
+}
+
+impl<'v> RawRecord<'v> {
+    /// The `type` member: the IR node identity of the value's most-specific
+    /// record value type.
+    #[must_use]
+    pub fn type_identity(self) -> &'v str {
+        self.type_identity
+    }
+
+    /// The `fields` members, in document order.
+    pub fn fields(
+        self,
+    ) -> impl DoubleEndedIterator<Item = (&'v str, RawValue<'v>)> + ExactSizeIterator {
+        self.fields.iter().map(move |(name, index)| {
+            (
+                name.as_str(),
+                RawValue {
+                    arena: self.arena,
+                    index: *index,
+                },
+            )
+        })
+    }
+}
+
+/// The items of a collection value, in document order.
+#[derive(Clone, Copy, Debug)]
+pub struct RawItems<'v> {
+    arena: &'v SnapshotValue,
+    items: &'v [usize],
+}
+
+impl SnapshotValue {
+    /// Rewrite the population every reference of this value names.
+    pub(super) fn rename_populations(&mut self, rename: &dyn Fn(&str) -> String) {
+        for node in &mut self.nodes {
+            if let RawNode::Reference(selected) = node {
+                selected.population = rename(&selected.population);
+            }
+        }
+    }
+
+    /// A value over an arena of nodes the reader built, rooted at `root`.
+    fn from_arena(nodes: Vec<RawNode>, root: usize) -> Self {
+        Self { nodes, root }
+    }
+
+    fn single(node: RawNode) -> Self {
+        Self {
+            nodes: vec![node],
+            root: 0,
+        }
+    }
+
+    /// `{"boolean": value}`.
+    #[must_use]
+    pub fn boolean(value: bool) -> Self {
+        Self::single(RawNode::Boolean(value))
+    }
+
+    /// `{"integer": "<spelling>"}`.
+    #[must_use]
+    pub fn integer(spelling: impl Into<String>) -> Self {
+        Self::single(RawNode::Integer(spelling.into()))
+    }
+
+    /// A native payload object: its `kind` and every other member in
+    /// document order, each with its text or `None` where it is not a JSON
+    /// string. Admission judges it in the native payload order, so a defective
+    /// object is held as read.
+    #[must_use]
+    pub fn native(kind: RawNativeKind, members: Vec<(String, Option<String>)>) -> Self {
+        Self::single(RawNode::Native(NativeObject {
+            kind,
+            members,
+            objects: Vec::new(),
+        }))
+    }
+
+    /// A Quantity object over the unit named `unit` and the normalized
+    /// Rational `magnitude` (FR-106 "A Quantity value").
+    #[must_use]
+    pub fn quantity(unit: String, magnitude: &filament_exact::Rational) -> Self {
+        let rational = NativeObject {
+            kind: RawNativeKind::Known(NativeKind::Rational),
+            members: vec![
+                (
+                    "numerator".to_owned(),
+                    Some(magnitude.numerator().to_string()),
+                ),
+                (
+                    "denominator".to_owned(),
+                    Some(magnitude.denominator().to_string()),
+                ),
+            ],
+            objects: Vec::new(),
+        };
+        Self::single(RawNode::Native(NativeObject {
+            kind: RawNativeKind::Known(NativeKind::Quantity),
+            members: vec![
+                ("unit".to_owned(), Some(unit)),
+                ("magnitude".to_owned(), None),
+            ],
+            objects: vec![("magnitude".to_owned(), rational)],
+        }))
+    }
+
+    /// `{"absent": {}}`.
+    #[must_use]
+    pub fn absent() -> Self {
+        Self::single(RawNode::Absent)
+    }
+
+    /// `{"reference": {"population": ..., "key": ...}}`.
+    #[must_use]
+    pub fn reference(reference: SelectedObject) -> Self {
+        Self::single(RawNode::Reference(reference))
+    }
+
+    /// `{"present": inner}`.
+    #[must_use]
+    pub fn present(inner: Self) -> Self {
+        let mut nodes = inner.nodes;
+        let at = nodes.len();
+        nodes.push(RawNode::Present(inner.root));
+        Self { nodes, root: at }
+    }
+
+    /// `{"sequence": [items...]}`.
+    #[must_use]
+    pub fn sequence(items: Vec<Self>) -> Self {
+        Self::collection(CollectionKind::Sequence, items)
+    }
+
+    /// `{"<tag>": [items...]}` for the wire tag of `kind` (`sequence`,
+    /// `set`, `bag` or `ordered-set`), the items in the given order. A writer
+    /// of a `set` or `bag` orders them by encoded bytes in
+    /// [`Self::to_json`]; the order given is not the wire order there.
+    #[must_use]
+    pub fn collection(kind: CollectionKind, items: Vec<Self>) -> Self {
+        // The first item's arena is kept as it is (its offset is zero), so a
+        // chain of single-item collections builds in linear time.
+        let mut items = items.into_iter();
+        let (mut nodes, mut roots) = match items.next() {
+            Some(first) => (first.nodes, vec![first.root]),
+            None => (Vec::new(), Vec::new()),
+        };
+        for item in items {
+            let offset = nodes.len();
+            nodes.extend(item.nodes.into_iter().map(|node| node.shifted(offset)));
+            roots.push(item.root + offset);
+        }
+        let at = nodes.len();
+        nodes.push(RawNode::Collection { kind, items: roots });
+        Self { nodes, root: at }
+    }
+
+    /// `{"record": {"type": type_identity, "fields": {..}}}`, its fields in
+    /// the given order.
+    #[must_use]
+    pub fn record(type_identity: impl Into<String>, fields: Vec<(String, Self)>) -> Self {
+        let mut nodes = Vec::new();
+        let mut members = Vec::with_capacity(fields.len());
+        for (name, value) in fields {
+            let offset = nodes.len();
+            nodes.extend(value.nodes.into_iter().map(|node| node.shifted(offset)));
+            members.push((name, value.root + offset));
+        }
+        let at = nodes.len();
+        nodes.push(RawNode::Record {
+            type_identity: type_identity.into(),
+            fields: members,
+        });
+        Self { nodes, root: at }
+    }
+
+    /// `{"variant": {"type": type_identity, "case": case}}`.
+    #[must_use]
+    pub fn variant(type_identity: impl Into<String>, case: impl Into<String>) -> Self {
+        Self::single(RawNode::Variant {
+            type_identity: Some(type_identity.into()),
+            case: Some(case.into()),
+            extra_member: false,
+        })
+    }
+
+    /// A `variant` value read from a payload that may lack `type` or `case`
+    /// or hold another member, which admission refuses in FR-360 item 9's
+    /// order.
+    #[must_use]
+    pub fn variant_payload(
+        type_identity: Option<String>,
+        case: Option<String>,
+        extra_member: bool,
+    ) -> Self {
+        Self::single(RawNode::Variant {
+            type_identity,
+            case,
+            extra_member,
+        })
+    }
+
+    /// The root value's form.
+    #[must_use]
+    pub fn form(&self) -> RawForm<'_> {
+        self.at(self.root)
+    }
+
+    fn at(&self, index: usize) -> RawForm<'_> {
+        match &self.nodes[index] {
+            RawNode::Boolean(value) => RawForm::Boolean(*value),
+            RawNode::Integer(spelling) => RawForm::Integer(spelling),
+            RawNode::Native(native) => RawForm::Native(native.as_raw()),
+            RawNode::Absent => RawForm::Absent,
+            RawNode::Present(inner) => RawForm::Present(RawValue {
+                arena: self,
+                index: *inner,
+            }),
+            RawNode::Reference(reference) => RawForm::Reference(reference),
+            RawNode::Collection { kind, items } => {
+                RawForm::Collection(*kind, RawItems { arena: self, items })
+            }
+            RawNode::Record {
+                type_identity,
+                fields,
+            } => RawForm::Record(RawRecord {
+                arena: self,
+                type_identity,
+                fields,
+            }),
+            RawNode::Variant {
+                type_identity,
+                case,
+                extra_member,
+            } => RawForm::Variant(RawVariant {
+                type_identity: type_identity.as_deref(),
+                case: case.as_deref(),
+                extra_member: *extra_member,
+            }),
+        }
+    }
+}
+
+/// Structural equality, compared on an explicit heap stack so a value of any
+/// depth compares in constant native stack, whatever order its arena was
+/// built in.
+impl PartialEq for SnapshotValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals_by(other, None, &|_, _| None)
+    }
+}
+
+/// The retained sequence of a Text payload under `declared`'s profile
+/// (FR-141): the payload itself, or its normalization.
+#[ix_trace_rs::string_edge]
+pub(super) fn retained_text(declared: &filament_exact::TextType, payload: &str) -> String {
+    match declared.profile().normalization() {
+        Some(form) => form.apply(payload).collect(),
+        None => payload.to_owned(),
+    }
+}
+
+/// A Quantity object's unit text and exact magnitude, or `None` when it is
+/// not one admission reads.
+#[ix_trace_rs::string_edge]
+fn quantity_identity(native: RawNative<'_>) -> Option<(&str, filament_exact::Rational)> {
+    let unit = native
+        .members()
+        .find_map(|(name, text)| (name == "unit").then_some(text).flatten())?;
+    let magnitude = document::quantity_magnitude(native.object("magnitude")?).ok()?;
+    Some((unit, magnitude))
+}
+
+/// A Text object's `text` member, if it is a string.
+#[ix_trace_rs::string_edge]
+fn text_member(native: RawNative<'_>) -> Option<&str> {
+    native
+        .members()
+        .find_map(|(name, text)| (name == "text").then_some(text).flatten())
+}
+
+impl SnapshotValue {
+    /// Whether the two values are equal, a value of a declared Text type
+    /// comparing by its retained sequence (FR-106-AC-40, FR-141): `declared`
+    /// is this value's slot type, `None` where it is not known. Every other
+    /// form compares as read. `field_type` gives the declared type of a
+    /// record's field by the record's type identity and the field's name, so
+    /// a Text inside a record compares by its retained sequence too.
+    pub(super) fn equals_by<'t>(
+        &self,
+        other: &Self,
+        declared: Option<&'t filament_exact::ValueType>,
+        field_type: &dyn Fn(&str, &str) -> Option<&'t filament_exact::ValueType>,
+    ) -> bool {
+        Self::forms_equal(declared, self.form(), other.form(), field_type)
+    }
+
+    /// [`Self::equals_by`] over two value forms. Both are reduced to the
+    /// identity of their canonical structure in one shared interner, so equal
+    /// values get one identity: a `set` and a `bag` sort the identities of
+    /// their items (FR-106 "Set, bag and ordered-set values": any order), every
+    /// other form keeps its order. The walk keeps its own heap stack, so the
+    /// native stack does not grow with document nesting, and costs
+    /// O(n log n) in the values read.
+    fn forms_equal<'t>(
+        declared: Option<&'t filament_exact::ValueType>,
+        left: RawForm<'_>,
+        right: RawForm<'_>,
+        field_type: &dyn Fn(&str, &str) -> Option<&'t filament_exact::ValueType>,
+    ) -> bool {
+        let mut interner = HashMap::new();
+        let left = structure_identity(&mut interner, declared, left, field_type);
+        let right = structure_identity(&mut interner, declared, right, field_type);
+        left == right
+    }
+}
+
+/// The identity of `form`'s canonical structure in `interner`: two forms get
+/// the same identity exactly when [`SnapshotValue::equals_by`] holds.
+fn structure_identity<'t>(
+    interner: &mut HashMap<Vec<u8>, u64>,
+    declared: Option<&'t filament_exact::ValueType>,
+    form: RawForm<'_>,
+    field_type: &dyn Fn(&str, &str) -> Option<&'t filament_exact::ValueType>,
+) -> u64 {
+    use filament_exact::ValueType;
+    enum Task<'a, 't> {
+        Read(Option<&'t ValueType>, RawForm<'a>),
+        /// Combine the identities of the last `count` values read.
+        Combine {
+            tag: u8,
+            names: Vec<String>,
+            count: usize,
+            sorted: bool,
+        },
+    }
+    fn text(bytes: &mut Vec<u8>, text: &str) {
+        let length = u64::try_from(text.len()).unwrap_or(u64::MAX);
+        bytes.extend_from_slice(&length.to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+    }
+    fn intern(interner: &mut HashMap<Vec<u8>, u64>, bytes: Vec<u8>) -> u64 {
+        let next = u64::try_from(interner.len()).unwrap_or(u64::MAX);
+        *interner.entry(bytes).or_insert(next)
+    }
+    let mut work = vec![Task::Read(declared, form)];
+    let mut done: Vec<u64> = Vec::new();
+    while let Some(task) = work.pop() {
+        match task {
+            Task::Combine {
+                tag,
+                names,
+                count,
+                sorted,
+            } => {
+                let at = done.len().saturating_sub(count);
+                let mut children = done.split_off(at);
+                if sorted {
+                    children.sort_unstable();
+                }
+                let mut bytes = vec![tag];
+                for name in &names {
+                    text(&mut bytes, name);
+                }
+                for child in children {
+                    bytes.extend_from_slice(&child.to_le_bytes());
+                }
+                done.push(intern(interner, bytes));
+            }
+            Task::Read(declared, form) => match form {
+                RawForm::Boolean(held) => done.push(intern(interner, vec![b'b', u8::from(held)])),
+                RawForm::Integer(spelling) => {
+                    let mut bytes = vec![b'i'];
+                    text(&mut bytes, spelling);
+                    done.push(intern(interner, bytes));
+                }
+                RawForm::Native(native) => {
+                    let mut bytes = vec![b'n'];
+                    match (declared, native.kind) {
+                        (
+                            Some(ValueType::Text(text_type)),
+                            RawNativeKind::Known(NativeKind::Text),
+                        ) => match text_member(native) {
+                            Some(held) => {
+                                bytes[0] = b't';
+                                text(&mut bytes, &retained_text(text_type, held));
+                            }
+                            // A Text with no `text` member equals nothing, not
+                            // even another: its identity is unique.
+                            None => {
+                                bytes[0] = b'!';
+                                bytes.extend_from_slice(&interner.len().to_le_bytes());
+                            }
+                        },
+                        (_, RawNativeKind::Known(NativeKind::Rational)) => {
+                            match document::rational_payload(native) {
+                                // One value whatever its spelling (FR-106 "A
+                                // Rational value").
+                                Ok(value) => {
+                                    bytes[0] = b'Q';
+                                    text(&mut bytes, &value.numerator().to_string());
+                                    text(&mut bytes, &value.denominator().to_string());
+                                }
+                                Err(_) => {
+                                    bytes[0] = b'!';
+                                    bytes.extend_from_slice(&interner.len().to_le_bytes());
+                                }
+                            }
+                        }
+                        (_, RawNativeKind::Known(NativeKind::Quantity)) => {
+                            match quantity_identity(native) {
+                                // One value whatever its magnitude's spelling
+                                // (FR-106 "A Quantity value").
+                                Some((unit, magnitude)) => {
+                                    bytes[0] = b'q';
+                                    text(&mut bytes, unit);
+                                    text(&mut bytes, &magnitude.numerator().to_string());
+                                    text(&mut bytes, &magnitude.denominator().to_string());
+                                }
+                                // A Quantity admission refuses equals nothing.
+                                None => {
+                                    bytes[0] = b'!';
+                                    bytes.extend_from_slice(&interner.len().to_le_bytes());
+                                }
+                            }
+                        }
+                        _ => {
+                            text(&mut bytes, &format!("{:?}", native.kind));
+                            for (name, member) in native.members() {
+                                text(&mut bytes, name);
+                                match member {
+                                    Some(held) => {
+                                        bytes.push(1);
+                                        text(&mut bytes, held);
+                                    }
+                                    None => bytes.push(0),
+                                }
+                            }
+                        }
+                    }
+                    done.push(intern(interner, bytes));
+                }
+                RawForm::Absent => done.push(intern(interner, vec![b'a'])),
+                RawForm::Reference(reference) => {
+                    let mut bytes = vec![b'r'];
+                    text(&mut bytes, &reference.population);
+                    text(&mut bytes, &reference.key);
+                    done.push(intern(interner, bytes));
+                }
+                RawForm::Present(inner) => {
+                    // A field's declared type is its bare type: `Option` only
+                    // wraps an operation parameter or result.
+                    let inner_type = match declared {
+                        Some(ValueType::Option(payload)) => Some(&**payload),
+                        other => other,
+                    };
+                    work.push(Task::Combine {
+                        tag: b'p',
+                        names: Vec::new(),
+                        count: 1,
+                        sorted: false,
+                    });
+                    work.push(Task::Read(inner_type, inner.form()));
+                }
+                RawForm::Collection(kind, items) => {
+                    let element = match declared {
+                        Some(ValueType::Collection(collection)) => Some(collection.element()),
+                        _ => None,
+                    };
+                    let count = items.iter().len();
+                    work.push(Task::Combine {
+                        tag: b'0' + collection_discriminant(kind),
+                        names: Vec::new(),
+                        count,
+                        sorted: matches!(kind, CollectionKind::Set | CollectionKind::Bag),
+                    });
+                    // Pushed last-first, so the first item reads first.
+                    let items: Vec<_> = items.iter().collect();
+                    work.extend(
+                        items
+                            .into_iter()
+                            .rev()
+                            .map(|item| Task::Read(element, item.form())),
+                    );
+                }
+                RawForm::Record(record) => {
+                    let names: Vec<String> = std::iter::once(record.type_identity().to_owned())
+                        .chain(record.fields().map(|(name, _)| name.to_owned()))
+                        .collect();
+                    let fields: Vec<_> = record.fields().collect();
+                    work.push(Task::Combine {
+                        tag: b'R',
+                        names,
+                        count: fields.len(),
+                        sorted: false,
+                    });
+                    work.extend(fields.into_iter().rev().map(|(name, value)| {
+                        Task::Read(field_type(record.type_identity(), name), value.form())
+                    }));
+                }
+                RawForm::Variant(variant) => {
+                    let mut bytes = vec![b'v', u8::from(variant.has_extra_member())];
+                    for part in [variant.type_identity(), variant.case()] {
+                        match part {
+                            Some(held) => {
+                                bytes.push(1);
+                                text(&mut bytes, held);
+                            }
+                            None => bytes.push(0),
+                        }
+                    }
+                    done.push(intern(interner, bytes));
+                }
+            },
+        }
+    }
+    // The walk leaves exactly one identity; a malformed stack identifies as 0
+    // on both sides, which only a program error could reach.
+    done.pop().unwrap_or(0)
+}
+
+fn collection_discriminant(kind: CollectionKind) -> u8 {
+    match kind {
+        CollectionKind::Sequence => 0,
+        CollectionKind::Set => 1,
+        CollectionKind::Bag => 2,
+        CollectionKind::OrderedSet => 3,
+    }
+}
+
+impl Eq for SnapshotValue {}
+
+impl RawNode {
+    /// This node with every nested index moved up by `offset`.
+    fn shifted(self, offset: usize) -> Self {
+        match self {
+            Self::Present(inner) => Self::Present(inner + offset),
+            Self::Collection { kind, items } => Self::Collection {
+                kind,
+                items: items.into_iter().map(|item| item + offset).collect(),
+            },
+            Self::Record {
+                type_identity,
+                fields,
+            } => Self::Record {
+                type_identity,
+                fields: fields
+                    .into_iter()
+                    .map(|(name, index)| (name, index + offset))
+                    .collect(),
+            },
+            other @ (Self::Boolean(_)
+            | Self::Integer(_)
+            | Self::Native(_)
+            | Self::Absent
+            | Self::Reference(_)
+            | Self::Variant { .. }) => other,
+        }
+    }
+}
+
+impl<'v> RawValue<'v> {
+    /// This value's form.
+    #[must_use]
+    pub fn form(self) -> RawForm<'v> {
+        self.arena.at(self.index)
+    }
+}
+
+impl<'v> RawItems<'v> {
+    /// The items, in order.
+    pub fn iter(self) -> impl DoubleEndedIterator<Item = RawValue<'v>> + ExactSizeIterator {
+        self.items.iter().map(move |index| RawValue {
+            arena: self.arena,
+            index: *index,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Re-derived model view
+// ---------------------------------------------------------------------------
+
+/// One re-normalized domain package's effective view, with the reverse
+/// `EffectiveId -> DeclarationKey` index admission needs (the forward
+/// direction, [`EffectiveView::type_identities`], is a checked package's own
+/// input, never admission's own name-first lookup).
+#[derive(Debug)]
+pub(crate) struct ModelView {
+    pub(crate) view: EffectiveView,
+    by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
+    /// Whether the view is the unit's own source package (FR-569), whose
+    /// declarations a snapshot names without an `ix://` scheme.
+    source: bool,
+}
+
+impl ModelView {
+    /// The view with its reverse type-identity index.
+    pub(crate) fn new(view: EffectiveView) -> Self {
+        let by_effective_id = view
+            .type_identities()
+            .iter()
+            .map(|(key, effective)| (effective.clone(), key.clone()))
+            .collect();
+        Self {
+            view,
+            by_effective_id,
+            source: false,
+        }
+    }
+
+    /// The view of the unit's own source package.
+    pub(crate) fn source(view: EffectiveView) -> Self {
+        Self {
+            source: true,
+            ..Self::new(view)
+        }
+    }
+
+    /// Whether this is the unit's own source package.
+    pub(crate) fn is_source(&self) -> bool {
+        self.source
+    }
+
+    fn type_name(&self, effective: EffectiveId) -> Option<&str> {
+        self.by_effective_id
+            .get(&effective)
+            .map(|key| key.node.as_str())
+    }
+
+    pub(crate) fn declaration_key(&self, effective: EffectiveId) -> Option<&DeclarationKey> {
+        self.declaration_key_borrowed(&effective)
+    }
+
+    pub(crate) fn declaration_key_with_work<E>(
+        &self,
+        effective: &EffectiveId,
+        work: &mut impl FnMut(u64) -> Result<(), E>,
+    ) -> Result<Option<&DeclarationKey>, E> {
+        for (candidate, key) in &self.by_effective_id {
+            work(1)?;
+            if crate::model::key::effective_equal_with_work(candidate, effective, work)? {
+                return Ok(Some(key));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn declaration_key_borrowed(
+        &self,
+        effective: &EffectiveId,
+    ) -> Option<&DeclarationKey> {
+        self.by_effective_id.get(effective)
+    }
+}
+
+/// The domain packages a checked package selects: their identities, whose
+/// documents the caller supplies, and the source packages the unit's own
+/// `object` declarations build (FR-569), which have no document.
+#[derive(Clone, Copy, Debug)]
+pub struct ModelSelections<'a> {
+    selections: &'a [DomainPackageRef],
+    sources: &'a [DomainPackage],
+}
+
+impl<'a> ModelSelections<'a> {
+    /// `selections`, of which those named by a package of `sources` are the
+    /// unit's own source packages.
+    #[must_use]
+    pub fn new(selections: &'a [DomainPackageRef], sources: &'a [DomainPackage]) -> Self {
+        Self {
+            selections,
+            sources,
+        }
+    }
+
+    /// The selected packages, source packages included.
+    #[must_use]
+    pub fn selections(&self) -> &'a [DomainPackageRef] {
+        self.selections
+    }
+
+    fn source(&self, identity: &str) -> Option<&'a DomainPackage> {
+        self.sources
+            .iter()
+            .find(|package| package.model_selection.identity == identity)
+    }
+}
+
+impl<'a> From<&'a [DomainPackageRef]> for ModelSelections<'a> {
+    fn from(selections: &'a [DomainPackageRef]) -> Self {
+        Self::new(selections, &[])
+    }
+}
+
+impl<'a> From<&'a Vec<DomainPackageRef>> for ModelSelections<'a> {
+    fn from(selections: &'a Vec<DomainPackageRef>) -> Self {
+        Self::new(selections, &[])
+    }
+}
+
+impl<'a, const N: usize> From<&'a [DomainPackageRef; N]> for ModelSelections<'a> {
+    fn from(selections: &'a [DomainPackageRef; N]) -> Self {
+        Self::new(selections, &[])
+    }
+}
+
+/// Re-admit and re-normalize every domain package `model_selections`
+/// names (the caller's own `CheckedGraph::model_inputs()`), against the
+/// same package input a caller's `compile` already used; a source package
+/// has no document and normalizes from its records. See the module doc's
+/// design note.
+pub(crate) fn model_views<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    packages: &PackageInput,
+    limits: ModelNormalizationLimits,
+) -> Result<Vec<ModelView>, AdmissionFailure> {
+    let model_selections = model_selections.into();
+    let mut views = Vec::with_capacity(model_selections.selections.len());
+    for selection in model_selections.selections {
+        let source = model_selections.source(&selection.identity);
+        let domain_package = match source {
+            Some(source) => source.clone(),
+            None => {
+                let identities = [selection.identity.clone()];
+                let admitted = admit_selections(&identities, packages, limits.intake)
+                    .map_err(|_| fault("model-reconsistent-admission"))?;
+                let Some((package_ref, document)) = admitted.into_iter().next() else {
+                    return Err(fault("model-reconsistent-admission"));
+                };
+                let records = read_records(&package_ref.identity, &document)
+                    .map_err(|_| fault("model-reconsistent-records"))?;
+                DomainPackage::new(package_ref, records)
+            }
+        };
+        let view = match normalize(&domain_package, limits) {
+            NormalizeOutcome::Completed(view) => view,
+            // A reached ceiling of `ModelNormalizationLimits` is the caller's
+            // budget wherever it is read (ADR-014 section 1), so it refuses
+            // as the compile path does, naming its setting; any other
+            // refusal is a broken invariant, since the same packages already
+            // normalized at compile time.
+            NormalizeOutcome::Incomplete(incomplete) => {
+                return Err(caller_budget_refusal(
+                    &incomplete.denial(),
+                    INSUFFICIENT_NEXT_CHARGE,
+                ))
+            }
+            NormalizeOutcome::Refused(refusals) => {
+                return Err(refusals
+                    .iter()
+                    .find_map(|refusal| {
+                        let denial = refusal.cause.denial()?;
+                        Some(caller_budget_refusal(
+                            &denial,
+                            refusal.cause.catalog_code().cause(),
+                        ))
+                    })
+                    .unwrap_or_else(|| fault("model-reconsistent-normalize")))
+            }
+        };
+        views.push(if source.is_some() {
+            ModelView::source(view)
+        } else {
+            ModelView::new(view)
+        });
+    }
+    Ok(views)
+}
+
+/// FR-106 "Document forms": the declaration identity a snapshot's `name`
+/// stands for. A name with no `ix://` scheme names a declaration of the
+/// unit's own source package, written as the unit writes it; an `ix://` name
+/// names a model declaration only, so one that spells a source package's
+/// declaration names nothing. Built once per admission, so each name resolves
+/// by lookup instead of a scan of every view's records.
+pub(crate) struct DeclarationNames<'a> {
+    /// `ix://<identity>/` for each source package.
+    source_prefixes: Vec<String>,
+    /// Every declaration node of every view.
+    nodes: BTreeSet<&'a str>,
+}
+
+impl<'a> DeclarationNames<'a> {
+    pub(crate) fn new(views: &'a [ModelView]) -> Self {
+        Self {
+            source_prefixes: views
+                .iter()
+                .filter(|view| view.is_source())
+                .map(|view| format!("ix://{}/", view.view.model_selection().identity))
+                .collect(),
+            nodes: views
+                .iter()
+                .flat_map(|view| view.view.domain_package().records.iter())
+                .map(|record| record.key().node.as_str())
+                .collect(),
+        }
+    }
+
+    /// The scheme of a document `name` is wire text, so this is a string edge.
+    #[ix_trace_rs::string_edge]
+    pub(crate) fn resolve(&self, name: &str) -> String {
+        if name.starts_with("ix://") {
+            return if self
+                .source_prefixes
+                .iter()
+                .any(|prefix| name.starts_with(prefix.as_str()))
+            {
+                format!("unresolved:{name}")
+            } else {
+                name.to_owned()
+            };
+        }
+        self.source_prefixes
+            .iter()
+            .map(|prefix| format!("{prefix}{name}"))
+            .find(|candidate| self.nodes.contains(candidate.as_str()))
+            .unwrap_or_else(|| name.to_owned())
+    }
+}
+
+/// The one [`ModelView`] whose effective view names `effective`, and the
+/// [`DeclarationKey`] it resolves to. `None` when no re-derived view names
+/// it -- a broken invariant, since `effective` came from the same checked
+/// package these views were re-derived from.
+pub(crate) fn view_of(views: &[ModelView], effective: EffectiveId) -> Option<&ModelView> {
+    views
+        .iter()
+        .find(|view| view.declaration_key(effective.clone()).is_some())
+}
+
+// ---------------------------------------------------------------------------
+// Document validity (FR-056, FR-106 check 1)
+// ---------------------------------------------------------------------------
+
+/// FR-106 check 1.3, document validity: the one read of an observation
+/// document through `quire-canonical`'s shared reader. A document over the
+/// byte limit, one whose read cannot reserve memory, and one holding a number
+/// with no exact RFC 8785 spelling (`inexact-integer` or `inexact-number`,
+/// with the `document_pointer` of the first such number) refuse here. A number
+/// with no finite double is the reader's own refusal, classified from its
+/// lexeme: it is named when the reader reaches it, so ahead of an earlier
+/// inexact number. Any other refusal of the shared reader (malformed text, a lone
+/// surrogate escape, non-UTF-8 bytes, a repeated name) refuses
+/// `invalid_runtime_input`/`invalid-value` at the root.
+fn check_document_valid(
+    read: &Result<quire_canonical::Document, quire_canonical::ReadError>,
+    limits: ObservationLimits,
+) -> Result<(), AdmissionFailure> {
+    match read {
+        Ok(document) => {
+            if let Some((pointer, inexact, _)) =
+                crate::model::intake::first_inexact_number(document.root())
+            {
+                return Err(refuse(
+                    admission_record(Code::NoncanonicalWire, inexact.as_str())
+                        .with("document_pointer", pointer.as_str()),
+                ));
+            }
+            Ok(())
+        }
+        Err(error) => match read_error_refusal(error, limits) {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        },
+    }
+}
+
+/// [`check_document_valid`]'s refusal for a refusal of the shared reader,
+/// or `None` for a refusal this check does not own.
+fn read_error_refusal(
+    error: &quire_canonical::ReadError,
+    limits: ObservationLimits,
+) -> Option<AdmissionFailure> {
+    match error {
+        quire_canonical::ReadError::Limit(limit) => Some(input_bytes_exceeded(
+            limits.document_bytes,
+            u128::from(limit.required),
+        )),
+        quire_canonical::ReadError::Allocation { requested } => Some(allocation_failed(*requested)),
+        // A number with no finite double (`1e400`) is not malformed bytes:
+        // it refuses like any other number with no exact RFC 8785 spelling,
+        // classified from its lexeme.
+        quire_canonical::ReadError::NumberOutOfRange {
+            pointer, lexeme, ..
+        } => {
+            crate::model::intake::out_of_range_number(pointer, lexeme).map(|(pointer, inexact)| {
+                refuse(
+                    admission_record(Code::NoncanonicalWire, inexact.as_str())
+                        .with("document_pointer", pointer.as_str()),
+                )
+            })
+        }
+        // Any other refusal of the shared reader settles at the document
+        // root before any member is read (FR-106 check 1.3, FR-106-AC-3, AC-32, AC-38).
+        quire_canonical::ReadError::Malformed { .. }
+        | quire_canonical::ReadError::DuplicateName { .. } => Some(refuse(
+            admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                .with("document_pointer", ""),
+        )),
+        _ => None,
+    }
+}
+
+/// FR-106 check 1.2's refusal: `stage_limit_exceeded`/`input-bytes-exceeded`
+/// naming `observation.input_bytes`, its bound and the length reached.
+fn input_bytes_exceeded(bound: u64, actual: u128) -> AdmissionFailure {
+    limit_refusal(&LimitExceeded::new(
+        Setting::ObservationInputBytes,
+        bound,
+        actual,
+    ))
+}
+
+/// A reached ceiling of a caller's budget (`ModelNormalizationLimitsV1` or
+/// `PopulationAdmissionLimitsV1`, ADR-014 B-2) as an admission refusal: the compile path's
+/// `resource_exhausted` with its `cause`, carrying FR-255 Behavior 1's
+/// record from [`BudgetDenial::catalog_fields`].
+fn caller_budget_refusal(denial: &BudgetDenial, cause: &'static str) -> AdmissionFailure {
+    refuse(caller_budget_record(denial, cause))
+}
+
+/// [`caller_budget_refusal`]'s record.
+fn caller_budget_record(denial: &BudgetDenial, cause: &'static str) -> AdmissionRecord {
+    let mut record = admission_record(Code::ResourceExhausted, cause);
+    record.fields.extend(denial.catalog_fields());
+    record
+}
+
+/// `limit` as an admission refusal: `stage_limit_exceeded` with the limit's
+/// cause and its `kind`, `bound`, `actual` and `setting` fields (FR-255
+/// Behavior 1).
+fn limit_refusal(limit: &LimitExceeded) -> AdmissionFailure {
+    let mut record = admission_record(Code::StageLimitExceeded, limit.kind().catalog_cause());
+    if let Some(fields) = limit.catalog_fields() {
+        record.fields.extend(fields);
+    }
+    refuse(record)
+}
+
+/// FR-261 Behavior 4: the object and value counts of one document, charged
+/// as the reader's tree is walked. `values` counts every value form of the
+/// document, nested ones included.
+struct ReadMeter {
+    limits: ObservationLimits,
+    objects: u64,
+    values: u64,
+}
+
+impl ReadMeter {
+    fn new(limits: ObservationLimits) -> Self {
+        Self {
+            limits,
+            objects: 0,
+            values: 0,
+        }
+    }
+
+    /// Charge one object: `observation.objects`.
+    fn object(&mut self) -> Result<(), AdmissionFailure> {
+        self.objects = self.objects.saturating_add(1);
+        if self.objects > self.limits.objects_per_document {
+            return Err(limit_refusal(&LimitExceeded::new(
+                Setting::ObservationObjects,
+                self.limits.objects_per_document,
+                u128::from(self.objects),
+            )));
+        }
+        Ok(())
+    }
+
+    /// Charge one value form: `observation.values`.
+    fn value(&mut self) -> Result<(), AdmissionFailure> {
+        self.values = self.values.saturating_add(1);
+        if self.values > self.limits.values_per_document {
+            return Err(limit_refusal(&LimitExceeded::new(
+                Setting::ObservationValues,
+                self.limits.values_per_document,
+                u128::from(self.values),
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// The catalog cause of a denied accounting charge.
+const INSUFFICIENT_NEXT_CHARGE: &str = "insufficient-next-charge";
+
+/// FR-259 B6: reading or encoding the document could not reserve
+/// `requested` bytes of memory.
+fn allocation_failed(requested: usize) -> AdmissionFailure {
+    refuse(
+        admission_record(Code::ResourceExhausted, ALLOCATION_FAILED.cause())
+            .with("requested", requested.to_string()),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Provisions
+// ---------------------------------------------------------------------------
+
+/// The documents a state is read from, keyed by the reference each declares.
+pub type DocumentProvision = BTreeMap<DocumentRef, Vec<u8>>;
+
+/// FR-106's snapshot and invocation provisions: maps from document reference
+/// to document bytes.
+pub struct Provisions<'a> {
+    /// The snapshot provision.
+    pub snapshots: &'a BTreeMap<DocumentRef, Vec<u8>>,
+    /// The invocation provision.
+    pub invocations: &'a BTreeMap<DocumentRef, Vec<u8>>,
+}
+
+/// FR-109's `Function` selection: admit the one current snapshot's
+/// populations (checks 1, 5 to 8, over the snapshot alone -- a function has
+/// no clause, so checks 2 to 4, 9 to 11 do not apply) into an
+/// [`ObjectEnvironment`], for the caller to resolve each object argument
+/// against (FR-109's own `wrong-role-mapping` refusal on an unresolved
+/// one).
+pub fn admit_current_snapshot<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provision: &BTreeMap<DocumentRef, Vec<u8>>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+) -> Result<(ObjectEnvironment, AdmissionUsage), AdmissionFailure> {
+    admit_object_environment(
+        model_selections,
+        types,
+        packages,
+        model_limits,
+        provision,
+        selected,
+        limits,
+        &[],
+    )
+}
+
+/// FR-330: one snapshot of a temporal clause's trace, admitted as
+/// [`admit_current_snapshot`] admits it, except that `required`, the
+/// populations the clause's `holds` atoms name (FR-391), are required to be
+/// complete (FR-106 check 7), repeatedly through their reference fields and
+/// relationship ends: a trace over one with no snapshot row is `Incomplete`
+/// `incomplete_population`/`missing-required-artifact`, and over one listed
+/// but not `complete` is `Incomplete` `incomplete_population`/
+/// `incomplete-scope`, as a state clause's observation is.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_trace_snapshot<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provision: &BTreeMap<DocumentRef, Vec<u8>>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+    required: &[String],
+) -> Result<(ObjectEnvironment, AdmissionUsage), AdmissionFailure> {
+    admit_current_environment(
+        model_selections,
+        types,
+        (packages, model_limits),
+        (provision, selected, limits),
+        &[],
+        required,
+    )
+}
+
+/// FR-098 step 3: a replayed function's object environment, admitted as
+/// [`admit_current_snapshot`] admits it, except that the populations holding
+/// an object that equals one of the converted `arguments` are required to be
+/// complete (FR-106 check 7), repeatedly through their reference fields and
+/// relationship ends.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_object_environment<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provision: &BTreeMap<DocumentRef, Vec<u8>>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+    arguments: &[ObjectReference],
+) -> Result<(ObjectEnvironment, AdmissionUsage), AdmissionFailure> {
+    admit_current_environment(
+        model_selections,
+        types,
+        (packages, model_limits),
+        (provision, selected, limits),
+        arguments,
+        &[],
+    )
+}
+
+/// One current snapshot's object environment, with the populations holding
+/// `arguments` and the populations `required` required to be complete.
+fn admit_current_environment<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    (packages, model_limits): (&PackageInput, ModelNormalizationLimits),
+    (provision, selected, limits): (
+        &BTreeMap<DocumentRef, Vec<u8>>,
+        &DocumentRef,
+        ObservationLimits,
+    ),
+    arguments: &[ObjectReference],
+    required: &[String],
+) -> Result<(ObjectEnvironment, AdmissionUsage), AdmissionFailure> {
+    let views = model_views(model_selections, packages, model_limits)?;
+    let read = read_document(DocumentKind::Snapshot, provision, selected, limits, &views)?;
+    let snapshot = read
+        .as_snapshot()
+        .ok_or_else(|| fault("expected-snapshot-document"))?;
+    if snapshot.observation != document::ObservationRole::Current {
+        return Err(refuse(admission_record(
+            Code::WrongSnapshot,
+            "wrong-observation",
+        )));
+    }
+    check_model_any(&views, &snapshot.model)?;
+    let admitted = document::admit_argument_populations(
+        &views,
+        types,
+        snapshot,
+        &read.identity,
+        arguments,
+        required,
+        model_limits.ancestor_steps,
+    )?;
+    Ok((admitted.environment, read.usage))
+}
+
+/// The reference a document `bytes` names itself by: the four identity labels
+/// of its `identity` member. `None` when `bytes` are no document or carry no
+/// complete `identity`.
+pub fn document_reference(bytes: &[u8]) -> Option<DocumentRef> {
+    document::reference_of(bytes)
+}
+
+/// FR-109's `Function` selection: `type_identity`'s own [`UniverseId`],
+/// re-deriving `views` the same way [`admit_current_snapshot`] does (the
+/// module doc's design note), for the caller to resolve an object
+/// argument's population into the exact same universe admission itself
+/// would assign that object.
+pub fn population_universe_for<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    type_identity: EffectiveId,
+) -> Result<UniverseId, AdmissionFailure> {
+    let views = model_views(model_selections, packages, model_limits)?;
+    population_universe(&views, type_identity)
+}
+
+/// The effective identity of the declared type `declaration` and its
+/// [`UniverseId`], derived through `population_universe` exactly as
+/// [`population_universe_for`] resolves an object argument. `None` when no
+/// selected model declares `declaration`.
+pub fn declared_type_universe_for<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    declaration: &DeclarationKey,
+) -> Result<Option<(EffectiveId, UniverseId)>, AdmissionFailure> {
+    let views = model_views(model_selections, packages, model_limits)?;
+    let Some(effective) = views
+        .iter()
+        .find_map(|view| view.view.type_identities().get(declaration).cloned())
+    else {
+        return Ok(None);
+    };
+    let universe = population_universe(&views, effective.clone())?;
+    Ok(Some((effective, universe)))
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+/// FR-106: admit the selected snapshot and invocation documents against
+/// `model_selections`/`types` (the caller's own checked graph, re-derived
+/// per the module doc's design note) and `clause` (the caller's own
+/// selected `check::CheckedStateClause`, read into [`ClauseFacts`] before
+/// this call), into one [`AdmittedObservations`] value, or return exactly
+/// one [`AdmissionFailure`].
+#[allow(clippy::too_many_arguments)]
+pub fn admit_observations<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    clause: &ClauseFacts,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provisions: &Provisions<'_>,
+    selection: &ClauseSelection,
+    limits: ObservationLimits,
+) -> Result<AdmittedObservations, AdmissionFailure> {
+    let wrong_observation = || refuse(admission_record(Code::WrongSnapshot, "wrong-observation"));
+    // Check 2: selection form.
+    match (clause.kind, &selection.input) {
+        (
+            StateClauseKind::Invariant | StateClauseKind::Constraint,
+            ClauseSelectionInput::Current { .. },
+        )
+        | (
+            StateClauseKind::Invariant | StateClauseKind::Constraint,
+            ClauseSelectionInput::Context { .. },
+        )
+        | (StateClauseKind::Precondition, ClauseSelectionInput::PreCall { .. })
+        | (
+            StateClauseKind::Precondition | StateClauseKind::Postcondition,
+            ClauseSelectionInput::Invocation { .. },
+        ) => {}
+        (
+            StateClauseKind::Precondition | StateClauseKind::Postcondition,
+            ClauseSelectionInput::Current { .. } | ClauseSelectionInput::Context { .. },
+        )
+        | (
+            StateClauseKind::Invariant
+            | StateClauseKind::Constraint
+            | StateClauseKind::Postcondition,
+            ClauseSelectionInput::PreCall { .. },
+        )
+        | (
+            StateClauseKind::Invariant | StateClauseKind::Constraint,
+            ClauseSelectionInput::Invocation { .. },
+        ) => return Err(wrong_observation()),
+    }
+
+    let views = model_views(model_selections, packages, model_limits)?;
+    let selection = &selection.resolved(&views);
+    let context_view =
+        view_of(&views, clause.context.clone()).ok_or_else(|| fault("unresolved-context-type"))?;
+    let context_name = context_view
+        .type_name(clause.context.clone())
+        .ok_or_else(|| fault("unresolved-context-name"))?
+        .to_owned();
+    let state_machine = is_state_machine_context(context_view, &context_name);
+
+    // Check 2, by the clause's receiver: a state machine's invariant is
+    // selected by `Context` alone, an object type's never is, and a
+    // `Current` or `PreCall` selection names a `self` exactly when the
+    // receiver is an object.
+    let named_self = match &selection.input {
+        ClauseSelectionInput::Current { self_object, .. }
+        | ClauseSelectionInput::PreCall { self_object, .. } => Some(self_object.is_some()),
+        ClauseSelectionInput::Invocation { .. } | ClauseSelectionInput::Context { .. } => None,
+    };
+    let context_selected = matches!(selection.input, ClauseSelectionInput::Context { .. });
+    if (clause.kind == StateClauseKind::Invariant && context_selected != state_machine)
+        || named_self.is_some_and(|named| named == state_machine)
+    {
+        return Err(wrong_observation());
+    }
+
+    // A precondition's pre-call observation, selected by `PreCall` or by
+    // `Invocation`, and a state machine's invariant on side `pre`, are
+    // admitted against this one context.
+    // FR-391: the populations the clause names, required (FR-106 check 7)
+    // with their closure in the snapshot of the observation each is read at.
+    let named = NamedReads::of(&clause.named_populations);
+    macro_rules! pre_call_context {
+        ($operation:expr, $as_context:expr) => {
+            PreCallContext {
+                views: &views,
+                types,
+                context_view,
+                context_name: &context_name,
+                clause_context: clause.context.clone(),
+                state_machine,
+                clause: clause.identity.clone(),
+                operation: $operation,
+                as_context: $as_context,
+                ancestor_steps: model_limits.ancestor_steps,
+                named: &named.pre,
+            }
+        };
+    }
+    let clause_operation = || -> Result<OperationSource<'_>, AdmissionFailure> {
+        clause
+            .operation
+            .as_ref()
+            .map(OperationSource::Clause)
+            .ok_or_else(|| fault("clause-declares-no-operation"))
+    };
+
+    let admitted = match &selection.input {
+        ClauseSelectionInput::Current {
+            snapshot,
+            anchor,
+            self_object,
+        } => admit_invariant(
+            &views,
+            types,
+            context_view,
+            &context_name,
+            clause.identity.clone(),
+            provisions,
+            snapshot,
+            anchor,
+            self_object
+                .as_ref()
+                .ok_or_else(|| fault("object-invariant-names-no-self"))?,
+            &named.current,
+            limits,
+            model_limits.ancestor_steps,
+        ),
+        ClauseSelectionInput::PreCall {
+            snapshot,
+            self_object,
+            parameters,
+        } => {
+            let context = pre_call_context!(clause_operation()?, false);
+            let read = read_document(
+                DocumentKind::Snapshot,
+                provisions.snapshots,
+                snapshot,
+                limits,
+                &views,
+            )?;
+            let parameters: Vec<(String, SnapshotValue)> = parameters
+                .iter()
+                .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+                .collect();
+            admit_pre_call(
+                &context,
+                PreCallInput {
+                    call: None,
+                    receiver_invocation: None,
+                    invocation: None,
+                    invocation_usage: AdmissionUsage::default(),
+                    pre: read,
+                    self_object: self_object.as_ref(),
+                    parameters: &parameters,
+                },
+            )
+        }
+        ClauseSelectionInput::Invocation { invocation } => match clause.kind {
+            StateClauseKind::Precondition => admit_pre_call_invocation(
+                &pre_call_context!(clause_operation()?, false),
+                provisions,
+                invocation,
+                limits,
+            ),
+            StateClauseKind::Postcondition => admit_operation(
+                &views,
+                types,
+                context_view,
+                &context_name,
+                clause.identity.clone(),
+                clause.context.clone(),
+                OperationSource::Clause(
+                    clause
+                        .operation
+                        .as_ref()
+                        .ok_or_else(|| fault("clause-declares-no-operation"))?,
+                ),
+                false,
+                &named,
+                provisions,
+                invocation,
+                limits,
+                model_limits,
+            ),
+            // Check 2 above refused an invariant's `Invocation` selection.
+            StateClauseKind::Invariant | StateClauseKind::Constraint => {
+                Err(fault("invariant-selected-by-invocation"))
+            }
+        },
+        ClauseSelectionInput::Context { invocation, side } => match side {
+            ContextSide::Pre => admit_pre_call_invocation(
+                &pre_call_context!(OperationSource::Any(&clause.operations), true),
+                provisions,
+                invocation,
+                limits,
+            ),
+            ContextSide::Post => admit_operation(
+                &views,
+                types,
+                context_view,
+                &context_name,
+                clause.identity.clone(),
+                clause.context.clone(),
+                OperationSource::Any(&clause.operations),
+                true,
+                &named,
+                provisions,
+                invocation,
+                limits,
+                model_limits,
+            ),
+        },
+    }?;
+    Ok(admitted)
+}
+
+/// FR-391 "Evaluation": the populations a clause names, by the observation
+/// each is read at. Each is required (FR-106 check 7, "required
+/// population") in that observation's snapshot, and so, repeatedly, is every
+/// population a reference field of its objects names: one with no snapshot
+/// row is `Incomplete` `incomplete_population`/`missing-required-artifact`,
+/// and one listed but not `complete` is `Incomplete`
+/// `incomplete_population`/`incomplete-scope`.
+#[derive(Debug, Default)]
+struct NamedReads {
+    current: Vec<String>,
+    pre: Vec<String>,
+    post: Vec<String>,
+}
+
+impl NamedReads {
+    fn of(named: &[(String, crate::model::clause_observation::Observation)]) -> Self {
+        use crate::model::clause_observation::Observation as Read;
+        let mut reads = Self::default();
+        for (population, observation) in named {
+            match observation {
+                Read::Current => reads.current.push(population.clone()),
+                Read::Pre => reads.pre.push(population.clone()),
+                Read::Post => reads.post.push(population.clone()),
+            }
+        }
+        reads
+    }
+}
+
+// The remainder of this module (document reading, the eleven checks, and
+// the frame/delta check) is implemented incrementally; see
+// `admit_invariant`/`admit_operation` below.
+
+mod document;
+mod encode;
+mod extents;
+mod frame;
+mod initial;
+mod relationships;
+mod tree;
+mod write;
+
+pub use document::ObservationRole;
+use document::{read_document, DocumentKind};
+pub use encode::ValueEncoder;
+pub use extents::{
+    BundleKey, BundlePart, BundleRefusal, Keyed, ObservationOrigin, PopulationEnumerationFailure,
+    PopulationManifest, RelationshipExtents, ResolveBundle,
+};
+pub(crate) use initial::{admit_initial_state, observe_state, state_fields, state_reference};
+pub use write::{
+    write_environment_document, EnvironmentLabels, EnvironmentModel, EnvironmentObject,
+    EnvironmentPopulation,
+};
+
+#[allow(clippy::too_many_arguments)]
+fn admit_invariant(
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    context_view: &ModelView,
+    context_name: &str,
+    clause: filament_exact::NodeKey,
+    provisions: &Provisions<'_>,
+    selected: &DocumentRef,
+    anchor: &SelectedAnchor,
+    self_object: &SelectedObject,
+    named: &[String],
+    limits: ObservationLimits,
+    ancestor_steps: u64,
+) -> Result<AdmittedObservations, AdmissionFailure> {
+    let read = read_document(
+        DocumentKind::Snapshot,
+        provisions.snapshots,
+        selected,
+        limits,
+        views,
+    )?;
+    let snapshot = read
+        .as_snapshot()
+        .ok_or_else(|| fault("expected-snapshot-document"))?;
+
+    // Check 3: observation role and anchor.
+    if snapshot.observation != document::ObservationRole::Current {
+        return Err(refuse(admission_record(
+            Code::WrongSnapshot,
+            "wrong-observation",
+        )));
+    }
+    let document_anchor = snapshot
+        .anchor
+        .as_ref()
+        .ok_or_else(|| refuse(admission_record(Code::WrongSnapshot, "wrong-observation")))?;
+    // `AnchorKind` derives `PartialEq`; compared directly (SR-750
+    // FND-011), never through `as_str()` string equality.
+    if document_anchor.kind != anchor.kind || document_anchor.name != anchor.name {
+        return Err(refuse(
+            admission_record(Code::WrongSnapshot, "wrong-anchor")
+                .with(
+                    "required",
+                    format!("{} {}", anchor.kind.as_str(), anchor.name),
+                )
+                .with(
+                    "supplied",
+                    format!("{} {}", document_anchor.kind.as_str(), document_anchor.name),
+                ),
+        ));
+    }
+
+    // Check 4: model.
+    check_model(views, context_view, &snapshot.model)?;
+
+    // Check 6-8: populations and values, completeness, closure.
+    let environment = document::admit_populations(
+        views,
+        types,
+        snapshot,
+        &read.identity,
+        Some(&self_object.population),
+        named,
+        ancestor_steps,
+    )?;
+
+    // Check 9: self.
+    let self_reference = document::resolve_self(
+        views,
+        types,
+        context_view,
+        context_name,
+        &environment.environment,
+        self_object,
+    )?;
+
+    Ok(AdmittedObservations {
+        usage: read.usage,
+        clause,
+        current: Some(Observation {
+            identity: read.identity,
+            environment: environment.environment,
+            populations: environment.completeness,
+            out_of_range: environment.out_of_range,
+        }),
+        pre: None,
+        post: None,
+        self_object: self_reference,
+        invocation: None,
+        self_kind: SelfKind::Object,
+        receiver_pre: None,
+        receiver_post: None,
+        parameters: Vec::new(),
+        result: None,
+        created: Vec::new(),
+        deleted: Vec::new(),
+    })
+}
+
+/// FR-106 check 4: `model` must match `context_view`'s own package model
+/// selection -- "the package's model selection for the clause's alias"
+/// (`FR-106-admit-snapshots-and-invocations.md:191-193`), never merely some
+/// alias of the unit (SR-750 FND-012: matching against every view in
+/// `views` would wrongly admit a document bound to a different alias's
+/// model in a multi-alias unit).
+fn check_model(
+    views: &[ModelView],
+    context_view: &ModelView,
+    model: &document::ModelHeader,
+) -> Result<(), AdmissionFailure> {
+    let wrong = || {
+        refuse(admission_record(
+            Code::InvalidModelBinding,
+            "wrong-model-selection",
+        ))
+    };
+    // A source type's context names no model of its own: its snapshot names
+    // one of the package's domain packages, or none when it selects none.
+    if context_view.is_source() {
+        return check_model_any(views, model);
+    }
+    let selection = &context_view.view.model_selection();
+    match &model.identity {
+        Some(identity) if selection.identity == *identity => Ok(()),
+        Some(_) | None => Err(wrong()),
+    }
+}
+
+/// [`check_model`], over every domain package in `views`: FR-109's `Function`
+/// selection (`admit_current_snapshot`) carries no clause alias of its own
+/// to scope this check to -- a bare `Function` selection is not `on
+/// Alias::Type::op`-shaped -- so it stays scoped to the unit's whole model
+/// selection set, as before. A package that selects no domain package
+/// admits a document with no `model` member.
+fn check_model_any(
+    views: &[ModelView],
+    model: &document::ModelHeader,
+) -> Result<(), AdmissionFailure> {
+    let mut domain = views.iter().filter(|view| !view.is_source()).peekable();
+    let matches = match &model.identity {
+        None => domain.peek().is_none(),
+        Some(identity) => domain.any(|view| view.view.model_selection().identity == *identity),
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(refuse(admission_record(
+            Code::InvalidModelBinding,
+            "wrong-model-selection",
+        )))
+    }
+}
+
+/// The three documents FR-106 check 1 read for one invocation: the
+/// invocation, then its pre and post snapshots, in that order.
+struct InvocationDocuments {
+    invocation: document::ReadDocument,
+    pre: document::ReadDocument,
+    post: document::ReadDocument,
+}
+
+impl InvocationDocuments {
+    fn invocation(&self) -> Result<&document::InvocationDocument, AdmissionFailure> {
+        self.invocation
+            .as_invocation()
+            .ok_or_else(|| fault("expected-invocation-document"))
+    }
+
+    fn pre(&self) -> Result<&document::SnapshotDocument, AdmissionFailure> {
+        self.pre
+            .as_snapshot()
+            .ok_or_else(|| fault("expected-snapshot-document"))
+    }
+
+    fn post(&self) -> Result<&document::SnapshotDocument, AdmissionFailure> {
+        self.post
+            .as_snapshot()
+            .ok_or_else(|| fault("expected-snapshot-document"))
+    }
+}
+
+/// What FR-106 checks 1 and 3 to 10 admit from one invocation.
+struct InvocationAdmission {
+    documents: InvocationDocuments,
+    pre: document::AdmittedEnvironment,
+    post: document::AdmittedEnvironment,
+    self_reference: ObjectReference,
+    invocation: DocumentRef,
+    self_kind: SelfKind,
+    receiver_pre: Option<ObjectReference>,
+    receiver_post: Option<ObjectReference>,
+    /// The operation the invocation names, resolved by check 5.
+    operation: OperationDeclaration,
+    parameters: Vec<(String, Value)>,
+    result: Option<Value>,
+}
+
+fn is_state_machine_context(context_view: &ModelView, context_name: &str) -> bool {
+    context_view
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .any(|record| {
+            matches!(
+                record,
+                crate::model::domain_package::DomainPackageRecord::StateMachine(machine)
+                    if machine.key.node == context_name
+            )
+        })
+}
+
+/// Where FR-106 check 5 takes the invocation's operation from.
+#[derive(Clone, Copy)]
+enum OperationSource<'a> {
+    /// The operation the clause names.
+    Clause(&'a OperationFacts),
+    /// Any effective operation of the state machine the invocation's
+    /// `context` names, which a state machine's invariant allows, naming no
+    /// operation of its own (FSpec FR-208-AC-10).
+    Any(&'a OperationTable),
+}
+
+/// The clause's receiver as check 5 compares an invocation with it.
+struct Receiver<'a> {
+    views: &'a [ModelView],
+    types: &'a TypeEnvironment,
+    context_name: &'a str,
+    context: EffectiveId,
+    state_machine: bool,
+}
+
+impl InvocationAdmission {
+    /// Every document's read usage.
+    fn usage(&self) -> AdmissionUsage {
+        self.documents
+            .invocation
+            .usage
+            .merged_with(self.documents.pre.usage)
+            .merged_with(self.documents.post.usage)
+    }
+}
+
+/// FR-106 check 9's `self` rule: an object receiver needs an object
+/// reference, a state machine's context has none, so its `self` is `null`.
+fn wrong_self_kind() -> AdmissionFailure {
+    refuse(admission_record(Code::InvalidRuntimeInput, "wrong-value-kind").with("field", "self"))
+}
+
+/// FR-106 checks 1 and 3 to 10 over the invocation `selected`, of the
+/// operation `source` names, on `context_view`'s type `context_name`.
+/// `self` is required in the post snapshot only when `post_self` (a
+/// postcondition, SR-750 FND-006).
+#[allow(clippy::too_many_arguments)]
+fn admit_invocation_documents(
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    context_view: &ModelView,
+    context_name: &str,
+    clause_context: EffectiveId,
+    source: OperationSource<'_>,
+    post_self: bool,
+    named: &NamedReads,
+    provisions: &Provisions<'_>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+    ancestor_steps: u64,
+) -> Result<InvocationAdmission, AdmissionFailure> {
+    // Check 1: read every selected document -- the invocation, then its
+    // pre and post snapshots, in that order -- before any of checks 2 to 5
+    // read any of their content (SR-750 FND-005: this must not interleave
+    // with check 4/5, which is what admission did before this fix).
+    let invocation_read = read_document(
+        DocumentKind::Invocation,
+        provisions.invocations,
+        selected,
+        limits,
+        views,
+    )?;
+    let (pre_ref, post_ref) = {
+        let invocation = invocation_read
+            .as_invocation()
+            .ok_or_else(|| fault("expected-invocation-document"))?;
+        (invocation.call.pre.clone(), invocation.post.clone())
+    };
+    let pre_read = read_document(
+        DocumentKind::Snapshot,
+        provisions.snapshots,
+        &pre_ref,
+        limits,
+        views,
+    )?;
+    let post_read = read_document(
+        DocumentKind::Snapshot,
+        provisions.snapshots,
+        &post_ref,
+        limits,
+        views,
+    )?;
+    let documents = InvocationDocuments {
+        invocation: invocation_read,
+        pre: pre_read,
+        post: post_read,
+    };
+    let invocation = documents.invocation()?;
+    let pre_snapshot = documents.pre()?;
+    let post_snapshot = documents.post()?;
+
+    // Check 3: observation role (pre/post's own anchor is not applicable
+    // to an invocation's snapshots).
+    if pre_snapshot.observation != document::ObservationRole::Pre
+        || post_snapshot.observation != document::ObservationRole::Post
+    {
+        return Err(refuse(admission_record(
+            Code::WrongSnapshot,
+            "wrong-observation",
+        )));
+    }
+
+    // Check 4: model, for each document in the order it was read.
+    check_model(views, context_view, &invocation.call.model)?;
+    check_model(views, context_view, &pre_snapshot.model)?;
+    check_model(views, context_view, &post_snapshot.model)?;
+
+    // Check 5: operation, then the invocation each snapshot names.
+    let state_machine = is_state_machine_context(context_view, context_name);
+    let operation = check_operation(
+        &invocation.call,
+        &Receiver {
+            views,
+            types,
+            context_name,
+            context: clause_context.clone(),
+            state_machine,
+        },
+        source,
+    )?;
+    document::check_snapshot_invocation(
+        pre_snapshot,
+        &documents.pre.identity,
+        &documents.invocation.identity,
+    )?;
+    document::check_snapshot_invocation(
+        post_snapshot,
+        &documents.post.identity,
+        &documents.invocation.identity,
+    )?;
+
+    // Checks 6 to 8: pre's own check 6, then post's, then pre's check 7,
+    // then post's, then pre's check 8, then post's -- never fully
+    // finishing one snapshot's checks 6 to 8 before starting the other's
+    // check 6 (SR-750 FND-005).
+    let self_object = invocation.call.self_object.as_ref();
+    // FR-106 check 9: `self` is required in the post snapshot only for a
+    // postcondition (SR-750 FND-006), never for a `Frame` run, whose
+    // operation may delete it.
+    let post_range = if post_self {
+        limits.post_state
+    } else {
+        PostStateRange::Refuse
+    };
+    let read_machine = state_machine.then_some(clause_context.clone());
+    let mut pre_values = document::admit_population_values(
+        views,
+        types,
+        pre_snapshot,
+        &documents.pre.identity,
+        read_machine.clone(),
+        PostStateRange::Refuse,
+        ancestor_steps,
+    )?;
+    let mut post_values = document::admit_population_values(
+        views,
+        types,
+        post_snapshot,
+        &documents.post.identity,
+        read_machine,
+        post_range,
+        ancestor_steps,
+    )?;
+    let pre_self_population =
+        self_object.and_then(|object| (!state_machine).then_some(object.population.as_str()));
+    let post_self_population = self_object
+        .and_then(|object| (!state_machine && post_self).then_some(object.population.as_str()));
+    let mut pre_required =
+        document::parameter_populations(views, &operation, &invocation.call.parameters);
+    pre_required.extend(pre_values.read_context_populations());
+    pre_required.extend(named.pre.iter().cloned());
+    let mut post_required = post_values.read_context_populations();
+    post_required.extend(named.post.iter().cloned());
+    document::check_population_completeness(
+        views,
+        &pre_snapshot.populations,
+        &pre_values.completeness,
+        pre_self_population,
+        &pre_required,
+        &pre_values.extents,
+    )?;
+    document::check_population_completeness(
+        views,
+        &post_snapshot.populations,
+        &post_values.completeness,
+        post_self_population,
+        &post_required,
+        &post_values.extents,
+    )?;
+    document::check_population_closure(
+        &pre_snapshot.populations,
+        &pre_values.completeness,
+        &pre_values.keys_by_population,
+        &pre_values.extents,
+    )?;
+    document::check_population_closure(
+        &post_snapshot.populations,
+        &post_values.completeness,
+        &post_values.keys_by_population,
+        &post_values.extents,
+    )?;
+    document::check_context_closure(&[&pre_values, &post_values])?;
+
+    // Check 9: self and context.
+    let (pre_admitted, post_admitted, self_reference, receiver_pre, receiver_post) =
+        if state_machine {
+            if self_object.is_some() {
+                return Err(wrong_self_kind());
+            }
+            let receiver_pre =
+                pre_values.attach_read_context(context_name, &documents.pre.identity, selected)?;
+            let receiver_post = if post_self {
+                Some(post_values.attach_read_context(
+                    context_name,
+                    &documents.post.identity,
+                    selected,
+                )?)
+            } else {
+                None
+            };
+            let pre_admitted = document::finish_populations(types, pre_values)?;
+            let post_admitted = document::finish_populations(types, post_values)?;
+            let self_reference = receiver_post
+                .clone()
+                .unwrap_or_else(|| receiver_pre.clone());
+            (
+                pre_admitted,
+                post_admitted,
+                self_reference,
+                Some(receiver_pre),
+                receiver_post,
+            )
+        } else {
+            let pre_admitted = document::finish_populations(types, pre_values)?;
+            let post_admitted = document::finish_populations(types, post_values)?;
+            let self_object = self_object.ok_or_else(wrong_self_kind)?;
+            let reference = document::resolve_self(
+                views,
+                types,
+                context_view,
+                context_name,
+                &pre_admitted.environment,
+                self_object,
+            )?;
+            if post_self {
+                let _ = document::resolve_self(
+                    views,
+                    types,
+                    context_view,
+                    context_name,
+                    &post_admitted.environment,
+                    self_object,
+                )?;
+            }
+            (pre_admitted, post_admitted, reference, None, None)
+        };
+
+    // Check 10: parameters and result.
+    // A reference parameter resolves against the pre snapshot's objects, a
+    // reference result against the post snapshot's; either one naming a key
+    // absent from its complete population refuses `dangling_reference`
+    // (check 8's closure rule, SR-771 FND-001).
+    let mut parameter_references =
+        document::References::over(views, types, &pre_snapshot.populations);
+    let mut result_references =
+        document::References::over(views, types, &post_snapshot.populations);
+    document::check_untyped_parameters(
+        views,
+        context_name,
+        operation.name(),
+        &invocation.call.parameters,
+    )?;
+    let parameters = document::admit_parameters(
+        &mut parameter_references,
+        &operation,
+        &invocation.call.parameters,
+    )?;
+    document::check_untyped_result(views, context_name, operation.name(), &invocation.result)?;
+    let result = document::admit_result(&mut result_references, &operation, &invocation.result)?;
+    check_argument_bounds(
+        views,
+        types,
+        clause_context,
+        &operation,
+        &parameters,
+        result.as_ref(),
+    )?;
+
+    Ok(InvocationAdmission {
+        documents,
+        pre: pre_admitted,
+        post: post_admitted,
+        self_reference,
+        invocation: selected.clone(),
+        self_kind: SelfKind::of(state_machine),
+        receiver_pre,
+        receiver_post,
+        operation,
+        parameters,
+        result,
+    })
+}
+
+/// FSpec FR-154 "Unit bounds": an argument or result an invocation supplies
+/// that violates a bound on its parameter or on the operation's result
+/// refuses `invalid_runtime_input`/`invalid-value`, naming the parameter
+/// (or the result), the constraint, its keyword and bound.
+fn check_argument_bounds(
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    context: EffectiveId,
+    operation: &OperationDeclaration,
+    parameters: &[(String, Value)],
+    result: Option<&Value>,
+) -> Result<(), AdmissionFailure> {
+    let bounds = crate::model::state::member_bounds(views);
+    if bounds.is_empty() {
+        return Ok(());
+    }
+    for view in views {
+        for record in &view.view.domain_package().records {
+            let crate::model::domain_package::DomainPackageRecord::OperationMember(member) = record
+            else {
+                continue;
+            };
+            let declared =
+                crate::model::intake::member_identity_name(&member.owner.node, &member.key.node)
+                    == Some(operation.name())
+                    && view
+                        .view
+                        .type_identities()
+                        .get(&member.owner)
+                        .is_some_and(|owner| types.conforms(context.clone(), owner.clone()));
+            if !declared {
+                continue;
+            }
+            for (name, value) in parameters {
+                let Some(parameter) = member.parameters.iter().find(|parameter| {
+                    crate::model::intake::member_identity_name(
+                        &member.key.node,
+                        &parameter.key.node,
+                    ) == Some(name.as_str())
+                }) else {
+                    continue;
+                };
+                if let Some(record) =
+                    document::unit_bound_refusal(&bounds, &parameter.key, value, types)
+                {
+                    return Err(refuse(record.with("parameter", name.clone())));
+                }
+            }
+            if let Some(record) = result
+                .and_then(|value| document::unit_bound_refusal(&bounds, &member.key, value, types))
+            {
+                return Err(refuse(record.with("result", operation.name().to_owned())));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What a pre-call admission reads about the selected clause, whether the
+/// precondition is selected by `PreCall` or by `Invocation`, or a state
+/// machine's invariant by `Context` on side `pre`.
+struct PreCallContext<'a> {
+    views: &'a [ModelView],
+    types: &'a TypeEnvironment,
+    context_view: &'a ModelView,
+    context_name: &'a str,
+    clause_context: EffectiveId,
+    state_machine: bool,
+    clause: filament_exact::NodeKey,
+    operation: OperationSource<'a>,
+    /// Whether this is the invariant of a state machine on side `pre`: the
+    /// invocation's `parameters` are neither read nor checked.
+    as_context: bool,
+    ancestor_steps: u64,
+    /// The populations the clause names at `pre` (FR-391), required with
+    /// the reference parameters'.
+    named: &'a [String],
+}
+
+/// FR-106 check 5: an invocation's `context` and `operation` against the
+/// clause's. For an object receiver they must be the clause's. For a state
+/// machine's clause the `context` must be the clause's machine or a
+/// specialization of it, and the `operation` the clause's, or for an
+/// invariant any effective operation of the machine the `context` names.
+/// Returns the operation the invocation names.
+fn check_operation(
+    call: &document::InvocationCall,
+    receiver: &Receiver<'_>,
+    source: OperationSource<'_>,
+) -> Result<OperationDeclaration, AdmissionFailure> {
+    let wrong_invocation = || refuse(admission_record(Code::WrongSnapshot, "wrong-invocation"));
+    if !receiver.state_machine {
+        let OperationSource::Clause(operation) = source else {
+            return Err(fault("context-selection-of-an-object-receiver"));
+        };
+        if call.context != receiver.context_name || call.operation != operation.declaration.name() {
+            return Err(wrong_invocation());
+        }
+        return Ok(operation.declaration.clone());
+    }
+    let invoked = document::find_declaration(receiver.views, &call.context)
+        .and_then(|(view, key)| view.view.type_identities().get(&key).cloned())
+        .filter(|invoked| {
+            receiver
+                .types
+                .conforms(invoked.clone(), receiver.context.clone())
+        })
+        .ok_or_else(wrong_invocation)?;
+    match source {
+        OperationSource::Clause(operation) if call.operation == operation.declaration.name() => {
+            Ok(operation.declaration.clone())
+        }
+        OperationSource::Clause(_) => Err(wrong_invocation()),
+        OperationSource::Any(table) => {
+            match table.resolve(receiver.types, invoked, &call.operation) {
+                OperationLookup::Declared { operation, .. } => Ok(operation.clone()),
+                OperationLookup::Missing | OperationLookup::Ambiguous(_) => Err(wrong_invocation()),
+            }
+        }
+    }
+}
+
+/// One pre-call observation's documents, already read by check 1: the
+/// call half of the invocation that carried it (`None` for a `PreCall`
+/// selection) and that invocation's read usage, its pre snapshot, the self
+/// object and the parameters.
+struct PreCallInput<'a> {
+    call: Option<&'a document::InvocationCall>,
+    receiver_invocation: Option<&'a DocumentRef>,
+    /// The selected invocation's own identity, when one is selected.
+    invocation: Option<&'a DocumentRef>,
+    invocation_usage: AdmissionUsage,
+    pre: document::ReadDocument,
+    self_object: Option<&'a SelectedObject>,
+    parameters: &'a [(String, SnapshotValue)],
+}
+
+/// A precondition selected by `Invocation` (FR-106 "Behavior"): check 1
+/// reads the invocation's call half and then its `pre` snapshot, and
+/// nothing of its post side -- not its `post` snapshot, `result`,
+/// `created` or `deleted` -- and check 11 does not run. The rest is
+/// [`admit_pre_call`], the one path a `PreCall` selection takes too, so
+/// both admit the same observation. A state machine's invariant on side
+/// `pre` reads the same documents and, binding no parameter, not the
+/// invocation's `parameters` either.
+fn admit_pre_call_invocation(
+    context: &PreCallContext<'_>,
+    provisions: &Provisions<'_>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+) -> Result<AdmittedObservations, AdmissionFailure> {
+    let invocation_read = read_document(
+        if context.as_context {
+            DocumentKind::InvocationContext
+        } else {
+            DocumentKind::InvocationCall
+        },
+        provisions.invocations,
+        selected,
+        limits,
+        context.views,
+    )?;
+    let call = invocation_read
+        .as_invocation_call()
+        .ok_or_else(|| fault("expected-invocation-document"))?;
+    let pre_read = read_document(
+        DocumentKind::Snapshot,
+        provisions.snapshots,
+        &call.pre,
+        limits,
+        context.views,
+    )?;
+    admit_pre_call(
+        context,
+        PreCallInput {
+            call: Some(call),
+            receiver_invocation: Some(selected),
+            invocation: Some(&invocation_read.identity),
+            invocation_usage: invocation_read.usage,
+            pre: pre_read,
+            self_object: call.self_object.as_ref(),
+            parameters: &call.parameters,
+        },
+    )
+}
+
+/// FR-106 checks 3 to 10 over one pre-call observation, read by check 1:
+/// the pre snapshot, the self object and the parameters, and for an
+/// invocation its own model (check 4) and operation (check 5). Check 11
+/// compares a pre and a post snapshot; a pre-call observation has no post
+/// side, so it does not run.
+fn admit_pre_call(
+    context: &PreCallContext<'_>,
+    input: PreCallInput<'_>,
+) -> Result<AdmittedObservations, AdmissionFailure> {
+    let call = input.call;
+    let views = context.views;
+    let snapshot = input
+        .pre
+        .as_snapshot()
+        .ok_or_else(|| fault("expected-snapshot-document"))?;
+
+    // Check 3: observation role.
+    if snapshot.observation != document::ObservationRole::Pre {
+        return Err(refuse(admission_record(
+            Code::WrongSnapshot,
+            "wrong-observation",
+        )));
+    }
+
+    // Check 4: model, for each document in the order it was read.
+    if let Some(call) = call {
+        check_model(views, context.context_view, &call.model)?;
+    }
+    check_model(views, context.context_view, &snapshot.model)?;
+
+    // Check 5: operation.
+    let operation = match (call, context.operation) {
+        (Some(call), source) => check_operation(
+            call,
+            &Receiver {
+                views: context.views,
+                types: context.types,
+                context_name: context.context_name,
+                context: context.clause_context.clone(),
+                state_machine: context.state_machine,
+            },
+            source,
+        )?,
+        (None, OperationSource::Clause(operation)) => operation.declaration.clone(),
+        (None, OperationSource::Any(_)) => return Err(fault("context-selection-names-no-call")),
+    };
+    if let Some(invocation) = input.invocation {
+        document::check_snapshot_invocation(snapshot, &input.pre.identity, invocation)?;
+    }
+
+    // Checks 6 to 8, with every declared population a reference parameter
+    // names required alongside `self`'s.
+    let state_machine = context.state_machine;
+    let receiver_identity = input
+        .receiver_invocation
+        .cloned()
+        .unwrap_or_else(|| input.pre.identity.clone());
+    let mut values = document::admit_population_values(
+        context.views,
+        context.types,
+        snapshot,
+        &input.pre.identity,
+        state_machine.then_some(context.clause_context.clone()),
+        PostStateRange::Refuse,
+        context.ancestor_steps,
+    )?;
+    let mut required = if context.as_context {
+        Vec::new()
+    } else {
+        document::parameter_populations(context.views, &operation, input.parameters)
+    };
+    required.extend(values.read_context_populations());
+    required.extend(context.named.iter().cloned());
+    document::check_population_completeness(
+        context.views,
+        &snapshot.populations,
+        &values.completeness,
+        input
+            .self_object
+            .and_then(|object| (!state_machine).then_some(object.population.as_str())),
+        &required,
+        &values.extents,
+    )?;
+    document::check_population_closure(
+        &snapshot.populations,
+        &values.completeness,
+        &values.keys_by_population,
+        &values.extents,
+    )?;
+    document::check_context_closure(&[&values])?;
+
+    // Check 9: self and context.
+    let (admitted, self_reference, receiver_pre) = if state_machine {
+        if input.self_object.is_some() {
+            return Err(wrong_self_kind());
+        }
+        let reference = values.attach_read_context(
+            context.context_name,
+            &input.pre.identity,
+            &receiver_identity,
+        )?;
+        let admitted = document::finish_populations(context.types, values)?;
+        (admitted, reference.clone(), Some(reference))
+    } else {
+        let admitted = document::finish_populations(context.types, values)?;
+        let self_object = input.self_object.ok_or_else(wrong_self_kind)?;
+        let reference = document::resolve_self(
+            context.views,
+            context.types,
+            context.context_view,
+            context.context_name,
+            &admitted.environment,
+            self_object,
+        )?;
+        (admitted, reference, None)
+    };
+
+    // Check 10: parameters, resolved against the pre snapshot. A pre-call
+    // observation carries no result, and a state machine's invariant binds
+    // no parameter.
+    let parameters = if context.as_context {
+        Vec::new()
+    } else {
+        let mut references =
+            document::References::over(context.views, context.types, &snapshot.populations);
+        document::check_untyped_parameters(
+            context.views,
+            context.context_name,
+            operation.name(),
+            input.parameters,
+        )?;
+        document::admit_parameters(&mut references, &operation, input.parameters)?
+    };
+
+    let usage = input.invocation_usage.merged_with(input.pre.usage);
+    let observation = Observation {
+        identity: input.pre.identity,
+        environment: admitted.environment,
+        populations: admitted.completeness,
+        out_of_range: admitted.out_of_range,
+    };
+    let (current, pre) = if context.as_context {
+        (Some(observation), None)
+    } else {
+        (None, Some(observation))
+    };
+    Ok(AdmittedObservations {
+        usage,
+        clause: context.clause.clone(),
+        current,
+        pre,
+        post: None,
+        self_object: self_reference,
+        invocation: input.receiver_invocation.cloned(),
+        self_kind: SelfKind::of(state_machine),
+        receiver_pre,
+        receiver_post: None,
+        parameters,
+        result: None,
+        created: Vec::new(),
+        deleted: Vec::new(),
+    })
+}
+
+/// A postcondition's invocation, or a state machine's invariant on side
+/// `post` (`as_context`): FR-106 checks 1 and 3 to 11. A `Context`
+/// selection's observation is the post snapshot alone.
+#[allow(clippy::too_many_arguments)]
+fn admit_operation(
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    context_view: &ModelView,
+    context_name: &str,
+    clause_identity: filament_exact::NodeKey,
+    clause_context: EffectiveId,
+    source: OperationSource<'_>,
+    as_context: bool,
+    named: &NamedReads,
+    provisions: &Provisions<'_>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+    model_limits: ModelNormalizationLimits,
+) -> Result<AdmittedObservations, AdmissionFailure> {
+    let admitted = admit_invocation_documents(
+        views,
+        types,
+        context_view,
+        context_name,
+        clause_context.clone(),
+        source,
+        true,
+        named,
+        provisions,
+        selected,
+        limits,
+        model_limits.ancestor_steps,
+    )?;
+    let invocation = admitted.documents.invocation()?;
+
+    // Check 11: frame and delta.
+    let frame_context = frame::FrameContext {
+        views,
+        types,
+        context_view,
+        limits: model_limits,
+        effect: admitted.operation.effect(),
+    };
+    let binding = frame_binding(invocation);
+    let (created, deleted) = frame::enforce(
+        &frame_context,
+        &binding,
+        frame_snapshot(admitted.documents.pre()?),
+        frame_snapshot(admitted.documents.post()?),
+        &invocation.created,
+        &invocation.deleted,
+    )?;
+    // Check 11.6: the pre and the post context of a state machine's clause.
+    if admitted.self_kind == SelfKind::Context {
+        frame::enforce_contexts(
+            &frame_context,
+            clause_context,
+            admitted.documents.pre()?,
+            admitted.documents.post()?,
+        )?;
+    }
+
+    let usage = admitted.usage();
+    let pre = Observation {
+        identity: admitted.documents.pre.identity,
+        environment: admitted.pre.environment,
+        populations: admitted.pre.completeness,
+        out_of_range: admitted.pre.out_of_range,
+    };
+    let post = Observation {
+        identity: admitted.documents.post.identity,
+        environment: admitted.post.environment,
+        populations: admitted.post.completeness,
+        out_of_range: admitted.post.out_of_range,
+    };
+    if as_context {
+        return Ok(AdmittedObservations {
+            usage,
+            clause: clause_identity,
+            current: Some(post),
+            pre: None,
+            post: None,
+            self_object: admitted.self_reference,
+            invocation: Some(admitted.invocation),
+            self_kind: admitted.self_kind,
+            receiver_pre: None,
+            receiver_post: admitted.receiver_post,
+            parameters: Vec::new(),
+            result: None,
+            created: Vec::new(),
+            deleted: Vec::new(),
+        });
+    }
+    Ok(AdmittedObservations {
+        usage,
+        clause: clause_identity,
+        current: None,
+        pre: Some(pre),
+        post: Some(post),
+        self_object: admitted.self_reference,
+        invocation: Some(admitted.invocation),
+        self_kind: admitted.self_kind,
+        receiver_pre: admitted.receiver_pre,
+        receiver_post: admitted.receiver_post,
+        parameters: admitted.parameters,
+        result: admitted.result,
+        created,
+        deleted,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// FR-115: an operation frame run over one invocation
+// ---------------------------------------------------------------------------
+
+/// FR-115: the selected operation a `Frame` run admits its invocation
+/// against, read by the caller off its own checked graph
+/// (`check::CheckedGraph::operation_frame`), as [`ClauseFacts`] is.
+pub struct FrameFacts {
+    /// The context object type `T` of `M::T::op`.
+    pub context: EffectiveId,
+    /// The operation's `state`/`frame` node identity (FR-105).
+    pub frame: filament_exact::NodeKey,
+    /// The operation, resolved as FR-104 resolves a clause's.
+    pub operation: OperationFacts,
+}
+
+/// FR-115: one invocation admitted by FR-106's checks 1 and 3 to 10 for a
+/// `Frame` run, holding what check 11 reads. Check 11 itself runs at S6a,
+/// through [`Self::check_frame`], in the `ProtocolClause` `evaluate` arm.
+pub struct AdmittedInvocation<'t> {
+    /// FR-109 Outputs' admission usage over the three documents.
+    pub usage: AdmissionUsage,
+    /// The frame node identity the invocation was admitted for (the S6a
+    /// arm's mismatch check, as [`AdmittedObservations::clause`] is).
+    pub frame: filament_exact::NodeKey,
+    /// The invocation document's identity.
+    pub invocation: DocumentRef,
+    /// The pre snapshot's identity.
+    pub pre: DocumentRef,
+    /// The post snapshot's identity.
+    pub post: DocumentRef,
+    views: Vec<ModelView>,
+    types: &'t TypeEnvironment,
+    context: EffectiveId,
+    model_limits: ModelNormalizationLimits,
+    documents: InvocationDocuments,
+}
+
+impl std::fmt::Debug for AdmittedInvocation<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdmittedInvocation")
+            .field("usage", &self.usage)
+            .field("frame", &self.frame)
+            .field("invocation", &self.invocation)
+            .field("pre", &self.pre)
+            .field("post", &self.post)
+            .finish_non_exhaustive()
+    }
+}
+
+/// `snapshot` as check 11 reads it.
+fn frame_snapshot(snapshot: &document::SnapshotDocument) -> frame::FrameSnapshot<'_> {
+    frame::FrameSnapshot {
+        populations: &snapshot.populations,
+        relationships: &snapshot.relationships,
+    }
+}
+
+/// The receiver and the reference arguments of `invocation`, which the
+/// frame's receiver-scoped and argument-scoped entries ground in (FR-013).
+fn frame_binding(invocation: &document::InvocationDocument) -> frame::FrameBinding<'_> {
+    let call = &invocation.call;
+    frame::FrameBinding {
+        receiver: call.self_object.as_ref(),
+        arguments: call
+            .parameters
+            .iter()
+            .filter_map(|(name, value)| match value.form() {
+                RawForm::Reference(object) => Some((name.clone(), object)),
+                _ => None,
+            })
+            .collect(),
+    }
+}
+
+/// FR-115: check 11's result as the thing under test.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FrameVerdict {
+    /// Nothing changed outside the frame, and the declared delta agrees.
+    Holds,
+    /// Check 11's steps 1 to 3 found a change outside the frame.
+    Violation(Box<FrameWitness>),
+    /// The frame cannot be evaluated over the invocation: check 11's step 4
+    /// found a declared delta that disagrees
+    /// (`population_delta_mismatch`/`delta-disagreement`), the
+    /// conformance walk reached its ceiling, or a `frame.write` or
+    /// `frame.redefines-link` charge was denied (`resource_exhausted`/
+    /// `insufficient-next-charge`).
+    Refused(AdmissionRecord),
+}
+
+/// FR-115: the evaluated frame witness, the counterexample a `Frame` run's
+/// violation carries (ADR-012 §12.2 Evaluate row).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrameWitness {
+    /// The catalog code: `frame_violation`.
+    pub code: Code,
+    /// The catalog cause: `unauthorized-change`.
+    pub cause: &'static str,
+    /// The invocation.
+    pub invocation: DocumentRef,
+    /// The pre selection.
+    pub pre: DocumentRef,
+    /// The post selection.
+    pub post: DocumentRef,
+    /// The population the change is in.
+    pub population: String,
+    /// The change, with the frame permission it was checked against.
+    pub change: FrameChange,
+}
+
+/// FR-115: one change outside the frame, with the frame permission it was
+/// checked against.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FrameChange {
+    /// A surviving object's field changed, and reaches no `modifies` entry.
+    FieldWrite {
+        /// The object's key.
+        object: String,
+        /// The field's declared name.
+        field: String,
+        /// The frame's `modifies`.
+        modifies: Vec<DeclarationKey>,
+    },
+    /// An object was created whose type conforms to no `creates` entry.
+    Created {
+        /// The created object's key.
+        object: String,
+        /// Its most-specific type.
+        type_name: DeclarationKey,
+        /// The frame's `creates`.
+        creates: Vec<DeclarationKey>,
+    },
+    /// An object was deleted whose type conforms to no `deletes` entry.
+    Deleted {
+        /// The deleted object's key.
+        object: String,
+        /// Its most-specific type.
+        type_name: DeclarationKey,
+        /// The frame's `deletes`.
+        deletes: Vec<DeclarationKey>,
+    },
+    /// An object's most-specific type changed, which no frame permission
+    /// authorizes (FR-151's grants are `modifies`, `creates` and `deletes`).
+    Retyped {
+        /// The object's key.
+        object: String,
+        /// Its pre most-specific type.
+        pre_type: DeclarationKey,
+        /// Its post most-specific type.
+        post_type: DeclarationKey,
+    },
+    /// A relationship instance was added or removed, and the frame's
+    /// `modifies` does not name the relationship (FR-115 step 5).
+    Link {
+        /// The relationship node's key.
+        relationship: DeclarationKey,
+        /// Whether the instance is in the post extent only or the pre only.
+        difference: LinkDifference,
+        /// The instance's source end.
+        source: SelectedObject,
+        /// The instance's target end.
+        target: SelectedObject,
+        /// The frame's checked `modifies`, in declared order.
+        modifies: Vec<DeclarationKey>,
+    },
+}
+
+/// FR-115: which extent a changed relationship instance is in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LinkDifference {
+    /// The instance is in the post extent and not in the pre extent.
+    Added,
+    /// The instance is in the pre extent and not in the post extent.
+    Removed,
+}
+
+impl AdmittedInvocation<'_> {
+    /// FR-106 check 11 over this invocation with `effect`, the frame the
+    /// caller resolved from the compiled package (FSpec FR-013-AC-3: the
+    /// request carries no frame), in check 11's order, stopping at the
+    /// first finding.
+    pub fn check_frame(&self, effect: &OperationEffect) -> Result<FrameVerdict, InternalFault> {
+        let as_fault = |failure: AdmissionFailure| match failure {
+            AdmissionFailure::Fault(fault) => fault,
+            AdmissionFailure::Refused(_) | AdmissionFailure::Incomplete(_) => {
+                InternalFault::new("observation-admission", "admitted-invocation-unreadable")
+            }
+        };
+        let context_view = view_of(&self.views, self.context.clone()).ok_or_else(|| {
+            InternalFault::new("observation-admission", "unresolved-context-type")
+        })?;
+        let invocation = self.documents.invocation().map_err(as_fault)?;
+        let frame_context = frame::FrameContext {
+            views: &self.views,
+            types: self.types,
+            context_view,
+            limits: self.model_limits,
+            effect,
+        };
+        let binding = frame_binding(invocation);
+        frame::verdict(
+            &frame_context,
+            &binding,
+            &frame::WitnessDocuments {
+                invocation: &self.invocation,
+                pre: &self.pre,
+                post: &self.post,
+            },
+            frame_snapshot(self.documents.pre().map_err(as_fault)?),
+            frame_snapshot(self.documents.post().map_err(as_fault)?),
+            &invocation.created,
+            &invocation.deleted,
+        )
+    }
+}
+
+/// FR-115: admit the invocation `selected` for a `Frame` run of `frame`'s
+/// operation, by FR-106's checks 1 and 3 to 10. Check 4 compares each
+/// document's `model` to the model selection of the view `frame.context`
+/// resolves in (the alias `M` of `M::T::op`), and check 5 the invocation's
+/// `context` and `operation` to the selected ones. `self` is required in
+/// the pre snapshot only, since the operation may delete it.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_frame_invocation<'a, 't>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &'t TypeEnvironment,
+    frame: &FrameFacts,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provisions: &Provisions<'_>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+) -> Result<AdmittedInvocation<'t>, AdmissionFailure> {
+    let views = model_views(model_selections, packages, model_limits)?;
+    let context_view =
+        view_of(&views, frame.context.clone()).ok_or_else(|| fault("unresolved-context-type"))?;
+    let context_name = context_view
+        .type_name(frame.context.clone())
+        .ok_or_else(|| fault("unresolved-context-name"))?
+        .to_owned();
+    let admitted = admit_invocation_documents(
+        &views,
+        types,
+        context_view,
+        &context_name,
+        frame.context.clone(),
+        OperationSource::Clause(&frame.operation),
+        false,
+        &NamedReads::default(),
+        provisions,
+        selected,
+        limits,
+        model_limits.ancestor_steps,
+    )?;
+    Ok(AdmittedInvocation {
+        usage: admitted.usage(),
+        frame: frame.frame.clone(),
+        invocation: admitted.documents.invocation.identity.clone(),
+        pre: admitted.documents.pre.identity.clone(),
+        post: admitted.documents.post.identity.clone(),
+        views,
+        types,
+        context: frame.context.clone(),
+        model_limits,
+        documents: admitted.documents,
+    })
+}
+
+/// `type_identity`'s own [`UniverseId`], the same one
+/// `crate::model::normalize` assigned its connected component when it
+/// built `views` (`EffectiveView::object_universe_of`) -- not an
+/// approximation of it. FR-106 admits objects into an
+/// [`ObjectEnvironment`], which identifies objects by `(universe, type,
+/// key)`; admission and `fsl_replay::spine::clause` (FR-109's `Function`
+/// selection, which resolves an object argument's population the same way
+/// admission does) must agree with normalization exactly, or a reference
+/// to the same object admitted through a different path would compare
+/// unequal (a spurious `foreign_reference`/`DanglingReference`).
+/// `pub(crate)`: `fsl_replay::spine::clause` resolves an object argument
+/// the same way.
+fn population_universe(
+    views: &[ModelView],
+    type_identity: EffectiveId,
+) -> Result<UniverseId, AdmissionFailure> {
+    let view =
+        view_of(views, type_identity.clone()).ok_or_else(|| fault("object-type-unresolved"))?;
+    let key = view
+        .declaration_key(type_identity)
+        .ok_or_else(|| fault("object-type-unresolved"))?;
+    view.view
+        .object_universe_of(key)
+        .and_then(|universe| universe.identity().ok())
+        .ok_or_else(|| fault("object-universe-unresolved"))
+}
+
+mod helpers {
+    use super::*;
+
+    /// An empty `key` is untrusted input, not an internal invariant (SR-750
+    /// FND-004 round 2): FR-106 settles it at admission, `invalid_runtime_
+    /// input`/`invalid-value` naming `key`, the same cause check 6.5 uses
+    /// for any other malformed value.
+    pub(crate) fn object_reference(
+        views: &[ModelView],
+        type_identity: EffectiveId,
+        key: &str,
+    ) -> Result<ObjectReference, AdmissionFailure> {
+        let object = ObjectId::new(key.to_owned()).map_err(|_| {
+            refuse(
+                admission_record(Code::InvalidRuntimeInput, "invalid-value").with("field", "key"),
+            )
+        })?;
+        let universe = population_universe(views, type_identity.clone())?;
+        Ok(ObjectReference::new(universe, type_identity, object))
+    }
+
+    pub(crate) fn admission_record(code: Code, cause: &'static str) -> AdmissionRecord {
+        super::admission_record(code, cause)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    /// `check_document_valid` over one read of `bytes` under the default
+    /// limits, as admission makes it.
+    fn check(bytes: &[u8]) -> Result<(), AdmissionFailure> {
+        let limits = ObservationLimits::default();
+        let read = quire_canonical::read(bytes, limits.document_bytes);
+        check_document_valid(&read, limits)
+    }
+
+    /// FR-106 check 1.3: any text the shared reader refuses (a repeated
+    /// member name, a lone surrogate escape, a byte that is not UTF-8, text
+    /// that is not JSON) refuses `invalid_runtime_input`/`invalid-value` at
+    /// the document root.
+    #[trace("TC-465", "FR-106-AC-3")]
+    #[test]
+    fn the_shared_reader_settles_a_text_it_refuses_at_check_1_3() {
+        let invalid_value = || {
+            Err(refuse(
+                admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                    .with("document_pointer", ""),
+            ))
+        };
+        assert_eq!(check(br#"{"a":1,"a":2}"#), invalid_value());
+        assert_eq!(check(br#"{"s":"\ud800"}"#), invalid_value());
+        assert_eq!(check(b"{\"s\":\"\xC0\"}"), invalid_value());
+        assert_eq!(check(b"{\"a\":"), invalid_value());
+        assert_eq!(check(b"{} {}"), invalid_value());
+    }
+
+    /// FR-056: a number with no finite double refuses `noncanonical_wire` at
+    /// its pointer: `1e400` and `-1e400` are `inexact-integer`, `1e-400` is
+    /// `inexact-number`.
+    #[trace("TC-145", "FR-056-AC-2")]
+    #[test]
+    fn a_number_with_no_finite_double_refuses_noncanonical_wire_at_its_pointer() {
+        let wide = format!("1{}.5", "0".repeat(400));
+        let wide_whole = format!("1{}e-1", "0".repeat(400));
+        for (text, cause, pointer) in [
+            (r#"{"n":1e400}"#, "inexact-integer", "/n"),
+            (r#"{"a":[0,-1e400]}"#, "inexact-integer", "/a/1"),
+            ("1e400", "inexact-integer", ""),
+            (r#"{"a":{"n":1e-400}}"#, "inexact-number", "/a/n"),
+            (r#"{"a":1,"a":2,"n":1e400}"#, "inexact-integer", "/n"),
+            ("[1e400", "inexact-integer", "/0"),
+            (r#"{"x":[1e-400,1e400]}"#, "inexact-integer", "/x/1"),
+            (wide.as_str(), "inexact-number", ""),
+            (wide_whole.as_str(), "inexact-integer", ""),
+        ] {
+            assert_eq!(
+                check(text.as_bytes()),
+                Err(refuse(
+                    admission_record(Code::NoncanonicalWire, cause)
+                        .with("document_pointer", pointer)
+                )),
+                "{text}"
+            );
+        }
+    }
+
+    /// A repeated member name the reader detects before it reaches an
+    /// underflowing number is the reader's refusal.
+    #[trace("TC-145", "FR-056-AC-2")]
+    #[test]
+    fn a_repeated_name_before_an_underflow_is_the_readers_refusal() {
+        assert_eq!(
+            check(br#"{"a":1,"a":2,"n":1e-400}"#),
+            Err(refuse(
+                admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                    .with("document_pointer", "")
+            ))
+        );
+    }
+
+    /// FR-261-AC-2 (TC-733 step 2): on a 512 KiB stack, check 1.3 over a
+    /// document holding a value nested 100,000 deep reads the document.
+    #[trace("TC-733", "FR-261-AC-2")]
+    #[test]
+    fn a_document_nested_100_000_deep_is_read_on_content() {
+        let outcome = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                let depth = 100_000;
+                let text = format!("{{\"a\":{}{}}}", "[".repeat(depth), "]".repeat(depth));
+                check(text.as_bytes())
+            })
+            .expect("the test thread spawns")
+            .join()
+            .expect("the read does not overflow the stack");
+        assert_eq!(outcome, Ok(()));
+    }
+
+    /// The reader's allocation failure refuses `resource_exhausted`/
+    /// `allocation-failed` carrying `requested`, and a byte error is check
+    /// 1.2's `input-bytes-exceeded`.
+    #[trace("TC-729", "FR-259-AC-5")]
+    #[test]
+    fn an_allocation_failure_refuses_allocation_failed() {
+        let expected = refuse(
+            admission_record(Code::ResourceExhausted, "allocation-failed")
+                .with("requested", "4096"),
+        );
+        assert_eq!(
+            read_error_refusal(
+                &quire_canonical::ReadError::Allocation { requested: 4096 },
+                ObservationLimits::default()
+            ),
+            Some(expected)
+        );
+    }
+}
+
+mod population_document;
+pub use population_document::admitted_population_document;

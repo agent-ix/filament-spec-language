@@ -3,41 +3,41 @@ id: FR-183
 title: "Replay a hyper counterexample through ModelSystem"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-175
+  - target: ix://agent-ix/filament-spec-language/FR-175
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
 ---
 # FR-183: Replay a hyper counterexample through ModelSystem
 
 ## Description
 
-QSL SHALL replay a hyper counterexample through the layer-6 replay facade
-(FR-098) at ADR-011 E9: `qsl_replay::replay_model_trace_tuple` takes
+FSL SHALL replay a hyper counterexample through the layer-6 replay facade
+(FR-098) at ADR-011 E9: `fsl_replay::replay_model_trace_tuple` takes
 FR-098's request with one subject's inputs per alias and a
 `WitnessEnvelope<HyperCounterexample>` whose source is
 `ReplaySource::ModelTraceTuple` (ADR-023 HX-1). It re-executes every trace
@@ -46,7 +46,7 @@ fairness, and evaluates the body over the tuple (ADR-023 HX-2, HX-3, HX-5,
 PA-7). For a `WitnessExhausted` counterexample it recomputes the witness
 sets along the universal traces, so the absence of a matching existential
 run is checked with no engine present. Replay needs no model checker and no
-solver. The same crate, `qsl-replay` (ADR-029 CB-2), holds the
+solver. The same crate, `fsl-replay` (ADR-029 CB-2), holds the
 product-closure certificate checker of FR-163, which an EN-1 `proved` must
 pass before it settles (ADR-023 HX-7). The crate also holds the
 match-witness check that an HP-2 `k`-induction proof with a non-empty `μ_U`
@@ -67,10 +67,10 @@ no matching partner run survives past the named position.
 - A `WitnessEnvelope<HyperCounterexample>` (FR-070):
 
 ```rust
-pub struct HyperCounterexample {          // QSpec FR-400, member for member
+pub struct HyperCounterexample {          // FSpec FR-400, member for member
     pub kind: HyperCounterexampleKind,
     pub instance: Vec<(Name, Key)>,       // object parameter binding
-    pub traces: Vec<HyperTrace>,          // as QSpec FR-400 states for the kind
+    pub traces: Vec<HyperTrace>,          // as FSpec FR-400 states for the kind
     pub trace_position: u64,
 }
 
@@ -126,7 +126,7 @@ pub fn check_match_witness(
 
 ### Common
 
-- The reader SHALL refuse an envelope that breaks QSpec FR-400's
+- The reader SHALL refuse an envelope that breaks FSpec FR-400's
   validation rules, with the code and member FR-400 names, before any
   replay runs.
 
@@ -147,7 +147,7 @@ pub fn check_match_witness(
 
 - For an `Undefined` counterexample, each trace SHALL be a finite path from
   an initial state, one per trace or execution variable of the clause,
-  universal and existential, as QSpec FR-400 states. The executor SHALL
+  universal and existential, as FSpec FR-400 states. The executor SHALL
   re-execute each path through its alias's `ModelSystem` with FR-128's
   step refusals, then evaluate `μ_U`, `μ_E`, the body's letters and each
   universal component's contract conjunctions at the joint positions up to
@@ -291,14 +291,14 @@ pub fn check_match_witness(
 - [FR-098](FR-098-execute-a-replay-request.md),
   [FR-070](FR-070-implement-typed-counterexample-witness-envelope.md),
   [FR-072](FR-072-implement-typed-replay-result.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md),
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-128](FR-128-replay-a-model-counterexample.md) (shared refusals),
   [FR-175](FR-175-evaluate-a-body-over-a-tuple-of-behaviours.md),
   [FR-184](FR-184-bound-hyper-runs-with-caller-budgets.md).
-- QSpec owns the `HyperCounterexample` wire and its replay rules (ADR-023
+- FSpec owns the `HyperCounterexample` wire and its replay rules (ADR-023
   QS-6).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-400 and FR-401 (Linear STD-136; ADR-023 QS-6).
+- ADR-023. FSpec half: FSpec FR-400 and FR-401 (Linear STD-136; ADR-023 QS-6).

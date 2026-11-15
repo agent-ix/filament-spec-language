@@ -3,7 +3,7 @@ id: TC-215
 title: "A dominated redefinition is retained for provenance, not deleted"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-215: A dominated redefinition is retained for provenance, not deleted

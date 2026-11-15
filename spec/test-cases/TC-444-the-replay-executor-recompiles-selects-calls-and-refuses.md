@@ -3,16 +3,16 @@ id: TC-444
 title: "The replay executor recompiles, selects, calls, and refuses each O-26 case"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
 ---
 # TC-444: The replay executor recompiles, selects, calls, and refuses each O-26 case
 
 ## Description
 
-Verify that `qsl_replay::replay` recompiles a complete-V1 unit from a replay
+Verify that `fsl_replay::replay` recompiles a complete-V1 unit from a replay
 request's byte provision, selects and calls the
 function, settles the verdict, and refuses each ADR-013 O-26 case with a
 typed variant and no partial result.
@@ -96,7 +96,7 @@ Tag the tests `#[trace("TC-444", ...)]` with the ACs each step backs.
 ## Expected Results
 
 - Step 1: `reproduced-without-witness`, value `false`, the executor's implementation identity and
-  non-zero work charges; `reproduced-with-evaluated-witness` with no QSpec FR-351
+  non-zero work charges; `reproduced-with-evaluated-witness` with no FSpec FR-351
   record; a missing-binding decode refusal naming
   `x`'s node id.
 - Step 2: `inconclusive` with cause `Verdicts` (`violation`/`success`),
@@ -121,12 +121,12 @@ Tag the tests `#[trace("TC-444", ...)]` with the ACs each step backs.
   `6 > 3` = `true`, `inconclusive` with cause `Verdicts`. The S4 emitter
   writes `p`'s `call` node (`node_tag` `expression`, `semantic_form` `call`)
   in exactly the checked-package/v2 shape codegen's FR-021 oracle generator
-  reads (`quire-contract-codegen/src/exact_function.rs`, confirmed
-  read-only against `origin/main`); no QSL emission change was needed, and
+  reads (`filament-contract-codegen/src/exact_function.rs`, confirmed
+  read-only against `origin/main`); no FSL emission change was needed, and
   the shape is separately confirmed structurally by
-  `qsl-package/src/emit/tests.rs::emit_checked_places_the_calls_occurrence_at_its_own_source_span`,
+  `fsl-package/src/emit/tests.rs::emit_checked_places_the_calls_occurrence_at_its_own_source_span`,
   which round-trips a real function-calls-function package through a real
-  `quire.checked-package/v2` emit and IR's own I2 decode.
+  `filament.checked-package/v2` emit and IR's own I2 decode.
 
 - Step 7: `q(3)` is `false` and agrees (`reproduced-without-witness`). The
   extra entry refuses `DependencySelections`

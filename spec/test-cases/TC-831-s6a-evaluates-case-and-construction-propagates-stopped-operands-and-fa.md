@@ -3,7 +3,7 @@ id: TC-831
 title: "S6a evaluates case and construction, propagates stopped operands and faults on a broken invariant"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-322
+  - target: ix://agent-ix/filament-spec-language/FR-322
     type: verifies
 ---
 # TC-831: S6a evaluates case and construction, propagates stopped operands and faults on a broken invariant
@@ -30,7 +30,7 @@ Scope: FR-322-AC-1, FR-322-AC-2, FR-322-AC-4.
    evaluator entry; then run evaluation `work_units` 39,996 and 39,997.
    Establish the actual semantic total from the trace rather than assuming
    the source-predicted 39,997 is an executed result.
-5. Run QSpec TC-265's cases (tag `QSpec-TC-265`).
+5. Run FSpec TC-265's cases (tag `FSpec-TC-265`).
 
 Tag each test `#[trace("TC-831", "<AC id>")]`.
 

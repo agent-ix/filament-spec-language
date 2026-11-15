@@ -1,1 +1,0 @@
-{"format":"quire.monitor-trace/1","prefix":[{"identity":{"authority":"test","identity":"v0"}},{"identity":{"authority":"test","identity":"v1"}}],"loop":[{"identity":{"authority":"test","identity":"v2"}},{"identity":{"authority":"test","identity":"v3"}}]}

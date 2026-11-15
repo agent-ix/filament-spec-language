@@ -3,7 +3,7 @@ id: TC-635
 title: "Every-scheduler claims with a fairness set are decided over fair schedulers through fair end components"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-200
+  - target: ix://agent-ix/filament-spec-language/FR-200
     type: verifies
 ---
 # TC-635: Every-scheduler claims with a fairness set are decided over fair schedulers through fair end components

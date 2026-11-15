@@ -3,17 +3,17 @@ id: FR-084
 title: "Admit closed populations and resolve typed lookup and allInstances"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-047
+  - target: ix://agent-ix/filament-spec-language/FR-047
     type: references
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
 ---
 # FR-084: Admit closed populations and resolve typed lookup and allInstances
@@ -28,8 +28,8 @@ the query's required closure is established; it SHALL NOT substitute an
 empty, first-match or otherwise partial result for a closure or refusal
 outcome.
 
-This requirement is QSL's own binder contract for quire-specification
-[FR-153](ix://agent-ix/quire-specification/FR-153) ("Query explicit closed
+This requirement is FSL's own binder contract for filament-specification
+[FR-153](ix://agent-ix/filament-specification/FR-153) ("Query explicit closed
 model environments"), and it supplies the "explicit membership and closure
 authority" and "concrete object membership and closure" that
 [FR-047](FR-047-evaluate-finite-object-reference-graphs.md)'s own graph
@@ -114,8 +114,8 @@ Before its first query charge, each `allInstances<T>` query checks whether
 index's existing conformance operation provides the reflexive and bounded
 generalization check; this coverage check adds no charge point. Member
 walking uses the existing `population.visit` charge. This ordering and charge
-allocation follow the QSpec `allInstances<T>` value-accounting mechanism in
-[`quire-specification/proposals/quire-v1/definitions/value-accounting.md`](https://github.com/agent-ix/quire-specification/blob/main/proposals/quire-v1/definitions/value-accounting.md): coverage is determined before the first query charge without a new charge row, while member walking remains charged at `population.visit`.
+allocation follow the FSpec `allInstances<T>` value-accounting mechanism in
+[`filament-specification/proposals/filament-v1/definitions/value-accounting.md`](https://github.com/agent-ix/filament-specification/blob/main/proposals/filament-v1/definitions/value-accounting.md): coverage is determined before the first query charge without a new charge row, while member walking remains charged at `population.visit`.
 
 ### lookup distinguishes a genuine absence from a genuine refusal or incompleteness
 
@@ -146,7 +146,7 @@ queried `T`; a key whose universe differs from `T`'s universe SHALL refuse
 with a foreign-universe cause; a receiver that is not a population binding,
 or a queried `T` that is not a model object type, SHALL refuse with an
 operator-ineligible or type-mismatch cause respectively. This is
-quire-specification [FR-153](ix://agent-ix/quire-specification/FR-153)'s
+filament-specification [FR-153](ix://agent-ix/filament-specification/FR-153)'s
 typed-result and refusal contract (`Set<Reference<T>>[0,N]`,
 `cardinality_out_of_bound`/`above-maximum`, `foreign_reference`/
 `foreign-universe`, `ill_typed`/`operator-ineligible`), bound to this
@@ -160,8 +160,8 @@ types `T1` and `T2` that it conforms to (for example, `allInstances<A>` and
 `C`, a subtype of `A`), the returned `ReferenceKey`'s type component SHALL
 be the object's own most-specific effective type in both cases — never `T1`
 or `T2` — and the two returned keys for that object SHALL be
-byte-identical. This is quire-specification
-[FR-153](ix://agent-ix/quire-specification/FR-153)-AC-6's "a subtype object
+byte-identical. This is filament-specification
+[FR-153](ix://agent-ix/filament-specification/FR-153)-AC-6's "a subtype object
 seen through supertype and subtype queries has one reference key whose type
 component is its most-specific type," bound to this compiler's own
 `ReferenceKey` type.
@@ -170,7 +170,7 @@ component is its most-specific type," bound to this compiler's own
 
 The model checker SHALL compute one object universe per connected component
 of the model's object-type supertype graph, with the identity that
-quire-specification `model-complete.md` ("Object universe") defines, and
+filament-specification `model-complete.md` ("Object universe") defines, and
 SHALL NOT compute one universe for a whole model or one per root type. A
 reference key SHALL carry the universe of its object type's component, and
 its object component SHALL be the member's authored object identity
@@ -195,7 +195,7 @@ their content are equal.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-084-AC-1 | Given a population declared with an `open` extent, admission reports the distinct unknown-closure outcome, carrying no binding; given the same closed-extent population whose generalization graph is not itself closed (`GeneralizationClosure::Open`), admission likewise reports the distinct unknown-closure outcome, naming the unresolved type, and carries no binding; given the same population declared `closed`, with a closed generalization graph and every member covered, admission succeeds; given a member of a type the population does not declare, admission is refused (not unknown-closure). | Test (TC-226) |
-| FR-084-AC-2 | Given a successfully admitted population, `allInstances<T>` returns a complete deduplicated set in canonical reference-key order exactly when `T` conforms to at least one declared member type, including when `T` equals that member type; otherwise it returns a typed incomplete result naming subtype closure and `T`, with no collection; that result is the `Undefined` outcome with reason `incomplete-closure` in QSL and carries QSpec FR-153-AC-14's `incomplete_population`/`unclosed-subtypes` as its code and cause at the contract boundary, one result under two names, not two outcomes. Object closure is guaranteed by successful admission under the admission rule above. | Test (TC-227; `qsl-eval/tests/it/model_reference_queries.rs::tc_227_incomplete_subtype_closure_is_undefined_through_checked_evaluate`) |
+| FR-084-AC-2 | Given a successfully admitted population, `allInstances<T>` returns a complete deduplicated set in canonical reference-key order exactly when `T` conforms to at least one declared member type, including when `T` equals that member type; otherwise it returns a typed incomplete result naming subtype closure and `T`, with no collection; that result is the `Undefined` outcome with reason `incomplete-closure` in FSL and carries FSpec FR-153-AC-14's `incomplete_population`/`unclosed-subtypes` as its code and cause at the contract boundary, one result under two names, not two outcomes. Object closure is guaranteed by successful admission under the admission rule above. | Test (TC-227; `fsl-eval/tests/it/model_reference_queries.rs::tc_227_incomplete_subtype_closure_is_undefined_through_checked_evaluate`) |
 | FR-084-AC-3 | Given a `lookup<T>` query whose key matches no member, the result is the declared absence mode, a genuine completed result. | Test (TC-228) |
 | FR-084-AC-4 | Given two runtime member records sharing universe and object identity but differing most-specific type, admission refuses conflicting-identity and admits no binding; given two records with equal key and equal content, admission collapses them into one member. | Test (TC-229) |
 | FR-084-AC-5 | `allInstances<T>(p)`'s result is `Set<Reference<T>>[0,N]` when `p` declares maximum `N`, and the unbounded `Set<Reference<T>>` when `p` declares none, admitting every selected count; a selected count above a declared `N` refuses cardinality-out-of-bound; `lookup<T>(p, r)`'s present result is typed to `T` in every absence mode; a foreign-universe key, a non-binding receiver or a non-object-type `T` each refuse with their own named cause. | Test (TC-240) |
@@ -206,16 +206,16 @@ their content are equal.
 
 - **Upstream:** [FR-081](FR-081-preserve-model-correspondence-and-declaration-identity.md)
   supplies the effective declarations this requirement's population binding
-  is keyed against; quire-specification FR-153 owns the normative closed-
+  is keyed against; filament-specification FR-153 owns the normative closed-
   environment query rule and AD-006 owns the decision to keep populations
   and closed dispatch sets in the model view. FR-153-AC-9 (the unbounded
-  `p` case of FR-084-AC-5) landed in quire-specification PR #75.
-  `qsl-semantics/src/model/population.rs`'s `all_instances` returns
+  `p` case of FR-084-AC-5) landed in filament-specification PR #75.
+  `fsl-semantics/src/model/population.rs`'s `all_instances` returns
   the unbounded `Set<Reference<T>>` (a result with no bound) when `p`
   declares no maximum, admitting every selected count (TC-240 step 3,
   `an_unbounded_binding_selects_every_member_with_no_bound`). The other
   FR-084-AC-5 clauses keep their own status under TC-240.
-- ADR-013 §8 OQ-C and OQ-E, and quire-specification `model-complete.md`
+- ADR-013 §8 OQ-C and OQ-E, and filament-specification `model-complete.md`
   and FR-204, fix the universe and object identity (FR-084-AC-7).
 - **Downstream:** [FR-047](FR-047-evaluate-finite-object-reference-graphs.md)'s
   graph evaluator receives concrete object membership and closure as an

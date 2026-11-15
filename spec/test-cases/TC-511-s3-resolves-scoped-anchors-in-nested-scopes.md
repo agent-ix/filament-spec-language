@@ -3,7 +3,7 @@ id: TC-511
 title: "S3 resolves scoped anchors through nested scopes and refuses a missing anchor or member"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-113
+  - target: ix://agent-ix/filament-spec-language/FR-113
     type: verifies
 ---
 # TC-511: S3 resolves scoped anchors through nested scopes and refuses a missing anchor or member

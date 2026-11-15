@@ -3,11 +3,11 @@ id: FR-074
 title: "Move model below check: relocate checked_dispatch and the field-refinement obligation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-009
+  - target: ix://agent-ix/filament-spec-language/US-009
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-068
+  - target: ix://agent-ix/filament-spec-language/FR-068
     type: traces_to
 ---
 # FR-074: Move model below check: relocate checked_dispatch and the field-refinement obligation
@@ -55,7 +55,7 @@ its one `check` dependency, since `semantic_value` does not exist yet.
 - `src/model/checked_dispatch.rs`, the whole file (1149 lines pre-move),
   including its own interim-edge comment and `use crate::check::{...}` line
   FR-068-CON-5 required (`:109-117`).
-- `qsl-semantics/src/model/conformance.rs:763-1094`: the contiguous
+- `fsl-semantics/src/model/conformance.rs:763-1094`: the contiguous
   `check_field_refinement_obligation` obligation block (`CLAUSE_SELF_SLOT`,
   `clause_location`, `self_field_node`, `field_domain_type`,
   `presence_condition`, `comparison_condition`, `established_facts`,
@@ -77,7 +77,7 @@ its one `check` dependency, since `semantic_value` does not exist yet.
   `DispatchBridgeRefusal`, `DispatchRoot`, `MissingClauseField`,
   `OperationClauses`) are re-exported from `check`'s own `mod.rs`, keeping
   the crate's public API for these items reachable at an equivalent path so
-  `qsl-eval/tests/it/dispatch_calls.rs` continues to exercise them.
+  `fsl-eval/tests/it/dispatch_calls.rs` continues to exercise them.
 - `model::conformance::check_field_refinement_obligation`, with its seven
   exclusive helpers and one exclusive const, relocated to a new `check`
   submodule, re-exported the same way, so `tests/model_conformance.rs`
@@ -97,8 +97,8 @@ its one `check` dependency, since `semantic_value` does not exist yet.
 - Zero definitions of `model::checked_dispatch`,
   `check_field_refinement_obligation`, or any of its seven exclusive helpers
   and one exclusive const, remaining under `model` after the move.
-- Zero `use crate::check` edges remaining anywhere under `qsl-semantics/src/model/`: `grep
-  -rn "use crate::check" qsl-semantics/src/model/` finds nothing.
+- Zero `use crate::check` edges remaining anywhere under `fsl-semantics/src/model/`: `grep
+  -rn "use crate::check" fsl-semantics/src/model/` finds nothing.
 
 ## Behavior
 
@@ -112,7 +112,7 @@ from `check` at all: the two files that used to are the two files that move.
 This requirement SHALL NOT leave any `model` file — the two relocated files'
 former locations or any other — importing from `crate::check`; the resolved
 import graph (`xtask`'s `model_check_edges`, not only a textual scan) SHALL
-be empty over the whole `qsl-semantics/src/model/` tree.
+be empty over the whole `fsl-semantics/src/model/` tree.
 
 ### `check` depending on `model` is the permitted direction
 
@@ -163,13 +163,13 @@ declared interim edge (four names for `checked_dispatch.rs`, nine for
 flat form, valid inside `model`, to the crate-absolute, submodule-qualified
 form `check`'s own files already use — `crate::forms::{...}`,
 `crate::value::composite::{...}` (`value::composite` was later deleted
-and the import repointed directly onto `quire_exact`), `quire_exact::NodeKey`,
-`quire_exact::OrderingOperator` (named `crate::value::numeric::OrderingOperator`
+and the import repointed directly onto `filament_exact`), `filament_exact::NodeKey`,
+`filament_exact::OrderingOperator` (named `crate::value::numeric::OrderingOperator`
 at the time of this move; `value::numeric` was later deleted and
-the import repointed directly onto `quire_exact`) — per the existing
+the import repointed directly onto `filament_exact`) — per the existing
 FR-068-AC-6 tier rule for `check`'s own shipped `value` imports, which now
 applies to these files for the first time because they are now under
-`qsl-semantics/src/check/`) but
+`fsl-semantics/src/check/`) but
 SHALL NOT change *what* they import: the same items, resolving to the same
 definitions, before and after the move.
 
@@ -186,7 +186,7 @@ definitions, before and after the move.
 | --- | --- | --- |
 | FR-074-AC-1 | After this requirement's implementation, `checked_dispatch_operation` is defined exactly once, under `check`, and is absent from `model`. A definition scan over the whole compiled crate confirms both halves: presence under `check`, and absence under `model`. This criterion fails on an implementation that adds a copy under `check` while leaving the original under `model` in place, not only on the original's outright absence. | Test (TC-261) |
 | FR-074-AC-2 | After this requirement's implementation, `check_field_refinement_obligation` is defined exactly once, under `check`, and is absent from `model`; its seven exclusive helpers (`clause_location`, `self_field_node`, `field_domain_type`, `presence_condition`, `comparison_condition`, `established_facts`, `format_interval`) and one exclusive const (`CLAUSE_SELF_SLOT`) move with it as one unit, verified by inspection of the diff (none of the eight items remains defined, in whole or in part, under `model/conformance.rs`). | Test (TC-261); Inspection (helper set) |
-| FR-074-AC-3 | The resolved import graph shows zero `model` → `check` edges anywhere under `qsl-semantics/src/model/`: `xtask`'s `model_check_edges`, run against the real tree, returns an empty result, and a textual scan (`grep -rn "use crate::check" qsl-semantics/src/model/`) also finds nothing. This criterion fails if any `model` file — including, but not limited to, the two files this requirement moves code out of — still imports from `crate::check` after the move. | Test (TC-262) |
+| FR-074-AC-3 | The resolved import graph shows zero `model` → `check` edges anywhere under `fsl-semantics/src/model/`: `xtask`'s `model_check_edges`, run against the real tree, returns an empty result, and a textual scan (`grep -rn "use crate::check" fsl-semantics/src/model/`) also finds nothing. This criterion fails if any `model` file — including, but not limited to, the two files this requirement moves code out of — still imports from `crate::check` after the move. | Test (TC-262) |
 | FR-074-AC-4 | `model::index::ModelIndex` is `pub` and its `field`, `operations` and `scalar_bounds` accessors are `pub(crate)`; `model::conformance::missing_member` is `pub(crate)`; `AxisFailure`/`ConformanceOutcome` are `pub`; `model::conformance`'s `charge_axis` is private and `multiplicity_conforms` is `pub(super)`. Verified by inspecting the visibility qualifiers in `model/index.rs` and `model/conformance.rs`, and the `crate::model` paths `check/field_refinement.rs` imports. | Inspection |
 
 ## Dependencies
@@ -201,4 +201,4 @@ definitions, before and after the move.
   submodule-qualified import-path rule now applies to the two files this
   requirement relocates into `check` for the first time.
 - [US-009](../usecase/US-009-trust-a-single-check-authority-unreachable-from-evaluation.md).
-- GitHub agent-ix/quire-spec-language#241.
+- GitHub agent-ix/filament-spec-language#241.

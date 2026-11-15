@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The local QSpec vector gate. Path resolution and child environments live here,
+//! The local FSpec vector gate. Path resolution and child environments live here,
 //! so Make never interprets checkout path bytes as source.
 
 use std::ffi::{OsStr, OsString};
@@ -60,14 +60,14 @@ impl Target {
 }
 
 const CHECKS: &[Check] = &[
-    Check { package: "qsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_c14_source_map_lookup_over_qspec_positive_fixtures", summaries: &[&["conformance: ", " source-map entries over ", " positive fixtures"]], summary_mode: SummaryMode::Exact },
-    Check { package: "qsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_i2_read_over_qspec_checked_package_v2_fixtures", summaries: &[&["conformance: ", " positive fixtures through QSL's full I2 read"], &["conformance: ", " adverse mutations refused"]], summary_mode: SummaryMode::Prefix },
-    Check { package: "qsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_fr340_frame_mutations_match_qspec_vectors", summaries: &[&["conformance: ", " frame-body mutation vectors matched"]], summary_mode: SummaryMode::Exact },
-    Check { package: "qsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_node_index_vectors_refuse_malformed_wire", summaries: &[&["conformance: ", " node-index vector outcomes matched"]], summary_mode: SummaryMode::Exact },
-    Check { package: "qsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_dependency_selection_vectors", summaries: &[&["conformance: ", " dependency-selection entry mutations and ", " order vectors"]], summary_mode: SummaryMode::Exact },
-    Check { package: "qsl-package", target: Target::Lib, selection: "emit::tests::golden::conformance_emitted_application_nodes_match_qspec_positive_fixtures", summaries: &[&["conformance: ", " emitted application nodes match QSpec's positive fixtures"]], summary_mode: SummaryMode::Exact },
-    Check { package: "qsl-semantics", target: Target::Test, selection: "complete_value_lock::conformance_admit_selection_matches_qspec_vectors", summaries: &[&["conformance: ", " accepted and ", " refused selection vectors"]], summary_mode: SummaryMode::Exact },
-    Check { package: "qsl-package", target: Target::Lib, selection: "checked_v2::tests::protocol_corpus::conformance_protocol_vector_positive_packages_are_admitted", summaries: &[&["conformance: ", " protocol vector positive packages admitted"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_c14_source_map_lookup_over_fspec_positive_fixtures", summaries: &[&["conformance: ", " source-map entries over ", " positive fixtures"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_i2_read_over_fspec_checked_package_v2_fixtures", summaries: &[&["conformance: ", " positive fixtures through FSL's full I2 read"], &["conformance: ", " adverse mutations refused"]], summary_mode: SummaryMode::Prefix },
+    Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_fr340_frame_mutations_match_fspec_vectors", summaries: &[&["conformance: ", " frame-body mutation vectors matched"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_node_index_vectors_refuse_malformed_wire", summaries: &[&["conformance: ", " node-index vector outcomes matched"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_dependency_selection_vectors", summaries: &[&["conformance: ", " dependency-selection entry mutations and ", " order vectors"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-package", target: Target::Lib, selection: "emit::tests::golden::conformance_emitted_application_nodes_match_fspec_positive_fixtures", summaries: &[&["conformance: ", " emitted application nodes match FSpec's positive fixtures"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-semantics", target: Target::Test, selection: "complete_value_lock::conformance_admit_selection_matches_fspec_vectors", summaries: &[&["conformance: ", " accepted and ", " refused selection vectors"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::protocol_corpus::conformance_protocol_vector_positive_packages_are_admitted", summaries: &[&["conformance: ", " protocol vector positive packages admitted"]], summary_mode: SummaryMode::Exact },
 ];
 
 fn resolve(input: Option<&OsStr>, workspace: &Path) -> Result<PathBuf> {
@@ -75,7 +75,7 @@ fn resolve(input: Option<&OsStr>, workspace: &Path) -> Result<PathBuf> {
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Error::ConformanceInput {
             path: PathBuf::new(),
-            reason: "set QSPEC_DIR to a quire-specification checkout".to_owned(),
+            reason: "set FSPEC_DIR to a filament-specification checkout".to_owned(),
         })?;
     let path = Path::new(raw);
     let candidate = if path.is_absolute() {
@@ -193,7 +193,7 @@ fn run_with(
                 "terse",
                 "--nocapture",
             ])
-            .env("QSPEC_DIR", &checkout)
+            .env("FSPEC_DIR", &checkout)
             .envs(child_env.iter().copied())
             .output()
             .map_err(|source| Error::ConformanceSpawn {
@@ -207,14 +207,14 @@ fn run_with(
 
 /// Validate the checkout before other local CI lanes begin.
 pub fn check_input(workspace: &Path) -> Result<String> {
-    let input = std::env::var_os("QSPEC_DIR");
+    let input = std::env::var_os("FSPEC_DIR");
     resolve(input.as_deref(), workspace)?;
     Ok(String::new())
 }
 
-/// Validate the checkout and run every required exact QSpec vector selection.
+/// Validate the checkout and run every required exact FSpec vector selection.
 pub fn run(workspace: &Path) -> Result<String> {
-    let input: Option<OsString> = std::env::var_os("QSPEC_DIR");
+    let input: Option<OsString> = std::env::var_os("FSPEC_DIR");
     run_with(Path::new("cargo"), workspace, input.as_deref(), &[])
 }
 
@@ -231,7 +231,7 @@ fn run_ci_with(
         .arg("--no-print-directory")
         .arg("ci-internal")
         .args(args)
-        .env("QSPEC_DIR", checkout)
+        .env("FSPEC_DIR", checkout)
         .env_remove("MAKEFLAGS")
         .env_remove("MFLAGS")
         .envs(child_env.iter().copied())
@@ -243,9 +243,9 @@ fn run_ci_with(
     Ok(String::new())
 }
 
-/// Launch the entire local CI graph with one validated absolute QSpec checkout.
+/// Launch the entire local CI graph with one validated absolute FSpec checkout.
 pub fn run_ci(workspace: &Path) -> Result<String> {
-    let input = std::env::var_os("QSPEC_DIR");
+    let input = std::env::var_os("FSPEC_DIR");
     run_ci_with(Path::new("make"), workspace, input.as_deref(), &[], &[])
 }
 

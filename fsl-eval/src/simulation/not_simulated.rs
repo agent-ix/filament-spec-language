@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-101: the dispositions returned before any state is explored or
+//! sampled.
+
+use filament_exact::NodeKey;
+use filament_exact::ValueType;
+use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
+use filament_semantic_value::declaration::TypeEnvironment;
+use fsl_foundation::selection::DefinitionRef;
+use fsl_semantics::family::{classify_extent_at, ClaimExtent, ClassifyFailure, UnboundedDomains};
+
+use crate::simulation::key::EncodingRefusal;
+
+/// The type positions the requires-bound pre-check visits at most, for every
+/// caller that classifies a subject's roots: the model check, the closure
+/// certificate check and replay classify the same roots under this one
+/// limit, so they agree on what is bounded.
+pub const BOUND_POSITIONS: u64 = 1 << 20;
+
+/// Every unbounded domain a `requires-bound` request named, by key, with its
+/// kind (ADR-014 §4).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RequiresBound {
+    /// The request's unbounded domains.
+    pub domains: UnboundedDomains,
+}
+
+/// Why `explore_request` or `sample_request` returned before exploring or
+/// sampling anything (FR-101).
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum NotSimulated {
+    /// The request's extent is unbounded (ADR-014 §4). No `TransitionSystem`
+    /// method was called.
+    #[error("the request has an unbounded domain and requires a proof bound")]
+    RequiresBound(RequiresBound),
+    /// `classify_extent` stopped: a node-count stage limit or an internal
+    /// fault. Neither `RequiresBound` nor an exploration.
+    #[error("the request's extent could not be classified: {0:?}")]
+    Extent(ClassifyFailure),
+    /// `sampler` names a generator other than
+    /// `filament.simulation.sampler/v1`, the only one
+    /// `sample_request` runs. Refused before any draw;
+    /// `explore_request` never returns this.
+    #[error("sampler {supplied:?} is not the filament.simulation.sampler/v1 generator")]
+    GeneratorMismatch {
+        /// The `DefinitionRef` the caller supplied.
+        supplied: DefinitionRef,
+    },
+    /// `system.initial()` returned no state to sample from.
+    /// `explore_request` never returns this.
+    #[error("the system has no initial state to sample from")]
+    EmptyInitial,
+    /// A `TransitionSystem::Key` or `TransitionId` reached during the walk
+    /// has no RFC 8785 encoding (FR-101-AC-11). Unlike the other variants,
+    /// this can happen after some of the walk has already run: the engine
+    /// stops at the first state or successor that fails to encode.
+    #[error(transparent)]
+    KeyEncoding(#[from] EncodingRefusal),
+}
+
+impl NotSimulated {
+    /// This cause's catalog code, when it has one (ADR-013 O-16/O-17).
+    /// `RequiresBound` is `None`, not an invented code: ADR-014 §4 and
+    /// FSpec FR-181 treat requires-bound as a negotiation disposition the
+    /// caller answers with a bounded request, never a refusal, exactly as
+    /// `fsl-route`'s own `Disposition::RequiresBound` carries no catalog
+    /// code (`fsl-route/src/routing.rs:29-31`); a `CatalogCoded` impl is
+    /// documented as always `Category::Refusal` (`fsl_foundation::
+    /// filament_semantic_value::catalog::CatalogCoded`), which `RequiresBound` is not, so this is
+    /// an inherent method, not that trait. `GeneratorMismatch`,
+    /// `EmptyInitial` and `KeyEncoding` are each
+    /// `invalid_runtime_input`/`invalid-value`: `EmptyInitial` and
+    /// `KeyEncoding` are the malformed-runtime-request category ADR-014
+    /// TR-2 gives, and `GeneratorMismatch` is FR-101's own reading of the
+    /// same code. `Extent` delegates to whichever of `classify_extent`'s
+    /// own two failure types stopped it -- `LimitExceeded`'s own
+    /// `stage_limit_exceeded`/`<kind>-exceeded`, or `InternalFault`'s own
+    /// `runtime_invariant`/`established-invariant-broken` -- rather than
+    /// inventing a third code for `Extent` itself.
+    pub fn catalog_code(&self) -> Option<CatalogCode> {
+        match self {
+            Self::RequiresBound(_) => None,
+            Self::EmptyInitial
+            | Self::KeyEncoding(EncodingRefusal::NoEncoding(_))
+            | Self::GeneratorMismatch { .. } => {
+                Some(CatalogCode::new("invalid_runtime_input", "invalid-value"))
+            }
+            Self::KeyEncoding(EncodingRefusal::Allocation { .. }) => {
+                Some(CatalogCode::new("resource_exhausted", "allocation-failed"))
+            }
+            Self::Extent(ClassifyFailure::Limit(exceeded))
+            | Self::KeyEncoding(EncodingRefusal::Limit(exceeded)) => Some(exceeded.catalog_code()),
+            Self::Extent(ClassifyFailure::Fault(fault)) => Some(fault.catalog_code()),
+        }
+    }
+
+    /// The structured payload for [`Self::catalog_code`]'s cause, when one
+    /// applies (ADR-013 O-17, FR-096). `Extent(ClassifyFailure::Limit(_))`
+    /// delegates to `LimitExceeded`'s own fields (`kind`, `bound`,
+    /// `actual`). Every other case is `None`: `RequiresBound` carries no
+    /// catalog code at all; `InternalFault` carries no catalog fields; and
+    /// FR-096's key table has no row for `invalid-value` (the same shape
+    /// `BoundRefusal::catalog_fields` uses at `fsl-route/src/
+    /// request.rs:179`).
+    pub fn catalog_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
+        match self {
+            Self::Extent(ClassifyFailure::Limit(exceeded))
+            | Self::KeyEncoding(EncodingRefusal::Limit(exceeded)) => exceeded.catalog_fields(),
+            Self::RequiresBound(_)
+            | Self::EmptyInitial
+            | Self::KeyEncoding(
+                EncodingRefusal::NoEncoding(_) | EncodingRefusal::Allocation { .. },
+            )
+            | Self::Extent(ClassifyFailure::Fault(_))
+            | Self::GeneratorMismatch { .. } => None,
+        }
+    }
+}
+
+/// A requires-bound root: the node that carries it, the child-index path
+/// below that node at which its type sits (empty for the node itself; FSpec
+/// FR-331 gives a model member its own path), and its checked type.
+pub trait Root {
+    /// The carrying node.
+    fn node(&self) -> &NodeKey;
+    /// The base path of the root's type in the node.
+    fn base(&self) -> &[u32];
+    /// The root's checked type.
+    fn value_type(&self) -> &ValueType;
+}
+
+impl Root for (NodeKey, &ValueType) {
+    fn node(&self) -> &NodeKey {
+        &self.0
+    }
+    fn base(&self) -> &[u32] {
+        &[]
+    }
+    fn value_type(&self) -> &ValueType {
+        self.1
+    }
+}
+
+impl Root for (NodeKey, Vec<u32>, &ValueType) {
+    fn node(&self) -> &NodeKey {
+        &self.0
+    }
+    fn base(&self) -> &[u32] {
+        &self.1
+    }
+    fn value_type(&self) -> &ValueType {
+        self.2
+    }
+}
+
+/// Classify `domains`' extent (ADR-014 §4) before any `TransitionSystem`
+/// method is called, shared by `explore_request` and `sample_request`
+/// (FR-101).
+pub(crate) fn check_requires_bound<R: Root>(
+    domains: &[R],
+    types: &TypeEnvironment,
+    position_limit: u64,
+) -> Result<(), NotSimulated> {
+    let rooted: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+        .iter()
+        .map(|root| (root.node().clone(), root.base().to_vec(), root.value_type()))
+        .collect();
+    match classify_extent_at(&rooted, types, position_limit) {
+        Ok(ClaimExtent::Bounded) => Ok(()),
+        Ok(ClaimExtent::Unbounded(domains)) => {
+            Err(NotSimulated::RequiresBound(RequiresBound { domains }))
+        }
+        Err(failure) => Err(NotSimulated::Extent(failure)),
+    }
+}

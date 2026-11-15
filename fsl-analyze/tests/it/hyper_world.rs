@@ -1,0 +1,1074 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! ADR-023 section 8's vault as a hyper world: the `test/vault` domain
+//! package (object type `Vault`, secret `h` and public output `l` over
+//! `Int[0, 1]`, population `vaults`, operation `step(i: Int[0, 1])` with frame
+//! `modifies [l]`, and `reset()`), the units that give it the leaky and the
+//! secure `step` contract, the two initial snapshots `(h, l) = (0, 0)` and
+//! `(1, 0)`, and the seams a hyper run reads its letters and `match` through.
+//!
+//! A hyper clause's `holds` atoms and `match` conjuncts are checked nodes at
+//! S3 (FR-487), so the seams evaluate them through the one clause evaluator
+//! over the world's package: `CheckedHyperLetters` for the atoms
+//! (`holds(v.l @ x = v.l @ y)`, `holds(v.l @ x = k)`) and `CheckedStepMatch`
+//! for the conjuncts.
+
+use filament_semantic_value::checking::CheckMode;
+use std::collections::{BTreeMap, BTreeSet};
+
+use filament_checked::key::DeclarationKey;
+use filament_exact::{Cancel, Meter, Value};
+use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_analyze::model_check::{
+    check_hyper, check_single_existential, retain, HyperCheckRequest, ModelCheckRefusal,
+    RetainedGraph, SingleExistentialRequest, SingleExistentialRun,
+};
+use fsl_eval::fairness::{analyze, EdgeLabel, Graph, Identity, Outcome as FairnessOutcome, Vertex};
+use fsl_eval::hyper::{
+    BodySense, CheckedHyperLetters, CheckedStepMatch, HyperFinding, HyperInputs, HyperLetters,
+    HyperProduct, HyperState, HyperTransition, MatchIncomplete, MatchReading, ParameterBinding,
+    Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
+};
+use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelSubject};
+use fsl_eval::simulation::model::{
+    ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
+};
+use fsl_eval::simulation::Limits;
+use fsl_eval::temporal::AtomReading;
+use fsl_foundation::IdentityLimits;
+use fsl_foundation::SourceIdentity;
+use fsl_package::CheckedPackage;
+use fsl_replay::{
+    replay_hyper_trace_tuple, HyperCounterexample, HyperOutcome, HyperReplay, ModelCheckLimits,
+    ModelTraceSettlement, ReplayRefusal, DEFAULT_MAX_WITNESS_SET,
+};
+use fsl_route::reductions::Reductions;
+use fsl_semantics::check::{
+    check_hyper_clauses, CheckedHyper, CheckedHyperClause, FormulaNode, FormulaNodeId,
+    PackageDeclarations,
+};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
+use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
+use fsl_semantics::value::{admit_integer_division, DefinitionRole};
+use serde_json::{json, Value as Json};
+
+use crate::counter::UNLIMITED;
+
+const PACKAGE: &str = "test/vault";
+/// The package of the second model of a two-alias world, under alias
+/// [`OTHER_ALIAS`].
+const OTHER: &str = "test/vault-other";
+const OTHER_ALIAS: &str = "N";
+
+/// The key of the vault in `vaults`.
+pub(crate) const KEY: &str = "v";
+
+/// The vaults `(key, (h, l))` of each initial state.
+type Starts<'a> = Vec<Vec<(&'a str, (i64, i64))>>;
+
+/// Which `step` contract the vault has (ADR-023 section 8).
+#[derive(Clone, Copy)]
+pub(crate) enum Vault {
+    /// `self.l = (i + self.h) mod 2`: `l` is the exclusive or of the input and
+    /// the secret, written as a disjunction because the checker types `=`
+    /// between a bounded field and arithmetic as a mismatch.
+    Leaky,
+    /// `self.l = i`.
+    Secure,
+    /// `self.l = i`, enabled only while `self.l = 0`: after one `step` the
+    /// vault is terminal, so a trace takes its stutter step from there.
+    Terminal,
+    /// The contracts as written: the `step` and `reset` contract text.
+    Custom(&'static str),
+    /// ADR-023 section 13's vault: a field `busy` and an internal operation
+    /// `mix`. `step(i)` requires `busy = 0`, sets `l = i` and sets `busy` to
+    /// `h`; `mix` requires `busy = 1` and clears it.
+    Busy,
+    /// [`Self::Busy`] whose `step` leaks as [`Self::Leaky`] does:
+    /// `l = (i + h) mod 2`.
+    BusyLeaky,
+}
+
+impl Vault {
+    /// Whether the vault has the `busy` field and the `mix` operation.
+    fn busy(self) -> bool {
+        matches!(self, Self::Busy | Self::BusyLeaky)
+    }
+
+    fn contracts(self, reset: bool) -> String {
+        if let Self::Custom(text) = self {
+            return text.to_owned();
+        }
+        let step = match self {
+            Self::Leaky => "post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
+            Self::Secure => "post Step using v on V::Vault::step { self.l = i }\n",
+            Self::Terminal => {
+                "pre Fresh using v on V::Vault::step { self.l = 0 }\n\
+                 post Step using v on V::Vault::step { self.l = i }\n"
+            }
+            Self::Busy => {
+                "pre Idle using v on V::Vault::step { self.busy = 0 }\n\
+                 post Step using v on V::Vault::step { self.l = i and self.busy = self.h }\n\
+                 pre Busy using v on V::Vault::mix { self.busy = 1 }\n\
+                 post Mixed using v on V::Vault::mix { self.busy = 0 }\n"
+            }
+            Self::BusyLeaky => {
+                "pre Idle using v on V::Vault::step { self.busy = 0 }\n\
+                 post Step using v on V::Vault::step { ((i = self.h and self.l = 0) or (i != self.h and self.l = 1)) and self.busy = self.h }\n\
+                 pre Busy using v on V::Vault::mix { self.busy = 1 }\n\
+                 post Mixed using v on V::Vault::mix { self.busy = 0 }\n"
+            }
+            Self::Custom(_) => unreachable!("returned above"),
+        };
+        let reset = if reset {
+            "post Reset using v on V::Vault::reset { self.l = 0 }\n"
+        } else {
+            ""
+        };
+        format!("{step}{reset}")
+    }
+}
+
+fn ident(suffix: &str) -> String {
+    format!("ix://{PACKAGE}/{suffix}")
+}
+
+pub(crate) fn key(suffix: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: ident(suffix),
+    }
+}
+
+/// The declaration `suffix` of the second model.
+fn other_key(suffix: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: OTHER.to_owned(),
+        node: format!("ix://{OTHER}/{suffix}"),
+    }
+}
+
+fn origin(identity: &str) -> Json {
+    json!({"generated": {"generatorIdentity": identity, "generatorVersion": "1.0.0",
+        "inputIdentities": [identity]}})
+}
+
+fn wire_type(identity: &str, kind: &str, extra: Json) -> Json {
+    let mut node = json!({
+        "identity": identity, "displayName": identity,
+        "kind": {"module": PACKAGE, "name": kind}, "roles": [],
+        "origin": origin(identity), "constraints": [], "extensions": [],
+        "unknownPolicy": "reject",
+    });
+    for (name, value) in extra.as_object().expect("extra members") {
+        node[name] = value.clone();
+    }
+    node
+}
+
+/// `Int[0, 1]`.
+fn bit() -> Json {
+    let identity = ident("Bit");
+    let constraint = |keyword: &str, value: &str| {
+        json!({
+            "identity": format!("{identity}/constraints/{keyword}"), "keyword": keyword,
+            "operands": {"value": value}, "appliesTo": "ix://filament/native/Integer",
+            "diagnosticCode": format!("bound.{keyword}"), "origin": origin(&identity),
+        })
+    };
+    wire_type(
+        &identity,
+        "value_type",
+        json!({"scalar": "integer",
+            "constraints": [constraint("min", "0"), constraint("max", "1")]}),
+    )
+}
+
+fn field(name: &str) -> Json {
+    let identity = ident(&format!("Vault/{name}"));
+    json!({
+        "identity": identity, "name": name, "typeRef": ident("Bit"),
+        "presence": "required", "nullable": false, "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": origin(&identity),
+    })
+}
+
+/// An operation of `Vault` with frame `modifies_receiver` the fields `modifies`
+/// (the vault it is applied to; the same as `modifies [l]` over one vault),
+/// taking `i: Bit` when `input`.
+fn operation(name: &str, input: bool, modifies: &[&str]) -> Json {
+    let identity = ident(&format!("Vault/{name}"));
+    let params: Vec<Json> = input
+        .then(|| {
+            let parameter = format!("{identity}/i");
+            json!({
+                "identity": parameter, "name": "i", "typeRef": ident("Bit"),
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&parameter),
+            })
+        })
+        .into_iter()
+        .collect();
+    json!({
+        "identity": identity, "name": name, "params": params, "pre": [], "post": [],
+        "origin": {"source": {"sourceIdentity": ident("spec"), "path": "spec.fspec",
+            "startLine": 1, "startColumn": 1}},
+        "frame": {"modifies": [],
+            "modifies_receiver": modifies.iter().map(|field| ident(&format!("Vault/{field}")))
+                .collect::<Vec<_>>(),
+            "creates": [], "deletes": []},
+    })
+}
+
+/// The domain package, with the `busy` field and the `mix` operation when
+/// `busy`.
+fn document(busy: bool, reset: bool) -> Vec<u8> {
+    let vault = ident("Vault");
+    let constructs: Vec<Json> = [
+        ("object_type", meaning::OBJECT_TYPE),
+        ("population", meaning::POPULATION),
+        ("value_type", meaning::VALUE_TYPE),
+    ]
+    .into_iter()
+    .map(|(name, meaning)| {
+        json!({"kind": {"module": PACKAGE, "name": name}, "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "record", "members": {},
+                "meaning": meaning}})
+    })
+    .collect();
+    let mut operations = vec![operation(
+        "step",
+        true,
+        if busy { &["l", "busy"] } else { &["l"] },
+    )];
+    if reset {
+        operations.push(operation("reset", false, &["l"]));
+    }
+    let mut fields = vec![field("h"), field("l")];
+    if busy {
+        operations.push(operation("mix", false, &["busy"]));
+        fields.push(field("busy"));
+    }
+    let population = ident("vaults");
+    json!({
+        "contractVersion": "2.0.0",
+        "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {"identity": ident("spec"), "version": "1.0.0", "dialect": "spec-bundle"},
+        "package": {"identity": PACKAGE, "version": "1.0.0",
+            "mappingVersions": [], "profileVersions": []},
+        "occurrences": [], "extensions": [],
+        "constructs": constructs,
+        "types": [
+            bit(),
+            wire_type(&vault, "object_type", json!({
+                "supertypes": [],
+                "fields": fields,
+                "operations": operations,
+                "relationships": [],
+            })),
+        ],
+        "populations": [{
+            "identity": population, "displayName": population,
+            "kind": {"module": PACKAGE, "name": "population"},
+            "members": [vault], "extent": "closed", "origin": origin(&population),
+        }],
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// The unit text: the header selecting the domain package as `V`, the `step`
+/// contract of `vault`, and `body`.
+fn unit_text(other: Option<&[u8]>, vault: Vault, reset: bool, body: &str) -> String {
+    let second = if other.is_some() {
+        format!("model {OTHER_ALIAS} = \"{OTHER}\";\n")
+    } else {
+        String::new()
+    };
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile p = \"filament.protocol.finite-global/v1\";\n\
+         model V = \"{PACKAGE}\";\n\
+         {second}function Noop using v(): Boolean pure {{ true }}\n{}{body}",
+        vault.contracts(reset),
+    )
+}
+
+/// The vault again under another package identity: the second model of a
+/// clause over two aliases.
+fn other_document(document: &[u8]) -> Vec<u8> {
+    String::from_utf8(document.to_vec())
+        .expect("the document is UTF-8")
+        .replace(PACKAGE, OTHER)
+        .into_bytes()
+}
+
+fn declarations(documents: &[&[u8]], text: &str) -> PackageDeclarations {
+    let packages = package_input(documents.iter().copied()).unwrap();
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("agent-ix", "hyper"),
+        "hyper.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 parses the unit");
+    assert!(parsed.is_admissible(), "S1: {:?}", parsed.diagnostics());
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the model selection admits")
+    .with_parsed_operation_clauses(|text| {
+        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+    })
+    .expect("the operation clauses parse");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "package".to_owned(),
+        built,
+        models,
+        Vec::new(),
+    )
+    .expect("the unit assembles");
+    // `div` reads truncating integer division.
+    declarations.integer_division = Some(
+        admit_integer_division(
+            &[DefinitionRole::IntegerDivisionTruncating.reference()],
+            None,
+        )
+        .expect("the division profile admits"),
+    );
+    declarations
+}
+
+/// One snapshot of the vaults `(key, (h, l))`, provisioned in `snapshots`;
+/// each vault of a busy world has `busy` as its flag.
+fn snapshot(
+    snapshots: &mut fsl_semantics::model::observation::DocumentProvision,
+    name: &str,
+    vaults: &[(&str, (i64, i64))],
+    busy: Option<i64>,
+    second: Option<&[(&str, (i64, i64))]>,
+) -> DocumentRef {
+    let header = json!({"identity": PACKAGE});
+    let population = |package: &str, vaults: &[(&str, (i64, i64))]| {
+        let ident = |suffix: &str| format!("ix://{package}/{suffix}");
+        json!({"population": ident("vaults"), "complete": true,
+            "objects": vaults.iter().map(|(key, (h, l))| {
+                let mut fields = json!({"h": {"integer": h.to_string()},
+                    "l": {"integer": l.to_string()}});
+                if let Some(busy) = busy {
+                    fields["busy"] = json!({"integer": busy.to_string()});
+                }
+                json!({"key": key, "type": ident("Vault"), "fields": fields})
+            }).collect::<Vec<_>>()})
+    };
+    let populations: Vec<Json> = std::iter::once(population(PACKAGE, vaults))
+        .chain(second.map(|second| population(OTHER, second)))
+        .collect();
+    let body = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": name},
+        "observation": "current", "model": header,
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": populations,
+    });
+    let bytes = body.to_string().into_bytes();
+    snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+    DocumentRef {
+        authority: "test".to_owned(),
+        identity: name.to_owned(),
+    }
+}
+
+/// The `l` of the vault at `state`.
+pub(crate) fn low(state: &ModelSimState) -> i64 {
+    field_of(state, KEY, "l")
+}
+
+/// The `l` of the vault `key` at `state`.
+pub(crate) fn low_of(state: &ModelSimState, key: &str) -> i64 {
+    field_of(state, key, "l")
+}
+
+/// The `busy` of the vault at `state`, for a busy vault.
+pub(crate) fn busy_of(state: &ModelSimState) -> i64 {
+    field_of(state, KEY, "busy")
+}
+
+/// The `h` of the vault at `state`.
+pub(crate) fn high(state: &ModelSimState) -> i64 {
+    field_of(state, KEY, "h")
+}
+
+fn field_of(state: &ModelSimState, vault: &str, field: &str) -> i64 {
+    match state.state().populations[&key("vaults")][vault]
+        .fields
+        .get(&key(&format!("Vault/{field}")))
+    {
+        Some(Value::Integer(value)) => value.to_string().parse().expect("a small value"),
+        other => panic!("{field} is not an integer: {other:?}"),
+    }
+}
+
+/// A checked vault world with one hyper clause.
+pub(crate) struct World {
+    pub(crate) text: String,
+    pub(crate) package: CheckedPackage,
+    pub(crate) clause: CheckedHyperClause,
+    packages: fsl_semantics::model::intake::PackageInput,
+    snapshots: fsl_semantics::model::observation::DocumentProvision,
+    initial: Vec<DocumentRef>,
+    pub(crate) max_candidates: u64,
+    /// The search horizon of an HP-2, HP-3 or HP-6 run (`max_depth`).
+    pub(crate) max_depth: Option<usize>,
+    /// The keys of the universe of `vaults`.
+    pub(crate) universe: Vec<String>,
+    /// Whether the request bounds `vaults` with `universe`; when it does not,
+    /// the population has no universe.
+    pub(crate) bounded: bool,
+    /// The keys of the universe of the second model's `vaults`, when it has
+    /// one.
+    pub(crate) other_universe: Option<Vec<String>>,
+}
+
+impl World {
+    /// The vault under `vault`'s contract, with `reset` when asked, started
+    /// from `starts` and the hyper clause `declaration`.
+    pub(crate) fn new(vault: Vault, reset: bool, starts: &[(i64, i64)], declaration: &str) -> Self {
+        let starts: Vec<_> = starts.iter().copied().map(Some).collect();
+        Self::started(vault, reset, &starts, declaration)
+    }
+
+    /// [`Self::new`] from `starts`, each a vault `(h, l)` or, for `None`, an
+    /// initial state whose population holds no object.
+    pub(crate) fn started(
+        vault: Vault,
+        reset: bool,
+        starts: &[Option<(i64, i64)>],
+        declaration: &str,
+    ) -> Self {
+        let snapshots = starts
+            .iter()
+            .map(|start| start.map(|start| (KEY, start)).into_iter().collect())
+            .collect();
+        Self::build(vault, reset, snapshots, vec![KEY.to_owned()], declaration)
+    }
+
+    /// One initial state holding the vaults `objects`, `(key, (h, l))`, which
+    /// are also the universe: the clause has one instance for each.
+    pub(crate) fn with_vaults(
+        vault: Vault,
+        objects: &[(&str, (i64, i64))],
+        declaration: &str,
+    ) -> Self {
+        let universe = objects.iter().map(|(key, _)| (*key).to_owned()).collect();
+        Self::build(vault, false, vec![objects.to_vec()], universe, declaration)
+    }
+
+    /// One initial state for each of `snapshots`, each holding its vaults
+    /// `(key, (h, l))`; `universe` are the keys the clause has an instance
+    /// for.
+    pub(crate) fn with_snapshots(
+        vault: Vault,
+        snapshots: Vec<Vec<(&str, (i64, i64))>>,
+        universe: &[&str],
+        declaration: &str,
+    ) -> Self {
+        let universe = universe.iter().map(|key| (*key).to_owned()).collect();
+        Self::build(vault, false, snapshots, universe, declaration)
+    }
+
+    /// The vault, started from `starts`, with the vault again as a second
+    /// model under alias `N`: the world of a clause over two aliases.
+    pub(crate) fn with_second_model(
+        vault: Vault,
+        starts: &[(i64, i64)],
+        declaration: &str,
+    ) -> Self {
+        let snapshots: Vec<_> = starts.iter().map(|start| vec![(KEY, *start)]).collect();
+        Self::assemble(
+            vault,
+            false,
+            snapshots.clone(),
+            Some(snapshots),
+            Vec::new(),
+            vec![KEY.to_owned()],
+            declaration,
+        )
+    }
+
+    /// [`Self::with_second_model`] from one initial state that holds the
+    /// vaults `first` in the first model and `second` in the second model,
+    /// `(key, (h, l))`, each of which is also its model's universe.
+    pub(crate) fn with_second_vaults(
+        vault: Vault,
+        first: &[(&str, (i64, i64))],
+        second: &[(&str, (i64, i64))],
+        declaration: &str,
+    ) -> Self {
+        let keys = |objects: &[(&str, (i64, i64))]| {
+            objects.iter().map(|(key, _)| (*key).to_owned()).collect()
+        };
+        let mut world = Self::assemble(
+            vault,
+            false,
+            vec![first.to_vec()],
+            Some(vec![second.to_vec()]),
+            Vec::new(),
+            keys(first),
+            declaration,
+        );
+        world.other_universe = Some(keys(second));
+        world
+    }
+
+    /// A busy vault (ADR-023 section 13) started from each of `starts`, a
+    /// vault `(h, l, busy)`, and the hyper clause `declaration`.
+    pub(crate) fn busy(vault: Vault, starts: &[(i64, i64, i64)], declaration: &str) -> Self {
+        let snapshots = starts
+            .iter()
+            .map(|(h, l, _)| vec![(KEY, (*h, *l))])
+            .collect();
+        let flags = starts.iter().map(|(_, _, busy)| *busy).collect();
+        Self::assemble(
+            vault,
+            false,
+            snapshots,
+            None,
+            flags,
+            vec![KEY.to_owned()],
+            declaration,
+        )
+    }
+
+    fn build(
+        vault: Vault,
+        reset: bool,
+        starts: Vec<Vec<(&str, (i64, i64))>>,
+        universe: Vec<String>,
+        declaration: &str,
+    ) -> Self {
+        Self::assemble(
+            vault,
+            reset,
+            starts,
+            None,
+            Vec::new(),
+            universe,
+            declaration,
+        )
+    }
+
+    /// The world over `starts`, whose snapshot `index` has the flag
+    /// `flags[index]` (0 when `flags` holds none) in a busy vault, with the
+    /// vaults `second_starts` as a second model under alias `N` when given.
+    fn assemble(
+        vault: Vault,
+        reset: bool,
+        starts: Vec<Vec<(&str, (i64, i64))>>,
+        second_starts: Option<Starts<'_>>,
+        flags: Vec<i64>,
+        universe: Vec<String>,
+        declaration: &str,
+    ) -> Self {
+        let document = document(vault.busy(), reset);
+        let other = second_starts.as_ref().map(|_| other_document(&document));
+        let other = other.as_deref();
+        let documents: Vec<&[u8]> = std::iter::once(document.as_slice()).chain(other).collect();
+        // IEEE profile selection is package-wide and includes literals in a
+        // hyper clause. Keep that clause in the linked package for IEEE
+        // atom tests so evaluation receives the profile selected by S3.
+        let ieee_package_clause =
+            if declaration.contains("float32(bits:") || declaration.contains("float64(bits:") {
+                format!("{declaration}\n")
+            } else {
+                String::new()
+            };
+        let base = unit_text(other, vault, reset, &ieee_package_clause);
+        let graph = declarations(&documents, &base)
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("{base}: the unit checks: {refusals:?}"));
+        let package = CheckedPackage::link(graph);
+        let text = unit_text(other, vault, reset, &format!("{declaration}\n"));
+        let mut checked = check_hyper_clauses(&declarations(&documents, &text));
+        let clause = match checked.pop() {
+            Some(Ok(CheckedHyper::Behaviours(clause))) if checked.is_empty() => *clause,
+            other => panic!("{declaration}: one checked hyper clause, not {other:?}"),
+        };
+        let mut snapshots = BTreeMap::new();
+        let initial = starts
+            .iter()
+            .enumerate()
+            .map(|(index, start)| {
+                let busy = vault.busy().then(|| flags.get(index).copied().unwrap_or(0));
+                snapshot(
+                    &mut snapshots,
+                    &format!("s{index}"),
+                    start,
+                    busy,
+                    second_starts
+                        .as_ref()
+                        .map(|second| second[index].as_slice()),
+                )
+            })
+            .collect();
+        Self {
+            text,
+            package,
+            clause,
+            packages: package_input(documents.iter().copied()).unwrap(),
+            snapshots,
+            initial,
+            max_candidates: 1_000_000,
+            max_depth: None,
+            universe,
+            bounded: true,
+            other_universe: None,
+        }
+    }
+
+    /// The vault's subject.
+    pub(crate) fn subject(&self) -> ModelSubject<'_> {
+        ModelSubject {
+            simulation: ModelSimulationRequest {
+                emit: fsl_package::EmitLimits::fixture(),
+                package: &self.package,
+                packages: &self.packages,
+                normalization: ModelNormalizationLimits::default(),
+                snapshots: &self.snapshots,
+                initial: self.initial.clone(),
+                universes: [(key("vaults"), self.bounded.then_some(&self.universe))]
+                    .into_iter()
+                    .chain([(other_key("vaults"), self.other_universe.as_ref())])
+                    .filter_map(|(population, keys)| {
+                        keys.map(|keys| PopulationUniverse {
+                            population,
+                            keys: keys.clone(),
+                        })
+                    })
+                    .collect(),
+                observation: ObservationLimits::default(),
+                expansion: ExpansionLimits {
+                    max_candidates: self.max_candidates,
+                },
+                meter: UNLIMITED,
+            },
+            proof_bounds: Vec::new(),
+        }
+    }
+
+    /// The letters and the `match` of this world's clause.
+    pub(crate) fn seams(&self) -> Seams<'_> {
+        Seams {
+            world: self,
+            system: ModelSystem::new(self.subject().simulation)
+                .expect("the world's subject admits"),
+        }
+    }
+
+    /// The run of the clause under `limits`.
+    pub(crate) fn run(
+        &self,
+        limits: ModelCheckLimits,
+        cancel: &Cancel,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let seams = self.seams();
+        self.run_through(&seams, &seams, limits, cancel)
+    }
+
+    /// The run of the clause when the request selects `reductions`, with one
+    /// subject for each alias of the clause.
+    pub(crate) fn run_selecting(
+        &self,
+        reductions: Reductions,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let seams = self.seams();
+        check_hyper(
+            HyperCheckRequest {
+                clause: &self.clause,
+                subjects: (0..self.clause.aliases().len())
+                    .map(|_| self.subject())
+                    .collect(),
+                letters: &seams,
+                matcher: &seams,
+                limits: ModelCheckLimits::default(),
+                meter: UNLIMITED,
+                reductions,
+                max_depth: self.max_depth,
+            },
+            &Cancel::new(),
+        )
+    }
+
+    /// The HP-5 run of the clause under `limits` and `seed` (FR-181).
+    pub(crate) fn run_single(
+        &self,
+        limits: ModelCheckLimits,
+        seed: Option<u64>,
+        cancel: &Cancel,
+    ) -> Result<SingleExistentialRun, ModelCheckRefusal> {
+        let seams = self.seams();
+        check_single_existential(
+            SingleExistentialRequest {
+                clause: &self.clause,
+                subject: self.subject(),
+                letters: &seams,
+                limits,
+                max_depth: self.max_depth,
+                seed,
+                meter: UNLIMITED,
+            },
+            cancel,
+        )
+    }
+
+    /// The run of the clause reading its atoms through `letters` and its
+    /// `match` through `matcher`.
+    pub(crate) fn run_through(
+        &self,
+        letters: &dyn HyperLetters,
+        matcher: &dyn StepMatch,
+        limits: ModelCheckLimits,
+        cancel: &Cancel,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        check_hyper(
+            HyperCheckRequest {
+                clause: &self.clause,
+                subjects: vec![self.subject()],
+                letters,
+                matcher,
+                limits,
+                max_depth: self.max_depth,
+                meter: UNLIMITED,
+                reductions: Reductions::default(),
+            },
+            cancel,
+        )
+    }
+
+    /// The source text of the body atom `atom`.
+    pub(crate) fn atom_text(&self, atom: FormulaNodeId) -> &str {
+        let Some(FormulaNode::Holds { span }) = self.clause.body().nodes().get(atom.index()) else {
+            panic!("the letter reads only holds atoms");
+        };
+        &self.text[span.start..span.end]
+    }
+}
+
+/// The seams to the vault world's atoms and `match` conjuncts: the clause's
+/// checked nodes, evaluated through the one clause evaluator over the
+/// world's package (FR-487).
+pub(crate) struct Seams<'w> {
+    world: &'w World,
+    system: ModelSystem<'w>,
+}
+
+impl HyperLetters for Seams<'_> {
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &[ParameterBinding],
+        states: &[&ModelSimState],
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        let systems = vec![&self.system; self.world.clause.quantifiers().len()];
+        CheckedHyperLetters::new(&self.world.package, &self.world.clause, systems)
+            .map_err(|_| AtomStop::Fault(InternalFault::new("hyper-world", "letters-admit")))?
+            .atom(atom, instance, states, meter)
+    }
+}
+
+/// Whether the operation text names `Vault::step`: the text is the canonical
+/// document of the operation's declaration identity.
+fn is_step(operation: &str) -> bool {
+    operation.contains("/Vault/step\"")
+}
+
+/// The argument `i` of a `step` label: `Some` exactly when the step is a
+/// `step`, and its integer.
+pub(crate) fn input_of(label: &StepLabel<'_>) -> Option<i64> {
+    match label {
+        StepLabel::Operation(transition) if is_step(transition.operation()) => {
+            let [argument] = transition.arguments() else {
+                panic!("step takes one argument: {:?}", transition.arguments());
+            };
+            let value = argument
+                .split("\"value\":\"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .unwrap_or_else(|| panic!("{argument} is not an integer"));
+            Some(value.parse().expect("an integer input"))
+        }
+        _ => None,
+    }
+}
+
+impl StepMatch for Seams<'_> {
+    fn universal(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut Meter,
+    ) -> Result<MatchReading, MatchIncomplete> {
+        CheckedStepMatch::new(&self.world.package, &self.world.clause)
+            .universal(instance, steps, meter)
+    }
+
+    fn existential(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut Meter,
+    ) -> Result<MatchReading, MatchIncomplete> {
+        CheckedStepMatch::new(&self.world.package, &self.world.clause)
+            .existential(instance, steps, meter)
+    }
+}
+
+/// ADR-023 section 1's `NonInterference`, with `match` when asked.
+pub(crate) fn non_interference(matched: &str) -> String {
+    format!(
+        "hyper NonInterference using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V {matched} \
+         {{ always holds(v.l @ a = v.l @ b) }}"
+    )
+}
+
+/// ADR-023 section 8.2's `Opaque`, with `conjuncts` added to its `match`.
+pub(crate) fn opaque(conjuncts: &str) -> String {
+    format!(
+        "hyper Opaque using inf over behaviours (v: V::Vault) \
+         forall trace a of V exists trace b of V \
+         match {{ a.step.Vault::step.i = b.step.Vault::step.i{conjuncts} }} \
+         {{ holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }}"
+    )
+}
+
+/// The `match` of `NonInterference`: equal operations with equal inputs.
+pub(crate) const EQUAL_INPUTS: &str =
+    "match { a.step.op = b.step.op and a.step.Vault::step.i = b.step.Vault::step.i }";
+
+/// The two initial states of ADR-023 section 8's vault, `(h, l)`.
+pub(crate) const STARTS: [(i64, i64); 2] = [(0, 0), (1, 0)];
+
+/// The product of `world`'s clause explored in full, for a test that reads
+/// the retained graph itself: the graph, and the automaton's acceptance sets
+/// as the states of the graph each holds.
+pub(crate) struct Explored {
+    pub(crate) graph: RetainedGraph<HyperState, HyperTransition, HyperFinding>,
+    pub(crate) accepting: Vec<Vec<usize>>,
+}
+
+/// The one instance of `NonInterference`'s object parameter `v`: the vault.
+pub(crate) fn instance() -> [ParameterBinding; 1] {
+    [ParameterBinding {
+        parameter: "v".to_owned(),
+        instance: ModelInstance {
+            population: key("vaults"),
+            key: KEY.to_owned(),
+        },
+    }]
+}
+
+impl World {
+    /// Replay `counterexample` through the vault's system (FR-183).
+    pub(crate) fn replay(
+        &self,
+        counterexample: &HyperCounterexample,
+    ) -> Result<ModelTraceSettlement, ReplayRefusal> {
+        self.replay_under(counterexample, DEFAULT_MAX_WITNESS_SET)
+    }
+
+    /// Replay `counterexample` with witness sets of at most `max_witness_set`
+    /// members (FR-184).
+    pub(crate) fn replay_under(
+        &self,
+        counterexample: &HyperCounterexample,
+        max_witness_set: u64,
+    ) -> Result<ModelTraceSettlement, ReplayRefusal> {
+        let seams = self.seams();
+        self.replay_through(counterexample, &seams, &seams, max_witness_set)
+    }
+
+    /// Replay `counterexample` reading the atoms through `letters` and
+    /// `match` through `matcher`, with witness sets of at most
+    /// `max_witness_set` members.
+    pub(crate) fn replay_through(
+        &self,
+        counterexample: &HyperCounterexample,
+        letters: &dyn HyperLetters,
+        matcher: &dyn StepMatch,
+        max_witness_set: u64,
+    ) -> Result<ModelTraceSettlement, ReplayRefusal> {
+        let system = ModelSystem::new(self.subject().simulation).expect("the subject admits");
+        let instance = instance();
+        replay_hyper_trace_tuple(
+            &HyperReplay {
+                clause: &self.clause,
+                systems: vec![&system; self.clause.quantifiers().len()],
+                instance: &instance,
+                letters,
+                matcher,
+                meter: UNLIMITED,
+                max_witness_set,
+                cancel: &Cancel::new(),
+            },
+            counterexample,
+        )
+    }
+
+    /// Explore the self-composition product of the clause (FR-176) with the
+    /// engine's own exploration, with no limit.
+    pub(crate) fn explore(&self) -> Explored {
+        let system = ModelSystem::new(self.subject().simulation).expect("the subject admits");
+        let seams = self.seams();
+        let cancel = Cancel::new();
+        let instance = instance();
+        let mut product = HyperProduct::new(HyperInputs {
+            systems: vec![&system; self.clause.quantifiers().len()],
+            instance: &instance,
+            body: self.clause.body(),
+            profile: self.clause.profile(),
+            sense: BodySense::Negated,
+            letters: &seams,
+            matcher: (!self.clause.mu_universal().is_empty()).then_some(&seams as &dyn StepMatch),
+            max_automaton_states: u64::MAX,
+            meter: UNLIMITED,
+            cancel: &cancel,
+            copy_swap: None,
+        })
+        .expect("the negated body translates");
+        product.start().expect("the initial states read");
+        let exploration = retain(
+            &product,
+            Limits {
+                max_states: usize::MAX,
+                max_transitions: usize::MAX,
+            },
+            IdentityLimits::default(),
+            None,
+            || false,
+        )
+        .expect("the keys encode");
+        let automaton = product.automaton();
+        let accepting = (0..automaton.acceptance_set_count())
+            .map(|set| {
+                exploration
+                    .graph
+                    .states()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, state)| {
+                        matches!(&state.state.property,
+                            Property::After(at) if automaton.is_accepting_in(set, *at))
+                    })
+                    .map(|(index, _)| index)
+                    .collect()
+            })
+            .collect();
+        drop(automaton);
+        Explored {
+            graph: exploration.graph,
+            accepting,
+        }
+    }
+}
+
+/// The witness-set product of `world`'s HP-3 clause explored in full: the
+/// graph, and the number of states the safety automaton reached.
+pub(crate) struct WitnessExplored {
+    pub(crate) graph: RetainedGraph<HyperState, HyperTransition, HyperFinding>,
+    pub(crate) automaton_states: usize,
+}
+
+impl World {
+    /// Explore the witness-set product of the clause (FR-177) with the
+    /// engine's own exploration, with no limit.
+    pub(crate) fn explore_witness(&self) -> WitnessExplored {
+        let system = ModelSystem::new(self.subject().simulation).expect("the subject admits");
+        let seams = self.seams();
+        let cancel = Cancel::new();
+        let instance = instance();
+        let mut product = WitnessProduct::new(WitnessInputs {
+            systems: vec![&system; self.clause.quantifiers().len()],
+            universal: self.clause.universals(),
+            instance: &instance,
+            body: self.clause.body(),
+            profile: self.clause.profile(),
+            letters: &seams,
+            universal_match: (!self.clause.mu_universal().is_empty())
+                .then_some(&seams as &dyn StepMatch),
+            existential_match: (!self.clause.mu_existential().is_empty())
+                .then_some(&seams as &dyn StepMatch),
+            max_automaton_states: u64::MAX,
+            max_witness_set: u64::MAX,
+            meter: UNLIMITED,
+            cancel: &cancel,
+        })
+        .expect("the body translates to a safety automaton");
+        product.start().expect("the initial states read");
+        let exploration = retain(
+            &product,
+            Limits {
+                max_states: usize::MAX,
+                max_transitions: usize::MAX,
+            },
+            IdentityLimits::default(),
+            None,
+            || false,
+        )
+        .expect("the keys encode");
+        let automaton_states = product.automaton().reached_states();
+        WitnessExplored {
+            graph: exploration.graph,
+            automaton_states,
+        }
+    }
+}
+
+impl Explored {
+    /// The number of strongly connected components of the graph that hold a
+    /// cycle through a state of every acceptance set, with no fairness
+    /// constraint: ADR-023 section 8.1's accepting SCCs.
+    pub(crate) fn accepting_components(&self) -> usize {
+        let mut graph = Graph::new();
+        let vertices: Vec<_> = self
+            .graph
+            .states()
+            .iter()
+            .map(|_| graph.add_vertex([]))
+            .collect();
+        for edge in self.graph.edges() {
+            graph
+                .add_edge(
+                    vertices[edge.source.index()],
+                    vertices[edge.target.index()],
+                    EdgeLabel::Transition(Identity::new(0)),
+                )
+                .expect("both ends exist");
+        }
+        for set in &self.accepting {
+            graph
+                .add_acceptance_set(set.iter().map(|index| vertices[*index]))
+                .expect("members exist");
+        }
+        let all: BTreeSet<Vertex> = graph.vertices().collect();
+        analyze(&graph, &all, &[], &Cancel::new())
+            .expect("the graph analyses")
+            .iter()
+            .filter(|analysis| *analysis.outcome() == FairnessOutcome::Fair)
+            .count()
+    }
+}

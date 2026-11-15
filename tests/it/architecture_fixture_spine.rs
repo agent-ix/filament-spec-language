@@ -3,12 +3,12 @@
 //! architecture bundle enters through spine I2, is selected by a native model
 //! declaration, and its field, Port and Connection records retain their
 //! selected identities through S3. Every step runs on the spine
-//! (`qsl_replay::spine` parse, select, check), never on a composed path.
+//! (`fsl_replay::spine` parse, select, check), never on a composed path.
 //!
 //! The bundle is read at test time from the locked
 //! `agent-ix-extraction-frontend` checkout and copied to a temporary root, so
 //! edits never touch the shared checkout. The unedited bundle does not admit
-//! whole: `Pump`/`Sys`/`Tank.id` are typed `UUID`, which is not a QSL native
+//! whole: `Pump`/`Sys`/`Tank.id` are typed `UUID`, which is not an FSL native
 //! value type, and `Flow2`'s inline relationship is not identified
 //! `<owner>/<name>`. [`architecture_bundle`] types the three identity fields
 //! `Boolean` and drops `Flow2`; every part, port, connection and allocation
@@ -18,18 +18,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use ix_trace_rs::trace;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::DependencyInput;
-use qsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
-use qsl_semantics::model::domain_package::{DomainPackageRecord, PortDirection};
-use qsl_semantics::model::index::ModelIndex;
-use qsl_semantics::model::intake::lift_document;
-use qsl_semantics::model::systems::{
+use filament_checked::key::DeclarationKey;
+use filament_exact::Cancel;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::DependencyInput;
+use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::domain_package::{DomainPackageRecord, PortDirection};
+use fsl_semantics::model::index::ModelIndex;
+use fsl_semantics::model::intake::lift_document;
+use fsl_semantics::model::systems::{
     check_connection, classify, ConnectionCheckOutcome, ConnectionOutcome,
 };
-use quire_checked::key::DeclarationKey;
-use quire_exact::Cancel;
+use ix_trace_rs::trace;
 
 const PACKAGE: &str = "agent-ix/architecture";
 
@@ -147,12 +147,12 @@ fn key(artifact: &str) -> DeclarationKey {
 fn architecture_fixture_binds_references_through_spine_i2() {
     let bundle = architecture_bundle(|_| {});
     let bytes = lift(bundle.path());
-    let packages = qsl_semantics::model::intake::package_input([bytes.as_slice()])
+    let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()])
         .expect("the lifted FCD package enters I2 intake");
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile S = \"quire.value.complete/v1\";\n\
-         profile P = \"quire.protocol.finite-global/v1\";\n\
+         profile S = \"filament.value.complete/v1\";\n\
+         profile P = \"filament.protocol.finite-global/v1\";\n\
          model M = \"{PACKAGE}\";\n\
          pre FieldRule using S on M::Pump::run {{ self.id }}\n\
          protocol Plumbing using P over (view: M::Sys) on origin {{\n\
@@ -166,12 +166,12 @@ fn architecture_fixture_binds_references_through_spine_i2() {
     );
     let source = SourceIdentity::new("agent-ix", "test:tc-1308-fcd-i2");
     let cancel = Cancel::new();
-    let limits = qsl_replay::spine::SpineLimits::default();
+    let limits = fsl_replay::spine::SpineLimits::default();
     let failure = |failure| {
-        qsl_replay::spine::refusal_or_fault(failure).expect("no internal front-end fault")
+        fsl_replay::spine::refusal_or_fault(failure).expect("no internal front-end fault")
     };
-    let parsed = qsl_replay::spine::parse(
-        &qsl_replay::spine::ParseRequest {
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
             source: &source,
             path: "architecture.native",
             bytes: text.as_bytes(),
@@ -182,7 +182,7 @@ fn architecture_fixture_binds_references_through_spine_i2() {
     .map_err(failure)
     .expect("the native unit parses")
     .into_value();
-    let models = qsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
         .map_err(failure)
         .expect("the fixture is selected by model M")
         .into_value();
@@ -234,7 +234,7 @@ fn architecture_fixture_binds_references_through_spine_i2() {
         ),
         ConnectionCheckOutcome::Completed(ConnectionOutcome::Admitted)
     );
-    let checked = qsl_replay::spine::check(
+    let checked = fsl_replay::spine::check(
         &parsed,
         "tc-1308-fcd-i2".to_owned(),
         &models,
@@ -287,15 +287,15 @@ fn architecture_fixture_binds_references_through_spine_i2() {
             .package()
             .graph()
             .field_domain(
-                &quire_exact::Identifier::new("M").unwrap(),
-                &quire_exact::Identifier::new("Pump").unwrap(),
-                &quire_exact::Identifier::new("id").unwrap(),
+                &filament_exact::Identifier::new("M").unwrap(),
+                &filament_exact::Identifier::new("Pump").unwrap(),
+                &filament_exact::Identifier::new("id").unwrap(),
             )
             .expect("field binding has no internal fault")
             .is_some(),
         "the field read binds to the selected Pump.id domain key"
     );
-    let emitted = qsl_package::emit_checked(checked.package(), qsl_package::EmitLimits::fixture())
+    let emitted = fsl_package::emit_checked(checked.package(), fsl_package::EmitLimits::fixture())
         .expect("checked unit emits");
     assert!(
         !emitted.package().bytes().is_empty(),
@@ -309,7 +309,7 @@ fn architecture_fixture_binds_references_through_spine_i2() {
         .package()
         .protocol_occurrence_schemas()
         .expect("in-process occurrence schema");
-    let read_back = qsl_package::protocol_occurrence_schemas_from_read(&read)
+    let read_back = fsl_package::protocol_occurrence_schemas_from_read(&read)
         .expect("read-back occurrence schema");
     assert_eq!(in_process, read_back, "in-process/read-back parity");
     let role_model = |name: &str| {
@@ -321,11 +321,11 @@ fn architecture_fixture_binds_references_through_spine_i2() {
             .model
             .clone()
     };
-    let sys = quire_exact::NodeKey::new(
+    let sys = filament_exact::NodeKey::new(
         PACKAGE,
         ["model", "object_type", &format!("ix://{PACKAGE}/Sys")]
             .into_iter()
-            .map(|segment| quire_exact::PathSegment::Text(segment.to_owned()))
+            .map(|segment| filament_exact::PathSegment::Text(segment.to_owned()))
             .collect(),
         0,
     )
@@ -355,16 +355,16 @@ fn architecture_fixture_binds_references_through_spine_i2() {
 /// `text` through the spine's parse, select and check over `packages`.
 fn spine_check(
     text: &str,
-    packages: &qsl_semantics::model::intake::PackageInput,
-) -> Result<qsl_replay::spine::CheckedUnit, Box<qsl_replay::spine::CompileRefusal>> {
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> Result<fsl_replay::spine::CheckedUnit, Box<fsl_replay::spine::CompileRefusal>> {
     let source = SourceIdentity::new("agent-ix", "test:fcd-refusals");
     let cancel = Cancel::new();
-    let limits = qsl_replay::spine::SpineLimits::default();
+    let limits = fsl_replay::spine::SpineLimits::default();
     let fault = |failure| {
-        qsl_replay::spine::refusal_or_fault(failure).expect("no internal front-end fault")
+        fsl_replay::spine::refusal_or_fault(failure).expect("no internal front-end fault")
     };
-    let parsed = qsl_replay::spine::parse(
-        &qsl_replay::spine::ParseRequest {
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
             source: &source,
             path: "refusals.native",
             bytes: text.as_bytes(),
@@ -374,10 +374,10 @@ fn spine_check(
     )
     .map_err(fault)?
     .into_value();
-    let models = qsl_replay::spine::select(&parsed, packages, limits.model, &cancel)
+    let models = fsl_replay::spine::select(&parsed, packages, limits.model, &cancel)
         .map_err(fault)?
         .into_value();
-    Ok(qsl_replay::spine::check(
+    Ok(fsl_replay::spine::check(
         &parsed,
         "fcd-refusals".to_owned(),
         &models,
@@ -392,7 +392,7 @@ fn spine_check(
 fn unit(declarations: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile S = \"quire.model.complete/v1\";\n\
+         profile S = \"filament.model.complete/v1\";\n\
          model M = \"{PACKAGE}\";\n{declarations}"
     )
 }
@@ -405,7 +405,7 @@ fn unit(declarations: &str) -> String {
 fn systems_records_and_missing_names_are_not_value_types_on_the_spine() {
     let bundle = architecture_bundle(|_| {});
     let bytes = lift(bundle.path());
-    let packages = qsl_semantics::model::intake::package_input([bytes.as_slice()])
+    let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()])
         .expect("the lifted FCD package enters I2 intake");
     // A part, a Port and an allocation (kinds the type site cannot take) and
     // a name the package does not declare.
@@ -416,7 +416,7 @@ fn systems_records_and_missing_names_are_not_value_types_on_the_spine() {
         let refusal = spine_check(&text, &packages)
             .err()
             .unwrap_or_else(|| panic!("M::{record} is not a value type"));
-        let qsl_replay::spine::CompileRefusal::Assembly {
+        let fsl_replay::spine::CompileRefusal::Assembly {
             refusal,
             region: Some(region),
         } = refusal.as_ref()
@@ -427,8 +427,8 @@ fn systems_records_and_missing_names_are_not_value_types_on_the_spine() {
         assert!(
             matches!(
                 refusal.errors.as_slice(),
-                [qsl_semantics::check::AssemblyError {
-                    cause: qsl_semantics::check::AssemblyCause::UnresolvedTypeName { name },
+                [fsl_semantics::check::AssemblyError {
+                    cause: fsl_semantics::check::AssemblyCause::UnresolvedTypeName { name },
                     ..
                 }] if *name == written
             ),
@@ -450,7 +450,7 @@ fn systems_records_and_missing_names_are_not_value_types_on_the_spine() {
 fn missing_members_and_substituted_packages_refuse() {
     let bundle = architecture_bundle(|_| {});
     let bytes = lift(bundle.path());
-    let packages = qsl_semantics::model::intake::package_input([bytes.as_slice()])
+    let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()])
         .expect("the lifted FCD package enters I2 intake");
     let read = |member: &str| {
         unit(&format!(
@@ -464,7 +464,7 @@ fn missing_members_and_substituted_packages_refuse() {
         .err()
         .unwrap_or_else(|| panic!("a member Pump does not declare refuses"));
     assert!(
-        matches!(*refusal, qsl_replay::spine::CompileRefusal::Check { .. }),
+        matches!(*refusal, fsl_replay::spine::CompileRefusal::Check { .. }),
         "{refusal:?}"
     );
 
@@ -476,13 +476,13 @@ fn missing_members_and_substituted_packages_refuse() {
         );
     });
     let other_bytes = lift(other.path());
-    let substitute = qsl_semantics::model::intake::package_input([other_bytes.as_slice()])
+    let substitute = fsl_semantics::model::intake::package_input([other_bytes.as_slice()])
         .expect("the same-shaped package under another identity enters intake");
     let text = read("id");
     let refusal = spine_check(&text, &substitute).err().unwrap_or_else(|| {
         panic!("a same-shaped package under another identity is not the selection")
     });
-    let qsl_replay::spine::CompileRefusal::Intake {
+    let fsl_replay::spine::CompileRefusal::Intake {
         refusal,
         region: Some(region),
     } = refusal.as_ref()

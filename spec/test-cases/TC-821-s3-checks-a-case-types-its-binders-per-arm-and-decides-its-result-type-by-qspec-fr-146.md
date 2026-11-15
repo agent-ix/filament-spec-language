@@ -1,12 +1,12 @@
 ---
 id: TC-821
-title: "S3 checks a case, types its binders per arm and decides its result type by QSpec FR-146"
+title: "S3 checks a case, types its binders per arm and decides its result type by FSpec FR-146"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-318
+  - target: ix://agent-ix/filament-spec-language/FR-318
     type: verifies
 ---
-# TC-821: S3 checks a case, types its binders per arm and decides its result type by QSpec FR-146
+# TC-821: S3 checks a case, types its binders per arm and decides its result type by FSpec FR-146
 
 ## Description
 

@@ -3,44 +3,44 @@ id: FR-075
 title: "Compute lowering-target candidates from a registered-backend registry"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-011
+  - target: ix://agent-ix/filament-spec-language/US-011
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-193
+  - target: ix://agent-ix/filament-specification/FR-193
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-390
+  - target: ix://agent-ix/filament-specification/FR-390
     type: depends_on
 ---
 # FR-075: Compute lowering-target candidates from a registered-backend registry
 
 ## Description
 
-QSL SHALL provide a registry, the layer-R `route` module's `Registry`
+FSL SHALL provide a registry, the layer-R `route` module's `Registry`
 (ADR-011 §6.1), that backends populate by registering a `BackendDescriptor`
-under one contract. QSL SHALL compute each requested item's candidate set
+under one contract. FSL SHALL compute each requested item's candidate set
 from that registry's current contents, matching on capability kind, for
 `probabilistic-satisfaction` the item's exact evidence kind (ADR-012 §7.1,
 §7.2; FR-290, "Evidence kinds"), and for `temporal-satisfaction` the item's
-dynamics (QSpec FR-193 "Routing a hybrid item"). A state-graph item also
+dynamics (FSpec FR-193 "Routing a hybrid item"). A state-graph item also
 matches only a registration that advertises that item's exact state-graph
-form (QSpec FR-331, FR-390; ADR-022 QS-7).
+form (FSpec FR-331, FR-390; ADR-022 QS-7).
 
 Resolving a backend by `BackendId` in `route` is this requirement's work
 (#185). The native `lowering` module and its fixed `ProjectionTarget` catalog
 are deleted.
 The registry SHALL define no local capability-kind type. The registry SHALL
 consume the canonical `Capability` value type
-([quire-spec-language#213](https://github.com/agent-ix/quire-spec-language/issues/213)),
-whose members are the twelve labels FR-290 fixes and FR-057 admits into QSL.
+([filament-spec-language#213](https://github.com/agent-ix/filament-spec-language/issues/213)),
+whose members are the twelve labels FR-290 fixes and FR-057 admits into FSL.
 
 ## Inputs
 
@@ -53,7 +53,7 @@ whose members are the twelve labels FR-290 fixes and FR-057 admits into QSL.
   supplies none, and its optional `state_graph_forms` set of typed
   `StateGraphFormKind` values, a nonempty subset of the exact FR-390 forms
   `Possible`, `AlwaysPossible` and `UniquePath`, serialized as `possible`,
-  `always-possible` and `unique-path` (QSpec FR-331). Absence means it
+  `always-possible` and `unique-path` (FSpec FR-331). Absence means it
   advertises no state-graph form; a non-temporal descriptor cannot supply
   this member. `mode` is
   `bounded` or `unbounded` (ADR-012 §7.1). `BackendId` is the backend
@@ -109,7 +109,7 @@ whose members are the twelve labels FR-290 fixes and FR-057 admits into QSL.
 
 `StateGraphFormKind` SHALL be the registry's typed, payload-free identity for
 the checked state-graph form, with exactly `Possible`, `AlwaysPossible` and
-`UniquePath`, corresponding respectively to QSpec FR-390's `possible`,
+`UniquePath`, corresponding respectively to FSpec FR-390's `possible`,
 `always-possible` and `unique-path`. The request builder derives this value
 from the checked claim's `StateGraphForm`; it SHALL NOT compare claim names,
 predicate operands, instance bindings or source spelling.
@@ -141,7 +141,7 @@ below and this exact-form rule; a non-state-graph temporal item does not read
 For a `temporal-satisfaction` item, a registration SHALL be a candidate only
 when its `dynamics` set holds `hybrid` for an item carrying the
 `hybrid-dynamics` requirement, and `discrete` for an item carrying none
-(QSpec FR-193 "Routing a hybrid item", QSpec FR-290 "Candidate set and
+(FSpec FR-193 "Routing a hybrid item", FSpec FR-290 "Candidate set and
 negotiation"). So EN-6, whose descriptor supplies no `dynamics`, is never a
 candidate for a hybrid item, a hybrid provider whose `dynamics` is `{hybrid}`
 is never a candidate for a temporal item without hybrid dynamics, and a
@@ -171,7 +171,7 @@ comparing a candidate's advertised mode against the item's extent is
 ### Requested items from a package's requirement records
 
 `route`'s request builder (design name
-`qsl_route::request::items_from_requirements`; the implementing ticket
+`fsl_route::request::items_from_requirements`; the implementing ticket
 chooses the Rust spelling) SHALL take a checked package's requirement
 records (`CheckedPackage::graph().requirements()`, FR-062-AC-13), the
 registry, at most one `BackendId` the request names, and the request's
@@ -218,7 +218,7 @@ of a probabilistic item" when the request names both evidence kinds. Each `Requi
   request index carrying the record's evidence kind, and SHALL then append,
   after the item of the last record, one second-kind item per such record
   in record key order, carrying the other evidence kind, the record's
-  occurrence key and node, and the next request index (QSpec FR-290: "One
+  occurrence key and node, and the next request index (FSpec FR-290: "One
   claim may be requested twice, once per evidence kind"). With `n` records
   and the `j`-th probabilistic record (from 0) in key order, its
   second-kind item's request index is `n + j`. The two items of one claim
@@ -267,9 +267,9 @@ occurrence key; no outer conversion replaces it. The narrow is context only
 and does not add a requested item, routed item or claim. The driver's mapping
 passes that occurrence's conversion context to IR together with the item's
 root. A bare `lower([add])` call remains governed by the Contract IR API and
-this requirement does not make QSL discover a reverse narrow for it.
+this requirement does not make FSL discover a reverse narrow for it.
 
-The orchestrating driver (T-13) reads nothing else about items from QSL. It
+The orchestrating driver (T-13) reads nothing else about items from FSL. It
 writes each item's kind, extent classification, named backend and
 candidates into the FR-331 request, and joins CG's settlements to items by
 request index. For a `requires-bound` item, it answers with a bounded
@@ -286,7 +286,7 @@ record, so each record has at most one follow-up settlement, and joins it
 to the record by occurrence key. Writing several bounded items for one
 domain set with different bounds (FR-097-AC-3) stays a capability of the
 writer; the driver uses one and writes no second follow-up for a record.
-That driver rule is tested in agent-ix/quire-driver. It
+That driver rule is tested in agent-ix/filament-driver. It
 passes the `supported` items to `routing::route`, and hands CG generation
 each routed item's request index, occurrence key, node and result bound,
 with the package's requirement records keyed by occurrence key (ADR-011
@@ -296,7 +296,7 @@ E7), resolving the node in the admitted v2 package.
 
 The registry SHALL import the capability-kind labels a backend advertises,
 and the capability kind a requested item carries, from the one canonical
-`Capability` type. The QSL source tree SHALL define no second type, in the
+`Capability` type. The FSL source tree SHALL define no second type, in the
 registry module or elsewhere in `#185`'s scope, whose variants name FR-290's
 capability-kind labels.
 
@@ -319,11 +319,11 @@ earlier defect and an evidence defect refuses with the earlier cause. It SHALL
 ignore evidence-kind labels supplied for a backend that advertises no
 `probabilistic-satisfaction` kind, so the descriptor holds none, defective or
 not. It SHALL read a label repeated within the labels as one member, because
-QSpec FR-290 states the evidence kinds as a set; this differs from `domains`
+FSpec FR-290 states the evidence kinds as a set; this differs from `domains`
 and `fairness_kinds`, whose repeat FR-057 and FR-134 refuse.
 
 A descriptor that advertises no `probabilistic-satisfaction` kind SHALL NOT
-require evidence-kind labels for admission. QSL SHALL preserve the accepted
+require evidence-kind labels for admission. FSL SHALL preserve the accepted
 labels on the admitted descriptor for the registered backend contract; this
 requirement assigns no new evidence-kind vocabulary or alias.
 
@@ -337,7 +337,7 @@ by the descriptor's `BackendId`, when the member is not a list
 `hybrid` (`unknown-label`), repeats a label (`duplicate-label`), or holds
 `hybrid` while the descriptor's `bounds` lack `max_solver_steps` or
 `max_solver_time` (`missing-bounds`, naming the first absent limit in that
-order), reporting the first defect in that order (QSpec FR-193 "Routing a
+order), reporting the first defect in that order (FSpec FR-193 "Routing a
 hybrid item"). It SHALL judge `dynamics` after every advertised pair,
 `domains`, `fairness_kinds` and the evidence kinds, so a registration with an
 earlier defect refuses with the earlier cause, and SHALL ignore a `dynamics`
@@ -346,8 +346,8 @@ descriptor holds none. The check SHALL finish before the descriptor is
 inserted into the registry; the refused descriptor contributes no
 registration, and any registration already held under that identity stands.
 An admitted descriptor SHALL keep `dynamics` exactly as supplied: a
-descriptor that supplies none holds none, and every FR-331 manifest QSL
-writes from it carries no `dynamics` member, so the descriptor of such a registration (the production engines en-1 and en-6 both supply none) and the request identity (QSpec FR-331, "Request identity") of
+descriptor that supplies none holds none, and every FR-331 manifest FSL
+writes from it carries no `dynamics` member, so the descriptor of such a registration (the production engines en-1 and en-6 both supply none) and the request identity (FSpec FR-331, "Request identity") of
 every temporal request over it are those it has without this member.
 `{discrete}` is only how candidate computation reads an absent member. A
 descriptor that supplies `["discrete"]` explicitly holds a different
@@ -358,9 +358,9 @@ FR-075-AC-4 states.
 ### Reading a `backend` member
 
 A candidate's wire form is ADR-013 O-19's `backend` member, the backend
-identity string alone. When QSL reads one, it SHALL keep the identity
+identity string alone. When FSL reads one, it SHALL keep the identity
 verbatim, with no normalization (ADR-013 C-27). If the member is empty, then
-QSL SHALL refuse it.
+FSL SHALL refuse it.
 
 Writing a candidate's identity and reading it back SHALL give the same
 candidate.
@@ -370,7 +370,7 @@ candidate.
 If a registration names a `BackendId` the registry already holds, the
 registry SHALL compare identity, provider origin, advertised
 pairs, retained `domains`, the evidence-kind set and the `dynamics` member as supplied. A second registration of one identity is
-refused whatever its manifest (QSpec FR-290-AC-10, TC-282). A different identity is a different registry key and is
+refused whatever its manifest (FSpec FR-290-AC-10, TC-282). A different identity is a different registry key and is
 not a duplicate-registration conflict:
 
 - If the two are equal in every equality-compared member, the
@@ -438,8 +438,8 @@ were added.
 | FR-075-AC-16 | For `function f using v(a: Int[0, 9]): Int[0, 10] pure { a + 1 }`, the driver's IR call includes roots `[item.node(), conversion_context.node()]` (or the equivalent contextual entry point), with context paired to the item by request index and occurrence key. For RR-16, the driver makes this mapping independently for both items, which share the `+` node but have different request indices and conversion contexts: each item passes its own narrow context root, and neither context is swapped or selected by node key. In both vectors, the narrow is context only; it creates no additional requirement item, routed item or claim, and the routed claim remains the scalar application occurrence. A bare `lower([add])` call still returns the behavior specified by Contract IR and is not changed by this criterion. | Test (TC-449) |
 | FR-075-AC-17 | For every `CallRequirement` of FR-395 over fixture K, `items_from_requirements` over the package's records yields at the member's request index an item whose `occurrence()` equals the member's key. | Test (TC-1089) |
 | FR-075-AC-18 | Over a registry holding one registration advertising `probabilistic-satisfaction` with `{statistical}` (EN-4's manifest) and one with `{exact}` (EN-5's), and a package whose records in key order are FR-186's `P95` claim (index 0, record evidence kind `statistical`), FR-195's `FairTerminates` (index 1, record evidence kind `exact`) and a `value-validity` record (index 2): with no evidence selection the builder writes three items, `P95`'s naming `statistical` with candidates the EN-4 registration only and `FairTerminates`'s naming `exact` with candidates the EN-5 registration only; with the selection `exact` it writes three items, `P95`'s and `FairTerminates`'s each naming `exact` with candidates the EN-5 registration only, `statistical` never substituting; with both kinds it writes five items, indices 0 to 2 equal to the no-selection items, index 3 `P95`'s `exact` item (EN-5 only) and index 4 `FairTerminates`'s `statistical` item (EN-4 only), each with its record's occurrence key. The `value-validity` item is at index 2 and carries no evidence kind under every selection, and no written item settles `absent-evidence-kind` or `unknown-evidence-kind`. Each probabilistic item's unbounded domains are its record's, naming its claim, under every selection. | Test (TC-1163) |
-| FR-075-AC-19 | Over a registry holding the fixture registration `qsl-model-check`, a discrete-only temporal-satisfaction registration like the production engines en-1 and en-6, advertising `temporal-satisfaction` with no `dynamics`, and a fixture hybrid registration `hybrid-fixture` advertising it with `dynamics` `{hybrid}` and `bounds` `{max_solver_steps: 1000000, max_solver_time: 60}`, the item of FR-447's `SlowEnough`, carrying `hybrid-dynamics`, has the candidate set `[hybrid-fixture]`, and the item of a temporal clause over a model without hybrid dynamics `[qsl-model-check]`; with `hybrid-fixture`'s `dynamics` `{discrete, hybrid}` the second item's set is `[hybrid-fixture, qsl-model-check]`; with only `qsl-model-check` registered the hybrid item's set is empty; naming `qsl-model-check`, the hybrid item's set is empty; a `value-validity` item's set is unchanged by every `dynamics`. Two registries built from these registrations in either order compute equal sets. | Test (TC-193) |
-| FR-075-AC-20 | `descriptor_from_manifest` refuses a `temporal-satisfaction` descriptor whose `dynamics` is `[]`, `["hybrid", "hybrid"]`, `["continuous"]`, `"hybrid"`, or `["hybrid"]` with `bounds` lacking `max_solver_time`, with `invalid_capability`/`invalid-dynamics` keyed by `BackendId`, retaining `empty`, `duplicate-label`, `unknown-label`, `not-a-list` and `missing-bounds` naming `max_solver_time`, before insertion and leaving an earlier registration of that identity standing; one with a `fairness_kinds` defect as well refuses `invalid-fairness-kinds`; a `dynamics` on a descriptor advertising only `value-validity` is ignored and the descriptor is admitted holding none; a descriptor with no `dynamics` is admitted holding none and is read as `{discrete}` for candidates, and the manifest QSL writes from the fixture registration `qsl-model-check`'s descriptor carries no `dynamics` key, its RFC 8785 bytes equal to those of the same descriptor written without the member, so a temporal request over it keeps its request identity; a registration of the fixture's identity supplying `dynamics` `["discrete"]` beside one supplying none is refused `duplicate-backend`. Two registrations of one identity differing only in `dynamics` conflict as FR-075-AC-4 states. | Test (TC-193) |
+| FR-075-AC-19 | Over a registry holding the fixture registration `fsl-model-check`, a discrete-only temporal-satisfaction registration like the production engines en-1 and en-6, advertising `temporal-satisfaction` with no `dynamics`, and a fixture hybrid registration `hybrid-fixture` advertising it with `dynamics` `{hybrid}` and `bounds` `{max_solver_steps: 1000000, max_solver_time: 60}`, the item of FR-447's `SlowEnough`, carrying `hybrid-dynamics`, has the candidate set `[hybrid-fixture]`, and the item of a temporal clause over a model without hybrid dynamics `[fsl-model-check]`; with `hybrid-fixture`'s `dynamics` `{discrete, hybrid}` the second item's set is `[hybrid-fixture, fsl-model-check]`; with only `fsl-model-check` registered the hybrid item's set is empty; naming `fsl-model-check`, the hybrid item's set is empty; a `value-validity` item's set is unchanged by every `dynamics`. Two registries built from these registrations in either order compute equal sets. | Test (TC-193) |
+| FR-075-AC-20 | `descriptor_from_manifest` refuses a `temporal-satisfaction` descriptor whose `dynamics` is `[]`, `["hybrid", "hybrid"]`, `["continuous"]`, `"hybrid"`, or `["hybrid"]` with `bounds` lacking `max_solver_time`, with `invalid_capability`/`invalid-dynamics` keyed by `BackendId`, retaining `empty`, `duplicate-label`, `unknown-label`, `not-a-list` and `missing-bounds` naming `max_solver_time`, before insertion and leaving an earlier registration of that identity standing; one with a `fairness_kinds` defect as well refuses `invalid-fairness-kinds`; a `dynamics` on a descriptor advertising only `value-validity` is ignored and the descriptor is admitted holding none; a descriptor with no `dynamics` is admitted holding none and is read as `{discrete}` for candidates, and the manifest FSL writes from the fixture registration `fsl-model-check`'s descriptor carries no `dynamics` key, its RFC 8785 bytes equal to those of the same descriptor written without the member, so a temporal request over it keeps its request identity; a registration of the fixture's identity supplying `dynamics` `["discrete"]` beside one supplying none is refused `duplicate-backend`. Two registrations of one identity differing only in `dynamics` conflict as FR-075-AC-4 states. | Test (TC-193) |
 | FR-075-AC-21 | For each FR-390 state-graph form, the request builder carries its exact `StateGraphFormKind` derived from the checked claim's `StateGraphForm`, and the candidate set contains exactly registrations whose typed `state_graph_forms` includes that value, subject to the temporal-dynamics rule; a descriptor with no `state_graph_forms` matches no state-graph form; a temporal-formula item and every other capability kind is unaffected by `state_graph_forms`; two otherwise identical descriptors with different form sets conflict under FR-075-AC-4. | Test (TC-193) |
 | FR-075-AC-22 | `descriptor_from_manifest` admits a temporal descriptor with any nonempty, duplicate-free subset of `possible`, `always-possible` and `unique-path`, admits the member absent as no state-graph forms, and refuses an empty, duplicate or unknown list, a present non-array member, or the member on a descriptor without `temporal-satisfaction` with `invalid_capability`/`invalid-state-graph-forms`, keyed by backend identity, before registry insertion and leaving an earlier registration standing. | Test (TC-193) |
 
@@ -451,29 +451,29 @@ were added.
   implements; §5.2 lists the explicit registry failure cases FR-075-AC-3 and
   FR-075-AC-4 verify.
 - [FR-057](FR-057-admit-shared-capability-kinds.md) admits the twelve FR-290
-  capability-kind labels into QSL and states the same candidate-set rule from
+  capability-kind labels into FSL and states the same candidate-set rule from
   the composed-linker admission side; this requirement implements it at the
   registry.
-- [FR-290](ix://agent-ix/quire-specification/FR-290) (quire-specification)
+- [FR-290](ix://agent-ix/filament-specification/FR-290) (filament-specification)
   is the normative source for the twelve capability-kind labels, the
   `(kind, mode)` advertisement shape, and the candidate-set ordering rule
   this requirement's Outputs section restates. Its "Candidate set and
   negotiation" section (FR-290-AC-9, FR-290-AC-10) is also the normative
   source for the idempotent-repeat and conflicting-identity rules
   FR-075-AC-7 and FR-075-AC-4 implement.
-- [quire-spec-language#185](https://github.com/agent-ix/quire-spec-language/issues/185)'s
+- [filament-spec-language#185](https://github.com/agent-ix/filament-spec-language/issues/185)'s
   issue body describes "the canonical six-kind `Capability` value type,"
   taking the `protocol` family's six members (FR-290's `Families` table, the
   set FR-060 dispatches independently) as the whole vocabulary. That phrase
   is stale: FR-290's "Vocabulary authority" section states verbatim that its
   twelve labels, not six, "are the single capability-kind vocabulary of the
-  Quire ecosystem," from which "`quire-spec-language`'s `Capability` type,
+  Filament ecosystem," from which "`filament-spec-language`'s `Capability` type,
   the backend descriptors registered in its registry... take their
   members." FR-290 governs; this requirement and FR-057 specify against the
   twelve-label vocabulary throughout, and #213's `Capability` type is expected
   to carry all twelve.
 - The canonical `Capability` value type and its outcome constructors are
-  owned by [quire-spec-language#213](https://github.com/agent-ix/quire-spec-language/issues/213);
+  owned by [filament-spec-language#213](https://github.com/agent-ix/filament-spec-language/issues/213);
   this requirement consumes that type and specifies no shape for it.
 - [FR-080](FR-080-registry-evidence-and-gates.md) records the permutation
   property test (FR-075-AC-2, evidenced by TC-194) as part of the ADR-012

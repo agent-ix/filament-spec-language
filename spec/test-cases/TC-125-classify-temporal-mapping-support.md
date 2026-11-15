@@ -3,7 +3,7 @@ id: TC-125
 title: "Classify native-to-TL temporal mapping support"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-045
+  - target: ix://agent-ix/filament-spec-language/FR-045
     type: verifies
 ---
 # TC-125: Classify native-to-TL temporal mapping support
@@ -18,15 +18,15 @@ support table in `resources/native-v1/spec/functional/FR-095-preserve-native-tl-
 never from an installed TL version, a backend report or the classifier's own
 output. Each numbered group corresponds to the matching acceptance criterion.
 
-The correspondence Contract IR FR-350 constructs from a supported QSL
+The correspondence Contract IR FR-350 constructs from a supported FSL
 classification is verified in [TC-1240](./TC-1240-establish-the-native-to-tl-temporal-correspondence.md).
 
-Groups 1–5 execute in `tests/it/mapping_support.rs` and the `qsl-package` mapping tests
+Groups 1–5 execute in `tests/it/mapping_support.rs` and the `fsl-package` mapping tests
 (the `composed_temporal_mapping.rs` controls of the v1 classifier were retired by QSL-858 PR 1) and group 6 in
-the `qsl-package` mapping tests (FR-527-AC-13 to AC-21); the `/2`-package classifier and its `mapping_support_v2.rs` controls were retired by QSL-858 PR 2. No TL evaluator, bridge definition or
+the `fsl-package` mapping tests (FR-527-AC-13 to AC-21); the `/2`-package classifier and its `mapping_support_v2.rs` controls were retired by QSL-858 PR 2. No TL evaluator, bridge definition or
 contract-IR predicate projection participates; the classification is a total
 function of the admitted declaration and the requested surrounding-execution
-closure, which the owner ruling on `quire-contract-ir#64` fixes as the TL row
+closure, which the owner ruling on `filament-contract-ir#64` fixes as the TL row
 selector.
 
 ## Test Procedure
@@ -95,7 +95,7 @@ and its activation record; nothing is substituted or reduced. A `/2`
 classification retains the definition selection it authenticated, and a `/1`
 classification is never mistakable for one.
 
-This case verifies QSL's classification boundary only. Contract IR FR-350 owns
+This case verifies FSL's classification boundary only. Contract IR FR-350 owns
 the projection and result join; its full owner-reader, past-history, identity,
 mutation and limit vectors are specified by
 [TC-1240](./TC-1240-establish-the-native-to-tl-temporal-correspondence.md).

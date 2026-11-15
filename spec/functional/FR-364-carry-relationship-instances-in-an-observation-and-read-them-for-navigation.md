@@ -3,23 +3,23 @@ id: FR-364
 title: "Carry relationship instances in an observation and read them for runtime navigation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-362
+  - target: ix://agent-ix/filament-spec-language/FR-362
     type: depends_on
-  - target: ix://agent-ix/quire-semantic-value/FR-119
+  - target: ix://agent-ix/filament-semantic-value/FR-119
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: references
-  - target: ix://agent-ix/quire-specification/FR-152
+  - target: ix://agent-ix/filament-specification/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
 ---
 # FR-364: Carry relationship instances in an observation and read them for runtime navigation
@@ -32,14 +32,14 @@ relationship instances. It SHALL refuse an instance set that is not a
 well-formed set of links of the declared relationship. When a clause navigates
 a relationship end, the evaluator SHALL take its targets from a read-only view
 of those instances alone, and SHALL decide the refusals and charges
-quire-specification [FR-152](ix://agent-ix/quire-specification/FR-152)'s
+filament-specification [FR-152](ix://agent-ix/filament-specification/FR-152)'s
 "Navigation" section states. When it must tell a missing object that is
 dangling from one it cannot decide, it SHALL read a population manifest that
 the observation's producer issued from an exhausted traversal of the admitted
 package's population declarations, and SHALL decide `dangling` only from a
 closed manifest.
 
-This requirement is QSL's own contract for the runtime half of FR-152's
+This requirement is FSL's own contract for the runtime half of FR-152's
 "Navigation" section, which [FR-085](FR-085-resolve-relationship-end-references.md)
 leaves out of its scope. FR-152 says what navigation returns and charges; it
 does not say how an observation carries the instances navigation reads. This
@@ -203,7 +203,7 @@ rows read and the failure; failure is the only way a manifest is partial. No ope
 from supplied rows, converts a partial manifest into a closed one or closes a
 manifest before the enumerator is exhausted. The semantic-value store builds
 the manifest from the enumerator and keeps its state private
-([FR-119](ix://agent-ix/quire-semantic-value/FR-119)).
+([FR-119](ix://agent-ix/filament-semantic-value/FR-119)).
 
 ### `resolve` decides a missing object by the manifest alone
 
@@ -327,7 +327,7 @@ present reference for count 1; any other finite `{l, u}` the `Set<Reference<U>>[
 when `unique` is `true` and the `Bag<Reference<U>>[l,u]` when it is `false`, in
 ascending reference-key order. The static form, direction, ambiguity and
 `unbounded` or `ordered` refusals are decided at checking and are not decided
-here. The role `name` is the one nearest the receiver, as FR-363 and QSpec
+here. The role `name` is the one nearest the receiver, as FR-363 and FSpec
 FR-322 resolve it: the source end's role names the forward traversal from the
 source type, the target end's role the inverse traversal from the target
 type, and `{l, u}` and `U` belong to the end the role does not name, as in
@@ -376,20 +376,20 @@ FR-363; a navigation site reaches the evaluator already resolved.
   resolves against; [FR-085](FR-085-resolve-relationship-end-references.md)
   supplies the navigation relationship, its ends and its multiplicity;
   [FR-082](FR-082-resolve-conformance-subsetting-and-redefinition.md) supplies
-  conformance. quire-specification FR-152 owns the navigation result types,
+  conformance. filament-specification FR-152 owns the navigation result types,
   the traversal rule, the refusals and the `model.navigate` schedule of
-  `quire.value.accounting/v1`; AD-006 owns the decision to keep populations in
+  `filament.value.accounting/v1`; AD-006 owns the decision to keep populations in
   the model view.
 - **Downstream:** [FR-106](FR-106-admit-snapshots-and-invocations.md) binds
   extent admission to the snapshot document and decides the dangling and
   completeness rules for it. The checker's typing of a relationship end, its
   direction, ambiguity and `unbounded` or `ordered` refusals, and the
-  `quire.op.model.navigate` lowering are FR-363's.
+  `filament.op.model.navigate` lowering are FR-363's.
 - [FR-365](FR-365-reach-an-object-over-a-relationship-end-in-a-state-clause.md)
   reads the same extents and `resolve` for `reaches` over a relationship end.
 - [FR-362](FR-362-produce-the-checked-graph-and-the-type-report-from-one-source.md) supplies the
-  source reference the bundle key compares as a whole. quire-semantic-value
-  [FR-119](ix://agent-ix/quire-semantic-value/FR-119) is the store this
+  source reference the bundle key compares as a whole. filament-semantic-value
+  [FR-119](ix://agent-ix/filament-semantic-value/FR-119) is the store this
   requirement's reads and manifest are built in.
 - The object environment holds the extents. Whether the extent store lives in
   the semantic-value object closure or in the model layer's environment beside

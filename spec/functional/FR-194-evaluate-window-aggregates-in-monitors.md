@@ -3,17 +3,17 @@ id: FR-194
 title: "Evaluate window aggregates in monitors"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-497
+  - target: ix://agent-ix/filament-spec-language/FR-497
     type: references
 ---
 # FR-194: Evaluate window aggregates in monitors
@@ -42,7 +42,7 @@ too few responses is undefined, never a pass.
 
 - A parsed clause over a trace subject with aggregate terms, under the
   event-position false-extension or timestamped-event finite-window profile
-  (QSpec FR-090).
+  (FSpec FR-090).
 - An observed trace, and the run's `max_window_values` (ADR-014 B-2).
 
 ## Outputs
@@ -69,7 +69,7 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
 - S3 SHALL admit an aggregate term only in a clause over a trace subject. An
   aggregate term in a claim over a model subject SHALL be refused
   `unsupported_construct`/`expression-form` at the aggregate term, with a
-  diagnostic naming ADR-024 §2's measures (QSpec FR-414-AC-6).
+  diagnostic naming ADR-024 §2's measures (FSpec FR-414-AC-6).
 - `past[a, b]` SHALL have `a <= b`: natural numbers under event-position,
   durations under the timestamped-event profile. A duration window under
   event-position, or a position window under timestamped-event, SHALL be
@@ -79,7 +79,7 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   unit (the selected clock unit, FR-337), is no duration and SHALL be
   refused `ill_typed`/`unit-mismatch` at the bound's unit. A bound whose
   unit names no declared unit stays a missing name
-  (`missing_declaration`/`missing-name`, QSpec FR-142), and a bound in an
+  (`missing_declaration`/`missing-name`, FSpec FR-142), and a bound in an
   affine time unit stays `ill_typed`/`type-mismatch`; neither is a unit
   mismatch. A window with `a > b` SHALL be refused
   `invalid_package`/`invalid-value` at the window `past[a, b]`.
@@ -92,19 +92,19 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   it has the value 0, so a claim can state that a window with no match is
   acceptable (`count where holds(e is Error) over past[0, 9] min_count 0
   <= 2` holds over a window with no error).
-- `min_count` is optional (QSpec shared grammar `[ 'min_count', uint ]`).
+- `min_count` is optional (FSpec shared grammar `[ 'min_count', uint ]`).
   S3 SHALL check a term that omits it as the same term written `min_count 1`,
   so the two spellings give one `AggregateTerm`, and two clauses that differ
   only in this spelling emit one node id and have one obligation identity.
 - The value expression and the threshold SHALL have equal dimensions; a
-  threshold in another unit converts exactly by QSpec FR-142, and another
+  threshold in another unit converts exactly by FSpec FR-142, and another
   dimension SHALL be refused `ill_typed`/`unit-mismatch` at the threshold
-  (QSpec FR-414-AC-4).
+  (FSpec FR-414-AC-4).
 - The value expression of a `sum`, `min`, `max` or `quantile` term SHALL be
   of family `integer`, `rational` or `quantity`, and the threshold of the
   aggregate's result family, `integer` for `count`, `rational` for
   `fraction` (an integer literal standing for the rational of its value),
-  otherwise the value's family (QSpec FR-370 "Window aggregate atom"); S3
+  otherwise the value's family (FSpec FR-370 "Window aggregate atom"); S3
   SHALL refuse a value or threshold of another family
   `ill_typed`/`type-mismatch` at it. The value of a `sum`, `min`, `max` or
   `quantile` term has the type of its value expression, and a quantity value
@@ -112,7 +112,7 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   value of `Quantity<M::ms>` gives `Quantity<M::ms>` over that package
   unit's node, its threshold converts exactly into `M::ms`, and a threshold
   in a unit of the source's own `Time`, another dimension with no dimension
-  equivalence declared, is a threshold of another dimension (QSpec FR-414
+  equivalence declared, is a threshold of another dimension (FSpec FR-414
   "Values", FR-142-AC-19 to AC-21). A value or threshold of a carried
   quantity type `Quantity<u, C>` (FR-497) SHALL be refused
   `ill_typed`/`type-mismatch` at it before any charge, because a carried
@@ -162,7 +162,7 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   SHALL stop and the result SHALL be `Incomplete(LimitReached{limit, value,
   setting})` (ADR-018 V-7), naming `max_window_values`, its value and
   `monitor.max_window_values`. The
-  limit SHALL have a published default of 1,048,576 (2^20), which QSL
+  limit SHALL have a published default of 1,048,576 (2^20), which FSL
   publishes, and the setting name `monitor.max_window_values` (FR-255's
   convention).
 - The evaluator SHALL visit the window's positions oldest first. When the
@@ -186,7 +186,7 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   position's cause wins, because it is the first fault found and the count is
   incomplete.
 - Evaluation SHALL charge one unit of ADR-014 TR-5 work at `temporal.visit`
-  (`quire.value.accounting/v1`) per window position visited, whether or not the filter admits the position, and under a stop
+  (`filament.value.accounting/v1`) per window position visited, whether or not the filter admits the position, and under a stop
   at an undefined position, the positions visited up to and including it.
   These visit units are separate from the units that evaluating a filter,
   value or predicate charges itself.
@@ -213,19 +213,19 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
 | FR-194-AC-8 | Under event-position, `count over past[5, 2 s] >= 1` reports exactly one refusal, `ill_typed`/`unit-mismatch` at `2 s`, and no `invalid-value`. Under event-position, `quantile 1 of e.latency over past[0, 9] <= 5 m` against a time value reports `invalid_package`/`invalid-value` at `1` and then `ill_typed`/`unit-mismatch` at `5 m`. In a claim over a model subject, `count over past[0, 300 s] >= 1` reports only `unsupported_construct`/`expression-form` at the `count` term, and `quantile 1 of x.v over past[5, 2] <= 1` reports `expression-form` at the term and then `invalid-value` at `1`, with no `a > b` refusal. | Test (TC-629) |
 | FR-194-AC-9 | Under event-position, `count over past[0, 9] >= 1` and `count over past[0, 9] min_count 1 >= 1` check to equal `AggregateTerm`s with `min_count` 1, and two clauses `always[0,0] (…)` over them emit one node id; at position 0 of a one-event trace each atom is `true`. Over `x` values `1, 2` at positions 0 and 1, `count where holds(e.x > 5) over past[0, 9] >= 1`, written without `min_count`, reads `Undefined(InsufficientData{count: 0, min_count: 1})` at position 1; `count over past[0, 9] min_count 2 >= 1` reads `Undefined(InsufficientData{count: 1, min_count: 2})` at position 0 and `true` at position 1. | Test (TC-629) |
 | FR-194-AC-10 | Under event-position over `x` values `1, 2` at positions 0 and 1, at position 1: `count where holds(e.x > 5) over past[0, 9] min_count 0 <= 2` is `true` (count 0), `count where holds(e.x > 5) over past[0, 9] min_count 0 >= 1` is `false`, and `sum of e.x where holds(e.x > 5) over past[0, 9] min_count 0 = 0` is `true`, none of them `InsufficientData`; the same `count` without `min_count` reads `Undefined(InsufficientData{count: 0, min_count: 1})`. `min`, `max`, `fraction holds(e.x > 1)` and `quantile 0.5` of `e.x` each with `min_count 0` refuse `invalid_package`/`invalid-value` at `0`. | Test (TC-629) |
-| FR-194-AC-11 | With `model M = "acme/rpc"`, the package declaring base dimension `Time`, its root unit `s` and a unit `ms` of `Time` (`target` `s`, `scale` `1/1000`), and the unit declaring `dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;`, under event-position over event field `latency: Quantity<M::ms>` with values `5`, `1` and `4` of `M::ms` at positions 0 to 2, at position 2 the `sum`, `min`, `max` and `quantile 0.5` terms of `e.latency` over `past[0, 2]` check with value type `Quantity<M::ms>` over the package unit's node and evaluate to `10`, `1`, `5` and `4` of `M::ms`; `sum of e.latency over past[0, 2] <= 1 M::s` checks with its threshold converted to `1000` of `M::ms` and is `true`; `sum of e.latency where holds(e.latency > 9 M::ms) over past[0, 2] min_count 0 = 0 M::ms` is `true`; the thresholds `10 ms` and `10 s` of the source units each refuse `ill_typed`/`unit-mismatch` at the threshold (QSpec FR-414-AC-13). | Test (TC-629) |
-| FR-194-AC-12 | With `dimension Length; unit m : Length = rational(1, 1);` and `type Lc = Quantity<m, Int[-5, 5]>;`, under event-position over event field `d: Quantity<m>`, each of `sum`, `min`, `max` and `quantile 0.5` of `convert<Lc>(e.d)` over `past[0, 2]` with threshold `5 m` reports exactly one refusal, `ill_typed`/`type-mismatch` at `convert<Lc>(e.d)`, and with threshold `5 s` (beside `dimension Time; unit s : Time = rational(1, 1);`) that refusal then `ill_typed`/`unit-mismatch` at `5 s`; `sum of e.d over past[0, 2] <= convert<Lc>(5 m)` refuses `ill_typed`/`type-mismatch` at the threshold; `sum of convert<Quantity<m>>(convert<Lc>(e.d)) over past[0, 2] <= 5 m` checks, and over `d` values `2`, `-1` and `3` of `m` its sum at position 2 is `4 m` (QSpec FR-414-AC-14). | Test (TC-629) |
+| FR-194-AC-11 | With `model M = "acme/rpc"`, the package declaring base dimension `Time`, its root unit `s` and a unit `ms` of `Time` (`target` `s`, `scale` `1/1000`), and the unit declaring `dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;`, under event-position over event field `latency: Quantity<M::ms>` with values `5`, `1` and `4` of `M::ms` at positions 0 to 2, at position 2 the `sum`, `min`, `max` and `quantile 0.5` terms of `e.latency` over `past[0, 2]` check with value type `Quantity<M::ms>` over the package unit's node and evaluate to `10`, `1`, `5` and `4` of `M::ms`; `sum of e.latency over past[0, 2] <= 1 M::s` checks with its threshold converted to `1000` of `M::ms` and is `true`; `sum of e.latency where holds(e.latency > 9 M::ms) over past[0, 2] min_count 0 = 0 M::ms` is `true`; the thresholds `10 ms` and `10 s` of the source units each refuse `ill_typed`/`unit-mismatch` at the threshold (FSpec FR-414-AC-13). | Test (TC-629) |
+| FR-194-AC-12 | With `dimension Length; unit m : Length = rational(1, 1);` and `type Lc = Quantity<m, Int[-5, 5]>;`, under event-position over event field `d: Quantity<m>`, each of `sum`, `min`, `max` and `quantile 0.5` of `convert<Lc>(e.d)` over `past[0, 2]` with threshold `5 m` reports exactly one refusal, `ill_typed`/`type-mismatch` at `convert<Lc>(e.d)`, and with threshold `5 s` (beside `dimension Time; unit s : Time = rational(1, 1);`) that refusal then `ill_typed`/`unit-mismatch` at `5 s`; `sum of e.d over past[0, 2] <= convert<Lc>(5 m)` refuses `ill_typed`/`type-mismatch` at the threshold; `sum of convert<Quantity<m>>(convert<Lc>(e.d)) over past[0, 2] <= 5 m` checks, and over `d` values `2`, `-1` and `3` of `m` its sum at position 2 is `4 m` (FSpec FR-414-AC-14). | Test (TC-629) |
 
 ## Dependencies
 
-- QSpec FR-414, which states the same Undefined rule and charge in the shared half.
+- FSpec FR-414, which states the same Undefined rule and charge in the shared half.
 - ADR-024 WA-1 to WA-8, QS-10; ADR-014 A-4, B-2, TR-4, TR-5; ADR-013 O-16.
 - [FR-123](FR-123-check-fairness-and-interval-operators-of-infinite-trace-clauses.md)
   (profiles at S3).
 
 ## References
 
-- QSpec half, which owns the aggregate grammar, windows under both profiles,
-  nearest-rank quantiles and `InsufficientData`: QSpec FR-414 (Linear
+- FSpec half, which owns the aggregate grammar, windows under both profiles,
+  nearest-rank quantiles and `InsufficientData`: FSpec FR-414 (Linear
   STD-137).
 - Owning ticket: Linear QSL-371.

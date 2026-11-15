@@ -3,28 +3,28 @@ id: FR-131
 title: "Replay checks strong fairness on a model counterexample"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-016
+  - target: ix://agent-ix/filament-spec-language/US-016
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-129
+  - target: ix://agent-ix/filament-spec-language/FR-129
     type: depends_on
 ---
 # FR-131: Replay checks strong fairness on a model counterexample
 
 ## Description
 
-`qsl_replay::replay_model_trace` (FR-128) SHALL check every constraint of a
+`fsl_replay::replay_model_trace` (FR-128) SHALL check every constraint of a
 model counterexample's fairness set against its loop, weak and strong, with
 enabledness recomputed from the model, and refuse a lasso that fails a
 strong constraint as an unfair lasso (ADR-019 FS-8, SF-4). The
-`qsl-replay` settlement map (FR-127) SHALL settle an EN-1 counterexample that replay refuses as
+`fsl-replay` settlement map (FR-127) SHALL settle an EN-1 counterexample that replay refuses as
 unfair `inconclusive`, `ReplayParity`, since EN-1 builds only fair lassos
 (ADR-019 SV-4).
 
@@ -38,9 +38,9 @@ never taken.
 
 ## Semantic authority and boundary
 
-QSpec owns the counterexample wire with each constraint's kind and the rule
+FSpec owns the counterexample wire with each constraint's kind and the rule
 that replay recomputes enabledness and refuses an unfair lasso (ADR-019
-QS-5, QS-6; References). This requirement specifies QSL's replay check and
+QS-5, QS-6; References). This requirement specifies FSL's replay check and
 its settlement.
 
 ## Inputs
@@ -96,5 +96,5 @@ its settlement.
 
 ## References
 
-- QSpec FR-364 (replay) and FR-362 (the fairness set in the counterexample):
-  the QSpec half of ADR-019 QS-5 and QS-6 (Linear STD-132).
+- FSpec FR-364 (replay) and FR-362 (the fairness set in the counterexample):
+  the FSpec half of ADR-019 QS-5 and QS-6 (Linear STD-132).

@@ -3,23 +3,23 @@ id: FR-201
 title: "Check a probability certificate"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-200
+  - target: ix://agent-ix/filament-spec-language/FR-200
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-199
+  - target: ix://agent-ix/filament-spec-language/FR-199
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
 ---
 # FR-201: Check a probability certificate
@@ -27,10 +27,10 @@ relationships:
 ## Description
 
 EN-5 SHALL emit every proof with a `ProbabilityCertificate` (ADR-028 CE-1).
-QSpec FR-412 defines the certificate contract and the exact conditions its
+FSpec FR-412 defines the certificate contract and the exact conditions its
 checker verifies. The layer-6 facade entry
-`qsl_replay::check_probability_certificate` SHALL apply that contract using
-QSL's recompile, product enumeration and graph code, without an engine
+`fsl_replay::check_probability_certificate` SHALL apply that contract using
+FSL's recompile, product enumeration and graph code, without an engine
 present. It solves no equation and runs no iteration. The checker is part of
 the qualified core (ADR-028 CE-7): an EN-5 `proved` SHALL count only after
 this checker accepts its certificate.
@@ -73,7 +73,7 @@ The checker uses FR-338's `CertificateRejection{rule, at}`. FR-338's
 also uses FR-169's `RankMissing` and `RankBroken` and FR-163's `Malformed`.
 FR-338's `CertificateLocus` gains `ProbabilisticProductState(ProductKey)`,
 the complete FR-196 product key; the checker also uses FR-163's
-`CertificateMember`. QSpec FR-331 writes the first as its probabilistic
+`CertificateMember`. FSpec FR-331 writes the first as its probabilistic
 product state form `{product_key}` and the second as `{member}`.
 
 | Failure | `rule` | `at` |
@@ -100,15 +100,15 @@ product state form `{product_key}` and the second as `{member}`.
 ### Closed reachability document profile
 
 For untimed unbounded `eventually` reachability and the bounded subset below, the
-document codec SHALL implement the following QSL-owned profile of QSpec
+document codec SHALL implement the following FSL-owned profile of FSpec
 FR-412's open, nonempty `objective` object. This profile does not narrow the
 other objective obligations above and below; unsupported forms SHALL remain
 explicitly unsupported rather than be encoded as this profile.
 
 - The objective SHALL have exactly `profile`, `targets`, `optimization` and
   `fairness`. `profile` SHALL be
-  `"quire.probability-objective/reachability/v1"`; `targets` SHALL be the
-  complete set of reachable target product keys, transported using QSpec
+  `"filament.probability-objective/reachability/v1"`; `targets` SHALL be the
+  complete set of reachable target product keys, transported using FSpec
   FR-331's `ProbabilityProductKey`; `optimization` SHALL be `"minimum"`,
   `"maximum"` or `"workload"`; `fairness` SHALL be the empty array. An empty
   target set is valid. Targets are extensional evidence, not an expression
@@ -132,7 +132,7 @@ explicitly unsupported rather than be encoded as this profile.
 - The document SHALL have exactly `identity`, `objective`, `kind`, `values`
   and `ranking`, with `kind` equal to `"exact"`. Identity SHALL use the
   existing structural `{node_id, model, ordinal}` contract. Values SHALL
-  use QSpec's existing `{state, value}` rows and `Rational` representation
+  use FSpec's existing `{state, value}` rows and `Rational` representation
   `{numerator, denominator}`, both canonical decimal integer strings with
   a positive denominator (zero is `"0"/"1"`);
   ranking SHALL be required and use its existing `{state, rank}` rows and
@@ -143,7 +143,7 @@ explicitly unsupported rather than be encoded as this profile.
   reject malformed UTF-8/JSON, duplicate or unknown members, missing
   members, noncanonical bytes, nonreduced rationals, nonpositive
   denominators and noncanonical integer strings rather than normalize
-  them into accepted evidence. It SHALL use QSpec's existing unpadded
+  them into accepted evidence. It SHALL use FSpec's existing unpadded
   canonical base64url transport for state keys. `targets`, `values` and
   `ranking` SHALL each be strictly ascending by decoded complete canonical
   key octets, with no duplicate keys. Values and ranking SHALL cover
@@ -154,7 +154,7 @@ explicitly unsupported rather than be encoded as this profile.
   `ProbabilityProductKey::for_model_state` helper for the unbounded subset.
   The bounded subset SHALL use the existing complete formula-monitor
   representation, with null accumulator and pending components. The stale
-  five-component illustrative tuple in QSpec FR-412/schema documentation
+  five-component illustrative tuple in FSpec FR-412/schema documentation
   SHALL NOT cause binding to be dropped. Actual absent monitor,
   accumulator and pending components remain null. The reader SHALL admit
   keys against the checked subject and compare complete canonical octets;
@@ -180,19 +180,19 @@ explicitly unsupported rather than be encoded as this profile.
 #### Bounded event-position checking
 
 The bounded subset is a capability extension of the same
-`quire.probability-objective/reachability/v1` document contract: its members,
+`filament.probability-objective/reachability/v1` document contract: its members,
 extensional target meaning, optimization, fairness and complete-key transport
 do not change. Existing unbounded documents retain their meaning and admission.
 No second formula AST, opaque monitor id or public horizon field is introduced.
 
 - The checker SHALL independently construct the model/monitor product using
-  `qsl-eval`'s qualified property-automaton translation, initialization and
+  `fsl-eval`'s qualified property-automaton translation, initialization and
   transition semantics. It SHALL read position 0 during initialization and
   one subsequent position per observation step, including the inclusive
   position h. At a terminal model state it SHALL apply the existing FR-126
   profile false-extension closure, rather than invent model progress or
   infer acceptance from current predicate truth.
-- `qsl-eval` SHALL own a canonical monitor-state key operation alongside its
+- `fsl-eval` SHALL own a canonical monitor-state key operation alongside its
   existing automaton key ownership and a terminal false-extension operation
   usable by the qualified checker. Those operations SHALL preserve FR-196's
   checked formula/profile/origin/binding context and complete parsed FR-338
@@ -205,7 +205,7 @@ No second formula AST, opaque monitor id or public horizon field is introduced.
   have value 0; neither is expanded. Bellman equality applies at every
   undecided state over actual model/monitor successors.
 - Bounded ranks SHALL agree with the independently rederived remaining
-  event-position horizon/debts under QSpec FR-412's finite-horizon rule:
+  event-position horizon/debts under FSpec FR-412's finite-horizon rule:
   each undecided state's rank is its actual remaining future positions,
   and each decided state's rank is 0. Every undecided observation successor
   that remains undecided consumes one position. The checker SHALL reject
@@ -226,7 +226,7 @@ No second formula AST, opaque monitor id or public horizon field is introduced.
 
 For infinite-trace untimed `holds(A) until holds(B)` and `always holds(P)`
 over checked state predicates, the document codec SHALL admit a separate
-`"quire.probability-objective/state-predicate/v1"` profile. This does not
+`"filament.probability-objective/state-predicate/v1"` profile. This does not
 reinterpret `reachability/v1`. The new objective SHALL contain exactly
 `profile`, `event`, `targets`, `failures`, `optimization` and `fairness`.
 `event` SHALL be `"until"` or `"always"`; optimization and empty fairness
@@ -275,7 +275,7 @@ neither SHALL be trusted as a qualitative result supplied by EN-5.
   checker SHALL use FR-196's full binding-bearing model-state keys with
   absent monitor, accumulator and pending components null, as ADR-028 PR-6
   specifies. No local monitor handle, surrogate formula AST or synthetic
-  terminal model key SHALL be introduced. The qsl-eval qualified bounded
+  terminal model key SHALL be introduced. The fsl-eval qualified bounded
   monitor and false-extension closure are not the semantics of this
   infinite-trace subset; terminal stutter here has the same state predicates
   forever. Actual checked formula/profile/binding context SHALL determine
@@ -291,11 +291,11 @@ neither SHALL be trusted as a qualitative result supplied by EN-5.
   required to fail solely because its spelling differs; no invented formula
   identity field is added. Certificate proofs alone are extended here;
   this profile SHALL NOT authorize new FR-202 refutation semantics or
-  complete the blocked QSpec FR-413 witness wire.
+  complete the blocked FSpec FR-413 witness wire.
 
 ### Closed cyclic DTMC eventual document profile
 
-The codec SHALL admit `"quire.probability-objective/cyclic-dtmc-eventual/v1"`
+The codec SHALL admit `"filament.probability-objective/cyclic-dtmc-eventual/v1"`
 only for untimed infinite-trace unbounded `eventually holds(P)` over a checked
 state predicate. This is a separate closed profile: it SHALL NOT change the
 admission, canonical bytes or meaning of any existing profile. Its objective
@@ -362,13 +362,13 @@ No policy, component partition, formula AST or additional body field is added.
   values. The raw-model-key owner budget prerequisite remains open; this
   profile does not invent an upstream API or establish that prerequisite.
   Proof coverage alone is extended: FR-202 native cyclic refutations,
-  QSpec FR-413 wire, fairness, timed, long-run and reward coverage remain open.
+  FSpec FR-413 wire, fairness, timed, long-run and reward coverage remain open.
 
 ### Closed cyclic MDP eventual document profile
 
 For checked untimed infinite-trace `probability op c [eventually holds(P)]`
 claims over every scheduler, the codec SHALL additionally admit
-`"quire.probability-objective/cyclic-mdp-eventual/v1"`. This separate proof
+`"filament.probability-objective/cyclic-mdp-eventual/v1"`. This separate proof
 profile SHALL retain exactly the reachability objective's `profile`,
 `targets`, `optimization` and `fairness` members and the existing exact
 `identity`, `objective`, `kind`, `values` and `ranking` document body.
@@ -507,7 +507,7 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   for the other objectives, takes the `ModelSystem` admitted over a
   `CheckedPackage` and its `claims`, binds the claim by the item's node, and
   re-enumerates the product through that system with the checker's own graph
-  code and no `qsl-analyze` code; it decodes no wire and recompiles nothing,
+  code and no `fsl-analyze` code; it decodes no wire and recompiles nothing,
   as FR-193's replay over a package S4 does not emit (FR-185). A package with
   a random parameter, a workload or a reward has no emitted form, so
   `analyze` (FR-281) runs the checked-subject form for every EN-5 item. Both forms apply every condition of this requirement
@@ -522,9 +522,9 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   encoded request is bounded by `replay.input_bytes` before provision access;
   it SHALL re-admit `subject` and re-enumerate the product through
   `ModelSystem` and the monitor, using
-  `qsl-eval`'s property-automaton translation and enabledness (ADR-018
+  `fsl-eval`'s property-automaton translation and enabledness (ADR-018
   LA-5) and its own product enumeration and graph algorithms, and no
-  `qsl-analyze` code. It SHALL NOT accept or reuse an EN-5 solver product as
+  `fsl-analyze` code. It SHALL NOT accept or reuse an EN-5 solver product as
   trusted replay data: every
   reachable product state for an `Upper`, `Exact` or `LongRun` certificate,
   and the states the certificate names and their successors for a `Lower`
@@ -532,13 +532,13 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
 - It SHALL recompute the decided states, `Prob0` and `Prob1`, and components
   with its own graph code. When the objective has a fairness set, it SHALL
   derive the maximal fair end components using FR-200's refinement before
-  applying QSpec FR-412's certificate conditions.
-- It SHALL apply QSpec FR-412's exact-rational conditions and threshold-side
-  rule, and QSpec FR-331's rejection vocabulary. It SHALL accept when the
+  applying FSpec FR-412's certificate conditions.
+- It SHALL apply FSpec FR-412's exact-rational conditions and threshold-side
+  rule, and FSpec FR-331's rejection vocabulary. It SHALL accept when the
   conditions hold and the initial state's value is on the claim's side of the
   threshold, and report the side; otherwise it SHALL reject with the rule and
   locus the table above gives the first failing condition and state in
-  canonical order. QSL's internal rule and locus variants map to the published
+  canonical order. FSL's internal rule and locus variants map to the published
   forms as the table above specifies. It SHALL check the `Malformed` members
   before any re-enumeration.
 - For a `quantile q of M >= c` claim over every scheduler, proved by an
@@ -553,7 +553,7 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
 
 ### Verdict path
 
-- QSL's settlement map in `qsl-replay` SHALL run the checker on the
+- FSL's settlement map in `fsl-replay` SHALL run the checker on the
   certificate that left S6c over E11 and settle `proved` only on `Accepted`; `Rejected` SHALL settle
   `inconclusive`, `CertificateRejected`; `Stopped` SHALL settle V-7.
 - The checker's arithmetic and graph algorithms SHALL be code separate from
@@ -563,7 +563,7 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
 
 For checked `ProbForm::ExpectedReward` source claims `expected accumulate R
 until holds(B) op c` in the untimed infinite-trace profile, the codec SHALL
-admit the separate `"quire.probability-objective/expected-reward/v1"`
+admit the separate `"filament.probability-objective/expected-reward/v1"`
 objective. It SHALL have exactly `profile`, `targets`, `reward`,
 `unit`, `optimization` and `fairness`. `reward` SHALL use FR-196's existing
 `[model_node,identifier]` identity: the actual declaring model NodeId and
@@ -634,7 +634,7 @@ change the bytes or interpretation of either existing probability profile.
 
 For checked `expected accumulate R until holds(B) op c` claims under a
 fully resolved workload, the codec SHALL additionally admit
-`"quire.probability-objective/dtmc-expected-reward/v1"`. This finite-only
+`"filament.probability-objective/dtmc-expected-reward/v1"`. This finite-only
 proof profile SHALL retain exactly the acyclic reward objective's
 `profile`, `targets`, `reward`, `unit`, `optimization` and `fairness`
 members; `optimization` SHALL be `"workload"` and `fairness` empty. The
@@ -726,7 +726,7 @@ action transport, second reward expression or new unit algebra is added.
 
 For checked `expected accumulate R until holds(B) op c` every-scheduler
 claims, the codec SHALL additionally admit the distinct closed objective
-`"quire.probability-objective/cyclic-mdp-expected-reward/v1"`. It SHALL
+`"filament.probability-objective/cyclic-mdp-expected-reward/v1"`. It SHALL
 retain exactly the reward objective's `profile`, `targets`, `reward`,
 `unit`, `optimization` and `fairness` members, and the exact document's
 `identity`, `objective`, `kind`, `values` and `ranking` body. Kind SHALL be
@@ -825,7 +825,7 @@ is introduced.
 For a checked unweighted `long-run fraction holds(P)` claim under an
 authored workload in the untimed infinite-trace profile, the codec SHALL
 admit the separate objective profile
-`"quire.probability-objective/dtmc-long-run/v1"`. The objective SHALL have
+`"filament.probability-objective/dtmc-long-run/v1"`. The objective SHALL have
 exactly `profile`, `predicate_states`, `optimization` and `fairness`;
 `optimization` SHALL be `"workload"` and `fairness` SHALL be the empty
 array. `predicate_states` SHALL be the complete ascending set of reachable
@@ -861,7 +861,7 @@ not from that set, values, component rows or a producer's graph.
   original reachable graph, ordered by decoded complete key octets, with
   values in [0,1]. Reachability ranks or target labels SHALL NOT be used
   to substitute for long-run evidence.
-- Each component SHALL use QSpec FR-331's existing exact
+- Each component SHALL use FSpec FR-331's existing exact
   `{value, gain, bias}` shape. `value` is `rho_C` in [0,1]; `gain` SHALL
   equal `rho_C`, the average original unweighted indicator reward in
   FR-199's result. `bias` SHALL have exactly the existing `{state, value}`
@@ -935,7 +935,7 @@ not from that set, values, component rows or a producer's graph.
 
 For a checked `long-run fraction holds(P) weighted by R` claim under an
 authored workload, the codec SHALL admit the separate objective profile
-`"quire.probability-objective/dtmc-weighted-long-run/v1"`. Its objective
+`"filament.probability-objective/dtmc-weighted-long-run/v1"`. Its objective
 SHALL have exactly `profile`, `predicate_states`, `weight`, `unit`,
 `optimization` and `fairness`. `optimization` SHALL be `"workload"` and
 `fairness` SHALL be empty. `predicate_states` retains the unweighted
@@ -1040,7 +1040,7 @@ another same-dimension UnitId SHALL NOT substitute for that identity.
 ### Closed bounded fair eventual document profile
 
 The codec SHALL admit the separate profile
-`"quire.probability-objective/bounded-fair-eventual/v1"` only for
+`"filament.probability-objective/bounded-fair-eventual/v1"` only for
 origin-activated event-position `eventually[0,h] holds(P)`, finite integer
 h >= 0, checked state predicate P, untimed finite Markov models, one subject
 initial state, one admitted claim binding and a nonempty checked fairness
@@ -1056,7 +1056,7 @@ initial states/bindings and refutations remain outside this profile.
   profile's extensional meaning; optimization is `"minimum"` or
   `"maximum"`. Each fairness record SHALL contain exactly `fairness_kind`
   (`"weak"` or `"strong"`), `granularity` (`"whole"` or `"each"`) and
-  `target`. Target SHALL reuse QSpec FR-322-AC-293's closed model-operation
+  `target`. Target SHALL reuse FSpec FR-322-AC-293's closed model-operation
   variant of `TemporalFairnessTarget`: exactly `{kind: "operation",
   declaration: NodeId, name: Identifier}`. The declaration is the actual
   declaring model type's structural identity, not an alias, inferred
@@ -1127,7 +1127,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-4 | A proof whose certificate the checker accepts settles `proved`; with a checker `max_states` of 2 the check stops and the item settles `Incomplete(LimitReached{…})` naming `max_states`. The same applies while rederiving R/waiting components or checking randomized observation evidence, with the actual consumed value/setting retained. | Test (TC-636) |
 | FR-201-AC-5 | An `Opt` model whose initial state has the actions `go`, which activates and then sets `M` to 1 with probability `1/4` and to 3 with `3/4`, and `skip`, which never activates. For `quantile 0.5 of (M) >= 3` (`M` is a placeholder for the claim's parenthesised measure) over every scheduler, the `Upper` certificate with `y = 0` at the initial state and `−1/4` after `go` is accepted with side `AtLeast`: only `skip` is tight, and no activated state is reachable through it. The same claim over a variant whose `go` sets `M` to 1 and 3 with `1/2` each, with `y = 0` at both states, is rejected, naming the activated state after `go`, since `go` is tight. | Test (TC-636) |
 | FR-201-AC-7 | Given a `ReplayRequestWire` whose measured encoded size is `B`, when the checker receives caller-configured `ReplayLimits` with `input_bytes = B - 1`, it returns `ReplayRefusal::Request(ReplayRequestRefusal::BoundExceeded(BoundExceeded { bound: B - 1, actual: B }))` before byte-provision lookup or recompile. | Test |
-| FR-201-AC-6 | Rejection rules and loci: AC-1's certificate with `4/5` replaced by `9/10` is rejected `InequalityFails` at the `ProbabilisticProductState` of that first state; AC-2's `LongRun` certificate with the changed bias, `InequalityFails` at the `down` state; AC-3's `Lower` certificate with its ranking omitted, `Malformed` at `CertificateMember("ranking")` before any re-enumeration; AC-2's `Lower` certificate with one named non-target state's rank removed, `RankMissing` at it, and with that rank raised to the rank of its only positive successor, `RankBroken` at it; AC-1's accepted certificate offered for a `>=` threshold above its initial state's value, `ThresholdMissed` at the initial state; AC-5's rejected variant, `InequalityFails` at the activated state after `go`. Each rejection is written with QSpec FR-331's rule spelling at its `{product_key}` or `{member}` form. | Test (TC-1197) |
+| FR-201-AC-6 | Rejection rules and loci: AC-1's certificate with `4/5` replaced by `9/10` is rejected `InequalityFails` at the `ProbabilisticProductState` of that first state; AC-2's `LongRun` certificate with the changed bias, `InequalityFails` at the `down` state; AC-3's `Lower` certificate with its ranking omitted, `Malformed` at `CertificateMember("ranking")` before any re-enumeration; AC-2's `Lower` certificate with one named non-target state's rank removed, `RankMissing` at it, and with that rank raised to the rank of its only positive successor, `RankBroken` at it; AC-1's accepted certificate offered for a `>=` threshold above its initial state's value, `ThresholdMissed` at the initial state; AC-5's rejected variant, `InequalityFails` at the activated state after `go`. Each rejection is written with FSpec FR-331's rule spelling at its `{product_key}` or `{member}` form. | Test (TC-1197) |
 | FR-201-AC-8 | Over each of those ACs' own model, the checked-subject form gives the verdict, rule and locus that AC states: AC-1's certificate over §15.4's `Link`, including the `4/5` replaced by `9/10` rejection; AC-2's `LongRun` certificate over §15.3's model and its dyadic `Lower` certificate over §15.1's; AC-3's `FairTerminates` certificates over §15.6's `Coin` model, the fairness-removed one rejected; and AC-5's tight-action cases over its `Opt` model. | Test (TC-636) |
 | FR-201-AC-9 | For an admitted acyclic eventual claim, writing and reading the closed profile preserves identity, exact rational values, complete keys, targets and required ranks byte for byte. Duplicate/out-of-order rows, unreduced 2/4, denominator 0, missing ranking, extra fields, padded base64url and a model-only key are rejected. | Test |
 | FR-201-AC-10 | A valid document offered for another identity refuses before enumeration; replacing its targets or optimization while retaining valid Bellman rows refuses objective mismatch. A same-model key with a different binding is rejected rather than merged. Altering a value fails equality; removing or breaking positive-value rank progress fails ranking even when equalities hold. | Test |
@@ -1142,7 +1142,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-19 | For an acyclic two-step source with named integer reward R, initial choices a (cost 1, then cost 2 to B) and b (cost 4 directly to B) have exact minimum 3 and maximum 4. The minimum AtLeast 3 and maximum AtMost 4 documents accept at equality; thresholds 4 and 3 respectively reject ThresholdMissed. An equal-weight resolved workload has value 7/2 and accepts either bound at 7/2. Values above 1 are accepted; a probability-style target value 1 rejects. | Test |
 | FR-201-AC-20 | A draw-dependent authored reward of 2 or 6 with equal probability on an edge entering B gives value 4, including the entry cost. Swapping costs 2 and 6 between those equally probable draws preserves the value 4; the same certificate accepts after independent recomputation when every equation, target, identity and rank remains valid. Changing the costs to 2 and 8 falsifies the certified initial value 4 and rejects; substituting a fixed unit-step cost also rejects because its value 1 fails that equation. Initial B has value 0 even with an enabled positive-cost operation. A reached B absorbs a later positive-cost edge; a reached non-B terminal, including a zero-cost terminal, is explicitly unsupported under FR-198's nonreachability rule. A raw reachable cycle beyond B is unsupported before stopping. | Test |
 | FR-201-AC-21 | A checked quantity reward expressed as 2 ms and 6 ms under equal draws gives 4 ms and accepts a source threshold 0.004 s after exact checked-unit normalization. Wrong reward name/model, target set, optimization, binding or full key prevents acceptance; changing the claimed reward/unit identity with the same numeric magnitudes prevents objective acceptance. Equivalent independently rederived costs under the actual admitted subject remain valid; source changes alone do not imply a staleness rejection. A dimensionally wrong source bound preserves the typing refusal. Noncanonical, duplicate, omitted or oversized keys/rows/rationals refuse or stop under the actual caller control; missing/wrong ranks reject, including a zero-cost live state's wrong height. | Test |
-| FR-201-AC-22 | The checker independently checks analyze's AC-19 to AC-21 exact documents with no qsl-analyze/provider dependency or reused solver graph/cost labels. Negative/undefined reward evaluation, unsupported profile/kind, exhausted graph/arithmetic/representation budgets, pre-cancellation and cancellation during expansion or reward evaluation preserve typed nonacceptance without truth values. Existing reachability/v1 and state-predicate/v1 canonical bytes/verdicts are unchanged. | Test |
+| FR-201-AC-22 | The checker independently checks analyze's AC-19 to AC-21 exact documents with no fsl-analyze/provider dependency or reused solver graph/cost labels. Negative/undefined reward evaluation, unsupported profile/kind, exhausted graph/arithmetic/representation budgets, pre-cancellation and cancellation during expansion or reward evaluation preserve typed nonacceptance without truth values. Existing reachability/v1 and state-predicate/v1 canonical bytes/verdicts are unchanged. | Test |
 | FR-201-AC-23 | A DTMC s with probabilities 1/3 each to s, target g and non-target absorbing f has exact eventual probability 1/2; values (s,g,f)=(1/2,1,0), ranks (1,0,0) accept minimum AtLeast and maximum AtMost at 1/2. Target g absorbs despite its original outgoing cycle. An initial target has exact value 1 and accepts minimum AtLeast 1/2; a non-target terminal has exact value 0 under infinite stutter and accepts maximum AtMost 1/2. Thresholds 3/5 AtLeast and 2/5 AtMost reject ThresholdMissed for the mixed case. A target-free two-state closed cycle has exact values/ranks 0 and accepts maximum AtMost 1/2; assigning its states 1/2 despite valid harmonic equalities rejects. | Test |
 | FR-201-AC-24 | In a transient SCC, a goes to b with probability 1, b to a with 1/2, target g with 1/4 and closed failure f with 1/4. Values a=b=1/2, g=1, f=0 and ranks a=2,b=1,g=f=0 accept; both SCC members having condensation rank 1 rejects RankBroken. A fully authored workload at s choosing equally between deterministic return-to-s and a distribution g:1/3,f:2/3 resolves to s:1/2,g:1/6,f:1/3 and accepts exact value 1/3, rank 1 on either workload bound at equality; 2/5 AtLeast and 1/4 AtMost reject. | Test |
 | FR-201-AC-25 | AC-23/24 documents round-trip canonically; wrong values, distances, missing/extra coverage, foreign binding, altered complete model key, model-only key, changed derived targets/optimization or mismatched identity prevent acceptance. Changed source probabilities that falsify equations reject; equivalent source changes may accept. A live state with stay and exit scheduler choices refuses as unsupported even if a producer supplies a policy or equal values, including when that state lies beyond an early target. Unresolved workload, fairness, clocks, rewards, other formulas, multi-post and multiple bindings/initials remain unsupported. Existing profile bytes and verdicts are unchanged. | Test |
@@ -1183,8 +1183,8 @@ initial states/bindings and refutations remain outside this profile.
 
 ## References
 
-- QSpec half, which owns the certificate wire and the checker's conditions:
-  QSpec FR-412 (Linear STD-137).
+- FSpec half, which owns the certificate wire and the checker's conditions:
+  FSpec FR-412 (Linear STD-137).
 - ADR-029 (owning record of the qualified core and RU-2) is on its own draft
   branch: Linear QSL-390.
 - Owning ticket: Linear QSL-371.

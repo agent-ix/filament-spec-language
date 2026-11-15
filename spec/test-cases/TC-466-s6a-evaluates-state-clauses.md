@@ -3,7 +3,7 @@ id: TC-466
 title: "S6a evaluates state clauses over their observations, pre reads and reaches"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: verifies
 ---
 # TC-466: S6a evaluates state clauses over their observations, pre reads and reaches

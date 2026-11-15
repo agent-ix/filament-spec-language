@@ -13,8 +13,8 @@ cargo run --locked --example config_version_fixtures -- /tmp/config-version
 examples/config-version/requests.sh /tmp/config-version/healthy-parent ParentOrder
 ```
 
-QSL builds no executable. `run.json` is a `native-run/1` request for
-`quire_spec_language::command::run`, and `compile.json` a `native-compile/1`
+FSL builds no executable. `run.json` is a `native-run/1` request for
+`filament_spec_language::command::run`, and `compile.json` a `native-compile/1`
 request for `command::compile`; the test
 `walkthrough_requests_reproduce_the_documented_exit_codes` runs both:
 

@@ -3,7 +3,7 @@ id: TC-1000
 title: "An optional field, a collection element and a payload accept a child and refuse a parent or an unrelated record"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-359
+  - target: ix://agent-ix/filament-spec-language/FR-359
     type: verifies
 ---
 # TC-1000: An optional field, a collection element and a payload accept a child and refuse a parent or an unrelated record

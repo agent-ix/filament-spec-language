@@ -3,7 +3,7 @@ id: TC-583
 title: "Reductions route only to advertising candidates, need footprints, and enter the obligation identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-159
+  - target: ix://agent-ix/filament-spec-language/FR-159
     type: verifies
 ---
 # TC-583: Reductions route only to advertising candidates, need footprints, and enter the obligation identity
@@ -20,7 +20,7 @@ Fixtures: A test `TransitionSystem` without hooks; a registry with one candidate
 
 1. Request partial-order reduction over the test system; negotiate a `partial-order` request and a `symmetry` request against the registry.
 2. Compute the identities of the §7.1 claim with `[[a, b, c]]`, with no reduction, and with and without constraint `Low`; settle a request with `ReductionNotPreserving`.
-3. Validate EN-1's manifest entry against QSpec's backend-provider schema,
+3. Validate EN-1's manifest entry against FSpec's backend-provider schema,
    then the entry with `state-constraint` for `constraint`; negotiate a
    request selecting constraint `Low` against a registry whose only
    candidate advertises `["symmetry", "partial-order"]`, then with EN-1

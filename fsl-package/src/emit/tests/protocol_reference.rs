@@ -1,0 +1,1016 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-1021: a protocol reference expression resolves its target by typed
+//! node key and emits exactly the carrier FSpec FR-322-AC-66 specifies, next
+//! to the `protocol`/`protocol_clause` node it targets (FR-092-AC-16 to
+//! AC-18, FR-218-AC-8 and AC-9). Every emitted package is read back through
+//! IR's v2 reader.
+
+use filament_semantic_value::checking::CheckMode;
+use std::collections::BTreeMap;
+
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolConstruct, ProtocolReferenceCause};
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+
+use super::*;
+
+const PROTOCOL_PROFILE: &str = "filament.protocol.finite-global/v1";
+
+/// One protocol named `name`: a static role over the spine model's `Gadget`, an
+/// empty `run` sequence and a `finish`.
+fn protocol(name: &str) -> String {
+    format!(
+        "protocol {name} using p over (input: M::Gadget) on origin {{\n\
+         role R on M::Gadget;\n\
+         run sequence Main {{ }}\n\
+         finish End as (outcome: Boolean) {{ true }};\n\
+         }}\n"
+    )
+}
+
+/// The spine-model unit with `header` after its `v` profile, then
+/// `declarations`.
+fn unit(header: &str, declarations: &str) -> String {
+    let fixture = spine_model_without(&[FIELD_ACCESS, CONFORMING_EQUALITY]);
+    let fixture = fixture.replace(
+        "profile v = \"filament.model.complete/v1\";\n",
+        &format!("profile v = \"filament.model.complete/v1\";\n{header}"),
+    );
+    format!("{fixture}{declarations}")
+}
+
+/// `unit` with the protocol profile selected.
+fn selecting(declarations: &str) -> String {
+    unit(
+        &format!("profile p = \"{PROTOCOL_PROFILE}\";\n"),
+        declarations,
+    )
+}
+
+/// The refusals the spine-model unit `text` checks to.
+fn refusals(text: &str) -> Vec<CheckRefusal> {
+    let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
+    assemble_with_models(text.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("the unit refuses")
+}
+
+/// A unit over the ConfigVersion model whose one protocol `Flow` has `root`
+/// as its `run` root, with the protocol profile selected or not, and a
+/// function that refers to `Flow` or not.
+fn rooted(root: &str, profile: bool, reference: bool) -> String {
+    let profile = if profile {
+        format!("profile p = \"{PROTOCOL_PROFILE}\";\n")
+    } else {
+        String::new()
+    };
+    let function = if reference {
+        "function refers using v(): Boolean pure { protocol Flow }\n"
+    } else {
+        ""
+    };
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n{profile}\
+         model Config = \"example/config-version\";\n\
+         record Ack {{ ok: Boolean; }}\n\
+         {function}\
+         protocol Flow using p over (input: Config::ConfigVersion) on origin {{\n\
+         role R on Config::ConfigVersion;\n\
+         run {root}\n\
+         finish End as (outcome: Boolean) {{ true }};\n\
+         }}\n"
+    )
+}
+
+/// A post-test `repeat`, whose guard reads its body's binder: no node form.
+const POST_TEST_ROOT: &str = "sequence Main { repeat Again by R visible (e.ok) \
+     while { not e.ok } sequence Body { event E by R as (e: Ack) { true }; } }";
+
+const ATTEMPT_ROOT: &str = "attempt Update by R on Config::ConfigVersion::attemptUpdate \
+     contracts [] as (tried: Boolean) { true };";
+
+/// The refusal of a protocol that names `construct`, whose node is not
+/// written yet.
+pub(super) fn not_emitted(construct: ProtocolConstruct) -> CheckCause {
+    CheckCause::ProtocolReference(Box::new(ProtocolReferenceCause::NotEmitted { construct }))
+}
+
+/// FR-508: a protocol whose `run` root is an event node still builds its
+/// clause when the required protocol profile alias is selected.
+#[trace("FR-092-AC-18", "TC-1021")]
+#[test]
+fn a_non_control_root_emits_a_protocol_node_with_a_valid_profile_alias() {
+    let graph = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, false), false)
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    assert!(graph
+        .semantic_graph()
+        .nodes()
+        .any(|node| node.node_tag() == fsl_semantics::check::NodeTag::Protocol));
+}
+
+/// With a protocol profile selected, a protocol that names a construct
+/// whose node is not written yet refuses `unsupported_construct`/
+/// `not-yet-implemented` at its declaration, once for each such construct and
+/// naming the ticket that writes it, never an internal fault; a reference to
+/// it refuses with the first of them at the reference.
+#[trace("FR-092-AC-18", "FR-218-AC-8", "TC-1021")]
+#[test]
+fn an_unwritten_construct_refuses_a_selected_profile_and_a_reference_to_it() {
+    let attempt = not_emitted(ProtocolConstruct::PostTestRepeat);
+    assert_eq!(attempt.code(), fsl_foundation::Code::UnsupportedConstruct);
+    assert_eq!(attempt.cause(), Some("not-yet-implemented"));
+    for (construct, ticket) in [
+        (ProtocolConstruct::Relationships, "QSL-1141"),
+        (ProtocolConstruct::ChannelCarriesBounded, "QSL-1137"),
+        (ProtocolConstruct::ChannelKeyNotEqualityStable, "QSL-1142"),
+        (ProtocolConstruct::Control("parallel"), "QSL-1126"),
+        (ProtocolConstruct::PostTestRepeat, "STD-539"),
+        (ProtocolConstruct::ReferenceCycle, "QSL-844"),
+    ] {
+        assert_eq!(construct.tracking(), ticket, "{construct:?}");
+    }
+
+    let declared = check_attempt_unit(&rooted(POST_TEST_ROOT, true, false), false)
+        .expect_err("the protocol names an unwritten construct");
+    assert_eq!(
+        declared.iter().map(|r| &r.cause).collect::<Vec<_>>(),
+        [&attempt]
+    );
+
+    let referred = check_attempt_unit(&rooted(POST_TEST_ROOT, true, true), false)
+        .expect_err("the reference refuses too");
+    assert_eq!(referred.len(), 2, "{referred:?}");
+    assert!(referred.iter().all(|r| r.cause == attempt));
+    assert_ne!(referred[0].location, referred[1].location);
+}
+
+/// A protocol with an `attempt` is written after the state clauses its
+/// `contracts` name, so a function that refers to it cannot be keyed before
+/// the clauses: the reference refuses typed (`not-yet-implemented`,
+/// QSL-1121g), while the protocol alone checks.
+#[trace("FR-092-AC-18", "TC-1021")]
+#[test]
+fn a_function_referring_to_a_protocol_with_an_attempt_refuses_typed() {
+    check_attempt_unit(&rooted(ATTEMPT_ROOT, true, false), false)
+        .unwrap_or_else(|refusals| panic!("the attempt protocol checks: {refusals:?}"));
+    let construct = ProtocolConstruct::ReferenceToAttemptProtocol;
+    assert_eq!(construct.tracking(), "QSL-1121g");
+    let refusals = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, true), false)
+        .expect_err("the reference refuses");
+    assert_eq!(
+        refusals.iter().map(|r| &r.cause).collect::<Vec<_>>(),
+        [&not_emitted(construct)]
+    );
+}
+
+/// FR-383-AC-18, TC-1297: a refused earlier declaration does not shift the
+/// source-indexed attempt facts for the later checked protocol.
+#[trace("FR-383-AC-18", "TC-1297")]
+#[test]
+fn a_later_attempt_protocol_lowers_after_an_earlier_refusal() {
+    let broken = "protocol Broken using p over (input: Config::ConfigVersion) on origin {\n\
+         role R on Config::ConfigVersion;\n\
+         run sequence Main { parallel Par { branch a sequence A { } branch b sequence B { } } join all [a, ghost]; }\n\
+         finish End as (outcome: Boolean) { true };\n\
+         }\n";
+    let later = format!(
+        "protocol Later using p over (input: Config::ConfigVersion) on origin {{\n\
+         role R on Config::ConfigVersion;\n\
+         run sequence Main {{ {ATTEMPT_ROOT} }}\n\
+         finish End as (outcome: Boolean) {{ true }};\n\
+         }}\n"
+    );
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile p = \"{PROTOCOL_PROFILE}\";\n\
+         model Config = \"example/config-version\";\n{broken}{later}"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-1497"),
+        "program.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 admits the two declarations");
+    let raw = parsed.source().reference().clone();
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the declarations");
+    let checked = PackageDeclarations::assemble(
+        raw,
+        "pkg".to_owned(),
+        unit,
+        vec![super::config_version_model(false)],
+        Vec::new(),
+    )
+    .expect("the declarations assemble")
+    .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
+    .expect("protocol-local S3 refusal is retained");
+    assert_eq!(checked.protocol_refusals().len(), 1);
+    assert_eq!(checked.protocol_refusals()[0].declaration, "Broken");
+
+    let package = CheckedPackage::link(checked);
+    let results = emit_checked_with_protocol_results(&package)
+        .expect("the later protocol with an attempt emits independently");
+    let [ProtocolEmissionResult::Refused {
+        declaration: refused,
+        ..
+    }, ProtocolEmissionResult::Emitted {
+        declaration: emitted,
+        nodes,
+        ..
+    }] = results.results()
+    else {
+        panic!("the independent results retain both declarations");
+    };
+    assert_eq!(refused, "Broken");
+    assert_eq!(emitted, "Later");
+    assert!(nodes.iter().any(|node| {
+        node["semantic_form"] == "control"
+            && node["body"]["operation"]["member"]["operator"] == "attempt"
+    }));
+}
+
+pub(super) fn node_of<'w>(wire: &'w Value, tag: &str, form: &str) -> &'w Value {
+    let matching: Vec<&Value> = nodes(wire)
+        .iter()
+        .filter(|node| node["node_tag"] == tag && node["semantic_form"] == form)
+        .collect();
+    let [node] = matching[..] else {
+        panic!("one {tag}/{form} node: {matching:#?}");
+    };
+    node
+}
+
+/// The node `digest` names.
+pub(super) fn node_by_id<'w>(wire: &'w Value, id: &Value) -> &'w Value {
+    nodes(wire)
+        .iter()
+        .find(|node| &node["node_id"] == id)
+        .unwrap_or_else(|| panic!("a node {id}"))
+}
+
+/// The value of the clause argument `name`, after checking that the clause
+/// holds its thirteen arguments in FR-464's order.
+pub(super) fn clause_argument<'w>(clause: &'w Value, name: &str) -> &'w Value {
+    let arguments = clause["body"]["arguments"].as_array().unwrap();
+    let names: Vec<&str> = arguments
+        .iter()
+        .map(|argument| argument["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "over",
+            "activation",
+            "captures",
+            "roles",
+            "relationships",
+            "channels",
+            "queues",
+            "requirements",
+            "compensations",
+            "terminal",
+            "scheduling",
+            "run",
+            "finish"
+        ]
+    );
+    arguments
+        .iter()
+        .find(|argument| argument["name"] == name)
+        .map(|argument| &argument["value"])
+        .unwrap()
+}
+
+/// The graph the clause `Fill` is the root of: the `over` binder at level 0,
+/// an `origin` activation, one static role, the `run` sequence and the
+/// `finish` obligation, each its own node declared at its FR-464 path, and
+/// every set but `roles` empty.
+fn assert_clause_graph(wire: &Value, clause: &Value) {
+    let reference = |value: &Value| -> &Value {
+        assert_eq!(value["term"], "reference");
+        node_by_id(wire, &value["target"])
+    };
+    let level = |parameter: &Value| -> (String, String) {
+        let members = parameter["body"]["members"].as_array().unwrap();
+        (
+            members[0]["value"]["value"].as_str().unwrap().to_owned(),
+            members[1]["value"]["value"].as_str().unwrap().to_owned(),
+        )
+    };
+    let over = reference(clause_argument(clause, "over"));
+    assert_eq!(
+        (over["node_tag"].as_str(), over["semantic_form"].as_str()),
+        (Some("value"), Some("parameter"))
+    );
+    assert_eq!(level(over), ("input".to_owned(), "0".to_owned()));
+    assert_eq!(
+        clause_argument(clause, "activation"),
+        &json!({"term": "aggregate", "members": [{
+            "term": "binding", "name": "kind",
+            "value": {"term": "literal", "value": "origin", "value_kind": "text",
+                      "type": clause_argument(clause, "activation")["members"][0]["value"]["type"]}
+        }]})
+    );
+    for empty in [
+        "captures",
+        "relationships",
+        "channels",
+        "queues",
+        "requirements",
+        "compensations",
+        "terminal",
+        "scheduling",
+    ] {
+        assert_eq!(
+            clause_argument(clause, empty),
+            &json!({"term": "aggregate", "members": []}),
+            "{empty}"
+        );
+    }
+
+    let roles = clause_argument(clause, "roles")["members"]
+        .as_array()
+        .unwrap();
+    let [role] = roles.as_slice() else {
+        panic!("one role: {roles:?}");
+    };
+    let role = reference(role);
+    assert_eq!(role["semantic_form"], "role");
+    assert_eq!(
+        role["declaration"]["qualified_name"],
+        json!(["Fill", "role", "R"])
+    );
+    assert_eq!(role["body"]["operation"]["member"]["operator"], "role");
+    assert_eq!(
+        role["body"]["arguments"][1]["value"],
+        json!({"term": "aggregate", "members": []}),
+        "a static role replicates nothing"
+    );
+    let model = reference(&role["body"]["arguments"][0]["value"]);
+    assert_eq!(model["semantic_form"], "object_type");
+
+    let run = reference(clause_argument(clause, "run"));
+    assert_eq!(run["semantic_form"], "control");
+    assert_eq!(
+        run["declaration"]["qualified_name"],
+        json!(["Fill", "run", "Main"])
+    );
+    assert_eq!(run["body"]["operation"]["member"]["operator"], "sequence");
+    assert_eq!(
+        run["body"]["arguments"],
+        json!([{"term": "binding", "name": "children", "value": {"term": "aggregate", "members": []}}])
+    );
+
+    let finish = reference(clause_argument(clause, "finish"));
+    assert_eq!(finish["semantic_form"], "obligation");
+    assert_eq!(
+        finish["declaration"]["qualified_name"],
+        json!(["Fill", "finish", "End"])
+    );
+    assert_eq!(finish["body"]["operation"]["member"]["operator"], "finish");
+    let binder = reference(&finish["body"]["arguments"][0]["value"]);
+    assert_eq!(
+        level(binder),
+        ("outcome".to_owned(), "1".to_owned()),
+        "after `over`"
+    );
+    let constraint = reference(&finish["body"]["arguments"][1]["value"]);
+    assert_eq!(constraint["body"]["value"], json!(true));
+}
+
+const REFERS_TO_FILL: &str = "function refers using v(): Boolean pure { protocol Fill }\n";
+
+/// The spine-model unit whose protocol `Flow` has two roles and a channel
+/// between them, so a queue is generated (FR-465).
+pub(super) fn channel_unit() -> String {
+    selecting(
+        "protocol Flow using p over (input: M::Gadget) on origin {\n\
+         role R on M::Gadget;\nrole S on M::Gadget;\n\
+         channel C from R to S carries Boolean ordering unordered \
+         delivery at-least-once capacity 4 overflow block;\n\
+         run sequence Main { }\n\
+         finish End as (outcome: Boolean) { true };\n\
+         }\n",
+    )
+}
+
+/// The unit TC-1021 step 3 emits: `Fill`, and a function that refers to it.
+pub(super) fn reference_unit() -> String {
+    selecting(&format!("{REFERS_TO_FILL}{}", protocol("Fill")))
+}
+
+/// FR-092-AC-16, FR-092-AC-18 (TC-1021 step 3): the unit emits the target
+/// `protocol_clause` node and the one `protocol_reference` carrier, and
+/// IR's reader admits it.
+#[trace("FR-092-AC-16", "FR-092-AC-18", "TC-1021")]
+#[test]
+fn a_reference_emits_the_target_node_and_one_carrier_the_reader_admits() {
+    let text = reference_unit();
+    let (emission, wire, read) = emit_model_unit(&text, None);
+    assert_eq!(emission.omitted, []);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+
+    let protocol_nodes: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["node_tag"] == "protocol")
+        .collect();
+    assert_eq!(protocol_nodes.len(), 5);
+    let clause = node_of(&wire, "protocol", "protocol_clause");
+    let reference = node_of(&wire, "protocol", "protocol_reference");
+
+    // AC-18: the target node.
+    let law = json!({
+        "role": "protocol_profile",
+        "definition": {"authority": "agent-ix", "identity": PROTOCOL_PROFILE},
+    });
+    assert_eq!(clause["body"]["term"], "application");
+    assert_eq!(clause["body"]["operator"], "protocol_control");
+    assert_eq!(
+        clause["body"]["operation"]["identity"],
+        "filament.op.protocol.control"
+    );
+    assert_eq!(clause["body"]["operation"]["laws"], json!([law]));
+    assert_eq!(
+        clause["body"]["operation"]["member"],
+        json!({"kind": "profile_operator", "operator": "protocol"})
+    );
+    assert_clause_graph(&wire, clause);
+    assert_eq!(clause["declaration"]["qualified_name"], json!(["Fill"]));
+    assert_eq!(
+        clause["occurrences"],
+        json!([{"role": "declaration", "ordinal": 0}])
+    );
+    let boolean = nodes(&wire)
+        .iter()
+        .find(|node| node["node_tag"] == "scalar_type" && node["semantic_form"] == "boolean")
+        .expect("the Boolean scalar type node is written");
+    assert_eq!(clause["semantic_type"], boolean["node_id"]);
+    assert_eq!(clause["body"]["result_type"], boolean["node_id"]);
+    assert_eq!(wire["lock"]["profile_selections"], json!([law]));
+
+    // AC-16: the carrier.
+    assert_eq!(
+        reference["body"],
+        json!({"term": "reference", "target": clause["node_id"]})
+    );
+    assert_eq!(reference["semantic_type"], clause["semantic_type"]);
+    assert_eq!(reference["dependencies"], json!([clause["node_id"]]));
+    assert_eq!(
+        reference["occurrences"],
+        json!([{"role": "expression", "ordinal": 0}])
+    );
+    for absent in ["declaration", "owner"] {
+        assert!(
+            reference.get(absent).is_none_or(Value::is_null),
+            "{absent}: {reference}"
+        );
+    }
+    assert!(reference.get("recursion_group").is_none_or(Value::is_null));
+    assert!(wire.get("protocol_references").is_none());
+    assert!(wire["semantic_graph"].get("protocol_references").is_none());
+
+    // The reference is placed at the two tokens of `protocol Fill`.
+    let entries: Vec<&Value> = wire["source_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["node_id"] == reference["node_id"])
+        .collect();
+    let [entry] = entries[..] else {
+        panic!("one source-map entry: {entries:?}");
+    };
+    assert_eq!(entry["role"], "expression");
+    let region = &entry["regions"][0];
+    let start = usize::try_from(region["start"].as_u64().unwrap()).unwrap();
+    let end = usize::try_from(region["end"].as_u64().unwrap()).unwrap();
+    assert_eq!(&text[start..end], "protocol Fill");
+}
+
+/// FR-092-AC-16, FR-092-AC-18: an `each` trigger, a nested `run` tree, two
+/// static roles and `scheduling adversarial` emit the
+/// graph IR admits: the trigger at level 1 and the finish binder after it,
+/// the child control declared under its holder, the roles ascending by digest
+/// with the whole-model role's `model` the selection's text identity, and the
+/// adversarial text.
+#[trace("FR-092-AC-16", "FR-092-AC-18", "TC-1021")]
+#[test]
+fn a_trigger_nested_runs_roles_and_scheduling_emit_what_the_reader_admits() {
+    let text = selecting(
+        "protocol Flow using p over (input: M::Gadget) on each (gadget: M::Gadget) {\n\
+         role R on M::Gadget;\n\
+         role W on M::Widget;\n\
+         scheduling adversarial;\n\
+         run sequence Outer { sequence Inner { } }\n\
+         finish End as (outcome: Boolean) { true };\n\
+         }\n",
+    );
+    let (emission, wire, read) = emit_model_unit(&text, None);
+    assert_eq!(emission.omitted, []);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let clause = node_of(&wire, "protocol", "protocol_clause");
+    let reference = |value: &Value| node_by_id(&wire, &value["target"]);
+    let level = |parameter: &Value| {
+        parameter["body"]["members"][1]["value"]["value"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+
+    let activation = clause_argument(clause, "activation")["members"]
+        .as_array()
+        .unwrap();
+    assert_eq!(activation[0]["value"]["value"], "each");
+    assert_eq!(activation[1]["name"], "trigger");
+    let trigger = reference(&activation[1]["value"]);
+    assert_eq!(level(trigger), "1");
+    assert_eq!(level(reference(clause_argument(clause, "over"))), "0");
+    let finish = reference(clause_argument(clause, "finish"));
+    assert_eq!(
+        level(reference(&finish["body"]["arguments"][0]["value"])),
+        "2",
+        "the finish binder follows `over` and the trigger"
+    );
+
+    let scheduling = clause_argument(clause, "scheduling")["members"]
+        .as_array()
+        .unwrap();
+    assert_eq!(scheduling.len(), 1);
+    assert_eq!(scheduling[0]["value"], "adversarial");
+
+    let outer = reference(clause_argument(clause, "run"));
+    assert_eq!(
+        outer["declaration"]["qualified_name"],
+        json!(["Flow", "run", "Outer"])
+    );
+    let children = outer["body"]["arguments"][0]["value"]["members"]
+        .as_array()
+        .unwrap();
+    let [inner] = children.as_slice() else {
+        panic!("one child: {children:?}");
+    };
+    assert_eq!(
+        reference(inner)["declaration"]["qualified_name"],
+        json!(["Flow", "run", "Outer", "Inner"])
+    );
+
+    let roles = clause_argument(clause, "roles")["members"]
+        .as_array()
+        .unwrap();
+    let digests: Vec<filament_exact::NodeKey> = roles
+        .iter()
+        .map(|role| {
+            fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
+                .unwrap()
+                .key_of_value(&role["target"])
+                .expect("a node id")
+        })
+        .collect();
+    assert_eq!(digests.len(), 2);
+    assert!(
+        digests.windows(2).all(|pair| pair[0] < pair[1]),
+        "ascending: {digests:?}"
+    );
+    let models: Vec<&str> = roles
+        .iter()
+        .map(|role| {
+            reference(&reference(role)["body"]["arguments"][0]["value"])["semantic_form"]
+                .as_str()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        models,
+        ["object_type", "object_type"],
+        "each role refers to its type's node"
+    );
+}
+
+/// FR-464 "Sets": the order of `roles` follows the node digests, not the
+/// source order, so swapping two roles' order in the source leaves the
+/// clause's `roles` argument unchanged.
+#[trace("FR-464-AC-3", "TC-1021")]
+#[test]
+fn the_roles_set_does_not_follow_source_order() {
+    let source = |first: &str, second: &str| {
+        selecting(&format!(
+            "protocol Flow using p over (input: M::Gadget) on origin {{\n\
+             {first}\n{second}\n\
+             run sequence Main {{ }}\n\
+             finish End as (outcome: Boolean) {{ true }};\n\
+             }}\n"
+        ))
+    };
+    let roles_of = |text: &str| {
+        let (_, wire, read) = emit_model_unit(text, None);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        let clause = node_of(&wire, "protocol", "protocol_clause");
+        clause_argument(clause, "roles").clone()
+    };
+    let (gadget, widget) = ("role R on M::Gadget;", "role W on M::Widget;");
+    let in_order = roles_of(&source(gadget, widget));
+    assert_eq!(in_order["members"].as_array().unwrap().len(), 2);
+    assert_eq!(in_order, roles_of(&source(widget, gadget)));
+}
+
+/// FR-383-AC-23: selected whole-model identities are emitted as literal text,
+/// without a model dependency or replication group, and survive the I2 read.
+#[trace("FR-383-AC-23", "TC-1021")]
+#[test]
+fn a_whole_model_role_is_emitted_and_admitted() {
+    fn replace_strings(value: &mut Value, from: &str, to: &str) {
+        match value {
+            Value::String(text) => *text = text.replace(from, to),
+            Value::Array(values) => {
+                for value in values {
+                    replace_strings(value, from, to);
+                }
+            }
+            Value::Object(fields) => {
+                for value in fields.values_mut() {
+                    replace_strings(value, from, to);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut model_m: Value = serde_json::from_slice(SPINE_MODEL_DOCUMENT).unwrap();
+    let cell = model_m["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|ty| ty["displayName"] == "Rock")
+        .expect("the fixture has an unused entity type to name Cell");
+    cell["identity"] = json!("ix://acme/orders/Cell");
+    cell["displayName"] = json!("Cell");
+    cell["origin"]["generated"]["inputIdentities"] = json!(["ix://acme/orders/Cell"]);
+    let model_m = crate::emit::tests::wire_bytes(&model_m).unwrap();
+    let mut model_n_value: Value = serde_json::from_slice(&model_m).unwrap();
+    replace_strings(&mut model_n_value, "acme/orders", "acme/other-orders");
+    let model_n = crate::emit::tests::wire_bytes(&model_n_value).unwrap();
+    let model_m_identity = package_identity(&model_m);
+    let model_n_identity = package_identity(&model_n);
+    assert_ne!(model_m_identity, model_n_identity);
+
+    let text = selecting(
+        "protocol Flow using p over (input: M::Gadget) on origin {\n\
+         role w on M;\n\
+         role u on N;\n\
+         role v on M::Cell;\n\
+         run sequence Main { }\n\
+         finish End as (outcome: Boolean) { true };\n\
+         }\n",
+    )
+    .replace(
+        "model M = \"acme/orders\";",
+        "model M = \"acme/orders\";\nmodel N = \"acme/other-orders\";",
+    );
+    let models =
+        fsl_semantics::model::intake::package_input([model_m.as_slice(), model_n.as_slice()])
+            .unwrap();
+    let graph = assemble_with_models(text.as_bytes(), &models)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("whole-model role should be admitted: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let clause = node_of(&wire, "protocol", "protocol_clause");
+    let role_nodes: Vec<&Value> = clause_argument(clause, "roles")["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|reference| node_by_id(&wire, &reference["target"]))
+        .collect();
+    let role = |name: &str| {
+        role_nodes
+            .iter()
+            .copied()
+            .find(|node| node["declaration"]["qualified_name"] == json!(["Flow", "role", name]))
+            .unwrap_or_else(|| panic!("role {name} is emitted: {role_nodes:?}"))
+    };
+    let whole_m = role("w");
+    let whole_n = role("u");
+    let cell_role = role("v");
+    for (role, selected_identity) in [(whole_m, model_m_identity), (whole_n, model_n_identity)] {
+        assert_eq!(
+            role["body"]["arguments"][0]["value"]["value"], selected_identity,
+            "the whole-model argument is the selected package identity"
+        );
+        assert_eq!(
+            role["body"]["arguments"][1]["value"],
+            json!({"term": "aggregate", "members": []}),
+            "whole-model roles have an empty replication group"
+        );
+        let dependencies = role["dependencies"]
+            .as_array()
+            .expect("role dependencies are an array");
+        assert!(
+            dependencies.iter().all(|dependency| {
+                !wire["semantic_graph"]["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|node| node["node_id"] == *dependency && node["node_tag"] == "model")
+            }),
+            "whole-model roles do not depend on an emitted model node"
+        );
+    }
+    assert_ne!(whole_m["node_id"], whole_n["node_id"]);
+    assert_ne!(whole_m["node_id"], cell_role["node_id"]);
+
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    for document in [&model_m, &model_n] {
+        evidence
+            .insert_domain_package_document(package_identity(document), document.as_slice())
+            .expect("each selected model document is I2 evidence");
+    }
+    let read = read_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    );
+    assert!(
+        matches!(read, Read::Verified { .. }),
+        "the reader admits roles: {read:?}"
+    );
+}
+
+/// FR-464 "Term shapes": a `sequence`'s `children` are an ordered list whose
+/// order is the execution order, so it is the source order, not the name or
+/// the digest order: three children in two source orders each come back in
+/// the order written.
+#[trace("TC-1021")]
+#[test]
+fn a_sequences_children_follow_the_source_order() {
+    let children_of = |order: [&str; 3]| -> Vec<String> {
+        let body: String = order
+            .iter()
+            .map(|name| format!("sequence {name} {{ }} "))
+            .collect();
+        let text = selecting(&format!(
+            "protocol Flow using p over (input: M::Gadget) on origin {{\n\
+             role R on M::Gadget;\n\
+             run sequence Main {{ {body} }}\n\
+             finish End as (outcome: Boolean) {{ true }};\n\
+             }}\n"
+        ));
+        let (_, wire, read) = emit_model_unit(&text, None);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        let clause = node_of(&wire, "protocol", "protocol_clause");
+        let run = node_by_id(
+            &wire,
+            clause_argument(clause, "run")["target"]
+                .as_object()
+                .map(|_| &clause_argument(clause, "run")["target"])
+                .unwrap(),
+        );
+        run["body"]["arguments"][0]["value"]["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|child| {
+                let node = node_by_id(&wire, &child["target"]);
+                node["declaration"]["qualified_name"]
+                    .as_array()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    };
+    assert_eq!(
+        children_of(["Zeta", "Alpha", "Mid"]),
+        ["Zeta", "Alpha", "Mid"]
+    );
+    assert_eq!(
+        children_of(["Mid", "Alpha", "Zeta"]),
+        ["Mid", "Alpha", "Zeta"]
+    );
+}
+
+/// FR-464-AC-3: a protocol's `protocol_clause` key follows its own content
+/// and nothing else: two distinct protocols have distinct keys, and
+/// declaring them in the other order leaves each key unchanged.
+#[trace("FR-464-AC-3", "TC-1021")]
+#[test]
+fn a_clause_key_is_distinct_per_protocol_and_independent_of_declaration_order() {
+    let keys_of = |declarations: &str| -> BTreeMap<String, String> {
+        let (_, wire, read) = emit_model_unit(&selecting(declarations), None);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        nodes(&wire)
+            .iter()
+            .filter(|node| node["semantic_form"] == "protocol_clause")
+            .map(|node| {
+                (
+                    node["declaration"]["qualified_name"][0]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                    node["node_id"].to_string(),
+                )
+            })
+            .collect()
+    };
+    let (fill, drain) = (protocol("Fill"), protocol("Drain"));
+    let forward = keys_of(&format!("{fill}{drain}"));
+    assert_eq!(forward.len(), 2);
+    assert_ne!(forward["Fill"], forward["Drain"]);
+    assert_eq!(forward, keys_of(&format!("{drain}{fill}")));
+}
+
+/// FR-383-AC-15: unrelated protocols cannot alter Fill's protocol node bytes,
+/// and changing a reachable finish node changes the clause key.
+#[trace("FR-383-AC-15", "TC-1062")]
+#[test]
+fn protocol_nodes_are_stable_around_unrelated_declarations() {
+    let emitted_nodes = |declarations: &str| {
+        let (emission, resolved_wire, read) = emit_model_unit(&selecting(declarations), None);
+        let wire = crate::emit::tests::raw_wire(&emission);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        let mut owned: Vec<Value> = nodes(&wire)
+            .iter()
+            .filter(|node| node["declaration"]["qualified_name"][0] == "Fill")
+            .cloned()
+            .collect();
+        owned.sort_by_key(|node| node["node_id"].to_string());
+        let clause = nodes(&wire)
+            .iter()
+            .find(|node| {
+                node["semantic_form"] == "protocol_clause"
+                    && node["declaration"]["qualified_name"][0] == "Fill"
+            })
+            .expect("the Fill protocol clause")["node_id"]
+            .clone();
+        let clause_wire = {
+            let at = nodes(&wire)
+                .iter()
+                .position(|node| node["node_id"] == clause)
+                .expect("the clause is a node");
+            nodes(&resolved_wire)[at]["node_id"].clone()
+        };
+        // The clause and every node it reaches through dependencies, each
+        // with every id it holds resolved to its structural key: node bytes
+        // alone name no node (FR-322).
+        let graph = WireGraph::of_package_value(&resolved_wire).unwrap();
+        let resolved_nodes = nodes(&resolved_wire);
+        let mut pending = vec![resolved_nodes
+            .iter()
+            .position(|node| node["node_id"] == clause_wire)
+            .expect("the clause is a node")];
+        let mut reached = std::collections::BTreeSet::new();
+        let mut closure = Vec::new();
+        while let Some(at) = pending.pop() {
+            if !reached.insert(at) {
+                continue;
+            }
+            let node = &resolved_nodes[at];
+            closure.push(graph.structural_value(node).unwrap().to_string());
+            for dependency in node["dependencies"].as_array().unwrap() {
+                let key = graph.key_of_value(dependency).unwrap();
+                pending.push(graph.index_of(&key).unwrap() as usize);
+            }
+        }
+        closure.sort();
+        let clause = closure;
+        (owned, clause)
+    };
+
+    let fill = protocol("Fill");
+    let isolated = emitted_nodes(&fill);
+    let surrounded = emitted_nodes(&format!(
+        "{}{}{}",
+        protocol("Before"),
+        fill,
+        protocol("After")
+    ));
+    assert_eq!(
+        isolated.0, surrounded.0,
+        "unrelated declarations do not alter Fill's complete protocol node bytes"
+    );
+
+    let changed = fill.replace("{ true };", "{ false };");
+    assert_ne!(changed, fill, "the reachable finish expression changes");
+    let (_, changed_clause) = emitted_nodes(&changed);
+    assert_ne!(
+        changed_clause, isolated.1,
+        "a changed reachable finish node changes the clause key"
+    );
+}
+
+/// FR-218-AC-8 (TC-1021 step 4): an unknown name, a name only qualified, a
+/// name that resolves to a function and a second reference to one target.
+#[trace("FR-218-AC-8", "TC-1021")]
+#[test]
+fn unresolved_non_protocol_and_repeated_references_refuse_by_cause() {
+    let flow = protocol("Fill");
+    let missing = refusals(&selecting(&format!(
+        "function refers using v(): Boolean pure {{ protocol Missing }}\n{flow}"
+    )));
+    let [missing] = missing.as_slice() else {
+        panic!("one refusal: {missing:?}");
+    };
+    assert_eq!(missing.cause, CheckCause::MissingName("Missing".to_owned()));
+
+    let qualified = refusals(&selecting(&format!(
+        "function refers using v(): Boolean pure {{ protocol M::Fill }}\n{flow}"
+    )));
+    let [qualified] = qualified.as_slice() else {
+        panic!("one refusal: {qualified:?}");
+    };
+    assert_eq!(
+        qualified.cause,
+        CheckCause::MissingName("M::Fill".to_owned())
+    );
+
+    let function = refusals(&selecting(&format!(
+        "function other using v(): Boolean pure {{ true }}\n\
+         function refers using v(): Boolean pure {{ protocol other }}\n{flow}"
+    )));
+    let [function] = function.as_slice() else {
+        panic!("one refusal: {function:?}");
+    };
+    assert_eq!(function.cause.code(), fsl_foundation::Code::IllTyped);
+    assert_eq!(function.cause.cause(), Some("operator-ineligible"));
+
+    let twice = refusals(&selecting(&format!(
+        "function refers using v(): Boolean pure {{ protocol Fill and protocol Fill }}\n{flow}"
+    )));
+    let [twice] = twice.as_slice() else {
+        panic!("one refusal: {twice:?}");
+    };
+    assert_eq!(
+        twice.cause.code(),
+        fsl_foundation::Code::UnsupportedConstruct
+    );
+    assert_eq!(twice.cause.cause(), Some("expression-form"));
+    let CheckCause::ProtocolReference(cause) = &twice.cause else {
+        panic!("a protocol reference cause: {twice:?}");
+    };
+    assert_ne!(
+        cause.first(),
+        Some(&twice.location),
+        "names the first reference"
+    );
+}
+
+/// FR-508: a protocol whose `using` alias is absent keeps the existing
+/// `MissingProfile` classification.
+#[trace("FR-092-AC-18", "TC-1021")]
+#[test]
+fn a_reference_with_a_missing_protocol_profile_alias_refuses_missing_profile() {
+    let refused = refusals(&unit("", &format!("{REFERS_TO_FILL}{}", protocol("Fill"))));
+    let [refused] = refused.as_slice() else {
+        panic!("one refusal: {refused:?}");
+    };
+    assert!(matches!(
+        &refused.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), fsl_semantics::check::ProtocolAnchorCause::MissingProfile { alias, .. } if alias == "p")
+    ));
+}
+
+/// FR-218-AC-9 (TC-1021 step 5): a reference whose bound target is no node
+/// of the graph refuses `missing_declaration`/`missing-name`, naming the
+/// bound key, and writes no package.
+#[trace("FR-218-AC-9", "TC-1021")]
+#[test]
+fn a_reference_bound_to_a_key_no_node_carries_refuses_missing_name() {
+    let text = selecting(&format!("{REFERS_TO_FILL}{}", protocol("Fill")));
+    let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
+    let mut graph = assemble_with_models(text.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("the package checks");
+    let key_of = |form: &str| {
+        graph
+            .semantic_graph()
+            .nodes()
+            .find(|node| node.semantic_form() == form)
+            .unwrap_or_else(|| panic!("a {form} node"))
+            .key()
+    };
+    let (target, reference) = (key_of("protocol_clause"), key_of("protocol_reference"));
+    assert!(graph.semantic_graph_mut().remove(target.clone()).is_some());
+    let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("no package");
+    assert_eq!(refusal.code(), fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(refusal.cause(), Some("missing-name"));
+    assert_eq!(
+        refusal,
+        EmitRefusal::StaleProtocolReference {
+            reference: node_id(reference),
+            target: node_id(target),
+        }
+    );
+}

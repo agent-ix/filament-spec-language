@@ -3,25 +3,25 @@ id: FR-515
 title: "Read the checked predicate and the temporal subject from a checked package"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-051
+  - target: ix://agent-ix/filament-spec-language/FR-051
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-449
+  - target: ix://agent-ix/filament-spec-language/FR-449
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-500
+  - target: ix://agent-ix/filament-spec-language/FR-500
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-513
+  - target: ix://agent-ix/filament-spec-language/FR-513
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-531
+  - target: ix://agent-ix/filament-spec-language/FR-531
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-532
+  - target: ix://agent-ix/filament-spec-language/FR-532
     type: references
 ---
 # FR-515: Read the checked predicate and the temporal subject from a checked package
@@ -31,7 +31,7 @@ relationships:
 FR-051 and its modules `protocol_artifact::checked_predicate` and
 `protocol_artifact::temporal_subject` were retired by QSL-303 (M-6d) with the
 statement "nothing outside the deleted modules' own tests called them". That
-statement is false for quire-protocol: `src/assessment.rs` and
+statement is false for filament-protocol: `src/assessment.rs` and
 `src/result/record.rs` take a `ValidatedCheckedPredicate` and a
 `ValidatedTemporalSubject` (declaration, leaf, predicate leaves, package
 binding and document identity) as the subject of every temporal assessment
@@ -42,26 +42,26 @@ no schema bytes, no producer and no `read(bytes, ...)` round trip.
 This requirement specifies the two views, the node facts each accessor returns,
 and which accessors of the retired modules end and why. It adds no checked-package
 member and no Contract IR code: the views read the nodes FR-337 and FR-383 already
-emit through the public surface of `quire_contract_model::CheckedPackageV2`.
+emit through the public surface of `filament_contract_model::CheckedPackageV2`.
 
 ## Use case
 
-quire-protocol reads a handoff package with Contract IR's reader and holds a
+filament-protocol reads a handoff package with Contract IR's reader and holds a
 `CheckedPackageV2`. For a temporal clause `Due` of that package it needs the
 clause's identity triple, its `over` node, its profile and clock row, its
 activation, its captures, the operators and intervals of its formula and the
 Boolean operand node of every `holds` atom, so that an assessment names exactly
-the obligation the source authored. It calls QSL for that view and does not
+the obligation the source authored. It calls FSL for that view and does not
 parse the clause body itself.
 
 ## Semantic authority and boundary
 
-QSpec FR-370 owns the clause body; FR-337 states what QSL emits; Contract IR owns
-the reader. This requirement states only what QSL returns from an admitted
+FSpec FR-370 owns the clause body; FR-337 states what FSL emits; Contract IR owns
+the reader. This requirement states only what FSL returns from an admitted
 package. The views select no truth, hold no evaluation callback and assert no
 observation or result state (the FR-051-AC-6 history text, kept).
 
-For the checked-package native evaluation route, QSL SHALL expose the exact
+For the checked-package native evaluation route, FSL SHALL expose the exact
 relation from each checked temporal declaration to its native evaluation arena
 entry and each declaration occurrence. Each relation row names the checked
 `CheckedNodeId`, the native arena handle assigned while constructing the native
@@ -72,8 +72,8 @@ occurrence remains separately addressable by its `{ role, ordinal }` key.
 
 ## Inputs
 
-- A `&quire_contract_model::CheckedPackageV2` returned by
-  `read_checked_package`, or the retained package of QSL's successful I2 read
+- A `&filament_contract_model::CheckedPackageV2` returned by
+  `read_checked_package`, or the retained package of FSL's successful I2 read
   (`V2Read`). A caller cannot construct either view from bytes, from a decoded
   graph or from a term.
 - For the temporal subject, the `CheckedNodeId` of a `temporal`/`temporal_clause`
@@ -83,7 +83,7 @@ occurrence remains separately addressable by its `{ role, ordinal }` key.
 
 ## Outputs
 
-In `qsl_package::checked_views` (std only; no new dependency):
+In `fsl_package::checked_views` (std only; no new dependency):
 
 ```rust
 pub fn temporal_subject<'p>(package: &'p CheckedPackageV2, clause: &CheckedNodeId)
@@ -93,7 +93,7 @@ pub fn checked_predicate<'p>(package: &'p CheckedPackageV2, selection: &Predicat
 ```
 
 Both views borrow the package, have no public constructor and no method that
-evaluates. `ViewRefusal` here is the closed, `Copy`, payload-free enum of `qsl_package::checked_views`, a different type from FR-519's `ViewRefusal` of `qsl_package::protocol_view` (which carries payloads); the variants of this requirement are:
+evaluates. `ViewRefusal` here is the closed, `Copy`, payload-free enum of `fsl_package::checked_views`, a different type from FR-519's `ViewRefusal` of `fsl_package::protocol_view` (which carries payloads); the variants of this requirement are:
 
 - `UnresolvedClause`: FR-337's `clause-root-unresolved` lookup refusal, reused;
 - `LeafNotInClause`: the leaf is no term the clause reads (it is reachable
@@ -109,7 +109,7 @@ read-only declaration-to-arena relation: for every occurrence of a declaration,
 relation is a method pair of `TemporalSubjectView`, is built from the admitted package and is the only source of arena
 handles. An `ArenaHandle` is opaque: it names the view's declaration node and the slot of the occurrence in the view's occurrence order, so a handle read from the view of another declaration is declared by no row of this one. It is not derived from formula bytes, a digest or a hash. A caller-supplied occurrence key or handle is a lookup key, not an
 assertion, and SHALL be accepted only when it equals a row the view itself
-declares. QSL does not authenticate the caller; the check is equality with a
+declares. FSL does not authenticate the caller; the check is equality with a
 declared row. A key naming no declared occurrence refuses
 `ViewRefusal::OccurrenceNotDeclared`, and a handle that is no declared row's
 handle refuses `ViewRefusal::ArenaHandleNotDeclared`. Both are new payload-free
@@ -139,26 +139,26 @@ not under a caller budget.
 | --- | --- | --- |
 | `declaration()` (u32 index) | `declaration() -> &CheckedNodeId` | the clause node id |
 | `root()` (handle) | `occurrences() -> &[ClauseOccurrence]`, each `{ node, role: claim, ordinal }` | FR-337's identity triples; one per declaration of a structurally equal clause |
-| none (implicit in `root`) | `over() -> &CheckedNodeId` | the first argument of the `quire.op.temporal.clause` application (FR-337) |
+| none (implicit in `root`) | `over() -> &CheckedNodeId` | the first argument of the `filament.op.temporal.clause` application (FR-337) |
 | `clause()` (requirement, name, execution) | `requirements() -> &[&CheckedNodeId]`; `name_of(&ClauseOccurrence) -> Option<&str>` and `name() -> Option<&str>` | `requirements()`: the node ids of the protocol clauses whose `requirements` entries name this clause (the FR-449 rows whose `required_temporal` is this clause), in row order. `name_of` returns the `name` of the `temporal_clause_names` row keyed `{ declaration, occurrence }` (FR-337) for the occurrence, `None` when no row has that key (as `clock_of` does for a clock row), and `name()` returns that name when the node has exactly one occurrence and `None` when it has several, as `clock()` does. The clause node itself has no `declaration` member and the reader refuses one; the name is read from the sidecar row alone |
 | `source()` (source, span) | `source_span() -> &CheckedSourceMapEntry` | the package source map entry of the clause node with role `claim`; its region covers the clause's name token only, not the formula |
 | `profile_identities()` | `profile() -> &CheckedSelection` | the lock `profile_selections` row whose definition equals the clause's `temporal_profile` law |
 | `clock()` | `clock() -> Option<&TemporalBinding>` | the `temporal_bindings()` row for this declaration's occurrence when the node has one occurrence; `None` when the lock selects no clock configuration and `None` for a node with several occurrences, whose rows `clock_of(&ClauseOccurrence)` returns by the key `{ declaration, role, ordinal }` |
 | `activation()` | `activation() -> Activation` | `Origin`, or `Each { trigger: CheckedNodeId, guard: Option<CheckedNodeId> }` from the clause's activation argument |
 | `captures()` | `captures() -> &[CheckedNodeId]` | the clause's captures argument, in source order |
-| `operators()`, `required_history()` | `formula() -> Vec<OperatorUse>`, each `{ operation: &str, interval: Option<Interval> }` in formula pre-order; and `formula_graph() -> Vec<FormulaNodeUse>`, each `{ node: &CheckedNodeId, operation: &str, interval: Option<Interval>, aggregate: Option<AggregateUse>, operands: &[usize] }`, `node` being the formula node's id (equal terms share one node, FR-337) and `aggregate` the window aggregate argument of a `quire.op.temporal.aggregate` entry (`{ kind, q: Option<Rational>, predicate: Option<&CheckedNodeId>, value: Option<&CheckedNodeId>, filter: Option<&CheckedNodeId>, window_kind, lower, upper, min_count, comparison, threshold }`, the bindings of QSpec FR-370 "Window aggregate atom": `q` for a `quantile` only, `predicate` for a `fraction` only and `value` for a `sum`, `min`, `max` or `quantile` only; FR-337-AC-15), absent for every other entry in formula pre-order, `operands` being the positions in that list of the node's operand entries | `formula()` lists the `quire.op.temporal.*` applications and their `temporal_interval` members (FR-337) only; `formula_graph()` lists every formula node the clause reads: the temporal applications, the `holds` applications, the connectives and the constants, a `holds` atom, a constant and a leaf having no operands; the history span is derived by FR-043, not carried |
+| `operators()`, `required_history()` | `formula() -> Vec<OperatorUse>`, each `{ operation: &str, interval: Option<Interval> }` in formula pre-order; and `formula_graph() -> Vec<FormulaNodeUse>`, each `{ node: &CheckedNodeId, operation: &str, interval: Option<Interval>, aggregate: Option<AggregateUse>, operands: &[usize] }`, `node` being the formula node's id (equal terms share one node, FR-337) and `aggregate` the window aggregate argument of a `filament.op.temporal.aggregate` entry (`{ kind, q: Option<Rational>, predicate: Option<&CheckedNodeId>, value: Option<&CheckedNodeId>, filter: Option<&CheckedNodeId>, window_kind, lower, upper, min_count, comparison, threshold }`, the bindings of FSpec FR-370 "Window aggregate atom": `q` for a `quantile` only, `predicate` for a `fraction` only and `value` for a `sum`, `min`, `max` or `quantile` only; FR-337-AC-15), absent for every other entry in formula pre-order, `operands` being the positions in that list of the node's operand entries | `formula()` lists the `filament.op.temporal.*` applications and their `temporal_interval` members (FR-337) only; `formula_graph()` lists every formula node the clause reads: the temporal applications, the `holds` applications, the connectives and the constants, a `holds` atom, a constant and a leaf having no operands; the history span is derived by FR-043, not carried |
 | `predicate_leaves()` | `predicate_leaves() -> &[CheckedNodeId]` | the Boolean operand node of every `holds` atom in formula pre-order, one entry per atom. The activation guard is a separate node of the clause's activation argument; equal terms share one node (FR-337), so a guard equal to a `holds` operand is that same node and is among the entries |
 | `history_boundary()` | none | a property of an evaluation input (FR-516), not of the package |
 | `values()`, `bindings()`, `type_indices()`, `temporal_nodes()` | none | the checked graph is the closed table; a caller resolves a node id with `CheckedPackageV2::term` |
 | `package_artifact()`, `package_digest()`, `document().digest()`, `document().identity()`, `document().bytes()`, `SCHEMA_BYTES`, `SCHEMA_SHA256`, the `identity` label | none | the digest, the schema and the document go with the retired contract (QSL-1270 removed digests); the package binding is by lifetime and by `belongs_to` below |
 
 `belongs_to(&self, package: &CheckedPackageV2) -> bool` is true exactly for the
-package the view was read from (the check quire-protocol made by comparing
+package the view was read from (the check filament-protocol made by comparing
 `package_digest()` values).
 
 The view's `admission_binding() -> AdmissionBinding` SHALL expose the opaque
 admitted-package binding issued by `CheckedPackageV2`'s owner, without
-replacing it with a QSL carrier. FR-527
+replacing it with an FSL carrier. FR-527
 retains this owner capability in its owned classification after the view's
 borrow ends. Its owner-defined admission membership is distinct from this
 view's borrow-location check: a package clone retains the original admission,
@@ -200,11 +200,11 @@ only when one is written.
   `ClauseOccurrence`, and the view of the shared node returns both. Under a
   clock-configured temporal profile the writer emits one `temporal_bindings`
   row per clause occurrence, keyed by the declaration and the occurrence
-  `{ role, ordinal }` with the producer-assigned ordinal (QSpec FR-322 "Temporal
+  `{ role, ordinal }` with the producer-assigned ordinal (FSpec FR-322 "Temporal
   clock bindings"), and the reader admits one row per occurrence of a shared
   node. `occurrences()` lists a node's occurrences in the order of the node's
-  `occurrences` array as the package carries it, which QSpec FR-322 does not
-  constrain, while the lock lists the clock rows ascending by occurrence. QSL's own
+  `occurrences` array as the package carries it, which FSpec FR-322 does not
+  constrain, while the lock lists the clock rows ascending by occurrence. FSL's own
   emitter assigns ordinals in ascending order, so both orders agree for every
   package it emits; a package from another producer may carry them differently.
   `clock_of(&ClauseOccurrence) -> Option<&TemporalBinding>` returns the row
@@ -216,7 +216,7 @@ only when one is written.
 
 ### The in-process package
 
-The evaluation entry is the type `EvidencePackage` in `qsl-eval`, built from an
+The evaluation entry is the type `EvidencePackage` in `fsl-eval`, built from an
 `Emission` (FR-337) with `EvidencePackage::from_emission(&Emission,
 &AdmittedPackageRead)` or from a read-back package with
 `EvidencePackage::from_read(&AdmittedPackageRead)`. Both answer both views, and
@@ -309,7 +309,7 @@ A consumer that holds only the `CheckedPackageV2` the reader returned, with no
 evaluation package with `EvidencePackage::from_package` over a `BarePackage`
 (FR-531). It gets the same rows, views, clause ids and evaluator formula as the
 two in-process constructors, and the same `EvidenceResult` from the same request
-(FR-532). quire-protocol FR-046 consumes the evidence types through that entry.
+(FR-532). filament-protocol FR-046 consumes the evidence types through that entry.
 The views of this requirement are already functions of the package alone, and
 need no `BarePackage`.
 
@@ -325,18 +325,18 @@ need no `BarePackage`.
 | FR-515-AC-6 | A view read from package **P1** answers `belongs_to(P1)` true and `belongs_to(P2)` false for a second package **P2** emitted from the same source, and the lifetime of the view ends with the borrow of its package. | Test (TC-1310) |
 | FR-515-AC-7 | Two structurally equal clauses of one package under an infinite-trace temporal profile give one node and two `ClauseOccurrence` values with different ordinals, returned by the view of that node; changing one interval of the formula changes `formula()` and the node id, and adding a source comment changes neither. | Test (TC-1310) |
 | FR-515-AC-8 | The views expose no method that takes a closure or evaluates a term, no public constructor, and none of `digest`, `bytes`, `identity`, `package_digest`, `SCHEMA_BYTES`; a compile-fail test that constructs either view outside the module, and compile-fail tests that call `digest()`, `bytes()`, `identity()`, `package_digest()` and a closure-taking method on either view, each fail to compile. | Test (TC-1310) |
-| FR-515-AC-9 | `quire_spec_language::protocol_artifact::checked_predicate` and `quire_spec_language::protocol_artifact::temporal_subject` do not resolve; a compile-fail `use` of each fails. | Test (TC-1310) |
+| FR-515-AC-9 | `filament_spec_language::protocol_artifact::checked_predicate` and `filament_spec_language::protocol_artifact::temporal_subject` do not resolve; a compile-fail `use` of each fails. | Test (TC-1310) |
 | FR-515-AC-10 | For a clause whose guard `g` is a different node from every `holds` operand, `checked_predicate` of `g` is `ActivationGuard` and `g` is absent from `predicate_leaves()`. | Test (TC-1310) |
 | FR-515-AC-11 | For a clause whose guard is equal to a `holds` operand, so that the two are one node, `checked_predicate` of that node is `ActivationGuard` and the node is present in `predicate_leaves()` once for each `holds` atom that reads it. | Test (TC-1310) |
 | FR-515-AC-12 | `checked_predicate` of a leaf the clause reads and for which the package source map holds no entry refuses `LeafHasNoSource` and returns no partial view. | Test (TC-1310) |
-| FR-515-AC-13 | Two structurally equal clauses under a clock-configured temporal profile give one node and two `ClauseOccurrence` values, and the package is admitted by `read_checked_package` with one `temporal_bindings` row per occurrence (QSpec FR-322 vectors BO-P1 to BO-R9). | Test (TC-1310) |
+| FR-515-AC-13 | Two structurally equal clauses under a clock-configured temporal profile give one node and two `ClauseOccurrence` values, and the package is admitted by `read_checked_package` with one `temporal_bindings` row per occurrence (FSpec FR-322 vectors BO-P1 to BO-R9). | Test (TC-1310) |
 | FR-515-AC-14 | Over FR-337-AC-16's package, whose two structurally equal clauses `Alpha` and `Beta` share one node: `name_of` of the occurrence with ordinal 0 returns `Alpha` and of ordinal 1 returns `Beta`, each equal to the `name` of the `temporal_clause_names` row read back at that occurrence, and `name()` returns `None`, and `name_of` of an occurrence with ordinal 7 returns `None`. Over a package whose clause `Gamma` has one occurrence, `name()` returns `Some("Gamma")` and `name_of` its one occurrence returns `Gamma`; the `ActivationGuard` and `HoldsLeaf` predicate views of `Gamma` return `Some("Gamma")` from `name()`. | Test (TC-1310) |
 | FR-515-AC-15 | `requirements()` of a temporal clause that no protocol `requirements` entry names is empty, and of a clause that a protocol's `requirements` entry names holds that protocol clause's node id. | Test (TC-1310) |
 | FR-515-AC-16 | `checked_predicate` of an activation guard returns a view whose `source_span` is one of the source map entries of the guard node. | Test (TC-1310) |
 | FR-515-AC-17 | `checked_predicate` of a `ClauseLeaf` returns a view whose `source_span` is the entry of the leaf node whose regions lie inside the source regions of the clause's formula root node. | Test (TC-1310) |
 | FR-515-AC-18 | Over **R**'s three packages (one per clock kind), holding four temporal clauses (FR-517), `temporal_subject` over the `EvidencePackage` constructed from the `Emission` returns `profile()`, `clock()` and `occurrences()` equal to those over the package read back from the emitted bytes, and the `profile_selections` and `temporal_bindings` rows it holds equal the `Emission`'s rows byte for byte. | Test (TC-1310) |
 | FR-515-AC-19 | In a unit the test authors over the `config-version` model (`examples/config-version`), whose temporal clauses (capture, `on each` activation, guard) the test writes, since the example holds none, with two temporal clauses of different nodes and different clock rows, each node's `clock()` is its own occurrence's row, in the evaluation package constructed from the `Emission` and in the read-back package alike. | Test (TC-1310) |
-| FR-515-AC-20 | Over a constructed V2 package of twins of one node, whose node `occurrences` array order is ordinal 7 then ordinal 3 while the lock's clock rows ascend as ordinal 3 then ordinal 7, with different clock configurations, read back through the reader (QSL's emitter cannot produce this order, so the package is constructed and no `Emission` or in-process counterpart exists for it), `clock_of` of the occurrence with ordinal 3 returns the row keyed ordinal 3, `clock_of` of ordinal 7 returns the row keyed ordinal 7, and `clock()` is `None`; a pairing by position fails this criterion. | Test (TC-1310) |
+| FR-515-AC-20 | Over a constructed V2 package of twins of one node, whose node `occurrences` array order is ordinal 7 then ordinal 3 while the lock's clock rows ascend as ordinal 3 then ordinal 7, with different clock configurations, read back through the reader (FSL's emitter cannot produce this order, so the package is constructed and no `Emission` or in-process counterpart exists for it), `clock_of` of the occurrence with ordinal 3 returns the row keyed ordinal 3, `clock_of` of ordinal 7 returns the row keyed ordinal 7, and `clock()` is `None`; a pairing by position fails this criterion. | Test (TC-1310) |
 | FR-515-AC-21 | For each `TemporalClauseRef` of an `Emission`, the `CheckedNodeId` equals the `declaration` of the `temporal_clause_names` row read back at the same occurrence, and the `CheckedNodeId` of a clause in the evaluation package constructed from the `Emission` equals the one in the read-back package; a derivation of ids outside the emitter does not exist in the API. | Test (TC-1310) |
 | FR-515-AC-22 | In a unit the test authors over the `config-version` model (`examples/config-version`), whose temporal clauses (capture, `on each` activation, guard) the test writes, since the example holds none, for a clause with a guard that reads the trigger binder and four distinct `holds` atoms in formula order at atom indices 0 to 3 (FR-532 "Atom index"), one reading a capture binder (index 0), one reading only `over()` (index 1), one reading no binder (index 2) and one reading a capture binder and `over()` (index 3), the derived instance-bound set is exactly `{0, 3}`, the guard has no index, and the set equals the one the read-back package gives; swapping the formula order of the first and the second atom gives `{1, 3}`; a caller-supplied set is not accepted. | Test (TC-1310) |
 | FR-515-AC-23 | For each clause of **R** and the authored clause of AC-22, the evaluator's formula built from the evaluation package constructed from the `Emission` equals, node for node with operations, intervals and operand edges, the formula built from the read-back package; `formula_graph()` of AC-3's clause lists the `always` entry with one operand position that names the `holds` entry, while `formula()` of that clause lists the `always` and `holds` applications exactly as AC-3 states; and a view whose `operands` hold a cycle or an out-of-range position makes the clause unreadable (FR-516). | Test (TC-1310) |
@@ -352,8 +352,8 @@ need no `BarePackage`.
 ## Dependencies
 
 - **Upstream:** FR-337, FR-383, FR-449, FR-051 (retired modules), QSL-303,
-  QSL-1270 (digest removal), `quire_contract_model::CheckedPackageV2`; QSpec FR-322 (the per-occurrence clock
+  QSL-1270 (digest removal), `filament_contract_model::CheckedPackageV2`; FSpec FR-322 (the per-occurrence clock
   rows FR-515-AC-13 and AC-20 read).
 - **Delivery:** FR-515-AC-18 to AC-28 and FR-516-AC-18, AC-29 and AC-30 are delivered by QSL-1608, which builds the `Emission`-constructed package and the shared formula construction.
-- **Downstream:** quire-protocol `src/assessment.rs`, `src/result/record.rs`
+- **Downstream:** filament-protocol `src/assessment.rs`, `src/result/record.rs`
   (QSL-1549).

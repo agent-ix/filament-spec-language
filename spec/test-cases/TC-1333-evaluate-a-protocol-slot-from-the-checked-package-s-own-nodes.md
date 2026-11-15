@@ -3,7 +3,7 @@ id: TC-1333
 title: "Evaluate a protocol slot from the checked package's own nodes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-533
+  - target: ix://agent-ix/filament-spec-language/FR-533
     type: verifies
 ---
 # TC-1333: Evaluate a protocol slot from the checked package's own nodes

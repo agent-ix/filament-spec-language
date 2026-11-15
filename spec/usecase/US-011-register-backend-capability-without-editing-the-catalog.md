@@ -3,29 +3,29 @@ id: US-011
 title: "Register a backend's capabilities without editing the lowering catalog"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-076
+  - target: ix://agent-ix/filament-spec-language/FR-076
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-077
+  - target: ix://agent-ix/filament-spec-language/FR-077
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-078
+  - target: ix://agent-ix/filament-spec-language/FR-078
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-011: Register a backend's capabilities without editing the lowering catalog
 
 ## Story
 
-**As a** backend integrator adding a new proof or analysis backend to QSL
+**As a** backend integrator adding a new proof or analysis backend to FSL
 (Kani today; Verus, SMT or an implication backend later)
 **I want** my backend to register the capability kinds and modes it
 advertises through one open contract, instead of a change to a fixed,
 hand-maintained enum of lowering targets
-**So that** adding my backend costs a registration, not a change to QSL's
+**So that** adding my backend costs a registration, not a change to FSL's
 core type, and a claim my backend does not cover settles as an honest
 `unsupported` result rather than a build break, a refusal, or a request
 that waits indefinitely for a backend that may never register.
@@ -34,11 +34,11 @@ that waits indefinitely for a backend that may never register.
 
 The deleted native `lowering` module defined `ProjectionTarget` as a fixed
 three-variant catalog (`BooleanOracleV1`, `IntegerIrV1`, `StateScalarIrV1`).
-Every new backend needed a QSL code change to add a variant, and there was no
+Every new backend needed an FSL code change to add a variant, and there was no
 registration boundary a backend implements once. Separately, the composed linker still reads backend support directly
-when it records a capability request, and QSL's `value::ieee` and
+when it records a capability request, and FSL's `value::ieee` and
 `value::division` modules carried `negotiate_*` functions left over from
-before capability negotiation moved to `quire-contract-codegen`'s single
+before capability negotiation moved to `filament-contract-codegen`'s single
 `negotiate_*` point (ADR-012 §7, §10 OBS-003, OBS-004). FR-078 has
 since removed those functions, and both modules have since been
 deleted entirely. Kani is the first
@@ -73,7 +73,7 @@ contract is what this story asks to exist, not multiple backends.
 ## Constraints (Contextual)
 
 The registry consumes the canonical `Capability` value type
-([quire-spec-language#213](https://github.com/agent-ix/quire-spec-language/issues/213))
+([filament-spec-language#213](https://github.com/agent-ix/filament-spec-language/issues/213))
 and defines no second capability vocabulary or competing enum. Existing Kani
 lowering corpora must keep producing the same output across the swap from
 the fixed catalog to the registry.
@@ -81,10 +81,10 @@ the fixed catalog to the registry.
 ## Dependencies (Contextual)
 
 Upstream: the capability-kind vocabulary and backend-absence policy
-(quire-specification FR-290, quire-specification#116) and the QSL admission
-side of the same contract (FR-057). Downstream: `quire-contract-codegen`'s
+(filament-specification FR-290, filament-specification#116) and the FSL admission
+side of the same contract (FR-057). Downstream: `filament-contract-codegen`'s
 `negotiate_*` taking the candidate set
-([quire-contract-codegen#86](https://github.com/agent-ix/quire-contract-codegen/issues/86)),
+([filament-contract-codegen#86](https://github.com/agent-ix/filament-contract-codegen/issues/86)),
 because only `negotiate_*` settles a disposition; this story's registry
 supplies candidates, not dispositions.
 
@@ -94,7 +94,7 @@ Priority: High. This registry is an architectural prerequisite for every
 backend beyond Kani (Verus, SMT, an implication backend) and for lane E's
 model/relation and temporal/protocol lowering, which route through it. The
 risk of leaving the fixed catalog in place is that every future backend
-requires a QSL core change and there is no honest, uniform way to report
+requires an FSL core change and there is no honest, uniform way to report
 "no backend covers this claim" short of a refusal or an indefinite hold.
 
 ## Traceability (Informative)
@@ -102,5 +102,5 @@ requires a QSL core change and there is no honest, uniform way to report
 - [FR-075](../functional/FR-075-compute-candidates-from-registered-backends.md)
 - [FR-076](../functional/FR-076-settle-backend-absence-as-unsupported.md)
 - [FR-077](../functional/FR-077-remove-composed-linker-backend-negotiation.md)
-- [FR-078](../functional/FR-078-remove-qsl-negotiate-copies.md)
+- [FR-078](../functional/FR-078-remove-fsl-negotiate-copies.md)
 - [FR-080](../functional/FR-080-registry-evidence-and-gates.md)

@@ -3,7 +3,7 @@ id: TC-631
 title: "EN-5 builds the DTMC or MDP product with monitors, accumulators and intermediate states"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: verifies
 ---
 # TC-631: EN-5 builds the DTMC or MDP product with monitors, accumulators and intermediate states

@@ -12,7 +12,7 @@ use crate::emit_checked_v2::{producer_bytes, read_back};
 #[test]
 fn compound_quantity_type_metadata_survives_emission_and_strict_read() {
     let source = "language \"ix:native\" edition \"1-draft\";
-        profile v = \"quire.value.complete/v1\";
+        profile v = \"filament.value.complete/v1\";
         dimension Mass; dimension Length; dimension Time;
         unit kg : Mass = rational(1, 1);
         unit m : Length = rational(1, 1);

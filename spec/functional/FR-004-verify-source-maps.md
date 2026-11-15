@@ -3,7 +3,7 @@ id: FR-004
 title: "Verify extracted-body correspondence"
 type: FR
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/US-002"
+  - target: "ix://agent-ix/filament-spec-language/US-002"
     type: traces_to
 ---
 # FR-004: Verify extracted-body correspondence

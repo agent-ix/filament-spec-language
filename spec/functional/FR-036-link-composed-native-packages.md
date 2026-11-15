@@ -3,23 +3,23 @@ id: FR-036
 title: "Link composed packages without inventing runtime premises"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-035
+  - target: ix://agent-ix/filament-spec-language/FR-035
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-030
+  - target: ix://agent-ix/filament-specification/FR-030
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-031
+  - target: ix://agent-ix/filament-specification/FR-031
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-034
+  - target: ix://agent-ix/filament-specification/FR-034
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-035
+  - target: ix://agent-ix/filament-specification/FR-035
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
 ---
 # FR-036: Link composed packages without inventing runtime premises
@@ -28,7 +28,7 @@ relationships:
 
 When linking an explicitly inventoried composed package, the compiler SHALL resolve each declaration to its selected definition closure, admitted domain-package model declarations and typed native dependencies before exposing it to a downstream checker.
 
-`qsl_replay::spine::StaticSubject` (FR-510) retains the package contract's six
+`fsl_replay::spine::StaticSubject` (FR-510) retains the package contract's six
 declared static components — Sources, Language, Profiles, Models, Native
 dependencies and Binding requirements — and compares two subjects component by
 component. Nothing is derived from a subject beyond that comparison;
@@ -60,8 +60,8 @@ are named at each entry point under FR-255. A zero limit permits no charged
 work in its dimension, a charge is checked before its work is performed, and a
 retry starts a new accounting run without mutating the prior report or inputs.
 
-The [standard package contract](https://github.com/agent-ix/quire-specification/blob/main/proposals/quire-v1/package-contract.md),
-landed in [standard PR #15](https://github.com/agent-ix/quire-specification/pull/15),
+The [standard package contract](https://github.com/agent-ix/filament-specification/blob/main/proposals/filament-v1/package-contract.md),
+landed in [standard PR #15](https://github.com/agent-ix/filament-specification/pull/15),
 owns the static/assessment split. Model declarations come
 only from domain packages admitted under FR-056; the linker introduces no
 parallel model schema, canonicalizer, predicate semantics or observation store.
@@ -90,14 +90,14 @@ The linker SHALL validate each selected definition's identity, revision, bytes a
 
 If a definition is missing, conflicting or incompatible, then the linker SHALL refuse every dependent declaration with the failed selection retained.
 
-For spine compilation, `qsl_replay::spine::check` SHALL retain a typed
+For spine compilation, `fsl_replay::spine::check` SHALL retain a typed
 per-use profile outcome in its checked result. The outcome SHALL distinguish
 the selected profile identity, required use-site kind, definition-closure
 status and any typed closure cause; closure completion SHALL remain distinct
 from use-site admission.
 
-When a protocol use selects `quire.observation.binding/v1`, the spine checker SHALL retain its exact definition closure, including the registered
-`quire.protocol.finite-global/v1` dependency and that definition's transitive
+When a protocol use selects `filament.observation.binding/v1`, the spine checker SHALL retain its exact definition closure, including the registered
+`filament.protocol.finite-global/v1` dependency and that definition's transitive
 requirements. The spine checker SHALL separately report `WrongProfileKind`
 for this protocol use because observation binding is not a protocol profile.
 
@@ -156,7 +156,7 @@ The type checker SHALL type a domain object type, Interface or record value type
 
 The type checker SHALL refuse any other field type, and a domain value type, as an unsupported prerequisite.
 
-**QSL-499 disposition:** the composed linker (`linking::composed` namespace, binding, definition-closure, model-binding and request-report stages) is deleted under ADR-011, ADR-033 and FR-499; the spine check (`qsl_replay::spine::check`) is the single path. The retired criteria below are retained as migration history and are not active acceptance obligations. Their behavior is owned as follows: header and definition selection by FR-110 and FR-056 (AC-1, AC-3); scoped names, anchors, duplicate and cyclic declarations by FR-113 and FR-218 (AC-2, AC-4); requested clause/capability pairs by FR-057 (AC-6); work accounting by FR-218-AC-36 and FR-255 (AC-7). FR-036-AC-5, AC-8 and AC-9 stay active.
+**QSL-499 disposition:** the composed linker (`linking::composed` namespace, binding, definition-closure, model-binding and request-report stages) is deleted under ADR-011, ADR-033 and FR-499; the spine check (`fsl_replay::spine::check`) is the single path. The retired criteria below are retained as migration history and are not active acceptance obligations. Their behavior is owned as follows: header and definition selection by FR-110 and FR-056 (AC-1, AC-3); scoped names, anchors, duplicate and cyclic declarations by FR-113 and FR-218 (AC-2, AC-4); requested clause/capability pairs by FR-057 (AC-6); work accounting by FR-218-AC-36 and FR-255 (AC-7). FR-036-AC-5, AC-8 and AC-9 stay active.
 
 ## Acceptance Criteria
 
@@ -169,7 +169,7 @@ The type checker SHALL refuse any other field type, and a domain value type, as 
 | FR-036-AC-5 | Changing runtime population/window/trace or backend leaves static meaning unchanged; changing a required semantic selection changes it. Resource-only configuration changes remain visible without becoming semantic changes. | Test (TC-115) |
 | FR-036-AC-6 | **RETIRED in QSL-499; historical only.** Two required requested pairs over different FR-057 capability kinds both remain in the request report in caller order; when either is not settled `supported`, complete aggregate success joined from the FR-331 accounting records on request index is unavailable, and a family body refused by its checker is never represented as checked. | Test (TC-115) |
 | FR-036-AC-7 | **RETIRED in QSL-499; historical only.** A dependency chain, diamond and cycle terminate under declared versioned work accounting and lowered traversal budgets. The accounting contract supplies exact-limit expectations, including shared dependencies and revisits; zero never disables a limit. An unaffordable next charge or counter overflow retains unfinished dispositions and yields no complete or executable package. A retry with sufficient budget preserves the original inputs and prior report. | Test (TC-114) |
-| FR-036-AC-8 | Through `qsl_replay::spine::check`, the typed per-use profile outcome for `protocol P using ob`, where `ob` selects `quire.observation.binding/v1`, retains the selected identity, completed closure status, exact registered `quire.protocol.finite-global/v1` dependency and its transitive requirements; use-site admission separately refuses `WrongProfileKind`. If the required protocol definition is omitted, conflicting or incompatible, that outcome retains the corresponding typed closure cause, the declaration remains refused or incomplete, and no complete checked package is reported. | Test (TC-114) |
+| FR-036-AC-8 | Through `fsl_replay::spine::check`, the typed per-use profile outcome for `protocol P using ob`, where `ob` selects `filament.observation.binding/v1`, retains the selected identity, completed closure status, exact registered `filament.protocol.finite-global/v1` dependency and its transitive requirements; use-site admission separately refuses `WrongProfileKind`. If the required protocol definition is omitted, conflicting or incompatible, that outcome retains the corresponding typed closure cause, the declaration remains refused or incomplete, and no complete checked package is reported. | Test (TC-114) |
 | FR-036-AC-9 | Native model references to a field, a Port and a Connection of a domain package admitted under FR-056 bind to their exact declaration keys and kinds. A part, a Port or an allocation written where a value type is expected, and a name the package does not declare, refuse at the assembler located on the written name; a member the declared object type does not have refuses at the check. A `model` selection is unit-level on the spine and carries no version or digest (FR-513-AC-1): a same-shaped package under another identity does not satisfy it, and the unit refuses `missing_import` at intake, located on the `model` declaration. | Test (TC-148, TC-1308) |
 
 ## Dependencies

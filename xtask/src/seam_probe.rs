@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! QSL#214 (FR-063): `cargo xtask seam-probe` demonstrates ADR-012 §5.1's S1
-//! and S7 seams by building the QSL workspace crates that hold seams under
-//! `RUSTFLAGS=--cfg seam_probe` (or `seam_probe_forms` for `qsl-forms`) (three normal builds and six probe builds,
+//! and S7 seams by building the FSL workspace crates that hold seams under
+//! `RUSTFLAGS=--cfg seam_probe` (or `seam_probe_forms` for `fsl-forms`) (three normal builds and six probe builds,
 //! `PROBE_BUILDS` and `NORMAL_BUILDS`) and comparing the `E0004`
 //! (non-exhaustive match) locations rustc reports against a checked-in
 //! list, exactly as FR-063 requires.
@@ -16,7 +16,7 @@
 //! callers were three `assert_eq!` call sites asserting a hand-written
 //! `match`'s own literal result against itself, a fabricated reader
 //! manufactured to keep otherwise-dead code alive (see `crate::family`'s
-//! module doc in the QSL crate). Deleting the fabricated callers left
+//! module doc in the FSL crate). Deleting the fabricated callers left
 //! `stage_hooks` itself with no real reader, so it is gone too, and with it
 //! the second S1 seam this tool could check in. Only `catalog_code_prefix`'s
 //! prefix arm remains.
@@ -30,28 +30,28 @@
 //! declaration and application). `ExprNode` and `NodeKind` carry
 //! `#[cfg(seam_probe)]` probe variants and a protective arm at every other
 //! production `match` site the variant would otherwise break
-//! (`qsl-forms::syntax`, `qsl-semantics::check::assemble`,
+//! (`fsl-forms::syntax`, `fsl-semantics::check::assemble`,
 //! `::checked_dispatch`, `::family`), landing one checked-in location for
 //! S2 (`Typer::infer_form`, the check seam) and two for S3 (`Machine::
 //! apply`, the evaluator; `Lowering::lower_node`, the identity-lowering
 //! pass feeding v2 emission) -- see [`checked_in_locations`]'s own doc for
-//! the parser's leading-token-kind table (`qsl-forms::dispatch::dispatch`),
-//! which has its own `qsl-forms` probe build. S4 (each family `Cause` enum's
+//! the parser's leading-token-kind table (`fsl-forms::dispatch::dispatch`),
+//! which has its own `fsl-forms` probe build. S4 (each family `Cause` enum's
 //! `catalog_code()`) now has one demonstration, `CheckCause::code`
 //! (FR-062-AC-8, TC-161) -- see that entry in
 //! [`checked_in_locations`]'s own doc below.
 //!
 //! **S7 (#185, ADR-012 §5.1's row: "requirement derivation per
 //! family; registry advertisement check; CG `negotiate_*` capability arm").**
-//! QSL owns the first two; `#[cfg(seam_probe)]` on
+//! FSL owns the first two; `#[cfg(seam_probe)]` on
 //! `crate::check::Capability` (defined in `capability.rs` itself, which also
 //! carries its own match's probe arm and so is not a seam-probe location)
-//! makes the match in `qsl-route`'s `advertises_kind` helper `same_kind`
+//! makes the match in `fsl-route`'s `advertises_kind` helper `same_kind`
 //! (registry advertisement check) non-exhaustive under the probe build. The CG `negotiate_*`
-//! arm is quire-contract-codegen#86's own seam, not probed here.
+//! arm is filament-contract-codegen#86's own seam, not probed here.
 //!
 //! This tool's checked-in list therefore covers exactly the one S1 and one
-//! S7 location QSL's own code adds, and reports that scope honestly rather
+//! S7 location FSL's own code adds, and reports that scope honestly rather
 //! than as "AC-6 satisfied."
 
 use std::collections::BTreeSet;
@@ -94,7 +94,7 @@ pub struct SeamLocation {
 
 /// FR-063-AC-6's S1 and S7 categories, checked in.
 ///
-/// S1: the one `match` over `FamilyKind` in `qsl-semantics/src/family/mod.rs` --
+/// S1: the one `match` over `FamilyKind` in `fsl-semantics/src/family/mod.rs` --
 /// `catalog_code_prefix`'s prefix arm. `stage_hooks`'s stage-participation
 /// table match is deleted (this module's own doc, PR #262 review finding
 /// F7), narrowing this list from two locations to one. Exactly one location
@@ -103,7 +103,7 @@ pub struct SeamLocation {
 /// the same change (FR-063-AC-1/AC-2), or `xtask seam-probe` fails.
 ///
 /// S7 (#185): the applicability table's own
-/// `Capability::applies_to_declaration` match and `qsl-route`'s
+/// `Capability::applies_to_declaration` match and `fsl-route`'s
 /// `advertises_kind` helper `same_kind` (registry advertisement check).
 /// `applies_to_declaration` deliberately leaves the
 /// `#[cfg(seam_probe)]` variant unhandled, so a kind without an applicability
@@ -113,7 +113,7 @@ pub struct SeamLocation {
 /// `advertises_kind`'s body, not an `impl` method, so it resolves unqualified.
 ///
 /// FR-090-AC-6 (TC-387): the `ProtocolClause` snapshot cause's
-/// `catalog_code()` match over `quire_semantic_value::call::WrongSnapshotCause`, whose
+/// `catalog_code()` match over `filament_semantic_value::call::WrongSnapshotCause`, whose
 /// `#[cfg(seam_probe)]` variant has an arm only in `WrongSnapshotCause::
 /// as_str`. **S4-shaped, not S4 itself (PR #434 review, LOW-4):** the match
 /// has the same shape S4 does (a `Cause` enum's `catalog_code()` arm), but
@@ -124,44 +124,44 @@ pub struct SeamLocation {
 /// FR-063-AC-6's S4 category.
 ///
 /// FR-090-AC-4 (TC-385): the S6a seam's `match` over
-/// `qsl-eval`'s `value::expression::s6a::S6aFamilyKind` (`evaluate_declaration`), its
+/// `fsl-eval`'s `value::expression::s6a::S6aFamilyKind` (`evaluate_declaration`), its
 /// `S6aFamilyKind::family` mapping to `FamilyKind`, and the one
-/// `match` over `quire_eval::FamilyOutcome` (`ValueFunctionFamily::
+/// `match` over `filament_eval::FamilyOutcome` (`ValueFunctionFamily::
 /// evaluate`, which passes the evaluator's `FamilyOutcome` back as an
 /// `EvalOutcome`). Each enum carries a `#[cfg(seam_probe)]` variant.
 ///
 /// **S2 and S3: the check seam over the parsed form enum, and the
 /// checked node enum's evaluator and identity-lowering pass.** `ExprNode`
-/// (`qsl-forms::syntax::ExprNode`) and `NodeKind`
-/// (`quire_checked::node::NodeKind`) each carry a `#[cfg(seam_probe)]`
+/// (`fsl-forms::syntax::ExprNode`) and `NodeKind`
+/// (`filament_checked::node::NodeKind`) each carry a `#[cfg(seam_probe)]`
 /// probe variant now too:
 ///
-/// - S2: `Typer::infer_form` (`qsl-semantics/src/check/check/typing.rs`),
+/// - S2: `Typer::infer_form` (`fsl-semantics/src/check/check/typing.rs`),
 ///   the check-time dispatch over `ExprNode` that already carried
 ///   `#[deny(clippy::wildcard_enum_match_arm)]` before this ticket (the
 ///   FR-063-AC-7 lint, satisfied in advance of the probe variant that makes
 ///   it a real seam).
-/// - S3: `Machine::apply` (`qsl-eval/src/value/expression/evaluate.rs`),
+/// - S3: `Machine::apply` (`fsl-eval/src/value/expression/evaluate.rs`),
 ///   the evaluator's own exhaustive dispatch over `NodeKind`; and
-///   `Lowering::lower_node` (`qsl-semantics/src/check/lowering.rs`, also
+///   `Lowering::lower_node` (`fsl-semantics/src/check/lowering.rs`, also
 ///   already `#[deny(clippy::wildcard_enum_match_arm)]`), the FR-093
 ///   identity-lowering pass whose `SemanticNode`/`SemanticTerm` output feeds
-///   `qsl-package`'s v2 emission (ADR-012 §5.1 row S3's "v2 emitter").
+///   `fsl-package`'s v2 emission (ADR-012 §5.1 row S3's "v2 emitter").
 ///
 /// **The parser's leading-token-kind table.** ADR-012 §5.1 row
-/// S2's `qsl-forms::dispatch::dispatch` `match` over `LeadingTokenKind`
-/// lives in `qsl-forms`, below `qsl-semantics`. It has its own cfg,
+/// S2's `fsl-forms::dispatch::dispatch` `match` over `LeadingTokenKind`
+/// lives in `fsl-forms`, below `fsl-semantics`. It has its own cfg,
 /// `seam_probe_forms`, which adds `LeadingTokenKind::__SeamProbe` and is set
-/// only by `qsl-forms`' own probe build (`PROBE_BUILDS`' first entry), so
+/// only by `fsl-forms`' own probe build (`PROBE_BUILDS`' first entry), so
 /// that seam does not stop the crates above it compiling in the other
 /// builds. FR-063-AC-6 has an entry in every category.
 ///
-/// **The replay facade (ADR-013 TK-01):** `qsl-replay`'s `replay`,
+/// **The replay facade (ADR-013 TK-01):** `fsl-replay`'s `replay`,
 /// the executor's `match` over `FamilyOutcome` that settles a replayed
 /// outcome. Each family whose S6a result is new widens the facade there.
 ///
 /// **S4 proper (FR-062-AC-8, TC-161):**
-/// `qsl-semantics/src/check/refusal.rs`'s `CheckCause::code`, the one family
+/// `fsl-semantics/src/check/refusal.rs`'s `CheckCause::code`, the one family
 /// `Cause` enum's `catalog_code()`-shaped mapping S4 names, now that
 /// `Value`'s function family has a real cause (`CheckCause`) to
 /// demonstrate the seam over. `CheckCause`'s `#[cfg(seam_probe)]` variant
@@ -177,31 +177,31 @@ pub struct SeamLocation {
 pub fn checked_in_locations() -> BTreeSet<SeamLocation> {
     [
         SeamLocation {
-            file: "qsl-semantics/src/family/mod.rs".to_owned(),
+            file: "fsl-semantics/src/family/mod.rs".to_owned(),
             item: "FamilyKind::catalog_code_prefix".to_owned(),
         },
         SeamLocation {
-            file: "qsl-semantics/src/check/refusal.rs".to_owned(),
+            file: "fsl-semantics/src/check/refusal.rs".to_owned(),
             item: "CheckCause::code".to_owned(),
         },
         SeamLocation {
-            file: "qsl-route/src/lib.rs".to_owned(),
+            file: "fsl-route/src/lib.rs".to_owned(),
             item: "same_kind".to_owned(),
         },
         SeamLocation {
-            file: "qsl-eval/src/value/expression/causes.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/causes.rs".to_owned(),
             item: "ProtocolClauseSnapshot::catalog_code".to_owned(),
         },
         SeamLocation {
-            file: "qsl-eval/src/value/expression/mod.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/mod.rs".to_owned(),
             item: "evaluate_declaration".to_owned(),
         },
         SeamLocation {
-            file: "qsl-eval/src/value/expression/s6a/mod.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/s6a/mod.rs".to_owned(),
             item: "S6aFamilyKind::family".to_owned(),
         },
         SeamLocation {
-            file: "qsl-eval/src/value/expression/family.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/family.rs".to_owned(),
             item: "ValueFunctionFamily::evaluate".to_owned(),
         },
         // FR-107, FR-090 lines 44-45: `ProtocolClause`'s own
@@ -211,68 +211,68 @@ pub fn checked_in_locations() -> BTreeSet<SeamLocation> {
         // `ReferenceEvaluation`" rule growing by one family, not a new
         // kind of seam.
         SeamLocation {
-            file: "qsl-eval/src/value/expression/s6a/protocol_clause.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/s6a/protocol_clause.rs".to_owned(),
             item: "ProtocolClauseFamily::evaluate".to_owned(),
         },
         SeamLocation {
-            file: "qsl-semantics/src/check/check/typing.rs".to_owned(),
+            file: "fsl-semantics/src/check/check/typing.rs".to_owned(),
             item: "Typer::infer_form".to_owned(),
         },
         SeamLocation {
-            file: "qsl-eval/src/value/expression/evaluate.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/evaluate.rs".to_owned(),
             item: "Machine::apply".to_owned(),
         },
         SeamLocation {
-            file: "qsl-semantics/src/check/lowering.rs".to_owned(),
+            file: "fsl-semantics/src/check/lowering.rs".to_owned(),
             item: "Lowering::lower_node".to_owned(),
         },
         SeamLocation {
-            file: "qsl-semantics/src/check/capability.rs".to_owned(),
+            file: "fsl-semantics/src/check/capability.rs".to_owned(),
             item: "Capability::applies_to_declaration".to_owned(),
         },
         SeamLocation {
-            file: "qsl-forms/src/dispatch.rs".to_owned(),
+            file: "fsl-forms/src/dispatch.rs".to_owned(),
             item: "dispatch".to_owned(),
         },
         SeamLocation {
-            file: "qsl-replay/src/execute.rs".to_owned(),
+            file: "fsl-replay/src/execute.rs".to_owned(),
             item: "replay_with_cancel_and_temporal_selections".to_owned(),
         },
-        // FR-100: `qsl_replay::spine::run`'s own seam over
+        // FR-100: `fsl_replay::spine::run`'s own seam over
         // `FamilyOutcome`, mirroring `execute::replay`'s above.
         SeamLocation {
-            file: "qsl-replay/src/spine/call.rs".to_owned(),
+            file: "fsl-replay/src/spine/call.rs".to_owned(),
             item: "convert_outcome".to_owned(),
         },
         // FR-043-AC-17: the decisive-atom reader's `match` over
         // `FamilyOutcome` (`decisive_record`), mirroring `convert_outcome`'s
         // above.
         SeamLocation {
-            file: "qsl-replay/src/spine/clause/temporal.rs".to_owned(),
+            file: "fsl-replay/src/spine/clause/temporal.rs".to_owned(),
             item: "decisive_record".to_owned(),
         },
         // FR-337: the temporal letter reader's `match` over `FamilyOutcome`
         // (`ObservedLetters::reading`, shared by `atom` and `activation`), mirroring `execute::replay`'s above.
         SeamLocation {
-            file: "qsl-eval/src/temporal/observed.rs".to_owned(),
+            file: "fsl-eval/src/temporal/observed.rs".to_owned(),
             item: "ObservedLetters::reading".to_owned(),
         },
         // The window-expression reader's `match` over `FamilyOutcome`
         // (`ObservedWindowSource::read`), mirroring `ObservedLetters::reading`.
         SeamLocation {
-            file: "qsl-eval/src/temporal/observed_window.rs".to_owned(),
+            file: "fsl-eval/src/temporal/observed_window.rs".to_owned(),
             item: "ObservedWindowSource::read".to_owned(),
         },
         // FR-357: `replay_value_parity`'s own seam over `FamilyOutcome`,
         // mirroring `execute::replay`'s above.
         SeamLocation {
-            file: "qsl-replay/src/execute/value_parity.rs".to_owned(),
+            file: "fsl-replay/src/execute/value_parity.rs".to_owned(),
             item: "settle".to_owned(),
         },
-        // QSpec FR-483: the value-validity check arm's own seam over
+        // FSpec FR-483: the value-validity check arm's own seam over
         // `FamilyOutcome`, mirroring `replay_value_parity`'s above.
         SeamLocation {
-            file: "qsl-replay/src/value_check.rs".to_owned(),
+            file: "fsl-replay/src/value_check.rs".to_owned(),
             item: "ValueTarget::evaluate_with_case_budget".to_owned(),
         },
     ]
@@ -309,7 +309,7 @@ impl<'ast> Visit<'ast> for EnclosingItem {
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
         let previous = self
             .current_impl_self
-            .replace(qsl_string_edge::impl_self_name(&node.self_ty));
+            .replace(fsl_string_edge::impl_self_name(&node.self_ty));
         syn::visit::visit_item_impl(self, node);
         self.current_impl_self = previous;
     }
@@ -457,50 +457,50 @@ fn offline_registry_unavailable(stderr: &str) -> bool {
 /// **One probe build per crate.** A seam `match` makes its own
 /// crate fail to compile under `--cfg seam_probe`, and a crate that fails
 /// stops every crate that depends on it: rustc never reaches them. Since X-6b
-/// moved `check` and `family` into `qsl-semantics`, the S1 seam
+/// moved `check` and `family` into `fsl-semantics`, the S1 seam
 /// (`FamilyKind::catalog_code_prefix`) is in that crate, while the root
-/// crate's seams match over `qsl-semantics`' probe variants. So the probe
-/// builds `qsl-forms` alone under `--cfg seam_probe_forms` (which
+/// crate's seams match over `fsl-semantics`' probe variants. So the probe
+/// builds `fsl-forms` alone under `--cfg seam_probe_forms` (which
 /// reports the leading-token table, and is separate from `seam_probe` so
-/// that seam hides nothing above it), then `qsl-semantics` alone under
+/// that seam hides nothing above it), then `fsl-semantics` alone under
 /// `--cfg seam_probe`, which reports its
 /// own seam, and then the root crate under `--cfg seam_probe --cfg
 /// seam_probe_downstream`, where the downstream cfg gives each lower crate's
 /// own seam its probe arm so that crate compiles and the root crate's seams
-/// are reached. `qsl-route` gets a downstream build of its own:
+/// are reached. `fsl-route` gets a downstream build of its own:
 /// the root crate names it only as a dev dependency, so building the root
-/// crate's `--lib` never compiles it. `qsl-eval` gets one for
+/// crate's `--lib` never compiles it. `fsl-eval` gets one for
 /// the same reason: the root crate does not depend on it at all, so its
 /// S6a seams (`value::expression`) are reached only by a build of its own.
-/// **Layered downstream cfgs.** `qsl-replay` depends on `qsl-eval`,
-/// and the root crate on `qsl-replay`, so each of those crates' seams needs a
+/// **Layered downstream cfgs.** `fsl-replay` depends on `fsl-eval`,
+/// and the root crate on `fsl-replay`, so each of those crates' seams needs a
 /// probe arm in the builds of the crates above it: `seam_probe_eval_downstream`
-/// gives `qsl-eval`'s seams theirs, and `seam_probe_replay_downstream` gives
-/// `qsl-replay`'s its own. `qsl-eval`'s build sets neither, so it still
-/// reports its own seams; `qsl-replay`'s build sets the first, so it
-/// compiles `qsl-eval` and reports its own seam; the root crate's sets both.
+/// gives `fsl-eval`'s seams theirs, and `seam_probe_replay_downstream` gives
+/// `fsl-replay`'s its own. `fsl-eval`'s build sets neither, so it still
+/// reports its own seams; `fsl-replay`'s build sets the first, so it
+/// compiles `fsl-eval` and reports its own seam; the root crate's sets both.
 /// Each build must fail; together they must report exactly the checked-in
 /// list.
 const PROBE_BUILDS: [(&str, &str); 6] = [
-    ("qsl-forms", "--cfg seam_probe_forms"),
-    ("qsl-semantics", "--cfg seam_probe"),
+    ("fsl-forms", "--cfg seam_probe_forms"),
+    ("fsl-semantics", "--cfg seam_probe"),
     (
-        "quire-spec-language",
+        "filament-spec-language",
         "--cfg seam_probe --cfg seam_probe_downstream --cfg seam_probe_eval_downstream \
          --cfg seam_probe_replay_downstream",
     ),
-    ("qsl-route", "--cfg seam_probe --cfg seam_probe_downstream"),
-    ("qsl-eval", "--cfg seam_probe --cfg seam_probe_downstream"),
+    ("fsl-route", "--cfg seam_probe --cfg seam_probe_downstream"),
+    ("fsl-eval", "--cfg seam_probe --cfg seam_probe_downstream"),
     (
-        "qsl-replay",
+        "fsl-replay",
         "--cfg seam_probe --cfg seam_probe_downstream --cfg seam_probe_eval_downstream",
     ),
 ];
 
 /// The normal builds, with no probe cfg: the root crate, which builds every
-/// crate it depends on, and `qsl-route` and `qsl-eval`, which it does not
+/// crate it depends on, and `fsl-route` and `fsl-eval`, which it does not
 /// (see [`PROBE_BUILDS`]).
-const NORMAL_BUILDS: [&str; 3] = ["quire-spec-language", "qsl-route", "qsl-eval"];
+const NORMAL_BUILDS: [&str; 3] = ["filament-spec-language", "fsl-route", "fsl-eval"];
 
 /// One probe build's result: whether it compiled, and the `E0004`
 /// locations it reported.
@@ -515,7 +515,7 @@ struct ProbeBuild {
 /// A probe build that compiled is an error, but not an early one: the
 /// comparison runs over every build first, so the error names the package
 /// that compiled and the checked-in locations no build reported
-/// (FR-063-AC-2, TC-161 step 4). `qsl-semantics` and `qsl-route` each hold
+/// (FR-063-AC-2, TC-161 step 4). `fsl-semantics` and `fsl-route` each hold
 /// one seam, so adding a probe arm to that seam makes the whole build
 /// compile, and the missing location is the only thing that says which seam
 /// it was.
@@ -602,8 +602,8 @@ pub fn run(workspace_root: &Path) -> Result<String> {
         .collect::<Vec<_>>()
         .join(", ");
     Ok(format!(
-        "seam-probe: {} checked-in locations confirmed under RUSTFLAGS=--cfg seam_probe (qsl-forms: seam_probe_forms) \
-         (qsl-forms, qsl-semantics, then quire-spec-language, qsl-route, qsl-eval and qsl-replay); normal builds have none: \
+        "seam-probe: {} checked-in locations confirmed under RUSTFLAGS=--cfg seam_probe (fsl-forms: seam_probe_forms) \
+         (fsl-forms, fsl-semantics, then filament-spec-language, fsl-route, fsl-eval and fsl-replay); normal builds have none: \
          {locations}.\n{model_arms}",
         checked_in.len()
     ))
@@ -616,7 +616,7 @@ pub fn state_model_arm_report(workspace_root: &Path) -> Result<String> {
     let sites = [
         (
             "S1 prefix",
-            "qsl-semantics/src/family/mod.rs",
+            "fsl-semantics/src/family/mod.rs",
             "FamilyKind",
             "catalog_code_prefix",
             "Self",
@@ -624,7 +624,7 @@ pub fn state_model_arm_report(workspace_root: &Path) -> Result<String> {
         ),
         (
             "S3 hook",
-            "qsl-semantics/src/check/state_model.rs",
+            "fsl-semantics/src/check/state_model.rs",
             "StateModelFamily",
             "check",
             "Form",
@@ -650,7 +650,7 @@ pub fn state_model_arm_report(workspace_root: &Path) -> Result<String> {
         };
         for item in parsed.items {
             if let syn::Item::Impl(item) = item {
-                if qsl_string_edge::impl_self_name(&item.self_ty) != owner {
+                if fsl_string_edge::impl_self_name(&item.self_ty) != owner {
                     continue;
                 }
                 for item in item.items {
@@ -687,7 +687,7 @@ pub fn state_model_arm_report(workspace_root: &Path) -> Result<String> {
 /// a missing or renamed production table cannot silently report absence.
 #[string_edge]
 fn forms_s2_report(workspace_root: &Path) -> Result<String> {
-    const FILE: &str = "qsl-forms/src/dispatch.rs";
+    const FILE: &str = "fsl-forms/src/dispatch.rs";
     let path = workspace_root.join(FILE);
     let source = fs::read_to_string(&path).map_err(|source| Error::SeamProbeReadSource {
         path: path.clone(),
@@ -803,7 +803,7 @@ mod state_model_tests {
         }
         assert!(
             report.contains(
-                "StateModel S2 arm Bound => state_model::population_bound (ADR-016 FP-1, FP-3, FR-380): qsl-forms/src/dispatch.rs::dispatch"
+                "StateModel S2 arm Bound => state_model::population_bound (ADR-016 FP-1, FP-3, FR-380): fsl-forms/src/dispatch.rs::dispatch"
             ),
             "{report}"
         );
@@ -847,9 +847,9 @@ mod state_model_tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let scratch = tempfile::tempdir().unwrap();
         for file in [
-            "qsl-semantics/src/family/mod.rs",
-            "qsl-forms/src/dispatch.rs",
-            "qsl-semantics/src/check/state_model.rs",
+            "fsl-semantics/src/family/mod.rs",
+            "fsl-forms/src/dispatch.rs",
+            "fsl-semantics/src/check/state_model.rs",
         ] {
             let destination = scratch.path().join(file);
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
@@ -860,7 +860,7 @@ mod state_model_tests {
         state_model_arm_report(scratch.path()).unwrap();
         let file = scratch
             .path()
-            .join("qsl-semantics/src/check/state_model.rs");
+            .join("fsl-semantics/src/check/state_model.rs");
         let mut source = fs::read_to_string(&file).unwrap();
         let mut arm = LookupArm::default();
         arm.visit_file(&syn::parse_file(&source).unwrap());
@@ -887,16 +887,16 @@ mod state_model_tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let scratch = tempfile::tempdir().unwrap();
         for file in [
-            "qsl-semantics/src/family/mod.rs",
-            "qsl-forms/src/dispatch.rs",
-            "qsl-semantics/src/check/state_model.rs",
+            "fsl-semantics/src/family/mod.rs",
+            "fsl-forms/src/dispatch.rs",
+            "fsl-semantics/src/check/state_model.rs",
         ] {
             let destination = scratch.path().join(file);
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
             fs::copy(root.join(file), destination).unwrap();
         }
         state_model_arm_report(scratch.path()).unwrap();
-        let file = scratch.path().join("qsl-forms/src/dispatch.rs");
+        let file = scratch.path().join("fsl-forms/src/dispatch.rs");
         let source = fs::read_to_string(&file).unwrap();
         let changed = source.replace(
             "LeadingTokenKind::Body => protocol_clause::operation_body(construct),",
@@ -916,16 +916,16 @@ mod state_model_tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let scratch = tempfile::tempdir().unwrap();
         for file in [
-            "qsl-semantics/src/family/mod.rs",
-            "qsl-forms/src/dispatch.rs",
-            "qsl-semantics/src/check/state_model.rs",
+            "fsl-semantics/src/family/mod.rs",
+            "fsl-forms/src/dispatch.rs",
+            "fsl-semantics/src/check/state_model.rs",
         ] {
             let destination = scratch.path().join(file);
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
             fs::copy(root.join(file), destination).unwrap();
         }
         state_model_arm_report(scratch.path()).unwrap();
-        let file = scratch.path().join("qsl-forms/src/dispatch.rs");
+        let file = scratch.path().join("fsl-forms/src/dispatch.rs");
         let source = fs::read_to_string(&file).unwrap();
         let bound = "LeadingTokenKind::Bound => state_model::population_bound(construct),";
         assert!(source.contains(bound), "the real Bound arm was found");
@@ -963,16 +963,16 @@ mod state_model_tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let scratch = tempfile::tempdir().unwrap();
         for file in [
-            "qsl-semantics/src/family/mod.rs",
-            "qsl-forms/src/dispatch.rs",
-            "qsl-semantics/src/check/state_model.rs",
+            "fsl-semantics/src/family/mod.rs",
+            "fsl-forms/src/dispatch.rs",
+            "fsl-semantics/src/check/state_model.rs",
         ] {
             let destination = scratch.path().join(file);
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
             fs::copy(root.join(file), destination).unwrap();
         }
         state_model_arm_report(scratch.path()).unwrap();
-        let file = scratch.path().join("qsl-forms/src/dispatch.rs");
+        let file = scratch.path().join("fsl-forms/src/dispatch.rs");
         let source = fs::read_to_string(&file).unwrap();
         let changed = source.replace(
             "LeadingTokenKind::Function => value::function(construct)",
@@ -985,7 +985,7 @@ mod state_model_tests {
         let message = error.to_string();
         assert!(message.contains("expected-but-missing"), "{message}");
         assert!(
-            message.contains("qsl-forms/src/dispatch.rs::dispatch")
+            message.contains("fsl-forms/src/dispatch.rs::dispatch")
                 && message.contains("Value producer"),
             "{message}"
         );
@@ -1052,7 +1052,7 @@ mod tests {
         fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
             let previous = self
                 .current_impl_self
-                .replace(qsl_string_edge::impl_self_name(&node.self_ty));
+                .replace(fsl_string_edge::impl_self_name(&node.self_ty));
             syn::visit::visit_item_impl(self, node);
             self.current_impl_self = previous;
         }
@@ -1114,11 +1114,11 @@ mod tests {
     fn protocol_slots_keep_the_single_protocol_clause_seam() {
         let locations = checked_in_locations();
         assert!(locations.contains(&SeamLocation {
-            file: "qsl-eval/src/value/expression/mod.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/mod.rs".to_owned(),
             item: "evaluate_declaration".to_owned(),
         }));
         assert!(locations.contains(&SeamLocation {
-            file: "qsl-eval/src/value/expression/s6a/protocol_clause.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/s6a/protocol_clause.rs".to_owned(),
             item: "ProtocolClauseFamily::evaluate".to_owned(),
         }));
         assert_eq!(
@@ -1138,7 +1138,7 @@ mod tests {
     #[test]
     fn checked_in_locations_contains_check_causes_code() {
         assert!(checked_in_locations().contains(&SeamLocation {
-            file: "qsl-semantics/src/check/refusal.rs".to_owned(),
+            file: "fsl-semantics/src/check/refusal.rs".to_owned(),
             item: "CheckCause::code".to_owned(),
         }));
     }
@@ -1147,14 +1147,14 @@ mod tests {
     #[test]
     fn checked_in_locations_contains_value_check_case_budget_seam() {
         assert!(checked_in_locations().contains(&SeamLocation {
-            file: "qsl-replay/src/value_check.rs".to_owned(),
+            file: "fsl-replay/src/value_check.rs".to_owned(),
             item: "ValueTarget::evaluate_with_case_budget".to_owned(),
         }));
     }
 
     /// FR-063-AC-6: the checked-in list has an entry for each of
     /// the five named categories, including the parser's leading-token-kind
-    /// table, and `qsl-forms` has its own probe build so that entry is
+    /// table, and `fsl-forms` has its own probe build so that entry is
     /// reachable (a list entry no build reports would fail `seam-probe`).
     #[ix_trace_rs::trace("TC-161", "FR-063-AC-6")]
     #[test]
@@ -1168,44 +1168,44 @@ mod tests {
         };
         // S1: `FamilyKind` prefix arm.
         assert!(has(
-            "qsl-semantics/src/family/mod.rs",
+            "fsl-semantics/src/family/mod.rs",
             "FamilyKind::catalog_code_prefix"
         ));
         // S6a: `evaluate_declaration`.
         assert!(has(
-            "qsl-eval/src/value/expression/mod.rs",
+            "fsl-eval/src/value/expression/mod.rs",
             "evaluate_declaration"
         ));
         // S2: the parser's leading-token-kind table, and the check seam.
-        assert!(has("qsl-forms/src/dispatch.rs", "dispatch"));
+        assert!(has("fsl-forms/src/dispatch.rs", "dispatch"));
         assert!(has(
-            "qsl-semantics/src/check/check/typing.rs",
+            "fsl-semantics/src/check/check/typing.rs",
             "Typer::infer_form"
         ));
         // S3: evaluator and lowering.
         assert!(has(
-            "qsl-eval/src/value/expression/evaluate.rs",
+            "fsl-eval/src/value/expression/evaluate.rs",
             "Machine::apply"
         ));
         assert!(has(
-            "qsl-semantics/src/check/lowering.rs",
+            "fsl-semantics/src/check/lowering.rs",
             "Lowering::lower_node"
         ));
         // S4: a family `Cause` enum's `catalog_code()`.
         assert!(has(
-            "qsl-semantics/src/check/refusal.rs",
+            "fsl-semantics/src/check/refusal.rs",
             "CheckCause::code"
         ));
-        // The forms table is reported by `qsl-forms`' own probe build.
+        // The forms table is reported by `fsl-forms`' own probe build.
         assert!(PROBE_BUILDS
             .iter()
-            .any(|(package, flags)| *package == "qsl-forms" && flags.contains("seam_probe_forms")));
+            .any(|(package, flags)| *package == "fsl-forms" && flags.contains("seam_probe_forms")));
     }
 
     /// FR-507-AC-6 (TC-1302): a `Capability` variant with no applicable-family
     /// entry does not compile under `--cfg seam_probe`. The probe variant
     /// `Capability::__SeamProbe` has no row in `applies_to_declaration`, so
-    /// the `qsl-semantics` probe build fails with `E0004` at exactly that
+    /// the `fsl-semantics` probe build fails with `E0004` at exactly that
     /// function, while the same package builds clean with no probe cfg.
     /// Ignored in the default run because `make seam-probe` (in `CI_CHECKS`)
     /// runs the same builds and comparison; run it with `--ignored`.
@@ -1217,7 +1217,7 @@ mod tests {
             .parent()
             .expect("xtask sits in the workspace root");
         let (normal_succeeded, normal_locations, normal_stderr) =
-            build_and_collect_e0004(workspace_root, "qsl-semantics", "")
+            build_and_collect_e0004(workspace_root, "fsl-semantics", "")
                 .expect("the normal build runs");
         assert!(
             normal_succeeded,
@@ -1226,7 +1226,7 @@ mod tests {
         assert!(normal_locations.is_empty(), "{normal_locations:?}");
 
         let (probe_succeeded, probe_locations, _) =
-            build_and_collect_e0004(workspace_root, "qsl-semantics", "--cfg seam_probe")
+            build_and_collect_e0004(workspace_root, "fsl-semantics", "--cfg seam_probe")
                 .expect("the probe build runs");
         assert!(
             !probe_succeeded,
@@ -1234,7 +1234,7 @@ mod tests {
         );
         assert!(
             probe_locations.contains(&SeamLocation {
-                file: "qsl-semantics/src/check/capability.rs".to_owned(),
+                file: "fsl-semantics/src/check/capability.rs".to_owned(),
                 item: "Capability::applies_to_declaration".to_owned(),
             }),
             "{probe_locations:?}"
@@ -1305,7 +1305,7 @@ mod tests {
 
     fn route_seam() -> SeamLocation {
         SeamLocation {
-            file: "qsl-route/src/lib.rs".to_owned(),
+            file: "fsl-route/src/lib.rs".to_owned(),
             item: "same_kind".to_owned(),
         }
     }
@@ -1325,12 +1325,12 @@ mod tests {
             .collect();
         let builds = [
             ProbeBuild {
-                package: "quire-spec-language",
+                package: "filament-spec-language",
                 succeeded: false,
                 locations: everything_but_route,
             },
             ProbeBuild {
-                package: "qsl-route",
+                package: "fsl-route",
                 succeeded: true,
                 locations: BTreeSet::new(),
             },
@@ -1339,11 +1339,11 @@ mod tests {
             .expect_err("a probe build that compiled fails the gate")
             .to_string();
         assert!(
-            message.contains("the probe build of qsl-route succeeded"),
+            message.contains("the probe build of fsl-route succeeded"),
             "{message}"
         );
         assert!(
-            message.contains(r#"expected-but-missing: [SeamLocation { file: "qsl-route/src/lib.rs", item: "same_kind" }]"#),
+            message.contains(r#"expected-but-missing: [SeamLocation { file: "fsl-route/src/lib.rs", item: "same_kind" }]"#),
             "{message}"
         );
     }
@@ -1360,26 +1360,26 @@ mod tests {
             .partition(|location| *location == route_seam());
         let builds = [
             ProbeBuild {
-                package: "quire-spec-language",
+                package: "filament-spec-language",
                 succeeded: false,
                 locations: rest.clone(),
             },
             ProbeBuild {
-                package: "qsl-route",
+                package: "fsl-route",
                 succeeded: false,
                 locations: route,
             },
         ];
         compare_probe_builds(&builds, &checked_in).expect("the union equals the list");
         let missing = [ProbeBuild {
-            package: "quire-spec-language",
+            package: "filament-spec-language",
             succeeded: false,
             locations: rest,
         }];
         let message = compare_probe_builds(&missing, &checked_in)
             .expect_err("a checked-in location no build reported")
             .to_string();
-        assert!(message.contains("qsl-route/src/lib.rs"), "{message}");
+        assert!(message.contains("fsl-route/src/lib.rs"), "{message}");
     }
 
     /// FR-063-AC-4: `xtask seam-probe` exits non-zero when the checked-in
@@ -1396,7 +1396,7 @@ mod tests {
     fn a_wrong_checked_in_list_maps_to_a_non_zero_exit_code() {
         let checked_in = checked_in_locations();
         let builds = [ProbeBuild {
-            package: "quire-spec-language",
+            package: "filament-spec-language",
             succeeded: false,
             locations: checked_in.clone(),
         }];
@@ -1429,7 +1429,7 @@ mod tests {
         // entry (the case above) does not exercise this one.
         let mut over_checked_in = checked_in.clone();
         over_checked_in.insert(SeamLocation {
-            file: "qsl-eval/src/value/expression/family.rs".to_owned(),
+            file: "fsl-eval/src/value/expression/family.rs".to_owned(),
             item: "not_a_real_seam_function".to_owned(),
         });
         let error = compare_probe_builds(&builds, &over_checked_in)
@@ -1644,10 +1644,10 @@ mod tests {
 
     /// FR-063-AC-7 (second test): none of `FamilyKind`, the parsed form
     /// enum (`ExprNode`), the checked node enum (`NodeKind`; defined in
-    /// `quire-checked` since QSL-1376), `Value`'s function family's own
+    /// `filament-checked` since QSL-1376), `Value`'s function family's own
     /// `Cause` (`CheckCause`) or `WrongSnapshotCause`
     /// (`ProtocolClauseSnapshot`'s own S4-shaped, not family-`Cause`, cause;
-    /// defined in `quire-semantic-value`) carries `#[non_exhaustive]`.
+    /// defined in `filament-semantic-value`) carries `#[non_exhaustive]`.
     #[ix_trace_rs::trace("TC-161", "FR-063-AC-7")]
     #[test]
     fn closed_enums_carry_no_non_exhaustive_attribute() {
@@ -1655,9 +1655,9 @@ mod tests {
             .parent()
             .expect("xtask lives one level below the workspace root");
         for (file, name) in [
-            ("qsl-semantics/src/family/mod.rs", "FamilyKind"),
-            ("qsl-forms/src/syntax.rs", "ExprNode"),
-            ("qsl-semantics/src/check/refusal.rs", "CheckCause"),
+            ("fsl-semantics/src/family/mod.rs", "FamilyKind"),
+            ("fsl-forms/src/syntax.rs", "ExprNode"),
+            ("fsl-semantics/src/check/refusal.rs", "CheckCause"),
         ] {
             assert_enum_is_not_non_exhaustive(workspace_root, file, name);
         }
@@ -1668,8 +1668,8 @@ mod tests {
             crate::canonical_types::cargo_metadata(workspace_root).expect("cargo metadata runs");
         let packages = crate::canonical_types::packages(&metadata).expect("metadata reads");
         for (package, file, name) in [
-            ("quire-checked", "node.rs", "NodeKind"),
-            ("quire-semantic-value", "call.rs", "WrongSnapshotCause"),
+            ("filament-checked", "node.rs", "NodeKind"),
+            ("filament-semantic-value", "call.rs", "WrongSnapshotCause"),
         ] {
             let leaf = packages
                 .iter()
@@ -1734,7 +1734,7 @@ mod tests {
         fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
             let previous = self
                 .current_impl_self
-                .replace(qsl_string_edge::impl_self_name(&node.self_ty));
+                .replace(fsl_string_edge::impl_self_name(&node.self_ty));
             syn::visit::visit_item_impl(self, node);
             self.current_impl_self = previous;
         }

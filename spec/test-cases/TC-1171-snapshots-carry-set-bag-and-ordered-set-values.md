@@ -3,14 +3,14 @@ id: TC-1171
 title: "Snapshots and invocations carry set, bag and ordered-set values"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-1171: Snapshots and invocations carry set, bag and ordered-set values
 
 ## Description
 
-Verify that admission reads `set`, `bag` and `ordered-set` values by QSpec FR-144's supplied-collection rules, writes sets and bags in the order of their elements' native encoding, decides frame changes by collection equality, witnesses out-of-range elements and counts elements toward `observation.values`; and that a Decimal value keeps its supplied coefficient and scale outside a set or bag, is normalized as the element of a set or bag, compares by value and is checked for membership by value; that a Rational is normalized wherever it stands, a Float keeps its exact bits and is a member by bit identity, a Quantity keeps its exact magnitude and unit, and a String element keeps its exact scalar sequence, each in a scalar slot and as the element of a set, bag or ordered set.
+Verify that admission reads `set`, `bag` and `ordered-set` values by FSpec FR-144's supplied-collection rules, writes sets and bags in the order of their elements' native encoding, decides frame changes by collection equality, witnesses out-of-range elements and counts elements toward `observation.values`; and that a Decimal value keeps its supplied coefficient and scale outside a set or bag, is normalized as the element of a set or bag, compares by value and is checked for membership by value; that a Rational is normalized wherever it stands, a Float keeps its exact bits and is a member by bit identity, a Quantity keeps its exact magnitude and unit, and a String element keeps its exact scalar sequence, each in a scalar slot and as the element of a set, bag or ordered set.
 
 Scope: FR-106-AC-50, FR-106-AC-51, FR-106-AC-52, FR-106-AC-53, FR-106-AC-54, FR-106-AC-55, FR-106-AC-56, FR-106-AC-57, FR-106-AC-58, FR-106-AC-59, FR-106-AC-60, FR-106-AC-66, FR-106-AC-68, FR-106-AC-69.
 

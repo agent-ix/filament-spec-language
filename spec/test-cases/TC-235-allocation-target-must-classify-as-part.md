@@ -3,7 +3,7 @@ id: TC-235
 title: "An allocation whose target does not classify as Part refuses wrong-export"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: verifies
 ---
 # TC-235: An allocation whose target does not classify as Part refuses wrong-export

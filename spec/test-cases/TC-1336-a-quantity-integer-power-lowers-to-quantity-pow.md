@@ -3,9 +3,9 @@ id: TC-1336
 title: "A quantity integer power lowers to quantity.pow"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-1336: A quantity integer power lowers to quantity.pow
@@ -14,18 +14,18 @@ relationships:
 
 Verify that `e ^ n` over a non-affine quantity and a signed integer literal
 parses, checks to the compound unit of the operand's exponents times `n`,
-lowers to one `quire.op.quantity.pow` node and evaluates through the owned
-quantity core with QSpec FR-142's charges; that a negative exponent carries a
+lowers to one `filament.op.quantity.pow` node and evaluates through the owned
+quantity core with FSpec FR-142's charges; that a negative exponent carries a
 nonzero obligation on the base; and that an affine, carried or non-quantity
 operand and a non-literal exponent are refused. Scope: FR-093-AC-58 and the
-`e ^ n` row of FR-091-AC-3 (QSpec TC-187 U12, U13 and U21).
+`e ^ n` row of FR-091-AC-3 (FSpec TC-187 U12, U13 and U21).
 
 ## Test Procedure
 
 1. Declare the units of FR-093-AC-58. Check, lower and evaluate `w1` to `w7`;
-   read each `quire.op.quantity.pow` node, its arguments and its
+   read each `filament.op.quantity.pow` node, its arguments and its
    `result_type`, and pass each package to IR's v2 reader.
-2. Check `w8`, then evaluate its first power node with QSpec TC-187 U13's
+2. Check `w8`, then evaluate its first power node with FSpec TC-187 U13's
    tuple as the meter's remaining budget at that node.
 3. Check `r1` and `r2` under `CheckMode::Linked`; check `r2` under
    `CheckMode::Kernel` and evaluate its first power node with U21's
@@ -35,13 +35,13 @@ operand and a non-literal exponent are refused. Scope: FR-093-AC-58 and the
    `2 m ^ 2` and `-1 m ^ 2` through S2.
 
 Tag the test `#[trace("FR-093-AC-58", "TC-1336")]`; step 5's mapping also
-carries `FR-091-AC-3`. The expected outcomes of U12, U13 and U21 are QSpec
+carries `FR-091-AC-3`. The expected outcomes of U12, U13 and U21 are FSpec
 TC-187's, referenced by row ID.
 
 ## Expected Results
 
 - Step 1: every function checks and evaluates to `true`; `w1`'s power is one
-  `quire.op.quantity.pow` node over the `2 m` literal and the `Integer` literal
+  `filament.op.quantity.pow` node over the `2 m` literal and the `Integer` literal
   `"2"`, sharing the product's compound-unit node, with no law, mode, member or
   leaves; `w3`'s and `w4`'s powers have the dimensionless compound-unit node;
   `w5`'s power has the unit `s` to the power 1; IR's v2 reader admits each

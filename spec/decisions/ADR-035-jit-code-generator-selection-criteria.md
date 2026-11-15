@@ -3,32 +3,32 @@ id: ADR-035
 title: "JIT code generator: Cranelift behind the execution-backend seam, with the criteria that would reopen it"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-560
+  - target: ix://agent-ix/filament-spec-language/FR-560
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-561
+  - target: ix://agent-ix/filament-spec-language/FR-561
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-562
+  - target: ix://agent-ix/filament-spec-language/FR-562
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-563
+  - target: ix://agent-ix/filament-spec-language/FR-563
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-568
+  - target: ix://agent-ix/filament-spec-language/FR-568
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/NFR-017
+  - target: ix://agent-ix/filament-spec-language/NFR-017
     type: relates_to
-  - target: ix://agent-ix/quire-specification/FR-306
+  - target: ix://agent-ix/filament-specification/FR-306
     type: relates_to
 ---
 # ADR-035: JIT code generator: Cranelift behind the execution-backend seam, with the criteria that would reopen it
 
-Status: Accepted. The owner decided RES-56: `qsl-jit` uses Cranelift for
+Status: Accepted. The owner decided RES-56: `fsl-jit` uses Cranelift for
 now, behind the ExecutionBackend seam (FR-294). The planner ruled CG-4:
-exactly one confined unsafe module in `qsl-jit` (FR-568).
+exactly one confined unsafe module in `fsl-jit` (FR-568).
 
 ## Context
 
@@ -38,9 +38,9 @@ ADR-029 EB-7 fixes the execution-backend seam (FR-294) and the JIT semantics
 Cranelift. This record states that decision, the criteria that support it,
 and the conditions under which it is reopened.
 
-The two candidates differ along lines that matter to QSL:
+The two candidates differ along lines that matter to FSL:
 
-- **Build.** QSL's README promises that a clean clone builds with only a Rust
+- **Build.** FSL's README promises that a clean clone builds with only a Rust
   toolchain (NFR-017). Cranelift is a set of crates.io crates. An LLVM
   binding needs an LLVM installation on the build host, or a bundled build of
   LLVM.
@@ -58,9 +58,9 @@ depends on this decision.
 
 ## Decision
 
-**`qsl-jit` generates code with Cranelift.** The JIT is reached only through
+**`fsl-jit` generates code with Cranelift.** The JIT is reached only through
 the ExecutionBackend seam (FR-294), so replacing the code generator later
-changes `qsl-jit` alone: no caller, no outcome and no parity rule changes
+changes `fsl-jit` alone: no caller, no outcome and no parity rule changes
 (EB-4, FR-295). LLVM is not used, by default or behind a feature.
 
 The criteria below are the rationale for that choice and the conditions that
@@ -75,7 +75,7 @@ failure is CG-3 reopen condition 1:
 1. **Rust-only default build.** The default workspace build and the
    NFR-017 clean-clone gate stay Rust-only: the code generator needs no
    system library.
-2. **Prepare accounting.** The code generator lets `qsl-jit` charge
+2. **Prepare accounting.** The code generator lets `fsl-jit` charge
    `compile_work_units` before translating each checked node and
    `code_bytes` with each block's byte length before keeping it, and poll
    `&Cancel` at each charge (FR-294).
@@ -92,7 +92,7 @@ failure is CG-3 reopen condition 1:
 
 ### CG-2 The sanity spike (Phase 4a)
 
-When `qsl-jit` is first built (Phase 4a), a sanity spike records these
+When `fsl-jit` is first built (Phase 4a), a sanity spike records these
 numbers for the Cranelift JIT, and confirms each CG-1 criterion, over the FR-295 parity program generator's
 10,000 units at the gate's default seed and their argument tuples, on each
 CG-1 item 6 target, release profile. The spike records numbers; it does not
@@ -104,8 +104,8 @@ re-run the choice:
 | Run time | Wall time of every argument tuple's `call`, summed |
 | Interpreter time | The same calls on the interpreter backend, summed |
 | Code bytes | The `code_bytes` counter `prepare` reaches, summed |
-| Build cost | Clean-clone `cargo build --locked -p qsl-jit` wall time and the number of packages it adds to `Cargo.lock` |
-| Unsafe sites | The number of `unsafe` blocks and `unsafe fn` in `qsl-jit` Cranelift requires |
+| Build cost | Clean-clone `cargo build --locked -p fsl-jit` wall time and the number of packages it adds to `Cargo.lock` |
+| Unsafe sites | The number of `unsafe` blocks and `unsafe fn` in `fsl-jit` Cranelift requires |
 
 The spike's JIT also passes the FR-563 parity gate.
 
@@ -117,7 +117,7 @@ This record is reopened only when the spike, or later use, shows a blocker:
    `PrepareLimits` per node, or cannot target one of the CG-1 item 6
    targets).
 2. The Cranelift JIT cannot pass the FR-563 parity gate because of the code
-   generator, not because of a `qsl-jit` defect.
+   generator, not because of a `fsl-jit` defect.
 3. Prepare time plus run time is not below the interpreter time on
    `x86_64-unknown-linux-gnu`, so the JIT gives no speed-up.
 
@@ -126,21 +126,21 @@ numbers are recorded and the decision stands. If condition 3 holds, the
 reopened decision includes not building the JIT: EB-8's `jit` choice then
 keeps refusing as not supplied (FR-296).
 
-### CG-4 Unsafe code in `qsl-jit` (ruled: one confined module)
+### CG-4 Unsafe code in `fsl-jit` (ruled: one confined module)
 
-Entering generated machine code requires `unsafe`. Every other QSL crate
-declares `unsafe_code = "forbid"`. Ruling: `qsl-jit` holds exactly one module
-that may contain unsafe code, `qsl_jit::exec`. The crate declares
+Entering generated machine code requires `unsafe`. Every other FSL crate
+declares `unsafe_code = "forbid"`. Ruling: `fsl-jit` holds exactly one module
+that may contain unsafe code, `fsl_jit::exec`. The crate declares
 `unsafe_code = "deny"` at its root and `#[allow(unsafe_code)]` appears only on
-`mod exec`; no other module of `qsl-jit` and no other QSL crate contains
+`mod exec`; no other module of `fsl-jit` and no other FSL crate contains
 unsafe code. The `arch-lint unsafe-confinement` check enforces the allowed
 module list, which holds that one entry (FR-568).
 
-**Safety contract of `qsl_jit::exec`.** The unsafe code may only:
+**Safety contract of `fsl_jit::exec`.** The unsafe code may only:
 
 1. take, from Cranelift's JIT module, the address of a finalized function of
    the prepared value that owns the module;
-2. convert that address to the one entry signature `qsl-jit` generates for
+2. convert that address to the one entry signature `fsl-jit` generates for
    every entry (`extern "C" fn(*const EntryFrame) -> u32`, the frame holding
    the argument handles, the meter (which holds the cancellation handle) and the result record; the frame
    holds no `KernelTable` and no function pointer, because each shim is a
@@ -178,7 +178,7 @@ signature check, the FR-561 call-target check and the FR-563 parity gate.
 
 ## Consequences
 
-- `qsl-jit` depends on Cranelift crates from crates.io, so the outside-user
+- `fsl-jit` depends on Cranelift crates from crates.io, so the outside-user
   build stays Rust-only (NFR-017).
 - The choice can be revisited without touching any caller, because the seam
   and the parity gate do not depend on the code generator.
@@ -202,4 +202,4 @@ signature check, the FR-561 call-target check and the FR-563 parity gate.
 
 - ADR-029 EB-4, EB-5, EB-7, EB-8.
 - RES-56: the JIT code-generator decision (owner: Cranelift, for now).
-- QSpec FR-306: AOT and JIT parity.
+- FSpec FR-306: AOT and JIT parity.

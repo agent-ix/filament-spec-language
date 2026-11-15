@@ -3,31 +3,31 @@ id: FR-185
 title: "Declare random parameters, workloads and rewards"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-272
+  - target: ix://agent-ix/filament-specification/FR-272
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-185: Declare random parameters, workloads and rewards
 
 ## Description
 
-S3 SHALL admit the three declarations that make a QSL state model
+S3 SHALL admit the three declarations that make an FSL state model
 probabilistic (ADR-024 §1): a distribution on an operation parameter (a
 **random parameter**, PM-1), a **workload** that weights every operation of
 a model (PM-2), and named **rewards** on an operation (PM-5). It SHALL check
 each declaration's well-formedness and record it on the checked package, so
-FR-187 can give transitions step probabilities and reward values. QSpec owns
+FR-187 can give transitions step probabilities and reward values. FSpec owns
 the spelling and the semantics; this requirement specifies the compiler's
 checks.
 
@@ -40,7 +40,7 @@ that names the declaration and the rule it breaks.
 
 ## Inputs
 
-- A parsed QSL package with state models, operations, workloads and
+- A parsed FSL package with state models, operations, workloads and
   rewards.
 
 ## Outputs
@@ -73,9 +73,9 @@ integers in lowest terms.
 Every refusal below that carries a bracketed string is an
 `invalid_probabilistic_model` diagnostic whose cause is that string, and it retains the declaration locus and
 the parameter, reward, workload or operation it names. Every cause except
-`duplicate-reward` is in QSpec FR-272's closed set for that code (QSpec
-FR-405). `duplicate-reward` is a QSL-proposed cause that QSpec does not yet
-define; it is requested of QSpec in STD-188, and QSL emits it until QSpec
+`duplicate-reward` is in FSpec FR-272's closed set for that code (FSpec
+FR-405). `duplicate-reward` is an FSL-proposed cause that FSpec does not yet
+define; it is requested of FSpec in STD-188, and FSL emits it until FSpec
 adds it or names another.
 
 A weight is an `exact-value`, and `exact-number` admits a signed integer, so
@@ -171,21 +171,21 @@ of probabilities start from.
 
 Note. A workload name is a package-wide identifier (FR-186), so a same-named
 workload on another model is a repeat too. No `invalid_probabilistic_model`
-cause names a repeated workload, and the code and cause are those of QSpec
+cause names a repeated workload, and the code and cause are those of FSpec
 FR-272's `conflicting_declaration` row, as FR-246 uses them for a repeated
 name.
 
 ### Rewards
 
 - S3 SHALL admit a named reward on an operation whose value type is an
-  integer type or a quantity type (QSpec FR-142).
+  integer type or a quantity type (FSpec FR-142).
 - If a reward's expression reads a state field, an ambient value or
   anything other than the operation's parameters and constants, S3 SHALL
   refuse the reward [`state-read-in-reward`], naming the reward and the read.
 - If a reward's value type is neither an integer nor a quantity type, S3
   SHALL refuse the reward [`reward-type`].
 - If an operation declares two rewards of one name, S3 SHALL refuse the
-  second [`duplicate-reward`] (QSL-proposed, STD-188), naming the operation and the reward.
+  second [`duplicate-reward`] (FSL-proposed, STD-188), naming the operation and the reward.
 - S3 SHALL leave the non-negativity check to model admission, which runs
   it over the parameters' finite domains (FR-187).
 
@@ -193,18 +193,18 @@ name.
 
 A quantity-typed operation parameter, such as ADR-024 §7.2's duration `d`, has
 the type `Quantity<u>` of a declared unit `u`. The domain package names the
-unit with a unit `typeRef` (`ix://quire/unit/<name>`, QSpec FR-322 "Model-owned
+unit with a unit `typeRef` (`ix://filament/unit/<name>`, FSpec FR-322 "Model-owned
 members" step 4 and FR-322-AC-80), which resolves to the unit's own type node
-(QSpec FR-142). A distribution's support values are quantity literals of that
+(FSpec FR-142). A distribution's support values are quantity literals of that
 unit (`1 ms`, `3 ms`, `12 ms` for `Quantity<ms>`). S3 SHALL refuse a support
 value that is not a `Quantity<u>` value, another unit of the same dimension
-included, with `value-outside-type` (Random parameters), the cause QSpec
+included, with `value-outside-type` (Random parameters), the cause FSpec
 FR-405-AC-3 assigns to a support, not FR-142's `type-mismatch`.
 
 A parameter whose declared type is an integer range, such as
 `Millis = Int[1, 12]`, takes integer supports.
 
-Dependencies: the unit `typeRef` and the quantity literal form are QSpec's
+Dependencies: the unit `typeRef` and the quantity literal form are FSpec's
 (FR-142, FR-322); reading the unit `typeRef` is an intake rule (FR-056-AC-42), and
 resolving it is the assembler's (FR-091).
 
@@ -214,7 +214,7 @@ If a checked package holds a random parameter, a workload or a reward, then
 S4 SHALL refuse the package `unsupported_construct`/`not-yet-implemented`,
 naming the first such declaration in source order, its feature name
 (`random-parameter`, `workload` or `reward`) and the selected profile
-identity (QSpec FR-272). A checked `probabilistic` claim (FR-186) is no such
+identity (FSpec FR-272). A checked `probabilistic` claim (FR-186) is no such
 declaration: S4 emits it as its own node (FR-498). S3's checked record is unaffected, and FR-187 reads
 it from the checked package, not from the emitted wire. Replay of a sampled
 witness (FR-193) takes that checked subject and recompiles nothing.
@@ -241,6 +241,6 @@ witness (FR-193) takes that checked subject and recompiles nothing.
 
 ## References
 
-- QSpec half of the work, which owns the grammar and semantics of random
-  parameters, workloads and rewards: QSpec FR-405 (Linear STD-137).
+- FSpec half of the work, which owns the grammar and semantics of random
+  parameters, workloads and rewards: FSpec FR-405 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

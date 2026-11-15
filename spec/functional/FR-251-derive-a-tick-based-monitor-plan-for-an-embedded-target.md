@@ -3,40 +3,40 @@ id: FR-251
 title: "Derive a tick-based monitor plan for an embedded target"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-160
+  - target: ix://agent-ix/filament-specification/FR-160
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-252
+  - target: ix://agent-ix/filament-specification/FR-252
     type: depends_on
-  - target: ix://agent-ix/quire-observation/FR-004
+  - target: ix://agent-ix/filament-observation/FR-004
     type: depends_on
-  - target: ix://agent-ix/quire-contract-ir/FR-358
+  - target: ix://agent-ix/filament-contract-ir/FR-358
     type: depends_on
 ---
 # FR-251: Derive a tick-based monitor plan for an embedded target
 
 ## Description
 
-QSL SHALL derive, for a timed claim monitored on an embedded target, a
+FSL SHALL derive, for a timed claim monitored on an embedded target, a
 monitor plan that the runtime repository builds into a monitor (ADR-026
 MN-1 to MN-4). The plan reads the claim under the timestamped-event
 profile with integer ticks of a monotonic hardware counter, converts each
 dense constant to ticks with sound rounding, sizes each buffer from a
 caller-set maximum event rate, and fixes how overflow and counter faults
-settle. QSL's reference evaluator gives the same three-valued decision over
+settle. FSL's reference evaluator gives the same three-valued decision over
 a tick-stamped trace as the plan specifies.
 
 ## Use case
@@ -63,7 +63,7 @@ engineer states.
 ```rust
 pub struct TimedMonitorPlan {
     pub subject: MonitorSubject,            // exact checked package and clause occurrence
-    pub binding: ClockBindingKey,           // QSpec FR-252: counter, unit, width
+    pub binding: ClockBindingKey,           // FSpec FR-252: counter, unit, width
     pub uncertainty: ExactRational,
     pub max_reading_gap: u64,
     pub program: MonitorProgram,            // plan-root entries, atoms, topology and State type
@@ -73,13 +73,13 @@ pub struct TimedMonitorPlan {
 }
 ```
 
-This is the logical contract, not a new Rust dependency from RT to QSL or
+This is the logical contract, not a new Rust dependency from RT to FSL or
 a separate serialization format. Its checked payload crosses
 [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
 E5 through the checked-package wire and its verified binding; IR owns S5
 lowering, and the driver with CG/RT owns generation under
 [ADR-029](../decisions/ADR-029-lifecycle-cli-provider-plugin-cache-codegen-boundaries.md)
-OP-3 and EB-6. QSL owns the program's temporal meaning. Transport and
+OP-3 and EB-6. FSL owns the program's temporal meaning. Transport and
 lowering SHALL preserve the logical fields below.
 
 ### Executable program and ownership
@@ -91,15 +91,15 @@ dependency; intervals and buffer capacities alone are not an executable plan.
 | Program component | Required content |
 | --- | --- |
 | Subject | `MonitorSubject`: exact checked package identity, authored clause occurrence, checked formula root, activation and capture bindings, and timestamped-event profile. Existing checked identities are retained; a clause display name is not a selection. |
-| Atoms | Each `AtomId` maps to its checked predicate body, ordered input/capture slots with admitted types and declaration identities, and source occurrence. The activation guard is identified separately from formula atoms. No atom is an unresolved name or caller-supplied Boolean callback. An atom's captured values are the scalar or aggregate values the atom reads, typed per atom capture binding (FR-251-AC-5) and projected from the model value by existing catalog projections; whole model objects are not passed as `State`. Where a model-typed atom has no admitted projection, the monitor reports `Incomplete(LimitReached{limit: atom_projection, value: <AtomId>, setting: monitor.atom_projection})` with replayable evidence, not a refusal and not a dropped atom (QSpec FR-487, "Atoms without an admitted projection", FR-487-AC-12). |
+| Atoms | Each `AtomId` maps to its checked predicate body, ordered input/capture slots with admitted types and declaration identities, and source occurrence. The activation guard is identified separately from formula atoms. No atom is an unresolved name or caller-supplied Boolean callback. An atom's captured values are the scalar or aggregate values the atom reads, typed per atom capture binding (FR-251-AC-5) and projected from the model value by existing catalog projections; whole model objects are not passed as `State`. Where a model-typed atom has no admitted projection, the monitor reports `Incomplete(LimitReached{limit: atom_projection, value: <AtomId>, setting: monitor.atom_projection})` with replayable evidence, not a refusal and not a dropped atom (FSpec FR-487, "Atoms without an admitted projection", FR-487-AC-12). |
 | Formula topology | Each `SubformulaId` identifies one node with its checked operator tag, ordered operand IDs, optional atom ID and its interval reference. One root is named. All references resolve inside this program; node IDs are scoped to its subject. Operator tags and operand order survive lowering. |
-| State | One typed `State` record whose fields are the persistent state slots, named by subformula: the unwrapped time (an integer tick, kept in state), each buffered subformula's sequence of entries (unwrapped tick and captured bindings), and the active obligation instances with their captured bindings and origin. An obligation's **origin** is the unwrapped tick of the event that activated it (monotone, so time-based windows read it directly); an "on each" activation's position is `State.event_position` read when `on_event` creates the instance and kept as an ordinary capture, which travels as the integer field `position` of the instance's `status` record in `activations` (QSpec FR-487 imposes no type on `status`); there is no `Activation` field and the plan root has no binding for it. The `init` entry's result is the initial value of every slot, so the state initializer is the `init` body. Buffer capacities are premises of the plan root (below), not part of any sequence type; every fold over a buffer is bounded by its capacity, and the `buffer_<n>` of an unbounded past operator also holds one summary cell as its first element (an accumulator and its own `history_start`, not an entry and not counted in the capacity, Behavior "Unbounded past operators"). An operator with no finite window (a root `always` or `eventually`, or a future operator nested without a bounding outer window) keeps no history buffer: each live obligation instance carries a constant-size accumulator (its status and origin tick) as a field of `State`, and the number of live instances is bounded by a plan-declared **activation capacity**, the plan root's `activation_capacity` binding (QSpec FR-487, member 16), bounding the `activations` field of `State`. A bounded future operator nested under a bounded outer window is bounded by its own buffer capacity (the retention rule of Buffers); an unbounded future operator nested there is bounded by the activation capacity. A bounded future interval operator keeps its buffer of the Buffers rule even under an unbounded root; the activation capacity bounds live instances of unbounded operators only (a pending instance of an unbounded operator nested under a bounded one counts against the same shared activation capacity), and an overflow reports the limit of whichever capacity was exceeded. `State` has exactly the fields `now`, `history_start` (the unwrapped tick from which buffered history is trusted, initially the baseline), one `buffer_<n>` per buffer, `activations` and `event_position` (QSpec FR-487), the unwrapped monotone count of admitted events (the event position of QSpec FR-091 and FR-092; `init` sets it to 0 and `on_event` adds 1 per admitted event). |
+| State | One typed `State` record whose fields are the persistent state slots, named by subformula: the unwrapped time (an integer tick, kept in state), each buffered subformula's sequence of entries (unwrapped tick and captured bindings), and the active obligation instances with their captured bindings and origin. An obligation's **origin** is the unwrapped tick of the event that activated it (monotone, so time-based windows read it directly); an "on each" activation's position is `State.event_position` read when `on_event` creates the instance and kept as an ordinary capture, which travels as the integer field `position` of the instance's `status` record in `activations` (FSpec FR-487 imposes no type on `status`); there is no `Activation` field and the plan root has no binding for it. The `init` entry's result is the initial value of every slot, so the state initializer is the `init` body. Buffer capacities are premises of the plan root (below), not part of any sequence type; every fold over a buffer is bounded by its capacity, and the `buffer_<n>` of an unbounded past operator also holds one summary cell as its first element (an accumulator and its own `history_start`, not an entry and not counted in the capacity, Behavior "Unbounded past operators"). An operator with no finite window (a root `always` or `eventually`, or a future operator nested without a bounding outer window) keeps no history buffer: each live obligation instance carries a constant-size accumulator (its status and origin tick) as a field of `State`, and the number of live instances is bounded by a plan-declared **activation capacity**, the plan root's `activation_capacity` binding (FSpec FR-487, member 16), bounding the `activations` field of `State`. A bounded future operator nested under a bounded outer window is bounded by its own buffer capacity (the retention rule of Buffers); an unbounded future operator nested there is bounded by the activation capacity. A bounded future interval operator keeps its buffer of the Buffers rule even under an unbounded root; the activation capacity bounds live instances of unbounded operators only (a pending instance of an unbounded operator nested under a bounded one counts against the same shared activation capacity), and an overflow reports the limit of whichever capacity was exceeded. `State` has exactly the fields `now`, `history_start` (the unwrapped tick from which buffered history is trusted, initially the baseline), one `buffer_<n>` per buffer, `activations` and `event_position` (FSpec FR-487), the unwrapped monotone count of admitted events (the event position of FSpec FR-091 and FR-092; `init` sets it to 0 and `on_event` adds 1 per admitted event). |
 | Transitions | Four **entries**, each a checked-expression `function` node of the checked-package v2 wire (the existing expression and function contracts; no statement vocabulary): `init() -> State`, `on_event(State, event inputs) -> (State, Results)`, `on_watermark(State, watermark inputs) -> (State, Results)` and `on_gap(State, gap) -> (State, Results)`, where `gap` is the checked gap RT passes on a counter fault. An entry is a state-passing total function: "assignment" is constructing the next state record, "branch" is `if`/`case`, "loop over a buffer" is a fold bounded by the buffer's capacity, "push" and "expire" construct and filter the buffer sequence, and "emit" is a field of `Results`. A checked atom or guard body embeds as an operand of the entry's expression. The entries explicitly compute atoms, activate obligations, update state and buffers, expire windows and emit typed obligation results; every read, call target and branch is resolved, and calling an unspecified temporal operator is not an entry body. |
-| Entry bindings | Each entry's parameters are its input slots and `State`, and its result is the next `State` and `Results`. An event's inputs are the **gap-checked tick delta** that RT supplies (below), the clause's admitted snapshot/invocation values and the binding identity; a watermark's inputs are the **unwrapped history-boundary tick** (a non-negative integer in the plan's tick unit, covering every tick up to and including the boundary, QSpec FR-487 and FR-094) and the admitted scope identities of QSpec FR-094/FR-160, which RT supplies. Neither entry receives a raw, possibly wrapping counter reading. An ordinary clock poll is not a watermark and creates no event position. |
+| Entry bindings | Each entry's parameters are its input slots and `State`, and its result is the next `State` and `Results`. An event's inputs are the **gap-checked tick delta** that RT supplies (below), the clause's admitted snapshot/invocation values and the binding identity; a watermark's inputs are the **unwrapped history-boundary tick** (a non-negative integer in the plan's tick unit, covering every tick up to and including the boundary, FSpec FR-487 and FR-094) and the admitted scope identities of FSpec FR-094/FR-160, which RT supplies. Neither entry receives a raw, possibly wrapping counter reading. An ordinary clock poll is not a watermark and creates no event position. |
 
 **Plan root.** The plan crosses E5 as one **plan-root node** of the
 checked-package v2 wire: a `temporal`/`monitor_plan` node with seventeen ordered
-bindings (QSpec FR-487, FR-322-AC-308): `clause` (the clause the program
+bindings (FSpec FR-487, FR-322-AC-308): `clause` (the clause the program
 monitors, whose `temporal_bindings` row is the plan's clock binding), `state`,
 `inputs`, `scope`, `results`, the entries `init`, `on_event` and `on_watermark`,
 `counter_width_bits`, `max_reading_gap`, `max_event_rate` (a
@@ -108,17 +108,17 @@ rational, events per tick), `buffers` (capacity per buffered subformula),
 the tick scale), `uncertainty` (a rational at least 0, in ticks), the entry `on_gap` (member
 15) and, last (member 16), `activation_capacity` (an integer at least 0). Each
 premise, including the uncertainty, counter, tick unit, gap, rate and
-capacities (buffer and activation), is part of the root's key (QSpec FR-487-AC-6), so changing one
+capacities (buffer and activation), is part of the root's key (FSpec FR-487-AC-6), so changing one
 gives a different plan. The tick intervals of the logical fields above are
 not bindings: each is derived from the clause's interval bounds and the unit
-scales (QSpec FR-487). Every entry, atom body and type the root needs is a
+scales (FSpec FR-487). Every entry, atom body and type the root needs is a
 dependency of the root, and the root's key also covers the body roots of the
 declared helper functions its entries, atoms and guard call (the call closure of
-QSpec FR-487; a helper stays a declared node keyed by its name for call
-identity), so its content key (QSpec FR-322) selects the
+FSpec FR-487; a helper stays a declared node keyed by its name for call
+identity), so its content key (FSpec FR-322) selects the
 complete immutable plan and no second identity scheme is introduced. The
 logical Rust record above is the producer's in-memory view of that node; the
-wire node, not a QSL-owned Rust type, is what IR reads and the driver admits.
+wire node, not an FSL-owned Rust type, is what IR reads and the driver admits.
 
 The `Emission` that carries the plan-root bytes SHALL carry, from the same
 acquisition the package was emitted from, every witness row the emitter
@@ -169,17 +169,17 @@ not final writer-renamed identities or admitted order/progress authority.
 
 The request SHALL receive a genuine independently admitted observation-owner
 progress association as an explicit input under the observation owner's
-[authority-value contract](ix://agent-ix/quire-observation/FR-004). Checked
+[authority-value contract](ix://agent-ix/filament-observation/FR-004). Checked
 model-step facts may establish the model-time order; they SHALL NOT establish
 a static progress context in place of that observation authority. The
 observation owner's canonical association VALUE and the capability that
-admitted it SHALL be retained without substituting a compiler-generated assertion. QSL SHALL consume the supplying owner's bounded canonical-value
+admitted it SHALL be retained without substituting a compiler-generated assertion. FSL SHALL consume the supplying owner's bounded canonical-value
 interface; the complete progress authority document bytes SHALL NOT serve as
 the association value. The retained owner view SHALL supply its already bounded
 canonical association bytes by borrow, without a second encoder or owned copy.
 Owner admission ceilings SHALL retain the owner's typed resource refusal before
 such a view exists; the handoff SHALL NOT introduce a second getter ceiling.
-The shared native budget SHALL charge any QSL-owned materialization before its
+The shared native budget SHALL charge any FSL-owned materialization before its
 allocation, and SHALL NOT charge a copy when the handoff only borrows owner bytes.
 
 The canonical model-step order value SHALL be RFC 8785 JSON with exactly
@@ -191,13 +191,13 @@ conversion, not aliases or a new identity scheme. For a dense source,
 contain exactly `kind: "tick"`, `operation` (the original checked tick-operation
 anchor) and `period` with canonical decimal-string `numerator` and
 `denominator` of the checked exact rational. No absent tick anchor SHALL be
-defaulted. The value establishes model-step semantics under QSpec FR-252;
+defaulted. The value establishes model-step semantics under FSpec FR-252;
 it contains no timestamp sorting or event-arrival ordering claim. Encoding
 SHALL obey the caller's finite canonical byte ceiling and preserve the native
 encoder refusal without a partial value. These original structural components
 are not final writer addresses and do not replace the final-emission join.
 
-The public plan-root handoff SHALL expose QSL-admitted model-step order and
+The public plan-root handoff SHALL expose FSL-admitted model-step order and
 independently admitted progress-association authority bound to the same final
 emission as its plan and timing obligations. The handoff SHALL preserve the
 original canonical admitted values and the owner-established association with the
@@ -205,7 +205,7 @@ selected package, clause, subject and claim occurrence. It SHALL use the
 owning admission interface; neither the monitor scope type nor its watermark
 entry establishes that authority.
 
-QSL SHALL independently compare the observation association's selected subject,
+FSL SHALL independently compare the observation association's selected subject,
 clock identity and revision, observation source, model, time unit, source kind,
 and digital operation and exact period against the independently selected
 observation inputs and original checked model-time source. These component
@@ -213,13 +213,13 @@ comparisons SHALL NOT establish joint authority without comparing the complete
 structural model, unit, dimension and digital operation node identities and
 the actual clause claim occurrence. The clause comparison SHALL retain the
 original structural clause node, claim role and ordinal, and original source
-reference under the owning occurrence contract. QSL SHALL compare the complete
+reference under the owning occurrence contract. FSL SHALL compare the complete
 owner-encoded structural components; a digest, alias, clause name, clock label
 or equal numeric position SHALL NOT replace any component. This requirement
 specifies the compared owner values, not a new carrier or an alternative
 claim-string encoding.
 
-Before issuing the admitted context, QSL SHALL join the original clause node
+Before issuing the admitted context, FSL SHALL join the original clause node
 and claim ordinal through that same final emission's retained temporal binding
 rows. The selected declaration SHALL equal the plan root's clause binding and
 the strict reader's selected clause declaration. A foreign emission or a
@@ -234,7 +234,7 @@ substituted progress association SHALL NOT acquire authority by matching a
 clause name, type, structural label or numeric index. The handoff SHALL NOT
 fabricate an admitted value or infer authority from clock configuration. A
 bare semantic identity SHALL NOT substitute for a complete admitted value.
-QSL SHALL NOT reconstruct the association from a second emission or duplicate
+FSL SHALL NOT reconstruct the association from a second emission or duplicate
 the owner admission rules.
 
 `PlanRoot::admit_authority` SHALL perform the one strict admission of the final
@@ -245,39 +245,39 @@ SHALL clone the actual original opaque IR `AdmissionBinding` retained by that
 admitted emitting package. The package
 used by that selection SHALL retain that exact capability. A clone permitted by
 the IR owner retains it; an independent strict read of equal bytes or a handoff
-from another emission SHALL NOT replace it. QSL SHALL NOT mint, reconstruct,
+from another emission SHALL NOT replace it. FSL SHALL NOT mint, reconstruct,
 hash or serialize an alternative binding. This requirement leaves the concrete
 constructor ownership form to the owning admission interface; it does not
 introduce a second package admission for the handoff.
 
 The admitted authority SHALL expose the original checked `ModelTimeSource`
 through a borrowed constant-time accessor tied to its retained immutable checked
-unit. The source's `TimeSourceKind` is QSL's actual type: its tick period is
-`quire_exact::Rational`, not IR's `CheckedRational`.
+unit. The source's `TimeSourceKind` is FSL's actual type: its tick period is
+`filament_exact::Rational`, not IR's `CheckedRational`.
 
 For IR authority-row adaptation, the authority SHALL also expose a borrowed
-`Option<&quire_contract_model::CheckedRational>`: `None` for dense time and the
+`Option<&filament_contract_model::CheckedRational>`: `None` for dense time and the
 exact checked tick period for tick time. Construction SHALL obtain the selected
 same-package admitted clock through the public budgeted IR clock read, compare
 its kind and already-validated canonical period components with the original
 checked time source's verified association, and precharge the one owned IR
 `CheckedRational` value and its component copies before storing them. The
 accessors SHALL not scan, clone, format or allocate; they SHALL not relabel
-QSL's numeric type as an IR type or introduce a local time-source carrier.
+FSL's numeric type as an IR type or introduce a local time-source carrier.
 
 ### Shared preparation budget
 
 Authority selection and canonical value materialization SHALL require the
 caller's same mutable `NativeJoinBudget` under
-[FR-358](ix://agent-ix/quire-contract-ir/FR-358). The budget SHALL be shared with
-the following row adaptation and native selected-closure preparation. QSL SHALL
+[FR-358](ix://agent-ix/filament-contract-ir/FR-358). The budget SHALL be shared with
+the following row adaptation and native selected-closure preparation. FSL SHALL
 NOT create a fresh allowance, clone a budget, restore spent work or storage,
 or continue a preparation phase after its first unpaid charge. Starting a new
 phase through the owner's public resume operation may clear phase metadata;
 it SHALL preserve cumulative consumption and the caller's original limits.
 
 Before each corresponding inspection, comparison, traversal, conversion or
-allocation, QSL SHALL admit its work and logical ownership charges through the
+allocation, FSL SHALL admit its work and logical ownership charges through the
 original budget's public accounted-charge interface. The inventory SHALL
 include original source and full claim identity comparison; checked clause,
 model-time-source and association-row scans; structural identity components
@@ -319,9 +319,9 @@ The entries SHALL be expressed in the existing checked expression and
 no new statement, loop or assignment vocabulary exists, and a state-passing
 function entry satisfies this requirement's executable-body obligation (QSL-685
 called these "instruction and control-flow bodies"). A catalog operation needed to extend a buffer
-(a sequence append) is not a new operation: QSpec FR-487 expresses it as
-`quire.op.collection.flatten` of a sequence of two sequences, so the closed
-operation catalog is unchanged. QSL SHALL determine activation, atom meaning, operator updates,
+(a sequence append) is not a new operation: FSpec FR-487 expresses it as
+`filament.op.collection.flatten` of a sequence of two sequences, so the closed
+operation catalog is unchanged. FSL SHALL determine activation, atom meaning, operator updates,
 deadline settlement and result propagation before RT build. IR/CG may lower
 or generate these bodies, but RT SHALL NOT reconstruct them from the formula
 graph, source text, interval table or buffer IDs. A graph with missing bodies
@@ -362,14 +362,14 @@ scope, including its executable program and target premises, never just its
 buffer table. It covers the checked body of every atom and of the activation
 guard, every entry body, and the body of every declared helper function that an
 entry, an atom or the guard calls, directly or through another helper (the call
-closure of QSpec FR-487-AC-13), so replacing any one of those bodies, including
+closure of FSpec FR-487-AC-13), so replacing any one of those bodies, including
 through a public plan constructor, gives a different `PlanId`; a name, a
 declaration path or a node index alone is not a body. No new persistent identity
 scheme is introduced.
 
 ### Fault boundary
 
-QSL SHALL refuse plan derivation if the checked clause/target cannot yield
+FSL SHALL refuse plan derivation if the checked clause/target cannot yield
 the complete program; that refusal creates neither an RT monitor nor a
 verdict. An invalid package/clause selection, unresolved or foreign program
 reference, inconsistent interval/buffer association or altered target field
@@ -400,7 +400,7 @@ retain the `Incomplete` and `Failed` settlements below. An executor invariant
 failure SHALL be `Failed`, never `false`, pending or a successful verdict;
 after such a failure the monitor SHALL accept no further input. RT owns
 execution faults and input admission; a disagreement between the prescribed
-program and the QSL reference evaluator is a QSL plan-generation defect,
+program and the FSL reference evaluator is an FSL plan-generation defect,
 while incorrect execution of that program is an RT/CG defect. Neither owner
 may repair such a disagreement by inventing another evaluation rule.
 
@@ -408,15 +408,15 @@ may repair such a disagreement by inventing another evaluation rule.
 
 - The plan SHALL read the clause under the timestamped-event profile, with
   positions as observed events and time stamps as integer ticks; its clock
-  binding SHALL name the counter, its unit and its width (QSpec FR-252).
+  binding SHALL name the counter, its unit and its width (FSpec FR-252).
 - **Tick cover.** A reading `k` covers the **half-open** interval `[k, k+1)`
   of the counter unit (this supersedes ADR-026 MN-2's "closed"), widened at
   each end by the declared uncertainty `u` to `[k-u, k+1+u)`.
 - **Sound rounding.** Each observed instant SHALL be the interval its tick
-  covers, widened by the declared uncertainty (QSpec FR-160). An interval
+  covers, widened by the declared uncertainty (FSpec FR-160). An interval
   bound SHALL decide true or false only when every pair of instants in the
   operands' intervals agrees; otherwise the obligation SHALL stay pending or
-  indeterminate as QSpec FR-160 states.
+  indeterminate as FSpec FR-160 states.
 - **Buffers.** For each past-time or bounded-future interval operator `n`
   with upper bound `b`, the plan SHALL set the buffer capacity to
   `ceil(rate x R(n)) + 1`, where `rate` is the maximum event rate in events per
@@ -432,7 +432,7 @@ may repair such a disagreement by inventing another evaluation rule.
     of `n` must survive until every enclosing operator can still consult it
     (`L` is 0 for an operator with no enclosing interval operator);
   - `d(n)` is the number of enclosing interval operators, and `1 + 2u` is one
-    **tick cover** (one tick plus `2u`, the widening of QSpec FR-160 at each
+    **tick cover** (one tick plus `2u`, the widening of FSpec FR-160 at each
     end of the cover by the declared uncertainty `u`), counted once for `n` and
     once for each enclosing operator.
 
@@ -459,14 +459,14 @@ may repair such a disagreement by inventing another evaluation rule.
     prefix before the baseline, and the prefix lost by a counter gap or by an
     overflow below, enter as the one value `indeterminate`.
   - **Oracle of the differential.** For these operators the oracle of the AC-7
-    differential is this requirement's reference evaluator (the `qsl-eval`
+    differential is this requirement's reference evaluator (the `fsl-eval`
     module of "Declarative semantics") evaluating FR-092's declarative meaning
     over the tick trace extended before the baseline by an unknown prefix, every
     atom value `indeterminate` (the `HistoryCutoff` meaning, equal to the
-    accumulator that starts `indeterminate`). It is not QSpec FR-092's
+    accumulator that starts `indeterminate`). It is not FSpec FR-092's
     bounded-profile evaluator, which refuses an unbounded past interval, and not
-    the infinite-trace evaluator (QSpec FR-367), whose position 0 is the
-    authoritative origin and reads atoms before it as false (FR-092-AC-8); QSpec
+    the infinite-trace evaluator (FSpec FR-367), whose position 0 is the
+    authoritative origin and reads atoms before it as false (FR-092-AC-8); FSpec
     FR-092 states that the monitor is a separate evaluator. The two are related by
     refinement, which the differential also checks: wherever the monitor's verdict
     is definite it equals the infinite-trace verdict, and an `indeterminate`
@@ -586,7 +586,7 @@ may repair such a disagreement by inventing another evaluation rule.
   activation capacity SHALL never be dropped silently: the obligations it
   affects settle `Incomplete(LimitReached{limit, value, setting})` with
   `limit` `activation`, `value` the activation capacity and `setting`
-  `monitor.max_activations` (QSpec FR-487); the instance is not started.
+  `monitor.max_activations` (FSpec FR-487); the instance is not started.
 - **Simultaneous overflow.** When several operators (interval operators with a
   buffer, or unbounded operators at the activation capacity) overflow at one
   position, the entry SHALL report the overflowed operator with the lowest
@@ -620,10 +620,10 @@ may repair such a disagreement by inventing another evaluation rule.
   instances not yet started, are unaffected. Otherwise RT passes the
   gap-checked delta to `on_event`; the entry adds it to the unwrapped time it
   keeps in `State` and never sees a raw wrapping reading. The gap path and its
-  wire form are QSpec FR-487 "Counter-gap path" and FR-487-AC-7.
+  wire form are FSpec FR-487 "Counter-gap path" and FR-487-AC-7.
 - **Same-tick events.** Two events in the same tick have difference interval
   `(-w, w)` where `w` is the widened cover width; the monitor SHALL NOT clamp
-  it to 0 and SHALL NOT substitute ingestion order for it (QSpec FR-160-AC-5).
+  it to 0 and SHALL NOT substitute ingestion order for it (FSpec FR-160-AC-5).
 - **Reporting.** Every interval-operator instance is reported once, when it
   settles (`true`, `false`, `indeterminate` or `Failed`), and every
   still-pending instance is reported at each watermark step. A root verdict
@@ -631,8 +631,8 @@ may repair such a disagreement by inventing another evaluation rule.
   reports one folded outcome per activation (pending until resolved, `Incomplete(LimitReached)` if the activation overflowed), not one
   per position of the trace.
 - **Declarative semantics.** The meaning of every operator is the declarative
-  one of QSpec FR-091 and FR-092 (timestamped rule) over the widened tick
-  intervals of QSpec FR-160, and is normative; no separate update algorithm
+  one of FSpec FR-091 and FR-092 (timestamped rule) over the widened tick
+  intervals of FSpec FR-160, and is normative; no separate update algorithm
   is. Endpoints: an interval operator with bound `[a, b]` (or open or
   half-open as written) compares `tau_j - tau_i` with the bound over every
   pair of instants in the two widened covers, and decides only when all pairs
@@ -642,8 +642,8 @@ may repair such a disagreement by inventing another evaluation rule.
   conflicting even with all declared progress applied. A buffered entry
   expires when the end of its window falls before the history boundary. Each generated entry SHALL agree with this
   meaning on every trace (FR-251-AC-7).
-- QSL's reference evaluator over a tick-stamped trace SHALL give, for each
-  obligation, the decision the plan specifies. It is a module of `qsl-eval`
+- FSL's reference evaluator over a tick-stamped trace SHALL give, for each
+  obligation, the decision the plan specifies. It is a module of `fsl-eval`
   that evaluates the declarative semantics above directly, with uncertainty,
   three-valued results, counter width and watermarks; it is not the FR-234
   pointwise evaluator, and generated entries are validated against it.
@@ -658,17 +658,17 @@ may repair such a disagreement by inventing another evaluation rule.
 | FR-251-AC-4 | AC-1's admitted plan alone builds a monitor after the producer/preparation objects are dropped. Its closed program contains both atom bodies, the ordered implication/eventually/always topology, activation and capture bindings, state initializers and executable event/watermark transitions. No source parsing, clause argument, atom callback or RT temporal translation occurs. Removing a transition body refuses admission with no initialization or monitor. | Test (TC-1081) |
 | FR-251-AC-5 | Replace an atom, the activation guard body, a helper called by an entry, operand reference, entry body, `init` body, interval association, buffer owner, activation binding, uncertainty, counter, tick unit, event rate or maximum gap independently with one from a different selected clause/target while retaining the original selection: each candidate refuses admission without initialization. Matching numeric subformula IDs from two subjects do not alias. A correctly derived plan for the changed target is admitted as a distinct plan. | Test (TC-1081) |
 | FR-251-AC-6 | Build two monitors from the same plan; a request observed only by the first does not activate an obligation in the second. Attempts to rebind either live monitor to another program/target fail without changing either state. Each emitted result retains its selected subject, target premises and obligation origin. | Test (TC-1081) |
-| FR-251-AC-7 | Executing the plan's transition entries and the QSL reference evaluator on the same admitted inputs gives identical per-obligation outcomes for AC-1 through AC-3, a clause with reversed implication operands, an activation guard that is false, and open versus closed interval endpoints. A progress assertion past a deadline settles according to QSpec FR-094/FR-160; polling the counter without that assertion adds no event and settles no deadline. | Test (TC-1081) |
+| FR-251-AC-7 | Executing the plan's transition entries and the FSL reference evaluator on the same admitted inputs gives identical per-obligation outcomes for AC-1 through AC-3, a clause with reversed implication operands, an activation guard that is false, and open versus closed interval endpoints. A progress assertion past a deadline settles according to FSpec FR-094/FR-160; polling the counter without that assertion adds no event and settles no deadline. | Test (TC-1081) |
 | FR-251-AC-8 | An unsupported predicate/instruction yields `Unsupported` and no monitor; failed state allocation yields build failure and no monitor; an event missing a required admitted value is rejected without state change; an executor invariant failure yields `Failed` with no verdict and prevents further input. None of these controls returns `false` as a property result. | Test (TC-1081) |
-| FR-251-AC-9 | The admitted plan of AC-1 crosses E5 as one `temporal`/`monitor_plan` plan-root node (QSpec FR-487, FR-322-AC-308) whose dependencies include the entries `init`, `on_event`, `on_watermark` and `on_gap` (member 15 of QSpec FR-487; FR-487-AC-7) as `function` nodes with the signatures of the Transitions row, and the `State` type; no entry uses a statement, loop or assignment form. Changing any one entry body changes the plan-root's content key and so the plan identity. The `init` result is every slot's initial value, and an obligation's origin in `State` is the unwrapped tick of its activating event. | Test (TC-1081) |
+| FR-251-AC-9 | The admitted plan of AC-1 crosses E5 as one `temporal`/`monitor_plan` plan-root node (FSpec FR-487, FR-322-AC-308) whose dependencies include the entries `init`, `on_event`, `on_watermark` and `on_gap` (member 15 of FSpec FR-487; FR-487-AC-7) as `function` nodes with the signatures of the Transitions row, and the `State` type; no entry uses a statement, loop or assignment form. Changing any one entry body changes the plan-root's content key and so the plan identity. The `init` result is every slot's initial value, and an obligation's origin in `State` is the unwrapped tick of its activating event. | Test (TC-1081) |
 | FR-251-AC-10 | The entries never receive a raw counter reading. On the 16-bit target of AC-3, RT supplies `on_event` the delta 10 for readings `65530` then `4` and the entry's unwrapped time advances by 10; for `65530` then `65500` RT calls `on_gap` with the gap 65506 (not `on_event`) and the faulting reading `65500` becomes the new baseline (AC-11). `on_watermark` receives the unwrapped history-boundary tick and the admitted scope identities; a watermark with history boundary tick 3001, the first tick at which a later `ack` would decide false, settles AC-1's `req` obligation (`ack` never seen) false, and a mere counter poll adds no event and calls no entry. | Test (TC-1081) |
-| FR-251-AC-11 | On the 16-bit target of AC-3 with `max_reading_gap` 100, the first admitted reading passes `on_event` the delta 0 and leaves the unwrapped time at `init`'s value. With one obligation instance still open across the fault, one decided before it and one started after it: readings `65530`, `65500` make RT call `on_gap` with 65506; the open instance yields `Failed`, `ReadingGapExceeded{gap: 65506, max_reading_gap: 100}` and is dropped from `State`, the decided instance's result and the later instance are unaffected, no verdict is emitted for the dropped instance, and a following reading `65510` is differenced from `65500` (delta 10) and passed to `on_event`. The `on_gap` entry is member 15 of QSpec FR-487's root (FR-487-AC-7); its returned state has `now` advanced by `gap`. History buffers and the `history_start` after the fault are FR-251-AC-15. | Test (TC-1081) |
+| FR-251-AC-11 | On the 16-bit target of AC-3 with `max_reading_gap` 100, the first admitted reading passes `on_event` the delta 0 and leaves the unwrapped time at `init`'s value. With one obligation instance still open across the fault, one decided before it and one started after it: readings `65530`, `65500` make RT call `on_gap` with 65506; the open instance yields `Failed`, `ReadingGapExceeded{gap: 65506, max_reading_gap: 100}` and is dropped from `State`, the decided instance's result and the later instance are unaffected, no verdict is emitted for the dropped instance, and a following reading `65510` is differenced from `65500` (delta 10) and passed to `on_event`. The `on_gap` entry is member 15 of FSpec FR-487's root (FR-487-AC-7); its returned state has `now` advanced by `gap`. History buffers and the `history_start` after the fault are FR-251-AC-15. | Test (TC-1081) |
 | FR-251-AC-12 | An `on_event` or `on_watermark` step stopped by RT's typed `StepResourceStop` (the per-step budget supplied at build is exhausted) leaves the monitor `State` unchanged and the event unconsumed; the stop is a typed incomplete outcome, not a refusal, not a verdict, not `Incomplete(LimitReached)`, not `Failed` and not the terminal executor invariant failure (after which the monitor rejects input), and the monitor accepts the next input. Re-presenting the same event under a sufficient budget executes the transition body exactly once and gives the outcome the unstopped step would have given; "Valid inputs execute the transition body once" applies to steps that are not resource-stopped. | Test (TC-1081) |
 | FR-251-AC-13 | Under the AC-2 premises, `once[5 ms, 10 ms] holds(p)` also gets capacity 22 (the upper bound 10 ms, not the width 5 ms, which would give 12); 23 events inside the window settle `Incomplete(LimitReached{limit: event_buffer, value: 22, setting: monitor.max_event_rate})`. | Test (TC-706) |
 | FR-251-AC-14 | For `always (holds(req) implies eventually[0 ms, 3 ms] holds(ack))` the root `always` keeps no history buffer: `State` holds one constant-size accumulator per live instance, and with an activation capacity of 2, a third live instance is not started and settles `Incomplete(LimitReached{limit: activation, value: 2, setting: monitor.max_activations})`, with no instance dropped silently. The root reports one folded outcome per activation, pending until resolved; each `eventually` instance is reported once on settlement and each pending one at every watermark step. | Test (TC-1081) |
 | FR-251-AC-15 | On the 16-bit target of AC-3, after `on_gap` the history buffers are empty and `history_start` and `now` are the faulting reading's unwrapped tick; `once[0 ms, 10 ms] holds(p)` (1 MHz tick, `max_event_rate` 2 events per ms) evaluated before its window has refilled past the marker is `indeterminate`, then decides once refilled. A counter poll between readings leaves the baseline unchanged. | Test (TC-1081) |
 | FR-251-AC-16 | Two events in the same 1 MHz tick give the difference interval `(-1, 1)` at uncertainty 0: `a before b` is neither decided true nor decided false, not clamped to 0 and not decided by ingestion order. | Test (TC-706) |
-| FR-251-AC-17 | A clause with an "on each" activation over a model-typed value: three admitted events (two in the same tick) create instances whose activation positions are 1, 2 and 3, read from `State.event_position` at creation and carried as `status.position` of each `activations` record, with no `Activation` field in the plan; an atom's captures are the typed scalar or aggregate projections it reads, and an atom over a model value with no admitted projection yields `Incomplete(LimitReached{limit: atom_projection, value: <that AtomId>, setting: monitor.atom_projection})` with replayable evidence, not a refusal (QSpec FR-487-AC-12). | Test (TC-1081) |
+| FR-251-AC-17 | A clause with an "on each" activation over a model-typed value: three admitted events (two in the same tick) create instances whose activation positions are 1, 2 and 3, read from `State.event_position` at creation and carried as `status.position` of each `activations` record, with no `Activation` field in the plan; an atom's captures are the typed scalar or aggregate projections it reads, and an atom over a model value with no admitted projection yields `Incomplete(LimitReached{limit: atom_projection, value: <that AtomId>, setting: monitor.atom_projection})` with replayable evidence, not a refusal (FSpec FR-487-AC-12). | Test (TC-1081) |
 | FR-251-AC-18 | On a 1 MHz counter with uncertainty 0 and `max_event_rate` 2 events per ms (0.002 per tick), `once[0 ms, 10 ms] once[0 ms, 5 ms] holds(p)` gets capacity 22 for the outer operator (ceil(0.002 x (10000 + 1)) + 1) and 32 for the inner one: retention 10000 + 5000 ticks plus two covers = 15002 ticks, ceil(0.002 x 15002) + 1 = 31 + 1 = 32, not the 12 that its own bound alone would give. A 33rd entry for the inner operator settles `Incomplete(LimitReached{limit: event_buffer, value: 32, setting: monitor.max_event_rate})`. | Test (TC-706) |
 | FR-251-AC-19 | For `once[0 ms, 10 ms] eventually holds(ack)` (the `eventually` unbounded, nested under a bounded `once`) with `activation_capacity` 2, when `ack` has not occurred and events at ticks 0, 1000 and 2000 (a 1 MHz counter) each start an `eventually` instance under the `once`, the third start finds two live instances, is not started and settles `Incomplete(LimitReached{limit: activation, value: 2, setting: monitor.max_activations})`, counted against the same capacity as an unbounded root's instances, with no new plan-root binding. | Test (TC-1081) |
 | FR-251-AC-20 | Two sibling operators `once[0 ms, 10 ms] holds(p)` (lower `subformula` id) and `once[0 ms, 10 ms] holds(q)`, each capacity 22 under the AC-2 premises, both overflow at the 23rd event: that position yields two `Incomplete(LimitReached{limit: event_buffer, value: 22, setting: monitor.max_event_rate})` results, the lower-id operator's first, each with its own `instance.subformula`, and neither is dropped; the order is the same under any evaluation order of the entry. | Test (TC-706) |
@@ -689,37 +689,37 @@ may repair such a disagreement by inventing another evaluation rule.
 | FR-251-AC-35 | `always eventually holds(p)` is planned, not refused, keeps no history buffer and holds one constant-size accumulator per live inner instance in `activations`; with `activation_capacity` 2 and three positions before any `p`, the third inner instance is not started and settles `Incomplete(LimitReached{limit: activation, value: 2, setting: monitor.max_activations})`, none dropped silently, and the first `p` settles the two live `eventually` instances `true`; on an open trace the operator is `Pending`, never decided `true` by the absence of a counterexample. | Test (TC-1081) |
 | FR-251-AC-36 | `eventually always holds(p)` is planned, not refused; with `activation_capacity` 2 and `p` true at positions 1, 2 and 3, positions 1 and 2 start two pending `always p` instances and position 3 settles `Incomplete(LimitReached{limit: activation, value: 2, setting: monitor.max_activations})`; the first `p` settles no `always p` instance true; a `p` false at position 4 settles the two live instances `false` and leaves the outer `eventually` `Pending`. | Test (TC-1081) |
 | FR-251-AC-37 | Two plans of AC-1's clause that differ only in the checked body of one atom, or only in the checked body of the activation guard, have different `PlanId`s. | Test (TC-1081) |
-| FR-251-AC-38 | Two plans of AC-1's clause that differ only in the checked body of a declared helper function that an entry calls, directly or through another helper, have different `PlanId`s and different plan-root keys while the helper's own `node_id` (its declaration path, its call identity) is unchanged and it stays a declared node; the key covers the helper through its body root's node `node_id`, which is content, and not through a graph position or a name alone (QSpec FR-487). | Test (TC-1081) |
+| FR-251-AC-38 | Two plans of AC-1's clause that differ only in the checked body of a declared helper function that an entry calls, directly or through another helper, have different `PlanId`s and different plan-root keys while the helper's own `node_id` (its declaration path, its call identity) is unchanged and it stays a declared node; the key covers the helper through its body root's node `node_id`, which is content, and not through a graph position or a name alone (FSpec FR-487). | Test (TC-1081) |
 | FR-251-AC-39 | `TimedMonitorPlan` built through its public constructor with one atom body swapped has an unequal `PlanId`, and a plan with equal bodies throughout has an equal `PlanId`. | Test (TC-1081) |
 | FR-251-AC-40 | Under AC-2's premises (`once[0 ms, 10 ms] holds(p)`, capacity 22, `b` 10000 ticks, `u` 0), 23 events at ticks 0 to 22 with `p` false at ticks 0 to 21 and true at the lost 23rd event settle the affected obligations `Incomplete(LimitReached{limit: event_buffer, value: 22, setting: monitor.max_event_rate})` and raise `history_start` to `22 + 1 + 0` = 23; `once[0 ms, 10 ms] holds(p)` read at tick 5000 is `indeterminate`, not `false`, at tick 10022 (`now - b` is 22) is still `indeterminate`, and at tick 10023 (`now - b` is 23) decides from the entries then in the window. For `historically[0 ms, 10 ms] holds(p)` with `p` true at ticks 0 to 21 and false at the lost event, the read at tick 5000 and at tick 10022 is `indeterminate`, not `true`. With `u` 2 ticks the lost event at tick 22 raises `history_start` to 22 + 1 + 4 = 27 and the first deciding tick is 10027. | Test (TC-706) |
-| FR-251-AC-41 | For `once`, `historically`, `since` and `triggered` without an upper bound, the differential of AC-7 compares the monitor with the `HistoryCutoff` evaluator of "Unbounded past operators" (every atom before the baseline `indeterminate`) and requires equal verdicts; it also evaluates the same trace under QSpec's infinite-trace evaluator and requires that every definite monitor verdict equals that evaluator's verdict, and an `indeterminate` monitor verdict is not compared. | Test (TC-1081) |
+| FR-251-AC-41 | For `once`, `historically`, `since` and `triggered` without an upper bound, the differential of AC-7 compares the monitor with the `HistoryCutoff` evaluator of "Unbounded past operators" (every atom before the baseline `indeterminate`) and requires equal verdicts; it also evaluates the same trace under FSpec's infinite-trace evaluator and requires that every definite monitor verdict equals that evaluator's verdict, and an `indeterminate` monitor verdict is not compared. | Test (TC-1081) |
 | FR-251-AC-42 | The `Emission` returned with a plan-root package holds, non-empty wherever the acquisition had rows, the selected model declaration rows, selected model field rows, source-unit rows, model enum and source enum declaration and member rows, source union rows, source record rows, tuple declaration rows, operation-member rows, equality producer rows, equality fact rows, temporal binding rows and omitted nodes of that acquisition. Every node id in each of them (anchor, structural node, record node, declaration node, union payload node, record member type node, checked node, source-map entry node, fact nodes, omitted node and the node an omission cause names, temporal binding declaration) equals the plan-root package's id for the node, so a node the writer renames is named by its renamed id in every row and a row naming no renamed node is unchanged; no row is written anew. The selected model declaration and field rows equal the unit's acquisition rows, and IR's selected exact identity join accepts them against the package read back. | Test (TC-1081) |
 | FR-251-AC-43 | For a plan root written over a unit with two temporal clauses, each subject's clause node and claim ordinal select, through the returned `Emission`'s temporal binding rows, the declaration the plan root's `clause` binding names and the declaration of the package's `temporal_clause_names` row of that ordinal, read back through the strict reader; the selection is re-keyed with the retained rows through every rename the writer performs or may perform, so a carry that renames a clause declaration returns the renamed id and not the base package's id; a subject whose clause node or claim ordinal the package does not hold selects nothing, and a subject's selection never returns the other clause's declaration. | Test (TC-1081) |
 | FR-251-AC-44 | After the plan-root writer renames the fields `origin_tick` and `amount` of the generated `Instance`, `Activation` and `LimitReached` records to `origin` and `value`, each retained source record row of those records has `admitted_name` `origin` or `value` at the renamed members and the other members' binding names unchanged, keeps the declared field names `origin_tick` and `amount`, and Contract IR's source record join over the rows and the package read back through the strict reader succeeds and projects each record; the same rows with a renamed member's `admitted_name` set to the declared field name are refused with `MismatchedIdentityWitness`. | Test (TC-1081) |
-| FR-251-AC-45 | From a genuine authored tick-monitor unit, the public plan-root handoff returns the complete QSL-admitted model-step order and the observation owner's original canonical association VALUE, bound to the same final emission as its plan and two timing obligations. A public consumer compares the complete values and original source, structural clause node, claim role and ordinal, selected subject and checked model-time facts; the final emission temporal binding join equals its plan-root clause and the strict reader declaration. The handoff exposes the actual emitting package's original opaque IR AdmissionBinding, retained by that same package and its owner-permitted clones; an independent equal-byte read does not retain it. Both values and owner capabilities remain usable after temporary compilation inputs are dropped; clones and writer renames retain the owner-permitted association and all previously retained rows. | Test |
-| FR-251-AC-46 | Independently omit the checked order premise and progress association; substitute a foreign admitted emission; change the structural clause node, claim role, claim ordinal or original source; change the selected subject, observation source, clock identity/revision, model, structural model/unit/dimension/digital-operation node, unit, source kind, digital operation or exact period; and substitute order or progress values. Each candidate returns its typed missing-premise, owner refusal or mismatched-selection condition and no partial admitted context. Owner admission at its exact supported document/value limits succeeds and a supported one-short owner admission limit returns the original owner resource refusal before a view exists. The handoff borrows the admitted canonical association slice without a getter limit or copy; native exact/one-short bounds concern only actual QSL-owned materialization. A name, digest, clock configuration, equal numeric index, full authority document or a second emission cannot turn refusal into admission. | Test |
+| FR-251-AC-45 | From a genuine authored tick-monitor unit, the public plan-root handoff returns the complete FSL-admitted model-step order and the observation owner's original canonical association VALUE, bound to the same final emission as its plan and two timing obligations. A public consumer compares the complete values and original source, structural clause node, claim role and ordinal, selected subject and checked model-time facts; the final emission temporal binding join equals its plan-root clause and the strict reader declaration. The handoff exposes the actual emitting package's original opaque IR AdmissionBinding, retained by that same package and its owner-permitted clones; an independent equal-byte read does not retain it. Both values and owner capabilities remain usable after temporary compilation inputs are dropped; clones and writer renames retain the owner-permitted association and all previously retained rows. | Test |
+| FR-251-AC-46 | Independently omit the checked order premise and progress association; substitute a foreign admitted emission; change the structural clause node, claim role, claim ordinal or original source; change the selected subject, observation source, clock identity/revision, model, structural model/unit/dimension/digital-operation node, unit, source kind, digital operation or exact period; and substitute order or progress values. Each candidate returns its typed missing-premise, owner refusal or mismatched-selection condition and no partial admitted context. Owner admission at its exact supported document/value limits succeeds and a supported one-short owner admission limit returns the original owner resource refusal before a view exists. The handoff borrows the admitted canonical association slice without a getter limit or copy; native exact/one-short bounds concern only actual FSL-owned materialization. A name, digest, clock configuration, equal numeric index, full authority document or a second emission cannot turn refusal into admission. | Test |
 | FR-251-AC-47 | After original source, model and request inputs are dropped, a public consumer reads the actual combined checked unit retained by the plan root: its exact source includes the authored unit and generated entries, its selected clause equals the plan subject, and its checked time source retains the selected model node, source kind and unit. These are explicitly original checker facts, not final renamed identities or admitted order/progress. | Test |
 | FR-251-AC-48 | A genuine dense model-time monitor root yields the complete specified canonical model-step value, with the actual checked model/unit/dimension identities. A digital source retains its exact period and checked tick-operation anchor. Changed source kind, unit or period changes the value. Exact-byte-ceiling encoding succeeds and one byte less returns Encoding with the original native canonical limit and no partial order value. | Test |
 | FR-251-AC-49 | The authority handoff and order materialization receive the caller's one mutable NativeJoinBudget, precharge every specified selection/materialization work and logical-storage step, and preserve previous consumption when used before row adaptation and native closure preparation. Measure genuine dense and tick handoffs at ample allowance: exact combined work and storage succeed; one short independently preserves the first unpaid native kind, full amount, original bound and non-owning locus without a context. Precharge part of the same budget before entry, then demonstrate that two individually affordable handoffs can exhaust their combined allowance without resetting counters. Package clones yield equal values and charges; zero storage denies before owned allocation, later charges preserve the first refusal within a phase, and overflow cannot wrap. Owner read/canonical ceilings do not act as a second preparation allowance. | Test, Inspection |
-| FR-251-AC-50 | A genuine dense authority returns its original checked ModelTimeSource by borrow and no IR tick period; a genuine tick authority returns its original checked source and an actual borrowed IR CheckedRational with the exact same checked numerator/denominator. The source borrow names the same element of the immutable retained checked-unit source slice. The IR period comes from the selected same-package clock's validated canonical period components, compared against the checked association and copied once under the original shared budget; exact storage for the actual IR container and two component payloads succeeds and one short refuses before copying. Repeated getters return those original values without lookup, cloning, formatting or allocation. QSL TimeSourceKind::Tick retains quire_exact::Rational and is never claimed to be an IR type alias. | Test, Inspection |
+| FR-251-AC-50 | A genuine dense authority returns its original checked ModelTimeSource by borrow and no IR tick period; a genuine tick authority returns its original checked source and an actual borrowed IR CheckedRational with the exact same checked numerator/denominator. The source borrow names the same element of the immutable retained checked-unit source slice. The IR period comes from the selected same-package clock's validated canonical period components, compared against the checked association and copied once under the original shared budget; exact storage for the actual IR container and two component payloads succeeds and one short refuses before copying. Repeated getters return those original values without lookup, cloning, formatting or allocation. FSL TimeSourceKind::Tick retains filament_exact::Rational and is never claimed to be an IR type alias. | Test, Inspection |
 | FR-251-AC-51 | The plan root of a tick-monitor unit with atom `holds(g(c.versionNumber))`, for a helper `g` whose parameter is the unbounded `Integer` (a type that contains the field's bounded type), is written and admitted by the strict reader, exactly as for a helper `f` whose parameter is the field's own type: the checker makes the argument widening an explicit exact integer conversion (FR-065-AC-9), so the argument's type node is the parameter's (Contract IR FR-347). A base package the strict reader refuses is still reported as the typed base-package refusal carrying the reader's catalog code, never as a producer invariant failure (QSL-1822, QSL-1824). | Test (TC-1081) |
 
 ## Dependencies
 
 - [ADR-026](../decisions/ADR-026-dense-time.md) §14 MN-1 to MN-7; ADR-014 B-2.
 - [FR-234](FR-234-check-timed-intervals-and-classify-timed-property-forms.md).
-- QSpec FR-090 (timestamped-event profile), QSpec FR-160 (clock
-  uncertainty and three-valued obligations), QSpec FR-252 (clock binding).
+- FSpec FR-090 (timestamped-event profile), FSpec FR-160 (clock
+  uncertainty and three-valued obligations), FSpec FR-252 (clock binding).
 
 ## References
 
 - The monitor contract handed to the runtime repository: ADR-026 OV-13.
-- QSpec half (Linear STD-647, merged): the plan-root node, its seventeen bindings (`on_gap` is member 15, FR-487-AC-7; `activation_capacity` is member 16, FR-487-AC-8) and entry signatures, QSpec FR-487 (FR-487-AC-6 for plan identity) with TC-978 and FR-322-AC-308; the half-open tick cover, QSpec FR-160-AC-6 and FR-160-AC-7.
+- FSpec half (Linear STD-647, merged): the plan-root node, its seventeen bindings (`on_gap` is member 15, FR-487-AC-7; `activation_capacity` is member 16, FR-487-AC-8) and entry signatures, FSpec FR-487 (FR-487-AC-6 for plan identity) with TC-978 and FR-322-AC-308; the half-open tick cover, FSpec FR-160-AC-6 and FR-160-AC-7.
 - Linear QSL-685 fixes this executable handoff for RT's IR-519. The plan
   producer (QSL-587), executable lowering/generation and RT implementation
   remain downstream work; these criteria specify their acceptance and do
   not claim an implemented monitor.
-- QSpec half: QSpec FR-416 (Linear STD-139), the timed claim semantics the
+- FSpec half: FSpec FR-416 (Linear STD-139), the timed claim semantics the
   monitor plan evaluates.
 - D. Basin, F. Klaedtke and E. Zălinescu, 2011; H.-M. Ho, J. Ouaknine and
   J. Worrell, 2014 (ADR-026 References).

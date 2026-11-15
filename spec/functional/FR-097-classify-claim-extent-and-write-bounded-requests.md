@@ -3,23 +3,23 @@ id: FR-097
 title: "S-6: classify claim extent and write bounded requests"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-011
+  - target: ix://agent-ix/filament-spec-language/US-011
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
 ---
 # FR-097: S-6: classify claim extent and write bounded requests
@@ -33,10 +33,10 @@ the design authority; this requirement adds no rule of its own.
 - F `bound`: `DomainKey`, `FiniteBound`, `ProofBound` and `IntervalKey`
   (ADR-014 B-4, TR-3).
 - The layer-3 extent of a requested item, `ClaimExtent`, computed by the
-  ADR-014 §4 extent rule (`qsl_semantics::family`).
-- The O-20 request writer (`qsl_route::request`): the FR-331 extent
+  ADR-014 §4 extent rule (`fsl_semantics::family`).
+- The O-20 request writer (`fsl_route::request`): the FR-331 extent
   classification with its available finite bound, and bounded requests.
-- `qsl_eval::simulation::explore::Outcome::category()` (ADR-014 §7).
+- `fsl_eval::simulation::explore::Outcome::category()` (ADR-014 §7).
 - The kernel field shapes `CollectionType.bound: Option<CardinalityBound>`
   and `ValueType::Population(Option<u64>)` (ADR-014 N-3).
 
@@ -79,11 +79,11 @@ ceiling or backend budget converts into a proof bound (ADR-014 §1).
 | FR-097-AC-3 | The request writer classifies a bounded item `bounded`, and an unbounded item `unbounded` with `finite_bound_available` true exactly when every domain is boundable; a loop or infinite-trace domain makes it false. A bounded request that supplies one bound of the right kind per domain is written as its own item, with its own request index, classified `bounded`, carrying its proof bounds in key order, each with its domain kind (FR-097-AC-9); the unbounded item keeps its own index and classification. Two bounded items with different bounds are different items. | Test (TC-438) |
 | FR-097-AC-4 | The writer refuses, in this order: a bounded request for an item with no unbounded domain; a bound whose key names no unbounded domain of the item; an item with any domain no finite bound can stand for (loop, infinite trace, quantity), whether or not a bound was supplied for it; then, domain by domain in key order, a missing bound or a bound of the wrong kind. Each refusal is `invalid_runtime_input`/`invalid-value`, and no item is written. | Test (TC-438) |
 | FR-097-AC-5 | `explore::Outcome::category()` maps `Exhaustive` to success, `BoundReached` (a completed `max_depth` horizon, FR-101) to inconclusive, `Bounded` and `Cancelled` to incomplete, and `Stopped` to the category of its cause's code (incomplete for `resource_exhausted`, internal failure for `runtime_invariant`, FR-101); the stopped outcomes keep their frontier and, for `Bounded`, the limit reached. | Test (TC-439; `Stopped`: TC-474) |
-| FR-097-AC-6 | For record types QSL checks and emits, IR's v2 lowering with `require_bounds` returns `RequiresBound` exactly when QSL's extent is `Unbounded`, and IR's first unbounded node is a form QSL names as a domain; for a recursive type, whose domain QSL names `Recursive` at the type's root, it is a member of that root's recursion group. For operation-application requirement records (FR-062-AC-13), QSL's record is the authority for the extent, and the agreement is per application node for each record whose roots are all reachable from the application node through its operands: IR's predicate on that node returns `RequiresBound` exactly when the record's extent is `Unbounded`. In `function f using v(x: Int[0, 9], n: Integer): Integer pure { (x + 1) + n }`, IR's answer for the inner `+` agrees with its `Bounded` record and for the outer `+` with its `Unbounded` record. A record with a root reached through a `let` binder's bound value (FR-062's RR-7 `*`) or read only by a guard (the `+` of `if n = 0 then x + 1 else 0` over `x: Int[0, 9]`, `n: Integer`) is outside the agreement: its extent is the record's, and IR's predicate is not compared. | Test (TC-440) |
+| FR-097-AC-6 | For record types FSL checks and emits, IR's v2 lowering with `require_bounds` returns `RequiresBound` exactly when FSL's extent is `Unbounded`, and IR's first unbounded node is a form FSL names as a domain; for a recursive type, whose domain FSL names `Recursive` at the type's root, it is a member of that root's recursion group. For operation-application requirement records (FR-062-AC-13), FSL's record is the authority for the extent, and the agreement is per application node for each record whose roots are all reachable from the application node through its operands: IR's predicate on that node returns `RequiresBound` exactly when the record's extent is `Unbounded`. In `function f using v(x: Int[0, 9], n: Integer): Integer pure { (x + 1) + n }`, IR's answer for the inner `+` agrees with its `Bounded` record and for the outer `+` with its `Unbounded` record. A record with a root reached through a `let` binder's bound value (FR-062's RR-7 `*`) or read only by a guard (the `+` of `if n = 0 then x + 1 else 0` over `x: Int[0, 9]`, `n: Integer`) is outside the agreement: its extent is the record's, and IR's predicate is not compared. | Test (TC-440) |
 | FR-097-AC-7 | An unbounded collection type admits a collection value of any size with no cardinality refusal; it still charges `collection.bound`, and stops with `Incomplete` at that charge point only when the caller's meter runs out. `K<T>` and `K<T>[0, u64::MAX]` are different types and different v2 nodes. The checker types `map`, `flatMap`, `filter` and `flatten` over an unbounded source as unbounded, and proves no size maximum for it. | Test (TC-441) |
 | FR-097-AC-8 | A `Population<T>` with no declared maximum is unbounded: `allInstances` over it checks to an unbounded `Set<Reference<T>>` and selects every member with no cardinality refusal; a population parameter admits a binding only when their declared maxima are equal, absence included; and it lowers to its own v2 node, distinct from an unbounded `Set<Reference<T>>`. | Test (TC-441) |
 | FR-097-AC-9 | Every proof bound the request writer emits carries its domain's `DomainKind`, never none, and that kind pairs with the bound's `FiniteBound` variant per `DomainKind::finite_kind`: a `population` or `collection` domain's bound is a cardinality, an `integer` domain's an integer range, and a `recursive` domain's a depth. Each of the seven `DomainKind`s writes as its FR-331 wire spelling (`collection`, `population`, `integer`, `recursive`, `loop`, `infinite-trace`, `quantity`) and reads back to itself; a label not byte-equal to one of the seven, such as `Collection` or `infinite_trace`, is refused, not normalized. | Test (TC-436, TC-438) |
-| FR-097-AC-10 | A requirement item reads its temporal subject's proof bounds (QSpec FR-331 `temporal.subject.proof_bounds`) from `RequirementItem::temporal_proof_bounds()`: `None` unless the item is `temporal-satisfaction` over a model subject (FR-123), else the bounds the caller supplied through `with_subject_proof_bounds`, in key order, `Some(&[])` when none. The caller supplies a `FiniteBound` per `DomainKey::Population` and QSL writes the `population` kind; the supplied bounds are independent of the item's extent, its `proof_bounds()`, index and occurrence, which they leave unchanged. The method refuses an item that is not over a model subject, a key that is not a population, and a bound that is not a cardinality, each `invalid_runtime_input`/`invalid-value`. | Test (TC-438) |
+| FR-097-AC-10 | A requirement item reads its temporal subject's proof bounds (FSpec FR-331 `temporal.subject.proof_bounds`) from `RequirementItem::temporal_proof_bounds()`: `None` unless the item is `temporal-satisfaction` over a model subject (FR-123), else the bounds the caller supplied through `with_subject_proof_bounds`, in key order, `Some(&[])` when none. The caller supplies a `FiniteBound` per `DomainKey::Population` and FSL writes the `population` kind; the supplied bounds are independent of the item's extent, its `proof_bounds()`, index and occurrence, which they leave unchanged. The method refuses an item that is not over a model subject, a key that is not a population, and a bound that is not a cardinality, each `invalid_runtime_input`/`invalid-value`. | Test (TC-438) |
 
 ## Dependencies
 
@@ -97,4 +97,4 @@ ceiling or backend budget converts into a proof bound (ADR-014 §1).
   requirement's `ClaimExtent`.
 - [FR-070](FR-070-implement-typed-counterexample-witness-envelope.md) AC-3:
   the witness envelope's `run_limits` and `FiniteBound` declared domains.
-- IR's v2 lowering, the `qsl-package` dependency, for AC-6.
+- IR's v2 lowering, the `fsl-package` dependency, for AC-6.

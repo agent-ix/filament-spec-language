@@ -3,7 +3,7 @@ id: TC-579
 title: "Fairness visibility applies only under a non-empty fairness set, at either granularity, and over protocols"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-157
+  - target: ix://agent-ix/filament-spec-language/FR-157
     type: verifies
 ---
 # TC-579: Fairness visibility applies only under a non-empty fairness set, at either granularity, and over protocols

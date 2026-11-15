@@ -3,7 +3,7 @@ id: TC-866
 title: "The refinement report orders every result, lists every regression, and gives FR-301's verdict and exit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-344
+  - target: ix://agent-ix/filament-spec-language/FR-344
     type: verifies
 ---
 # TC-866: The refinement report orders every result, lists every regression, and gives FR-301's verdict and exit
@@ -44,9 +44,9 @@ Each expected verdict and exit is a literal in the test. Tag the tests
   superseding codes.
 - Step 3: cases are ordered by case name, not by creation order; the two
   reports are byte-equal.
-- Step 4: the case, then `quire.model.complete/v1`,
-  `quire.state.core/v1`, `quire.state.graph/v1`, `quire.state.queries/v1`,
-  `quire.temporal.complete/v1`, `quire.value.complete/v1`, then the edges
+- Step 4: the case, then `filament.model.complete/v1`,
+  `filament.state.core/v1`, `filament.state.graph/v1`, `filament.state.queries/v1`,
+  `filament.temporal.complete/v1`, `filament.value.complete/v1`, then the edges
   (core→queries, core→value, graph→model, model→temporal, queries→graph,
   value→model), each list written out as a literal. The four tool failures
   come first: `a/entry.json`,

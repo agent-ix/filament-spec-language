@@ -3,17 +3,17 @@ id: FR-157
 title: "Make writes to a fairness class's enabling footprint visible under partial-order reduction"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-156
+  - target: ix://agent-ix/filament-spec-language/FR-156
     type: depends_on
 ---
 # FR-157: Make writes to a fairness class's enabling footprint visible under partial-order reduction
@@ -25,7 +25,7 @@ of every behaviour on the atoms, but not necessarily a fair one: a reduced
 path may add a transition the behaviour never takes, and if that transition
 changes whether a fairness class is enabled, the only representative of a
 fair behaviour can be unfair, and the fairness filter then discards a real
-violation. Under a non-empty fairness set, QSL's `model_check` SHALL treat as
+violation. Under a non-empty fairness set, FSL's `model_check` SHALL treat as
 visible every transition whose write footprint affects the enabling footprint
 of a member of a fairness class it does not belong to (ADR-021 POR-10),
 where the enabling footprint is the member's whole read footprint, its
@@ -85,7 +85,7 @@ operations, each with a receiver-scoped frame: `arm()` (`modifies self.c`,
 pre `not self.c`, post `self.c`); `arm2()` (`modifies self.d`, pre `self.c
 and not self.d`, post `self.d`); `go()` (`modifies self.done`, pre `self.c
 and self.d and not self.done`, post `self.done`); and `toggle()` (`modifies
-self.a`, post `self.a = not pre(self.a)`). Canonical transition order is QSpec FR-181's order of the transition identities' escaped bytes: the operation text is a JSON document embedded as a string in the identity, so the byte after `arm` is the escape `\` (0x5C), which sorts after the `2` (0x32) of `arm2`. The order is `arm2`, `arm`, then `go` and `toggle`. A state is written (`a`, `c`, `d`, `done`).
+self.a`, post `self.a = not pre(self.a)`). Canonical transition order is FSpec FR-181's order of the transition identities' escaped bytes: the operation text is a JSON document embedded as a string in the identity, so the byte after `arm` is the escape `\` (0x5C), which sorts after the `2` (0x32) of `arm2`. The order is `arm2`, `arm`, then `go` and `toggle`. A state is written (`a`, `c`, `d`, `done`).
 The claim `Opens` is `eventually holds(x.done)` over `(x: M::Gate)`. The
 enabling footprint of `go(g)` is `{Field{g, c}, Field{g, d}, Field{g, done},
 Membership{gates, g}}`:
@@ -112,10 +112,10 @@ write.
   (C2 and the choice).
 - ADR-027 PA-1 to PA-3 (protocol fairness classes and scheduler constraints)
   and FT-1 to FT-5 (protocol footprints).
-- QSpec owns the preservation table's fairness rows (ADR-021 QS-5).
+- FSpec owns the preservation table's fairness rows (ADR-021 QS-5).
 
 ## References
 
-- QSpec half: QSpec FR-383 and FR-384 (Linear STD-134; ADR-021 §9 QS-2, QS-5). Protocol transition
+- FSpec half: FSpec FR-383 and FR-384 (Linear STD-134; ADR-021 §9 QS-2, QS-5). Protocol transition
   system: ADR-027, Linear QSL-396. Strong fairness: ADR-019, Linear QSL-365.
   Owning ticket: Linear QSL-368.

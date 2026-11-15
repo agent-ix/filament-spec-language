@@ -3,7 +3,7 @@ id: TC-887
 title: "S2 builds the complete protocol forms with their members and spans"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: verifies
 ---
 # TC-887: S2 builds the complete protocol forms with their members and spans

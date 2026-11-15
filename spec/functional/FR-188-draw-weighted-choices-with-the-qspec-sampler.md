@@ -1,20 +1,20 @@
 ---
 id: FR-188
-title: "Draw weighted choices with the QSpec sampler"
+title: "Draw weighted choices with the FSpec sampler"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-187
+  - target: ix://agent-ix/filament-spec-language/FR-187
     type: depends_on
 ---
-# FR-188: Draw weighted choices with the QSpec sampler
+# FR-188: Draw weighted choices with the FSpec sampler
 
 ## Description
 
@@ -23,11 +23,11 @@ weighted choices (ADR-024 ST-2): one for the operation by workload weight,
 one for the scheduled identity uniformly within the operation, then one per
 random parameter by its weights in declared order. Each choice SHALL select
 by exact integer weights with rejection, from the
-`quire.simulation.sampler/v1` generator, selected by its identity, whose
+`filament.simulation.sampler/v1` generator, selected by its identity, whose
 preimage carries a choice index within the step, so every draw is exact,
 independent of the others and reproducible from the seed. A choice over one
 item selects it without a draw and takes no choice index, so the indices
-count the choices that draw. QSpec's generator definition owns the preimage,
+count the choices that draw. FSpec's generator definition owns the preimage,
 the index rule and the vectors.
 
 ## Use case
@@ -42,13 +42,13 @@ selection.
 
 - A seed, a trace index, a step number, a choice index and a list of
   positive exact rational weights.
-- For a sample, the sampler's `DefinitionRef` (FR-101's `qsl_foundation::selection`).
+- For a sample, the sampler's `DefinitionRef` (FR-101's `fsl_foundation::selection`).
 
 ## Outputs
 
 ```rust
 pub struct ChoicePoint { pub seed: u64, pub trace: u64, pub step: u64, pub choice: u32 }
-pub struct TotalAboveDrawRange { pub total: Integer } // quire-exact; the scaled total N, above 2^256
+pub struct TotalAboveDrawRange { pub total: Integer } // filament-exact; the scaled total N, above 2^256
 pub enum WeightsRefusal {
     Empty,                                  // no weight: an empty item set is never a choice
     NotPositive { index: usize },           // the weight at `index` is zero or negative
@@ -61,7 +61,7 @@ pub fn sample_probabilistic(
     sampler: &DefinitionRef, seed: u64, trace: u64, positions: u64, cancel: &Cancel, // FR-276
 ) -> Result<SampledBehaviour, SampleStop>;
 
-// SampledStep, SampledBehaviour and SampleStop are public items of qsl-eval's simulation module.
+// SampledStep, SampledBehaviour and SampleStop are public items of fsl-eval's simulation module.
 pub struct SampledStep { pub transition: TransitionId, pub post_key: StateKey, // the post-state key (canonical state bytes)
     pub choices: Vec<u32>, // selected item index of each choice that drew, in choice-index order
     pub random: Vec<Value>, pub probability: Rational, pub rewards: Vec<(Identifier, Value)> }
@@ -90,7 +90,7 @@ pub enum SampleStop {
   at each step, so the next drawing choice takes the index the one-item
   choice would have taken, as the generator definition states.
 - If the scaled total `N` exceeds 2^256, then `weighted_choice` SHALL refuse
-  with `TotalAboveDrawRange{total}` before computing any draw, as QSpec
+  with `TotalAboveDrawRange{total}` before computing any draw, as FSpec
   FR-181-AC-14 states: the generator's acceptance test accepts no draw above
   that total, so a draw would never end.
 - If the weights are empty, then `weighted_choice` SHALL refuse with
@@ -109,14 +109,14 @@ pub enum SampleStop {
   FR-189 settles as an undecided successor.
 - The sampler SHALL be selected by identity only: `sample_probabilistic`
   runs a supplied `DefinitionRef` whose identity is
-  `quire.simulation.sampler/v1`, and refuses any other with
+  `filament.simulation.sampler/v1`, and refuses any other with
   `SampleStop::GeneratorMismatch` (FR-101's `NotSimulated::GeneratorMismatch`)
   before any draw.
 - Draw `d` of choice `c` at trace `t`, step `s` under seed `k` SHALL be
   SHA-256 of the JCS object
   `{"choice":"c","draw":"d","seed":"k","step":"s","trace":"t"}`,
-  each member a decimal string, as FR-101 and QSpec FR-181 state, so two
-  choices of one step use distinct preimages and QSpec TC-210's vectors
+  each member a decimal string, as FR-101 and FSpec FR-181 state, so two
+  choices of one step use distinct preimages and FSpec TC-210's vectors
   reproduce.
 - With unit weights and one choice per step, `weighted_choice` at choice
   index 0 SHALL select the index FR-101's uniform selection selects.
@@ -133,11 +133,11 @@ pub enum SampleStop {
   in choice-index order (a one-item choice records none), its
   drawn values (including those of one-item choices), its exact step
   probability and its rewards.
-- `SampledStep` and `SampledBehaviour` SHALL be public items of `qsl-eval`'s
+- `SampledStep` and `SampledBehaviour` SHALL be public items of `fsl-eval`'s
   simulation module, beside `sample_probabilistic`. `SampleStop` SHALL be
-  one too, because it carries `NotMarkov` and `ExpansionStop`, `qsl-eval`
-  outcomes that `quire-semantic-value`, a leaf with no dependency on
-  `qsl-eval`, cannot name. None of the three is a `quire-semantic-value`
+  one too, because it carries `NotMarkov` and `ExpansionStop`, `fsl-eval`
+  outcomes that `filament-semantic-value`, a leaf with no dependency on
+  `fsl-eval`, cannot name. None of the three is a `filament-semantic-value`
   item.
 - At a terminal state the sampler SHALL take the terminal stutter step with
   no draw, so a window that reaches a terminal state continues on stutter
@@ -152,29 +152,29 @@ pub enum SampleStop {
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-188-AC-1 | Every weighted-sampler conformance vector of the generator definition reproduces exactly: for each (seed, trace, step, choice, weights) the selected index equals the vector's. Every QSpec TC-210 uniform vector, run as unit weights at choice index 0, selects the same index as FR-101.  `sample_probabilistic` given a sampler `DefinitionRef` with another identity returns `SampleStop::GeneratorMismatch` before any draw, observed as a test-only draw counter (incremented once per draw the sampler computes) reading zero. | Test (TC-623) |
+| FR-188-AC-1 | Every weighted-sampler conformance vector of the generator definition reproduces exactly: for each (seed, trace, step, choice, weights) the selected index equals the vector's. Every FSpec TC-210 uniform vector, run as unit weights at choice index 0, selects the same index as FR-101.  `sample_probabilistic` given a sampler `DefinitionRef` with another identity returns `SampleStop::GeneratorMismatch` before any draw, observed as a test-only draw counter (incremented once per draw the sampler computes) reading zero. | Test (TC-623) |
 | FR-188-AC-2 | Over the weights `(1/3, 1/6, 1/2)` the scaled integers are `(2, 1, 3)` with `N = 6`. For one seed and 60,000 consecutive trace indices at step 0, choice 0, every index is selected and the selection at each point equals the reference computation of the generator definition. Choices 0 and 1 of the same step use different preimages, so their draws differ for at least one point among the first 100. | Test (TC-623) |
 | FR-188-AC-3 | Sampling `Service` (with `Phase` as `Int[0, 2]`, `outcome` a `Boolean` and `d` typed `Millis`, as FR-187-AC-1 declares it) under `Steady` from its initial state with seed 7, trace 12 and 11 positions twice gives equal behaviours. Every step records its selected item indices, its drawn values inside their supports, a step probability equal to FR-187's for that transition, and its `duration`. A sample that reaches `Done` and then `Idle` continues; the `Health` variant with a non-unique post-state stops with `SampleStop::NotMarkov`. | Test (TC-623) |
-| FR-188-AC-4 | QSpec TC-354's one-item vectors reproduce through `sample_probabilistic`, with the test-only draw counter. On `Lone` (one operation, one identity, no random parameter) a step selects item 0 of each one-item choice, leaves the draw counter at zero and records `choices = []`. On `Coin` (one operation, one identity, one random parameter whose support `false, true` in canonical value order has weights `(3, 1)`) at seed `424242`, trace 0, step 0 the parameter's choice is choice index 0 with preimage `{"choice":"0","draw":"0","seed":"424242","step":"0","trace":"0"}` (the TC-210 step-0 draw), and the draw's `v mod 4` is 2, below the first weight 3, so the choice selects index 0, `false`: the step records `choices = [0]` and `random = [false]`. `weighted_choice` over one weight returns 0 and the draw counter reads zero. | Test (TC-623) |
-| FR-188-AC-5 | `weighted_choice` over weights whose scaled total is `2^256` accepts every draw and selects as the generator definition states. Over weights `(2^256, 1)` in canonical value order (scaled total `2^256 + 1`, QSpec TC-354 SM-09) it returns `TotalAboveDrawRange{total: 2^256 + 1}` and the draw counter reads zero. `sample_probabilistic` on `Wide` (an operation with a random parameter whose support `false, true` has weights `(2^256, 1)`) stops with `SampleStop::TotalAboveDrawRange` at that parameter's choice. | Test (TC-623) |
-| FR-188-AC-6 | `SampledStep`, `SampledBehaviour` and `SampleStop` resolve as public items of `qsl-eval`'s simulation module, and the public items of `quire-semantic-value` include none of them. | Test (TC-623) |
+| FR-188-AC-4 | FSpec TC-354's one-item vectors reproduce through `sample_probabilistic`, with the test-only draw counter. On `Lone` (one operation, one identity, no random parameter) a step selects item 0 of each one-item choice, leaves the draw counter at zero and records `choices = []`. On `Coin` (one operation, one identity, one random parameter whose support `false, true` in canonical value order has weights `(3, 1)`) at seed `424242`, trace 0, step 0 the parameter's choice is choice index 0 with preimage `{"choice":"0","draw":"0","seed":"424242","step":"0","trace":"0"}` (the TC-210 step-0 draw), and the draw's `v mod 4` is 2, below the first weight 3, so the choice selects index 0, `false`: the step records `choices = [0]` and `random = [false]`. `weighted_choice` over one weight returns 0 and the draw counter reads zero. | Test (TC-623) |
+| FR-188-AC-5 | `weighted_choice` over weights whose scaled total is `2^256` accepts every draw and selects as the generator definition states. Over weights `(2^256, 1)` in canonical value order (scaled total `2^256 + 1`, FSpec TC-354 SM-09) it returns `TotalAboveDrawRange{total: 2^256 + 1}` and the draw counter reads zero. `sample_probabilistic` on `Wide` (an operation with a random parameter whose support `false, true` has weights `(2^256, 1)`) stops with `SampleStop::TotalAboveDrawRange` at that parameter's choice. | Test (TC-623) |
+| FR-188-AC-6 | `SampledStep`, `SampledBehaviour` and `SampleStop` resolve as public items of `fsl-eval`'s simulation module, and the public items of `filament-semantic-value` include none of them. | Test (TC-623) |
 | FR-188-AC-7 | `weighted_choice` over an empty list returns `WeightsRefusal::Empty`, over `(1, 0)` returns `NotPositive{index: 1}` and over `(1, -1/2)` returns `NotPositive{index: 1}`, each with the draw counter at zero. | Test (TC-623) |
-| FR-188-AC-8 | Over `OrdersUndecided`, FR-120-AC-9's `test/orders` dispatch fixture with `pre Low { self.ready() }` on `ready` (a precondition whose dispatched query is undefined at `t1`, which `quire.model.complete/v1` admits), under the workload `workload Steady on M { weight A::ready = 1; }`, whose expansion records `ContractUndetermined` at the initial state: `actions` returns `UndecidedSuccessor{state}`, `weighted_steps` returns `Unsteppable::UndecidedSuccessor`, and `sample_probabilistic` stops with `SampleStop::UndecidedSuccessor`, FR-189 settling it as an undecided successor. The same fixture with a further operation `wobble` (no parameters, an empty postcondition, writing `flag`, added to the domain package) weighted `weight A::wobble = 1` returns the undecided result, not `NotMarkov`. | Test (TC-623) |
+| FR-188-AC-8 | Over `OrdersUndecided`, FR-120-AC-9's `test/orders` dispatch fixture with `pre Low { self.ready() }` on `ready` (a precondition whose dispatched query is undefined at `t1`, which `filament.model.complete/v1` admits), under the workload `workload Steady on M { weight A::ready = 1; }`, whose expansion records `ContractUndetermined` at the initial state: `actions` returns `UndecidedSuccessor{state}`, `weighted_steps` returns `Unsteppable::UndecidedSuccessor`, and `sample_probabilistic` stops with `SampleStop::UndecidedSuccessor`, FR-189 settling it as an undecided successor. The same fixture with a further operation `wobble` (no parameters, an empty postcondition, writing `flag`, added to the domain package) weighted `weight A::wobble = 1` returns the undecided result, not `NotMarkov`. | Test (TC-623) |
 
 ## Dependencies
 
 - ADR-024 ST-2, RP-1, QS-8; ADR-014 TR-1, TR-6.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (generator, uniform selection, replay),
   [FR-187](FR-187-give-model-transitions-step-probabilities-and-rewards.md).
 
 ## References
 
-- QSpec half, which owns the generator definition: QSpec FR-181 and TC-210,
+- FSpec half, which owns the generator definition: FSpec FR-181 and TC-210,
   with FR-408's step order (Linear STD-137). The sampler definition
-  (`quire.simulation.sampler/v1`: weighted selection, the choice index in
+  (`filament.simulation.sampler/v1`: weighted selection, the choice index in
   the preimage, the one-item rule) and TC-354 (its vectors, SM-05 and SM-07
   for the one-item rule, SM-08 and SM-09 for the total bound) are read from
-  QSpec, whose FR-181-AC-14 states the refusal of a total above 2^256 as
+  FSpec, whose FR-181-AC-14 states the refusal of a total above 2^256 as
   `unsupported`, cause `total-above-draw-range{total}`.
 - Owning ticket: Linear QSL-371.

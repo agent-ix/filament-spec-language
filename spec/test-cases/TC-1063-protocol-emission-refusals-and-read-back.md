@@ -3,7 +3,7 @@ id: TC-1063
 title: "Protocol emission refusals, read-back equality and the reader's refusals"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: verifies
 ---
 # TC-1063: Protocol emission refusals, read-back equality and the reader's refusals
@@ -12,9 +12,9 @@ relationships:
 
 Verify that S4 refuses a stale bound key and a missing temporal profile with existing catalog pairs and no package, that a protocol
 with an S3 refusal emits no node of its own and no package for the unit while
-the other protocols keep their results (TC-1297), that QSL's I2 reader returns the emitted
+the other protocols keep their results (TC-1297), that FSL's I2 reader returns the emitted
 protocol equal to the in-process checked clause, that it refuses each mutated
-emitted package with QSpec's code at QSpec's locus, and that emission has no
+emitted package with FSpec's code at FSpec's locus, and that emission has no
 limit or depth of its own. Scope: FR-383-AC-17 to FR-383-AC-21, FR-383-AC-32 to FR-383-AC-61, FR-383-AC-63 to FR-383-AC-66.
 
 Catches a stale key repaired by a name lookup, a protocol dropped silently
@@ -43,12 +43,12 @@ Compile or read one unit or graph per row and assert the stated result.
 
 | # | Unit | Expected |
 | --- | --- | --- |
-| 6 | **W** through QSL's I2 reader | admitted; each protocol node returned with the emitted key, tag, form, type, declaration, body, dependencies and occurrences |
+| 6 | **W** through FSL's I2 reader | admitted; each protocol node returned with the emitted key, tag, form, type, declaration, body, dependencies and occurrences |
 | 7 | the protocol rebuilt from row 6's nodes against the in-process checked clause | equal keys, set order, ordered lists, binder levels, channel premises, queue bounds and derived causal relation |
 
 ### Reader refusals (the mutations of row 8 each recompute node and package identities unless stated)
 
-| # | Edit to **W**'s package | Expected, from QSpec FR-464 to FR-466 |
+| # | Edit to **W**'s package | Expected, from FSpec FR-464 to FR-466 |
 | --- | --- | --- |
 | 8a | `roles` out of ascending node-id order; a repeated `roles` entry | `invalid_semantic_graph` at the clause for the out-of-order set; `invalid_semantic_graph` at the repeated role member for the repeated entry |
 | 8b | the queue of `Charges` removed; a second queue naming `Charges` | `invalid_semantic_graph` |
@@ -60,15 +60,15 @@ Compile or read one unit or graph per row and assert the stated result.
 | 8h | `Outcome`'s case list in descending label order | `invalid_semantic_graph` |
 | 8i | the package without a `temporal_profile` while `Refund` stays | `missing_declaration`/`missing-selection` |
 
-QSL's conformance run reads the QSpec protocol-node mutation manifest
+FSL's conformance run reads the FSpec protocol-node mutation manifest
 `protocol-node-mutation-manifest.json` (version
-`quire.protocol-node-mutation-manifest/v1`, under
+`filament.protocol-node-mutation-manifest/v1`, under
 `proposals/checked-package-v2/fixtures`) and the `protocol-node-layout-rows.json`
 rows it defers to, in place, and copies no vector, base fixture or edit into
-QSL. For every row of the manifest's `rows` array and then of the layout file's
+FSL. For every row of the manifest's `rows` array and then of the layout file's
 `rows` array, in file order, the run applies the row's RFC 6902 `edit` (a list
 of operations; every executable row uses this form) to the row's `base` fixture
-and reads the result through QSL's I2 reader:
+and reads the result through FSL's I2 reader:
 
 - an `admit` row is admitted;
 - a `refuse` row is refused with the row's `code`, `cause`, `stage` and `locus`
@@ -79,11 +79,11 @@ and reads the result through QSL's I2 reader:
   `retains` row also asserts what the refusal retains;
 - a `property` row's `assertions` hold.
 
-The reader's deliberate order is preserved (QSpec FR-464 "Reader order"): a row
+The reader's deliberate order is preserved (FSpec FR-464 "Reader order"): a row
 expecting a later semantic refusal is not satisfied by an earlier wire or
 schema refusal, and a row asserts only the first defect in reader order. The
 executed set is the manifest rows plus the layout rows (25 `admit`, 90 `refuse`
-and 4 `property` rows at QSpec main); a `pending` entry is executed through its
+and 4 `property` rows at FSpec main); a `pending` entry is executed through its
 same-id layout row, and `CH14a` through `CH14a-1` to `CH14a-8`. The run records
 the executed count for each of `admit`, `refuse` and `property`, fails when
 any is zero or when an executable row was not executed, and reports a `pending`
@@ -94,7 +94,7 @@ as passing. The test is traced `TC-1063` and `FR-383-AC-20`.
 
 | # | Unit or graph | Expected |
 | --- | --- | --- |
-| L1 | **W**, fixture E and protocol L (TC-1070) emitted and read through QSL's I2 reader | for every slot, the rows under its site name for an application number that application's visits in the slot's walk (FR-383-AC-32) |
+| L1 | **W**, fixture E and protocol L (TC-1070) emitted and read through FSL's I2 reader | for every slot, the rows under its site name for an application number that application's visits in the slot's walk (FR-383-AC-32) |
 | L1a | row L1's package | no row under a slot's site name names an application the slot's walk does not visit (AC-33) |
 | L1b | row L1's package | the retry origin of `Refund` holds one `earlier.tally` node with two rows; the retry origin of `Partial` one `partialEarlier.tally` node with two of its own (AC-34) |
 | L2 | row L1's package | each row's `Location` equals the checked clause's `Location` of the term at the position it numbers (AC-35) |

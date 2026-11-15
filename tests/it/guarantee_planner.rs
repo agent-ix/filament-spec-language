@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! TC-1329 (FR-529-AC-1 to AC-13) and QSpec TC-984 case 1, TC-986 over a
-//! real native package: QSpec TC-984 case 1's unit (the counter model, the
+//! TC-1329 (FR-529-AC-1 to AC-13) and FSpec TC-984 case 1, TC-986 over a
+//! real native package: FSpec TC-984 case 1's unit (the counter model, the
 //! liveness clause `Eventually2`, the relation `A`, `guarantee G`) is
 //! compiled from source through S1 to S4. Each item-backed slot holds the
-//! FR-331 request item `qsl-route` writes for the slot, and a result entry
+//! FR-331 request item `fsl-route` writes for the slot, and a result entry
 //! for it. A sibling clause (`guarantee H` over the safety clause) is
 //! settled in every run and never changes.
 
-use ix_trace_rs::trace;
-use qsl_foundation::BackendId;
-use qsl_replay::planner::{
+use fsl_foundation::BackendId;
+use fsl_replay::planner::{
     read_premise_item, PlannerCause, PlannerDeclaration, PlannerResult, PlannerValue, SlotKey,
     SlotRole, SlotValue,
 };
-use qsl_replay::{Certification, InconclusiveCause, ItemLabel, PremiseOutcome};
-use qsl_route::declaration::DeclaredItem;
-use qsl_route::request::{items_from_requirements, RequestWriter};
-use qsl_route::{
+use fsl_replay::{Certification, InconclusiveCause, ItemLabel, PremiseOutcome};
+use fsl_route::declaration::DeclaredItem;
+use fsl_route::request::{items_from_requirements, RequestWriter};
+use fsl_route::{
     descriptor_from_manifest, Candidate, CandidateOutcome, FairnessKindsMember, FairnessLabel,
     ManifestMembers, ProviderOrigin, Registry,
 };
-use qsl_semantics::check::{CheckedImplementationGuarantee, SlotBacking as SemBacking};
+use fsl_semantics::check::{CheckedImplementationGuarantee, SlotBacking as SemBacking};
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::planner_chain::{compile_with, Chain, PACKAGE};
 
-#[path = "../../qsl-semantics/tests/support/guarantee.rs"]
+#[path = "../../fsl-semantics/tests/support/guarantee.rs"]
 #[allow(
     clippy::duplicate_mod,
     reason = "the semantics tests load the same fixture"
@@ -33,8 +33,8 @@ use crate::planner_chain::{compile_with, Chain, PACKAGE};
 mod fixture;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
-     profile v = \"quire.model.complete/v1\";\n\
-     profile t = \"quire.temporal.infinite-trace/v1\";\n\
+     profile v = \"filament.model.complete/v1\";\n\
+     profile t = \"filament.temporal.infinite-trace/v1\";\n\
      model Spec = \"test/orders\";\n";
 
 const LIVENESS: &str =
@@ -88,13 +88,13 @@ fn unit(clauses: &str, relation: &str, declarations: &str) -> String {
     format!("{HEADER}{clauses}{relation}{declarations}")
 }
 
-fn checked(unit: &str) -> qsl_package::CheckedPackage {
+fn checked(unit: &str) -> fsl_package::CheckedPackage {
     compile_with(unit, &[fixture::document(&["inc"])])
         .unwrap_or_else(|failure| panic!("{unit}: the unit compiles: {failure:?}"))
 }
 
 fn guarantee<'p>(
-    package: &'p qsl_package::CheckedPackage,
+    package: &'p fsl_package::CheckedPackage,
     name: &str,
 ) -> &'p CheckedImplementationGuarantee {
     package
@@ -119,13 +119,13 @@ fn record(chain: &Chain) -> impl Fn(&str) -> Value {
         .environment()
         .iter()
         .find_map(|member| match &member.supplies {
-            qsl_replay::planner::EnvSupplies::Fairness(premise) => {
+            fsl_replay::planner::EnvSupplies::Fairness(premise) => {
                 Some(premise.operation.context.clone())
             }
-            qsl_replay::planner::EnvSupplies::Assumption(_) => None,
+            fsl_replay::planner::EnvSupplies::Assumption(_) => None,
         })
         .expect("a scheduling member");
-    let context = qsl_foundation::node_wire::node_key_to_json(&context).expect("a node");
+    let context = fsl_foundation::node_wire::node_key_to_json(&context).expect("a node");
     let members: Vec<(String, String)> = chain
         .declaration
         .environment()
@@ -190,12 +190,12 @@ fn sibling_settles_unchanged(source: &str) {
 
 // ---- FR-529-AC-1: the positive chain -----------------------------------------
 
-/// QSpec TC-986 case 1, TC-984 case 1: the chain settles `proved`,
+/// FSpec TC-986 case 1, TC-984 case 1: the chain settles `proved`,
 /// `decisive-witness`, and the conclusion is bound to the source spans of the
 /// members that produced each slot.
 #[trace("TC-1329", "FR-529-AC-1")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-1")]
-#[trace("QSpec-TC-984")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-1")]
+#[trace("FSpec-TC-984")]
 #[test]
 fn the_positive_chain_settles_proved_with_its_conclusion_bound_to_the_source() {
     let source = unit(
@@ -254,7 +254,7 @@ fn liveness_chain() -> (String, Chain) {
 }
 
 #[trace("TC-1329", "FR-529-AC-2")]
-#[trace("QSpec-TC-982", "QSpec-FR-488-AC-2")]
+#[trace("FSpec-TC-982", "FSpec-FR-488-AC-2")]
 #[test]
 fn a_refuted_transition_simulation_leaves_the_item_inconclusive_naming_it() {
     let (source, chain) = liveness_chain();
@@ -283,7 +283,7 @@ fn a_refuted_transition_simulation_leaves_the_item_inconclusive_naming_it() {
 }
 
 #[trace("TC-1329", "FR-529-AC-2")]
-#[trace("QSpec-TC-982", "QSpec-FR-488-AC-3")]
+#[trace("FSpec-TC-982", "FSpec-FR-488-AC-3")]
 #[test]
 fn a_liveness_declaration_without_progress_names_the_first_no_divergence_slot() {
     let source = unit(
@@ -306,7 +306,7 @@ fn a_liveness_declaration_without_progress_names_the_first_no_divergence_slot() 
 }
 
 #[trace("TC-1329", "FR-529-AC-3")]
-#[trace("QSpec-TC-982", "QSpec-FR-488-AC-4")]
+#[trace("FSpec-TC-982", "FSpec-FR-488-AC-4")]
 #[test]
 fn a_not_proved_no_divergence_result_names_the_no_divergence_slot() {
     let (source, chain) = liveness_chain();
@@ -329,7 +329,7 @@ fn a_not_proved_no_divergence_result_names_the_no_divergence_slot() {
 }
 
 #[trace("TC-1329", "FR-529-AC-3")]
-#[trace("QSpec-TC-982", "QSpec-FR-488-AC-5")]
+#[trace("FSpec-TC-982", "FSpec-FR-488-AC-5")]
 #[test]
 fn a_fair_strong_clause_with_a_weak_scheduling_premise_fails_the_fairness_slot() {
     let source = unit(
@@ -367,11 +367,11 @@ fn a_fair_strong_clause_with_a_weak_scheduling_premise_fails_the_fairness_slot()
 
 // ---- FR-529-AC-4: an unbound element, no backend, an exhausted budget ---------
 
-/// QSpec TC-984 case 6: the relation does not bind `inc`'s frame, so the
+/// FSpec TC-984 case 6: the relation does not bind `inc`'s frame, so the
 /// guarantee item alone is refused `missing_declaration`/`missing-name`; the
 /// package's other items are the records the bound unit has.
 #[trace("TC-1329", "FR-529-AC-4")]
-#[trace("QSpec-TC-984", "QSpec-FR-490-AC-6")]
+#[trace("FSpec-TC-984", "FSpec-FR-490-AC-6")]
 #[test]
 fn an_unbound_frame_refuses_the_guarantee_item_alone() {
     let clauses = format!("{LIVENESS}{SAFETY}");
@@ -380,13 +380,13 @@ fn an_unbound_frame_refuses_the_guarantee_item_alone() {
     let refusal = guarantee(&package, "G")
         .item_refusal()
         .expect("the guarantee item is refused");
-    assert_eq!(refusal.code(), qsl_foundation::Code::MissingDeclaration);
+    assert_eq!(refusal.code(), fsl_foundation::Code::MissingDeclaration);
     assert_eq!(refusal.cause(), "missing-name");
     let node = guarantee(&package, "G").node().clone();
     assert_eq!(
         PlannerDeclaration::from_package(&package, &node).err(),
-        Some(qsl_replay::planner::DeclarationRefusal::ItemRefused {
-            code: qsl_foundation::Code::MissingDeclaration,
+        Some(fsl_replay::planner::DeclarationRefusal::ItemRefused {
+            code: fsl_foundation::Code::MissingDeclaration,
             cause: "missing-name",
         })
     );
@@ -432,7 +432,7 @@ fn an_unregistered_backend_settles_the_item_unsupported_naming_the_capability() 
 }
 
 #[trace("TC-1329", "FR-529-AC-4")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-9")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-9")]
 #[test]
 fn an_exhausted_work_budget_settles_the_item_incomplete_naming_max_work() {
     let (source, chain) = liveness_chain();
@@ -450,7 +450,7 @@ fn an_exhausted_work_budget_settles_the_item_incomplete_naming_max_work() {
 // ---- FR-529-AC-6, AC-7: admission ---------------------------------------------
 
 #[trace("TC-1329", "FR-529-AC-6")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-2", "QSpec-FR-492-AC-3")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-2", "FSpec-FR-492-AC-3")]
 #[test]
 fn a_forged_reordered_or_missing_slot_is_invalid_value_and_a_flag_is_wrong_kind() {
     let (source, chain) = liveness_chain();
@@ -502,7 +502,7 @@ fn a_forged_reordered_or_missing_slot_is_invalid_value_and_a_flag_is_wrong_kind(
 }
 
 #[trace("TC-1329", "FR-529-AC-7")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-3")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-3")]
 #[test]
 fn a_bare_label_or_a_reference_is_not_a_premise_result() {
     let (source, chain) = liveness_chain();
@@ -532,7 +532,7 @@ fn a_bare_label_or_a_reference_is_not_a_premise_result() {
 // ---- FR-529-AC-8: a finite trace ----------------------------------------------
 
 #[trace("TC-1329", "FR-529-AC-8")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-7")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-7")]
 #[test]
 fn a_tested_ten_thousand_step_trace_never_settles_the_item_proved() {
     let (source, chain) = liveness_chain();
@@ -554,7 +554,7 @@ fn a_tested_ten_thousand_step_trace_never_settles_the_item_proved() {
 
 // ---- FR-529-AC-9: the relation stays inert -----------------------------------
 
-fn registry_for(graph: &qsl_semantics::check::CheckedGraph) -> Registry {
+fn registry_for(graph: &fsl_semantics::check::CheckedGraph) -> Registry {
     let mut registry = Registry::new();
     let mut kinds: Vec<&'static str> = graph
         .requirements()
@@ -584,7 +584,7 @@ fn registry_for(graph: &qsl_semantics::check::CheckedGraph) -> Registry {
 }
 
 #[trace("TC-1329", "FR-529-AC-9")]
-#[trace("QSpec-TC-984", "QSpec-FR-490-AC-8")]
+#[trace("FSpec-TC-984", "FSpec-FR-490-AC-8")]
 #[test]
 fn a_relation_with_no_guarantee_has_the_records_and_route_results_it_has_without() {
     let clauses = format!("{LIVENESS}{SAFETY}");
@@ -593,7 +593,7 @@ fn a_relation_with_no_guarantee_has_the_records_and_route_results_it_has_without
     assert!(with.abstraction().is_some());
     assert!(without.abstraction().is_none());
     assert_eq!(with.graph().requirements(), without.graph().requirements());
-    let route_of = |package: &qsl_package::CheckedPackage| {
+    let route_of = |package: &fsl_package::CheckedPackage| {
         let registry = registry_for(package.graph());
         items_from_requirements(package.graph().requirements(), &registry, None)
             .iter()
@@ -610,10 +610,10 @@ fn a_relation_with_no_guarantee_has_the_records_and_route_results_it_has_without
 // ---- FR-529-AC-10: the planner-only causes ---------------------------------
 
 #[trace("TC-1329", "FR-529-AC-10")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-10")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-10")]
 #[test]
 fn a_plugin_entry_carrying_a_planner_only_cause_is_refused_unknown_cause() {
-    use qsl_replay::planner::{read_result_entry, EntryCause, EntryOrigin};
+    use fsl_replay::planner::{read_result_entry, EntryCause, EntryOrigin};
     for cause in [
         json!({"type": "premise-unproved", "premise": 3, "result": "absent"}),
         json!({"type": "transfer-not-preserving", "reason": "fragment", "operator": "previous"}),
@@ -634,7 +634,7 @@ fn a_plugin_entry_carrying_a_planner_only_cause_is_refused_unknown_cause() {
 // ---- FR-529-AC-11: the stuttering-invariant fragment ---------------------------
 
 #[trace("TC-1329", "FR-529-AC-11")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-11", "QSpec-TC-982")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-11", "FSpec-TC-982")]
 #[test]
 fn an_interval_operator_under_an_unbounded_one_is_not_preserved_with_every_slot_proved() {
     let source = unit(
@@ -655,7 +655,7 @@ fn an_interval_operator_under_an_unbounded_one_is_not_preserved_with_every_slot_
 // ---- FR-529-AC-12: the slot key binds the claim -----------------------------
 
 #[trace("TC-1329", "FR-529-AC-12")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-5", "QSpec-TC-982")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-5", "FSpec-TC-982")]
 #[test]
 fn a_result_for_another_slot_key_is_invalid_value_and_certified_reads_uncertified() {
     let (source, chain) = liveness_chain();
@@ -781,8 +781,8 @@ fn a_result_entry_defect_is_refused_at_its_slot_in_the_reading_order() {
 #[trace("TC-1329", "FR-529-AC-1")]
 #[test]
 fn the_model_request_writes_and_negotiates_the_declaration_premise_items() {
-    use qsl_route::model_request::ModelRequest;
-    use qsl_route::request::DerivedLimits;
+    use fsl_route::model_request::ModelRequest;
+    use fsl_route::request::DerivedLimits;
     let package = checked(&unit(
         &format!("{LIVENESS}{SAFETY}"),
         RELATION,
@@ -826,7 +826,7 @@ fn the_package_identity_is_the_checked_packages_not_the_callers() {
 /// record supplies settles `premise-unproved` naming the model-claim slot,
 /// from request bytes alone; any other slot's result refuses the member.
 #[trace("TC-1329", "FR-529-AC-6")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-12")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-12")]
 #[test]
 fn a_wire_model_claim_naming_an_unsupplied_assumption_is_premise_unproved() {
     let (_, chain) = liveness_chain();
@@ -850,7 +850,7 @@ fn a_wire_model_claim_naming_an_unsupplied_assumption_is_premise_unproved() {
 /// proved entry that states `uncertified` stays first-party `uncertified`
 /// whatever backend it names.
 #[trace("TC-1329", "FR-529-AC-6")]
-#[trace("QSpec-TC-986", "QSpec-FR-492-AC-8")]
+#[trace("FSpec-TC-986", "FSpec-FR-492-AC-8")]
 #[test]
 fn a_backend_name_does_not_make_an_entry_trusted() {
     let (_, chain) = liveness_chain();

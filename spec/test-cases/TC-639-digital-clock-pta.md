@@ -3,7 +3,7 @@ id: TC-639
 title: "Closed probabilistic timed automata are decided exactly through digital clocks, with the workload resolving delays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-204
+  - target: ix://agent-ix/filament-spec-language/FR-204
     type: verifies
 ---
 # TC-639: Closed probabilistic timed automata are decided exactly through digital clocks, with the workload resolving delays

@@ -3,7 +3,7 @@ id: TC-1384
 title: "The fast path is taken exactly where checked bounds prove the result fits"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-562
+  - target: ix://agent-ix/filament-spec-language/FR-562
     type: verifies
 ---
 # TC-1384: The fast path is taken exactly where checked bounds prove the result fits

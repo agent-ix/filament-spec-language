@@ -3,7 +3,7 @@ id: TC-582
 title: "The preservation table admits or settles each selected reduction before expansion"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-159
+  - target: ix://agent-ix/filament-spec-language/FR-159
     type: verifies
 ---
 # TC-582: The preservation table admits or settles each selected reduction before expansion

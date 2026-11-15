@@ -3,7 +3,7 @@ id: TC-225
 title: "A dispatch family walk that exhausts its edge limit stops incomplete instead of reporting a false unique winner"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-083
+  - target: ix://agent-ix/filament-spec-language/FR-083
     type: verifies
 ---
 # TC-225: A dispatch family walk that exhausts its edge limit stops incomplete instead of reporting a false unique winner

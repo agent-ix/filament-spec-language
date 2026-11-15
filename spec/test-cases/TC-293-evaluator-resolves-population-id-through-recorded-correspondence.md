@@ -3,7 +3,7 @@ id: TC-293
 title: "The evaluator resolves a Value::Population identity through the recorded correspondence, not a carried payload"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-089
+  - target: ix://agent-ix/filament-spec-language/FR-089
     type: verifies
 ---
 # TC-293: The evaluator resolves a Value::Population identity through the recorded correspondence, not a carried payload
@@ -19,10 +19,10 @@ FR-089-AC-3.
 Implemented: the evaluator matches
 `Value::Population(population_id)` and resolves it through
 `ObjectEnvironment::resolve_population`'s recorded correspondence
-(`Machine::resolve_population`, `qsl-eval/src/value/expression/evaluate.rs`'s
+(`Machine::resolve_population`, `fsl-eval/src/value/expression/evaluate.rs`'s
 `AllInstances`/`Lookup` sites). Backed by
 `tc_293_evaluator_resolves_population_id_through_recorded_correspondence`
-(`qsl-eval/tests/it/model_reference_queries.rs`).
+(`fsl-eval/tests/it/model_reference_queries.rs`).
 
 Catches an implementation that resolves by re-deriving a binding from the
 identity's own bytes (defeating the point of an opaque identity, which

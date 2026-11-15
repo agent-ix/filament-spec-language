@@ -3,7 +3,7 @@ id: TC-1170
 title: "Timed refinement, symmetry with clocks, reductions settled at negotiation and strong fairness over time"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-430
+  - target: ix://agent-ix/filament-spec-language/FR-430
     type: verifies
 ---
 # TC-1170: Timed refinement, symmetry with clocks, reductions settled at negotiation and strong fairness over time

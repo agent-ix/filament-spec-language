@@ -3,17 +3,17 @@ id: FR-324
 title: "Admit unions and case under the value profile that admits records and tuples"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-032
+  - target: ix://agent-ix/filament-spec-language/US-032
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-316
+  - target: ix://agent-ix/filament-spec-language/FR-316
     type: traces_to
-  - target: ix://agent-ix/quire-specification/AD-015
+  - target: ix://agent-ix/filament-specification/AD-015
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-143
+  - target: ix://agent-ix/filament-specification/FR-143
     type: depends_on
 ---
 # FR-324: Admit unions and case under the value profile that admits records and tuples
@@ -21,10 +21,10 @@ relationships:
 ## Description
 
 When a declaration's `using` alias selects a value profile that admits
-records and tuples (`quire.value.complete/v1`), the compiler SHALL admit
+records and tuples (`filament.value.complete/v1`), the compiler SHALL admit
 union declarations, union constructions and `case` in that declaration on
 the same basis, under exactly the profile it
-uses for records and tuples, as QSpec FR-143 "Value profile" defines (QSpec
+uses for records and tuples, as FSpec FR-143 "Value profile" defines (FSpec
 AD-015; ADR-012 §16.9 "Profiles").
 
 ## Inputs
@@ -52,11 +52,11 @@ AD-015; ADR-012 §16.9 "Profiles").
 
 ## Dependencies
 
-- QSpec FR-143 ("Value profile"), AD-015, AD-005.
+- FSpec FR-143 ("Value profile"), AD-015, AD-005.
 - FR-110 (header profile selections), FR-316.
 
 ## References
 
 - Owning ticket: QSL-383. Design: ADR-012 §16.9, §16.10.
-- Value profile naming `union` (SC-G7): QSpec FR-143 "Value profile"
+- Value profile naming `union` (SC-G7): FSpec FR-143 "Value profile"
   (specification ticket STD-115).

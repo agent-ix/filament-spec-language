@@ -3,9 +3,9 @@ id: TC-378
 title: "On a nested fixture, the node limit is the proximate cause of a function-declaration stop"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-378: On a nested fixture, the node limit is the proximate cause of a function-declaration stop

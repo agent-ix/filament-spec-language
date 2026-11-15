@@ -3,7 +3,7 @@ id: TC-181
 title: "The witness envelope refuses a malformed transcript or an oversized encoding"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-181: The witness envelope refuses a malformed transcript or an oversized encoding

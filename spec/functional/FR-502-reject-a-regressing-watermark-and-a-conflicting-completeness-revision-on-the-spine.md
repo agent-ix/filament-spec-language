@@ -3,19 +3,19 @@ id: FR-502
 title: "Reject a regressing progress watermark and a conflicting completeness revision under one temporal binding on the spine"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-094
+  - target: ix://agent-ix/filament-specification/FR-094
     type: depends_on
 ---
 # FR-502: Reject a regressing progress watermark and a conflicting completeness revision under one temporal binding on the spine
@@ -78,7 +78,7 @@ request supplied none. The same holds for a request that returns
   with identical bodies and different names are two occurrences of one node, and
   each SHALL have its own ledger binding, keyed by the declaration node and the
   occurrence ordinal that the package's `temporal_clause_names` and
-  `temporal_bindings` rows carry (QSpec TemporalBinding.occurrence). Progress
+  `temporal_bindings` rows carry (FSpec TemporalBinding.occurrence). Progress
   asserted for one occurrence settles nothing for the other, and a watermark,
   completeness or closure that would contradict one occurrence's entry is not a
   contradiction for the other; this keeps two independently monitored clauses
@@ -141,7 +141,7 @@ request supplied none. The same holds for a request that returns
 - FR-043-AC-12 (the legacy criterion this requirement succeeds on the spine),
   FR-327 and FR-501 (the evaluators that read the ledger), FR-330 (the entry
   that carries it).
-- QSpec FR-094 (progress is monotonic within its identified binding; a
+- FSpec FR-094 (progress is monotonic within its identified binding; a
   regressing or conflicting assertion produces a typed contradiction and does
   not roll back progress).
 

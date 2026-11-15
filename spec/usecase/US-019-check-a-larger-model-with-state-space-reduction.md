@@ -3,35 +3,35 @@ id: US-019
 title: "Check a larger model with state-space reduction"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-150
+  - target: ix://agent-ix/filament-spec-language/FR-150
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-153
+  - target: ix://agent-ix/filament-spec-language/FR-153
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-156
+  - target: ix://agent-ix/filament-spec-language/FR-156
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-157
+  - target: ix://agent-ix/filament-spec-language/FR-157
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-159
+  - target: ix://agent-ix/filament-spec-language/FR-159
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-160
+  - target: ix://agent-ix/filament-spec-language/FR-160
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-161
+  - target: ix://agent-ix/filament-spec-language/FR-161
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-162
+  - target: ix://agent-ix/filament-spec-language/FR-162
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-019: Check a larger model with state-space reduction

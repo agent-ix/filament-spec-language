@@ -3,35 +3,35 @@ id: FR-384
 title: "Derive the protocol occurrence schema and runtime binding requirements from the protocol nodes"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-050
+  - target: ix://agent-ix/filament-specification/FR-050
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-051
+  - target: ix://agent-ix/filament-specification/FR-051
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-210
+  - target: ix://agent-ix/filament-specification/FR-210
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-465
+  - target: ix://agent-ix/filament-specification/FR-465
     type: depends_on
 ---
 # FR-384: Derive the protocol occurrence schema and runtime binding requirements from the protocol nodes
 
 ## Description
 
-QSL SHALL derive, from the protocol nodes of a checked package (FR-383), a
+FSL SHALL derive, from the protocol nodes of a checked package (FR-383), a
 static occurrence schema for each protocol and the runtime binding
 requirements a later runtime satisfies, and SHALL carry neither on any
 node. The derivation reads the nodes only, so the schema and the requirements
 derived from the in-process checked package equal those derived from the
-package read back through QSL's I2 reader. A package fabricates no workflow
+package read back through FSL's I2 reader. A package fabricates no workflow
 instance, role instance, repeat ordinal, delivery or clock observation, and
-compiling needs none of them (QSpec FR-465 "Runtime subjects"). A runtime
+compiling needs none of them (FSpec FR-465 "Runtime subjects"). A runtime
 supplies its concrete values to the schema's key binder, which validates them
 against the schema and retains them as one occurrence key without storing any
 of them in the schema or the package.
@@ -52,17 +52,17 @@ domain, and the two sets of keys never collapse.
 
 ## Semantic authority and boundary
 
-QSpec FR-465 owns the statement that runtime subjects are a function of the
-operators and carried by no node, and QSpec FR-210 the subject vocabulary.
-QSpec FR-050 and FR-051 own role instances and relationship binding. This
-requirement specifies what QSL derives and returns. It binds nothing: the
+FSpec FR-465 owns the statement that runtime subjects are a function of the
+operators and carried by no node, and FSpec FR-210 the subject vocabulary.
+FSpec FR-050 and FR-051 own role instances and relationship binding. This
+requirement specifies what FSL derives and returns. It binds nothing: the
 concrete instance, ordinal, delivery and observation values are the
 consumer's.
 
 ## Inputs
 
 - The protocol nodes of one `protocol_clause` (FR-383) and the nodes they
-  reach: from the in-process `CheckedPackage` or from QSL's I2 read.
+  reach: from the in-process `CheckedPackage` or from FSL's I2 read.
 
 ## Outputs
 
@@ -92,7 +92,7 @@ of the nodes alone.
 (subject kind, subject node) the operators of the protocol's nodes imply,
 each holding its subject kind, the subject node's key and its scope (the key of
 the `protocol_clause` node). A record holds no authority and no contract: the
-package lock's `binding_contract` selection supplies both (QSpec FR-465
+package lock's `binding_contract` selection supplies both (FSpec FR-465
 "Runtime subjects"), so the record has no member for either.
 
 `WorkflowInstanceIdentity`: a caller-owned UTF-8 text of 1 to 4096 bytes,
@@ -191,7 +191,7 @@ ordinal.
   Every other operator implies none.
 - A record's scope SHALL be the key of the `protocol_clause` node, and it
   SHALL hold no authority and no contract: the package lock's
-  `binding_contract` selection supplies them (QSpec FR-465), and the
+  `binding_contract` selection supplies them (FSpec FR-465), and the
   derivation never guesses an authority or a contract. A record names no
   concrete value.
 - A requirement is derived for a node the package holds. A construct the
@@ -210,7 +210,7 @@ ordinal.
 | FR-384-AC-4 | Two protocols in one package that each declare a role `Payer` on the same model and a control `Charge` give distinct role keys and distinct control keys, so four distinct schema entries; **W** with its roles, its channel or its compensations declared in another order, or reformatted, gives the same schema in every entry, so no entry depends on a source position. | Test (TC-1064) |
 | FR-384-AC-5 | Over a variant of **W** with a `commit`, an `effect`, a `send`, a `receive`, an `attempt`, a replicated role and a template, the requirements hold exactly the subject kinds of the table for each node: one `workflow-instance` for the clause; `role-instance` for each role, with the replicated role's marked as one for each spawned object; `message` and `send` for the `send`; `receive` and `delivery` for the `receive`; `operation-attempt`; `business-effect`; `commit`; `compensation`, `compensation-attempt` and `compensation-effect` for the template; the workflow-closure observation for `finish`; and none for a `sequence`, `choice`, `parallel`, `repeat`, `await`, `check`, `fence`, `event`, channel, queue or `terminal`. | Test (TC-1064) |
 | FR-384-AC-6 | Each requirement names its subject node's key and the `protocol_clause` key as its scope, and holds no authority and no contract member. | Test (TC-1064) |
-| FR-384-AC-7 | No protocol node holds a requirement, a schema entry, an instance or an ordinal: the nodes of **W** contain none, and an `internal` or `external` member bound into the body arguments of a role node is refused by QSL's I2 reader with `malformed_wire`, and the same member added as a member of the node itself, outside its body, is refused with `unknown_member`, because the node shape is closed. | Test (TC-1064) |
+| FR-384-AC-7 | No protocol node holds a requirement, a schema entry, an instance or an ordinal: the nodes of **W** contain none, and an `internal` or `external` member bound into the body arguments of a role node is refused by FSL's I2 reader with `malformed_wire`, and the same member added as a member of the node itself, outside its body, is refused with `unknown_member`, because the node shape is closed. | Test (TC-1064) |
 | FR-384-AC-8 | A `Full` and a `Partial` template for one effect give two compensation entries and two sets of `compensation`, `compensation-attempt` and `compensation-effect` requirements, each naming its own template's key. | Test (TC-1064) |
 | FR-384-AC-9 | In **W**, each role slot holds the selected model type node it is `on`, equally in process and after the I2 read: `Fulfillment` holds `Shipment`, `Orders` holds `OrderView` and `Payments` holds `Payment`, and each is an emitted `object_type` node of the selected package, and none holds a `model_member`. | Test (TC-1064) |
 | FR-384-AC-10 | Over FR-383-AC-62's unit, the role slot of `Outlet` holds the node of `Sys` and the `model_member` `{package, node}` of `pump_out`, that of `Inlet` the node of `Sys` and the `model_member` of `tank_in`, and those of `Operator` and the whole-model role hold none; the slots from the in-process package equal those from the package read back through the I2 reader. | Test (TC-1064) |
@@ -221,9 +221,9 @@ ordinal.
 
 ## Dependencies
 
-- Contract IR IR-1310: the reader sees the declaration kinds of the selected model package, which a Port role's `model_member` check needs (QSpec FR-465).
+- Contract IR IR-1310: the reader sees the declaration kinds of the selected model package, which a Port role's `model_member` check needs (FSpec FR-465).
 - [FR-383](FR-383-emit-a-checked-protocol-as-v2-protocol-nodes.md) (the nodes
   and their keys, ordering and declarations).
 - [FR-218](FR-218-check-every-protocol-control-construct-at-s3.md) (the
   checked clause the nodes are written from).
-- QSpec FR-465 "Runtime subjects", FR-210, FR-050 and FR-051.
+- FSpec FR-465 "Runtime subjects", FR-210, FR-050 and FR-051.

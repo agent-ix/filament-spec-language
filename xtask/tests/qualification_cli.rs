@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! QSL qualification runner behavior (FR-350..FR-353).
+//! FSL qualification runner behavior (FR-350..FR-353).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,26 +9,26 @@ use ix_trace_rs::trace;
 use serde_json::Value;
 use tempfile::TempDir;
 
-fn qspec_dir() -> PathBuf {
-    std::env::var_os("QSPEC_DIR")
+fn fspec_dir() -> PathBuf {
+    std::env::var_os("FSPEC_DIR")
         .map(PathBuf::from)
         .or_else(|| {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .expect("xtask is under the workspace root");
-            Some(workspace.parent()?.join("quire-specification"))
+            Some(workspace.parent()?.join("filament-specification"))
         })
-        .expect("QSpec checkout path")
+        .expect("FSpec checkout path")
 }
 
 fn fixture_dir() -> PathBuf {
-    qspec_dir().join("proposals/conformance-corpus-v1/fixtures")
+    fspec_dir().join("proposals/conformance-corpus-v1/fixtures")
 }
 
 fn run(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(arguments)
-        .env("QSPEC_DIR", qspec_dir())
+        .env("FSPEC_DIR", fspec_dir())
         .output()
         .expect("xtask starts")
 }
@@ -60,7 +60,7 @@ fn write_canonical(path: &Path, value: &Value) {
 
 #[test]
 #[trace("TC-880", "FR-353-AC-1")]
-fn qualify_runs_qspec_formatter_fixture_and_reports_a_qualified_scope() {
+fn qualify_runs_fspec_formatter_fixture_and_reports_a_qualified_scope() {
     let fixture = fixture_dir();
     let output = run(&["qualify", "--corpus", fixture.to_str().unwrap()]);
 
@@ -73,7 +73,7 @@ fn qualify_runs_qspec_formatter_fixture_and_reports_a_qualified_scope() {
     assert_eq!(report["coverage"]["in_scope"], 1);
     assert_eq!(
         report["capabilities"][0]["outcome"], "passed",
-        "the fixture's formatter vector is executed through QSL"
+        "the fixture's formatter vector is executed through FSL"
     );
 }
 
@@ -84,18 +84,18 @@ fn qualify_compiles_a_language_vector_through_the_public_entry_point() {
     let corpus = copy_fixture(&temp);
     let source_path = corpus.join("inputs/native.native");
     let source_bytes = fs::read(&source_path).unwrap();
-    let identity = qsl_foundation::SourceIdentity::new("agent-ix", "inputs/native.native");
-    let compiled = qsl_replay::compile_package(
-        qsl_replay::CompileUnit {
+    let identity = fsl_foundation::SourceIdentity::new("agent-ix", "inputs/native.native");
+    let compiled = fsl_replay::compile_package(
+        fsl_replay::CompileUnit {
             source: identity,
             package_name: "qualification".to_owned(),
             path: "inputs/native.native",
             bytes: &source_bytes,
         },
         std::iter::empty::<&[u8]>(),
-        &qsl_replay::DependencyInput::default(),
-        qsl_replay::StageLimits::default(),
-        qsl_replay::ReplayLimits::default(),
+        &fsl_replay::DependencyInput::default(),
+        fsl_replay::StageLimits::default(),
+        fsl_replay::ReplayLimits::default(),
     )
     .expect("the compile fixture is admitted");
     let package: Value = serde_json::from_slice(compiled.bytes()).unwrap();
@@ -174,7 +174,7 @@ fn duplicate_object_keys_refuse_before_a_report() {
     let source = String::from_utf8(bytes).unwrap();
     let duplicate = source.replacen(
         "\"contract_version\":",
-        "\"contract_version\":\"quire.conformance-corpus/v1\",\"contract_version\":",
+        "\"contract_version\":\"filament.conformance-corpus/v1\",\"contract_version\":",
         1,
     );
     fs::write(&corpus_file, duplicate).unwrap();

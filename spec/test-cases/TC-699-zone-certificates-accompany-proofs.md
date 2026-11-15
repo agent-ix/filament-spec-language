@@ -3,7 +3,7 @@ id: TC-699
 title: "Every zone-engine proof carries a canonical zone certificate"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-244
+  - target: ix://agent-ix/filament-spec-language/FR-244
     type: verifies
 ---
 # TC-699: Every zone-engine proof carries a canonical zone certificate

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Complete-V1 tooling built on the `qsl-cst` layer.
+//! Complete-V1 tooling built on the `fsl-cst` layer.
 //!
 //! The recovering concrete syntax tree itself -- token vocabulary, lexer,
 //! parser, declarative grammar and located diagnostics -- lives in the
-//! `qsl-cst` crate (ADR-011 §6.1 layer 1). This module holds
+//! `fsl-cst` crate (ADR-011 §6.1 layer 1). This module holds
 //! `editor`/`edit`, the tooling built on that layer. The complete-V1
-//! definition bundle (ADR-011 §6.2 layer 3) is `qsl_semantics::library::bundle`
+//! definition bundle (ADR-011 §6.2 layer 3) is `fsl_semantics::library::bundle`
 //! (FR-111). This module re-exports no item of either crate (ADR-011 §7.2).
 
 mod edit;
@@ -19,11 +19,11 @@ pub use editor::{
     DocumentNavigation, DocumentSnapshot, DocumentSymbol, FormatCorrespondence, FormatResponse,
 };
 
-use qsl_cst::{CompleteDiagnostic, Limits, ParsedSource};
-use qsl_foundation::selection::ProfileCatalog;
-use qsl_foundation::SourceIdentity;
-use qsl_semantics::library::extension::HeldExtensions;
-use qsl_semantics::value::HeaderLayer;
+use fsl_cst::{CompleteDiagnostic, Limits, ParsedSource};
+use fsl_foundation::selection::ProfileCatalog;
+use fsl_foundation::SourceIdentity;
+use fsl_semantics::library::extension::HeldExtensions;
+use fsl_semantics::value::HeaderLayer;
 
 /// The current build's header-selectable layer identities for CST tooling.
 pub fn header_profile_catalog() -> ProfileCatalog {
@@ -41,18 +41,18 @@ pub fn parse_with_catalog(
     catalog: &ProfileCatalog,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    let source = qsl_cst::diagnostic::read_source(identity, path, bytes, limits.source_bytes)?;
-    let mut base = qsl_cst::parse_source(source.clone(), limits)?;
+    let source = fsl_cst::diagnostic::read_source(identity, path, bytes, limits.source_bytes)?;
+    let mut base = fsl_cst::parse_source(source.clone(), limits)?;
     let refused = base.selections().profiles.iter().find_map(|selection| {
         editor::profile_refusal(catalog, &selection.identity)
             .map(|refusal| (selection.identity_span, refusal))
     });
     if let Some((identity_span, (code, cause, message))) = refused {
-        base.prepend_diagnostic(*qsl_cst::diagnostic::error(
+        base.prepend_diagnostic(*fsl_cst::diagnostic::error(
             &source,
             code,
             cause,
-            qsl_foundation::Phase::Profile,
+            fsl_foundation::Phase::Profile,
             identity_span.start,
             identity_span.end,
             message,
@@ -72,13 +72,13 @@ pub fn parse_with_extensions(
     held: &HeldExtensions,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    let forms = qsl_replay::spine::extension_forms(held);
-    qsl_cst::parse_with_extensions(
+    let forms = fsl_replay::spine::extension_forms(held);
+    fsl_cst::parse_with_extensions(
         identity,
         path,
         bytes,
         limits,
         &forms,
-        &quire_exact::Cancel::new(),
+        &filament_exact::Cancel::new(),
     )
 }

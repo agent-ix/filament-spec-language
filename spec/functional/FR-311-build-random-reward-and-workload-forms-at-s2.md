@@ -3,15 +3,15 @@ id: FR-311
 title: "Build random, reward and workload declaration forms at S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-185
+  - target: ix://agent-ix/filament-spec-language/FR-185
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-405
+  - target: ix://agent-ix/filament-specification/FR-405
     type: depends_on
 ---
 # FR-311: Build random, reward and workload declaration forms at S2
@@ -19,11 +19,11 @@ relationships:
 ## Description
 
 When a `1-draft` unit that selects the complete facets holds a `random-decl`,
-a `reward-decl` or a `workload-decl`, the productions of QSpec's shared
+a `reward-decl` or a `workload-decl`, the productions of FSpec's shared
 grammar (§ "Probabilistic, timed and real-time forms", Linear STD-137), S2
-(`qsl-forms`) SHALL build one declaration form for it from S1's parse, so
-S3 can check it (FR-185). QSpec owns the productions and their meaning
-(QSpec FR-405); this requirement specifies the forms QSL builds.
+(`fsl-forms`) SHALL build one declaration form for it from S1's parse, so
+S3 can check it (FR-185). FSpec owns the productions and their meaning
+(FSpec FR-405); this requirement specifies the forms FSL builds.
 
 ## Use case
 
@@ -89,7 +89,7 @@ denominator. S3 reduces each weight (FR-185).
 
 ## References
 
-- QSpec half: the shared grammar's `random-decl`, `weighted-value`,
+- FSpec half: the shared grammar's `random-decl`, `weighted-value`,
   `reward-decl`, `workload-decl` and `workload-weight` productions, and
-  QSpec FR-405 for their meaning (Linear STD-137).
+  FSpec FR-405 for their meaning (Linear STD-137).
 - Owning ticket: Linear QSL-371.

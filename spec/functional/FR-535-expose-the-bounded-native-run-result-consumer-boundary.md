@@ -3,20 +3,20 @@ id: FR-535
 title: "Expose the bounded native-run-result/2 consumer boundary"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: references
 ---
 # FR-535: Expose the bounded native-run-result/2 consumer boundary
 
 ## Description
 
-`qsl_replay` SHALL export, at its crate root, the producer, the strict reader,
+`fsl_replay` SHALL export, at its crate root, the producer, the strict reader,
 the typed results and the caller-supplied bounds of
 [FR-267](FR-267-write-and-read-run-results-as-native-run-result-2.md), so a
 consumer reads and writes exact `native-run-result/2` bytes without naming
-`qsl_replay::spine`.
+`fsl_replay::spine`.
 
 ## Inputs
 

@@ -3,13 +3,13 @@ id: TC-1271
 title: "S4 emits a derived Boolean model-field state transition from the authored clauses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: references
-  - target: ix://agent-ix/quire-specification/FR-341
+  - target: ix://agent-ix/filament-specification/FR-341
     type: references
 ---
 # TC-1271: S4 emits a derived Boolean model-field state transition from the authored clauses
@@ -31,8 +31,8 @@ Scope: FR-105-AC-13 to FR-105-AC-17.
    operation `set(flag: Boolean)` whose frame modifies all five, with
    `pre P1 { flag or self.on }`, `post Q1 { self.on }`, and one
    postcondition reading each of `armed`, `count` and `seq`. Decode the graph
-   and read it through QSL's I2 reader (IR-1052 landed in IR main;
-   strict-reader readback waits only on a QSL `quire-contract-model` lock bump).
+   and read it through FSL's I2 reader (IR-1052 landed in IR main;
+   strict-reader readback waits only on an FSL `filament-contract-model` lock bump).
 2. Add `post Q2 { self.on = pre(self.on) or flag }` and
    `pre P2 { not flag or self.lit }`. Decode; then swap the source order of
    `Q1` and `Q2` and recompile; then declare `P1` twice with equal bodies under two names.

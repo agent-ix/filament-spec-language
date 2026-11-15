@@ -3,45 +3,45 @@ id: FR-215
 title: "Implement ProtocolSystem<M> as an FR-101 TransitionSystem"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-425
+  - target: ix://agent-ix/filament-specification/FR-425
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-426
+  - target: ix://agent-ix/filament-specification/FR-426
     type: depends_on
 ---
 # FR-215: Implement ProtocolSystem<M> as an FR-101 TransitionSystem
 
 ## Description
 
-Crate `qsl-eval`'s `simulation` module SHALL provide `ProtocolSystem<M: MemoryModel>`, beside
+Crate `fsl-eval`'s `simulation` module SHALL provide `ProtocolSystem<M: MemoryModel>`, beside
 `ModelSystem`, implementing FR-101's `TransitionSystem` over a protocol
 subject, with `initial` the subject's initial protocol states, `key` its
 `ProtocolKey` and `successors` every enabled step of every live instance,
 thread, registration, role, channel, environment and memory model (ADR-027
-TS-1). Each step SHALL have QSpec FR-426's typed canonical transition identity
+TS-1). Each step SHALL have FSpec FR-426's typed canonical transition identity
 (ADR-027 TS-2), an attempt SHALL apply through the one FR-120 application function
 `ModelSystem` uses (ADR-027 TS-3), and the protocol system SHALL reach
 memory only through `MemoryModel`, whose identity is `Sc` (ADR-027 SE-1 to
-SE-3). The `model_check` engine in crate `qsl-analyze` (ADR-029) SHALL check a protocol subject as FR-126
+SE-3). The `model_check` engine in crate `fsl-analyze` (ADR-029) SHALL check a protocol subject as FR-126
 checks a model subject (ADR-027 TS-4 to TS-6).
 
 ## Use case
@@ -98,7 +98,7 @@ impl<M: MemoryModel> TransitionSystem for ProtocolSystem<'_, M> {
 }
 ```
 
-`ProtocolTransition` is owned by `quire-semantic-value` (SV), because the
+`ProtocolTransition` is owned by `filament-semantic-value` (SV), because the
 compiler produces it and CG reads it in counterexamples; it serializes as
 `{"type":"protocol-transition","step":<kind>,"thread":<path>,"node":<wire node id>,…}`.
 
@@ -115,7 +115,7 @@ compiler produces it and CG reads it in counterexamples; it serializes as
 ### Transition identity
 
 - A step's identity SHALL carry its kind, the owning thread's path and its
-  wire node id, and the further members of QSpec FR-426's identity table:
+  wire node id, and the further members of FSpec FR-426's identity table:
   for `attempt` and `cattempt`, the operation's qualified name, the
   receiver reference and the argument vector; for `cattempt` and `cend`,
   the template's qualified name and the registration key; for `send`,
@@ -141,7 +141,7 @@ compiler produces it and CG reads it in counterexamples; it serializes as
   carry `ContractUndetermined`, and a model check that meets it SHALL return
   `Undecided(UndecidedSuccessor)`, which FR-127 settles as V-6. When a
   contract evaluates undefined, the model check SHALL return a violation
-  with cause `UndefinedEvaluation{where, cause}` (QSpec FR-426), which
+  with cause `UndefinedEvaluation{where, cause}` (FSpec FR-426), which
   FR-127 settles as refuted.
 
 ### The memory-model seam
@@ -195,18 +195,18 @@ compiler produces it and CG reads it in counterexamples; it serializes as
 
 ## Dependencies
 
-- ADR-027 §2.5 SE-1 to SE-4, §4 TS-1 to TS-6; ADR-011 §6.2 (`qsl-eval`'s
+- ADR-027 §2.5 SE-1 to SE-4, §4 TS-1 to TS-6; ADR-011 §6.2 (`fsl-eval`'s
   `simulation`, as amended by ADR-027); ADR-029 (`model_check` in
-  `qsl-analyze`).
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+  `fsl-analyze`).
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (`TransitionSystem`, engine, canonical order),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md) (the
   application function), [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (product, phases, limits), FR-205, FR-206, FR-209, FR-212, FR-213,
   FR-216.
-- QSpec owns the protocol transition identity's typed canonical form
-  (ADR-027 QS-4): QSpec FR-426, over FR-181.
+- FSpec owns the protocol transition identity's typed canonical form
+  (ADR-027 QS-4): FSpec FR-426, over FR-181.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-425, FR-426 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-425, FR-426 (Linear STD-140).

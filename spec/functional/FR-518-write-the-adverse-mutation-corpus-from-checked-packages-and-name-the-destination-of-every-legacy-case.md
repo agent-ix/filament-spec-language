@@ -3,17 +3,17 @@ id: FR-518
 title: "Write the adverse mutation corpus from checked packages and name the destination of every legacy case"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-517
+  - target: ix://agent-ix/filament-spec-language/FR-517
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-513
+  - target: ix://agent-ix/filament-spec-language/FR-513
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-050
+  - target: ix://agent-ix/filament-spec-language/FR-050
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-500
+  - target: ix://agent-ix/filament-spec-language/FR-500
     type: references
 ---
 # FR-518: Write the adverse mutation corpus from checked packages and name the destination of every legacy case
@@ -21,8 +21,8 @@ relationships:
 ## Description
 
 The legacy v2 handoff writer produced `mutations/manifest.json`
-(`quire.protocol.v2-mutations/1`, cases of identity, axis, input and expected
-refusal code). The table below records every legacy identity. quire-protocol's
+(`filament.protocol.v2-mutations/1`, cases of identity, axis, input and expected
+refusal code). The table below records every legacy identity. filament-protocol's
 IT-001 submits every case to its reader and asserts the declared refusal
 (`tests/it001_v2_handoff.rs`). Nothing in the checked-package path produces them.
 Moving them is the QSL-1501 gate for GAP-10 and GAP-15: **no case is dropped
@@ -34,11 +34,11 @@ The fixture **R** of FR-517 and `corpus = Standard`.
 
 ## Outputs
 
-`mutations/manifest.json`, format `quire.checked-handoff.mutations/1`:
+`mutations/manifest.json`, format `filament.checked-handoff.mutations/1`:
 `{ format, base_package: "checked-package.json", selection: "selection.json",
 cases: [ { identity, axis, input: { file }, stage, expected } ] }`, and one
 `mutations/<identity>.json` per case holding the mutated package bytes. `stage`
-is `reader` (refused by `quire_contract_model::read_checked_package`) or
+is `reader` (refused by `filament_contract_model::read_checked_package`) or
 `selection` (admitted by the reader and refused by `Selection::check`).
 `expected` is, for `reader`, a code, an optional cause and a JSON pointer; for
 `selection`, a `SelectionAxis` (`clause.name`, `clause.requirement`,
@@ -58,7 +58,7 @@ mutates them.
 
 Stage `reader` codes and loci are the ones Contract IR's reader gives today
 (`temporal_binding.rs` `validate`, FR-038 of Contract IR); `selection` axes are
-the ones in the sidecar. The expected values are written by hand in the QSL
+the ones in the sidecar. The expected values are written by hand in the FSL
 writer's source; the writer never copies them from the reader's output.
 
 Verification status: rows 1 to 4, 8 to 13, 16 to 21, 29 and 30 restate codes
@@ -71,13 +71,13 @@ in the same change.
 
 | # | Legacy identity (axis) | Legacy expected | Stage and mutation of **R** | Expected |
 | --- | --- | --- | --- | --- |
-| 1 | `header-wire-version-substitution` (`header.version`) | `v2.header.*` | reader: replace `contract_version` by `quire.checked-package/v1` | `unknown_contract_version` |
+| 1 | `header-wire-version-substitution` (`header.version`) | `v2.header.*` | reader: replace `contract_version` by `filament.checked-package/v1` | `unknown_contract_version` |
 | 2 | `binding-missing` (`temporal_bindings.inventory`) | `v2.binding.*` | reader: delete a clause's row | `invalid_package`/`timed-node-reference` at that clause node's `/semantic_graph/nodes/{N}/body` |
 | 3 | `binding-surplus` (`temporal_bindings.inventory`) | `v2.binding.*` | reader: append a row whose declaration is an id the graph does not hold | `invalid_package`/`timed-node-reference` at `/temporal_bindings/{i}/declaration` |
-| 4 | `binding-duplicate` (`temporal_bindings.uniqueness`) | `v2.binding.*` | reader: repeat a row | `invalid_package`/`conflicting-definition` at the second `/temporal_bindings/{i}` (a repeated `(declaration, occurrence)` pair, QSpec FR-322-AC-364) |
+| 4 | `binding-duplicate` (`temporal_bindings.uniqueness`) | `v2.binding.*` | reader: repeat a row | `invalid_package`/`conflicting-definition` at the second `/temporal_bindings/{i}` (a repeated `(declaration, occurrence)` pair, FSpec FR-322-AC-364) |
 | 5 | `binding-reordered` (`temporal_bindings.order`) | `v2.binding.*` | reader: swap two rows | `invalid_package`/`timed-node-reference` at `/temporal_bindings/{i}/declaration` of the row out of `NodeRef` order |
 | 6 | `declaration-index` (`temporal_binding.declaration`) | `v2.binding.*` | reader: a row's declaration becomes the id of a non-clause node | `invalid_package`/`timed-node-reference` at `/temporal_bindings/{i}/declaration` |
-| 7 | `definition-index` (`temporal_binding.definition`) | `v2.binding.*` | reader: remove the lock `profile_selections` row of the `temporal_profile` role | `missing_declaration`/`missing-selection` at `/semantic_graph/nodes/{N}`, the first protocol node in node order whose body applies `await` or `compensate` (QSpec FR-464-AC-11) |
+| 7 | `definition-index` (`temporal_binding.definition`) | `v2.binding.*` | reader: remove the lock `profile_selections` row of the `temporal_profile` role | `missing_declaration`/`missing-selection` at `/semantic_graph/nodes/{N}`, the first protocol node in node order whose body applies `await` or `compensate` (FSpec FR-464-AC-11) |
 | 8 | `declaration-name` (`declaration.name`) | `v2.declaration.*` | reader: add a `declaration` member to a `temporal_clause` node, which carries none; the reader refuses an unexpected declaration member, and the successor for a differing clause name is FR-518-AC-11 | `invalid_semantic_graph` (no cause) at `/semantic_graph/nodes/{N}/declaration` |
 | 9 | `declaration-requirement` (`declaration.requirement`) | `v2.declaration.*` | selection: the protocol `requirements` entry that names the clause points at another clause | `clause.requirement` |
 | 10 | `declaration-clause` (`declaration.clause`) | `v2.declaration.*` | selection: the clause node id differs from the sidecar's | `clause.node` |
@@ -101,11 +101,11 @@ in the same change.
 | 26 | `clock-missing-timestamp-unit` (`clock.timestamp_unit`) | `json` | reader: remove the member | `malformed_wire` at the row's `clock` |
 | 27 | `clock-renamed-timestamp-unit` (`clock.timestamp_unit`) | `json` | reader: rename it `timestampUnit`; the renamed member is outside the closed clock schema, so Contract IR refuses it where it stands | `unknown_member` at the renamed member, `/temporal_bindings/{N}/clock/timestampUnit` |
 | 28 | `definition-original-bytes` (`definition.original_bytes`) | `invalid.seal` | dropped: the checked package vouches for no source bytes, so the case has no successor | none |
-| 29 | `definition-artifact-wire-identity` (QSL main only) | `v2.definition.*` | selection: the lock definition authority differs | `definition.authority` |
-| 30 | `clock-name` (`temporal_bindings.clock_name`, QSL main only) | `v2.clock.*` | reader: a row's `clock_name` differs from the clause's clock literal | `invalid_package`/`timed-node-reference` at `/temporal_bindings/{i}/clock_name` |
+| 29 | `definition-artifact-wire-identity` (FSL main only) | `v2.definition.*` | selection: the lock definition authority differs | `definition.authority` |
+| 30 | `clock-name` (`temporal_bindings.clock_name`, FSL main only) | `v2.clock.*` | reader: a row's `clock_name` differs from the clause's clock literal | `invalid_package`/`timed-node-reference` at `/temporal_bindings/{i}/clock_name` |
 | 31 | by absence of a default: an empty `clock_name` (new) | none | reader: set `clock_name` to the empty text | `malformed_wire` at `/temporal_bindings/{i}/clock_name` |
 
-Rows 1 to 28 are the legacy identities. Rows 29 and 30 are cases QSL main has
+Rows 1 to 28 are the legacy identities. Rows 29 and 30 are cases FSL main has
 that the legacy list does not, and rows 14, 15 and 28 are legacy identities main
 no longer has. The manifest holds a case for every row that names a mutation:
 rows 1 to 13, 14b, 15b, 16 to 27, 29, 30 and 31 (30 cases). Of
@@ -157,7 +157,7 @@ Rows 14b and 15b keep the closed-shape assertion.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-518-AC-1 | `write(R, dir)` with `corpus = Standard` writes `mutations/manifest.json` of format `quire.checked-handoff.mutations/1` whose cases are in table order, each with a unique identity, a stage of `reader` or `selection`, and a non-empty case file; the cases include 14b and 15b. | Test (TC-1313) |
+| FR-518-AC-1 | `write(R, dir)` with `corpus = Standard` writes `mutations/manifest.json` of format `filament.checked-handoff.mutations/1` whose cases are in table order, each with a unique identity, a stage of `reader` or `selection`, and a non-empty case file; the cases include 14b and 15b. | Test (TC-1313) |
 | FR-518-AC-2 | Every case with stage `reader` is refused by `read_checked_package` with the code, cause and pointer of its table row, and no such case is admitted. | Test (TC-1313) |
 | FR-518-AC-3 | Every case with stage `selection` is admitted by `read_checked_package` and refused by `Selection::check` with the `SelectionAxis` of its row, and the unmutated **R** passes both. | Test (TC-1313) |
 | FR-518-AC-4 | Over **R**, the cases of rows 12 and 29 are admitted by `read_checked_package` and refused by `Selection::check` with `definition.identity` and `definition.authority` respectively (the destinations of legacy rows 14 and 15). | Test (TC-1313) |

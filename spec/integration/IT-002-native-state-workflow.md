@@ -3,13 +3,13 @@ id: IT-002
 title: "Run the supported native state workflow"
 type: IT
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-005"
+  - target: "ix://agent-ix/filament-spec-language/FR-005"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-006"
+  - target: "ix://agent-ix/filament-spec-language/FR-006"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-106"
+  - target: "ix://agent-ix/filament-spec-language/FR-106"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-107"
+  - target: "ix://agent-ix/filament-spec-language/FR-107"
     type: verifies
 ---
 # IT-002: Run the supported native state workflow

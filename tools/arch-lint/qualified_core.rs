@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-284 (ADR-029 CB-2, CB-3): the qualified core stays separable by crate.
 //!
-//! Two checks over the QSL core crates, [`CORE_CRATES`]:
+//! Two checks over the FSL core crates, [`CORE_CRATES`]:
 //!
 //! **The direction check** (CB-3 item 1) walks each core crate's resolved
 //! dependency closure from `cargo metadata` and fails naming each offending
 //! `(core crate, dependency)` pair. A dependency offends when it is
 //!
-//! - a QSL workspace member outside the core (the root crate, `qsl-analyze`,
-//!   `qsl-walk-grow`, `qsl-bench`, the tools), or a named QSL crate above
-//!   the core ([`QSL_ABOVE_CORE`]: `qsl-inspect`, `qsl-jit`);
+//! - an FSL workspace member outside the core (the root crate, `fsl-analyze`,
+//!   `fsl-walk-grow`, `fsl-bench`, the tools), or a named FSL crate above
+//!   the core ([`FSL_ABOVE_CORE`]: `fsl-inspect`, `fsl-jit`);
 //! - a driver crate ([`DRIVER`]);
-//! - a CG or RT crate ([`crate::graph::classify`]). An IR crate is not: QSL
+//! - a CG or RT crate ([`crate::graph::classify`]). An IR crate is not: FSL
 //!   depends on the IR model (ADR-011 §7.1) and the prove path's IR crates
 //!   are inside the core (CB-2);
 //! - an argument parser, a terminal or colour crate, a non-JSON renderer, a
 //!   plugin-host or cache crate, or an execution backend ([`FRONTEND`]).
 //!
-//! Every other QSL workspace member gets the CG, RT and driver part of that
-//! rule (FR-280-AC-3): no QSL crate depends on a CG, RT or driver crate.
+//! Every other FSL workspace member gets the CG, RT and driver part of that
+//! rule (FR-280-AC-3): no FSL crate depends on a CG, RT or driver crate.
 //!
 //! The walk follows normal dependency edges only and does not enter a
 //! proc-macro crate: build scripts, build dependencies and proc macros run
@@ -26,12 +26,12 @@
 //! offending dependency, so each pair names the crate the core reaches, not
 //! that crate's own dependencies. One edge is not followed, temporarily:
 //! [`FCD_LIFT_CLAP`], FCD's `agent-ix-extraction-frontend` depending on
-//! `clap`. Under a core crate, only `qsl-semantics` may depend on that
+//! `clap`. Under a core crate, only `fsl-semantics` may depend on that
 //! frontend; an edge into it from any other crate fails
 //! ([`Offence::FcdFrontend`]), so `clap` reached any way other than
-//! `qsl-semantics -> agent-ix-extraction-frontend -> clap` fails. Metadata
+//! `fsl-semantics -> agent-ix-extraction-frontend -> clap` fails. Metadata
 //! is resolved with `--all-features`, so an optional dependency any feature turns on counts,
-//! over the targets QSL builds for (the host and [`NO_STD_TARGET`]), so a dependency gated on either target counts and
+//! over the targets FSL builds for (the host and [`NO_STD_TARGET`]), so a dependency gated on either target counts and
 //! one behind a `cfg` neither sets (`cfg(loom)`) does not.
 //!
 //! **The ambient-input scan** (CB-3 item 2) token-scans the shipped source
@@ -72,64 +72,64 @@ use crate::api_surface::{
 use crate::error::{Code, Error, Result};
 use crate::graph::{classify, Repo};
 
-/// The QSL crates of the qualified core (ADR-029 CB-2), by package name.
-/// Each crate's source root is `<name>/src` under the QSL root.
+/// The FSL crates of the qualified core (ADR-029 CB-2), by package name.
+/// Each crate's source root is `<name>/src` under the FSL root.
 pub(crate) const CORE_CRATES: [&str; 9] = [
-    "qsl-foundation",
-    "qsl-cst",
-    "qsl-source",
-    "qsl-forms",
-    "qsl-semantics",
-    "qsl-package",
-    "qsl-eval",
-    "qsl-route",
-    "qsl-replay",
+    "fsl-foundation",
+    "fsl-cst",
+    "fsl-source",
+    "fsl-forms",
+    "fsl-semantics",
+    "fsl-package",
+    "fsl-eval",
+    "fsl-route",
+    "fsl-replay",
 ];
 
-/// QSL crates above the core (ADR-029 CB-3 item 3), refused under a core
+/// FSL crates above the core (ADR-029 CB-3 item 3), refused under a core
 /// crate even when they are not members of the scanned workspace.
-pub(crate) const QSL_ABOVE_CORE: &[&str] = &[
-    "quire-spec-language",
-    "qsl-analyze",
-    "qsl-inspect",
-    "qsl-jit",
+pub(crate) const FSL_ABOVE_CORE: &[&str] = &[
+    "filament-spec-language",
+    "fsl-analyze",
+    "fsl-inspect",
+    "fsl-jit",
 ];
 
 /// The driver repository's crates: the driver library and the crates above
-/// the core it holds (CB-3 item 3). The driver depends on QSL, so no QSL
+/// the core it holds (CB-3 item 3). The driver depends on FSL, so no FSL
 /// crate depends on any of them.
 pub(crate) const DRIVER: &[&str] = &[
-    "quire-driver",
-    "quire-plugin-host",
-    "quire-cache",
-    "quire-aot",
-    "quire-cli",
+    "filament-driver",
+    "filament-plugin-host",
+    "filament-cache",
+    "fsl-aot",
+    "fsl-cli",
 ];
 
 /// The one dependency path the direction check does not follow:
-/// `qsl-semantics` depends on FCD's `agent-ix-extraction-frontend` for
+/// `fsl-semantics` depends on FCD's `agent-ix-extraction-frontend` for
 /// `lift`, and that crate depends on `clap` for its own command line. The
-/// edge belongs to FCD. Only `qsl-semantics` may depend on the frontend, so
+/// edge belongs to FCD. Only `fsl-semantics` may depend on the frontend, so
 /// any other path from a core crate to `clap` fails.
 ///
 /// Temporary: when FCD's extraction frontend puts `clap` behind a
 /// non-default feature, this const and its tests are deleted.
 pub(crate) const FCD_LIFT_CLAP: [&str; 3] =
-    ["qsl-semantics", "agent-ix-extraction-frontend", "clap"];
+    ["fsl-semantics", "agent-ix-extraction-frontend", "clap"];
 
-/// The one ambient site the scan does not report, as (file under the QSL
+/// The one ambient site the scan does not report, as (file under the FSL
 /// root, enclosing function, category): FCD's `lift` writes its document
 /// only to an output path, so `lift_document` gives it a scratch directory.
 ///
 /// Temporary: when FCD offers a `lift` that returns the document bytes,
 /// this const and its tests are deleted.
 const FCD_LIFT_SCRATCH: (&str, &str, Ambient) = (
-    "qsl-semantics/src/model/intake.rs",
+    "fsl-semantics/src/model/intake.rs",
     "lift_document",
     Ambient::Filesystem,
 );
 
-/// The `no_std` target QSL builds its shared leaves for, besides the host.
+/// The `no_std` target FSL builds its shared leaves for, besides the host.
 const NO_STD_TARGET: &str = "thumbv7em-none-eabi";
 
 /// One frontend category CB-3 item 1 keeps out of the core.
@@ -257,7 +257,7 @@ pub(crate) const FRONTEND: &[(Frontend, &[&str])] = &[
 /// Why a dependency may not sit in a core crate's closure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum Offence {
-    /// A QSL workspace member outside the core, or a [`QSL_ABOVE_CORE`]
+    /// An FSL workspace member outside the core, or a [`FSL_ABOVE_CORE`]
     /// crate.
     AboveCore,
     /// A [`DRIVER`] crate.
@@ -266,7 +266,7 @@ pub(crate) enum Offence {
     Backend(Repo),
     Frontend(Frontend),
     /// An edge into FCD's `agent-ix-extraction-frontend` from a crate other
-    /// than `qsl-semantics` ([`FCD_LIFT_CLAP`]).
+    /// than `fsl-semantics` ([`FCD_LIFT_CLAP`]).
     FcdFrontend,
 }
 
@@ -277,7 +277,7 @@ impl fmt::Display for Offence {
             Self::Driver => f.write_str("driver crate"),
             Self::Backend(repo) => write!(f, "{repo} crate"),
             Self::Frontend(category) => f.write_str(category.as_str()),
-            Self::FcdFrontend => f.write_str("FCD frontend outside qsl-semantics"),
+            Self::FcdFrontend => f.write_str("FCD frontend outside fsl-semantics"),
         }
     }
 }
@@ -307,7 +307,7 @@ impl DepGraph {
     }
 }
 
-/// One direction finding: the QSL crate `core` (a core crate, or for the
+/// One direction finding: the FSL crate `core` (a core crate, or for the
 /// CG/RT/driver rule any workspace member) reaches `dependency` through
 /// `via`, the chain of crates between them (empty for a direct dependency).
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -318,7 +318,7 @@ pub(crate) struct DirectionFinding {
     pub(crate) via: Vec<String>,
 }
 
-/// The CG, RT and driver rule every QSL crate obeys (FR-280-AC-3).
+/// The CG, RT and driver rule every FSL crate obeys (FR-280-AC-3).
 fn backend_or_driver(package: &Package) -> Option<Offence> {
     let name = package.name.as_str();
     if DRIVER.contains(&name) {
@@ -339,7 +339,7 @@ fn core_offence(package: &Package) -> Option<Offence> {
     if let Some(offence) = backend_or_driver(package) {
         return Some(offence);
     }
-    if package.workspace_member || QSL_ABOVE_CORE.contains(&name) {
+    if package.workspace_member || FSL_ABOVE_CORE.contains(&name) {
         return Some(Offence::AboveCore);
     }
     FRONTEND
@@ -357,7 +357,7 @@ enum FcdEdge {
     /// `agent-ix-extraction-frontend -> clap`: not followed.
     Skip,
     /// An edge into `agent-ix-extraction-frontend` from a crate other than
-    /// `qsl-semantics`: refused.
+    /// `fsl-semantics`: refused.
     Refuse,
 }
 
@@ -446,7 +446,7 @@ pub(crate) fn check_direction(graph: &DepGraph) -> Result<Vec<DirectionFinding>>
         let start = graph.index_of(core).ok_or_else(|| {
             Error::new(
                 Code::Usage,
-                format!("core crate {core} is not a member of the --qsl workspace"),
+                format!("core crate {core} is not a member of the --fsl workspace"),
             )
         })?;
         walk(graph, start, core_offence, true, &mut findings);
@@ -472,12 +472,12 @@ fn host_triple() -> Result<String> {
         .ok_or_else(|| Error::new(Code::Io, "rustc -vV printed no host triple"))
 }
 
-/// `cargo metadata` over the workspace at `qsl_root`, every feature on and
+/// `cargo metadata` over the workspace at `fsl_root`, every feature on and
 /// filtered to the host and [`NO_STD_TARGET`], so a dependency gated on
 /// either counts and one behind a `cfg` neither sets (`cfg(loom)`) does
 /// not.
-pub(crate) fn workspace_graph(qsl_root: &Path) -> Result<DepGraph> {
-    let manifest = qsl_root.join("Cargo.toml");
+pub(crate) fn workspace_graph(fsl_root: &Path) -> Result<DepGraph> {
+    let manifest = fsl_root.join("Cargo.toml");
     let output = Command::new("cargo")
         .args([
             "metadata",
@@ -802,8 +802,8 @@ fn scan_file(
 }
 
 /// FR-284's ambient-input scan over the shipped source of every core crate
-/// under `qsl_root`.
-pub(crate) fn scan_ambient(qsl_root: &Path) -> Result<Vec<AmbientFinding>> {
+/// under `fsl_root`.
+pub(crate) fn scan_ambient(fsl_root: &Path) -> Result<Vec<AmbientFinding>> {
     let compiled: Vec<(Ambient, Vec<CallPattern>)> = AMBIENT
         .iter()
         .map(|(ambient, spellings)| {
@@ -820,7 +820,7 @@ pub(crate) fn scan_ambient(qsl_root: &Path) -> Result<Vec<AmbientFinding>> {
         .collect();
     let mut findings = Vec::new();
     for core in CORE_CRATES {
-        let src_root = qsl_root.join(core).join("src");
+        let src_root = fsl_root.join(core).join("src");
         if !src_root.is_dir() {
             return Err(Error::new(
                 Code::Usage,
@@ -850,7 +850,7 @@ pub(crate) fn scan_ambient(qsl_root: &Path) -> Result<Vec<AmbientFinding>> {
                 .any(|ancestor| module == ancestor || module.starts_with(&format!("{ancestor}::")));
             if !under_test {
                 let (scratch_file, function, category) = FCD_LIFT_SCRATCH;
-                let exempt = (file.strip_prefix(qsl_root) == Ok(Path::new(scratch_file)))
+                let exempt = (file.strip_prefix(fsl_root) == Ok(Path::new(scratch_file)))
                     .then_some((function, category));
                 findings.extend(scan_file(file, &compiled, exempt)?);
             }
@@ -861,7 +861,7 @@ pub(crate) fn scan_ambient(qsl_root: &Path) -> Result<Vec<AmbientFinding>> {
 
 /// The report `arch-lint qualified-core` prints, and whether it passed.
 pub(crate) fn report(
-    qsl_root: &Path,
+    fsl_root: &Path,
     direction: &[DirectionFinding],
     ambient: &[AmbientFinding],
 ) -> (String, bool) {
@@ -890,7 +890,7 @@ pub(crate) fn report(
     } else {
         summary.push_str("  Ambient input: FAIL\n");
         for finding in ambient {
-            let file = finding.file.strip_prefix(qsl_root).unwrap_or(&finding.file);
+            let file = finding.file.strip_prefix(fsl_root).unwrap_or(&finding.file);
             summary.push_str(&format!(
                 "    {}:{} {}\n",
                 file.display(),
@@ -908,9 +908,9 @@ mod tests {
     use ix_trace_rs::trace;
 
     /// A synthetic workspace with the core's real layering and no
-    /// violation: every core crate, the root crate and `qsl-analyze` above
+    /// violation: every core crate, the root crate and `fsl-analyze` above
     /// them, an IR crate and third-party leaves, and the `ix-trace-rs` proc
-    /// macro under `qsl-foundation`.
+    /// macro under `fsl-foundation`.
     struct Fixture {
         graph: DepGraph,
     }
@@ -926,7 +926,7 @@ mod tests {
             // The walker toolkit, the exact-value kernel and the semantic-value
             // leaf are each their own repository: git dependencies of the
             // core, not workspace members.
-            for leaf in ["quire-walk", "quire-exact", "quire-semantic-value"] {
+            for leaf in ["filament-walk", "filament-exact", "filament-semantic-value"] {
                 fixture.add(
                     leaf,
                     Some(&format!(
@@ -936,8 +936,8 @@ mod tests {
                     false,
                 );
             }
-            fixture.add("quire-spec-language", None, true, false);
-            fixture.add("qsl-analyze", None, true, false);
+            fixture.add("filament-spec-language", None, true, false);
+            fixture.add("fsl-analyze", None, true, false);
             fixture.add(
                 "ix-trace-rs",
                 Some("git+https://github.com/agent-ix/ix-trace-rs?branch=main"),
@@ -945,8 +945,8 @@ mod tests {
                 true,
             );
             fixture.add(
-                "quire-contract-model",
-                Some("git+https://github.com/agent-ix/quire-contract-ir?branch=main#ea63488"),
+                "filament-contract-model",
+                Some("git+https://github.com/agent-ix/filament-contract-ir?branch=main#ea63488"),
                 false,
                 false,
             );
@@ -957,24 +957,24 @@ mod tests {
                 false,
             );
             for (from, to) in [
-                ("quire-semantic-value", "quire-exact"),
-                ("qsl-foundation", "quire-exact"),
-                ("qsl-foundation", "ix-trace-rs"),
-                ("qsl-cst", "qsl-foundation"),
-                ("qsl-forms", "qsl-cst"),
-                ("qsl-semantics", "qsl-forms"),
-                ("qsl-semantics", "quire-semantic-value"),
-                ("qsl-semantics", "serde"),
-                ("qsl-package", "qsl-semantics"),
-                ("qsl-package", "quire-contract-model"),
-                ("qsl-eval", "qsl-package"),
-                ("qsl-route", "qsl-semantics"),
-                ("qsl-replay", "qsl-eval"),
-                ("qsl-replay", "quire-walk"),
-                ("qsl-source", "qsl-foundation"),
-                ("qsl-analyze", "qsl-replay"),
-                ("quire-spec-language", "qsl-replay"),
-                ("quire-spec-language", "qsl-analyze"),
+                ("filament-semantic-value", "filament-exact"),
+                ("fsl-foundation", "filament-exact"),
+                ("fsl-foundation", "ix-trace-rs"),
+                ("fsl-cst", "fsl-foundation"),
+                ("fsl-forms", "fsl-cst"),
+                ("fsl-semantics", "fsl-forms"),
+                ("fsl-semantics", "filament-semantic-value"),
+                ("fsl-semantics", "serde"),
+                ("fsl-package", "fsl-semantics"),
+                ("fsl-package", "filament-contract-model"),
+                ("fsl-eval", "fsl-package"),
+                ("fsl-route", "fsl-semantics"),
+                ("fsl-replay", "fsl-eval"),
+                ("fsl-replay", "filament-walk"),
+                ("fsl-source", "fsl-foundation"),
+                ("fsl-analyze", "fsl-replay"),
+                ("filament-spec-language", "fsl-replay"),
+                ("filament-spec-language", "fsl-analyze"),
             ] {
                 fixture.edge(from, to);
             }
@@ -1026,36 +1026,36 @@ mod tests {
         assert_eq!(Fixture::clean().pairs(), Vec::<(String, String)>::new());
     }
 
-    /// TC-767 step 2: `qsl-eval` depending on `qsl-analyze` fails naming
-    /// `(qsl-eval, qsl-analyze)`, and every core crate above `qsl-eval`
+    /// TC-767 step 2: `fsl-eval` depending on `fsl-analyze` fails naming
+    /// `(fsl-eval, fsl-analyze)`, and every core crate above `fsl-eval`
     /// that reaches it names its own pair.
     #[trace("TC-767", "FR-284-AC-1")]
     #[test]
-    fn tc_767_qsl_eval_depending_on_analyze_fails() {
+    fn tc_767_fsl_eval_depending_on_analyze_fails() {
         let mut fixture = Fixture::clean();
-        fixture.edge("qsl-eval", "qsl-analyze");
+        fixture.edge("fsl-eval", "fsl-analyze");
         assert_eq!(
             fixture.pairs(),
             [
-                pair("qsl-eval", "qsl-analyze"),
-                pair("qsl-replay", "qsl-analyze")
+                pair("fsl-eval", "fsl-analyze"),
+                pair("fsl-replay", "fsl-analyze")
             ]
         );
         let replay = check_direction(&fixture.graph)
             .unwrap()
             .into_iter()
-            .find(|finding| finding.core == "qsl-replay")
+            .find(|finding| finding.core == "fsl-replay")
             .unwrap();
-        assert_eq!(replay.via, ["qsl-eval"]);
+        assert_eq!(replay.via, ["fsl-eval"]);
         assert_eq!(replay.offence, Offence::AboveCore);
     }
 
-    /// TC-767 step 3: an argument parser under `qsl-replay` fails naming
-    /// `(qsl-replay, clap)`, also when it arrives through a third-party
+    /// TC-767 step 3: an argument parser under `fsl-replay` fails naming
+    /// `(fsl-replay, clap)`, also when it arrives through a third-party
     /// crate.
     #[trace("TC-767", "FR-284-AC-1")]
     #[test]
-    fn tc_767_argument_parser_in_qsl_replay_fails() {
+    fn tc_767_argument_parser_in_fsl_replay_fails() {
         let mut fixture = Fixture::clean();
         fixture.add(
             "clap",
@@ -1063,14 +1063,14 @@ mod tests {
             false,
             false,
         );
-        fixture.edge("qsl-replay", "clap");
-        assert_eq!(fixture.pairs(), [pair("qsl-replay", "clap")]);
+        fixture.edge("fsl-replay", "clap");
+        assert_eq!(fixture.pairs(), [pair("fsl-replay", "clap")]);
 
         let mut fixture = Fixture::clean();
         fixture.add("clap", None, false, false);
         fixture.add("some-frontend", None, false, false);
         fixture.edge("some-frontend", "clap");
-        fixture.edge("qsl-replay", "some-frontend");
+        fixture.edge("fsl-replay", "some-frontend");
         let findings = check_direction(&fixture.graph).unwrap();
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].dependency, "clap");
@@ -1081,22 +1081,22 @@ mod tests {
         );
     }
 
-    /// TC-767 step 4 and FR-280-AC-3: a CG crate under `qsl-route` fails
-    /// naming `(qsl-route, quire-contract-codegen)`; so does a driver crate.
+    /// TC-767 step 4 and FR-280-AC-3: a CG crate under `fsl-route` fails
+    /// naming `(fsl-route, filament-contract-codegen)`; so does a driver crate.
     #[trace("TC-767", "FR-284-AC-1", "FR-280-AC-3")]
     #[test]
-    fn tc_767_cg_or_driver_crate_in_qsl_route_fails() {
+    fn tc_767_cg_or_driver_crate_in_fsl_route_fails() {
         let mut fixture = Fixture::clean();
         fixture.add(
-            "quire-contract-codegen",
-            Some("git+https://github.com/agent-ix/quire-contract-codegen?branch=main#1"),
+            "filament-contract-codegen",
+            Some("git+https://github.com/agent-ix/filament-contract-codegen?branch=main#1"),
             false,
             false,
         );
-        fixture.edge("qsl-route", "quire-contract-codegen");
+        fixture.edge("fsl-route", "filament-contract-codegen");
         assert_eq!(
             fixture.pairs(),
-            [pair("qsl-route", "quire-contract-codegen")]
+            [pair("fsl-route", "filament-contract-codegen")]
         );
         assert_eq!(
             check_direction(&fixture.graph).unwrap()[0].offence,
@@ -1104,13 +1104,13 @@ mod tests {
         );
 
         let mut fixture = Fixture::clean();
-        fixture.add("quire-cli", None, false, false);
-        fixture.edge("qsl-route", "quire-cli");
-        assert_eq!(fixture.pairs(), [pair("qsl-route", "quire-cli")]);
+        fixture.add("fsl-cli", None, false, false);
+        fixture.edge("fsl-route", "fsl-cli");
+        assert_eq!(fixture.pairs(), [pair("fsl-route", "fsl-cli")]);
     }
 
-    /// FR-280-AC-3: every QSL workspace member outside the core gets the
-    /// CG, RT and driver rule, and only that rule: `qsl-analyze` depending
+    /// FR-280-AC-3: every FSL workspace member outside the core gets the
+    /// CG, RT and driver rule, and only that rule: `fsl-analyze` depending
     /// on a CG crate fails, and so does the root crate through it, while its
     /// argument parser is not refused.
     #[trace("TC-767", "FR-280-AC-3")]
@@ -1118,34 +1118,34 @@ mod tests {
     fn tc_767_cg_crate_in_a_non_core_member_fails() {
         let mut fixture = Fixture::clean();
         fixture.add(
-            "quire-contract-codegen",
-            Some("git+https://github.com/agent-ix/quire-contract-codegen?branch=main#1"),
+            "filament-contract-codegen",
+            Some("git+https://github.com/agent-ix/filament-contract-codegen?branch=main#1"),
             false,
             false,
         );
         fixture.add("clap", None, false, false);
-        fixture.edge("qsl-analyze", "quire-contract-codegen");
-        fixture.edge("qsl-analyze", "clap");
+        fixture.edge("fsl-analyze", "filament-contract-codegen");
+        fixture.edge("fsl-analyze", "clap");
         assert_eq!(
             fixture.pairs(),
             [
-                pair("qsl-analyze", "quire-contract-codegen"),
-                pair("quire-spec-language", "quire-contract-codegen"),
+                pair("filament-spec-language", "filament-contract-codegen"),
+                pair("fsl-analyze", "filament-contract-codegen"),
             ]
         );
         let root = check_direction(&fixture.graph)
             .unwrap()
             .into_iter()
-            .find(|finding| finding.core == "quire-spec-language")
+            .find(|finding| finding.core == "filament-spec-language")
             .unwrap();
-        assert_eq!(root.via, ["qsl-analyze"]);
+        assert_eq!(root.via, ["fsl-analyze"]);
 
         let mut fixture = Fixture::clean();
-        fixture.add("quire-driver", None, false, false);
-        fixture.edge("quire-spec-language", "quire-driver");
+        fixture.add("filament-driver", None, false, false);
+        fixture.edge("filament-spec-language", "filament-driver");
         assert_eq!(
             fixture.pairs(),
-            [pair("quire-spec-language", "quire-driver")]
+            [pair("filament-spec-language", "filament-driver")]
         );
     }
 
@@ -1161,7 +1161,7 @@ mod tests {
     }
 
     /// The clean fixture plus FCD's `agent-ix-extraction-frontend` under
-    /// `qsl-semantics`, with its `clap` dependency.
+    /// `fsl-semantics`, with its `clap` dependency.
     fn with_fcd_frontend() -> Fixture {
         let mut fixture = Fixture::clean();
         fixture.add(
@@ -1176,25 +1176,25 @@ mod tests {
             false,
             false,
         );
-        fixture.edge("qsl-semantics", "agent-ix-extraction-frontend");
+        fixture.edge("fsl-semantics", "agent-ix-extraction-frontend");
         fixture.edge("agent-ix-extraction-frontend", "clap");
         fixture
     }
 
-    /// The core crates that reach `qsl-semantics`, and so its `clap`.
+    /// The core crates that reach `fsl-semantics`, and so its `clap`.
     const ABOVE_SEMANTICS: [&str; 5] = [
-        "qsl-eval",
-        "qsl-package",
-        "qsl-replay",
-        "qsl-route",
-        "qsl-semantics",
+        "fsl-eval",
+        "fsl-package",
+        "fsl-replay",
+        "fsl-route",
+        "fsl-semantics",
     ];
 
-    /// The one FCD edge, `qsl-semantics -> agent-ix-extraction-frontend ->
-    /// clap`, is not followed; `qsl-semantics` reaching `clap` directly or
+    /// The one FCD edge, `fsl-semantics -> agent-ix-extraction-frontend ->
+    /// clap`, is not followed; `fsl-semantics` reaching `clap` directly or
     /// through another crate still fails for it and every core crate above
     /// it, and any edge into the frontend from a crate other than
-    /// `qsl-semantics` fails.
+    /// `fsl-semantics` fails.
     #[trace("TC-767", "FR-284-AC-1")]
     #[test]
     fn tc_767_only_the_fcd_frontend_clap_edge_is_skipped() {
@@ -1206,27 +1206,27 @@ mod tests {
             .collect();
 
         let mut direct = with_fcd_frontend();
-        direct.edge("qsl-semantics", "clap");
+        direct.edge("fsl-semantics", "clap");
         assert_eq!(direct.pairs(), every_core_above_semantics);
 
         let mut other = with_fcd_frontend();
         other.add("some-frontend", None, false, false);
         other.edge("some-frontend", "clap");
-        other.edge("qsl-semantics", "some-frontend");
+        other.edge("fsl-semantics", "some-frontend");
         assert_eq!(other.pairs(), every_core_above_semantics);
         let semantics = check_direction(&other.graph)
             .unwrap()
             .into_iter()
-            .find(|finding| finding.core == "qsl-semantics")
+            .find(|finding| finding.core == "fsl-semantics")
             .unwrap();
         assert_eq!(semantics.via, ["some-frontend"]);
 
         let frontend = "agent-ix-extraction-frontend";
         let mut eval = with_fcd_frontend();
-        eval.edge("qsl-eval", frontend);
+        eval.edge("fsl-eval", frontend);
         assert_eq!(
             eval.pairs(),
-            [pair("qsl-eval", frontend), pair("qsl-replay", frontend)]
+            [pair("fsl-eval", frontend), pair("fsl-replay", frontend)]
         );
         let findings = check_direction(&eval.graph).unwrap();
         assert!(findings
@@ -1237,7 +1237,7 @@ mod tests {
         // whichever route the walk discovers first.
         let mut second = with_fcd_frontend();
         second.add("y", None, false, false);
-        second.edge("qsl-semantics", "y");
+        second.edge("fsl-semantics", "y");
         second.edge("y", frontend);
         let every_core_reaching_the_frontend: Vec<(String, String)> = ABOVE_SEMANTICS
             .iter()
@@ -1247,7 +1247,7 @@ mod tests {
         let semantics = check_direction(&second.graph)
             .unwrap()
             .into_iter()
-            .find(|finding| finding.core == "qsl-semantics")
+            .find(|finding| finding.core == "fsl-semantics")
             .unwrap();
         assert_eq!(semantics.via, ["y"]);
         assert_eq!(semantics.offence, Offence::FcdFrontend);
@@ -1269,9 +1269,9 @@ mod tests {
     #[test]
     fn tc_767_parse_graph_reads_normal_edges_members_and_proc_macros() {
         let document = serde_json::json!({
-            "workspace_members": ["path+file:///q/qsl-eval#0.1.0"],
+            "workspace_members": ["path+file:///q/fsl-eval#0.1.0"],
             "packages": [
-                {"id": "path+file:///q/qsl-eval#0.1.0", "name": "qsl-eval", "source": null,
+                {"id": "path+file:///q/fsl-eval#0.1.0", "name": "fsl-eval", "source": null,
                  "targets": [{"kind": ["lib"]}]},
                 {"id": "registry+x#clap@4", "name": "clap", "source": "registry+x",
                  "targets": [{"kind": ["lib"]}]},
@@ -1281,7 +1281,7 @@ mod tests {
                  "targets": [{"kind": ["proc-macro"]}]}
             ],
             "resolve": {"nodes": [
-                {"id": "path+file:///q/qsl-eval#0.1.0", "deps": [
+                {"id": "path+file:///q/fsl-eval#0.1.0", "deps": [
                     {"pkg": "registry+x#clap@4", "dep_kinds": [{"kind": "build", "target": null}]},
                     {"pkg": "registry+x#tempfile@3", "dep_kinds": [{"kind": "dev", "target": null}, {"kind": null, "target": null}]},
                     {"pkg": "registry+x#serde_derive@1", "dep_kinds": [{"kind": null, "target": null}]}
@@ -1333,7 +1333,7 @@ mod tests {
     #[test]
     fn tc_768_ambient_reads_and_process_writes_in_core_source_fail() {
         let dir = core_tree(&[(
-            "qsl-eval/src/lib.rs",
+            "fsl-eval/src/lib.rs",
             "fn a() { let _ = std::env::var(\"HOME\"); }\n\
              fn b() { let _ = std::time::Instant::now(); }\n\
              fn c() { let _ = std::fs::read(\"config.toml\"); }\n\
@@ -1351,7 +1351,7 @@ mod tests {
              static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();\n\
              static TABLE: LazyLock<BTreeMap<u8, u8>> = LazyLock::new(BTreeMap::new);\n",
         )]);
-        let file = "qsl-eval/src/lib.rs".to_owned();
+        let file = "fsl-eval/src/lib.rs".to_owned();
         assert_eq!(
             found(&dir),
             [
@@ -1384,7 +1384,7 @@ mod tests {
     fn tc_768_only_the_fcd_lift_scratch_directory_is_skipped() {
         let dir = core_tree(&[
             (
-                "qsl-semantics/src/model/intake.rs",
+                "fsl-semantics/src/model/intake.rs",
                 "pub fn lift_document() {\n\
                  let _ = tempfile::tempdir();\n\
                  let _ = std::env::var(\"X\");\n\
@@ -1392,18 +1392,18 @@ mod tests {
                  fn other() { let _ = tempfile::tempdir(); }\n",
             ),
             (
-                "qsl-semantics/src/model/other.rs",
+                "fsl-semantics/src/model/other.rs",
                 "pub fn lift_document() { let _ = tempfile::tempdir(); }\n",
             ),
         ]);
-        let intake = "qsl-semantics/src/model/intake.rs".to_owned();
+        let intake = "fsl-semantics/src/model/intake.rs".to_owned();
         assert_eq!(
             found(&dir),
             [
                 (intake.clone(), 3, Ambient::Environment),
                 (intake, 5, Ambient::Filesystem),
                 (
-                    "qsl-semantics/src/model/other.rs".to_owned(),
+                    "fsl-semantics/src/model/other.rs".to_owned(),
                     1,
                     Ambient::Filesystem
                 ),
@@ -1421,7 +1421,7 @@ mod tests {
     fn tc_768_test_code_comments_and_constants_pass() {
         let dir = core_tree(&[
             (
-                "qsl-replay/src/lib.rs",
+                "fsl-replay/src/lib.rs",
                 "// std::env::var is not read here\n\
                  const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\n\
                  static TABLE: &[u8] = b\"println!\";\n\
@@ -1436,10 +1436,10 @@ mod tests {
                  fn m(x: bool, print: bool) -> bool { let dirs = 1; let tempfile = dirs; print != x && tempfile > 0 }\n",
             ),
             (
-                "qsl-replay/src/golden.rs",
+                "fsl-replay/src/golden.rs",
                 "fn g() { eprintln!(\"{:?}\", std::fs::read(\"x\")); }\n",
             ),
-            ("qsl-analyze/src/lib.rs", "fn h() { println!(\"x\"); }\n"),
+            ("fsl-analyze/src/lib.rs", "fn h() { println!(\"x\"); }\n"),
         ]);
         assert_eq!(found(&dir), Vec::new());
     }
@@ -1453,24 +1453,24 @@ mod tests {
         let (text, passed) = report(root, &[], &[]);
         assert!(passed, "{text}");
         let direction = [DirectionFinding {
-            core: "qsl-replay".to_owned(),
+            core: "fsl-replay".to_owned(),
             dependency: "clap".to_owned(),
             offence: Offence::Frontend(Frontend::ArgumentParser),
             via: vec!["some-frontend".to_owned()],
         }];
         let ambient = [AmbientFinding {
-            file: PathBuf::from("/q/qsl-eval/src/lib.rs"),
+            file: PathBuf::from("/q/fsl-eval/src/lib.rs"),
             line: 3,
             ambient: Ambient::Clock,
         }];
         let (text, passed) = report(root, &direction, &ambient);
         assert!(!passed);
         assert!(
-            text.contains("(qsl-replay, clap) argument parser via some-frontend\n"),
+            text.contains("(fsl-replay, clap) argument parser via some-frontend\n"),
             "{text}"
         );
         assert!(
-            text.contains("qsl-eval/src/lib.rs:3 clock read\n"),
+            text.contains("fsl-eval/src/lib.rs:3 clock read\n"),
             "{text}"
         );
     }

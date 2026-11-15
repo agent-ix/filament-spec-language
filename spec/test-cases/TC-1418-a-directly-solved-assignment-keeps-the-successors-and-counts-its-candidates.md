@@ -3,7 +3,7 @@ id: TC-1418
 title: "A directly solved assignment keeps the successors and counts its candidates"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: verifies
 ---
 # TC-1418: A directly solved assignment keeps the successors and counts its candidates
@@ -17,12 +17,12 @@ enumerates. Scope: FR-120-AC-29 to FR-120-AC-33.
 
 ## Test Procedure
 
-Steps 1 to 4 are integration tests in `qsl-eval/tests/it/` through
+Steps 1 to 4 are integration tests in `fsl-eval/tests/it/` through
 `ModelSystem::new` and `explore_model`, over TC-471's compile path and the
 `Cell` fixture of FR-120-AC-29 (`a`, `b: Int[0, 99]`), each case a model with its one operation, because the budget counts a whole expansion. The charge of an
 expansion is read as the smallest `max_candidates` under which it
 completes, found by bisection; no counter is exposed. Step 5 is the
-`qsl-bench` smallest-size test of the `mc/frame_candidates` axis, which
+`fsl-bench` smallest-size test of the `mc/frame_candidates` axis, which
 QSL-1906 creates; it cannot run before that ticket lands, and steps 1 to 4
 do not depend on it.
 

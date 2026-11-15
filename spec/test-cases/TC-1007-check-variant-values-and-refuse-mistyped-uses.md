@@ -3,7 +3,7 @@ id: TC-1007
 title: "A variant case literal and every variant-producing form check, and each mistyped use refuses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-360
+  - target: ix://agent-ix/filament-spec-language/FR-360
     type: verifies
 ---
 # TC-1007: A variant case literal and every variant-producing form check, and each mistyped use refuses

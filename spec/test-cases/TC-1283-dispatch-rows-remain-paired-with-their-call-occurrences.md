@@ -3,7 +3,7 @@ id: TC-1283
 title: "Dispatch rows remain paired with their call occurrences"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-494
+  - target: ix://agent-ix/filament-spec-language/FR-494
     type: verifies
 ---
 # TC-1283: Dispatch rows remain paired with their call occurrences
@@ -35,7 +35,7 @@ identities and effective-precondition identities. Scope: FR-494-AC-2 and AC-3.
 ## Expected Results
 
 - There are two rows, each keyed to its own local application and exact
-  occurrence. The rows are in QSpec FR-322 canonical application/occurrence
+  occurrence. The rows are in FSpec FR-322 canonical application/occurrence
   order.
 - Each row's selected operation, receiver context and candidate values match
   only the captured table for that application. No field is paired by member

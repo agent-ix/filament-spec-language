@@ -3,7 +3,7 @@ id: TC-780
 title: "Backends match the interpreter on budgets, limits and internal errors, and the outcome names no backend"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: verifies
 ---
 # TC-780: Backends match the interpreter on budgets, limits and internal errors, and the outcome names no backend

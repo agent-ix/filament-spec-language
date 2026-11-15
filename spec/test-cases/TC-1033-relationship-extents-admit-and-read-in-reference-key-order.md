@@ -3,7 +3,7 @@ id: TC-1033
 title: "Relationship extents admit under four conditions and read in reference-key order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: verifies
 ---
 # TC-1033: Relationship extents admit under four conditions and read in reference-key order

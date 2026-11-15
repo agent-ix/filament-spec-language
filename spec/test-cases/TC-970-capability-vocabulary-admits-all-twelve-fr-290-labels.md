@@ -3,7 +3,7 @@ id: TC-970
 title: "Capability admits exactly the twelve FR-290 labels"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-970: Capability admits exactly the twelve FR-290 labels

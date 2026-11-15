@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-390 (FR-090-AC-9) and TC-386 step 3 (FR-090-AC-5): `FamilyOutcome`,
 //! `FamilyResult` and `EvalOutcome` are defined once, in the layer-E leaf
-//! `quire-eval` (FR-401), so no QSL crate defines them; no module below the
+//! `filament-eval` (FR-401), so no FSL crate defines them; no module below the
 //! check core names them;
 //! the core names no family cause type; no crate below layer 3 depends on
-//! this crate; and `qsl-semantics`, layer 3 itself, depends on layers 2, F,
+//! this crate; and `fsl-semantics`, layer 3 itself, depends on layers 2, F,
 //! SV and K only. Uses the resolved-import and definition scans of TC-256, TC-170 and
 //! TC-176 (`xtask::import_graph`, `xtask::definition_scan`), so a
 //! fully-qualified inline path is caught as well as a `use` line.
@@ -16,15 +16,15 @@ use ix_trace_rs::trace;
 const CORE_TYPES: [&str; 3] = ["FamilyOutcome", "FamilyResult", "EvalOutcome"];
 
 const QUALIFIED_CORE_CRATES: [&str; 9] = [
-    "qsl-foundation",
-    "qsl-cst",
-    "qsl-source",
-    "qsl-forms",
-    "qsl-semantics",
-    "qsl-package",
-    "qsl-route",
-    "qsl-eval",
-    "qsl-replay",
+    "fsl-foundation",
+    "fsl-cst",
+    "fsl-source",
+    "fsl-forms",
+    "fsl-semantics",
+    "fsl-package",
+    "fsl-route",
+    "fsl-eval",
+    "fsl-replay",
 ];
 
 /// The family cause types, which the `check` core holds only through
@@ -37,43 +37,43 @@ const CAUSE_TYPES: [&str; 4] = [
 ];
 
 /// The modules ordered below the `check` core (ADR-011 §6.1, §6.2): layer 1
-/// `qsl-cst`, layer 2 `qsl-forms`, and the layer-3 `semantic_value`, `model`
+/// `fsl-cst`, layer 2 `fsl-forms`, and the layer-3 `semantic_value`, `model`
 /// and `library` modules, plus the layer-3 `value` modules that sit beside the
 /// evaluator (`value::model_query`) and the type environment
-/// (`value::environment_stage`). The layer-SV crate `quire-semantic-value` is
+/// (`value::environment_stage`). The layer-SV crate `filament-semantic-value` is
 /// its own repository and is not scanned here.
 const BELOW_CORE: [&str; 9] = [
-    "qsl-cst/src",
-    "qsl-forms/src",
-    "qsl-semantics/src/model",
-    "qsl-semantics/src/library",
-    "qsl-semantics/src/value/definition.rs",
-    "qsl-semantics/src/value/enumeration.rs",
-    "qsl-semantics/src/value/unit.rs",
-    "qsl-semantics/src/value/model_query.rs",
-    "qsl-semantics/src/value/environment_stage.rs",
+    "fsl-cst/src",
+    "fsl-forms/src",
+    "fsl-semantics/src/model",
+    "fsl-semantics/src/library",
+    "fsl-semantics/src/value/definition.rs",
+    "fsl-semantics/src/value/enumeration.rs",
+    "fsl-semantics/src/value/unit.rs",
+    "fsl-semantics/src/value/model_query.rs",
+    "fsl-semantics/src/value/environment_stage.rs",
 ];
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
-/// Step 1 (FR-401-AC-3): the one definition of each type is `quire-eval`'s,
-/// so no QSL crate defines it, `qsl-semantics/src/family/` included.
+/// Step 1 (FR-401-AC-3): the one definition of each type is `filament-eval`'s,
+/// so no FSL crate defines it, `fsl-semantics/src/family/` included.
 #[trace("FR-090-AC-9", "TC-390", "FR-401-AC-3")]
 #[test]
-fn family_outcome_types_are_defined_in_no_qsl_crate() {
+fn family_outcome_types_are_defined_in_no_fsl_crate() {
     let definitions = xtask::definition_scan::scan_dirs(
         &workspace_root(),
         &[
             "src",
-            "qsl-foundation/src",
-            "qsl-cst/src",
-            "qsl-forms/src",
-            "qsl-semantics/src",
-            "qsl-package/src",
-            "qsl-eval/src",
-            "qsl-replay/src",
+            "fsl-foundation/src",
+            "fsl-cst/src",
+            "fsl-forms/src",
+            "fsl-semantics/src",
+            "fsl-package/src",
+            "fsl-eval/src",
+            "fsl-replay/src",
         ],
     )
     .expect("the definition scan runs cleanly");
@@ -81,7 +81,7 @@ fn family_outcome_types_are_defined_in_no_qsl_crate() {
         let locations = definitions.items.get(name).cloned().unwrap_or_default();
         assert!(
             locations.is_empty(),
-            "{name} is defined in quire-eval only, found in the workspace: {locations:?}"
+            "{name} is defined in filament-eval only, found in the workspace: {locations:?}"
         );
     }
 }
@@ -121,11 +121,11 @@ fn no_module_below_the_check_core_names_a_family_outcome_type() {
 #[test]
 fn the_check_core_names_no_family_cause_type() {
     let paths =
-        xtask::import_graph::resolved_paths(&workspace_root(), &["qsl-semantics/src/family"])
+        xtask::import_graph::resolved_paths(&workspace_root(), &["fsl-semantics/src/family"])
             .expect("the resolved-import scan runs cleanly");
     assert!(
         !paths.is_empty(),
-        "the scan found no paths under qsl-semantics/src/family"
+        "the scan found no paths under fsl-semantics/src/family"
     );
     let offending: Vec<_> = paths
         .iter()
@@ -152,7 +152,7 @@ struct PackageDependencies {
     /// Each normal (and build) dependency with the features it enables.
     shipped_features: Vec<(String, Vec<String>)>,
     /// The tables (`[dependencies]`, `[dev-dependencies]`,
-    /// `[build-dependencies]`) in which the package enables `quire-checked`'s
+    /// `[build-dependencies]`) in which the package enables `filament-checked`'s
     /// `construct` feature.
     construct_tables: Vec<&'static str>,
     /// The package's own `default` feature list.
@@ -236,7 +236,7 @@ fn workspace_dependencies() -> Vec<PackageDependencies> {
                     .collect(),
                 construct_tables: dependencies
                     .iter()
-                    .filter(|dependency| dependency["name"].as_str() == Some("quire-checked"))
+                    .filter(|dependency| dependency["name"].as_str() == Some("filament-checked"))
                     .filter(|dependency| {
                         strings(&dependency["features"])
                             .iter()
@@ -264,33 +264,33 @@ fn workspace_dependencies() -> Vec<PackageDependencies> {
 /// below layer 3 depends only on the workspace crates below it, in its
 /// `[dependencies]`, `[dev-dependencies]` and `[build-dependencies]` alike
 /// (a build dependency on a higher layer or on this crate fails as a normal
-/// one does). `qsl-semantics`
-/// (layer 3) names exactly `qsl-forms` and `qsl-foundation` among
-/// the workspace crates in `[dependencies]`, never `qsl-cst`; its `[dev-dependencies]` may name
-/// `qsl-cst` so the FR-091
+/// one does). `fsl-semantics`
+/// (layer 3) names exactly `fsl-forms` and `fsl-foundation` among
+/// the workspace crates in `[dependencies]`, never `fsl-cst`; its `[dev-dependencies]` may name
+/// `fsl-cst` so the FR-091
 /// assembler's tests can run S1 (FR-091-AC-20), and only
-/// `model::intake` names its FCD dependencies. `quire-exact` and
-/// `quire-semantic-value` are external git dependencies of their own
-/// repositories, so no workspace check reaches them; `qsl-foundation` may name `quire-exact`,
-/// `qsl-cst` may name
-/// `qsl-foundation` and `quire-exact`, and `qsl-forms` names exactly
-/// `ix-trace-rs`, `qsl-cst`, `qsl-foundation`, `quire-exact`,
-/// `quire-semantic-value` and `quire-walk` in `[dependencies]` (ADR-011
-/// §6.1). `qsl-package` (layer 4)
-/// names exactly `qsl-foundation`, `qsl-semantics`, `quire-exact` and
-/// `quire-semantic-value` among the workspace crates in `[dependencies]`; its
-/// `[dev-dependencies]` may also name the lower layers `qsl-forms` and
-/// `qsl-cst` (the FR-091 S1-to-S4 round trip). `qsl-route` (layer R)
-/// names exactly `qsl-foundation`, `qsl-semantics` and `thiserror`
+/// `model::intake` names its FCD dependencies. `filament-exact` and
+/// `filament-semantic-value` are external git dependencies of their own
+/// repositories, so no workspace check reaches them; `fsl-foundation` may name `filament-exact`,
+/// `fsl-cst` may name
+/// `fsl-foundation` and `filament-exact`, and `fsl-forms` names exactly
+/// `ix-trace-rs`, `fsl-cst`, `fsl-foundation`, `filament-exact`,
+/// `filament-semantic-value` and `filament-walk` in `[dependencies]` (ADR-011
+/// §6.1). `fsl-package` (layer 4)
+/// names exactly `fsl-foundation`, `fsl-semantics`, `filament-exact` and
+/// `filament-semantic-value` among the workspace crates in `[dependencies]`; its
+/// `[dev-dependencies]` may also name the lower layers `fsl-forms` and
+/// `fsl-cst` (the FR-091 S1-to-S4 round trip). `fsl-route` (layer R)
+/// names exactly `fsl-foundation`, `fsl-semantics` and `thiserror`
 /// in `[dependencies]`, has no `[build-dependencies]`, and its
-/// `[dev-dependencies]` may also name layer K's `quire-exact`. `qsl-eval` (layer
-/// 5) names exactly `qsl-foundation`, `qsl-package`,
-/// `qsl-semantics`, `quire-exact`, `quire-semantic-value` and `thiserror` in
+/// `[dev-dependencies]` may also name layer K's `filament-exact`. `fsl-eval` (layer
+/// 5) names exactly `fsl-foundation`, `fsl-package`,
+/// `fsl-semantics`, `filament-exact`, `filament-semantic-value` and `thiserror` in
 /// `[dependencies]`, has no `[build-dependencies]`, and its `[dev-dependencies]` may also name the lower layers
-/// `qsl-forms` and `qsl-cst` (FR-091-AC-13's call of a function compiled
+/// `fsl-forms` and `fsl-cst` (FR-091-AC-13's call of a function compiled
 /// from source; `serde_json` moved here too, once its one shipped
 /// caller -- the deleted v2 function-package codec -- was deleted). Every other
-/// workspace crate, `qsl-source` and this crate included, is refused. Cargo already
+/// workspace crate, `fsl-source` and this crate included, is refused. Cargo already
 /// refuses a normal-dependency cycle back to this crate, but accepts a
 /// dev-dependency one, so the dev table is checked here.
 #[trace(
@@ -311,14 +311,14 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
         .map(|package| package.name.as_str())
         .collect();
     for required in [
-        "quire-spec-language",
-        "qsl-source",
-        "qsl-cst",
-        "qsl-forms",
-        "qsl-semantics",
-        "qsl-package",
-        "qsl-route",
-        "qsl-eval",
+        "filament-spec-language",
+        "fsl-source",
+        "fsl-cst",
+        "fsl-forms",
+        "fsl-semantics",
+        "fsl-package",
+        "fsl-route",
+        "fsl-eval",
     ] {
         assert!(
             workspace_crates.contains(&required),
@@ -326,50 +326,54 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
         );
     }
     for (crate_name, allowed, dev_only) in [
-        ("qsl-foundation", &["quire-exact"][..], &[][..]),
-        ("qsl-cst", &["qsl-foundation", "quire-exact"][..], &[][..]),
+        ("fsl-foundation", &["filament-exact"][..], &[][..]),
         (
-            "qsl-forms",
+            "fsl-cst",
+            &["fsl-foundation", "filament-exact"][..],
+            &[][..],
+        ),
+        (
+            "fsl-forms",
             &[
+                "filament-exact",
+                "filament-semantic-value",
+                "filament-walk",
+                "fsl-cst",
+                "fsl-foundation",
                 "ix-trace-rs",
-                "qsl-cst",
-                "qsl-foundation",
-                "quire-exact",
-                "quire-semantic-value",
-                "quire-walk",
             ][..],
             &[][..],
         ),
         (
-            "qsl-semantics",
-            &["qsl-forms", "qsl-foundation"][..],
-            &["qsl-cst"][..],
+            "fsl-semantics",
+            &["fsl-forms", "fsl-foundation"][..],
+            &["fsl-cst"][..],
         ),
         (
-            "qsl-package",
+            "fsl-package",
             &[
-                "qsl-foundation",
-                "qsl-semantics",
-                "quire-exact",
-                "quire-semantic-value",
+                "fsl-foundation",
+                "fsl-semantics",
+                "filament-exact",
+                "filament-semantic-value",
             ][..],
-            &["qsl-cst", "qsl-forms"][..],
+            &["fsl-cst", "fsl-forms"][..],
         ),
         (
-            "qsl-route",
-            &["qsl-foundation", "qsl-semantics"][..],
-            &["quire-exact"][..],
+            "fsl-route",
+            &["fsl-foundation", "fsl-semantics"][..],
+            &["filament-exact"][..],
         ),
         (
-            "qsl-eval",
+            "fsl-eval",
             &[
-                "qsl-foundation",
-                "qsl-package",
-                "qsl-semantics",
-                "quire-exact",
-                "quire-semantic-value",
+                "fsl-foundation",
+                "fsl-package",
+                "fsl-semantics",
+                "filament-exact",
+                "filament-semantic-value",
             ][..],
-            &["qsl-cst", "qsl-forms"][..],
+            &["fsl-cst", "fsl-forms"][..],
         ),
     ] {
         let package = packages
@@ -380,7 +384,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             !package.normal.is_empty(),
             "{crate_name} lists no dependency"
         );
-        if crate_name == "qsl-forms" {
+        if crate_name == "fsl-forms" {
             // Layer 2's "Depends on" cell names the four layer crates, so
             // its `[dependencies]` are exactly those plus `ix-trace-rs`
             // (ADR-012 section 9), which owns the `#[string_edge]` marker and
@@ -390,9 +394,9 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             normal.sort_unstable();
             assert_eq!(normal, allowed, "{crate_name}'s [dependencies]");
         }
-        if crate_name == "qsl-semantics" {
+        if crate_name == "fsl-semantics" {
             // Layer 3: its workspace-crate `[dependencies]` are
-            // exactly layers 2 and F (K and SV are external) -- no `qsl-cst` (layer 1) and no
+            // exactly layers 2 and F (K and SV are external) -- no `fsl-cst` (layer 1) and no
             // root crate. Its other entries are third-party crates and the
             // FCD crates, which `fcd_is_named_by_model_intake_only` below
             // confines to `model::intake`.
@@ -408,8 +412,8 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                 !package
                     .normal
                     .iter()
-                    .any(|dependency| dependency == "qsl-cst"),
-                "{crate_name} depends on layer-1 qsl-cst"
+                    .any(|dependency| dependency == "fsl-cst"),
+                "{crate_name} depends on layer-1 fsl-cst"
             );
             fcd_is_named_by_model_intake_only(&package.normal);
             // ADR-013 §2, ADR-013:113: shipped code encodes identities
@@ -427,8 +431,8 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                 "{crate_name} has a normal dependency on sha2"
             );
         }
-        if crate_name == "qsl-package" {
-            // Layer 4: "3, F, K; `quire-contract-model` for the v2
+        if crate_name == "fsl-package" {
+            // Layer 4: "3, F, K; `filament-contract-model` for the v2
             // wire contract" (ADR-011 X-7). The whole shipped table
             // is fixed: layer 3, F, K (the kernel occurrence `Origin` the
             // I2 reader keys the v2 source map by, ADR-013 O-07),
@@ -436,7 +440,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             // RFC 8785 encoder, for the `package_id` preimage),
             // and `thiserror`; `serde` deserializes semantic wire values
             // built by layer 3. The wire contract, canonical encoder,
-            // `quire-exact` and `thiserror` are optional, enabled by `std`
+            // `filament-exact` and `thiserror` are optional, enabled by `std`
             // (NFR-015). `serde_json` is optional too, enabled by `std`: the
             // hybrid reader reads a typed application operation through its
             // public `Serialize` form.
@@ -450,14 +454,14 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             assert_eq!(
                 normal,
                 [
+                    "filament-checked",
+                    "filament-contract-model",
+                    "filament-exact",
+                    "filament-semantic-value",
+                    "fsl-foundation",
+                    "fsl-semantics",
                     "ix-trace-rs",
-                    "qsl-foundation",
-                    "qsl-semantics",
                     "quire-canonical",
-                    "quire-checked",
-                    "quire-contract-model",
-                    "quire-exact",
-                    "quire-semantic-value",
                     "serde",
                     "serde_json",
                     "thiserror"
@@ -465,7 +469,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                 "{crate_name}'s [dependencies]"
             );
         }
-        if crate_name == "qsl-eval" {
+        if crate_name == "fsl-eval" {
             // Layer 5: "4, 3, F, K". The whole shipped table is
             // fixed: the four layer crates, `thiserror` for its error types,
             // and `quire-canonical`/`serde`/`serde_json` for the FR-101 simulation state
@@ -478,15 +482,15 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             assert_eq!(
                 normal,
                 [
+                    "filament-checked",
+                    "filament-eval",
+                    "filament-exact",
+                    "filament-semantic-value",
+                    "fsl-foundation",
+                    "fsl-package",
+                    "fsl-semantics",
                     "ix-trace-rs",
-                    "qsl-foundation",
-                    "qsl-package",
-                    "qsl-semantics",
                     "quire-canonical",
-                    "quire-checked",
-                    "quire-eval",
-                    "quire-exact",
-                    "quire-semantic-value",
                     "serde",
                     "serde_json",
                     "thiserror"
@@ -499,15 +503,15 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                 package.build
             );
         }
-        if crate_name == "qsl-route" {
+        if crate_name == "fsl-route" {
             // Layer R (ADR-011 §6.1 row "4, 3, F, SV, K"): `route` names
             // layer 3's `Capability`, F's `CatalogCode` and
             // `MemoryModelName` (FR-226),
             // SV's `PropertyForm` for the FR-124 deadlock-freedom item, and
             // `thiserror` for `RegistrationRefusal`, `ix-trace-rs` for the
             // required FR-064 string-edge marker, and C's `DeclarationKey`
-            // (`quire-checked`, X-9) for the population a request's symmetry
-            // declaration names (FR-159), `quire-exact`'s `NodeKey` for the
+            // (`filament-checked`, X-9) for the population a request's symmetry
+            // declaration names (FR-159), `filament-exact`'s `NodeKey` for the
             // structural node identity a request names; nothing of layer 4,
             // K or the root crate. The whole `[dependencies]` table is checked, so a
             // planted third-party crate fails it too.
@@ -516,12 +520,12 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             assert_eq!(
                 normal,
                 [
+                    "filament-checked",
+                    "filament-exact",
+                    "filament-semantic-value",
+                    "fsl-foundation",
+                    "fsl-semantics",
                     "ix-trace-rs",
-                    "qsl-foundation",
-                    "qsl-semantics",
-                    "quire-checked",
-                    "quire-exact",
-                    "quire-semantic-value",
                     "thiserror"
                 ],
                 "{crate_name}'s [dependencies]"
@@ -548,46 +552,46 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
         }
     }
     // ADR-011 §7.1: no shipped root-crate module calls `route`,
-    // so the root crate names `qsl-route` as a dev dependency only. This
+    // so the root crate names `fsl-route` as a dev dependency only. This
     // line comes out when a shipped caller (the T-13 driver) makes the
     // normal edge real.
     let root = packages
         .iter()
-        .find(|package| package.name == "quire-spec-language")
+        .find(|package| package.name == "filament-spec-language")
         .expect("cargo metadata lists the root crate");
     for (kind, dependencies) in [("normal", &root.normal), ("build", &root.build)] {
         assert!(
             !dependencies
                 .iter()
-                .any(|dependency| dependency == "qsl-route"),
-            "the root crate has a {kind} dependency on qsl-route; it is a dev dependency only"
+                .any(|dependency| dependency == "fsl-route"),
+            "the root crate has a {kind} dependency on fsl-route; it is a dev dependency only"
         );
     }
     assert!(
-        root.dev.iter().any(|dependency| dependency == "qsl-route"),
-        "the root crate's tests name qsl-route through a dev dependency"
+        root.dev.iter().any(|dependency| dependency == "fsl-route"),
+        "the root crate's tests name fsl-route through a dev dependency"
     );
     // No shipped root-crate module evaluates temporal evidence: the root
-    // crate names `qsl-eval` as a dev dependency only.
+    // crate names `fsl-eval` as a dev dependency only.
     assert!(
         !root
             .normal
             .iter()
-            .any(|dependency| dependency == "qsl-eval"),
-        "the root crate has a normal dependency on qsl-eval; it is a dev dependency only"
+            .any(|dependency| dependency == "fsl-eval"),
+        "the root crate has a normal dependency on fsl-eval; it is a dev dependency only"
     );
     assert!(
-        root.dev.iter().any(|dependency| dependency == "qsl-eval"),
+        root.dev.iter().any(|dependency| dependency == "fsl-eval"),
         "the root crate's tests drive the temporal evidence call through a dev dependency"
     );
     assert!(
-        !root.build.iter().any(|dependency| dependency == "qsl-eval"),
+        !root.build.iter().any(|dependency| dependency == "fsl-eval"),
         "no build script evaluates temporal evidence"
     );
 }
 
-/// The FCD crates `qsl-semantics` depends on are named by
-/// `qsl-semantics/src/model/intake.rs` and by no other file of that crate
+/// The FCD crates `fsl-semantics` depends on are named by
+/// `fsl-semantics/src/model/intake.rs` and by no other file of that crate
 /// (ADR-011 §6.1: FCD from `model::intake` only). A plain text search for
 /// each crate's Rust name, so a `use`, an inline path and a macro argument
 /// are all caught.
@@ -597,8 +601,8 @@ fn fcd_is_named_by_model_intake_only(dependencies: &[String]) {
         .filter(|dependency| dependency.starts_with("agent-ix-"))
         .map(|dependency| dependency.replace('-', "_"))
         .collect();
-    assert!(!fcd.is_empty(), "qsl-semantics names no FCD crate");
-    let root = workspace_root().join("qsl-semantics/src");
+    assert!(!fcd.is_empty(), "fsl-semantics names no FCD crate");
+    let root = workspace_root().join("fsl-semantics/src");
     let mut pending = vec![root.clone()];
     let mut naming = std::collections::BTreeSet::new();
     while let Some(dir) = pending.pop() {
@@ -618,7 +622,7 @@ fn fcd_is_named_by_model_intake_only(dependencies: &[String]) {
     assert_eq!(
         naming.into_iter().collect::<Vec<_>>(),
         ["model/intake.rs"],
-        "files of qsl-semantics naming an FCD crate"
+        "files of fsl-semantics naming an FCD crate"
     );
 }
 
@@ -641,34 +645,34 @@ fn forwards_to_test_support(value: &str, workspace_crates: &[&str]) -> bool {
 ///   dev-dependency may, which is how a crate's own tests reach it);
 /// - no `[features]` entry other than a package's own `test-support`
 ///   forwards to a workspace crate's `test-support` (`default =
-///   ["qsl-semantics/test-support"]`, or any feature a shipped dependent
+///   ["fsl-semantics/test-support"]`, or any feature a shipped dependent
 ///   could enable). Forwarding `test-support` to `test-support` is allowed:
 ///   only a test build can turn the outer one on, by the two rules above.
 ///
 /// Cargo feature unification would otherwise switch it on in a shipped
-/// build. Measured: a root `default = ["qsl-semantics/test-support"]` fails
+/// build. Measured: a root `default = ["fsl-semantics/test-support"]` fails
 /// this test.
 #[trace("FR-087-AC-1", "TC-243", "FR-400-AC-9")]
 #[test]
 fn no_shipped_dependency_enables_test_support() {
     let packages = workspace_dependencies();
-    // FR-400-AC-9: `quire-checked` is outside the workspace but its
+    // FR-400-AC-9: `filament-checked` is outside the workspace but its
     // `test-support` fixtures forge checked terms, so it is guarded too.
     let mut workspace_crates: Vec<&str> = packages
         .iter()
         .map(|package| package.name.as_str())
         .collect();
-    workspace_crates.push("quire-checked");
-    assert!(workspace_crates.contains(&"quire-spec-language"));
+    workspace_crates.push("filament-checked");
+    assert!(workspace_crates.contains(&"filament-spec-language"));
     // The matcher sees both spellings, including the `?` one Cargo accepts
     // only for an optional dependency, and nothing else.
     for (value, forwards) in [
-        ("qsl-semantics/test-support", true),
-        ("qsl-semantics?/test-support", true),
-        ("quire-checked/test-support", true),
-        ("qsl-semantics/other", false),
+        ("fsl-semantics/test-support", true),
+        ("fsl-semantics?/test-support", true),
+        ("filament-checked/test-support", true),
+        ("fsl-semantics/other", false),
         ("serde/test-support", false),
-        ("dep:qsl-semantics", false),
+        ("dep:fsl-semantics", false),
     ] {
         assert_eq!(
             forwards_to_test_support(value, &workspace_crates),
@@ -708,22 +712,22 @@ fn no_shipped_dependency_enables_test_support() {
     }
 }
 
-/// Layer A's `qsl-analyze` sits above the qualified core (ADR-011 §6.1,
+/// Layer A's `fsl-analyze` sits above the qualified core (ADR-011 §6.1,
 /// ADR-029 CB-3): no qualified-core crate (layers K to 6, SV or R), nor any
-/// tools other than `xtask` and `qsl-inspect`, name it in any dependency
+/// tools other than `xtask` and `fsl-inspect`, name it in any dependency
 /// table. `xtask` is outside the stage DAG and depends on it only for
-/// FR-489's provider snapshot. `qsl-inspect` is layer P and renders retained
-/// state-graph results. In particular `qsl-replay`, whose zone
+/// FR-489's provider snapshot. `fsl-inspect` is layer P and renders retained
+/// state-graph results. In particular `fsl-replay`, whose zone
 /// certificate checker keeps its own DBM separate from the zone engine's
 /// (ADR-026 CF-6, FR-245), cannot reach the engine's DBM through a
 /// dependency edge.
 #[trace("TC-700", "FR-245-AC-6")]
 #[test]
-fn no_core_crate_depends_on_qsl_analyze() {
+fn no_core_crate_depends_on_fsl_analyze() {
     let packages = workspace_dependencies();
     assert!(
-        packages.iter().any(|package| package.name == "qsl-analyze"),
-        "cargo metadata lists no qsl-analyze"
+        packages.iter().any(|package| package.name == "fsl-analyze"),
+        "cargo metadata lists no fsl-analyze"
     );
     for core in QUALIFIED_CORE_CRATES.into_iter().chain(["arch-lint"]) {
         let package = packages
@@ -738,8 +742,8 @@ fn no_core_crate_depends_on_qsl_analyze() {
             assert!(
                 !dependencies
                     .iter()
-                    .any(|dependency| dependency == "qsl-analyze"),
-                "{core} has a {kind} dependency on layer-A qsl-analyze"
+                    .any(|dependency| dependency == "fsl-analyze"),
+                "{core} has a {kind} dependency on layer-A fsl-analyze"
             );
         }
     }
@@ -748,7 +752,7 @@ fn no_core_crate_depends_on_qsl_analyze() {
     // stage crate may depend on it. The root uses it only from its tests.
     let root = packages
         .iter()
-        .find(|package| package.name == "quire-spec-language")
+        .find(|package| package.name == "filament-spec-language")
         .expect("cargo metadata lists the root crate");
     assert!(
         root.dev.iter().any(|dependency| dependency == "xtask"),
@@ -760,7 +764,7 @@ fn no_core_crate_depends_on_qsl_analyze() {
             ("dev", &package.dev),
             ("build", &package.build),
         ] {
-            let root_test_dependency = package.name == "quire-spec-language" && kind == "dev";
+            let root_test_dependency = package.name == "filament-spec-language" && kind == "dev";
             assert!(
                 root_test_dependency
                     || !dependencies.iter().any(|dependency| dependency == "xtask"),
@@ -771,34 +775,34 @@ fn no_core_crate_depends_on_qsl_analyze() {
     }
 }
 
-/// FR-401-AC-2: the crates whose shipped code names a `quire-eval` item
-/// (`qsl-eval`, `qsl-replay`) list it in `[dependencies]`; the lower layers
+/// FR-401-AC-2: the crates whose shipped code names a `filament-eval` item
+/// (`fsl-eval`, `fsl-replay`) list it in `[dependencies]`; the lower layers
 /// name it in no table, so the leaf stays below them in the dependency
 /// direction.
 /// The FR-401-AC-2 violations over `packages`, each naming the crate and the
-/// table: a crate that must name `quire-eval` in `[dependencies]` and does
+/// table: a crate that must name `filament-eval` in `[dependencies]` and does
 /// not, and a lower layer that names it in any table.
-fn quire_eval_placement_violations(packages: &[PackageDependencies]) -> Vec<String> {
+fn filament_eval_placement_violations(packages: &[PackageDependencies]) -> Vec<String> {
     let mut violations = Vec::new();
-    for named in ["qsl-eval", "qsl-replay"] {
+    for named in ["fsl-eval", "fsl-replay"] {
         match packages.iter().find(|package| package.name == named) {
             None => violations.push(format!("cargo metadata lists no {named}")),
-            Some(package) if !package.normal.iter().any(|d| d == "quire-eval") => {
+            Some(package) if !package.normal.iter().any(|d| d == "filament-eval") => {
                 violations.push(format!(
-                    "{named} does not name quire-eval in [dependencies]"
+                    "{named} does not name filament-eval in [dependencies]"
                 ));
             }
             Some(_) => {}
         }
     }
     for lower in [
-        "qsl-foundation",
-        "qsl-cst",
-        "qsl-source",
-        "qsl-forms",
-        "qsl-semantics",
-        "qsl-package",
-        "qsl-route",
+        "fsl-foundation",
+        "fsl-cst",
+        "fsl-source",
+        "fsl-forms",
+        "fsl-semantics",
+        "fsl-package",
+        "fsl-route",
     ] {
         let Some(package) = packages.iter().find(|package| package.name == lower) else {
             violations.push(format!("cargo metadata lists no {lower}"));
@@ -809,9 +813,9 @@ fn quire_eval_placement_violations(packages: &[PackageDependencies]) -> Vec<Stri
             ("[dev-dependencies]", &package.dev),
             ("[build-dependencies]", &package.build),
         ] {
-            if names.iter().any(|dependency| dependency == "quire-eval") {
+            if names.iter().any(|dependency| dependency == "filament-eval") {
                 violations.push(format!(
-                    "{lower} names quire-eval in {table}, which sits above it"
+                    "{lower} names filament-eval in {table}, which sits above it"
                 ));
             }
         }
@@ -821,16 +825,16 @@ fn quire_eval_placement_violations(packages: &[PackageDependencies]) -> Vec<Stri
 
 #[trace("FR-401-AC-2", "TC-390")]
 #[test]
-fn only_the_evaluation_layers_depend_on_quire_eval() {
-    let violations = quire_eval_placement_violations(&workspace_dependencies());
+fn only_the_evaluation_layers_depend_on_filament_eval() {
+    let violations = filament_eval_placement_violations(&workspace_dependencies());
     assert!(violations.is_empty(), "{violations:#?}");
 }
 
-/// FR-401-AC-2: a fixture in which `qsl-semantics` depends on `quire-eval`
+/// FR-401-AC-2: a fixture in which `fsl-semantics` depends on `filament-eval`
 /// fails the check, naming the crate and the table.
 #[trace("FR-401-AC-2", "TC-390")]
 #[test]
-fn a_lower_layer_naming_quire_eval_fails_the_placement_check() {
+fn a_lower_layer_naming_filament_eval_fails_the_placement_check() {
     let package = |name: &str, normal: &[&str]| PackageDependencies {
         name: name.to_owned(),
         normal: normal.iter().map(|d| (*d).to_owned()).collect(),
@@ -842,32 +846,32 @@ fn a_lower_layer_naming_quire_eval_fails_the_placement_check() {
         features: Vec::new(),
     };
     let mut fixture: Vec<_> = [
-        "qsl-foundation",
-        "qsl-cst",
-        "qsl-source",
-        "qsl-forms",
-        "qsl-package",
-        "qsl-route",
+        "fsl-foundation",
+        "fsl-cst",
+        "fsl-source",
+        "fsl-forms",
+        "fsl-package",
+        "fsl-route",
     ]
     .into_iter()
     .map(|name| package(name, &[]))
     .collect();
-    fixture.push(package("qsl-eval", &["quire-eval"]));
-    fixture.push(package("qsl-replay", &["quire-eval"]));
-    fixture.push(package("qsl-semantics", &[]));
-    assert!(quire_eval_placement_violations(&fixture).is_empty());
+    fixture.push(package("fsl-eval", &["filament-eval"]));
+    fixture.push(package("fsl-replay", &["filament-eval"]));
+    fixture.push(package("fsl-semantics", &[]));
+    assert!(filament_eval_placement_violations(&fixture).is_empty());
     fixture
         .last_mut()
         .unwrap()
         .normal
-        .push("quire-eval".to_owned());
+        .push("filament-eval".to_owned());
     assert_eq!(
-        quire_eval_placement_violations(&fixture),
-        ["qsl-semantics names quire-eval in [dependencies], which sits above it"]
+        filament_eval_placement_violations(&fixture),
+        ["fsl-semantics names filament-eval in [dependencies], which sits above it"]
     );
 }
 
-/// Every package that enables `quire-checked`'s `construct` feature, named
+/// Every package that enables `filament-checked`'s `construct` feature, named
 /// with the table, or through one of its own features that forwards to it.
 fn construct_enablers(packages: &[PackageDependencies]) -> Vec<String> {
     let mut found = Vec::new();
@@ -877,8 +881,8 @@ fn construct_enablers(packages: &[PackageDependencies]) -> Vec<String> {
         }
         for (feature, values) in &package.features {
             for value in values {
-                if value.starts_with("quire-checked/") && value.ends_with("construct")
-                    || value.starts_with("quire-checked?/") && value.ends_with("construct")
+                if value.starts_with("filament-checked/") && value.ends_with("construct")
+                    || value.starts_with("filament-checked?/") && value.ends_with("construct")
                 {
                     found.push(format!("{} through its feature `{feature}`", package.name));
                 }
@@ -888,20 +892,20 @@ fn construct_enablers(packages: &[PackageDependencies]) -> Vec<String> {
     found
 }
 
-/// FR-400-AC-1: `qsl-semantics` is the only crate that enables
-/// `quire-checked`'s `construct` feature, in any table.
+/// FR-400-AC-1: `fsl-semantics` is the only crate that enables
+/// `filament-checked`'s `construct` feature, in any table.
 #[trace("FR-400-AC-1", "TC-390")]
 #[test]
-fn only_qsl_semantics_enables_the_construct_feature() {
+fn only_fsl_semantics_enables_the_construct_feature() {
     let enablers = construct_enablers(&workspace_dependencies());
-    assert_eq!(enablers, ["qsl-semantics in [dependencies]"]);
+    assert_eq!(enablers, ["fsl-semantics in [dependencies]"]);
 }
 
-/// FR-400-AC-1: a fixture manifest in which `qsl-eval` enables `construct`
+/// FR-400-AC-1: a fixture manifest in which `fsl-eval` enables `construct`
 /// fails the check, naming the crate and the table.
 #[trace("FR-400-AC-1", "TC-390")]
 #[test]
-fn a_crate_other_than_qsl_semantics_enabling_construct_is_named() {
+fn a_crate_other_than_fsl_semantics_enabling_construct_is_named() {
     let package = |name: &str, construct_tables: Vec<&'static str>| PackageDependencies {
         name: name.to_owned(),
         normal: Vec::new(),
@@ -913,14 +917,14 @@ fn a_crate_other_than_qsl_semantics_enabling_construct_is_named() {
         features: Vec::new(),
     };
     let fixture = vec![
-        package("qsl-semantics", vec!["[dependencies]"]),
-        package("qsl-eval", vec!["[dev-dependencies]"]),
+        package("fsl-semantics", vec!["[dependencies]"]),
+        package("fsl-eval", vec!["[dev-dependencies]"]),
     ];
     assert_eq!(
         construct_enablers(&fixture),
         [
-            "qsl-semantics in [dependencies]",
-            "qsl-eval in [dev-dependencies]"
+            "fsl-semantics in [dependencies]",
+            "fsl-eval in [dev-dependencies]"
         ]
     );
 }
@@ -933,13 +937,13 @@ fn command_intake_is_a_non_core_leaf_consumer() {
     let packages = workspace_dependencies();
     let command = packages
         .iter()
-        .find(|package| package.name == "qsl-command")
+        .find(|package| package.name == "fsl-command")
         .expect("the command owner is a workspace package");
-    assert!(command.normal.iter().any(|name| name == "qsl-replay"));
+    assert!(command.normal.iter().any(|name| name == "fsl-replay"));
     assert!(!command
         .normal
         .iter()
-        .any(|name| name == "quire-spec-language"));
+        .any(|name| name == "filament-spec-language"));
     for core in QUALIFIED_CORE_CRATES {
         let package = packages
             .iter()
@@ -947,7 +951,7 @@ fn command_intake_is_a_non_core_leaf_consumer() {
             .unwrap_or_else(|| panic!("cargo metadata lists no {core}"));
         for (kind, dependencies) in [("normal", &package.normal), ("build", &package.build)] {
             assert!(
-                !dependencies.iter().any(|name| name == "qsl-command"),
+                !dependencies.iter().any(|name| name == "fsl-command"),
                 "{core} has a {kind} dependency on non-core filesystem intake"
             );
         }

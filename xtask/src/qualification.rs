@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-350..FR-353: execute the QSpec complete-V1 corpus against QSL and
+//! FR-350..FR-353: execute the FSpec complete-V1 corpus against FSL and
 //! settle/report capability qualification.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use qsl_foundation::diagnostic::Code;
+use fsl_foundation::diagnostic::Code;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -43,7 +43,7 @@ impl QualificationOption {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 enum CorpusVersion {
-    #[serde(rename = "quire.conformance-corpus/v1")]
+    #[serde(rename = "filament.conformance-corpus/v1")]
     CompleteV1,
 }
 
@@ -359,7 +359,7 @@ struct CoverageReport {
 
 #[derive(Debug, Serialize)]
 struct Report {
-    qsl_version: &'static str,
+    fsl_version: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     qualification: Option<&'static str>,
     scope: Vec<String>,
@@ -374,7 +374,7 @@ struct Report {
 }
 
 /// Run `cargo xtask qualify` after a full preflight. All corpus reads and
-/// QSL calls occur sequentially on this thread (FR-350-AC-7).
+/// FSL calls occur sequentially on this thread (FR-350-AC-7).
 pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<Outcome> {
     execute(workspace_root, operands).map(|execution| execution.outcome)
 }
@@ -391,27 +391,27 @@ pub struct Execution {
 /// Execute qualification, retaining successful operation bytes for callers
 /// that compare determinism. The CLI writes only the report.
 pub fn execute(workspace_root: &Path, operands: &[OsString]) -> Result<Execution> {
-    let qspec = qspec_dir(workspace_root)?;
-    execute_with_qspec(&qspec, operands)
+    let fspec = fspec_dir(workspace_root)?;
+    execute_with_fspec(&fspec, operands)
 }
 
-/// Execute against an explicitly selected QSpec checkout, without changing
+/// Execute against an explicitly selected FSpec checkout, without changing
 /// process-global environment variables.
-pub fn execute_with_qspec(qspec: &Path, operands: &[OsString]) -> Result<Execution> {
-    execute_with_parts(qspec, operands, None)
+pub fn execute_with_fspec(fspec: &Path, operands: &[OsString]) -> Result<Execution> {
+    execute_with_parts(fspec, operands, None)
 }
 
-/// [`execute_with_qspec`] over `matrix`, or the published matrix: the verdict
+/// [`execute_with_fspec`] over `matrix`, or the published matrix: the verdict
 /// is `qualified` only when the corpus and every FR-567 part pass. The parts
 /// beyond the corpus run after every preflight refusal, so a refused run
 /// executes no matrix case.
 pub(crate) fn execute_with_parts(
-    qspec: &Path,
+    fspec: &Path,
     operands: &[OsString],
-    matrix: Option<&[qsl_conformance::MatrixCell]>,
+    matrix: Option<&[fsl_conformance::MatrixCell]>,
 ) -> Result<Execution> {
     let args = parse_args(operands)?;
-    let limits = qsl_replay::CallerLimits::from_operands(args.limits.iter().map(String::as_str))
+    let limits = fsl_replay::CallerLimits::from_operands(args.limits.iter().map(String::as_str))
         .map_err(|error| Error::QualificationRefusal(error.to_string()))?;
     let corpus_root = fs::canonicalize(&args.corpus).map_err(|error| {
         Error::QualificationRefusal(format!("{}: {error}", args.corpus.display()))
@@ -422,7 +422,7 @@ pub(crate) fn execute_with_parts(
             corpus_root.display()
         )));
     }
-    let schema_path = qspec.join(SCHEMA_FILE);
+    let schema_path = fspec.join(SCHEMA_FILE);
     let schema_bytes = fs::read(&schema_path).map_err(|error| {
         Error::QualificationRefusal(format!("{}: {error}", schema_path.display()))
     })?;
@@ -432,7 +432,7 @@ pub(crate) fn execute_with_parts(
             schema_path.display()
         ))
     })?;
-    let adapters = adapters::Schemas::new(qspec, &schema)?;
+    let adapters = adapters::Schemas::new(fspec, &schema)?;
     let schema = jsonschema::JSONSchema::options()
         .with_draft(jsonschema::Draft::Draft202012)
         .compile(&schema)
@@ -493,7 +493,7 @@ pub(crate) fn execute_with_parts(
         .map(|cap| (cap.capability_id.as_str(), cap))
         .collect::<BTreeMap<_, _>>();
     let default_scope = args.capabilities.is_empty();
-    let profiles = qsl_profiles();
+    let profiles = fsl_profiles();
     let mut scope = if default_scope {
         corpus
             .coverage
@@ -503,7 +503,7 @@ pub(crate) fn execute_with_parts(
                 cap.applicability
                     .consumer_types
                     .iter()
-                    .any(|kind| qsl_consumer(*kind))
+                    .any(|kind| fsl_consumer(*kind))
                     && cap
                         .applicability
                         .semantic_profiles
@@ -542,7 +542,7 @@ pub(crate) fn execute_with_parts(
                 .applicability
                 .consumer_types
                 .contains(&vector.subject.consumer_type)
-            || !is_qsl_subject(&vector.subject)
+            || !is_fsl_subject(&vector.subject)
         {
             continue;
         }
@@ -609,7 +609,7 @@ pub(crate) fn execute_with_parts(
     parts.extend(crate::qualify::lifecycle_and_parity_parts(matrix));
     let qualified = parts.iter().all(crate::qualify::PartReport::passed);
     let report = Report {
-        qsl_version: quire_spec_language::VERSION,
+        fsl_version: filament_spec_language::VERSION,
         qualification: default_scope.then_some("complete-v1"),
         scope: scope_ids.clone(),
         verdict: if qualified {
@@ -697,24 +697,24 @@ fn parse_args(operands: &[OsString]) -> Result<Args> {
     })
 }
 
-fn qspec_dir(workspace_root: &Path) -> Result<PathBuf> {
-    let path = std::env::var_os("QSPEC_DIR")
+fn fspec_dir(workspace_root: &Path) -> Result<PathBuf> {
+    let path = std::env::var_os("FSPEC_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             workspace_root
                 .parent()
                 .unwrap_or(workspace_root)
-                .join("quire-specification")
+                .join("filament-specification")
         });
     fs::canonicalize(&path).map_err(|error| {
-        Error::QualificationRefusal(format!("QSPEC_DIR {}: {error}", path.display()))
+        Error::QualificationRefusal(format!("FSPEC_DIR {}: {error}", path.display()))
     })
 }
 
 fn validate_semantics(corpus: &Corpus) -> Result<()> {
     if corpus.contract_version != CorpusVersion::CompleteV1 {
         return Err(Error::QualificationRefusal(
-            "/contract_version: expected quire.conformance-corpus/v1".to_owned(),
+            "/contract_version: expected filament.conformance-corpus/v1".to_owned(),
         ));
     }
     let mut capabilities = BTreeSet::new();
@@ -795,41 +795,41 @@ fn validate_semantics(corpus: &Corpus) -> Result<()> {
     Ok(())
 }
 
-fn qsl_profiles() -> BTreeSet<String> {
-    let mut profiles = qsl_semantics::value::DefinitionRole::ALL
+fn fsl_profiles() -> BTreeSet<String> {
+    let mut profiles = fsl_semantics::value::DefinitionRole::ALL
         .into_iter()
         .map(|role| role.identity().to_owned())
         .collect::<BTreeSet<_>>();
     profiles.extend(
-        qsl_semantics::value::ModelRole::ALL
+        fsl_semantics::value::ModelRole::ALL
             .into_iter()
             .map(|role| role.identity().to_owned()),
     );
     profiles.extend(
-        qsl_semantics::value::TemporalRole::ALL
+        fsl_semantics::value::TemporalRole::ALL
             .into_iter()
             .map(|role| role.identity().to_owned()),
     );
     profiles.extend(
-        qsl_semantics::value::HeaderLayer::ALL
+        fsl_semantics::value::HeaderLayer::ALL
             .into_iter()
             .map(|layer| layer.identity().to_owned()),
     );
     profiles.extend(
-        qsl_semantics::check::TemporalProfile::ALL
+        fsl_semantics::check::TemporalProfile::ALL
             .into_iter()
             .map(|profile| profile.identity().to_owned()),
     );
     profiles
 }
 
-fn qsl_consumer(value: ConsumerType) -> bool {
+fn fsl_consumer(value: ConsumerType) -> bool {
     matches!(
         value,
         ConsumerType::Language | ConsumerType::Runtime | ConsumerType::Tool
     )
 }
-fn is_qsl_subject(subject: &Subject) -> bool {
+fn is_fsl_subject(subject: &Subject) -> bool {
     matches!(
         (subject.consumer_type, &subject.operation),
         (ConsumerType::Language, Operation::Compile)
@@ -841,7 +841,7 @@ fn is_qsl_subject(subject: &Subject) -> bool {
 fn execute_vector(
     vector: &Vector,
     root: &Path,
-    limits: &qsl_replay::CallerLimits,
+    limits: &fsl_replay::CallerLimits,
     overrides: &[String],
     schemas: &adapters::Schemas,
 ) -> (VectorReport, Option<Vec<u8>>) {
@@ -1330,7 +1330,7 @@ fn json_bytes(value: &Value) -> serde_json::Result<Vec<u8>> {
 
 impl Drop for DeepValue {
     fn drop(&mut self) {
-        qsl_foundation::node_wire::discard_node_json(std::mem::take(&mut self.0));
+        fsl_foundation::node_wire::discard_node_json(std::mem::take(&mut self.0));
     }
 }
 
@@ -1416,14 +1416,14 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(512 * 1024)
             .spawn(|| {
-                let qspec = std::env::var_os("QSPEC_DIR")
+                let fspec = std::env::var_os("FSPEC_DIR")
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|| {
                         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                             .ancestors()
-                            .map(|parent| parent.join("quire-specification"))
+                            .map(|parent| parent.join("filament-specification"))
                             .find(|path| path.is_dir())
-                            .expect("a QSpec checkout or QSPEC_DIR")
+                            .expect("an FSpec checkout or FSPEC_DIR")
                     });
                 let mut nested = b"[".repeat(50_000);
                 nested.push(b'0');
@@ -1437,17 +1437,17 @@ mod tests {
                     let directory = tempfile::tempdir().unwrap();
                     let corpus_root = directory.path();
                     std::fs::write(corpus_root.join("unit.native"),
-                        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\nfunction f using v(x: Int[0,9]): Int[0,9] pure { x }\n").unwrap();
+                        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(x: Int[0,9]): Int[0,9] pure { x }\n").unwrap();
                     let expected = if refusal {
                         serde_json::json!({"disposition":"refusal", "code":"ill_typed", "cause":"type-mismatch", "details":{"deep":null}})
                     } else {
                         serde_json::json!({"disposition":"value", "value":null})
                     };
                     let mut corpus = DeepValue::new(serde_json::json!({
-                        "contract_version":"quire.conformance-corpus/v1",
+                        "contract_version":"filament.conformance-corpus/v1",
                         "vectors":[{"id":"V1-TOOL-004-depth", "capability_id":"V1-TOOL-004", "class":"positive", "subject":{"consumer_type":"tool", "operation":"format"}, "applicability":{"consumer_types":["tool"]}, "input":{"files":[{"kind":"source", "path":"unit.native"}]}, "expected":expected}],
                         "results":[],
-                        "coverage":{"primary":[{"capability_id":"V1-TOOL-004", "applicability":{"consumer_types":["tool"], "semantic_profiles":["quire.value.complete/v1"]}}], "criteria_rollups":[], "consumer_rollups":[]}
+                        "coverage":{"primary":[{"capability_id":"V1-TOOL-004", "applicability":{"consumer_types":["tool"], "semantic_profiles":["filament.value.complete/v1"]}}], "criteria_rollups":[], "consumer_rollups":[]}
                     }));
                     let expected = &mut corpus.0["vectors"][0]["expected"];
                     if refusal {
@@ -1459,7 +1459,7 @@ mod tests {
                     let arguments = [
                         "--corpus".into(), corpus_root.as_os_str().to_owned(),
                     ];
-                    let execution = super::execute_with_qspec(&qspec, &arguments)
+                    let execution = super::execute_with_fspec(&fspec, &arguments)
                         .expect("a mismatching deep oracle settles rather than aborting");
                     assert_eq!(execution.outcome.code, 1);
                     let report = DeepValue::new(parse_unique_json(execution.outcome.stdout.as_bytes()).unwrap());
@@ -1472,7 +1472,7 @@ mod tests {
                     let expected = &report["capabilities"][0]["vectors"][0]["expected"];
                     let retained = if refusal { &expected["details"]["deep"] } else { &expected["value"] };
                     assert!(json_equal(&oracle, retained), "the complete oracle is retained in the report");
-                    let repeated = super::execute_with_qspec(&qspec, &arguments)
+                    let repeated = super::execute_with_fspec(&fspec, &arguments)
                         .expect("the repeated complete qualification remains admitted");
                     assert_eq!(execution.outcome.stdout, repeated.outcome.stdout);
 
@@ -1485,7 +1485,7 @@ mod tests {
                         corpus_root.join("complete-v1.json"),
                         json_bytes(&corpus).unwrap(),
                     ).unwrap();
-                    let failure = match super::execute_with_qspec(&qspec, &arguments) {
+                    let failure = match super::execute_with_fspec(&fspec, &arguments) {
                         Err(failure) => failure,
                         Ok(_) => panic!("an invalid deep oracle refuses before execution"),
                     };

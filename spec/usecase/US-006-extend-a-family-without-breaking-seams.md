@@ -3,18 +3,18 @@ id: US-006
 title: "Extend a semantic family without silently breaking a seam"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-063
+  - target: ix://agent-ix/filament-spec-language/FR-063
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-064
+  - target: ix://agent-ix/filament-spec-language/FR-064
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-006: Extend a semantic family without silently breaking a seam
 
 ## Story
 
-**As a** QSL contributor adding a new semantic variant to a family
+**As a** FSL contributor adding a new semantic variant to a family
 **I want** the build to fail immediately, at every place that must handle my
 new variant, if I forget to add a required arm
 **So that** I cannot ship a family extension that silently falls through an

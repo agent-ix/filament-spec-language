@@ -18,7 +18,7 @@
 //! **Aliases.** A `use … as X` rename and a `type X = …;` alias, in any
 //! scanned file, make `X` stand for every name its target mentions. Every
 //! recorded name set is closed over them, so `type Forged = CheckedPackage;`
-//! and `use quire_exact::NodeKey as Nk;` are seen through. The alias table is
+//! and `use filament_exact::NodeKey as Nk;` are seen through. The alias table is
 //! global, not per scope, so a name reused for two aliases over-approximates.
 //!
 //! **Known limits.** A macro body is read as flat tokens, so no name set
@@ -348,7 +348,7 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         }
         let previous = self
             .self_type
-            .replace(qsl_string_edge::impl_self_name(&node.self_ty));
+            .replace(fsl_string_edge::impl_self_name(&node.self_ty));
         syn::visit::visit_item_impl(self, node);
         self.self_type = previous;
     }
@@ -586,7 +586,7 @@ pub struct StageConstructor {
 /// `PackageDeclarations::check`. Its receiver is the S3 input, which
 /// `checked_input` treats as a pre-check representation (FR-270).
 pub const S3_CONSTRUCTOR: StageConstructor = StageConstructor {
-    file: "qsl-semantics/src/check/mod.rs",
+    file: "fsl-semantics/src/check/mod.rs",
     receiver: "PackageDeclarations",
     name: "check",
 };
@@ -606,31 +606,31 @@ pub const S3_ENTRY_NAMES: [&str; 6] = [
 ];
 
 /// The layer crates ADR-011 §6.1 places the canonical stage types in:
-/// layer 3 `qsl-semantics`, layer 4 `qsl-package`, layer 5 `qsl-eval` and
-/// layer 6 `qsl-replay`.
+/// layer 3 `fsl-semantics`, layer 4 `fsl-package`, layer 5 `fsl-eval` and
+/// layer 6 `fsl-replay`.
 pub const LAYER_CRATES: [&str; 4] = [
-    "qsl-semantics/src",
-    "qsl-package/src",
-    "qsl-eval/src",
-    "qsl-replay/src",
+    "fsl-semantics/src",
+    "fsl-package/src",
+    "fsl-eval/src",
+    "fsl-replay/src",
 ];
 
-/// Every crate of the QSL build a "whole crate" criterion covers: the root
+/// Every crate of the FSL build a "whole crate" criterion covers: the root
 /// crate and every workspace library crate. Not scanned: `xtask` and
-/// `tools/arch-lint` (developer tooling) and `qsl-bench` (the benchmark
+/// `tools/arch-lint` (developer tooling) and `fsl-bench` (the benchmark
 /// harness, which builds its fixture keys directly and ships nothing).
-pub const QSL_CRATES: [&str; 11] = [
+pub const FSL_CRATES: [&str; 11] = [
     "src",
-    "qsl-foundation/src",
-    "qsl-cst/src",
-    "qsl-source/src",
-    "qsl-forms/src",
-    "qsl-semantics/src",
-    "qsl-package/src",
-    "qsl-route/src",
-    "qsl-eval/src",
-    "qsl-replay/src",
-    "qsl-analyze/src",
+    "fsl-foundation/src",
+    "fsl-cst/src",
+    "fsl-source/src",
+    "fsl-forms/src",
+    "fsl-semantics/src",
+    "fsl-package/src",
+    "fsl-route/src",
+    "fsl-eval/src",
+    "fsl-replay/src",
+    "fsl-analyze/src",
 ];
 
 #[cfg(test)]
@@ -645,8 +645,8 @@ mod tests {
             .to_path_buf()
     }
 
-    fn qsl_items() -> Items {
-        scan(&workspace_root(), &QSL_CRATES).expect("scan runs")
+    fn fsl_items() -> Items {
+        scan(&workspace_root(), &FSL_CRATES).expect("scan runs")
     }
 
     fn in_layer_crate(file: &str) -> bool {
@@ -667,23 +667,23 @@ mod tests {
 
     /// ADR-013 T-1's four new stage outputs and the file that owns each.
     const STAGE_TYPES: [(&str, &str); 4] = [
-        ("CheckedGraph", "qsl-semantics/src/check/mod.rs"),
-        ("CheckedPackage", "qsl-package/src/checked.rs"),
-        ("EmittedPackage", "qsl-package/src/checked.rs"),
-        ("ImportView", "qsl-semantics/src/library/mod.rs"),
+        ("CheckedGraph", "fsl-semantics/src/check/mod.rs"),
+        ("CheckedPackage", "fsl-package/src/checked.rs"),
+        ("EmittedPackage", "fsl-package/src/checked.rs"),
+        ("ImportView", "fsl-semantics/src/library/mod.rs"),
     ];
 
     /// FR-087-AC-1 (TC-243 steps 1-3) and ADR-013 T-1: each stage-output
     /// type has one definition in the layer crates, in the file that owns
     /// it, with every field private and no type or const generic
-    /// parameter; elsewhere in the QSL crates there is no namesake. Private
+    /// parameter; elsewhere in the FSL crates there is no namesake. Private
     /// fields stay readable by the owning module's own child modules, so this does not prove step 4's
     /// accessor-only reads; TC-244's constructor allow-list covers the
     /// constructor half.
     #[trace("TC-243", "FR-087-AC-1")]
     #[test]
     fn tc_243_stage_types_have_one_owner_and_private_fields() {
-        let items = qsl_items();
+        let items = fsl_items();
         for (name, owner) in STAGE_TYPES {
             let (layer, other): (Vec<&Struct>, Vec<&Struct>) = items
                 .structs_named(name)
@@ -756,48 +756,48 @@ mod tests {
             "with_unit_refusals",
         ),
         // S4: the link step, and its dependency-bearing form (E4).
-        ("qsl-package/src/checked.rs", Some("CheckedPackage"), "link"),
+        ("fsl-package/src/checked.rs", Some("CheckedPackage"), "link"),
         (
-            "qsl-package/src/checked.rs",
+            "fsl-package/src/checked.rs",
             Some("CheckedPackage"),
             "link_with",
         ),
         // S4 wire: the v2 emitter's constructor.
-        ("qsl-package/src/checked.rs", Some("EmittedPackage"), "new"),
+        ("fsl-package/src/checked.rs", Some("EmittedPackage"), "new"),
         // I2: the import view over a library package.
-        ("qsl-semantics/src/library/mod.rs", Some("ImportView"), "of"),
+        ("fsl-semantics/src/library/mod.rs", Some("ImportView"), "of"),
         // A shared handle to the graph `link` or `link_with` took, which an
         // importing package's E3 types an imported name from (ADR-015 D-5);
         // it builds no graph.
         (
-            "qsl-package/src/checked.rs",
+            "fsl-package/src/checked.rs",
             Some("CheckedPackage"),
             "shared_graph",
         ),
         // I2 over a library's own emission (ADR-015 D-1 step 6).
-        ("qsl-package/src/checked_v2.rs", None, "read_import_view"),
+        ("fsl-package/src/checked_v2.rs", None, "read_import_view"),
         // The spine's S3 and S4 step over one parsed unit, and the per-library
         // chain the S4 source resolution reruns for each library (ADR-015
         // D-1); each package comes from `link_with`.
         (
-            "qsl-replay/src/spine/lifecycle.rs",
+            "fsl-replay/src/spine/lifecycle.rs",
             Some("Resolution"),
             "check_unit",
         ),
         (
-            "qsl-replay/src/spine/lifecycle.rs",
+            "fsl-replay/src/spine/lifecycle.rs",
             Some("Resolution"),
             "finish_unit",
         ),
         // The same S3 and S4 step over an admitted unit list (FR-480), and
         // the import-resolving loop both unit forms run.
         (
-            "qsl-replay/src/spine/lifecycle.rs",
+            "fsl-replay/src/spine/lifecycle.rs",
             Some("Resolution"),
             "check_unit_list",
         ),
         (
-            "qsl-replay/src/spine/lifecycle.rs",
+            "fsl-replay/src/spine/lifecycle.rs",
             Some("Resolution"),
             "check_frame",
         ),
@@ -823,7 +823,7 @@ mod tests {
     }
 
     /// FR-087-AC-1's constructor half and FR-087-AC-2 (TC-244 step 0): in
-    /// the QSL crates, the only items returning an owned `CheckedGraph`,
+    /// the FSL crates, the only items returning an owned `CheckedGraph`,
     /// `CheckedPackage`, `EmittedPackage` or
     /// `ImportView` are the named stage constructors; a `From` impl, decoder or other
     /// conversion into one fails here. Out-parameters are not seen.
@@ -840,7 +840,7 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(stage_returners(&qsl_items()), expected);
+        assert_eq!(stage_returners(&fsl_items()), expected);
     }
 
     /// TC-244 step 0's scan sees through an alias, a nested item and a
@@ -869,16 +869,16 @@ mod tests {
 
     /// FR-087-AC-8 (TC-247 steps 1-3, 6 and 7; step 4 by field
     /// name only): the one `EmittedPackage` is the canonical one in
-    /// `qsl-package` (the native-v1 namesake is deleted); no root-crate file
+    /// `fsl-package` (the native-v1 namesake is deleted); no root-crate file
     /// imports a canonical and a lane-private namesake together.
     #[trace("TC-247", "FR-087-AC-8")]
     #[test]
     fn tc_247_namesakes_stay_distinct_and_never_share_a_scope() {
-        let items = qsl_items();
+        let items = fsl_items();
         let emitted: Vec<&Struct> = items.structs_named("EmittedPackage").collect();
         let mut files: Vec<&str> = emitted.iter().map(|item| item.file.as_str()).collect();
         files.sort_unstable();
-        assert_eq!(files, ["qsl-package/src/checked.rs"]);
+        assert_eq!(files, ["fsl-package/src/checked.rs"]);
 
         let root_uses = || {
             items
@@ -887,7 +887,7 @@ mod tests {
                 .filter(|item| item.file.starts_with("src/"))
         };
         let imports_canonical = |item: &Use| {
-            item.names.contains("qsl_package")
+            item.names.contains("fsl_package")
                 && (item.names.contains("*")
                     || item.names.contains("EmittedPackage")
                     || item.names.contains("CheckedPackage"))
@@ -980,7 +980,7 @@ mod tests {
                 );
             }
         }
-        let outside_check = |file: &str| !file.starts_with("qsl-semantics/src/check/");
+        let outside_check = |file: &str| !file.starts_with("fsl-semantics/src/check/");
         for item in items
             .structs
             .iter()
@@ -1046,25 +1046,25 @@ mod tests {
     const RAW_WIRE_TYPE_FIELDS: [(&str, &str, &str); 6] = [
         // The public raw view of a `record` member.
         (
-            "qsl-semantics/src/model/observation.rs",
+            "fsl-semantics/src/model/observation.rs",
             "RawRecord",
             "type_identity",
         ),
         // The public raw view of a `variant` member.
         (
-            "qsl-semantics/src/model/observation.rs",
+            "fsl-semantics/src/model/observation.rs",
             "RawVariant",
             "type_identity",
         ),
         // The arena node that view reads.
         (
-            "qsl-semantics/src/model/observation.rs",
+            "fsl-semantics/src/model/observation.rs",
             "RawNode",
             "type_identity",
         ),
         // The reader's in-progress `record` form.
         (
-            "qsl-semantics/src/model/observation/tree.rs",
+            "fsl-semantics/src/model/observation/tree.rs",
             "Open",
             "type_identity",
         ),
@@ -1072,12 +1072,12 @@ mod tests {
         // wire: each node id string to the meaning string its `kind`
         // resolves to, and the node ids of `Rational` value types (FR-208).
         (
-            "qsl-semantics/src/model/intake.rs",
+            "fsl-semantics/src/model/intake.rs",
             "TypeNodeReader",
             "type_meanings",
         ),
         (
-            "qsl-semantics/src/model/intake.rs",
+            "fsl-semantics/src/model/intake.rs",
             "TypeNodeReader",
             "rational_types",
         ),
@@ -1139,7 +1139,7 @@ mod tests {
             .iter()
             .any(|f| f.contains("Foo.value_type is a bare String")));
         let root = tempfile::tempdir().expect("a temp dir");
-        let dir = root.path().join("qsl-semantics/src/model");
+        let dir = root.path().join("fsl-semantics/src/model");
         std::fs::create_dir_all(&dir).expect("dirs");
         std::fs::write(
             dir.join("observation.rs"),
@@ -1149,7 +1149,7 @@ mod tests {
              pub enum OtherNode { Record { type_identity: String } }\n",
         )
         .expect("write");
-        let allowed = scan(root.path(), &["qsl-semantics/src"]).expect("scan runs");
+        let allowed = scan(root.path(), &["fsl-semantics/src"]).expect("scan runs");
         let found = bare_type_fields(allowed.structs.iter(), allowed.enums.iter());
         assert_eq!(found.len(), 2, "{found:?}");
         assert!(found[0].contains("Other.type_identity"), "{found:?}");
@@ -1158,7 +1158,7 @@ mod tests {
 
     /// FR-088-AC-8 (TC-260, partial: steps 1 and 2, and step 3 for fields
     /// whose name says they hold a type): `ValueTypeRef` is defined once in
-    /// the QSL crates, as exactly `{Clock, Native(NativeValueType),
+    /// the FSL crates, as exactly `{Clock, Native(NativeValueType),
     /// Package(DeclarationKey), Unit(String)}`. `Clock` is a place in a timed
     /// model (FR-230) and carries no field; `Unit`'s string is a unit name the
     /// assembler resolves (FR-056-AC-42), not a type name. In `model`, every
@@ -1167,7 +1167,7 @@ mod tests {
     #[trace("TC-260", "FR-088-AC-8")]
     #[test]
     fn tc_260_value_type_ref_is_the_four_member_union() {
-        let items = qsl_items();
+        let items = fsl_items();
         let definitions: Vec<&Enum> = items
             .enums
             .iter()
@@ -1201,12 +1201,12 @@ mod tests {
             items
                 .structs
                 .iter()
-                .filter(|item| item.file.starts_with("qsl-semantics/src/model/"))
+                .filter(|item| item.file.starts_with("fsl-semantics/src/model/"))
         };
         let model_enums = items
             .enums
             .iter()
-            .filter(|item| item.file.starts_with("qsl-semantics/src/model/"));
+            .filter(|item| item.file.starts_with("fsl-semantics/src/model/"));
         let bare = bare_type_fields(model_structs(), model_enums);
         assert!(bare.is_empty(), "{bare:?}");
         for record in [

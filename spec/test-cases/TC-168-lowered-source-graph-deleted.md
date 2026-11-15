@@ -3,7 +3,7 @@ id: TC-168
 title: "SEAM-5 (LoweredSourceGraph) is deleted in the same change as the S2 forms core"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: verifies
 ---
 # TC-168: SEAM-5 (LoweredSourceGraph) is deleted in the same change as the S2 forms core

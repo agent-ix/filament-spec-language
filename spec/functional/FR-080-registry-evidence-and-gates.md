@@ -3,18 +3,18 @@ id: FR-080
 title: "Provide registry evidence for ADR-012 §5.3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-011
+  - target: ix://agent-ix/filament-spec-language/US-011
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
 ---
 # FR-080: Provide registry evidence for ADR-012 §5.3
 
 ## Description
 
-QSL SHALL provide the registry evidence ADR-012 §5.3 requires for the
+FSL SHALL provide the registry evidence ADR-012 §5.3 requires for the
 open seam S7 (the canonical twelve-member capability-kind enum, matched at
 the registry advertisement boundary): a property-based permutation-equality test, a
 `cargo-deny` ban on `inventory`, `linkme` and `ctor`, a lint gate finding no

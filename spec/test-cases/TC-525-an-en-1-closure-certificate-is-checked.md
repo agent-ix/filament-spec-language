@@ -3,7 +3,7 @@ id: TC-525
 title: "An EN-1 closure certificate is accepted or rejected by the core checker"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: verifies
 ---
 # TC-525: An EN-1 closure certificate is accepted or rejected by the core checker

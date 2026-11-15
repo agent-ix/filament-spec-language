@@ -3,9 +3,9 @@ id: TC-1051
 title: "The invariants of a type are evaluated once for each value they range over, and a false result is located by its runtime value path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-366
+  - target: ix://agent-ix/filament-spec-language/FR-366
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-1051: The invariants of a type are evaluated once for each value they range over, and a false result is located by its runtime value path
@@ -16,8 +16,8 @@ Verify `evaluate_value_invariants` and the `ValueInvariants` selection: the
 values an observation and an invocation reach, one result for each, the
 logical violation with no code or cause, the FR-207 path of each result, the
 result order, the outcome, the shared budget, and the evaluation of an
-object-type, process and state-machine invariant. These are QSpec
-[TC-235](ix://agent-ix/quire-specification/TC-235) M13 run 1, M14 run 1 and M16
+object-type, process and state-machine invariant. These are FSpec
+[TC-235](ix://agent-ix/filament-specification/TC-235) M13 run 1, M14 run 1 and M16
 run 1. Scope: FR-366-AC-4 to FR-366-AC-9 and FR-106-AC-48.
 
 Catches an evaluation that reads only the object's own fields and skips a
@@ -38,7 +38,7 @@ current observation `s1` holds one `Order` object `o1` with `total`
 `[{1, "EUR"}, {-2, "EUR"}]` and `discount` present as `{-1, "EUR"}`. Invocation
 `i1` of `Order/requote` on `o1` binds `amount` to `{-7, "EUR"}`; its `pre`
 snapshot is labelled `s2` and its `post` snapshot `s3`. Labels are compared as
-QSpec FR-207 compares an observation key, so `s1` orders before `s2`. Admit by
+FSpec FR-207 compares an observation key, so `s1` orders before `s2`. Admit by
 `ValueInvariants { snapshot: s1, invocation: i1 }` and evaluate with an
 unlimited meter unless a step says otherwise. Tag the tests
 `#[trace("TC-1051", "FR-366-AC-n")]`.

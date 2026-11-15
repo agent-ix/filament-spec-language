@@ -3,13 +3,13 @@ id: TC-1334
 title: "Admit named populations in timed model predicates"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-230-AC-58
+  - target: ix://agent-ix/filament-spec-language/FR-230-AC-58
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-230-AC-59
+  - target: ix://agent-ix/filament-spec-language/FR-230-AC-59
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-230-AC-60
+  - target: ix://agent-ix/filament-spec-language/FR-230-AC-60
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-230-AC-61
+  - target: ix://agent-ix/filament-spec-language/FR-230-AC-61
     type: verifies
 ---
 # TC-1334: Admit named populations in timed model predicates

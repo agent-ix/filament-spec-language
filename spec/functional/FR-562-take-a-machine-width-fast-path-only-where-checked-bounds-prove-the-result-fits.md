@@ -3,17 +3,17 @@ id: FR-562
 title: "Take a machine-width fast path only where checked bounds prove the exact result fits"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-561
+  - target: ix://agent-ix/filament-spec-language/FR-561
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-495
+  - target: ix://agent-ix/filament-spec-language/FR-495
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-306"
+  - target: "ix://agent-ix/filament-specification/FR-306"
     type: depends_on
 ---
 # FR-562: Take a machine-width fast path only where checked bounds prove the exact result fits
@@ -24,7 +24,7 @@ ADR-029 EB-4 rule 2 lets generated code use a machine-width fast path only
 where a checked bound shows the exact result fits. This requirement states
 that rule so it can be checked.
 
-The JIT backend (`qsl-jit`) SHALL compute, at `prepare`, an interval for each
+The JIT backend (`fsl-jit`) SHALL compute, at `prepare`, an interval for each
 `Integer` operand from its checked type: `[lo, hi]` for an operand of type
 `Int[lo, hi]`, and for an operand that is itself a fast-path result, the
 interval the rule below gave that result. An operand of unbounded `Integer`
@@ -38,7 +38,7 @@ machine integers, only when every operand has an interval inside
 | --- | --- |
 | `+`, binary `-`, `*` | interval arithmetic over the operand intervals gives a result interval inside `[-2^63, 2^63 - 1]` |
 | unary `-` | the negated interval lies inside `[-2^63, 2^63 - 1]` |
-| `div` | the divisor's interval excludes 0, and the result interval lies inside `[-2^63, 2^63 - 1]`; the result interval is the smallest interval holding `quire-exact`'s quotient at every pair of operand interval ends, which bounds it because the divisor's interval excludes 0 and the quotient is monotone in each operand over an interval of constant divisor sign |
+| `div` | the divisor's interval excludes 0, and the result interval lies inside `[-2^63, 2^63 - 1]`; the result interval is the smallest interval holding `filament-exact`'s quotient at every pair of operand interval ends, which bounds it because the divisor's interval excludes 0 and the quotient is monotone in each operand over an interval of constant divisor sign |
 | `mod`, `rem` | the divisor's interval excludes 0, and the result interval given below lies inside `[-2^63, 2^63 - 1]` |
 | `=`, `!=`, `<`, `<=`, `>`, `>=` | none beyond the operand condition; the result is `Boolean` |
 
@@ -123,15 +123,15 @@ the run's outcome, equal to the interpreter's (FR-295).
 ## Dependencies
 
 - ADR-029 EB-4 rules 2 and 4.
-- [FR-495](FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-qsl-source.md): the division law, the nonzero obligation and `CheckMode`.
+- [FR-495](FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md): the division law, the nonzero obligation and `CheckMode`.
 - [FR-295](FR-295-return-interpreter-outcomes-from-jit-and-aot.md): outcome and budget parity.
 - [FR-561](FR-561-call-the-exact-kernel-from-generated-code-through-one-table.md): the kernel table every other operation calls.
-- QSpec FR-306: a machine-width fast path only where a checked bound shows
+- FSpec FR-306: a machine-width fast path only where a checked bound shows
   the exact result fits.
 
 ## Overlap
 
-QSL's `quire-aot` follows the same rule in the code it generates,
+FSL's `fsl-aot` follows the same rule in the code it generates,
 under its own record; FR-295's parity gate holds it to the interpreter
 either way.
 

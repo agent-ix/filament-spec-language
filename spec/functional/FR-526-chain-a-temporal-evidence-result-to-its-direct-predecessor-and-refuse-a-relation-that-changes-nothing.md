@@ -3,23 +3,23 @@ id: FR-526
 title: "Chain a temporal evidence result to its direct predecessor and refuse a relation that names another obligation or changes nothing"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-052
+  - target: ix://agent-ix/filament-spec-language/FR-052
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-053
+  - target: ix://agent-ix/filament-spec-language/FR-053
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-524
+  - target: ix://agent-ix/filament-spec-language/FR-524
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
 ---
 # FR-526: Chain a temporal evidence result to its direct predecessor and refuse a relation that names another obligation or changes nothing
@@ -140,7 +140,7 @@ no truth), not an error (FR-523).
   from the package and the request's occurrence selection, never from a request
   member that names it. `subject` adds no member to `result_identity` beyond
   those of FR-522.
-- The result SHALL echo `correspondence` byte for byte (FR-516), and QSL SHALL
+- The result SHALL echo `correspondence` byte for byte (FR-516), and FSL SHALL
   treat it as opaque: it defines no revision or provenance shape and derives no
   identity from bytes, hashes or digests.
 - Each `SupportRef` of `support` SHALL name a pair of the FR-501 decision support:

@@ -3,51 +3,51 @@ id: FR-218
 title: "Check every protocol control construct the protocol system runs at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-569
+  - target: ix://agent-ix/filament-spec-language/FR-569
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-112
+  - target: ix://agent-ix/filament-spec-language/FR-112
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-113
+  - target: ix://agent-ix/filament-spec-language/FR-113
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-052
+  - target: ix://agent-ix/filament-specification/FR-052
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-053
+  - target: ix://agent-ix/filament-specification/FR-053
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-170
+  - target: ix://agent-ix/filament-specification/FR-170
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-171
+  - target: ix://agent-ix/filament-specification/FR-171
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-228
+  - target: ix://agent-ix/filament-specification/FR-228
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-051
+  - target: ix://agent-ix/filament-specification/FR-051
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-054
+  - target: ix://agent-ix/filament-specification/FR-054
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-466
+  - target: ix://agent-ix/filament-specification/FR-466
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: traces_to
 ---
 # FR-218: Check every protocol control construct the protocol system runs at S3
@@ -84,7 +84,7 @@ protocol system only ever runs a protocol whose meaning is fixed.
 
 ## Outputs
 
-- `CheckedProtocolClause` (`qsl_semantics::check::protocol_clause`): the control tree
+- `CheckedProtocolClause` (`fsl_semantics::check::protocol_clause`): the control tree
   with each node's checked kind, binder type and body; the compiled edge
   relation (structural, `branch`, `join`, send.out → receive.in,
   attempt.out → effect.in and await anchor edges); each binder's reader set
@@ -108,7 +108,7 @@ protocol system only ever runs a protocol whose meaning is fixed.
 ### Constructs
 
 - S3 SHALL check each node kind, control and declaration listed in the
-  Description against QSpec's grammar and contracts for it (QSpec FR-052,
+  Description against FSpec's grammar and contracts for it (FSpec FR-052,
   FR-053, FR-170, FR-171, FR-228), and SHALL record each in the checked
   clause.
 - S3 SHALL check each body (event, send, receive, finish and capture
@@ -118,7 +118,7 @@ protocol system only ever runs a protocol whose meaning is fixed.
 - A choice guard, repeat guard or `check` SHALL read binders, protocol captures and constants
   only. S3 SHALL refuse one that reads model state with `ill_typed`/
   `operator-ineligible` at the read, naming the guard.
-- Model state is what a read that lowers to a model-state operation reads (QSpec
+- Model state is what a read that lowers to a model-state operation reads (FSpec
   FR-464, "Slots that bar model state"): a field read of a binder whose type is
   an object type, a field read through a reference-typed value, an explicit
   dereference, a navigation or reachability over a relationship end, a lookup
@@ -128,20 +128,20 @@ protocol system only ever runs a protocol whose meaning is fixed.
   (FR-381). A field read of a record binder or an event binder is not a
   model-state read.
 - S3 SHALL refuse a choice whose guards are not proved exhaustive and
-  exclusive (QSpec FR-053) with `undefined_expression`/
+  exclusive (FSpec FR-053) with `undefined_expression`/
   `unproved-exhaustiveness` at the choice (Choice and repeat decisions).
 - S3 SHALL refuse a join that names a label that is not a branch of its
   `parallel` with `missing_declaration`/`missing-name` at the label.
 - S3 SHALL refuse a causal edge relation with a cycle with
   `invalid_package`/`definition-cycle`, naming the nodes on the cycle.
-- S3 SHALL check each `await` by QSpec FR-466 "Per-operator checks" 2 and 6
+- S3 SHALL check each `await` by FSpec FR-466 "Per-operator checks" 2 and 6
   and FR-464 "Profiles and laws", which own the rule; this requirement states
   what S3 records and refuses for it:
   - An `await` matches a `receive`, an `effect` or an `event` control. S3 SHALL
     refuse an `await` whose match is a `send` or an `attempt` with
     `unsupported_construct`/`declaration-form` at the `await`, naming the
     `await`, the matched event, the matched form (`send` or `attempt`) and the
-    selected protocol profile (QSpec FR-466 "Per-operator checks" 2).
+    selected protocol profile (FSpec FR-466 "Per-operator checks" 2).
   - The `within` window is a closed interval with `lower <= upper`. S3 SHALL
     refuse an inverted window or one with an open upper end with
     `ill_typed`/`type-mismatch` at the interval, and SHALL record a checked
@@ -162,7 +162,7 @@ protocol system only ever runs a protocol whose meaning is fixed.
   `repeat` with a cycle through no step node, such as a body `choice` with
   a step in one case and none in another, with
   `unsupported_construct`/`declaration-form` at the `repeat`, naming it
-  (QSpec FR-052). For this progress proof, a nested guarded repeat contributes
+  (FSpec FR-052). For this progress proof, a nested guarded repeat contributes
   its back edge and contributes its skip edge only when its guard can be false
   under the independent-atom proof below. A nested repeat whose guard cannot
   be false contributes the progress established by its entered body instead
@@ -181,7 +181,7 @@ protocol system only ever runs a protocol whose meaning is fixed.
 - S3 SHALL check a `repeat` with or without an iteration maximum and with or
   without an invariant and variant, and SHALL record the maximum, invariant
   and variant it has. A termination claim is the only reader of the
-  variant. QSL has no prover for a `repeat`'s invariant or variant in V1, so
+  variant. FSL has no prover for a `repeat`'s invariant or variant in V1, so
   S3 only checks and records them and does not discharge them (the
   termination claim's behaviour is ADR-014's).
 - `parallel`, `repeat`, `choice` and `sequence` SHALL nest with no ceiling
@@ -191,7 +191,7 @@ protocol system only ever runs a protocol whose meaning is fixed.
 
 ### Admission for emission
 
-The QSpec protocol node contract (QSpec FR-464, FR-465, FR-466) refuses the
+The FSpec protocol node contract (FSpec FR-464, FR-465, FR-466) refuses the
 nodes of each rule below, so each rule is refused before S4, by S3 at its
 construct or, where a bullet says so, by the parser, and the construct never
 reaches S4 (FR-383).
@@ -209,7 +209,7 @@ reaches S4 (FR-383).
   label listed twice is one joined label.
 - S3 SHALL refuse a `join` of a `parallel` that declares no `outstanding`
   rule when its policy is not `all`, with `invalid_package`/`invalid-value` at
-  the join (QSpec FR-171: each join declares). A checked protocol therefore
+  the join (FSpec FR-171: each join declares). A checked protocol therefore
   holds no such join. This refusal and FR-219's weak-join
   `unsupported_construct`/`declaration-form` refusal are independent, and S3
   reports both at one join that earns both, with no precedence between them.
@@ -225,9 +225,9 @@ reaches S4 (FR-383).
 ### Predicate joins
 
 `join predicate(f) [l1, ..., ln]` settles when the function `f`, applied to
-the dispositions of the joined branches, is true (QSpec FR-171, FR-228). The
+the dispositions of the joined branches, is true (FSpec FR-171, FR-228). The
 function sees the joined labels only, which are the branch dispositions the
-join captures explicitly (QSpec shared grammar), and a branch the join does
+join captures explicitly (FSpec shared grammar), and a branch the join does
 not list is not an argument.
 
 - S3 SHALL resolve `f` once, in the unit's own declaration scope, as a call's
@@ -237,7 +237,7 @@ not list is not an argument.
   `node` (the `parallel`) and `name`. A name that resolves to a declaration
   that is not a `function`, such as a `predicate`, a clause, a type or a
   protocol, SHALL refuse with `ill_typed`/`operator-ineligible` at the name,
-  naming the resolved kind, as QSpec FR-146 refuses a call to a declaration
+  naming the resolved kind, as FSpec FR-146 refuses a call to a declaration
   that is not a checked pure function.
 - The joined labels, each counted once, are taken in ascending order of their
   UTF-8 bytes, which is the order S4 writes the `joined` labels (FR-383).
@@ -254,7 +254,7 @@ not list is not an argument.
   `ill_typed`/`type-mismatch` at the name, retaining `node`, `function`,
   `expected` (the required parameter types and result type) and `actual` (the
   function's declared ones).
-- A function that reaches this check is an admitted function: QSpec FR-146
+- A function that reaches this check is an admitted function: FSpec FR-146
   establishes its purity, its total definedness and the termination of every
   call cycle it reaches when its own declaration is checked, and its body
   reads its parameters and constants only, never model state, a binder or a
@@ -263,7 +263,7 @@ not list is not an argument.
   unproved decrease refuses at that function's declaration by FR-146's
   rules, whatever join names it.
 - S3 SHALL record the checked policy as `Predicate{function}`, `function`
-  the typed node key (`quire.checked-semantic-node/v1`) of the resolved
+  the typed node key (`filament.checked-semantic-node/v1`) of the resolved
   function's `function` node (FR-092), bound once and never looked up again
   by name (FR-088). Two joins that name one function hold one key. The
   joined labels stay recorded as for every other policy.
@@ -275,14 +275,14 @@ role on the whole model `M` selects, recording the identity of the package `M`
 selects. It admits the role whatever the clause's `over` type
 is (a model type, a reference, a scalar, a record or a collection), and
 beside roles of the same clause on other aliases: `role w on M` and
-`role u on N` in one clause both check. S4 emits it as QSpec FR-465's role on
-a whole model, whose `model` argument is that identity text (QSpec
+`role u on N` in one clause both check. S4 emits it as FSpec FR-465's role on
+a whole model, whose `model` argument is that identity text (FSpec
 FR-465-AC-9), and the subject builder binds it by construction (FR-205). A
 role on a whole model attempts, owns choices and repeats, and sends and
 receives as any static role does.
 
 S3 admits a protocol whatever its `over` type, but S4 writes a clause node only
-when `over` is a reference to an object type of a selected model, because QSpec
+when `over` is a reference to an object type of a selected model, because FSpec
 FR-464 requires the clause's `owner_model` edge (FR-383). Any other `over`
 (a scalar, an `Option`, a collection) is refused at S4 as
 `unsupported_construct`/`not-yet-implemented` naming `NoOwnerModel` (planner
@@ -296,19 +296,19 @@ clause's model context is then `T` (FR-383 defines its `owner_model`). Until
 ADR-013 QC-30 lands, S4 emits no unit that declares a source object type
 (FR-569 `SourceObjectEmission`).
 
-A role on a whole model is static only (QSpec FR-465: a replicated role draws
+A role on a whole model is static only (FSpec FR-465: a replicated role draws
 its instances from a population of a model type, so its `model` is a
 reference). S3 SHALL refuse a replicated role over a model alias,
 `role r each M from pop` with `M` a model alias, with
 `invalid_model_binding`/`malformed-declaration` at `M`, before it resolves
-`pop`: a replicated role needs an object type, and QSL's I2 reader refuses
-the same form under QSpec FR-465 step 1, so S3 admits nothing S4 cannot
+`pop`: a replicated role needs an object type, and FSL's I2 reader refuses
+the same form under FSpec FR-465 step 1, so S3 admits nothing S4 cannot
 emit (Admission for emission).
 
 ### Channels
 
 A channel declares its two roles, its payload type, its ordering, its delivery
-policy, its capacity and its overflow policy (QSpec FR-054, FR-170). Each
+policy, its capacity and its overflow policy (FSpec FR-054, FR-170). Each
 premise is a separate fact; S3 SHALL NOT derive one from another.
 
 - S3 SHALL resolve a channel's `from` and `to` to roles the protocol declares.
@@ -323,7 +323,7 @@ premise is a separate fact; S3 SHALL NOT derive one from another.
   source order, as FR-113 refuses two nodes of one name. Channels and
   relationships have separate namespaces.
 - S3 SHALL record each checked channel under its qualified name, the
-  qualified name of the protocol definition that declares it (QSpec
+  qualified name of the protocol definition that declares it (FSpec
   FR-050), then `::`, then the channel's declaration-local handle (ADR-027
   PS-7). Two protocols
   that each declare a channel `Pay` declare two channels.
@@ -340,7 +340,7 @@ premise is a separate fact; S3 SHALL NOT derive one from another.
   the clause checker over `m` and constants only, and SHALL refuse a read of
   model state with `ill_typed`/`operator-ineligible` at the read, naming the
   key. The key's result type SHALL be one over which the clause checker
-  admits `=` (QSpec FR-054: stable equality); another type refuses
+  admits `=` (FSpec FR-054: stable equality); another type refuses
   `ill_typed`/`operator-ineligible` at the key, retaining `operator` (`=`) and
   the type. `ordering unordered` holds no binder and no key.
 - S3 SHALL record on the checked channel the ordering (`Unordered` or
@@ -348,7 +348,7 @@ premise is a separate fact; S3 SHALL NOT derive one from another.
   `Symbolic(name)`, the name unresolved) and the overflow policy (`Reject`,
   `Block` or `Loss(selector)`, the selector `Head` for the oldest queued
   message, `Tail` for the newest queued message and `New` for the arriving
-  message, QSpec FR-170) exactly as written. A loss selector is a premise
+  message, FSpec FR-170) exactly as written. A loss selector is a premise
   like the others and S3 derives none from the delivery policy. Two channels
   that differ in exactly one premise, the selector included, are different
   checked channels.
@@ -358,7 +358,7 @@ premise is a separate fact; S3 SHALL NOT derive one from another.
 A relationship member `relationship r = M::R;` declares the protocol-local name
 `r` for a relationship of the selected domain package (FR-056, FR-086). A
 `related by r (a, b)` clause on an event node requires the supplied instance of
-that relationship with those two typed ends (QSpec FR-051).
+that relationship with those two typed ends (FSpec FR-051).
 
 - S3 SHALL resolve `M::R` in the unit's own declaration scope. A name that
   resolves to no export of the package SHALL refuse with `missing_declaration`/
@@ -395,7 +395,7 @@ that relationship with those two typed ends (QSpec FR-051).
   declaration scope, and SHALL bind the checked requirement to that clause's
   position among the unit's `temporal` clauses in declaration order, never to
   the name; S4 SHALL mint the requirement's target node key
-  (`quire.checked-semantic-node/v1`) from that position when it emits the
+  (`filament.checked-semantic-node/v1`) from that position when it emits the
   clause, as a protocol reference binds its target (FR-092). No later stage
   looks the name up again (FR-088).
 - S3 SHALL bind a requirement by position for every temporal clause,
@@ -420,7 +420,7 @@ that relationship with those two typed ends (QSpec FR-051).
 ### Choice and repeat decisions
 
 A `choice` and a `repeat` have one owning role, written `by R`, and a
-`visible(...)` list of the facts the owner observes at the decision (QSpec
+`visible(...)` list of the facts the owner observes at the decision (FSpec
 FR-053, FR-172). A decision fact is a field read of an eligible record
 binder, of any type the clause checker admits (a Boolean flag, or a number or
 other scalar a guard compares). A `visible` entry is either exactly one
@@ -470,7 +470,7 @@ capture enclosed within a composite expression remains permitted.
   A `finish` record and a compensation's binders are bound where no node of
   the `run` tree reads them, so a decision that names one refuses as an
   out-of-scope read (Scopes) and never as `ineligible-kind`. The refusals of
-  one read are ordered as QSpec FR-464 orders them: the `over`/model-state
+  one read are ordered as FSpec FR-464 orders them: the `over`/model-state
   refusal first, then the out-of-scope refusal, then the decision-fact
   refusal, so each reason below is reachable only by a read the earlier
   refusals admit.
@@ -498,7 +498,7 @@ capture enclosed within a composite expression remains permitted.
   refuses as an out-of-scope read
   (Scopes).
 - The partition of a `choice` SHALL be proved over the atoms of its guards as
-  independent Booleans (QSpec FR-053). An atom is a Boolean fact, or a
+  independent Booleans (FSpec FR-053). An atom is a Boolean fact, or a
   comparison or other Boolean-typed term over non-Boolean facts; two atoms are
   equal exactly when their checked terms are syntactically identical, and `not`
   is the only negation recognised. So `got.count > 0` and `not (got.count > 0)`
@@ -563,7 +563,7 @@ one protocol declared in the same unit. It carries no package selector.
 - S3 SHALL resolve the written name once, in the unit's own declaration
   scope, to the target protocol's declaration, and SHALL bind the checked
   reference to that declaration's typed node key
-  (`quire.checked-semantic-node/v1`), the key of the `protocol`/`protocol_clause`
+  (`filament.checked-semantic-node/v1`), the key of the `protocol`/`protocol_clause`
   node FR-092 defines for it, never to the name. The checked
   reference holds the target key and the target's semantic type (today the
   Boolean type node the protocol clause carries) as its own type, and its
@@ -575,16 +575,16 @@ one protocol declared in the same unit. It carries no package selector.
   same way: a reference binds a local protocol only.
 - A name that resolves to a declaration that is not a protocol SHALL refuse
   with `ill_typed`/`operator-ineligible` at the reference, naming the
-  resolved kind. This is the cause QSpec FR-322-AC-66 gives a present target
+  resolved kind. This is the cause FSpec FR-322-AC-66 gives a present target
   of another kind.
 - A bound target key that no node of the checked graph carries when the
   reference is emitted is stale. S4 SHALL refuse it with
   `missing_declaration`/`missing-name` at the reference, naming the bound
-  key, and produce no package (FR-092), as the IR reader and QSpec
+  key, and produce no package (FR-092), as the IR reader and FSpec
   FR-322-AC-66 refuse a target key absent from the graph. A stale key is
   never repaired by looking the name up again.
 - A package holds one reference node per target protocol. The carrier key
-  (`quire.structural-node/v1`) is derived from the tag, form, semantic type
+  (`filament.structural-node/v1`) is derived from the tag, form, semantic type
   and body and not from occurrences, and the body is exactly
   `{term: "reference", target}`, so two references to one target share one
   key and one node. A repeated reference to the same target in the same unit
@@ -648,12 +648,12 @@ one protocol declared in the same unit. It carries no package selector.
   [FR-104](FR-104-check-state-clauses.md).
 - FR-381 (captures, activation and compensation), FR-308 (the forms),
   FR-383 (the emission of the checked clause), FR-086 (relationship kinds), FR-088 (type identity).
-- QSpec owns the grammar and contracts of every construct, and the catalog
-  spellings of its refusals: QSpec FR-051, FR-052, FR-053, FR-054, FR-170,
-  FR-171, FR-172, FR-228. A predicate join's function is admitted by QSpec
+- FSpec owns the grammar and contracts of every construct, and the catalog
+  spellings of its refusals: FSpec FR-051, FR-052, FR-053, FR-054, FR-170,
+  FR-171, FR-172, FR-228. A predicate join's function is admitted by FSpec
   FR-146 and resolved as FR-065 resolves a call.
-  The protocol reference's resolution rules follow QSpec FR-322-AC-66, and
-  its production and meaning are QSpec FR-463's.
+  The protocol reference's resolution rules follow FSpec FR-322-AC-66, and
+  its production and meaning are FSpec FR-463's.
 
 ## AC-16 coverage
 
@@ -662,5 +662,5 @@ one protocol declared in the same unit. It carries no package selector.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-052, including its loop rule
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-052, including its loop rule
   (Linear STD-140).

@@ -4,13 +4,13 @@ title: "Bound temporal evaluation work and required retained state"
 type: NFR
 quality_attribute: reliability
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: constrains
-  - target: ix://agent-ix/quire-spec-language/FR-044
+  - target: ix://agent-ix/filament-spec-language/FR-044
     type: constrains
-  - target: ix://agent-ix/quire-spec-language/FR-045
+  - target: ix://agent-ix/filament-spec-language/FR-045
     type: constrains
-  - target: ix://agent-ix/quire-specification/NFR-040
+  - target: ix://agent-ix/filament-specification/NFR-040
     type: depends_on
 ---
 # NFR-008: Bound temporal evaluation work and required retained state
@@ -27,7 +27,7 @@ support when the sibling did not require the unaffordable work.
 ## Scope
 
 - Applies to native temporal admission, whole-trace evaluation and incremental
-  re-evaluation of an emitted `quire.compiled-protocol/1` temporal body, and to
+  re-evaluation of an emitted `filament.compiled-protocol/1` temporal body, and to
   the mapping classification in
   [FR-045](../functional/FR-045-classify-temporal-mapping-support.md).
 - The evaluator owns its own retained-state table: the valuations and captures an
@@ -43,7 +43,7 @@ support when the sibling did not require the unaffordable work.
   that walk at any nesting depth.
 - The counters, their units and the traversal rules that charge them are published
   in [the temporal evaluation contract](../../docs/native-temporal-evaluation.md)
-  under the accounting label `quire.native.temporal-work/1`.
+  under the accounting label `filament.native.temporal-work/1`.
 
 ## Rationale
 
@@ -143,7 +143,7 @@ remain unperformed.
 Mutation testing of the exhaustion paths — whether the suite detects a Boolean
 returned from each forced stop — is **not performed by this revision**. It is
 recorded as outstanding assurance work on compiler
-[#38](https://github.com/agent-ix/quire-spec-language/issues/38), consistent with
+[#38](https://github.com/agent-ix/filament-spec-language/issues/38), consistent with
 the owner's direction to track incomplete assurance separately from
 implementation delivery. No metric row above claims it.
 
@@ -163,4 +163,4 @@ implementation delivery. No metric row above claims it.
   [FR-044](../functional/FR-044-activate-temporal-obligations.md) and
   [FR-045](../functional/FR-045-classify-temporal-mapping-support.md) define the
   outcomes this requirement bounds.
-- Shared source requirement: `ix://agent-ix/quire-specification/NFR-040`.
+- Shared source requirement: `ix://agent-ix/filament-specification/NFR-040`.

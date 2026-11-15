@@ -1,0 +1,769 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-070 (TC-905, TC-736): the witness value text encodes and decodes
+//! exactly, every malformed form refuses, and a value of any depth walks on
+//! a small native stack.
+
+use filament_exact::Integer;
+use filament_exact::NodeKey;
+use ix_trace_rs::trace;
+
+use super::super::envelope_tests::full_packet;
+use super::super::{
+    measured_encoded_bytes, DecodeRefusal, QuantityMagnitude, ReplaySource, Witness,
+    WitnessBinding, WitnessEnvelope, WitnessField, WitnessRefusal, WitnessSlot, WitnessValue,
+    WitnessValueType,
+};
+use super::EntryFault;
+use crate::bounds::BoundExceeded;
+
+fn id(fill: u8) -> NodeKey {
+    crate::fixture_node(fill)
+}
+
+fn int(value: i64) -> WitnessValue {
+    WitnessValue::ExactInteger(Integer::from(value))
+}
+
+fn field(name: &str, slot: WitnessSlot) -> WitnessField {
+    WitnessField {
+        name: name.to_owned(),
+        slot,
+    }
+}
+
+fn present(name: &str, value: WitnessValue) -> WitnessField {
+    field(name, WitnessSlot::Present(value))
+}
+
+fn canonical(parameter: NodeKey) -> WitnessBinding {
+    WitnessBinding {
+        parameter,
+        value_type: WitnessValueType::Canonical,
+    }
+}
+
+fn scalar(parameter: NodeKey) -> WitnessBinding {
+    WitnessBinding {
+        parameter,
+        value_type: WitnessValueType::I128,
+    }
+}
+
+/// A witness over `entries` (`parameter node id`, `entry text`), in the
+/// order given.
+fn witness(entries: &[(NodeKey, &str)]) -> Witness {
+    let values: Vec<String> = entries
+        .iter()
+        .map(|(parameter, text)| format!("{}={text}", crate::pn(parameter)))
+        .collect();
+    Witness::parse(format!("<<<assertion|h|c|{}>>>", values.join(";"))).unwrap()
+}
+
+/// `value` written as an entry text and read back through `decode`.
+fn round_trip(value: &WitnessValue) -> WitnessValue {
+    let text = value.to_value_text().unwrap();
+    let mut decoded = witness(&[(id(1), &text)])
+        .decode(&[canonical(id(1))])
+        .unwrap();
+    assert_eq!(decoded.len(), 1);
+    decoded.remove(0)
+}
+
+/// The fault `text` refuses with as the one `Canonical` entry of a witness.
+fn fault(text: &str) -> EntryFault {
+    match witness(&[(id(1), text)]).decode(&[canonical(id(1))]) {
+        Err(DecodeRefusal::Malformed {
+            parameter,
+            value_type: WitnessValueType::Canonical,
+            fault,
+        }) => {
+            assert_eq!(parameter, id(1), "the refusal names the parameter");
+            fault
+        }
+        other => panic!("{text}: expected a malformed refusal, got {other:?}"),
+    }
+}
+
+fn h(fill: u8) -> String {
+    let text = crate::id_text::node_text(&id(fill)).expect("a fixture node spells");
+    let quoted = serde_json::to_string(&text).expect("text quotes");
+    quoted[1..quoted.len() - 1].to_owned()
+}
+
+/// FR-070-AC-8 (TC-905): a transcript with one `Canonical` entry and one
+/// `I64` entry decodes to two values in binding order, and each slot state,
+/// option state, element order, member identifier and declaration node id
+/// decodes exactly as written.
+#[trace("TC-905", "FR-070-AC-8")]
+#[test]
+fn tc_905_a_nested_composite_decodes_exactly_beside_a_scalar() {
+    let value = WitnessValue::Record {
+        declaration: id(0xa1),
+        fields: vec![
+            present(
+                "i",
+                WitnessValue::Record {
+                    declaration: id(0xa2),
+                    fields: vec![
+                        present("a", int(3)),
+                        field("b", WitnessSlot::Absent),
+                        field("c", WitnessSlot::Null),
+                    ],
+                },
+            ),
+            present("o1", WitnessValue::Option(Some(Box::new(int(5))))),
+            present("o2", WitnessValue::Option(None)),
+            present("s", WitnessValue::Sequence(vec![int(3), int(1), int(2)])),
+            present("st", WitnessValue::Set(vec![int(1), int(2), int(3)])),
+            present("bg", WitnessValue::Bag(vec![int(1), int(1), int(2)])),
+            present("os", WitnessValue::OrderedSet(vec![int(9), int(4)])),
+            present(
+                "u1",
+                WitnessValue::Union {
+                    declaration: id(0xa3),
+                    member: "Circle".to_owned(),
+                    components: vec![int(4)],
+                },
+            ),
+            present(
+                "u2",
+                WitnessValue::Union {
+                    declaration: id(0xa3),
+                    member: "Empty".to_owned(),
+                    components: vec![],
+                },
+            ),
+        ],
+    };
+    let text = value.to_value_text().unwrap();
+    let decoded = witness(&[(id(1), &text), (id(2), "7")])
+        .decode(&[canonical(id(1)), scalar(id(2))])
+        .unwrap();
+    assert_eq!(decoded, vec![value, WitnessValue::Integer(7)]);
+}
+
+/// A set and a bag decode in ascending JCS order wherever the writer put
+/// them: the text of an unsorted value is the sorted one.
+#[trace("TC-905", "FR-070-AC-8")]
+#[test]
+fn tc_905_a_set_and_a_bag_are_written_ascending_by_their_jcs_bytes() {
+    let unsorted = WitnessValue::Set(vec![int(3), int(1), int(2)]);
+    assert_eq!(
+        round_trip(&unsorted),
+        WitnessValue::Set(vec![int(1), int(2), int(3)])
+    );
+    let bag = WitnessValue::Bag(vec![int(2), int(1), int(2)]);
+    assert_eq!(
+        round_trip(&bag),
+        WitnessValue::Bag(vec![int(1), int(2), int(2)])
+    );
+}
+
+/// FR-070-AC-9 (TC-905): each malformed entry refuses `Malformed` naming the
+/// parameter, with no partial result, for the cause its form has.
+#[trace("TC-905", "FR-070-AC-9")]
+#[test]
+fn tc_905_each_malformed_entry_refuses_naming_the_parameter() {
+    let ten = h(0x10);
+    let boolean = r#"{"type":"boolean","value":true}"#;
+    let one = r#"{"type":"integer","value":"1"}"#;
+    let two = r#"{"type":"integer","value":"2"}"#;
+    let cases: Vec<(String, EntryFault)> = vec![
+        (format!("{boolean}x"), EntryFault::Json),
+        (r#"{"type":"boolean", "value":true}"#.to_owned(), EntryFault::NotJcs),
+        (
+            format!(r#"{{"type":"record","name":"{ten}","fields":[]}}"#),
+            EntryFault::NotJcs,
+        ),
+        (r#"{"type":"map"}"#.to_owned(), EntryFault::Shape),
+        (
+            format!(r#"{{"fields":[{{"name":"a"}}],"name":"{ten}","type":"record"}}"#),
+            EntryFault::Shape,
+        ),
+        (r#"{"type":"integer","value":"007"}"#.to_owned(), EntryFault::Spelling),
+        (r#"{"type":"integer","value":7}"#.to_owned(), EntryFault::Shape),
+        (
+            r#"{"denominator":"4","numerator":"2","type":"rational"}"#.to_owned(),
+            EntryFault::Spelling,
+        ),
+        (
+            r#"{"denominator":"-1","numerator":"2","type":"rational"}"#.to_owned(),
+            EntryFault::Spelling,
+        ),
+        (
+            r#"{"bits":"7ff000000000000","type":"float64"}"#.to_owned(),
+            EntryFault::Spelling,
+        ),
+        (
+            r#"{"bits":"7FF0000000000000","type":"float64"}"#.to_owned(),
+            EntryFault::Spelling,
+        ),
+        (
+            format!(
+                r#"{{"identity":"abc","object_type":"{ten}","type":"reference","universe":"{ten}"}}"#
+            ),
+            EntryFault::Spelling,
+        ),
+        (
+            r#"{"elements":[{"type":"null"}],"type":"sequence"}"#.to_owned(),
+            EntryFault::Null,
+        ),
+        (
+            format!(r#"{{"elements":[{one},{one}],"type":"set"}}"#),
+            EntryFault::Elements,
+        ),
+        (
+            format!(r#"{{"elements":[{two},{one}],"type":"set"}}"#),
+            EntryFault::Elements,
+        ),
+        (
+            format!(r#"{{"elements":[{one},{one}],"type":"ordered-set"}}"#),
+            EntryFault::Elements,
+        ),
+        (r#"{"type":"text","value":"50%"}"#.to_owned(), EntryFault::Escape),
+        (r#"{"type":"text","value":"a%3bb"}"#.to_owned(), EntryFault::Escape),
+        (
+            format!(
+                "{{\"fields\":[{{\"name\":\"\\u0061\",\"value\":null}}],\"name\":\"{ten}\",\"type\":\"record\"}}"
+            ),
+            EntryFault::NotJcs,
+        ),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(fault(&text), expected, "{text}");
+    }
+}
+
+/// FR-070-AC-9: a refused entry gives no partial result even beside a good
+/// one.
+#[trace("TC-905", "FR-070-AC-9")]
+#[test]
+fn tc_905_a_refused_entry_leaves_no_partial_result() {
+    let witness = witness(&[
+        (id(1), r#"{"type":"boolean","value":true}"#),
+        (id(2), r#"{"type":"map"}"#),
+    ]);
+    let refused = witness.decode(&[canonical(id(1)), canonical(id(2))]);
+    assert!(
+        matches!(
+            refused,
+            Err(DecodeRefusal::Malformed { ref parameter, .. }) if *parameter == id(2)
+        ),
+        "{refused:?}"
+    );
+}
+
+/// FR-070-AC-11 (TC-905): one entry per leaf family decodes exactly as
+/// written.
+#[trace("TC-905", "FR-070-AC-11")]
+#[test]
+fn tc_905_each_leaf_family_decodes_exactly() {
+    let integer =
+        WitnessValue::ExactInteger("-170141183460469231731687303715884105728".parse().unwrap());
+    assert_eq!(round_trip(&integer), integer);
+    let enum_member = WitnessValue::Enum {
+        declaration: id(0xe1),
+        member: "RED".to_owned(),
+    };
+    assert_eq!(round_trip(&enum_member), enum_member);
+    let rational = WitnessValue::Rational {
+        numerator: Integer::from(-3_i64),
+        denominator: Integer::from(4_i64),
+    };
+    assert_eq!(round_trip(&rational), rational);
+    // The decimal keeps its retained coefficient and scale.
+    let decimal = WitnessValue::Decimal {
+        coefficient: Integer::from(1050_i64),
+        scale: Integer::from(2_i64),
+    };
+    assert_eq!(round_trip(&decimal), decimal);
+    // A NaN payload and a signed zero stay distinct.
+    let nan = WitnessValue::Float32(0x7fc0_0001);
+    assert_eq!(round_trip(&nan), nan);
+    let negative_zero = WitnessValue::Float64(0x8000_0000_0000_0000);
+    assert_eq!(round_trip(&negative_zero), negative_zero);
+    let quantity = WitnessValue::Quantity {
+        magnitude: QuantityMagnitude::Decimal {
+            coefficient: Integer::from(15_i64),
+            scale: Integer::from(1_i64),
+        },
+        unit: filament_exact::UnitId::declared(crate::fixture_node(0x44)),
+    };
+    assert_eq!(round_trip(&quantity), quantity);
+    let reference = WitnessValue::Reference {
+        universe: crate::fixture_universe(0x01),
+        object_type: crate::fixture_effective(0x02),
+        identity: b"order-17".to_vec(),
+    };
+    assert_eq!(round_trip(&reference), reference);
+}
+
+/// FR-070-AC-11: the text `a;b=c<<<d>>>e%f` is written with exactly four
+/// characters replaced, its escaped bytes count toward the entry's size, and
+/// the transcript parses as one block whose entry splits at its own
+/// delimiters only. A sequence of texts holding `;` and `>` decodes in order.
+#[trace("TC-905", "FR-070-AC-11")]
+#[test]
+fn tc_905_a_text_with_delimiters_is_escaped_and_decodes_exactly() {
+    let text = WitnessValue::Text("a;b=c<<<d>>>e%f".to_owned());
+    let escaped = text.to_value_text().unwrap();
+    assert_eq!(
+        escaped,
+        r#"{"type":"text","value":"a%3Bb=c%3C%3C%3Cd%3E%3E%3Ee%25f"}"#
+    );
+    assert_eq!(text.value_text_len(), escaped.len());
+    assert_eq!(round_trip(&text), text);
+    let sequence = WitnessValue::Sequence(vec![
+        WitnessValue::Text("x;y".to_owned()),
+        WitnessValue::Text("p>q".to_owned()),
+        WitnessValue::Text(">>>".to_owned()),
+    ]);
+    assert_eq!(round_trip(&sequence), sequence);
+}
+
+/// FR-070-AC-11 (the size claim): an `Input` assignment counts its value at
+/// its escaped text's length, a scalar at 8 bytes.
+#[trace("TC-905", "FR-070-AC-11")]
+#[test]
+fn tc_905_an_input_value_counts_at_its_escaped_text_length() {
+    let text = WitnessValue::Text("a;b".to_owned());
+    let expected = 32 + text.to_value_text().unwrap().len();
+    let source = ReplaySource::Input(vec![crate::CanonicalAssignment {
+        parameter: id(1),
+        value: text,
+    }]);
+    assert_eq!(source.measured_bytes(), expected);
+    let scalar_source = ReplaySource::Input(vec![crate::CanonicalAssignment {
+        parameter: id(1),
+        value: WitnessValue::Integer(1),
+    }]);
+    // An i128 integer is charged its 16 bytes.
+    assert_eq!(scalar_source.measured_bytes(), 32 + 16);
+}
+
+/// FR-070-AC-12 (TC-905): entries for `0a..` and `0b..` in that order
+/// decode; the same entries with `0b..` first refuse `EntryOrder` naming the
+/// `0a..` entry. A repeated node id stays `Duplicate`.
+#[trace("TC-905", "FR-070-AC-12")]
+#[test]
+fn tc_905_entries_must_ascend_by_parameter_node_id() {
+    let (a, b) = (id(0x0a), id(0x0b));
+    let ascending = witness(&[(a.clone(), "1"), (b.clone(), "2")]);
+    assert_eq!(
+        ascending
+            .decode(&[scalar(a.clone()), scalar(b.clone())])
+            .unwrap(),
+        vec![WitnessValue::Integer(1), WitnessValue::Integer(2)]
+    );
+    let descending = witness(&[(b.clone(), "2"), (a.clone(), "1")]);
+    assert_eq!(
+        descending.decode(&[scalar(a.clone()), scalar(b.clone())]),
+        Err(DecodeRefusal::EntryOrder(
+            fsl_foundation::node_wire::node_key_to_text(&a).unwrap()
+        ))
+    );
+    let repeated = witness(&[(a.clone(), "1"), (a.clone(), "2")]);
+    assert_eq!(
+        repeated.decode(&[scalar(a.clone()), scalar(b)]),
+        Err(DecodeRefusal::Duplicate(a))
+    );
+}
+
+/// A record of `depth` nested lists: `record List { head: Int[0, 9];
+/// tail?: List; }`, built from the inside out.
+fn list(depth: usize, head_name: &str, tail_name: &str) -> WitnessValue {
+    let declaration = id(0x77);
+    let mut value = WitnessValue::Record {
+        declaration: declaration.clone(),
+        fields: vec![
+            present(head_name, int(1)),
+            field(tail_name, WitnessSlot::Absent),
+        ],
+    };
+    for _ in 1..depth {
+        value = WitnessValue::Record {
+            declaration: declaration.clone(),
+            fields: vec![present(head_name, int(1)), present(tail_name, value)],
+        };
+    }
+    value
+}
+
+/// Run `body` on a thread with a 512 KiB stack.
+fn on_small_stack(body: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(body)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// FR-070-AC-10 (TC-736): on a thread with a 512 KiB stack, a transcript
+/// entry holding a 100,000-long recursive list decodes, with the envelope's
+/// reader bound raised to fit it through `replay.input_bytes`. The decoded
+/// value clones, compares equal to itself, renders its redacted `Debug` and
+/// drops with no stack overflow. With the bound one byte below the
+/// envelope's size, construction refuses `BoundExceeded` naming
+/// `replay.input_bytes`.
+#[trace("TC-736", "FR-070-AC-10")]
+#[test]
+fn tc_736_a_100000_long_list_decodes_and_walks_on_a_small_stack() {
+    on_small_stack(|| {
+        let value = list(100_000, "head", "tail");
+        let text = value.to_value_text().unwrap();
+        let transcript = format!("<<<assertion|h|c|{}={text}>>>", crate::pn(&id(1)));
+        let witness = Witness::parse(transcript).unwrap();
+
+        let mut packet = full_packet(0);
+        packet.source = Some(crate::EnvelopeSource::Witness(witness.clone()));
+        let size = measured_encoded_bytes(&packet);
+        assert!(
+            size > crate::DEFAULT_REPLAY_INPUT_BYTES as usize,
+            "the value needs the raised bound"
+        );
+        assert!(matches!(
+            WitnessEnvelope::reconstruct(packet.clone(), crate::ReplayLimits::default()),
+            Err(WitnessRefusal::BoundExceeded(BoundExceeded { bound, .. }))
+                if bound == crate::DEFAULT_REPLAY_INPUT_BYTES
+        ));
+        let below = WitnessEnvelope::reconstruct(
+            packet.clone(),
+            crate::ReplayLimits::default().with_input_bytes(size as u64 - 1),
+        )
+        .unwrap_err();
+        let WitnessRefusal::BoundExceeded(exceeded) = below else {
+            panic!("expected BoundExceeded, got {below:?}");
+        };
+        assert_eq!(exceeded.actual, size as u128);
+        assert_eq!(exceeded.bound, size as u64 - 1);
+        assert!(exceeded.to_string().contains("replay.input_bytes"));
+        let envelope = WitnessEnvelope::reconstruct(
+            packet,
+            crate::ReplayLimits::default().with_input_bytes(size as u64),
+        )
+        .unwrap();
+
+        let crate::EnvelopeSource::Witness(carried) = envelope.source() else {
+            panic!("a witness source");
+        };
+        let decoded = carried.decode(&[canonical(id(1))]).unwrap().remove(0);
+        assert_eq!(decoded.node_count(), 200_000);
+        let copy = decoded.clone();
+        assert_eq!(copy, decoded);
+        let rendered = format!("{decoded:?}");
+        assert!(rendered.contains("record"));
+        assert!(!rendered.contains("head"));
+        // The value is the one that was written.
+        assert_eq!(decoded, value);
+        drop(copy);
+        drop(decoded);
+        drop(value);
+    });
+}
+
+/// `depth` nested sets, each holding the next one and a text leaf, so every
+/// level has two elements to order.
+fn nested_sets(depth: usize) -> WitnessValue {
+    let mut value = WitnessValue::Set(vec![WitnessValue::Text("leaf".to_owned()), int(0)]);
+    for _ in 1..depth {
+        value = WitnessValue::Set(vec![value, WitnessValue::Text("leaf".to_owned())]);
+    }
+    value
+}
+
+/// The work `value` takes to encode, and the length of its output.
+fn work_of(value: &WitnessValue) -> (u64, usize) {
+    let (arena, work) = super::encode_pieces(value).unwrap();
+    let length = super::Chunks::new(&arena, 0).map(<[u8]>::len).sum();
+    (work.written + work.compared, length)
+}
+
+/// A value of a given nesting depth.
+type Shape = fn(usize) -> WitnessValue;
+
+fn nested_options(depth: usize) -> WitnessValue {
+    let mut value = int(0);
+    for _ in 0..depth {
+        value = WitnessValue::Option(Some(Box::new(value)));
+    }
+    value
+}
+
+fn nested_sequences(depth: usize) -> WitnessValue {
+    let mut value = int(0);
+    for _ in 0..depth {
+        value = WitnessValue::Sequence(vec![value, int(1)]);
+    }
+    value
+}
+
+/// FR-070-AC-13 (QSL-647): encoding does work proportional to the output, at
+/// any depth. Doubling the depth of nested sets, nested options and nested
+/// sequences doubles the work (a ratio near 2); an encoder that copies each
+/// subtree into every ancestor would quadruple it. The text decodes, order
+/// check included, on a 512 KiB stack and round-trips.
+#[trace("TC-905", "FR-070-AC-13")]
+#[test]
+fn tc_905_encoding_work_is_linear_in_depth() {
+    on_small_stack(|| {
+        const DEPTH: usize = 5_000;
+        let shapes: [(&str, Shape); 3] = [
+            ("sets", nested_sets),
+            ("options", nested_options),
+            ("sequences", nested_sequences),
+        ];
+        for (name, build) in shapes {
+            let (single, single_len) = work_of(&build(DEPTH));
+            let (double, double_len) = work_of(&build(2 * DEPTH));
+            assert!(
+                single >= single_len as u64,
+                "{name}: work counts at least the output"
+            );
+            assert!(
+                double <= 3 * single,
+                "{name}: work {single} at depth {DEPTH} became {double} at {}",
+                2 * DEPTH
+            );
+            assert!(
+                double <= 3 * double_len as u64,
+                "{name}: work {double} for {double_len} bytes of output"
+            );
+        }
+        let value = nested_sets(DEPTH);
+        let text = value.to_value_text().unwrap();
+        assert_eq!(value.value_text_len(), text.len());
+        let decoded = WitnessValue::from_value_text(&text).unwrap();
+        assert_eq!(decoded.to_value_text().unwrap(), text);
+        drop(decoded);
+        drop(value);
+    });
+}
+
+/// FR-070-AC-13 (QSL-647): the value text's length is counted from the
+/// finished bytes. A text of 1,000,000 `;`
+/// characters is 1,000,026 JCS bytes and 3,000,026 escaped; `value_text_len`
+/// returns the escaped length, equal to `to_value_text`'s, while the only
+/// bytes it holds are the JCS bytes: no buffer the encoder holds reaches
+/// the escaped length. (The crate forbids `unsafe`, so a counting allocator is not
+/// available; the held buffers are read from the encoder's pieces.)
+#[trace("TC-905", "FR-070-AC-13")]
+#[test]
+fn tc_905_value_text_len_counts_from_the_finished_bytes() {
+    let value = WitnessValue::Text(";".repeat(1_000_000));
+    assert_eq!(value.value_text_len(), 3_000_026);
+    assert_eq!(value.to_value_text().unwrap().len(), 3_000_026);
+    let (arena, _) = super::encode_pieces(&value).unwrap();
+    let held: Vec<usize> = arena
+        .iter()
+        .flatten()
+        .map(|piece| match piece {
+            super::Piece::Bytes(bytes) => bytes.capacity(),
+            super::Piece::Child(_) => 0,
+        })
+        .collect();
+    assert_eq!(arena.len(), 1);
+    assert!(held.iter().sum::<usize>() >= 1_000_026);
+    assert!(
+        held.iter().all(|capacity| *capacity < 3_000_026),
+        "a buffer reached the escaped length: {held:?}"
+    );
+}
+
+/// FR-070-AC-9 (QSL-647): the decode order check still refuses out-of-order
+/// and duplicate elements found by span, in a nested set, a bag and an
+/// ordered set.
+#[trace("TC-905", "FR-070-AC-9")]
+#[test]
+fn tc_905_the_element_order_check_reads_spans() {
+    let text = |value: &str| format!(r#"{{"type":"text","value":"{value}"}}"#);
+    let a = text("a");
+    let b = text("b");
+    let collection = |kind: &str, elements: &[&str]| {
+        format!(r#"{{"elements":[{}],"type":"{kind}"}}"#, elements.join(","))
+    };
+    let decodes = |json: &str| WitnessValue::from_value_text(json).map(|_| ());
+    assert_eq!(decodes(&collection("set", &[&a, &b])), Ok(()));
+    assert_eq!(decodes(&collection("bag", &[&a, &a, &b])), Ok(()));
+    assert_eq!(decodes(&collection("ordered-set", &[&b, &a])), Ok(()));
+    assert_eq!(
+        decodes(&collection("set", &[&b, &a])),
+        Err(EntryFault::Elements)
+    );
+    assert_eq!(
+        decodes(&collection("set", &[&a, &a])),
+        Err(EntryFault::Elements)
+    );
+    assert_eq!(
+        decodes(&collection("bag", &[&b, &a])),
+        Err(EntryFault::Elements)
+    );
+    assert_eq!(
+        decodes(&collection("ordered-set", &[&a, &a])),
+        Err(EntryFault::Elements)
+    );
+    // A bad collection nested inside a correctly ordered one is found. The
+    // bad set starts `{"elements"`, below `a`'s `{"type"`, so the outer
+    // elements [bad, a] are in order and only the nested path can trip.
+    let bad = collection("set", &[&b, &a]);
+    let outer = collection("set", &[&bad, &a]);
+    let sound = collection("set", &[&collection("set", &[&a, &b]), &a]);
+    assert_eq!(decodes(&sound), Ok(()));
+    assert_eq!(decodes(&outer), Err(EntryFault::Elements));
+}
+
+/// TC-1028: a native UUID and Timestamp are written as their payload text
+/// under their own tags and read back unchanged, noncanonical text
+/// included: the payload's spelling is admitted when the executor converts
+/// it, not by the form.
+#[trace("TC-1028")]
+#[test]
+fn tc_1028_native_payloads_round_trip_in_the_value_text() {
+    let uuid = WitnessValue::Uuid("00112233-4455-6677-8899-aabbccddeeff".to_owned());
+    assert_eq!(
+        uuid.to_value_text().unwrap(),
+        r#"{"kind":"uuid","text":"00112233-4455-6677-8899-aabbccddeeff"}"#
+    );
+    let timestamp = WitnessValue::Timestamp("-1".to_owned());
+    assert_eq!(
+        timestamp.to_value_text().unwrap(),
+        r#"{"kind":"timestamp","nanoseconds":"-1"}"#
+    );
+    let uppercase = WitnessValue::Uuid("00112233-4455-6677-8899-AABBCCDDEEFF".to_owned());
+    for value in [uuid, timestamp, uppercase] {
+        assert_eq!(round_trip(&value), value);
+    }
+}
+
+/// TC-1028: the closed native wire objects refuse an unknown kind, an extra
+/// or missing member, the other kind's payload member, a non-string payload
+/// and the `type` spelling.
+#[trace("TC-1028")]
+#[test]
+fn tc_1028_malformed_native_wire_objects_refuse_as_shape() {
+    for text in [
+        r#"{"kind":"guid","text":"x"}"#,
+        r#"{"extra":"x","kind":"uuid","text":"x"}"#,
+        r#"{"kind":"uuid"}"#,
+        r#"{"kind":"uuid","nanoseconds":"0"}"#,
+        r#"{"kind":"timestamp","text":"0"}"#,
+        r#"{"kind":"timestamp","nanoseconds":0}"#,
+        r#"{"kind":7,"text":"x"}"#,
+        r#"{"type":"uuid","value":"00112233-4455-6677-8899-aabbccddeeff"}"#,
+    ] {
+        assert_eq!(fault(text), EntryFault::Shape, "{text}");
+    }
+}
+
+/// FR-070-AC-14 (TC-905 step 7): each String and Text shape decodes exactly
+/// as written, with the entry escaped as FR-070 states.
+#[trace("TC-905", "FR-070-AC-14")]
+#[test]
+fn tc_905_string_and_text_entries_decode_exactly() {
+    let decoded = |entry: &str| {
+        let mut values = witness(&[(id(1), entry)])
+            .decode(&[canonical(id(1))])
+            .unwrap();
+        assert_eq!(values.len(), 1, "{entry}");
+        values.remove(0)
+    };
+    for (entry, expected) in [
+        (
+            r#"{"kind":"string","text":"a%3Bb%3E%3E%3Ec"}"#,
+            WitnessValue::String("a;b>>>c".to_owned()),
+        ),
+        (
+            r#"{"kind":"string","text":""}"#,
+            WitnessValue::String(String::new()),
+        ),
+        (
+            "{\"kind\":\"string\",\"text\":\"\u{e9}\"}",
+            WitnessValue::String("\u{e9}".to_owned()),
+        ),
+        (
+            "{\"kind\":\"string\",\"text\":\"e\u{301}\"}",
+            WitnessValue::String("e\u{301}".to_owned()),
+        ),
+        (
+            r#"{"kind":"string","text":"say \"hi\"\\x%3B"}"#,
+            WitnessValue::String("say \"hi\"\\x;".to_owned()),
+        ),
+        (
+            r#"{"kind":"string","text":"100%25%3C"}"#,
+            WitnessValue::String("100%<".to_owned()),
+        ),
+        (
+            r#"{"type":"text","value":"a%3Bb%3E%3E%3Ec"}"#,
+            WitnessValue::Text("a;b>>>c".to_owned()),
+        ),
+        (
+            r#"{"type":"text","value":""}"#,
+            WitnessValue::Text(String::new()),
+        ),
+    ] {
+        assert_eq!(decoded(entry), expected, "{entry}");
+    }
+    // The two spellings of the letter are two unequal Strings.
+    assert_ne!(
+        WitnessValue::String("\u{e9}".to_owned()),
+        WitnessValue::String("e\u{301}".to_owned())
+    );
+    // A `string` and a `text` of the same scalars are two unequal values.
+    assert_ne!(
+        WitnessValue::String("x".to_owned()),
+        WitnessValue::Text("x".to_owned())
+    );
+    // `P` then `Q`, each the String `a;b>>>c`: one block, two values.
+    let entry = r#"{"kind":"string","text":"a%3Bb%3E%3E%3Ec"}"#;
+    let pair = witness(&[(id(1), entry), (id(2), entry)])
+        .decode(&[canonical(id(1)), canonical(id(2))])
+        .unwrap();
+    assert_eq!(pair, vec![WitnessValue::String("a;b>>>c".to_owned()); 2]);
+}
+
+/// FR-070-AC-14: a String encodes to its entry, escaped and its length
+/// counted, and reads back unchanged.
+#[trace("TC-905", "FR-070-AC-14")]
+#[test]
+fn tc_905_a_string_encodes_to_its_escaped_entry() {
+    for (value, entry) in [
+        ("a;b>>>c", r#"{"kind":"string","text":"a%3Bb%3E%3E%3Ec"}"#),
+        ("100%<", r#"{"kind":"string","text":"100%25%3C"}"#),
+        (
+            "say \"hi\"\\x;",
+            r#"{"kind":"string","text":"say \"hi\"\\x%3B"}"#,
+        ),
+    ] {
+        let string = WitnessValue::String(value.to_owned());
+        let text = string.to_value_text().unwrap();
+        assert_eq!(text, entry);
+        assert_eq!(string.value_text_len(), entry.len());
+        assert_eq!(round_trip(&string), string);
+    }
+}
+
+/// FR-070-AC-15 (TC-905 step 8): each malformed String entry refuses
+/// `Malformed` naming the parameter, with no value.
+#[trace("TC-905", "FR-070-AC-15")]
+#[test]
+fn tc_905_each_malformed_string_entry_refuses_naming_the_parameter() {
+    for (entry, expected) in [
+        (r#"{"kind":"string"}"#, EntryFault::Shape),
+        (r#"{"kind":"string","nanoseconds":"0"}"#, EntryFault::Shape),
+        (
+            r#"{"extra":"y","kind":"string","text":"x"}"#,
+            EntryFault::Shape,
+        ),
+        (r#"{"kind":"string","text":5}"#, EntryFault::Shape),
+        (r#"{"kind":"string","text":null}"#, EntryFault::Shape),
+        (r#"{"kind":"String","text":"x"}"#, EntryFault::Shape),
+        (r#"{"kind":"blob","text":"x"}"#, EntryFault::Shape),
+        (r#"{"text":"x","kind":"string"}"#, EntryFault::NotJcs),
+        (r#"{"kind":"string","text":"\u00e9"}"#, EntryFault::NotJcs),
+        (r#"{"kind":"string","text":"100%zz"}"#, EntryFault::Escape),
+    ] {
+        assert_eq!(fault(entry), expected, "{entry}");
+    }
+    // A lone surrogate escape is no scalar sequence: no value is read.
+    fault(r#"{"kind":"string","text":"\ud800"}"#);
+}

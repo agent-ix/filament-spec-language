@@ -3,7 +3,7 @@ id: TC-1275
 title: "The replay facade encodes refinement queries"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-492
+  - target: ix://agent-ix/filament-spec-language/FR-492
     type: verifies
 ---
 # TC-1275: The replay facade encodes refinement queries
@@ -12,13 +12,13 @@ relationships:
 
 Verify the replay-owned `encode_refinement_query` wrapper over
 `CasRefinesCounter`. Scope: FR-492-AC-1 and FR-492-AC-5 to FR-492-AC-13; AC-4 is
-the `arch-lint-api-surface-qsl` make target.
+the `arch-lint-api-surface-fsl` make target.
 
 ## Test Procedure
 
-Test layer: `qsl-replay/tests/it/refinement_query_facade.rs`, calling the
+Test layer: `fsl-replay/tests/it/refinement_query_facade.rs`, calling the
 entries as the root exports them, over a `RefinementQueryRequest` built from root items
-alone (`acquire_checked_closure`, `refinement_node_key`, `RefinementUniverse::for_population`,
+alone (`acfilament_checked_closure`, `refinement_node_key`, `RefinementUniverse::for_population`,
 `RefinementQuerySubject::new`); the fixture supplies document values and the oracle only.
 
 1. Encode `Initial` and the `Step` queries of `peek` and `commitA`.

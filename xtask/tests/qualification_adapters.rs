@@ -9,60 +9,60 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
-const COUNTER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\nfunction digits using v(x: Int[0,9], y: Int[0,9]): Integer pure { x * 10 + y }\n";
-const FALSE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\nfunction negative using v(x: Int[0,9]): Boolean pure { x < 0 }\n";
+const COUNTER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction digits using v(x: Int[0,9], y: Int[0,9]): Integer pure { x * 10 + y }\n";
+const FALSE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction negative using v(x: Int[0,9]): Boolean pure { x < 0 }\n";
 
 struct Fixture {
     _temp: TempDir,
     corpus: PathBuf,
-    qspec: PathBuf,
+    fspec: PathBuf,
     value: Value,
     expected_output: Option<Vec<u8>>,
-    native_replay: Option<qsl_replay::ReplayRequestWire>,
+    native_replay: Option<fsl_replay::ReplayRequestWire>,
 }
 
-fn qspec_repository() -> PathBuf {
-    std::env::var_os("QSPEC_DIR")
+fn fspec_repository() -> PathBuf {
+    std::env::var_os("FSPEC_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .ancestors()
                 .find_map(|parent| {
-                    let candidate = parent.join("quire-specification");
+                    let candidate = parent.join("filament-specification");
                     candidate.is_dir().then_some(candidate)
                 })
-                .expect("a QSpec checkout or QSPEC_DIR")
+                .expect("an FSpec checkout or FSPEC_DIR")
         })
 }
 
 fn published(path: &str) -> Vec<u8> {
-    fs::read(qspec_repository().join(path)).expect("read the selected QSpec contract")
+    fs::read(fspec_repository().join(path)).expect("read the selected FSpec contract")
 }
 
 impl Fixture {
     fn new(subject: &str, operation: &str, source: &str, expected: Value) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let corpus = temp.path().join("corpus");
-        let qspec = temp.path().join("qspec");
+        let fspec = temp.path().join("fspec");
         fs::create_dir_all(corpus.join("inputs")).unwrap();
         for path in [
             "proposals/conformance-corpus-v1/schema.json",
             "proposals/checked-package-v2/schema.json",
         ] {
-            let destination = qspec.join(path);
+            let destination = fspec.join(path);
             fs::create_dir_all(destination.parent().unwrap()).unwrap();
             fs::write(destination, published(path)).unwrap();
         }
         fs::write(corpus.join("inputs/unit.native"), source).unwrap();
         let value = json!({
-            "contract_version":"quire.conformance-corpus/v1",
+            "contract_version":"filament.conformance-corpus/v1",
             "vectors":[{"id":"V1-TOOL-004-operation", "capability_id":"V1-TOOL-004", "class":"positive", "subject":{"consumer_type":subject,"operation":operation}, "applicability":{"consumer_types":[subject]}, "input":{"files":[{"kind":"source","path":"inputs/unit.native"}]}, "expected":expected}],
-            "results":[], "coverage":{"primary":[{"capability_id":"V1-TOOL-004","applicability":{"consumer_types":[subject],"semantic_profiles":["quire.value.complete/v1"]}}],"criteria_rollups":[],"consumer_rollups":[]}
+            "results":[], "coverage":{"primary":[{"capability_id":"V1-TOOL-004","applicability":{"consumer_types":[subject],"semantic_profiles":["filament.value.complete/v1"]}}],"criteria_rollups":[],"consumer_rollups":[]}
         });
         Self {
             _temp: temp,
             corpus,
-            qspec,
+            fspec,
             value,
             expected_output: None,
             native_replay: None,
@@ -92,7 +92,7 @@ impl Fixture {
             self.corpus.clone().into_os_string(),
         ];
         args.extend(extra.iter().map(OsString::from));
-        xtask::qualification::execute_with_qspec(&self.qspec, &args)
+        xtask::qualification::execute_with_fspec(&self.fspec, &args)
             .expect("the fixture corpus is valid")
     }
 
@@ -230,17 +230,17 @@ fn runtime_limits_remain_incomplete_and_are_fresh_for_siblings() {
 fn compiler_vectors_admit_the_actual_model_documents() {
     let source = include_str!("../../tests/fixtures/spine-model.native");
     let model = include_bytes!("../../tests/fixtures/spine-model.semantic-ir.json");
-    let expected = qsl_replay::compile_package(
-        qsl_replay::CompileUnit {
-            source: qsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
+    let expected = fsl_replay::compile_package(
+        fsl_replay::CompileUnit {
+            source: fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
             package_name: "qualification".into(),
             path: "inputs/unit.native",
             bytes: source.as_bytes(),
         },
         [model.as_slice()],
-        &qsl_replay::DependencyInput::default(),
-        qsl_replay::StageLimits::default(),
-        qsl_replay::ReplayLimits::default(),
+        &fsl_replay::DependencyInput::default(),
+        fsl_replay::StageLimits::default(),
+        fsl_replay::ReplayLimits::default(),
     )
     .expect("real model-backed compiler fixture");
     let mut fixture = Fixture::new(
@@ -309,20 +309,20 @@ fn replay_fixture_source(source: &str) -> Fixture {
         source,
         json!({"disposition":"value","value":null}),
     );
-    let selected = qsl_replay::call_site(
-        qsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
+    let selected = fsl_replay::call_site(
+        fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
         "qualification".into(),
         "inputs/unit.native",
         source.as_bytes(),
         [],
-        &qsl_replay::DependencyInput::default(),
-        &qsl_replay::QualifiedName::new(vec![qsl_replay::Identifier::new("negative").unwrap()])
+        &fsl_replay::DependencyInput::default(),
+        &fsl_replay::QualifiedName::new(vec![fsl_replay::Identifier::new("negative").unwrap()])
             .unwrap(),
     )
     .unwrap();
-    let graph = qsl_replay::WireGraph::of_package_bytes(&selected.package).unwrap();
+    let graph = fsl_replay::WireGraph::of_package_bytes(&selected.package).unwrap();
     let node = |key| graph.wire_value(key).unwrap();
-    let limits = qsl_replay::AccountingLimits::default()
+    let limits = fsl_replay::AccountingLimits::default()
         .bounds()
         .into_iter()
         .map(|(setting, bound)| {
@@ -341,27 +341,27 @@ fn replay_fixture_source(source: &str) -> Fixture {
         "replay_target":{"members":{"function":"negative"},"arguments":false,"occurrence_key":{"node_id":node(&selected.site.function),"role":selected.site.declaration.origin().role().as_str(),"ordinal":selected.site.declaration.origin().ordinal().to_string()},"over":null},
         "source":{"kind":"input","assignments":[{"parameter":node(&selected.site.parameters[0].1),"value":{"kind":"integer","decimal":"1"}}]},"obligation_identity":{"node_id":node(selected.site.obligation_identity().node()),"model":selected.site.obligation_identity().model().map(|model|model.as_str()),"ordinal":selected.site.obligation_identity().ordinal()},"backend":"fixture", "state_environment":[],"accounting_limits":limits,"stage_limits":{},"supplied_limits":null,"object_environment":null,"declared_domains":[],"byte_provision":[{"authority":"agent-ix","identity":"inputs/unit.native","bytes_path":"inputs/bytes.native"}]
     });
-    let native_request = qsl_replay::ReplayRequestWire {
-        package: qsl_replay::ReplayPackage::read(
+    let native_request = fsl_replay::ReplayRequestWire {
+        package: fsl_replay::ReplayPackage::read(
             &selected.package,
-            qsl_replay::ReplayLimits::default().input_bytes,
+            fsl_replay::ReplayLimits::default().input_bytes,
         )
         .unwrap(),
         profile_selections: Vec::new(),
         dependencies: Vec::new(),
-        replay_target: qsl_replay::RequestTargetWire::function(
-            qsl_replay::QualifiedName::new(vec![qsl_replay::Identifier::new("negative").unwrap()])
+        replay_target: fsl_replay::RequestTargetWire::function(
+            fsl_replay::QualifiedName::new(vec![fsl_replay::Identifier::new("negative").unwrap()])
                 .unwrap(),
             selected.site.declaration.clone(),
         ),
-        source: qsl_replay::ReplaySource::Input(vec![qsl_replay::CanonicalAssignment {
+        source: fsl_replay::ReplaySource::Input(vec![fsl_replay::CanonicalAssignment {
             parameter: selected.site.parameters[0].1.clone(),
-            value: qsl_replay::WitnessValue::Integer(1),
+            value: fsl_replay::WitnessValue::Integer(1),
         }]),
         obligation_identity: selected.site.obligation_identity().clone(),
         backend: "fixture".to_owned(),
-        state_environment: qsl_replay::StateEnvironment::new(Vec::new()),
-        accounting_limits: qsl_replay::AccountingLimits::default().0,
+        state_environment: fsl_replay::StateEnvironment::new(Vec::new()),
+        accounting_limits: fsl_replay::AccountingLimits::default().0,
         stage_limits: Default::default(),
         supplied_limits: None,
         object_environment: None,
@@ -373,22 +373,22 @@ fn replay_fixture_source(source: &str) -> Fixture {
         )],
         documents: Vec::new(),
     };
-    let native = qsl_replay::replay(native_request.clone(), qsl_replay::ReplayLimits::default())
+    let native = fsl_replay::replay(native_request.clone(), fsl_replay::ReplayLimits::default())
         .expect("the actual public function replay completes");
-    let qsl_replay::ReplayResult::Input(input) = &native else {
+    let fsl_replay::ReplayResult::Input(input) = &native else {
         panic!("an input replay");
     };
     if source == FALSE {
         assert_eq!(
             input.value(),
-            Some(qsl_replay::EvaluatedValue::Boolean(false))
+            Some(fsl_replay::EvaluatedValue::Boolean(false))
         );
     }
     let row: Value = serde_json::from_str(&native.to_function_json().unwrap()).unwrap();
     fixture.value["vectors"][0]["expected"] =
         json!({"disposition":"value", "value":{"results":[row]}});
     fixture.expected_output = Some(
-        qsl_replay::OutcomeDocument::from_replay(&Ok(native))
+        fsl_replay::OutcomeDocument::from_replay(&Ok(native))
             .to_bytes()
             .unwrap(),
     );
@@ -433,7 +433,7 @@ fn replay_corruption_is_an_attributed_tool_failure() {
         ("/package", Value::Null, "/package"),
         (
             "/package/contract_version",
-            json!("quire.checked-package/v1"),
+            json!("filament.checked-package/v1"),
             "/package/contract_version",
         ),
         (
@@ -460,17 +460,17 @@ fn replay_corruption_is_an_attributed_tool_failure() {
 #[test]
 #[trace("TC-875", "FR-350-AC-3", "FR-350-AC-19")]
 fn compiler_limits_preserve_the_stage_setting_and_refusal_partition() {
-    let compiled = qsl_replay::compile_package(
-        qsl_replay::CompileUnit {
-            source: qsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
+    let compiled = fsl_replay::compile_package(
+        fsl_replay::CompileUnit {
+            source: fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
             package_name: "qualification".to_owned(),
             path: "inputs/unit.native",
             bytes: COUNTER.as_bytes(),
         },
         [],
-        &qsl_replay::DependencyInput::default(),
-        qsl_replay::StageLimits::default(),
-        qsl_replay::ReplayLimits::default(),
+        &fsl_replay::DependencyInput::default(),
+        fsl_replay::StageLimits::default(),
+        fsl_replay::ReplayLimits::default(),
     )
     .unwrap();
     let fixture = Fixture::new(
@@ -615,14 +615,14 @@ fn another_consumers_open_operation_is_filtered_without_opening_its_input() {
 }
 
 fn model_population_fixture() -> Fixture {
-    let source = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.model.complete/v1\";\nmodel M = \"acme/orders\";\nfunction seen using v(p: Population<M::Gadget>[1], ok: Boolean): Boolean pure { ok }\n";
+    let source = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = \"acme/orders\";\nfunction seen using v(p: Population<M::Gadget>[1], ok: Boolean): Boolean pure { ok }\n";
     let mut model: Value = serde_json::from_slice(include_bytes!(
         "../../tests/fixtures/spine-model.semantic-ir.json"
     ))
     .unwrap();
     model["constructs"].as_array_mut().unwrap().push(json!({
         "kind":{"module":"acme/orders", "name":"population"}, "moduleVersion":"1.0.0",
-        "construct":{"identity":"none", "shape":"record", "members":{}, "meaning":"quire.meaning.model.population/v1"}
+        "construct":{"identity":"none", "shape":"record", "members":{}, "meaning":"filament.meaning.model.population/v1"}
     }));
     model["populations"] = json!([{
         "identity":"ix://acme/orders/Fleet", "displayName":"Fleet", "kind":{"module":"acme/orders", "name":"population"},
@@ -641,7 +641,7 @@ fn model_population_fixture() -> Fixture {
         &serde_json::to_vec(&model).unwrap(),
     );
     fixture.file("population", "inputs/population.json", &serde_json::to_vec(&json!({
-        "format":"quire.state.snapshot/v1", "identity":{"authority":"fixture", "identity":"current"}, "observation":"current",
+        "format":"filament.state.snapshot/v1", "identity":{"authority":"fixture", "identity":"current"}, "observation":"current",
         "model":{"identity":"acme/orders", "version":"1.0.0"},
         "populations":[{"population":"ix://acme/orders/Fleet", "complete":true,
             "objects":[{"key":"g1", "type":"ix://acme/orders/Gadget", "fields":{"code":{"integer":"7"}}}]}]
@@ -679,8 +679,8 @@ fn replay_pre_call_limits_keep_the_full_owner_context_and_zero_evaluation_charge
     let mut fixture = replay_fixture();
     let path = fixture.corpus.join("inputs/request.json");
     let mut request: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    let supplied =
-        quire_semantic_value::supplied_stop::SuppliedLimits::default().with_admission_work_units(0);
+    let supplied = filament_semantic_value::supplied_stop::SuppliedLimits::default()
+        .with_admission_work_units(0);
     request["supplied_limits"] = json!({
         "admission_work_units":"0", "conversion_work_units":supplied.conversion_work_units().to_string(),
         "numeric_magnitude_bits":supplied.numeric_magnitude_bits().to_string()
@@ -688,13 +688,13 @@ fn replay_pre_call_limits_keep_the_full_owner_context_and_zero_evaluation_charge
     fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     let mut direct = fixture.native_replay.as_ref().unwrap().clone();
     direct.supplied_limits = Some(supplied);
-    let native = qsl_replay::replay(direct, qsl_replay::ReplayLimits::default()).unwrap();
+    let native = fsl_replay::replay(direct, fsl_replay::ReplayLimits::default()).unwrap();
     let stop = native
         .pre_call_limit()
         .expect("the native caller budget stops before evaluation");
     assert_eq!(
         stop.context.phase,
-        quire_semantic_value::supplied_stop::SuppliedPhase::Admission
+        filament_semantic_value::supplied_stop::SuppliedPhase::Admission
     );
     let expected: Value = serde_json::from_str(&native.to_function_json().unwrap()).unwrap();
     let mismatch = report(&fixture.execute(&[]));
@@ -884,18 +884,18 @@ fn population_subsetting_retains_inherited_redefined_optional_and_collection_val
     }
 }
 
-fn use_witness(fixture: &mut Fixture) -> qsl_replay::ReplayResult {
+fn use_witness(fixture: &mut Fixture) -> fsl_replay::ReplayResult {
     let request = fixture.native_replay.as_mut().unwrap();
-    let qsl_replay::ReplaySource::Input(assignments) = &request.source else {
+    let fsl_replay::ReplaySource::Input(assignments) = &request.source else {
         panic!("input fixture")
     };
     let transcript = format!(
         "<<<assertion|qualification|negative|{}=1>>>",
-        qsl_replay::witness_entry_name(&assignments[0].parameter).unwrap()
+        fsl_replay::witness_entry_name(&assignments[0].parameter).unwrap()
     );
     request.source =
-        qsl_replay::ReplaySource::Witness(qsl_replay::Witness::parse(&transcript).unwrap());
-    let result = qsl_replay::replay(request.clone(), qsl_replay::ReplayLimits::default()).unwrap();
+        fsl_replay::ReplaySource::Witness(fsl_replay::Witness::parse(&transcript).unwrap());
+    let result = fsl_replay::replay(request.clone(), fsl_replay::ReplayLimits::default()).unwrap();
     let path = fixture.corpus.join("inputs/request.json");
     let mut wire: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     wire["source"] = json!({"kind":"witness", "transcript":transcript});
@@ -911,16 +911,16 @@ fn use_witness(fixture: &mut Fixture) -> qsl_replay::ReplayResult {
 fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let mut fixture = replay_fixture();
     let native = use_witness(&mut fixture);
-    let qsl_replay::ReplayResult::Witness(arm) = &native else {
+    let fsl_replay::ReplayResult::Witness(arm) = &native else {
         panic!("witness arm")
     };
     assert_eq!(
         arm.settlement(),
-        qsl_replay::WitnessSettlement::ReproducedWithEvaluatedWitness
+        fsl_replay::WitnessSettlement::ReproducedWithEvaluatedWitness
     );
     assert_eq!(
         arm.value(),
-        Some(qsl_replay::EvaluatedValue::Boolean(false))
+        Some(fsl_replay::EvaluatedValue::Boolean(false))
     );
     assert!(
         arm.record().is_none(),
@@ -936,7 +936,7 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     assert_eq!(passed.outcome.code, 0, "{}", passed.outcome.stdout);
     assert_eq!(
         passed.outputs["V1-TOOL-004-operation"],
-        qsl_replay::OutcomeDocument::from_replay(&Ok(native))
+        fsl_replay::OutcomeDocument::from_replay(&Ok(native))
             .to_bytes()
             .unwrap()
     );
@@ -955,16 +955,16 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let true_source = FALSE.replace("x < 0", "x > 0");
     let mut true_fixture = replay_fixture_source(&true_source);
     let true_native = use_witness(&mut true_fixture);
-    let qsl_replay::ReplayResult::Witness(true_arm) = true_native else {
+    let fsl_replay::ReplayResult::Witness(true_arm) = true_native else {
         panic!("witness arm")
     };
     assert_eq!(
         true_arm.value(),
-        Some(qsl_replay::EvaluatedValue::Boolean(true))
+        Some(fsl_replay::EvaluatedValue::Boolean(true))
     );
     assert!(matches!(
         true_arm.disagreement(),
-        Some(qsl_replay::DisagreementCause::Verdicts { .. })
+        Some(fsl_replay::DisagreementCause::Verdicts { .. })
     ));
     let true_row = &true_fixture.value["vectors"][0]["expected"]["value"]["results"][0];
     assert_eq!(
@@ -976,7 +976,7 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let undefined_source = FALSE.replace("x < 0", "10 mod (x - 1) > 0");
     let mut undefined_fixture = replay_fixture_source(&undefined_source);
     let undefined_native = use_witness(&mut undefined_fixture);
-    let qsl_replay::ReplayResult::Witness(undefined_arm) = undefined_native else {
+    let fsl_replay::ReplayResult::Witness(undefined_arm) = undefined_native else {
         panic!("witness arm")
     };
     assert!(undefined_arm.value().is_none());
@@ -1005,7 +1005,7 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
 
 #[test]
 #[trace("TC-1325", "FR-350-AC-17")]
-#[trace("TC-1325", "QSpec-FR-336-AC-8")]
+#[trace("TC-1325", "FSpec-FR-336-AC-8")]
 fn replay_provision_paths_refuse_absent_unlisted_absolute_and_parent_traversal() {
     let fixture = replay_fixture();
     let path = fixture.corpus.join("inputs/request.json");

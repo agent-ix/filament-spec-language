@@ -3,23 +3,23 @@ id: TC-1190
 title: "The HP-2 product identity binds each SMT outcome to its item and instance"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-336
+  - target: ix://agent-ix/filament-spec-language/FR-336
     type: verifies
 ---
 # TC-1190: The HP-2 product identity binds each SMT outcome to its item and instance
 
 ## Description
 
-Verify that `encode_hyper_query` returns a QSL-minted, in-process
+Verify that `encode_hyper_query` returns an FSL-minted, in-process
 `HyperProductIdentity` made of the clause occurrence, the subject
-identities and the instance, that a caller depending only on `qsl-replay`
+identities and the instance, that a caller depending only on `fsl-replay`
 can name it from its `replay` module but cannot build, serialize or
 deserialize it, that its refusals come in their stated order, that
-`SubjectIdentity` is `qsl-replay`'s order-independent type, and that
+`SubjectIdentity` is `fsl-replay`'s order-independent type, and that
 `settle_hyper_smt` settles an HP-2 SMT outcome only for the item and
 instance its identity names, checking any witness itself.
 
@@ -49,16 +49,16 @@ Scope: FR-315-AC-12 to FR-315-AC-14, FR-315-AC-49, FR-315-AC-51, FR-315-AC-52, F
    consumed counters. Call both for `NonInterference` as S3 checked it,
    before any package assembled it; for `NonInterference` over a subject
    whose `snapshots` provision lacks an initial state's document; and,
-   inside `qsl-replay`'s tests, for the clause altered after S3 so that its
+   inside `fsl-replay`'s tests, for the clause altered after S3 so that its
    parameter names an alias the clause does not hold.
-4. Build a test crate whose only QSL dependency is `qsl-replay`, whose
+4. Build a test crate whose only FSL dependency is `fsl-replay`, whose
    `replay` module names `HyperProductIdentity`, `HyperQuery`,
    `HyperQueryRequest`, `SubjectIdentity` and `HyperSmtOutcome` and calls
    `encode_hyper_query`, `HyperProductIdentity::of` and `settle_hyper_smt`.
    Add three compile-fail cases: a struct literal of
    `HyperProductIdentity`, serializing one, and deserializing one.
-5. Call `qsl_replay::SubjectIdentity::of` over FR-336-AC-4's subject and
-   compare it with the identity `qsl-analyze`'s request path writes into
+5. Call `fsl_replay::SubjectIdentity::of` over FR-336-AC-4's subject and
+   compare it with the identity `fsl-analyze`'s request path writes into
    the item; repeat with its initial states, its universe's keys and its
    proof bounds each in reverse order and compare identities and hashes.
 6. With `settle_hyper_smt` for the `NonInterference` item at instance `v`,
@@ -117,7 +117,7 @@ Tag the tests `#[trace("TC-1190", "FR-315-AC-n")]`,
   `ItemIdentity` carrying `instance-binding` for the empty instance.
 - Step 7: `inconclusive`, `BoundReached{depth: 2}`, method `smt-unrolling`;
   `refuted`, `decisive-counterexample`, method `smt-unrolling`, from
-  QSL's own replay; no record and
+  FSL's own replay; no record and
   `ProductMismatch` naming `instance` for the `w` lasso, never `refuted`;
   `refuted`, `UndefinedEvaluation`, method `k-induction`; `inconclusive`,
   `InductionNotClosed{depth: 1}`, method `k-induction`;

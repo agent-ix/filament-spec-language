@@ -3,7 +3,7 @@ id: TC-1034
 title: "Navigation reads an extent: its charges, dangling before the count bound, and cardinality refusals"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: verifies
 ---
 # TC-1034: Navigation reads an extent: its charges, dangling before the count bound, and cardinality refusals
@@ -21,7 +21,7 @@ Scope: FR-364-AC-3, FR-364-AC-5, FR-364-AC-6, FR-364-AC-7, FR-364-AC-8, FR-364-A
 
 Use TC-1033's fixture **orders** and its variants. A navigation is written
 `navigate(role, r)`: the role names the end nearest the receiver, as FR-363
-and QSpec FR-322 resolve it (the source end's role is the forward traversal
+and FSpec FR-322 resolve it (the source end's role is the forward traversal
 from a `Sys`, `Pump` or other source-type receiver; the target end's role is
 the inverse traversal from a target-type receiver), the receiver reference is
 `r`, and the multiplicity bound is the destination end's. The site is already
@@ -29,7 +29,7 @@ resolved: direction is the checker's, so a row that traverses an inverse role
 sets the relationship `undirected` or `target-to-source` or
 `bidirectional`. Every `ScalarLimitsV1` counter is unlimited unless a
 row sets one. Charges are the `model.navigate` schedule of
-`quire.value.accounting/v1`, listed in order with the `value_occurrences` of
+`filament.value.accounting/v1`, listed in order with the `value_occurrences` of
 the charge when it is not the default; the work and result units are the sums
 of the charges listed. Extents are complete unless a row says otherwise.
 Tag the tests `#[trace("TC-1034", "FR-364-AC-n")]`.

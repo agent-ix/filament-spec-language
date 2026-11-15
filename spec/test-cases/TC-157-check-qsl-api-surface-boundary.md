@@ -3,7 +3,7 @@ id: TC-157
 title: "Report pending, passing and failing T-12 API-surface rules"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: verifies
 ---
 # TC-157: Report pending, passing and failing T-12 API-surface rules
@@ -17,7 +17,7 @@ as `failing` with file, line and module named, respects `::`-segment module
 matching (a textual prefix that is not a segment boundary, such as
 `model_query` under a `model` allow-list, is not treated as allowed), and
 reproduces the real, current pending/failing/passing state of
-the live rules against QSL's own head. T12-B, T12-C, T12-D and T12-F are
+the live rules against FSL's own head. T12-B, T12-C, T12-D and T12-F are
 RETIRED (the constructors they guarded no longer exist). Scope: FR-060-AC-1 through FR-060-AC-4.
 
 ## Test Procedure
@@ -33,7 +33,7 @@ RETIRED (the constructors they guarded no longer exist). Scope: FR-060-AC-1 thro
 4. Construct a source tree with a module literally named `model_query`
    containing a call to a protected constructor, under a rule whose
    allowed caller is `model`. Run the check.
-5. Run `arch-lint api-surface` against QSL's real source tree at head.
+5. Run `arch-lint api-surface` against FSL's real source tree at head.
 
 ## Expected Results
 
@@ -55,5 +55,5 @@ RETIRED (the constructors they guarded no longer exist). Scope: FR-060-AC-1 thro
 
 ## Dependencies
 
-**Upstream:** [FR-060](../functional/FR-060-check-qsl-api-surface-boundary.md).
+**Upstream:** [FR-060](../functional/FR-060-check-fsl-api-surface-boundary.md).
 **Downstream:** none.

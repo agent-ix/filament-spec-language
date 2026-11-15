@@ -1,0 +1,927 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-338 "Canonical translation state" (ADR-018 LA-2, §12): the canonical
+//! key of a property-automaton state, and the safety translation of the two
+//! items EN-1 decides today, a TP-1 clause `always holds(A)` and FR-124's
+//! deadlock-freedom item `always holds(not deadlocked)`.
+//!
+//! An [`AutomatonStateKey`] is the RFC 8785 canonical UTF-8 octets of
+//! `["filament.automaton-state-key/v1", context, state]`, written by
+//! `quire-canonical`'s one encoder. `context` is `[root, profile, activation,
+//! binding]` ([`StateContext`]); `state` is one closed alternative of the
+//! translation's structural algebra. For a safety item it is `["safety",
+//! branches]`: the viable elementary configurations of the formula itself,
+//! each `[obligations, past, windows, acceptance]`. The key is a function of
+//! these facts alone, never of the order states were reached, and no graph
+//! index enters it.
+//!
+//! The safety shape above describes [`SafetyTranslation`]. The general
+//! [`PropertyAutomaton::state_key`] encoder uses the same outer discriminator
+//! and a context for the automaton kind, subject algebra, lowered formula and
+//! activation, followed by the reached translation configuration.
+//!
+//! Both items here are `G a` over one current atom. Reading a letter expands
+//! the carried root: the atom is discharged when it holds and removes the
+//! branch otherwise, and `G a` is carried to the next position. So the
+//! translation has exactly two states, the carried root ([`SafetyState::
+//! Carried`], `["safety",[[[[[],"positive"]],[],[],[]]]]`) and the one
+//! rejecting state ([`SafetyState::Rejected`], `["safety",[]]`), which is
+//! absorbing. Neither formula has a past, interval or least-fixed-point
+//! occurrence, so `past`, `windows` and `acceptance` are empty in every state,
+//! and an imported key with a member there resolves in no occurrence of the
+//! formula. The other forms of FR-338's algebra (bounded, TP-3 with
+//! intervals, Büchi) belong to the EN-1 phases that decide them; a clause of
+//! another shape is not translated here.
+//!
+//! [`SafetyStates`] is the general `["safety", branches]` algebra of any
+//! unbounded-profile clause over an ordinary or a protocol subject (the
+//! subject selects the past-window and finite `F`/`U` acceptance forms):
+//! obligations, past memory, interval windows and
+//! acceptance membership (`key_state.rs`), which it writes sorted and admits
+//! by resolving every member in the clause's formula.
+
+use filament_exact::{NodeKey, Value};
+use filament_semantic_value::fairness::PropertyForm;
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::IdentityLimits;
+use fsl_semantics::check::{
+    Activation, CheckedTemporalClause, FormulaNode, FormulaNodeId, TemporalProfile, UnaryTemporal,
+};
+use quire_canonical::{Limits, Node, NodeRef};
+
+use super::key_state::{safety_enc, Configuration, FormulaShape, Polarity, Reader};
+use crate::simulation::model::encode::{untyped_value_enc, Enc};
+
+/// The discriminator of a key's octet encoding (not a digest domain).
+pub const AUTOMATON_STATE_KEY_V1: &str = "filament.automaton-state-key/v1";
+
+/// The root of the derived deadlock-freedom item's context.
+const DEADLOCK_FREEDOM: &str = "deadlock-freedom";
+const RACE_FREEDOM: &str = "race-freedom";
+
+/// FR-338's `AutomatonStateKey`: the complete canonical octets of one
+/// automaton state under its context. Equality compares complete octets;
+/// order is ascending unsigned lexicographic octet order.
+///
+/// A [`SafetyTranslation`] builds a key by encoding one of its states or by
+/// admitting octets against its context. [`PropertyAutomaton::state_key`](super::PropertyAutomaton::state_key)
+/// uses the same type for reached bounded, safety and liveness states.
+/// [`AutomatonStateKey::imported`]
+/// wraps octets read from a certificate as they arrived: such a key is
+/// unadmitted, and a checker admits it against its own context before it
+/// is used for membership.
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AutomatonStateKey(pub(super) Vec<u8>);
+
+impl std::fmt::Debug for AutomatonStateKey {
+    /// The key's octets as text: a key is canonical UTF-8 JSON.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("AutomatonStateKey")
+            .field(&String::from_utf8_lossy(&self.0))
+            .finish()
+    }
+}
+
+impl AutomatonStateKey {
+    /// The octets of a key as a certificate carried them, not yet admitted.
+    pub fn imported(octets: Vec<u8>) -> Self {
+        Self(octets)
+    }
+
+    /// The key's canonical UTF-8 octets.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// The one FR-338 envelope writer used by every automaton representation.
+/// Form-specific translators only supply their checked context and typed
+/// state algebra; they do not define another byte-key scheme.
+pub(crate) fn canonical_state_key(
+    context: &Enc,
+    state: Enc,
+    max_bytes: u64,
+) -> Result<AutomatonStateKey, quire_canonical::Error> {
+    canonical_key_value(&canonical_state_key_value(context, state), max_bytes)
+}
+
+/// The FR-338 envelope value, shared by the writer and product-key callers.
+pub(crate) fn canonical_state_key_value(context: &Enc, state: Enc) -> Enc {
+    Enc::Array(vec![
+        Enc::text(AUTOMATON_STATE_KEY_V1),
+        context.clone(),
+        state,
+    ])
+}
+
+/// Encode an already assembled FR-338 key value with the shared bounded
+/// canonical writer.
+pub(crate) fn canonical_key_value(
+    value: &Enc,
+    max_bytes: u64,
+) -> Result<AutomatonStateKey, quire_canonical::Error> {
+    quire_canonical::to_vec(value, Limits::new(max_bytes)).map(AutomatonStateKey)
+}
+
+/// The root of a [`StateContext`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContextRoot {
+    /// An authored clause, by its checked occurrence: `[node, role,
+    /// ordinal]`.
+    Clause(OccurrenceKey),
+    /// The derived deadlock-freedom item: `["deadlock-freedom"]`.
+    DeadlockFreedom,
+    /// The derived race-freedom item (FR-224): `["race-freedom"]`.
+    RaceFreedom,
+}
+
+/// A context's activation: `"origin"` or `"each"` for a bounded monitor,
+/// `"each-when"` for an `on each` activation with a `when` condition under
+/// any profile, `"each"` for an unguarded infinite-trace TP-4 `on each`
+/// clause, `"infinite"` otherwise.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContextActivation {
+    /// A bounded monitor activated at the origin.
+    Origin,
+    /// A bounded monitor activated at each position, or an unguarded
+    /// infinite-trace TP-4 clause with `on each`.
+    Each,
+    /// An infinite-trace automaton.
+    Infinite,
+    /// An `on each` activation with a `when` condition (FR-338 "Guarded `on
+    /// each` activation"), under any profile.
+    EachWhen,
+}
+
+impl ContextActivation {
+    /// The activation's spelling in a key.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Origin => "origin",
+            Self::Each => "each",
+            Self::Infinite => "infinite",
+            Self::EachWhen => "each-when",
+        }
+    }
+}
+
+/// One entry of a context's binding: a parameter node of the item and the
+/// complete typed value bound to it.
+#[derive(Clone, Debug)]
+pub struct ContextBinding {
+    /// The parameter's checked node.
+    pub parameter: NodeKey,
+    /// The value it is bound to, written in FSpec FR-181's typed canonical
+    /// form.
+    pub value: ContextBindingValue,
+}
+
+/// FR-338 distinguishes over-instance keys from ordinary typed arguments.
+#[derive(Clone, Debug)]
+pub enum ContextBindingValue {
+    /// A concrete over instance, identified by its actual authored key.
+    Instance(String),
+    /// An ordinary argument in the complete FR-181 typed canonical form.
+    Value(Value),
+}
+
+impl ContextBinding {
+    /// Bind an actual checked over parameter to its concrete instance key.
+    pub fn instance(parameter: NodeKey, key: impl Into<String>) -> Self {
+        Self {
+            parameter,
+            value: ContextBindingValue::Instance(key.into()),
+        }
+    }
+
+    /// Bind an ordinary argument, including an ordinary reference argument.
+    pub fn value(parameter: NodeKey, value: Value) -> Self {
+        Self {
+            parameter,
+            value: ContextBindingValue::Value(value),
+        }
+    }
+}
+
+/// FR-338's key context `[root, profile, activation, binding]`. It does not
+/// copy the model subject: the certificate request binds the subject.
+#[derive(Clone, Debug)]
+pub struct StateContext {
+    /// The item's root.
+    pub root: ContextRoot,
+    /// The admitted temporal profile.
+    pub profile: TemporalProfile,
+    /// The activation.
+    pub activation: ContextActivation,
+    /// The item's concrete binding, in the item's binding order; `[]` for a
+    /// parameter-free item.
+    pub binding: Vec<ContextBinding>,
+}
+
+impl StateContext {
+    /// The derived deadlock-freedom item's context: `[["deadlock-freedom"],
+    /// "filament.temporal.infinite-trace/v1", "infinite", []]`.
+    pub fn deadlock_freedom() -> Self {
+        Self {
+            root: ContextRoot::DeadlockFreedom,
+            profile: TemporalProfile::InfiniteTrace,
+            activation: ContextActivation::Infinite,
+            binding: Vec::new(),
+        }
+    }
+
+    /// The derived race-freedom item's context: `[["race-freedom"],
+    /// "filament.temporal.infinite-trace/v1", "infinite", []]`.
+    pub fn race_freedom() -> Self {
+        Self {
+            root: ContextRoot::RaceFreedom,
+            profile: TemporalProfile::InfiniteTrace,
+            activation: ContextActivation::Infinite,
+            binding: Vec::new(),
+        }
+    }
+
+    /// The context of `clause` at `occurrence` under `binding`: its profile
+    /// and activation are the checked clause's own.
+    pub fn clause(
+        clause: &CheckedTemporalClause,
+        occurrence: OccurrenceKey,
+        binding: Vec<ContextBinding>,
+    ) -> Self {
+        let profile = clause.profile();
+        // An unguarded infinite-trace TP-4 `on each` clause is keyed under
+        // "each" (`["each-buchi", phase, branch]`).
+        let each_buchi = profile == TemporalProfile::InfiniteTrace
+            && clause.activation() == (Activation::Each { guarded: false })
+            && is_tp4(clause);
+        let activation = match (profile.is_bounded(), clause.activation()) {
+            (_, Activation::Each { guarded: true }) => ContextActivation::EachWhen,
+            (false, _) if each_buchi => ContextActivation::Each,
+            (false, _) => ContextActivation::Infinite,
+            (true, Activation::Origin) => ContextActivation::Origin,
+            (true, Activation::Each { .. }) => ContextActivation::Each,
+        };
+        Self {
+            root: ContextRoot::Clause(occurrence),
+            profile,
+            activation,
+            binding,
+        }
+    }
+
+    /// The context's encoding tree and its canonical octets, which an
+    /// admitted key's context must equal.
+    pub(super) fn encoded(&self, max_bytes: u64) -> Result<(Enc, Vec<u8>), KeyRefusal> {
+        let context = self.enc();
+        let octets = quire_canonical::to_vec(&context, Limits::new(max_bytes))
+            .map_err(|_| KeyRefusal::Encoding)?;
+        Ok((context, octets))
+    }
+
+    fn enc(&self) -> Enc {
+        let root = match &self.root {
+            ContextRoot::Clause(occurrence) => Enc::Array(vec![
+                node_enc(occurrence.node()),
+                Enc::text(occurrence.origin().role().as_str()),
+                Enc::text(occurrence.origin().ordinal().to_string()),
+            ]),
+            ContextRoot::DeadlockFreedom => Enc::Array(vec![Enc::text(DEADLOCK_FREEDOM)]),
+            ContextRoot::RaceFreedom => Enc::Array(vec![Enc::text(RACE_FREEDOM)]),
+        };
+        let binding = self
+            .binding
+            .iter()
+            .map(|entry| {
+                Enc::Array(vec![
+                    node_enc(&entry.parameter),
+                    match &entry.value {
+                        ContextBindingValue::Instance(key) => {
+                            Enc::Array(vec![Enc::text("instance"), Enc::text(key)])
+                        }
+                        ContextBindingValue::Value(value) => untyped_value_enc(value),
+                    },
+                ])
+            })
+            .collect();
+        Enc::Array(vec![
+            root,
+            Enc::text(self.profile.identity()),
+            Enc::text(self.activation.as_str()),
+            Enc::Array(binding),
+        ])
+    }
+}
+
+/// FR-322's NodeId object.
+fn node_enc(node: &NodeKey) -> Enc {
+    Enc::Node(node.clone())
+}
+
+/// A state of a [`SafetyTranslation`].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum SafetyState {
+    /// The root `G a` is carried: `["safety",[[[[[],"positive"]],[],[],[]]]]`.
+    Carried,
+    /// The unique rejecting state, `["safety",[]]`; absorbing.
+    Rejected,
+}
+
+impl SafetyState {
+    /// Whether the state rejects.
+    pub const fn is_rejecting(self) -> bool {
+        matches!(self, Self::Rejected)
+    }
+
+    fn enc(self) -> Enc {
+        let branches = match self {
+            Self::Carried => vec![Enc::Array(vec![
+                Enc::Array(vec![root_obligation()]),
+                Enc::Array(Vec::new()),
+                Enc::Array(Vec::new()),
+                Enc::Array(Vec::new()),
+            ])],
+            Self::Rejected => Vec::new(),
+        };
+        Enc::Array(vec![Enc::text("safety"), Enc::Array(branches)])
+    }
+}
+
+/// The root occurrence `[[], "positive"]`.
+fn root_obligation() -> Enc {
+    Enc::Array(vec![Enc::Array(Vec::new()), Enc::text("positive")])
+}
+
+/// What a [`SafetyTranslation`] translates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SafetyItem {
+    /// A TP-1 clause `always holds(A)`, with its `holds` atom.
+    ReachableInvariant {
+        /// The clause's `holds` atom.
+        atom: FormulaNodeId,
+    },
+    /// FR-124's deadlock-freedom item, `always holds(not deadlocked)`.
+    DeadlockFreedom,
+    /// FR-224's race-freedom item, `always holds(not raced)`.
+    RaceFreedom,
+}
+
+/// A clause this module does not translate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("the clause is not a form with a canonical translation: a reachable invariant `always holds(A)` under infinite-trace, or a bounded `eventually[0,u]` or `always[0,u]` over one `holds(A)` on origin")]
+pub struct NotTranslated;
+
+/// Why octets are not admitted as a key of a translation's context, or a key
+/// could not be encoded (FR-338 admission negatives).
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum KeyRefusal {
+    /// The octets are not one JSON value within the identity byte budget.
+    #[error("the key is not one JSON value within the identity byte budget")]
+    Malformed,
+    /// The octets are JSON but not their own RFC 8785 encoding.
+    #[error("the key is not its own RFC 8785 canonical encoding")]
+    NotCanonical,
+    /// The outer array is not `[discriminator, context, state]`.
+    #[error("the key is not a three-member array")]
+    Shape,
+    /// The discriminator is not `filament.automaton-state-key/v1`.
+    #[error("the key's discriminator is not {AUTOMATON_STATE_KEY_V1}")]
+    Discriminator,
+    /// The context is not this item's: another clause, profile, activation
+    /// or binding.
+    #[error("the key's context is not this item's")]
+    ForeignContext,
+    /// The state's tag is not a state alternative of FR-338's algebra.
+    #[error("the state tag {0:?} is not a state alternative")]
+    UnknownTag(String),
+    /// The state is an alternative of another form than this item's.
+    #[error("the state alternative {0:?} is not this item's form")]
+    WrongForm(String),
+    /// A state member is missing, extra, or of the wrong JSON type.
+    #[error("the state has a missing, extra or mistyped member")]
+    Members,
+    /// An unsigned integer is not a canonical decimal string in the u64
+    /// domain.
+    #[error("{0:?} is not a canonical unsigned decimal string")]
+    Decimal(String),
+    /// A set is unsorted or holds a duplicate.
+    #[error("a set is unsorted or holds a duplicate")]
+    Order,
+    /// A member names no occurrence of the item's formula with the matching
+    /// operator, polarity and bounds.
+    #[error("a member resolves in no occurrence of the item's formula")]
+    Unresolved,
+    /// The state is well formed but is not a state of this translation.
+    #[error("the state is not a state of this item's translation")]
+    Unreachable,
+    /// The state is well formed and resolves, but is not in FR-338's normal
+    /// form: a branch an obligation-free branch subsumes, or acceptance
+    /// membership that disagrees with what is carried.
+    #[error("the state is not in FR-338's normal form")]
+    NonNormal,
+    /// The key exceeds the identity byte budget or a bound value has no
+    /// typed canonical form.
+    #[error("the key has no canonical encoding within the identity byte budget")]
+    Encoding,
+}
+
+/// The canonical safety translation of one item under one context
+/// (FR-338): the automaton both EN-1 and the core's closure checker read.
+#[derive(Clone, Debug)]
+pub struct SafetyTranslation {
+    item: SafetyItem,
+    /// The context, and its canonical octets, which an admitted key's
+    /// context must equal.
+    context: Enc,
+    context_octets: Vec<u8>,
+    max_bytes: u64,
+}
+
+impl SafetyTranslation {
+    /// The translation of the deadlock-freedom item.
+    ///
+    /// # Errors
+    ///
+    /// [`KeyRefusal::Encoding`] when the context does not encode within the
+    /// identity byte budget.
+    pub fn deadlock_freedom() -> Result<Self, KeyRefusal> {
+        Self::new(
+            SafetyItem::DeadlockFreedom,
+            &StateContext::deadlock_freedom(),
+        )
+    }
+
+    /// The translation of the race-freedom item.
+    ///
+    /// # Errors
+    ///
+    /// [`KeyRefusal::Encoding`] when the context does not encode within the
+    /// identity byte budget.
+    pub fn race_freedom() -> Result<Self, KeyRefusal> {
+        Self::new(SafetyItem::RaceFreedom, &StateContext::race_freedom())
+    }
+
+    /// The translation of the TP-1 clause `clause` under `context`.
+    ///
+    /// # Errors
+    ///
+    /// [`TranslationRefusal::NotTranslated`] when the clause is not `always
+    /// holds(A)` under infinite-trace or `context` names another profile;
+    /// [`TranslationRefusal::Key`] when the context does not encode.
+    pub fn reachable_invariant(
+        clause: &CheckedTemporalClause,
+        context: &StateContext,
+    ) -> Result<Self, TranslationRefusal> {
+        let atom =
+            invariant_atom(clause).ok_or(TranslationRefusal::NotTranslated(NotTranslated))?;
+        if clause.profile() != TemporalProfile::InfiniteTrace
+            || context.profile != clause.profile()
+            || context.activation != ContextActivation::Infinite
+        {
+            return Err(TranslationRefusal::NotTranslated(NotTranslated));
+        }
+        Self::new(SafetyItem::ReachableInvariant { atom }, context).map_err(TranslationRefusal::Key)
+    }
+
+    fn new(item: SafetyItem, context: &StateContext) -> Result<Self, KeyRefusal> {
+        let max_bytes = IdentityLimits::default().input_bytes;
+        let (context, context_octets) = context.encoded(max_bytes)?;
+        Ok(Self {
+            item,
+            context,
+            context_octets,
+            max_bytes,
+        })
+    }
+
+    /// What the translation translates.
+    pub const fn item(&self) -> SafetyItem {
+        self.item
+    }
+
+    /// The state after reading a position whose atom is `holds`, from
+    /// `before`, or from the initial root obligation when `before` is
+    /// `None` (position zero).
+    pub fn read(&self, before: Option<SafetyState>, holds: bool) -> SafetyState {
+        match before {
+            Some(SafetyState::Rejected) => SafetyState::Rejected,
+            None | Some(SafetyState::Carried) if holds => SafetyState::Carried,
+            None | Some(SafetyState::Carried) => SafetyState::Rejected,
+        }
+    }
+
+    /// The canonical key of `state` under this translation's context.
+    ///
+    /// # Errors
+    ///
+    /// [`KeyRefusal::Encoding`] when the key exceeds the identity byte
+    /// budget; no truncated key is produced.
+    pub fn key(&self, state: SafetyState) -> Result<AutomatonStateKey, KeyRefusal> {
+        canonical_state_key(&self.context, state.enc(), self.max_bytes)
+            .map_err(|_| KeyRefusal::Encoding)
+    }
+
+    /// Admit `octets` as a key of this translation's context, refusing every
+    /// FR-338 admission negative before the key is used for membership.
+    ///
+    /// # Errors
+    ///
+    /// The first [`KeyRefusal`] the octets meet.
+    pub fn admit(&self, octets: &[u8]) -> Result<(AutomatonStateKey, SafetyState), KeyRefusal> {
+        admit_envelope(&self.context_octets, self.max_bytes, octets, |state| {
+            self.state(state)
+        })
+    }
+
+    /// The safety state `body` encodes. `#[string_edge]`: reads an imported
+    /// key's state tag by its wire spelling.
+    #[ix_trace_rs::string_edge]
+    fn state(&self, body: NodeRef<'_>) -> Result<SafetyState, KeyRefusal> {
+        let Node::Array(mut items) = body.node() else {
+            return Err(KeyRefusal::Members);
+        };
+        let tag = match items.next().map(|tag| tag.node()) {
+            Some(Node::String(tag)) => tag,
+            _ => return Err(KeyRefusal::Members),
+        };
+        match tag {
+            "safety" => {}
+            "bounded" | "accept" | "reject" | "buchi" | "guarded-buchi" | "each-buchi" => {
+                return Err(KeyRefusal::WrongForm(tag.to_owned()))
+            }
+            other => return Err(KeyRefusal::UnknownTag(other.to_owned())),
+        }
+        let [branches] = exactly(items).ok_or(KeyRefusal::Members)?;
+        let Node::Array(branches) = branches.node() else {
+            return Err(KeyRefusal::Members);
+        };
+        let mut carried = 0_usize;
+        let mut count = 0_usize;
+        let mut previous: Option<Vec<u8>> = None;
+        for branch in branches {
+            ascending(&mut previous, canonical(branch, self.max_bytes)?)?;
+            count += 1;
+            if self.configuration(branch)? {
+                carried += 1;
+            }
+        }
+        match (count, carried) {
+            (0, _) => Ok(SafetyState::Rejected),
+            (1, 1) => Ok(SafetyState::Carried),
+            _ => Err(KeyRefusal::Unreachable),
+        }
+    }
+
+    /// Check one elementary configuration `[obligations, past, windows,
+    /// acceptance]`; whether it is exactly the carried root.
+    fn configuration(&self, branch: NodeRef<'_>) -> Result<bool, KeyRefusal> {
+        let Node::Array(members) = branch.node() else {
+            return Err(KeyRefusal::Members);
+        };
+        let [obligations, past, windows, acceptance] =
+            exactly(members).ok_or(KeyRefusal::Members)?;
+        for fact in [past, windows, acceptance] {
+            let Node::Array(mut entries) = fact.node() else {
+                return Err(KeyRefusal::Members);
+            };
+            // Neither translated formula has a past, interval or
+            // least-fixed-point occurrence for an entry to name.
+            if entries.next().is_some() {
+                return Err(KeyRefusal::Unresolved);
+            }
+        }
+        let Node::Array(obligations) = obligations.node() else {
+            return Err(KeyRefusal::Members);
+        };
+        let mut previous: Option<Vec<u8>> = None;
+        let mut root = false;
+        for obligation in obligations {
+            ascending(&mut previous, canonical(obligation, self.max_bytes)?)?;
+            root |= self.obligation(obligation)?;
+        }
+        if !root {
+            // An obligation-free branch is true; `G a` never reaches it.
+            return Err(KeyRefusal::Unreachable);
+        }
+        Ok(true)
+    }
+
+    /// Check one obligation `[o, s]`; it must be the carried root `G a`,
+    /// the formula's one signed occurrence a state carries.
+    fn obligation(&self, obligation: NodeRef<'_>) -> Result<bool, KeyRefusal> {
+        let Node::Array(members) = obligation.node() else {
+            return Err(KeyRefusal::Members);
+        };
+        let members: Vec<NodeRef<'_>> = members.collect();
+        let (path, polarity) = match members.as_slice() {
+            [path, polarity] => (*path, *polarity),
+            // An interval obligation: neither formula has an interval.
+            [path, polarity, _, _] => {
+                self.path(*path)?;
+                self.polarity(*polarity)?;
+                return Err(KeyRefusal::Unresolved);
+            }
+            _ => return Err(KeyRefusal::Members),
+        };
+        let path = self.path(path)?;
+        let positive = self.polarity(polarity)?;
+        if path.is_empty() && positive {
+            Ok(true)
+        } else {
+            Err(KeyRefusal::Unresolved)
+        }
+    }
+
+    /// An occurrence path: canonical decimal operand positions.
+    fn path(&self, path: NodeRef<'_>) -> Result<Vec<u64>, KeyRefusal> {
+        let Node::Array(steps) = path.node() else {
+            return Err(KeyRefusal::Members);
+        };
+        steps
+            .map(|step| match step.node() {
+                Node::String(text) => decimal(text),
+                _ => Err(KeyRefusal::Members),
+            })
+            .collect()
+    }
+
+    /// A polarity; whether it is positive.
+    fn polarity(&self, polarity: NodeRef<'_>) -> Result<bool, KeyRefusal> {
+        match polarity.node() {
+            Node::String("positive") => Ok(true),
+            Node::String("negative") => Ok(false),
+            _ => Err(KeyRefusal::Members),
+        }
+    }
+}
+
+/// Admit `octets` as one key under the context whose canonical octets are
+/// `context_octets`: every envelope refusal, then `read` of the state body.
+pub(super) fn admit_envelope<T>(
+    context_octets: &[u8],
+    max_bytes: u64,
+    octets: &[u8],
+    read: impl FnOnce(NodeRef<'_>) -> Result<T, KeyRefusal>,
+) -> Result<(AutomatonStateKey, T), KeyRefusal> {
+    let document = quire_canonical::read(octets, max_bytes).map_err(|_| KeyRefusal::Malformed)?;
+    if canonical(document.root(), max_bytes)? != octets {
+        return Err(KeyRefusal::NotCanonical);
+    }
+    let Node::Array(items) = document.root().node() else {
+        return Err(KeyRefusal::Shape);
+    };
+    let [discriminator, context, state] = exactly(items).ok_or(KeyRefusal::Shape)?;
+    if !matches!(discriminator.node(), Node::String(AUTOMATON_STATE_KEY_V1)) {
+        return Err(KeyRefusal::Discriminator);
+    }
+    if canonical(context, max_bytes)? != context_octets {
+        return Err(KeyRefusal::ForeignContext);
+    }
+    let state = read(state)?;
+    Ok((AutomatonStateKey(octets.to_vec()), state))
+}
+
+/// Whether `clause` is a TP-4 (liveness) clause: its checked property form
+/// when it has one, else its formula's shape.
+pub(super) fn is_tp4(clause: &CheckedTemporalClause) -> bool {
+    clause.property_form().map_or_else(
+        || {
+            FormulaShape::of(clause.formula(), Polarity::Positive)
+                .is_some_and(|shape| shape.is_liveness())
+        },
+        |form| form == PropertyForm::Liveness,
+    )
+}
+
+/// The kind of subject a clause ranges over: FR-338 fixes its past-window
+/// and acceptance forms by it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubjectKind {
+    /// An ordinary operation subject: every step counts.
+    Ordinary,
+    /// A protocol subject (ADR-027): steps count by kind.
+    Protocol,
+}
+
+/// The safety translation of a checked clause whose states carry the whole
+/// `["safety", branches]` algebra (FR-338): obligations, past memory, interval
+/// windows and acceptance membership, resolved in the clause's own formula.
+///
+/// [`SafetyTranslation`] is the two-state special case EN-1 decides for
+/// `always holds(A)`. This type writes and admits the keys of any
+/// configuration set the checked formula can reach, but does not itself
+/// decide which sets a run reaches.
+#[derive(Clone, Debug)]
+pub struct SafetyStates {
+    context: Enc,
+    context_octets: Vec<u8>,
+    max_bytes: u64,
+    shape: FormulaShape,
+    subject: SubjectKind,
+}
+
+impl SafetyStates {
+    /// The states of the unbounded-profile clause `clause` over a `subject`
+    /// under `context`.
+    ///
+    /// # Errors
+    ///
+    /// [`TranslationRefusal::NotTranslated`] when the clause is under a
+    /// profile other than infinite-trace, is a liveness clause,
+    /// holds a timed interval, has more operand paths than the path bound,
+    /// or `context` names another profile; [`TranslationRefusal::Key`] when
+    /// the context does not encode.
+    pub fn clause(
+        clause: &CheckedTemporalClause,
+        context: &StateContext,
+        subject: SubjectKind,
+    ) -> Result<Self, TranslationRefusal> {
+        let not_translated = || TranslationRefusal::NotTranslated(NotTranslated);
+        if clause.profile() != TemporalProfile::InfiniteTrace || context.profile != clause.profile()
+        {
+            return Err(not_translated());
+        }
+        let shape =
+            FormulaShape::of(clause.formula(), Polarity::Positive).ok_or_else(not_translated)?;
+        // A TP-4 clause is keyed by `BuchiStates`, not as a safety state.
+        if is_tp4(clause) {
+            return Err(not_translated());
+        }
+        let max_bytes = IdentityLimits::default().input_bytes;
+        let (context, context_octets) = context
+            .encoded(max_bytes)
+            .map_err(TranslationRefusal::Key)?;
+        Ok(Self {
+            context,
+            context_octets,
+            max_bytes,
+            shape,
+            subject,
+        })
+    }
+
+    /// The canonical key of the state whose viable configurations are
+    /// `branches`, in any order and with any set order inside them: every
+    /// set is written sorted and duplicate-free.
+    ///
+    /// # Errors
+    ///
+    /// [`KeyRefusal::Encoding`] when the key exceeds the identity byte
+    /// budget; no truncated key is produced. Any other [`KeyRefusal`] when the
+    /// facts, after the earliest-deadline, furthest-extent, offset-union and
+    /// obligation-free-subsumption normalization, are a state this context
+    /// would refuse.
+    pub fn key(&self, branches: &[Configuration]) -> Result<AutomatonStateKey, KeyRefusal> {
+        let key = canonical_state_key(
+            &self.context,
+            safety_enc(branches, self.max_bytes)?,
+            self.max_bytes,
+        )
+        .map_err(|_| KeyRefusal::Encoding)?;
+        // A key is written only if this context would admit it back.
+        self.admit(key.as_bytes())?;
+        Ok(key)
+    }
+
+    /// Admit `octets` as a safety key of this clause's context, resolving
+    /// every member in its formula, and return the configurations it holds.
+    ///
+    /// # Errors
+    ///
+    /// The first [`KeyRefusal`] the octets meet.
+    pub fn admit(
+        &self,
+        octets: &[u8],
+    ) -> Result<(AutomatonStateKey, Vec<Configuration>), KeyRefusal> {
+        admit_envelope(&self.context_octets, self.max_bytes, octets, |state| {
+            self.state(state)
+        })
+    }
+
+    /// The configurations `body` encodes. `#[string_edge]`: reads an
+    /// imported key's state tag by its wire spelling.
+    #[ix_trace_rs::string_edge]
+    fn state(&self, body: NodeRef<'_>) -> Result<Vec<Configuration>, KeyRefusal> {
+        let Node::Array(mut items) = body.node() else {
+            return Err(KeyRefusal::Members);
+        };
+        let tag = match items.next().map(|tag| tag.node()) {
+            Some(Node::String(tag)) => tag,
+            _ => return Err(KeyRefusal::Members),
+        };
+        match tag {
+            "safety" => {}
+            "bounded" | "accept" | "reject" | "buchi" | "guarded-buchi" | "each-buchi" => {
+                return Err(KeyRefusal::WrongForm(tag.to_owned()))
+            }
+            other => return Err(KeyRefusal::UnknownTag(other.to_owned())),
+        }
+        let [branches] = exactly(items).ok_or(KeyRefusal::Members)?;
+        Reader {
+            shape: &self.shape,
+            max_bytes: self.max_bytes,
+            subject: self.subject,
+            boolean_obligations: false,
+        }
+        .branches(branches)
+    }
+}
+
+/// Why a clause has no [`SafetyTranslation`].
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum TranslationRefusal {
+    /// The clause is not a reachable invariant.
+    #[error(transparent)]
+    NotTranslated(NotTranslated),
+    /// The context does not encode.
+    #[error(transparent)]
+    Key(KeyRefusal),
+}
+
+/// The `holds` atom of a TP-1 clause `always holds(A)`.
+pub fn invariant_atom(clause: &CheckedTemporalClause) -> Option<FormulaNodeId> {
+    let formula = clause.formula();
+    let FormulaNode::Unary {
+        operator: UnaryTemporal::Always,
+        interval: None,
+        operand,
+    } = formula.nodes().get(formula.root().index())?
+    else {
+        return None;
+    };
+    matches!(
+        formula.nodes().get(operand.index()),
+        Some(FormulaNode::Holds { .. })
+    )
+    .then_some(*operand)
+}
+
+/// The canonical octets of `node`.
+pub(super) fn canonical(node: NodeRef<'_>, max_bytes: u64) -> Result<Vec<u8>, KeyRefusal> {
+    quire_canonical::to_vec(&node, Limits::new(max_bytes)).map_err(|_| KeyRefusal::Encoding)
+}
+
+/// Exactly `N` items, or `None`.
+pub(super) fn exactly<'d, const N: usize>(
+    items: impl Iterator<Item = NodeRef<'d>>,
+) -> Option<[NodeRef<'d>; N]> {
+    let items: Vec<NodeRef<'d>> = items.collect();
+    items.try_into().ok()
+}
+
+/// Require `next` to sort strictly after the previous set element.
+pub(super) fn ascending(previous: &mut Option<Vec<u8>>, next: Vec<u8>) -> Result<(), KeyRefusal> {
+    if previous.as_ref().is_some_and(|previous| *previous >= next) {
+        return Err(KeyRefusal::Order);
+    }
+    *previous = Some(next);
+    Ok(())
+}
+
+/// A canonical unsigned decimal string in `0..=2^64`: the u64 domain plus
+/// the one saturation value `b+1` of a counter whose bound is `u64::MAX`.
+/// `#[string_edge]`: reads an imported key's decimal string.
+#[ix_trace_rs::string_edge]
+pub(super) fn decimal_wide(text: &str) -> Result<u128, KeyRefusal> {
+    let refuse = || KeyRefusal::Decimal(text.to_owned());
+    let canonical =
+        text == "0" || (text.bytes().all(|byte| byte.is_ascii_digit()) && !text.starts_with('0'));
+    if text.is_empty() || !canonical {
+        return Err(refuse());
+    }
+    match text.parse::<u128>() {
+        Ok(value) if value <= u128::from(u64::MAX) + 1 => Ok(value),
+        _ => Err(refuse()),
+    }
+}
+
+/// A canonical unsigned decimal string in the u64 domain: `"0"` or
+/// `[1-9][0-9]*`, at most `"18446744073709551615"`. `#[string_edge]`: reads
+/// an imported key's decimal string.
+#[ix_trace_rs::string_edge]
+pub(super) fn decimal(text: &str) -> Result<u64, KeyRefusal> {
+    let refuse = || KeyRefusal::Decimal(text.to_owned());
+    let canonical =
+        text == "0" || (text.bytes().all(|byte| byte.is_ascii_digit()) && !text.starts_with('0'));
+    if text.is_empty() || !canonical {
+        return Err(refuse());
+    }
+    text.parse().map_err(|_| refuse())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decimal_strings_are_canonical_and_in_the_u64_domain() {
+        assert_eq!(decimal("0"), Ok(0));
+        assert_eq!(decimal("18446744073709551615"), Ok(u64::MAX));
+        for refused in ["", "01", "-1", "+1", "18446744073709551616", "1e3", " 1"] {
+            assert_eq!(
+                decimal(refused),
+                Err(KeyRefusal::Decimal(refused.to_owned())),
+                "{refused:?}"
+            );
+        }
+    }
+}

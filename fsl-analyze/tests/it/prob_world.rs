@@ -1,0 +1,1179 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The probabilistic models of FR-196's tests (TC-631, TC-641, TC-630): each
+//! a `test/<name>` domain package with one object type in one population
+//! over the universe `{<key>}`, a unit selecting it as `M` that writes its
+//! contracts, FR-185 declarations and claims, and one initial snapshot.
+//!
+//! The models are ADR-024 §7's and ADR-028 §15's. `Service`'s `phase` is
+//! `Int[0, 2]` (`0` Idle, `1` Busy, `2` Done), its `d` is `Int[1, 12]` and
+//! its `outcome` a Boolean `ok`. Quantity-valued probabilistic tests use a
+//! variant whose `d` parameter is typed by the declared `ms` unit.
+
+use filament_semantic_value::checking::CheckMode;
+use std::collections::BTreeMap;
+
+use filament_exact::ScalarLimits;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
+use fsl_eval::model_subject::ModelSubject;
+use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
+use fsl_package::CheckedPackage;
+use fsl_replay::ModelCheckLimits;
+use fsl_semantics::check::{CheckRefusal, CheckedProbabilisticClaim, PackageDeclarations};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
+use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
+use serde_json::{json, Value as Json};
+
+/// The native Boolean type reference.
+pub(crate) const BOOLEAN: &str = "ix://filament/native/Boolean";
+
+/// One operation: its name, its parameters as `(name, type reference)` and
+/// the fields its frame lets it write.
+pub(crate) struct Operation {
+    pub(crate) name: &'static str,
+    pub(crate) parameters: Vec<(&'static str, String)>,
+    pub(crate) modifies: Vec<&'static str>,
+    /// Whether the frame lets it delete the object.
+    pub(crate) deletes: bool,
+}
+
+/// One fixture model.
+pub(crate) struct Model {
+    /// The domain package's identity, `test/<name>`.
+    pub(crate) package: &'static str,
+    /// The object type's name.
+    pub(crate) object: &'static str,
+    /// The population's name.
+    pub(crate) population: &'static str,
+    /// The one object's key.
+    pub(crate) key: &'static str,
+    /// Bounded integer types: name, lower, upper.
+    pub(crate) integers: Vec<(&'static str, i64, i64)>,
+    /// The object type's fields: name and type reference.
+    pub(crate) fields: Vec<(&'static str, String)>,
+    /// The object type's operations.
+    pub(crate) operations: Vec<Operation>,
+    /// The unit's declarations after the model selection.
+    pub(crate) body: String,
+    /// The initial object's field values, as snapshot JSON.
+    pub(crate) initial: Json,
+}
+
+impl Model {
+    /// The identity of `suffix` in this package.
+    pub(crate) fn ident(&self, suffix: &str) -> String {
+        format!("ix://{}/{suffix}", self.package)
+    }
+
+    fn origin(identity: &str) -> Json {
+        json!({"generated": {"generatorIdentity": identity, "generatorVersion": "1.0.0",
+            "inputIdentities": [identity]}})
+    }
+
+    fn definition(&self, name: &str, kind: &str, members: Json) -> Json {
+        let identity = self.ident(name);
+        let mut node = json!({
+            "identity": identity, "displayName": identity,
+            "kind": {"module": self.package, "name": kind}, "roles": [],
+            "origin": Self::origin(&identity), "constraints": [], "extensions": [],
+            "unknownPolicy": "reject",
+        });
+        for (key, value) in members.as_object().expect("members") {
+            node[key] = value.clone();
+        }
+        node
+    }
+
+    fn integer_type(&self, name: &str, lower: i64, upper: i64) -> Json {
+        let identity = self.ident(name);
+        let constraint = |keyword: &str, value: i64| {
+            json!({
+                "identity": format!("{identity}/constraints/{keyword}"), "keyword": keyword,
+                "operands": {"value": value.to_string()}, "appliesTo": "ix://filament/native/Integer",
+                "diagnosticCode": format!("bound.{keyword}"), "origin": Self::origin(&identity),
+            })
+        };
+        self.definition(
+            name,
+            "value_type",
+            json!({"scalar": "integer",
+                "constraints": [constraint("min", lower), constraint("max", upper)]}),
+        )
+    }
+
+    fn typed(identity: String, name: &str, type_ref: &str) -> Json {
+        json!({
+            "identity": identity.clone(), "name": name, "typeRef": type_ref,
+            "presence": "required", "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+            "origin": Self::origin(&identity),
+        })
+    }
+
+    fn operation(&self, operation: &Operation, receiver_scoped: bool) -> Json {
+        let identity = self.ident(&format!("{}/{}", self.object, operation.name));
+        let parameters: Vec<Json> = operation
+            .parameters
+            .iter()
+            .map(|(name, type_ref)| Self::typed(format!("{identity}/{name}"), name, type_ref))
+            .collect();
+        let modifies: Vec<String> = operation
+            .modifies
+            .iter()
+            .map(|field| self.ident(&format!("{}/{field}", self.object)))
+            .collect();
+        let deletes = if operation.deletes {
+            vec![self.ident(self.object)]
+        } else {
+            vec![]
+        };
+        // A receiver-scoped frame lets the operation write its receiver's
+        // fields only, so a population of several objects keeps the others.
+        let frame = if receiver_scoped {
+            json!({"modifies": [], "modifies_receiver": modifies, "creates": [],
+                "deletes": deletes})
+        } else {
+            json!({"modifies": modifies, "creates": [], "deletes": deletes})
+        };
+        json!({
+            "identity": identity, "name": operation.name, "params": parameters,
+            "pre": [], "post": [],
+            "origin": {"source": {"sourceIdentity": self.ident("spec"), "path": "spec.fspec",
+                "startLine": 1, "startColumn": 1}},
+            "frame": frame,
+        })
+    }
+
+    /// The domain package document.
+    fn document(&self, symmetric: bool) -> Vec<u8> {
+        let mut kinds = vec![
+            ("object_type", meaning::OBJECT_TYPE),
+            ("population", meaning::POPULATION),
+        ];
+        if !self.integers.is_empty() {
+            kinds.push(("value_type", meaning::VALUE_TYPE));
+        }
+        let constructs: Vec<Json> = kinds
+            .into_iter()
+            .map(|(name, meaning)| {
+                json!({"kind": {"module": self.package, "name": name}, "moduleVersion": "1.0.0",
+                "construct": {"identity": "none", "shape": "record", "members": {},
+                    "meaning": meaning}})
+            })
+            .collect();
+        let fields: Vec<Json> = self
+            .fields
+            .iter()
+            .map(|(name, type_ref)| {
+                Self::typed(
+                    self.ident(&format!("{}/{name}", self.object)),
+                    name,
+                    type_ref,
+                )
+            })
+            .collect();
+        let mut types: Vec<Json> = self
+            .integers
+            .iter()
+            .map(|(name, lower, upper)| self.integer_type(name, *lower, *upper))
+            .collect();
+        types.push(self.definition(
+            self.object,
+            "object_type",
+            json!({
+                "supertypes": [], "fields": fields,
+                "operations": self.operations.iter().map(|operation| self.operation(operation, symmetric))
+                    .collect::<Vec<_>>(),
+                "relationships": [],
+            }),
+        ));
+        let population = self.ident(self.population);
+        json!({
+            "contractVersion": "2.0.0",
+            "canonicalization": {"algorithm": "rfc8785-v1"},
+            "source": {"identity": self.ident("spec"), "version": "1.0.0",
+                "dialect": "spec-bundle"},
+            "package": {"identity": self.package, "version": "1.0.0",
+                "mappingVersions": [], "profileVersions": []},
+            "occurrences": [], "extensions": [],
+            "constructs": constructs,
+            "types": types,
+            "populations": [{
+                "identity": population, "displayName": population,
+                "kind": {"module": self.package, "name": "population"},
+                "members": [self.ident(self.object)], "extent": "closed",
+                "symmetric": symmetric,
+                "origin": Self::origin(&population),
+            }],
+        })
+        .to_string()
+        .into_bytes()
+    }
+}
+
+/// A checked fixture model with its initial snapshot.
+pub(crate) struct World {
+    pub(crate) package: CheckedPackage,
+    pub(crate) provision: fsl_analyze::analyze::SourceProvision,
+    packages: fsl_semantics::model::intake::PackageInput,
+    snapshots: fsl_semantics::model::observation::DocumentProvision,
+    initial: Vec<DocumentRef>,
+    universe: PopulationUniverse,
+}
+
+/// The evaluation budget: ample for every fixture.
+pub(crate) const UNLIMITED: ScalarLimits = ScalarLimits {
+    integer_bits: 1 << 20,
+    decimal_digits: 1 << 20,
+    scale_expansion: 1 << 20,
+    text_input_bytes: 1 << 20,
+    text_scalars: 1 << 20,
+    normalized_scalars: 1 << 20,
+    unit_edges: 1 << 20,
+    value_occurrences: 1 << 20,
+    work_units: 1 << 30,
+    result_units: 1 << 30,
+};
+
+impl World {
+    /// `model`, checked.
+    pub(crate) fn new(model: &Model) -> Self {
+        Self::build(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            false,
+        )
+    }
+
+    /// `model`'s S3 check result, exposed for acceptance tests of pre-sampling
+    /// refusals.
+    pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<CheckRefusal>> {
+        Self::try_build(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            false,
+        )
+    }
+
+    /// `model`, checked, over a universe of `keys`, every one of them live in
+    /// the initial snapshot.
+    pub(crate) fn with_objects(model: &Model, keys: &[&str]) -> Self {
+        Self::build(model, keys, keys, &[&model.initial], false, false)
+    }
+
+    /// `model`, checked, over a universe of `keys`; only the object under
+    /// `model.key` is in the initial snapshot.
+    pub(crate) fn with_universe(model: &Model, keys: &[&str]) -> Self {
+        Self::build(model, keys, &[model.key], &[&model.initial], false, false)
+    }
+
+    /// `model`, checked, with one initial snapshot per field set of
+    /// `initials`, in order.
+    pub(crate) fn with_initials(model: &Model, initials: &[Json]) -> Self {
+        let initials: Vec<&Json> = initials.iter().collect();
+        Self::build(model, &[model.key], &[model.key], &initials, false, false)
+    }
+
+    /// `model`, checked, with the integer operators of
+    /// `filament.value.complete/v1` available as the profile `vc`.
+    pub(crate) fn with_value_profile(model: &Model) -> Self {
+        Self::build(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            true,
+        )
+    }
+
+    /// `model`, checked, with its population declared `symmetric` and its
+    /// operations scoped to their receivers, over a universe of `keys`,
+    /// every one of them live in the initial snapshot.
+    pub(crate) fn symmetric_objects(model: &Model, keys: &[&str]) -> Self {
+        Self::build(model, keys, keys, &[&model.initial], true, false)
+    }
+
+    /// As [`Self::symmetric_objects`], with one initial snapshot per entry of
+    /// `initials`; an entry `{"objects": {key: fields}}` gives each object
+    /// its own field values.
+    pub(crate) fn symmetric_with_initials(model: &Model, keys: &[&str], initials: &[Json]) -> Self {
+        let initials: Vec<&Json> = initials.iter().collect();
+        Self::build(model, keys, keys, &initials, true, false)
+    }
+
+    fn build(
+        model: &Model,
+        keys: &[&str],
+        live: &[&str],
+        initials: &[&Json],
+        symmetric: bool,
+        value_profile: bool,
+    ) -> Self {
+        Self::try_build(model, keys, live, initials, symmetric, value_profile)
+            .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"))
+    }
+
+    fn try_build(
+        model: &Model,
+        keys: &[&str],
+        live: &[&str],
+        initials: &[&Json],
+        symmetric: bool,
+        value_profile: bool,
+    ) -> Result<Self, Vec<CheckRefusal>> {
+        let document = model.document(symmetric);
+        let packages = package_input([document.as_slice()]).unwrap();
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
+             profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+             profile inf = \"filament.temporal.infinite-trace/v1\";\n{}\
+             model M = \"{}\";\n{}\n",
+            if value_profile {
+                "profile vc = \"filament.value.complete/v1\";\n"
+            } else {
+                ""
+            },
+            model.package,
+            model.body
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "fr-188"),
+            "fr-188.native",
+            unit.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 parses the unit");
+        assert!(parsed.is_admissible(), "S1: {:?}", parsed.diagnostics());
+        let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+        let models = admit_unit(
+            &built.selections().models,
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the model selection admits")
+        .with_parsed_operation_clauses(|text| {
+            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        })
+        .expect("the kept operation clauses parse");
+        let graph = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "package".to_owned(),
+            built,
+            models,
+            Vec::new(),
+        )
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())?;
+
+        let header = json!({"identity": model.package});
+        let mut snapshots = BTreeMap::new();
+        let mut initial = Vec::new();
+        for (index, fields) in initials.iter().enumerate() {
+            let identity = format!("s{index}");
+            let snapshot = json!({
+                "format": "filament.state.snapshot/v1",
+                "identity": {"authority": "test", "identity": identity},
+                "observation": "current", "model": header,
+                "anchor": {"kind": "initialization", "name": "start"},
+                "populations": [{"population": model.ident(model.population), "complete": true,
+                    "objects": live.iter().map(|key| json!({"key": key,
+                        "type": model.ident(model.object),
+                        "fields": fields.get("objects").and_then(|each| each.get(key))
+                            .unwrap_or(fields)}))
+                        .collect::<Vec<_>>()}],
+            })
+            .to_string()
+            .into_bytes();
+            snapshots.insert(
+                fsl_semantics::model::observation::document_reference(&snapshot)
+                    .expect("a document names itself"),
+                snapshot,
+            );
+            initial.push(DocumentRef {
+                authority: "test".to_owned(),
+                identity,
+            });
+        }
+        let population = filament_checked::key::DeclarationKey {
+            package: model.package.to_owned(),
+            node: model.ident(model.population),
+        };
+        Ok(Self {
+            provision: fsl_analyze::analyze::SourceProvision::single(
+                graph.source(),
+                unit.as_bytes(),
+            ),
+            package: CheckedPackage::link(graph),
+            packages,
+            snapshots,
+            initial,
+            universe: PopulationUniverse {
+                population,
+                keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+            },
+        })
+    }
+
+    fn simulation(&self) -> ModelSimulationRequest<'_> {
+        ModelSimulationRequest {
+            emit: fsl_package::EmitLimits::fixture(),
+            package: &self.package,
+            packages: &self.packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![self.universe.clone()],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: UNLIMITED,
+        }
+    }
+
+    /// The claim declared `name`.
+    pub(crate) fn claim(&self, name: &str) -> &CheckedProbabilisticClaim {
+        self.package
+            .graph()
+            .probabilistic_model()
+            .claim(name)
+            .unwrap_or_else(|| panic!("the claim {name} checks"))
+    }
+
+    /// The model subject over the initial snapshot.
+    pub(crate) fn subject(&self) -> ModelSubject<'_> {
+        ModelSubject {
+            simulation: self.simulation(),
+            proof_bounds: Vec::new(),
+        }
+    }
+
+    /// FR-280's subject binding for provider-entry tests.
+    pub(crate) fn binding(&self) -> fsl_analyze::analyze::SubjectBinding<'_> {
+        fsl_analyze::analyze::SubjectBinding {
+            packages: &self.packages,
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![self.universe.clone()],
+        }
+    }
+
+    /// The product request of the claim `name` under `limits`.
+    pub(crate) fn request(&self, name: &str, limits: ModelCheckLimits) -> ProductRequest<'_> {
+        ProductRequest {
+            subject: self.subject(),
+            claim: self.claim(name),
+            limits: ExactProbLimits {
+                model: limits,
+                ..ExactProbLimits::default()
+            },
+        }
+    }
+}
+
+fn int(package: &'static str, name: &str) -> String {
+    format!("ix://{package}/{name}")
+}
+
+/// ADR-024 §7.2's `Service` as FR-187-AC-1 declares it, with `extra`
+/// appended to its declarations. The object is `s`; `phase` is `0` Idle, `1`
+/// Busy, `2` Done.
+pub(crate) fn service(extra: &str) -> Model {
+    const PACKAGE: &str = "test/service";
+    Model {
+        package: PACKAGE,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![("Phase", 0, 2), ("Attempts", 0, 2), ("Millis", 1, 12)],
+        fields: vec![
+            ("phase", int(PACKAGE, "Phase")),
+            ("attempts", int(PACKAGE, "Attempts")),
+        ],
+        operations: vec![
+            Operation {
+                name: "request",
+                parameters: vec![],
+                modifies: vec!["phase", "attempts"],
+                deletes: false,
+            },
+            Operation {
+                name: "attempt",
+                parameters: vec![("d", int(PACKAGE, "Millis")), ("ok", BOOLEAN.to_owned())],
+                modifies: vec!["phase", "attempts"],
+                deletes: false,
+            },
+            Operation {
+                name: "reset",
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Idle using v on M::Server::request {{ self.phase = 0 }}\n\
+             post Started using v on M::Server::request {{ self.phase = 1 and self.attempts = 0 }}\n\
+             pre Busy using v on M::Server::attempt {{ self.phase = 1 }}\n\
+             post Attempted using v on M::Server::attempt {{ \
+                self.attempts - pre(self.attempts) = 1 and \
+                ((ok and self.phase = 2) or \
+                 (not ok and pre(self.attempts) = 1 and self.phase = 2) or \
+                 (not ok and pre(self.attempts) = 0 and self.phase = 1)) }}\n\
+             pre Done using v on M::Server::reset {{ self.phase = 2 }}\n\
+             post Reset using v on M::Server::reset {{ self.phase = 0 }}\n\
+             random Server::attempt(d) ~ {{ 1: 90, 3: 7, 12: 3 }};\n\
+             random Server::attempt(ok) ~ {{ true: 98, false: 2 }};\n\
+             reward duration on Server::attempt = d;\n\
+             workload Steady on M {{ weight Server::request = 1; weight Server::attempt = 1; \
+                weight Server::reset = 1; }}\n{extra}"
+        ),
+        initial: json!({"phase": {"integer": "0"}, "attempts": {"integer": "0"}}),
+    }
+}
+
+/// `Service` with a quantity-typed `d` parameter and quantity support values.
+/// `support` is inserted as the support map's value/weight pairs.
+pub(crate) fn quantity_service(support: &str, extra: &str) -> Model {
+    let mut model = service("");
+    model.operations[1].parameters[0].1 = "ix://filament/unit/ms".to_owned();
+    let integer_support = "random Server::attempt(d) ~ { 1: 90, 3: 7, 12: 3 };";
+    let quantity_support = format!("random Server::attempt(d) ~ {{ {support} }};");
+    assert!(
+        model.body.contains(integer_support),
+        "the service random clause exists"
+    );
+    model.body = model.body.replace(integer_support, &quantity_support);
+    model.body = model.body.replace(
+        "random Server::attempt(ok) ~ { true: 98, false: 2 };",
+        "random Server::attempt(ok) ~ { true: 1 };",
+    );
+    model.body = format!(
+        "dimension Time;\nunit ms : Time = rational(1, 1);\n\
+         unit s : Time = rational(1000, 1) * ms;\n{}\n{extra}",
+        model.body
+    );
+    model
+}
+
+/// ADR-028 §15.4's `Link`, with `extra` appended: two sends that lose with
+/// probability `1/10` and `1/5`, a `cost` of 1 on each, terminal once
+/// delivered or after two attempts.
+pub(crate) fn link(extra: &str) -> Model {
+    const PACKAGE: &str = "test/link";
+    let send = |name| Operation {
+        name,
+        parameters: vec![("lost", BOOLEAN.to_owned())],
+        modifies: vec!["delivered", "attempts"],
+        deletes: false,
+    };
+    let contract = |name: &str| {
+        format!(
+            "pre Ready_{name} using v on M::Msg::{name} {{ not self.delivered and self.attempts < 2 }}\n\
+             post Sent_{name} using v on M::Msg::{name} {{ \
+                self.attempts - pre(self.attempts) = 1 and self.delivered = (not lost) }}\n"
+        )
+    };
+    Model {
+        package: PACKAGE,
+        object: "Msg",
+        population: "msgs",
+        key: "m",
+        integers: vec![("Attempts", 0, 2)],
+        fields: vec![
+            ("delivered", BOOLEAN.to_owned()),
+            ("attempts", int(PACKAGE, "Attempts")),
+        ],
+        operations: vec![send("send_a"), send("send_b")],
+        body: format!(
+            "{}{}random Msg::send_a(lost) ~ {{ true: 1, false: 9 }};\n\
+             random Msg::send_b(lost) ~ {{ true: 1, false: 4 }};\n\
+             reward cost on Msg::send_a = 1;\n\
+             reward cost on Msg::send_b = 1;\n\
+             terminal Stop using v on M when {{ self.delivered or self.attempts = 2 }};\n\
+             workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; }}\n{extra}",
+            contract("send_a"),
+            contract("send_b")
+        ),
+        initial: json!({"delivered": {"boolean": false}, "attempts": {"integer": "0"}}),
+    }
+}
+
+/// ADR-024 §7.1's `Health`: `tick(fault)` writes `healthy` under the
+/// postcondition `post` with `fault`'s weights `weights`, and, with `spare`,
+/// a second Boolean `spare` that the FR-187-AC-3 variants leave loose or
+/// pin. `extra` is appended to the declarations.
+pub(crate) fn health(post: &str, weights: &str, spare: bool, extra: &str) -> Model {
+    let mut fields = vec![("healthy", BOOLEAN.to_owned())];
+    let mut modifies = vec!["healthy"];
+    let mut initial = json!({"healthy": {"boolean": true}});
+    if spare {
+        fields.push(("spare", BOOLEAN.to_owned()));
+        modifies.push("spare");
+        initial["spare"] = json!({"boolean": false});
+    }
+    Model {
+        package: "test/health",
+        object: "Node",
+        population: "nodes",
+        key: "n",
+        integers: vec![],
+        fields,
+        operations: vec![Operation {
+            name: "tick",
+            parameters: vec![("fault", BOOLEAN.to_owned())],
+            modifies,
+            deletes: false,
+        }],
+        body: format!(
+            "post Tick using v on M::Node::tick {{ {post} }}\n\
+             random Node::tick(fault) ~ {{ {weights} }};\n\
+             workload Steady on M {{ weight Node::tick = 1; }}\n{extra}"
+        ),
+        initial,
+    }
+}
+
+/// A cell whose `inc` postcondition divides by zero at a candidate post-state
+/// (`v = 2`), so the contract conjunction is undecided at every state
+/// (FR-189-AC-5's undecided successor, FR-120's `ContractUndetermined`).
+pub(crate) fn undetermined(extra: &str) -> Model {
+    const PACKAGE: &str = "test/undetermined";
+    Model {
+        package: PACKAGE,
+        object: "Cell",
+        population: "cells",
+        key: "c",
+        integers: vec![("Level", 0, 2)],
+        fields: vec![("v", int(PACKAGE, "Level"))],
+        operations: vec![Operation {
+            name: "inc",
+            parameters: vec![],
+            modifies: vec!["v"],
+            deletes: false,
+        }],
+        body: format!(
+            "post Inc using vc on M::Cell::inc {{ \
+                self.v - pre(self.v) = 1 and 6 mod (2 - self.v) >= 0 }}\n\
+             workload Even on M {{ weight Cell::inc = 1; }}\n{extra}"
+        ),
+        initial: json!({"v": {"integer": "0"}}),
+    }
+}
+
+/// `Health` as ADR-024 §7.1 has it: one fault in `10^7` ticks ends health.
+pub(crate) fn no_fault(extra: &str) -> Model {
+    health(
+        "self.healthy = (pre(self.healthy) and not fault)",
+        "true: 1, false: 9999999",
+        false,
+        extra,
+    )
+}
+
+/// Checks FR-196-AC-5's `Coin`, adapted to what S3 types today: one object `c` with
+/// `v: Int[0, 1]`, initially 0, and `drop(b: Int[0, 1])`, which draws `b`
+/// with equal weights and deletes the coin when `b = 0`. A claim bound to `c`
+/// reads `c.v` as undefined (`absent-key`) once the coin is gone.
+pub(crate) fn coin(extra: &str) -> Model {
+    const PACKAGE: &str = "test/coin";
+    Model {
+        package: PACKAGE,
+        object: "Coin",
+        population: "coins",
+        key: "c",
+        integers: vec![("Bit", 0, 1)],
+        fields: vec![("v", int(PACKAGE, "Bit"))],
+        operations: vec![Operation {
+            name: "drop",
+            parameters: vec![("b", int(PACKAGE, "Bit"))],
+            modifies: vec![],
+            deletes: true,
+        }],
+        body: format!(
+            "bound B on M::coins [1]\n\
+             post Drop using v on M::Coin::drop {{ count(o in M::coins where true) = b }}\n\
+             random Coin::drop(b) ~ {{ 0: 1, 1: 1 }};\n\
+             workload Even on M {{ weight Coin::drop = 1; }}\n{extra}"
+        ),
+        initial: json!({"v": {"integer": "0"}}),
+    }
+}
+
+/// A coin that is tossed with `toss(b: Int[0, 1])`: `b` is drawn with equal
+/// weights and the frame may delete the coin, with no postcondition, so each
+/// draw has two post-states, the coin kept and the coin gone.
+pub(crate) fn tossed_coin(extra: &str) -> Model {
+    const PACKAGE: &str = "test/tossed";
+    Model {
+        package: PACKAGE,
+        object: "Coin",
+        population: "coins",
+        key: "c",
+        integers: vec![("Bit", 0, 1)],
+        fields: vec![("v", int(PACKAGE, "Bit"))],
+        operations: vec![Operation {
+            name: "toss",
+            parameters: vec![("b", int(PACKAGE, "Bit"))],
+            modifies: vec![],
+            deletes: true,
+        }],
+        body: format!(
+            "random Coin::toss(b) ~ {{ 0: 1, 1: 1 }};\n\
+             workload Even on M {{ weight Coin::toss = 1; }}\n{extra}"
+        ),
+        initial: json!({"v": {"integer": "0"}}),
+    }
+}
+
+/// A coin that must be armed before it can be dropped: `arm` sets `armed`,
+/// and `drop(b: Int[0, 1])` then deletes the coin when `b = 0`. A claim
+/// bound to `c` reads `c.armed` as undefined once the coin is gone, two
+/// steps in.
+pub(crate) fn armed_coin(extra: &str) -> Model {
+    const PACKAGE: &str = "test/armed";
+    Model {
+        package: PACKAGE,
+        object: "Coin",
+        population: "coins",
+        key: "c",
+        integers: vec![("Bit", 0, 1)],
+        fields: vec![("armed", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "arm",
+                parameters: vec![],
+                modifies: vec!["armed"],
+                deletes: false,
+            },
+            Operation {
+                name: "drop",
+                parameters: vec![("b", int(PACKAGE, "Bit"))],
+                modifies: vec![],
+                deletes: true,
+            },
+        ],
+        body: format!(
+            "bound B on M::coins [1]\n\
+             pre Loose using v on M::Coin::arm {{ not self.armed }}\n\
+             post Armed using v on M::Coin::arm {{ self.armed }}\n\
+             pre Ready using v on M::Coin::drop {{ self.armed }}\n\
+             post Drop using v on M::Coin::drop {{ count(o in M::coins where true) = b }}\n\
+             random Coin::drop(b) ~ {{ 0: 1, 1: 1 }};\n\
+             workload Even on M {{ weight Coin::arm = 1; weight Coin::drop = 1; }}\n{extra}"
+        ),
+        initial: json!({"armed": {"boolean": false}}),
+    }
+}
+
+/// ADR-028 §15.6's `Coin` process: `flip(heads)` ends it with probability
+/// one half, `wait` leaves it as it is, and it is terminal once `done`.
+pub(crate) fn process(extra: &str) -> Model {
+    Model {
+        package: "test/proc",
+        object: "Proc",
+        population: "procs",
+        key: "p",
+        integers: vec![],
+        fields: vec![("done", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "flip",
+                parameters: vec![("heads", BOOLEAN.to_owned())],
+                modifies: vec!["done"],
+                deletes: false,
+            },
+            Operation {
+                name: "wait",
+                parameters: vec![],
+                modifies: vec!["done"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Live_flip using v on M::Proc::flip {{ not self.done }}\n\
+             post Flipped using v on M::Proc::flip {{ self.done = heads }}\n\
+             pre Live_wait using v on M::Proc::wait {{ not self.done }}\n\
+             post Waited using v on M::Proc::wait {{ self.done = pre(self.done) }}\n\
+             random Proc::flip(heads) ~ {{ true: 1, false: 1 }};\n\
+             terminal Done using v on M when {{ self.done }};\n\
+             workload Even on M {{ weight Proc::flip = 1; weight Proc::wait = 1; }}\n{extra}"
+        ),
+        initial: json!({"done": {"boolean": false}}),
+    }
+}
+
+/// Coin2: `stall` moves the process into a stuck state where it remains
+/// enabled, while both `flip` and `wait` are disabled. The fair component at
+/// `stuck` therefore witnesses strong fairness to `flip` vacuously.
+pub(crate) fn process_coin2(extra: &str) -> Model {
+    Model {
+        package: "test/proc2",
+        object: "Proc",
+        population: "procs",
+        key: "p",
+        integers: vec![],
+        fields: vec![("done", BOOLEAN.to_owned()), ("stuck", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "flip",
+                parameters: vec![("heads", BOOLEAN.to_owned())],
+                modifies: vec!["done"],
+                deletes: false,
+            },
+            Operation {
+                name: "wait",
+                parameters: vec![],
+                modifies: vec!["done"],
+                deletes: false,
+            },
+            Operation {
+                name: "stall",
+                parameters: vec![],
+                modifies: vec!["stuck"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Live_flip using v on M::Proc::flip {{ not self.stuck and not self.done }}\n\
+             post Flipped using v on M::Proc::flip {{ self.done = heads }}\n\
+             pre Live_wait using v on M::Proc::wait {{ not self.stuck and not self.done }}\n\
+             post Waited using v on M::Proc::wait {{ self.done = pre(self.done) }}\n\
+             pre Stuck_stall using v on M::Proc::stall {{ not self.done }}\n\
+             post Stalled using v on M::Proc::stall {{ self.stuck = true }}\n\
+             random Proc::flip(heads) ~ {{ true: 1, false: 1 }};\n\
+             terminal Done using v on M when {{ self.done }};\n\
+             reward cost on Proc::stall = 1;\n\
+             workload Even on M {{ weight Proc::flip = 1; weight Proc::wait = 1; weight Proc::stall = 1; }}\n{extra}"
+        ),
+        initial: json!({"done": {"boolean": false}, "stuck": {"boolean": false}}),
+    }
+}
+
+/// Availability process used by FR-199/FR-200: `tick` occasionally takes the
+/// system down, and fast/slow repairs return it to `up` with different odds.
+pub(crate) fn avail2(extra: &str) -> Model {
+    const PACKAGE: &str = "test/avail2";
+    Model {
+        package: PACKAGE,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![],
+        fields: vec![("up", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "tick",
+                parameters: vec![("to_down", BOOLEAN.to_owned())],
+                modifies: vec!["up"],
+                deletes: false,
+            },
+            Operation {
+                name: "repair_fast",
+                parameters: vec![("ok", BOOLEAN.to_owned())],
+                modifies: vec!["up"],
+                deletes: false,
+            },
+            Operation {
+                name: "repair_slow",
+                parameters: vec![("ok", BOOLEAN.to_owned())],
+                modifies: vec!["up"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Up_tick using v on M::Server::tick {{ self.up }}\n\
+             post Ticked using v on M::Server::tick {{ self.up = not to_down }}\n\
+             pre Down_fast using v on M::Server::repair_fast {{ not self.up }}\n\
+             post Fast using v on M::Server::repair_fast {{ self.up = ok }}\n\
+             pre Down_slow using v on M::Server::repair_slow {{ not self.up }}\n\
+             post Slow using v on M::Server::repair_slow {{ self.up = ok }}\n\
+             random Server::tick(to_down) ~ {{ true: 1, false: 1999 }};\n\
+             random Server::repair_fast(ok) ~ {{ true: 9, false: 1 }};\n\
+             random Server::repair_slow(ok) ~ {{ true: 1, false: 1 }};\n\
+             workload Steady on M {{ weight Server::tick = 1; weight Server::repair_fast = 1; weight Server::repair_slow = 1; }}\n{extra}"
+        ),
+        initial: json!({"up": {"boolean": true}}),
+    }
+}
+
+/// A zero-reward wait MEC with a positive-reward exit to the target. Strong
+/// fairness to `exit` makes the fair expected maximum finite and requires the
+/// collapse to retain its leaving action.
+pub(crate) fn zero_reward_exit(extra: &str) -> Model {
+    Model {
+        package: "test/exit",
+        object: "Proc",
+        population: "procs",
+        key: "p",
+        integers: vec![],
+        fields: vec![("done", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "wait",
+                parameters: vec![],
+                modifies: vec![],
+                deletes: false,
+            },
+            Operation {
+                name: "exit",
+                parameters: vec![],
+                modifies: vec!["done"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Live_wait using v on M::Proc::wait {{ not self.done }}\n\
+             post Waited using v on M::Proc::wait {{ self.done = pre(self.done) }}\n\
+             pre Live_exit using v on M::Proc::exit {{ not self.done }}\n\
+             post Exited using v on M::Proc::exit {{ self.done = true }}\n\
+             reward cost on Proc::exit = 5;\n\
+             terminal Done using v on M when {{ self.done }};\n{extra}"
+        ),
+        initial: json!({"done": {"boolean": false}}),
+    }
+}
+
+/// `proceed` reaches the target `done`; `abandon` reaches the non-target
+/// terminal `stopped`, whose only subsequent edge is terminal stutter.
+pub(crate) fn fair_terminal_stutter(extra: &str) -> Model {
+    Model {
+        package: "test/terminal-fair",
+        object: "TerminalFair",
+        population: "terminals",
+        key: "t",
+        integers: vec![],
+        fields: vec![
+            ("done", BOOLEAN.to_owned()),
+            ("stopped", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation {
+                name: "proceed",
+                parameters: vec![],
+                modifies: vec!["done"],
+                deletes: false,
+            },
+            Operation {
+                name: "abandon",
+                parameters: vec![],
+                modifies: vec!["stopped"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Live_proceed using v on M::TerminalFair::proceed {{ not self.done and not self.stopped }}\n\
+             post Proceeded using v on M::TerminalFair::proceed {{ self.done = true and self.stopped = pre(self.stopped) }}\n\
+             pre Live_abandon using v on M::TerminalFair::abandon {{ not self.done and not self.stopped }}\n\
+             post Abandoned using v on M::TerminalFair::abandon {{ self.stopped = true and self.done = pre(self.done) }}\n\
+             terminal End using v on M when {{ self.done or self.stopped }};\n{extra}"
+        ),
+        initial: json!({"done": {"boolean": false}, "stopped": {"boolean": false}}),
+    }
+}
+
+/// A zero-reward self-loop and a unit-reward target action used to check fair
+/// expected-reward minimization.
+pub(crate) fn fair_min_reward(extra: &str) -> Model {
+    Model {
+        package: "test/fair-min-reward",
+        object: "Proc",
+        population: "procs",
+        key: "p",
+        integers: vec![],
+        fields: vec![("done", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "free",
+                parameters: vec![],
+                modifies: vec![],
+                deletes: false,
+            },
+            Operation {
+                name: "costly",
+                parameters: vec![],
+                modifies: vec!["done"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Live_free using v on M::Proc::free {{ not self.done }}\n\
+             post Free using v on M::Proc::free {{ self.done = pre(self.done) }}\n\
+             pre Live_costly using v on M::Proc::costly {{ not self.done }}\n\
+             post Costly using v on M::Proc::costly {{ self.done = true }}\n\
+             reward cost on Proc::costly = 1;\n\
+             terminal Done using v on M when {{ self.done }};\n{extra}"
+        ),
+        initial: json!({"done": {"boolean": false}}),
+    }
+}
+
+/// A probabilistic split into two disjoint fair bottom components.
+pub(crate) fn fair_two_bottoms(extra: &str) -> Model {
+    Model {
+        package: "test/split",
+        object: "Split",
+        population: "splits",
+        key: "s",
+        integers: vec![],
+        fields: vec![
+            ("selected", BOOLEAN.to_owned()),
+            ("right", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation {
+                name: "split",
+                parameters: vec![("right", BOOLEAN.to_owned())],
+                modifies: vec!["selected", "right"],
+                deletes: false,
+            },
+            Operation {
+                name: "step",
+                parameters: vec![],
+                modifies: vec![],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre At_start using v on M::Split::split {{ not self.selected }}\n\
+             post Split using v on M::Split::split {{ self.selected = true and self.right = right }}\n\
+             pre At_step using v on M::Split::step {{ self.selected }}\n\
+             post Stepped using v on M::Split::step {{ self.selected = pre(self.selected) and self.right = pre(self.right) }}\n\
+             random Split::split(right) ~ {{ true: 1, false: 1 }};\n{extra}"
+        ),
+        initial: json!({"selected": {"boolean": false}, "right": {"boolean": false}}),
+    }
+}
+
+/// Two receivers each have a continuously enabled `tick` self-loop.
+pub(crate) fn pair_tick(extra: &str) -> Model {
+    Model {
+        package: "test/pair",
+        object: "Pair",
+        population: "pairs",
+        key: "a",
+        integers: vec![],
+        fields: vec![("live", BOOLEAN.to_owned())],
+        operations: vec![Operation {
+            name: "tick",
+            parameters: vec![],
+            modifies: vec![],
+            deletes: false,
+        }],
+        body: format!(
+            "pre Live_tick using v on M::Pair::tick {{ self.live }}\n\
+             post Ticked using v on M::Pair::tick {{ self.live = pre(self.live) }}\n{extra}"
+        ),
+        initial: json!({"live": {"boolean": true}}),
+    }
+}
+
+/// A non-fair wait MEC that strong fairness forces to route into a fair
+/// recurrent component.
+pub(crate) fn fair_longrun_escape(extra: &str) -> Model {
+    Model {
+        package: "test/fair-escape",
+        object: "Proc",
+        population: "procs",
+        key: "p",
+        integers: vec![],
+        fields: vec![("fair", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "wait",
+                parameters: vec![],
+                modifies: vec![],
+                deletes: false,
+            },
+            Operation {
+                name: "go_fair",
+                parameters: vec![],
+                modifies: vec!["fair"],
+                deletes: false,
+            },
+            Operation {
+                name: "continue_fair",
+                parameters: vec![],
+                modifies: vec![],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Before_wait using v on M::Proc::wait {{ not self.fair }}\n\
+             post Waiting using v on M::Proc::wait {{ self.fair = false }}\n\
+             pre Before_go using v on M::Proc::go_fair {{ not self.fair }}\n\
+             post Went using v on M::Proc::go_fair {{ self.fair = true }}\n\
+             pre Fair_continue using v on M::Proc::continue_fair {{ self.fair }}\n\
+             post Continued using v on M::Proc::continue_fair {{ self.fair = true }}\n{extra}"
+        ),
+        initial: json!({"fair": {"boolean": false}}),
+    }
+}
+
+/// FR-189-AC-7's `Wide`: `spin(x: Boolean)` writes `v = x`, with `x` drawn
+/// by weights whose total, `2^256 + 1`, is above the draw range.
+pub(crate) fn wide(extra: &str) -> Model {
+    Model {
+        package: "test/wide",
+        object: "Wide",
+        population: "wides",
+        key: "w",
+        integers: vec![],
+        fields: vec![("v", BOOLEAN.to_owned())],
+        operations: vec![Operation {
+            name: "spin",
+            parameters: vec![("x", BOOLEAN.to_owned())],
+            modifies: vec!["v"],
+            deletes: false,
+        }],
+        body: format!(
+            "post Spun using v on M::Wide::spin {{ self.v = x }}\n\
+             random Wide::spin(x) ~ {{ true: 1, false: \
+             115792089237316195423570985008687907853269984665640564039457584007913129639936 }};\n\
+             workload Unit on M {{ weight Wide::spin = 1; }}\n{extra}"
+        ),
+        initial: json!({"v": {"boolean": false}}),
+    }
+}
+
+/// FR-189-AC-4's activation variant of `Service`: `request(go: Boolean)`
+/// starts the server (`phase = 1`) when `go` and leaves it `Idle`
+/// otherwise, with `go ~ {true: 1, false: 1}`.
+pub(crate) fn activated_service(extra: &str) -> Model {
+    let mut model = service("");
+    model.package = "test/activated";
+    for operation in &mut model.operations {
+        if operation.name == "request" {
+            operation.parameters = vec![("go", BOOLEAN.to_owned())];
+        }
+        for (_, type_ref) in &mut operation.parameters {
+            *type_ref = type_ref.replace("test/service", "test/activated");
+        }
+    }
+    model.integers = vec![("Phase", 0, 2), ("Attempts", 0, 2), ("Millis", 1, 12)];
+    model.fields = vec![
+        ("phase", int("test/activated", "Phase")),
+        ("attempts", int("test/activated", "Attempts")),
+    ];
+    model.body = model
+        .body
+        .replace(
+            "post Started using v on M::Server::request { self.phase = 1 and self.attempts = 0 }",
+            "post Started using v on M::Server::request { \
+                (go and self.phase = 1 and self.attempts = 0) or \
+                (not go and self.phase = 0 and self.attempts = pre(self.attempts)) }",
+        )
+        .replace(
+            "random Server::attempt(d)",
+            "random Server::request(go) ~ { true: 1, false: 1 };\nrandom Server::attempt(d)",
+        );
+    model.body.push_str(extra);
+    model
+}

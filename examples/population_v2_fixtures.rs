@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! QSL-771: thin CLI over `population_fixtures::write`, the `Population<T>[N]` Contract IR v2 packages the admission corpus emits.
 
-use quire_spec_language::population_fixtures;
+use filament_spec_language::population_fixtures;
 
 fn main() -> std::process::ExitCode {
     let mut arguments = std::env::args_os().skip(1);

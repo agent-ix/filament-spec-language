@@ -3,19 +3,19 @@ id: FR-086
 title: "Bind systems-model references: Interface, Part, Port, Connection and Allocation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: references
-  - target: ix://agent-ix/quire-specification/FR-152
+  - target: ix://agent-ix/filament-specification/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
 ---
 # FR-086: Bind systems-model references: Interface, Part, Port, Connection and Allocation
@@ -31,13 +31,13 @@ binder SHALL admit a Connection or an Allocation only when every one of its
 independent admission conditions holds, and SHALL report every failing
 condition.
 
-This requirement is QSL's own binder contract for quire-specification
-[FR-152](ix://agent-ix/quire-specification/FR-152)'s kind-mapping rule
-`quire.model.systems.kind-mapping/v1`, which maps each IR node to at most one
+This requirement is FSL's own binder contract for filament-specification
+[FR-152](ix://agent-ix/filament-specification/FR-152)'s kind-mapping rule
+`filament.model.systems.kind-mapping/v1`, which maps each IR node to at most one
 systems kind by the meaning id of its construct, never by a kind name, a
 module or a separate wire capability. [FR-056](FR-056-admit-domain-package-model-declarations.md)
 already binds each construct's meaning id to its FR-152 kind at intake
-(FR-056 "Meaning binding"); this requirement is QSL's own binder contract for
+(FR-056 "Meaning binding"); this requirement is FSL's own binder contract for
 resolving that binding, and the cross-record conditions FR-152's kind-mapping
 and admission rules layer on top of it, into the compiler's own types.
 
@@ -45,14 +45,14 @@ and admission rules layer on top of it, into the compiler's own types.
 
 - Component records: every admitted `ComponentRecord` already corresponds,
   by FR-056's meaning binding, to a construct whose meaning id is
-  `quire.meaning.systems.part/v1`; this requirement classifies it Part
+  `filament.meaning.systems.part/v1`; this requirement classifies it Part
   unconditionally, never from a separate wire capability, because none
   exists to read.
 - Endpoint records, each carrying a declared interface-type reference, an
   optional declared port direction and its owning component's declaration
   key.
 - Object-type export records: every admitted export whose construct's
-  meaning id is `quire.meaning.systems.interface/v1` carries its ordered
+  meaning id is `filament.meaning.systems.interface/v1` carries its ordered
   feature signatures; this requirement classifies it Interface
   unconditionally, by the same meaning-binding argument as Part.
 - Relationship records, each carrying source and target ends, a direction
@@ -76,12 +76,12 @@ incomplete result.
 ### Classification is by declared meaning id and end kind, never by display name
 
 The model binder SHALL classify a component as `Part` whenever its construct's
-meaning id is `quire.meaning.systems.part/v1`; every `ComponentRecord`
+meaning id is `filament.meaning.systems.part/v1`; every `ComponentRecord`
 [FR-056](FR-056-admit-domain-package-model-declarations.md) admits already
 carries that meaning, so this classification is total over the admitted set
 and produces no no-kind cascade for a component. It SHALL classify an
 object-type export as `Interface` whenever its construct's meaning id is
-`quire.meaning.systems.interface/v1`, by the same total argument. It SHALL
+`filament.meaning.systems.interface/v1`, by the same total argument. It SHALL
 classify an endpoint as `Port` only when it declares a port direction, its
 owning component classifies as `Part`, and its declared interface-type
 reference classifies as `Interface`; otherwise it SHALL record a no-kind
@@ -100,7 +100,7 @@ resolve, independently.
 The model binder SHALL classify every interface, then every part, then every
 endpoint, then every relationship, then every allocation, each in ascending
 declaration-key order, charging one classification unit per record before
-resolving it — quire-specification FR-152's own kind-mapping order
+resolving it — filament-specification FR-152's own kind-mapping order
 ("interfaces, then parts, then ports, then connections, then allocations") —
 and SHALL collect every no-kind cascade into the classification's refusal
 list rather than stopping at the first.
@@ -111,7 +111,7 @@ A Port additionally requires its declared interface-type reference to
 classify as `Interface`; when it does not, the model binder SHALL record a
 no-kind cascade with a wrong-export cause naming the required kind
 (`Interface`) and the reference's actual resolved kind. This is
-quire-specification FR-152's own kind-mapping exhaustiveness rule ("a port
+filament-specification FR-152's own kind-mapping exhaustiveness rule ("a port
 whose interface type is not an Interface is `wrong-export` (required
 Interface)").
 
@@ -155,7 +155,7 @@ outright before the target-kind charge.
   admits the component, endpoint, relationship and allocation records with
   no export beyond binding to their FR-152 kind; [FR-082](FR-082-resolve-conformance-subsetting-and-redefinition.md)
   supplies the conformance relation the interface-type condition checks
-  against. quire-specification FR-152 owns the normative kind-mapping,
+  against. filament-specification FR-152 owns the normative kind-mapping,
   connection and allocation rules this requirement binds, and AD-006 owns
   the decision to resolve systems structure, interfaces first, in the
   checked model view.
@@ -171,9 +171,9 @@ outright before the target-kind charge.
   kind only; the effective declaration of a systems record under
   [FR-081](FR-081-preserve-model-correspondence-and-declaration-identity.md)
   is read from the effective view by the qualified-name binder
-  (`qsl-semantics/src/model/qualified.rs`). This is consistent with AD-006's export table, which names no export
+  (`fsl-semantics/src/model/qualified.rs`). This is consistent with AD-006's export table, which names no export
   record for the five systems meanings beyond binding to their FR-152 kind.
-- `ComponentRecord::has_part_signature` (`qsl-semantics/src/model/domain_package.rs`) and
+- `ComponentRecord::has_part_signature` (`fsl-semantics/src/model/domain_package.rs`) and
   `classify`'s `unsupplied("part-signature", ...)` refusal arm for it shall
   not exist: this requirement's meaning-id classification (the
   "Classification is by declared meaning id and end kind" clause above)

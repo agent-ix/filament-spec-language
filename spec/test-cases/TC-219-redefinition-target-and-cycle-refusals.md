@@ -3,7 +3,7 @@ id: TC-219
 title: "A missing redefinition target and a supertype cycle each refuse with a named cause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
 ---
 # TC-219: A missing redefinition target and a supertype cycle each refuse with a named cause

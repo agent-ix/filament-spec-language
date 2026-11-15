@@ -3,52 +3,52 @@ id: US-029
 title: "Drive the Quire lifecycle through one CLI or the library and get one outcome and exit code"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-279
+  - target: ix://agent-ix/filament-spec-language/FR-279
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-280
+  - target: ix://agent-ix/filament-spec-language/FR-280
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-281
+  - target: ix://agent-ix/filament-spec-language/FR-281
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-282
+  - target: ix://agent-ix/filament-spec-language/FR-282
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-283
+  - target: ix://agent-ix/filament-spec-language/FR-283
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-284
+  - target: ix://agent-ix/filament-spec-language/FR-284
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-286
+  - target: ix://agent-ix/filament-spec-language/FR-286
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-287
+  - target: ix://agent-ix/filament-spec-language/FR-287
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-297
+  - target: ix://agent-ix/filament-spec-language/FR-297
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-298
+  - target: ix://agent-ix/filament-spec-language/FR-298
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-299
+  - target: ix://agent-ix/filament-spec-language/FR-299
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-564
+  - target: ix://agent-ix/filament-spec-language/FR-564
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-565
+  - target: ix://agent-ix/filament-spec-language/FR-565
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-567
+  - target: ix://agent-ix/filament-spec-language/FR-567
     type: exercises
 ---
 # US-029: Drive the Quire lifecycle through one CLI or the library and get one outcome and exit code
 
 ## Story
 
-**As a** specification author, a CI job, or a Rust program that embeds QSL
+**As a** specification author, a CI job, or a Rust program that embeds FSL
 **I want** to parse, check, package, execute, analyze, monitor, prove, replay
 and inspect a specification through one `quire` command or through typed
 library calls, with limits I set and a way to cancel

@@ -3,7 +3,7 @@
 //! case result. A pure function of the two classes, their stages and the
 //! case's selection kind.
 
-use qsl_replay::spine::{ClauseRunSelection, ClauseRunStage, RefinementClass};
+use fsl_replay::spine::{ClauseRunSelection, ClauseRunStage, RefinementClass};
 use serde::Serialize;
 
 /// The kind of selection a case makes (FR-109, FR-115).
@@ -50,7 +50,7 @@ pub enum CaseResult {
     /// The prior revision admits and the superseding does not.
     #[serde(rename = "regression")]
     Regression,
-    /// A QSL implementation gap stopped the comparison.
+    /// An FSL implementation gap stopped the comparison.
     #[serde(rename = "unresolved (unsupported)")]
     UnresolvedUnsupported,
     /// A limit or budget stopped the comparison.

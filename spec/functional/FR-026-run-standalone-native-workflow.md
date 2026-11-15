@@ -3,22 +3,22 @@ id: FR-026
 title: "Read a native-v1 request and its selected files"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-301"
+  - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-287
+  - target: ix://agent-ix/filament-spec-language/FR-287
     type: references
 ---
 ## Description
 
-When a caller hands QSL's library operation `command` (FR-287) a native-run/1
+When a caller hands FSL's library operation `command` (FR-287) a native-run/1
 request file, `command` shall read the request and each file it selects under
 this requirement's caller-configured bounded intake. `command` reads a
 native-compile/1 request under FR-027's fixed default ceilings, without a
@@ -29,7 +29,7 @@ FR-027's edition reader. Only a `1-draft` program reaches a runner or a
 compiler: `run` calls a named function or runs a clause through the spine
 ([FR-100](FR-100-run-a-named-function-through-the-spine.md),
 [FR-312](FR-312-read-a-clause-run-request-and-run-it.md)), and `compile`
-returns `quire.checked-package/v2` bytes
+returns `filament.checked-package/v2` bytes
 ([FR-027](FR-027-export-compiled-native-package.md)). Every other declared
 edition, `0-draft` included, refuses `unknown_edition` (FR-027, FR-100).
 This requirement owns what the two requests share: the envelope, the
@@ -52,7 +52,7 @@ document/revision. Both labels are required members. A request whose source
 identity lacks one, such as a request written with only `identity`, refuses
 at the request stage with the native code `invalid-request`, exit code 20;
 the catalog keeps that code as a retained host code with its broad meaning,
-malformed command (`quire.native.diagnostics/v1`, "Other retained
+malformed command (`filament.native.diagnostics/v1`, "Other retained
 host/source codes").
 Relative paths resolve against the request's directory; absolute paths remain
 valid local file operands. Source display paths retain the authored file string.
@@ -109,5 +109,5 @@ The command shall begin each invocation with fresh budgets.
   native-run/1 members of a `1-draft` program.
 - [FR-267](FR-267-write-run-results-as-native-run-result-2.md): the
   `native-run-result/2` command-error envelope.
-- [FR-287](FR-287-reach-qsl-through-the-driver-cli.md): the driver, which
+- [FR-287](FR-287-reach-fsl-through-the-driver-cli.md): the driver, which
   owns operands, option spellings, usage errors and stream writes.

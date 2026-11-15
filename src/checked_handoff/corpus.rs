@@ -8,7 +8,7 @@
 //! The mutations edit package bytes as JSON values; no verdict on a package is
 //! made here, only by the reader and [`super::Selection::check`].
 
-use quire_contract_model::{CheckedPackageDispatchResult, CheckedPackageEvidence};
+use filament_contract_model::{CheckedPackageDispatchResult, CheckedPackageEvidence};
 use serde_json::{json, Value};
 
 use super::selection::SelectionAxis;
@@ -171,7 +171,7 @@ fn replace_id(v: &mut Value, from: &Value, to: &Value) {
 
 fn header_wire_version(v: &Value) -> Option<Made> {
     let mut w = clone(v);
-    *w.get_mut("contract_version")? = json!("quire.checked-package/v1");
+    *w.get_mut("contract_version")? = json!("filament.checked-package/v1");
     ok(
         w,
         reader("unknown_contract_version", None, "/contract_version".into()),
@@ -410,7 +410,7 @@ fn rewrite_definition(definition: &mut Value, axis: SelectionAxis, value: &str) 
 /// selection and every binding row move together to another registered
 /// profile, which the reader admits; only the sidecar names the first one.
 fn definition_identity(v: &Value) -> Option<Made> {
-    let other = "quire.temporal.fixed-sample.false-extension/v1";
+    let other = "filament.temporal.fixed-sample.false-extension/v1";
     let mut w = clone(v);
     for node in w
         .get_mut("semantic_graph")?
@@ -866,14 +866,14 @@ fn build_cases(
     // FR-322 "Operand index segments": the cases are authored against the
     // resolved form, whose node ids name graph positions, and written back
     // with operand slots and rows.
-    qsl_semantics::check::wire_id::resolve_operand_slots(&mut value)
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut value)
         .map_err(|detail| Error::ReadBackDiffers { detail })?;
     let mut manifest_cases = Vec::new();
     let mut files = Vec::new();
     for case in cases.into_iter().filter(|case| case.home == home) {
         let made = (case.make)(&value).ok_or_else(|| mismatch(case.identity))?;
         let mut slotted = made.value.clone();
-        qsl_semantics::check::wire_id::write_operand_rows(&mut slotted);
+        fsl_semantics::check::wire_id::write_operand_rows(&mut slotted);
         let bytes = serde_json::to_vec(&slotted).map_err(|source| Error::Encode {
             what: "mutations case",
             source,
@@ -942,7 +942,7 @@ mod tests {
     use ix_trace_rs::trace;
     use std::path::Path;
 
-    use quire_contract_model::{
+    use filament_contract_model::{
         CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageReadLimits,
         CheckedPackageRefusal, CheckedPackageRefusalCode, CheckedPackageV2,
     };

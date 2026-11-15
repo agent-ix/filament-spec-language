@@ -5,9 +5,9 @@ title: "Keep every release tag a buildable commit"
 type: NFR
 quality_attribute: reliability
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-037
+  - target: ix://agent-ix/filament-spec-language/US-037
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/NFR-017
+  - target: ix://agent-ix/filament-spec-language/NFR-017
     type: depends_on
 ---
 # NFR-018: Keep every release tag a buildable commit
@@ -26,7 +26,7 @@ A tag is what an outside user checks out to get a known version. Cargo
 resolves the workspace's git dependencies from the revisions `Cargo.lock`
 records, so a tag stays buildable only while those revisions stay reachable
 in their repositories. A history rewrite in a dependency repository can make
-an old tag unbuildable without any change in QSL. The gate finds that.
+an old tag unbuildable without any change in FSL. The gate finds that.
 
 - `make release-check TAG=<tag>` resolves the tag to its commit and runs
   NFR-017's clean-clone gate there with steps 1 to 4 and 7: the clone, the

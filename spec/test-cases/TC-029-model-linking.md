@@ -3,9 +3,9 @@ id: TC-029
 title: "Clause roots are Boolean"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-006
+  - target: ix://agent-ix/filament-spec-language/FR-006
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 

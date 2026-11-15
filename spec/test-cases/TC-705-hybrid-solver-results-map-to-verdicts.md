@@ -3,7 +3,7 @@ id: TC-705
 title: "Hybrid solver results map to verdicts"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-250
+  - target: ix://agent-ix/filament-spec-language/FR-250
     type: verifies
 ---
 # TC-705: Hybrid solver results map to verdicts

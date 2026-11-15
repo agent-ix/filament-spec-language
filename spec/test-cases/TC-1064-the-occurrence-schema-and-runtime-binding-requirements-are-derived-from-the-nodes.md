@@ -3,7 +3,7 @@ id: TC-1064
 title: "The occurrence schema and runtime binding requirements are derived from the protocol nodes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-384
+  - target: ix://agent-ix/filament-spec-language/FR-384
     type: verifies
 ---
 # TC-1064: The occurrence schema and runtime binding requirements are derived from the protocol nodes

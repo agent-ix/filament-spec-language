@@ -3,35 +3,35 @@ id: FR-163
 title: "Check a hyper item's product-closure certificate in the qualified core"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-174
+  - target: ix://agent-ix/filament-spec-language/FR-174
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-177
+  - target: ix://agent-ix/filament-spec-language/FR-177
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-178
+  - target: ix://agent-ix/filament-spec-language/FR-178
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-179
+  - target: ix://agent-ix/filament-spec-language/FR-179
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-181
+  - target: ix://agent-ix/filament-spec-language/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: references
 ---
 # FR-163: Check a hyper item's product-closure certificate in the qualified core
@@ -39,8 +39,8 @@ relationships:
 ## Description
 
 When EN-1 returns `Holds` for an HP-1, HP-2, HP-3 or HP-6 item, or
-`Witnessed` for an HP-5 item (FR-181), the layer-A engine in `qsl-analyze` SHALL hand over a
-`ProductClosureCertificate`, and QSL's layer-6 crate `qsl-replay` SHALL hold
+`Witnessed` for an HP-5 item (FR-181), the layer-A engine in `fsl-analyze` SHALL hand over a
+`ProductClosureCertificate`, and FSL's layer-6 crate `fsl-replay` SHALL hold
 `check_product_closure`, which accepts the certificate only when the
 certified set holds every initial product state, is closed under the
 recomputed successors, holds no undefined, refused or incomplete letter or
@@ -80,7 +80,7 @@ pub struct ProductClosureCertificate {
 ```
 
 A product state key is the tuple of each component's
-`quire.simulation.state-key/v1` state key in variable order, with the property
+`filament.simulation.state-key/v1` state key in variable order, with the property
 automaton's canonical state key (ADR-018 PC-3), and for HP-3 the witness
 set's members as sorted (existential tuple key, automaton key) pairs.
 
@@ -123,7 +123,7 @@ spellings").
 
 - **Production.** When EN-1 returns `Holds` for one of these forms, or
   `Witnessed` for HP-5, the
-  `qsl-analyze` engine SHALL write the certificate from its retained
+  `fsl-analyze` engine SHALL write the certificate from its retained
   product: every stored product state, and for HP-2 and HP-3 the
   components of its SCC decomposition, each with the first PC-4 witness
   that holds for it in FR-126's witness order. The certificate SHALL be a
@@ -138,9 +138,9 @@ spellings").
   only and does not reject another topological order.
 - **Core code only.** `check_product_closure` SHALL build each alias's
   `ModelSystem` by FR-128's rules and SHALL expand product states through
-  `qsl-eval`'s hyper product successor function, property-automaton
+  `fsl-eval`'s hyper product successor function, property-automaton
   translation, witness-set step and fairness-enabledness predicates (ADR-018
-  LA-2), using no `qsl-analyze` code.
+  LA-2), using no `fsl-analyze` code.
 - **Malformed.** A certificate whose `closure` keys are unsorted or
   duplicated, or whose `components` are absent for HP-2 or HP-3, SHALL be
   rejected with rule `Malformed` before any recomputation. Absent
@@ -225,5 +225,5 @@ spellings").
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-399 (Linear STD-136; ADR-023 QS-5). The
+- ADR-023. FSpec half: FSpec FR-399 (Linear STD-136; ADR-023 QS-5). The
   certified-proof ruling is recorded on Linear QSL-390.

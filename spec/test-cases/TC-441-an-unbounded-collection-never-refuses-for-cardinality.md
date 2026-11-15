@@ -3,7 +3,7 @@ id: TC-441
 title: "An unbounded collection never refuses for cardinality and stops only on the caller's meter"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: verifies
 ---
 # TC-441: An unbounded collection never refuses for cardinality and stops only on the caller's meter

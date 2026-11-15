@@ -3,15 +3,15 @@ id: FR-260
 title: "Admit semantic-IR package documents at any depth under the intake byte limit"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-027
+  - target: ix://agent-ix/filament-spec-language/US-027
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
 ---
 # FR-260: Admit semantic-IR package documents at any depth under the intake byte limit
@@ -70,7 +70,7 @@ limit (ADR-030 D-4.6).
 - [FR-056](FR-056-admit-domain-package-model-declarations.md) defines
   intake.
 - [FR-259](FR-259-encode-identities-and-read-json-through-quire-canonical-at-any-depth.md)
-  defines the shared reader and event API QSL consumes.
+  defines the shared reader and event API FSL consumes.
 - [FR-255](FR-255-name-the-setting-that-raises-a-reached-limit.md) names
   `intake.input_bytes`.
 
@@ -79,10 +79,10 @@ limit (ADR-030 D-4.6).
 The semantic-IR crate's move onto `quire-canonical`'s reader tree, and
 reporting every composite cycle whatever its length, are Filament-owned
 requirements (ADR-030 D-8 O-4); Filament designs them. FR-260-AC-3 tests the
-outcome through QSL's intake.
+outcome through FSL's intake.
 
 ## References
 
-- QSpec FR-460, the ecosystem depth rule (Linear STD-143, which supersedes
+- FSpec FR-460, the ecosystem depth rule (Linear STD-143, which supersedes
   STD-125).
 - Linear QSL-381.

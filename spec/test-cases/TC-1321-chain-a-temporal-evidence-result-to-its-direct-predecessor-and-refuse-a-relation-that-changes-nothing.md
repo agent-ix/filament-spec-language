@@ -3,7 +3,7 @@ id: TC-1321
 title: "Chain a temporal evidence result to its direct predecessor and refuse a relation that names another obligation or changes nothing"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-526
+  - target: ix://agent-ix/filament-spec-language/FR-526
     type: verifies
 ---
 # TC-1321: Chain a temporal evidence result to its direct predecessor and refuse a relation that names another obligation or changes nothing

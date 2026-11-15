@@ -3,7 +3,7 @@ id: TC-643
 title: "State-graph certificates of true claims are accepted and certify the proof"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
 ---
 # TC-643: State-graph certificates of true claims are accepted and certify the proof

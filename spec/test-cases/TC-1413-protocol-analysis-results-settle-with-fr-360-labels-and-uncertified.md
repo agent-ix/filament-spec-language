@@ -3,9 +3,9 @@ id: TC-1413
 title: "Protocol analysis results settle with the FR-360 labels and Uncertified proofs"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-573
+  - target: ix://agent-ix/filament-spec-language/FR-573
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-360
+  - target: ix://agent-ix/filament-specification/FR-360
     type: references
 ---
 # TC-1413: Protocol analysis results settle with the FR-360 labels and Uncertified proofs

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The inventory file, `quire.checked-handoff.inventory/1` (FR-517 "The
-//! inventory file"): QSL's own encoding of the `SourceInventoryOutcome` that
-//! `qsl_replay::qsl_inventory` returns over the in-process unit, and its reader.
+//! The inventory file, `filament.checked-handoff.inventory/1` (FR-517 "The
+//! inventory file"): FSL's own encoding of the `SourceInventoryOutcome` that
+//! `fsl_replay::fsl_inventory` returns over the in-process unit, and its reader.
 
-use quire_contract_model::source_obligation::{
+use filament_contract_model::source_obligation::{
     SourceInventoryCompleteness, SourceInventoryIdentity, SourceInventoryOutcome,
     SourcePendingObligationKind,
 };
-use quire_contract_model::CheckedNodeId;
+use filament_contract_model::CheckedNodeId;
 use serde::{Deserialize, Serialize};
 
 use super::{Error, INVENTORY_FORMAT};
@@ -70,13 +70,13 @@ pub enum InventoryReadError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum Owner {
-    #[serde(rename = "qsl")]
-    Qsl,
+    #[serde(rename = "fsl")]
+    Fsl,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum Scope {
-    #[serde(rename = "qsl_checked_requirements_and_pending_obligations")]
+    #[serde(rename = "fsl_checked_requirements_and_pending_obligations")]
     CheckedRequirementsAndPendingObligations,
 }
 
@@ -276,7 +276,7 @@ impl Inventory {
         })?;
         let file = FileJson {
             format: INVENTORY_FORMAT.to_owned(),
-            owner: Owner::Qsl,
+            owner: Owner::Fsl,
             scope: Scope::CheckedRequirementsAndPendingObligations,
             source: self.source.clone(),
             completeness: Completeness::Complete,
@@ -301,7 +301,7 @@ impl Inventory {
         if outcome.completeness() != &SourceInventoryCompleteness::Complete {
             return Err(unnameable("a complete inventory".to_owned()));
         }
-        let wire = qsl_semantics::check::wire_id::WireGraph::of_package_bytes(package_bytes)
+        let wire = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(package_bytes)
             .map_err(unnameable)?;
         let count = |value: usize, what: &str| {
             u64::try_from(value).map_err(|_| unnameable(format!("inventory {what}")))
@@ -352,13 +352,13 @@ impl Inventory {
 
 #[cfg(test)]
 mod tests {
-    use quire_contract_model::source_obligation::{
+    use filament_contract_model::source_obligation::{
         SourceDeclarationHandle, SourceInventoryEnumerator, SourceInventoryIncompleteReason,
         SourceInventoryOwner, SourceInventoryRow, SourceInventoryScope, SourceObligationSite,
         SourcePendingObligationId, SourceRequirementOccurrenceId, SourceUnitHandle,
     };
-    use quire_contract_model::{SourceDocumentId, SourceIdentity, SourceRevision};
-    use quire_exact::{NodeKey, PathSegment};
+    use filament_contract_model::{SourceDocumentId, SourceIdentity, SourceRevision};
+    use filament_exact::{NodeKey, PathSegment};
 
     use super::*;
 
@@ -378,10 +378,10 @@ mod tests {
             &self.identity
         }
         fn owner(&self) -> SourceInventoryOwner {
-            SourceInventoryOwner::Qsl
+            SourceInventoryOwner::Fsl
         }
         fn scope(&self) -> SourceInventoryScope {
-            SourceInventoryScope::QslCheckedRequirementsAndPendingObligations
+            SourceInventoryScope::FslCheckedRequirementsAndPendingObligations
         }
         fn next_row(
             &mut self,
@@ -428,7 +428,7 @@ mod tests {
         )
         .unwrap();
         SourceInventoryIdentity::RequirementRecord(SourceRequirementOccurrenceId {
-            node: qsl_semantics::check::wire_id::structural_id(&key),
+            node: fsl_semantics::check::wire_id::structural_id(&key),
             role: "expression".into(),
             ordinal: 3,
         })
@@ -503,7 +503,7 @@ mod tests {
         let stopped = outcome(
             vec![requirement("integer")],
             Some(SourceInventoryIncompleteReason::EarlyStop {
-                owner: SourceInventoryOwner::Qsl,
+                owner: SourceInventoryOwner::Fsl,
             }),
         );
         assert!(matches!(

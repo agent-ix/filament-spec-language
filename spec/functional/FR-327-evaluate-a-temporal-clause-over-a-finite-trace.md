@@ -3,27 +3,27 @@ id: FR-327
 title: "Evaluate a temporal clause over a finite trace at S6a, with typed positions and metered work"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-091
+  - target: ix://agent-ix/filament-specification/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-092
+  - target: ix://agent-ix/filament-specification/FR-092
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: references
 ---
 # FR-327: Evaluate a temporal clause over a finite trace at S6a, with typed positions and metered work
@@ -69,7 +69,7 @@ with an incomplete result, never a guess, when the work budget runs out.
   locus in the clause (as FR-330 names an undefined atom's), and `count` and
   `min_count` the atom's `u64` values (FR-194); or `Incomplete` with its
   charge point.
-- `TemporalPosition` encodes into `qsl_replay::TracePosition` as decimal
+- `TemporalPosition` encodes into `fsl_replay::TracePosition` as decimal
   ASCII with no leading zero, `0` for position zero.
 
 ## Behavior
@@ -86,7 +86,7 @@ with an incomplete result, never a guess, when the work budget runs out.
 
 ### Bounded-profile evaluation
 
-A clause under `quire.temporal.timestamped-event.finite-window/v1` reads stamped
+A clause under `filament.temporal.timestamped-event.finite-window/v1` reads stamped
 positions and is evaluated by FR-501, not by the false-extension rules below.
 Its outcomes add `Pending { where, deadline }` and `Indeterminate { where,
 reason }` to this section's outcomes; `Pending` maps to the category pending (FR-285) and
@@ -95,11 +95,11 @@ and neither is a truth value.
 
 - A `holds` atom SHALL evaluate through the one clause evaluator (FR-107)
   over the observation at its position.
-- Each interval operator SHALL have QSpec FR-091's offset meaning (future)
+- Each interval operator SHALL have FSpec FR-091's offset meaning (future)
   or FR-092's (past) under the selected profile.
 - Under a false-extension profile, a position after the last position of
   the trace SHALL read every atomic predicate as false and every constant
-  unchanged (QSpec FR-090).
+  unchanged (FSpec FR-090).
 - The clause SHALL be evaluated at position 0 for activation `on origin`,
   and at every activating position for activation `on each`. The outcome
   SHALL be `Completed(true)` when every activation evaluates true, and
@@ -129,7 +129,7 @@ and neither is a truth value.
   `UndefinedEvaluation`: a claim that is not defined on the trace does not
   hold on it.
 - A window aggregate atom that has no value because its window lacks data
-  (`insufficient-data{count, min_count}`, QSpec FR-414) is not an undefined
+  (`insufficient-data{count, min_count}`, FSpec FR-414) is not an undefined
   evaluation. An activation that reads such an atom at any position it
   reads has no truth value, even when another position it reads is false,
   and even when another atom of the same letter at that position is false:
@@ -154,7 +154,7 @@ and neither is a truth value.
     other (Work), and a denied charge returns `Incomplete`.
 - `InsufficientData` SHALL map to the O-16 category `undefined` with cause
   `insufficient-data{count, min_count}`, never `UndefinedEvaluation` and
-  never violation (QSpec FR-414): the trace lacks the data to decide the
+  never violation (FSpec FR-414): the trace lacks the data to decide the
   claim, so it neither holds nor fails on it.
 
 ### Refused condition
@@ -179,8 +179,8 @@ and neither is a truth value.
 
 ### Work
 
-- The evaluator SHALL charge `quire_exact::LimitKind::WorkUnits` once, at
-  the `temporal.visit` charge point (`quire.value.accounting/v1`; never
+- The evaluator SHALL charge `filament_exact::LimitKind::WorkUnits` once, at
+  the `temporal.visit` charge point (`filament.value.accounting/v1`; never
   `graph.expand`), for each visit of a temporal node at a position
   (ADR-014 TR-5). A temporal
   node is a temporal operator or a `holds` atom of the clause's formula,
@@ -218,11 +218,11 @@ and neither is a truth value.
 - [FR-106](FR-106-admit-snapshots-and-invocations.md) (observations),
   [FR-107](FR-107-evaluate-state-clauses-at-s6a.md) (the one clause
   evaluator), [FR-326](FR-326-admit-temporal-operators-by-the-unit-s-temporal-profile.md).
-- QSpec FR-090 (closed-boundary rules), FR-091, FR-092.
+- FSpec FR-090 (closed-boundary rules), FR-091, FR-092.
 
 ## References
 
 - Linear QSL-384 (spec ticket); QSL-43 (implementation).
-- QSpec FR-360 to FR-370: Linear STD-131.
-- QSpec FR-414 (window aggregates: insufficient data is the O-16 `undefined`
+- FSpec FR-360 to FR-370: Linear STD-131.
+- FSpec FR-414 (window aggregates: insufficient data is the O-16 `undefined`
   monitor category).

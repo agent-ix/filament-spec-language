@@ -3,44 +3,44 @@ id: US-024
 title: "Check a temporal property over every interleaving of a protocol"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-207
+  - target: ix://agent-ix/filament-spec-language/FR-207
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-208
+  - target: ix://agent-ix/filament-spec-language/FR-208
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-209
+  - target: ix://agent-ix/filament-spec-language/FR-209
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-210
+  - target: ix://agent-ix/filament-spec-language/FR-210
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-211
+  - target: ix://agent-ix/filament-spec-language/FR-211
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-212
+  - target: ix://agent-ix/filament-spec-language/FR-212
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-213
+  - target: ix://agent-ix/filament-spec-language/FR-213
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-214
+  - target: ix://agent-ix/filament-spec-language/FR-214
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-216
+  - target: ix://agent-ix/filament-spec-language/FR-216
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-217
+  - target: ix://agent-ix/filament-spec-language/FR-217
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-024: Check a temporal property over every interleaving of a protocol
 
 ## Story
 
-**As a** verification operator with a QSL protocol whose `run` control forks
+**As a** verification operator with an FSL protocol whose `run` control forks
 `parallel` branches, exchanges messages on channels, registers
 compensations, spawns replicated roles or starts one instance per trigger
 **I want** a temporal claim about that protocol, and its deadlock freedom,
@@ -118,5 +118,5 @@ work builds on this system.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-425 to
-  FR-433 and the causal interleavings of QSpec FR-052 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-425 to
+  FR-433 and the causal interleavings of FSpec FR-052 (Linear STD-140).

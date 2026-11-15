@@ -3,7 +3,7 @@ id: TC-202
 title: "value::ieee and value::division evaluation is unchanged by negotiate_* removal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-078
+  - target: ix://agent-ix/filament-spec-language/FR-078
     type: verifies
 ---
 # TC-202: value::ieee and value::division evaluation is unchanged by negotiate_* removal

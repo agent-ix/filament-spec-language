@@ -3,7 +3,7 @@ id: TC-1162
 title: "call_site selects process and state-machine operations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-121
+  - target: ix://agent-ix/filament-spec-language/FR-121
     type: verifies
 ---
 # TC-1162: call_site selects process and state-machine operations
@@ -12,7 +12,7 @@ relationships:
 
 Verify that `call_site`'s operation selection `M::T::op` resolves an owner
 `T` that is a process or a state machine, returns its `frame_operation`,
-anchor, frame and clauses, and refuses an owner other than an object type, a process or a state machine and an ambiguous operation name with QSpec FR-323's codes.
+anchor, frame and clauses, and refuses an owner other than an object type, a process or a state machine and an ambiguous operation name with FSpec FR-323's codes.
 
 Scope: FR-121-AC-25, FR-121-AC-26, FR-121-AC-27.
 

@@ -3,33 +3,33 @@ id: FR-122
 title: "Replay a state-clause counterexample through the replay facade"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-108
+  - target: ix://agent-ix/filament-spec-language/FR-108
     type: traces_to
 ---
 # FR-122: Replay a state-clause counterexample through the replay facade
@@ -38,8 +38,8 @@ relationships:
 
 A state-clause counterexample is an observation under which a state clause
 (an invariant, a precondition or a postcondition, FR-104) evaluates to
-`false`. QSL SHALL replay one through the layer-6 replay facade (FR-098):
-`qsl_replay::replay_state_clause` takes FR-098's request and a
+`false`. FSL SHALL replay one through the layer-6 replay facade (FR-098):
+`fsl_replay::replay_state_clause` takes FR-098's request and a
 `WitnessEnvelope<StateClauseCounterexample>`, recompiles the package, checks
 the envelope's clause identities against the recompile before any
 admission, admits
@@ -53,31 +53,31 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
 
 ## Inputs
 
-- FR-098's request, whose replay target is `state_clause` (QSpec FR-323):
+- FR-098's request, whose replay target is `state_clause` (FSpec FR-323):
   the state clause's declared name, as FR-106's `ClauseSelection` names it.
   It is the one carrier of the clause's selection: the payload names no
   clause. A state-clause request carries no `arguments` and no occurrence
-  key (QSpec FR-323 decode rule 1).
+  key (FSpec FR-323 decode rule 1).
 - A `WitnessEnvelope<StateClauseCounterexample>` (FR-070) whose payload
   holds:
   - `observation`: exactly one of FR-106's selection inputs, by the
     clause's kind:
     - `PreCall { snapshot, self, parameters }` for a precondition: the
-      `DocumentRef` of a `quire.state.snapshot/v1` document whose
+      `DocumentRef` of a `filament.state.snapshot/v1` document whose
       `observation` is `pre`, the operation's pre state; the self object
       (`{population, key}`); and each declared parameter's value in the
       snapshot value form. A violated precondition means the operation
       never ran, so the observation holds no post state;
     - `Invocation { invocation }` for a postcondition: the `DocumentRef`
-      (FR-106) of a `quire.state.invocation/v1` document. It names the self
+      (FR-106) of a `filament.state.invocation/v1` document. It names the self
       object, the parameters and result, and a `pre` and a `post` snapshot,
       each by identity;
     - `Current { snapshot, anchor, self }` for an invariant: the
-      `DocumentRef` of a `quire.state.snapshot/v1` document whose
+      `DocumentRef` of a `filament.state.snapshot/v1` document whose
       `observation` is `current`, the initialization or handler anchor
       (`{kind, name}`) it was taken at, and the self object
       (`{population, key}`);
-  - `witness`: the clause's QSpec FR-351 record, present exactly when the
+  - `witness`: the clause's FSpec FR-351 record, present exactly when the
     producing run's basis was decisive (FR-268).
 - The envelope's members for a state-clause packet, which carry the
   clause's identity: its `clause_node` is the checked node identity
@@ -95,7 +95,7 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
   CG's member; the executor does not read it and the result does not carry
   it.
 - FR-098's package reference, byte provision and limits: the request's
-  `quire.value.accounting/v1` limits build the evaluation meter, and its
+  `filament.value.accounting/v1` limits build the evaluation meter, and its
   stage limits bound the recompile as FR-098 states. Every document the
   observation names (the invocation and both its snapshots, or the one
   snapshot of `PreCall` or `Current`) is an entry of the byte
@@ -113,16 +113,16 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
   `PreCall` observation its self object and parameter values, the
   evaluated value when there is one, the post-state range violations when
   there are any, and the evaluation charges.
-- A result that reproduces (`false`) carries the QSpec FR-351 record FR-268
+- A result that reproduces (`false`) carries the FSpec FR-351 record FR-268
   re-derives exactly when the clause's settlement basis is decisive
   (FR-265), and no record otherwise. A result that settles `inconclusive`
-  carries no QSpec FR-351 record (FR-072, FR-269). A result with no value
+  carries no FSpec FR-351 record (FR-072, FR-269). A result with no value
   carries neither a value nor a record (FR-072).
 
 ## Behavior
 
 - The executor SHALL apply the two envelope checks below after the request
-  decodes by FR-071 (QSpec FR-323 decode rule 1, then the byte-provision
+  decodes by FR-071 (FSpec FR-323 decode rule 1, then the byte-provision
   rule) and before it recompiles, in the order listed, refusing with the
   first that applies:
   1. If the request's replay target is not `state_clause`, then the
@@ -131,7 +131,7 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
      `replay_state_clause` and the member it reads (`state_clause`): a
      function or a frame target selects no state clause, and no target is
      recovered from the payload. The code and pointer tell it apart from
-     QSpec FR-323's refusal of a request carrying two targets
+     FSpec FR-323's refusal of a request carrying two targets
      (`invalid-value`).
   2. If the envelope's replay target differs from the request's, then the
      executor SHALL refuse `invalid-request`, naming
@@ -141,7 +141,7 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
 - The executor SHALL resolve `state_clause` in the recompiled package's one
   name table of state clauses and functions (FR-109). If it names no state
   clause, a function's name included, then the executor SHALL refuse
-  `missing_declaration`/`missing-name` naming the target (QSpec
+  `missing_declaration`/`missing-name` naming the target (FSpec
   FR-323-AC-21).
 - If the observation's form does not match the resolved clause's kind
   (`PreCall` for a precondition, `Invocation` for a postcondition,
@@ -151,7 +151,7 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
 - The executor SHALL admit the observation by FR-106 with the selection
   (`state_clause`, `observation`), reading every document only from the byte
   provision by its identity, under FR-106's default
-  `ObservationLimits` (no `quire.value.accounting/v1` counter names an
+  `ObservationLimits` (no `filament.value.accounting/v1` counter names an
   admission limit) with post-state witnessing selected
   (`post_state: Witness`). For an `Invocation` observation, admission runs
   FR-106's frame and delta check (check 11) over the pre and post
@@ -165,7 +165,7 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
   settles no result.
 - The executor SHALL evaluate the admitted clause once by FR-107, with a
   fresh evaluation meter built from the request's
-  `quire.value.accounting/v1` limits, and compare verdicts as FR-072 does. The counterexample refuted the clause, so the
+  `filament.value.accounting/v1` limits, and compare verdicts as FR-072 does. The counterexample refuted the clause, so the
   proved verdict is `violation`.
   - If the post snapshot holds no range violation, the evaluation completes
     `false` and FR-268's witness comparison and
@@ -184,7 +184,7 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
     the evaluated boolean when it completes one, no value when it
     refuses, runs out of budget or faults. The result SHALL name each
     range violation (object, field, declared range, observed value) in
-    `range_violations`, and carries no QSpec FR-351 record. Pre-state
+    `range_violations`, and carries no FSpec FR-351 record. Pre-state
     values and arguments out of range are still refused by admission.
   - If the post snapshot holds no range violation and the evaluation completes
     `true`, then the executor SHALL settle
@@ -210,8 +210,8 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-122-AC-1 | Over FR-108's ConfigVersion unit, an envelope for `VersionUnchanged` whose observation is the changed-version invocation settles `reproduced-with-evaluated-witness`, and the same payload on an `Input`-arm envelope settles `reproduced-without-witness`. An envelope for `ParentOrder` whose observation is violating-parent's current snapshot (anchor `handler validate`, self `child`) settles `reproduced-with-evaluated-witness`. Each result holds the source identity, the `package_id`, the request's `state_clause`, the envelope's `clause_node` and `occurrence_key`, and the identity of every document admission read: the invocation and both snapshots, or the one current snapshot. Neither clause reaches a decisive occurrence (FR-265), so each payload carries no `witness` and no result carries an QSpec FR-351 record; each result holds the evaluated `false`. | Test (TC-517) |
-| FR-122-AC-2 | The `VersionUnchanged` envelope over the unchanged-version invocation, and the `ParentOrder` envelope over healthy-parent's snapshot, each settle `inconclusive`, `Verdicts`, holding `violation` and `success`, the evaluated `true` and no QSpec FR-351 record. The `ParentOrder` violating-parent envelope replayed with the request's `quire.value.accounting/v1` evaluation budget at zero settles `inconclusive`, `NoValue`. | Test (TC-517) |
+| FR-122-AC-1 | Over FR-108's ConfigVersion unit, an envelope for `VersionUnchanged` whose observation is the changed-version invocation settles `reproduced-with-evaluated-witness`, and the same payload on an `Input`-arm envelope settles `reproduced-without-witness`. An envelope for `ParentOrder` whose observation is violating-parent's current snapshot (anchor `handler validate`, self `child`) settles `reproduced-with-evaluated-witness`. Each result holds the source identity, the `package_id`, the request's `state_clause`, the envelope's `clause_node` and `occurrence_key`, and the identity of every document admission read: the invocation and both snapshots, or the one current snapshot. Neither clause reaches a decisive occurrence (FR-265), so each payload carries no `witness` and no result carries an FSpec FR-351 record; each result holds the evaluated `false`. | Test (TC-517) |
+| FR-122-AC-2 | The `VersionUnchanged` envelope over the unchanged-version invocation, and the `ParentOrder` envelope over healthy-parent's snapshot, each settle `inconclusive`, `Verdicts`, holding `violation` and `success`, the evaluated `true` and no FSpec FR-351 record. The `ParentOrder` violating-parent envelope replayed with the request's `filament.value.accounting/v1` evaluation budget at zero settles `inconclusive`, `NoValue`. | Test (TC-517) |
 | FR-122-AC-3 | Missing name: a `state_clause` naming `Absent`, and one naming the function `sameIdentity`, each refuse `missing_declaration`/`missing-name` naming the target. | Test (TC-517) |
 | FR-122-AC-4 | Precondition: over TC-466 step 3's `probe` unit (precondition `ReachesTarget`, `reaches(self, target, parent)`, over the chain `a -> b -> c`), an envelope whose observation is `PreCall` over the chain's pre snapshot with `self` `a` and `target` `a` settles `reproduced-with-evaluated-witness`, holding that one snapshot's identity and no post snapshot; with `target` `c` it settles `inconclusive`, `Verdicts`. The result holds `self` `a` and `target` `a` as the values it reproduced. Form mismatches refuse `wrong_snapshot`/`wrong-observation` with no admission (the observation's documents absent from the byte provision change none of these refusals): `ReachesTarget` with an `Invocation` observation over the `probe` invocation, `VersionUnchanged` with a `PreCall` observation, and `VersionUnchanged` with a `Current` observation over healthy-parent's snapshot. | Test (TC-517) |
 | FR-122-AC-5 | Admission refusals settle no result: the `VersionUnchanged` envelope over the forbidden-parent-change invocation refuses with FR-106's `frame_violation`/`unauthorized-change` record naming `child` and `parent`; the changed-version envelope with its pre snapshot absent from the byte provision refuses with FR-106's `unavailable_observation` record; the `ParentOrder` envelope over incomplete-population's snapshot (`complete: false`) refuses with FR-106's `Incomplete` `incomplete_population`/`incomplete-scope` record. | Test (TC-517) |
@@ -234,14 +234,14 @@ the FR-070 envelope: `StateClauseCounterexample`, which implements
   whose name lookup and evaluation replay shares),
   [FR-108](FR-108-run-the-configversion-spine-corpus.md) (the ConfigVersion
   corpus the criteria use).
-- ADR-013 O-25 to O-27 and OQ-H (QSL owns the payload and the replay entry;
+- ADR-013 O-25 to O-27 and OQ-H (FSL owns the payload and the replay entry;
   CG builds the envelope); ADR-017 PF-4 and G-2 (one carrier per identity:
   the envelope carries the clause's, and the payload does not repeat it).
 - FR-107-AC-3's `probe` unit
   (TC-466 step 3) is the precondition fixture.
 - [FR-268](FR-268-check-a-state-clause-witness-on-replay.md) (the
   payload's `witness`, its re-derivation and separation check).
-- QSpec FR-323 (the `state_clause` replay target, its decode refusals and
+- FSpec FR-323 (the `state_clause` replay target, its decode refusals and
   its resolution, FR-323-AC-18, FR-323-AC-19, FR-323-AC-21).
 - The analogue for a frame counterexample is
   [FR-116](FR-116-replay-a-frame-counterexample.md).

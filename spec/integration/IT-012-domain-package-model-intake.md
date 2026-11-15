@@ -3,10 +3,10 @@ id: IT-012
 title: "Admit a spec artifact bundle through quire-rs and the FCD semantic IR crates"
 type: IT
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-036, type: verifies }
-  - { target: ix://agent-ix/quire-specification/FR-152, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-154, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-036, type: verifies }
+  - { target: ix://agent-ix/filament-specification/FR-152, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-154, type: references }
   - { target: ix://agent-ix/filament-core-data/FR-142, type: depends_on }
   - { target: ix://agent-ix/filament-core-data/FR-143, type: depends_on }
 ---
@@ -88,4 +88,4 @@ assessment are verified elsewhere.
 agent-ix/filament-core-data#172 and #173, and Quire specification FR-208 and
 FR-154.
 **Downstream:** [TC-148](../test-cases/TC-148-domain-package-end-to-end.md) and
-the compiled-protocol `Model` identity under agent-ix/quire-spec-language#132.
+the compiled-protocol `Model` identity under agent-ix/filament-spec-language#132.

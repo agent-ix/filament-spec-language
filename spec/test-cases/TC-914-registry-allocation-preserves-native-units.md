@@ -1,34 +1,34 @@
 ---
 id: TC-914
-title: "Registry storage failures preserve their native measurements through QSL admission"
+title: "Registry storage failures preserve their native measurements through FSL admission"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
-  - target: ix://agent-ix/quire-semantic-value/FR-108
+  - target: ix://agent-ix/filament-semantic-value/FR-108
     type: references
 ---
-# TC-914: Registry storage failures preserve their native measurements through QSL admission
+# TC-914: Registry storage failures preserve their native measurements through FSL admission
 
 ## Description
 
 Verify [FR-082](../functional/FR-082-resolve-conformance-subsetting-and-redefinition.md)
-AC-10 through AC-13 through QSL's real expression-checking consumer of shared
+AC-10 through AC-13 through FSL's real expression-checking consumer of shared
 type-environment admission. The fixture uses valid record, tuple, union and
 object declarations with member links and an ancestor chain, sufficient stage
 limits, and an uncancelled handle. It observes the native amount and unit at
 the production reservation boundary delivered under
-[QSV FR-108](ix://agent-ix/quire-semantic-value/FR-108).
+[FSV FR-108](ix://agent-ix/filament-semantic-value/FR-108).
 
 ## Test Procedure
 
-1. Admit the fixture successfully through QSL and retain the complete
+1. Admit the fixture successfully through FSL and retain the complete
    environment and member-link results. Record its required work and ancestor
    counters for the configured-budget controls.
 2. Through an isolated allocator seam at the production reservation boundary,
    deny a registry, index and traversal reservation in separate attempts.
    Capture the actual amount passed and whether its unit is bytes or
-   additional elements. Assert the QSL public failure carries the identical
+   additional elements. Assert the FSL public failure carries the identical
    amount and unit in exactly one `requested` catalog field rendered as
    `<unit>:<amount>`, catalog `resource_exhausted`/`allocation-failed`, through
    `StageFailure::Refused`; assert the registry cause preserves the exact
@@ -67,7 +67,7 @@ Tag the implemented consumer tests with `TC-914` and the corresponding
 ## Expected Results
 
 A genuine allocator denial preserves the measured native request and unit in
-QSL's `resource_exhausted`/`allocation-failed` registry refusal as exactly one
+FSL's `resource_exhausted`/`allocation-failed` registry refusal as exactly one
 `requested: <unit>:<amount>` field. Capacity/size overflow is
 `resource_exhausted`/`reservation-size-overflow` with exactly one
 `upstream: <unit>:<amount>` field, and configured limits retain their bounds

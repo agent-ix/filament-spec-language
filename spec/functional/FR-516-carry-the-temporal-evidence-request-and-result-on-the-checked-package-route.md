@@ -3,41 +3,41 @@ id: FR-516
 title: "Carry the temporal evidence request and result on the checked-package route"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-515
+  - target: ix://agent-ix/filament-spec-language/FR-515
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-044
+  - target: ix://agent-ix/filament-spec-language/FR-044
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-052
+  - target: ix://agent-ix/filament-spec-language/FR-052
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-053
+  - target: ix://agent-ix/filament-spec-language/FR-053
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-449
+  - target: ix://agent-ix/filament-spec-language/FR-449
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-502
+  - target: ix://agent-ix/filament-spec-language/FR-502
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-524
+  - target: ix://agent-ix/filament-spec-language/FR-524
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-526
+  - target: ix://agent-ix/filament-spec-language/FR-526
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-531
+  - target: ix://agent-ix/filament-spec-language/FR-531
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-532
+  - target: ix://agent-ix/filament-spec-language/FR-532
     type: references
 ---
 # FR-516: Carry the temporal evidence request and result on the checked-package route
@@ -46,12 +46,12 @@ relationships:
 
 FR-052 and FR-053 state that the checked-package route owns temporal truth,
 settlement, support and opaque trigger identity, and say they "do not prescribe a
-new public API". quire-protocol needs one: its assessment builds a
+new public API". filament-protocol needs one: its assessment builds a
 `native_temporal::v2::Input` from observation evidence, receives a
 `ValidatedResult` with activation state, truth, settlement and decision support,
 and joins them to its own result record (`src/assessment.rs`, `src/conformance/kernel.rs`,
-IT-002). QSL-303 deleted the documents (`quire.native-temporal-request/v1`, `/v2`,
-`quire.native-temporal-result/v1`, `/v2`) and nothing replaced the typed input and
+IT-002). QSL-303 deleted the documents (`filament.native-temporal-request/v1`, `/v2`,
+`filament.native-temporal-result/v1`, `/v2`) and nothing replaced the typed input and
 output. This requirement specifies them as Rust values on the evaluator, with no
 JSON document, schema or content-derived identity string.
 
@@ -62,19 +62,19 @@ shape that carries them and the retained facts, and ends the document layer.
 
 ## Semantic authority and boundary
 
-QSL derives truth, settlement and support. The observation owner selects the
-trigger identity and the evidence references; QSL treats both as opaque (FR-053).
-QSL does not authenticate observation evidence.
+FSL derives truth, settlement and support. The observation owner selects the
+trigger identity and the evidence references; FSL treats both as opaque (FR-053).
+FSL does not authenticate observation evidence.
 
 ## Inputs
 
-`qsl_eval::temporal::evidence::EvidenceRequest`, built by the caller, with no
+`fsl_eval::temporal::evidence::EvidenceRequest`, built by the caller, with no
 result field:
 
 | Retired `v2::Input` field | Successor field | Note |
 | --- | --- | --- |
 | `trigger: SemanticTriggerIdentity` | `trigger: Option<SemanticTriggerIdentity>` (non-empty opaque bytes when present) | selects the instance the call assesses among the resolved instances; for a clause that activates `on origin` it is the execution-origin identity; required when the request carries a delivery or an origin, and `None` when it carries none |
-| `correspondence: EvidenceRef` | `correspondence: EvidenceRef` | `EvidenceRef` keeps `identity`, `authority_identity`, `authority_revision`, `scope`, `population`, and carries `contract` (text), `schema_digest`, `digest` and `authority_digest` (byte strings) as opaque caller-supplied members: QSL does not compute, verify or interpret them (it does not authenticate observation evidence), echoes each byte for byte in the result's support references, and no truth, settlement or support value depends on them. Package content digests stay removed (QSL-1270); these are the observation owner's identifiers, not QSL's |
+| `correspondence: EvidenceRef` | `correspondence: EvidenceRef` | `EvidenceRef` keeps `identity`, `authority_identity`, `authority_revision`, `scope`, `population`, and carries `contract` (text), `schema_digest`, `digest` and `authority_digest` (byte strings) as opaque caller-supplied members: FSL does not compute, verify or interpret them (it does not authenticate observation evidence), echoes each byte for byte in the result's support references, and no truth, settlement or support value depends on them. Package content digests stay removed (QSL-1270); these are the observation owner's identifiers, not FSL's |
 | `positions: Vec<ObservedPosition>` | `positions` | each `{ observation: EvidenceRef, position, valuations, aggregate_samples, instance_valuations, instance_aggregate_samples }`; `instance_valuations` is FR-524's map from a trigger identity to that instance's valuations at the position; `aggregate_samples` and `instance_aggregate_samples` carry the window aggregate samples of "Window aggregate atoms" below |
 | `anchor` | `anchor` | the authored activation anchor: the `EvidenceRef` identity of one of the request's positions, which fixes the activation position ("Assessed instance") |
 | `triggers: Vec<TriggerInput>` | `deliveries: Vec<TriggerDelivery>` (clause `on each`) or `origins: Vec<ExecutionOrigin>` (clause `on origin`, each `{ identity, payload, captures }`) | the ordered deliveries, each `{ identity, receipt, anchor, payload, guard: Option<bool>, captures }`, so that a repeated delivery of one identity and several instances are expressible (FR-524). The retired native request admitted exactly one trigger; the legacy evaluator (`temporal::Trace.triggers`) admitted many, and this field is the successor of that list |
@@ -86,7 +86,7 @@ result field:
 | none | `progress_ledger: Option<ProgressLedger>` | FR-502's ledger of watermark, completeness and closure per binding; the call applies FR-502 to the request's progress assertion and returns the updated ledger |
 | none | `ledger: Option<EvidenceLedger>` | the caller-held ledger of retained instances (FR-524) and latest results (FR-526); the result returns the updated ledger |
 | `relation` | `relation` | `Original`, `Superseding(prev)` or `Invalidating(prev)`, `prev` the predecessor's `result_identity` (FR-526) |
-| none | `occurrence: Option<{ role, ordinal }>` | selects the clause occurrence of a node that several structurally equal clauses share, with the producer-assigned `{ role, ordinal }` of QSpec FR-322; the occurrence's clock row is the one keyed `(declaration, occurrence)`, never the k-th row by position. May be omitted for a node with one occurrence |
+| none | `occurrence: Option<{ role, ordinal }>` | selects the clause occurrence of a node that several structurally equal clauses share, with the producer-assigned `{ role, ordinal }` of FSpec FR-322; the occurrence's clock row is the one keyed `(declaration, occurrence)`, never the k-th row by position. May be omitted for a node with one occurrence |
 | none | `control: Option<CheckedNodeId>` | the protocol clause the caller selected; when present, the package's FR-449 activation-map row of that clause must name the call's clause (below) |
 | none (the retired document asserted the profile and clock) | `binding: TraceBinding` | the profile, clock binding name and clock parameters the request asserts; the evaluator compares them with the clause's rows before any position (FR-522) |
 
@@ -309,14 +309,14 @@ ceilings from the same inputs is byte-equal to a call that never stopped
   the emitted bytes assign (FR-515 "The in-process package"; FR-337). The clause's
   instance-bound atoms are derived from the package by FR-515 and are no request
   member. A `CheckedNodeId` plus the request's `occurrence` selects the clock row by its
-  key `(declaration, occurrence)` (QSpec FR-322), not by position among the node's
+  key `(declaration, occurrence)` (FSpec FR-322), not by position among the node's
   rows, so producer-assigned ordinals that differ from position pair correctly. For
   a node with one occurrence the selector may be omitted; for a node with several
   occurrences an absent selector is refused with `occurrence-required` and a
   selector naming no occurrence with `occurrence-unknown`. Two clauses with
   different nodes never read each other's rows.
 - **Contract ids.** The four contract strings have no producer after this
-  requirement; quire-protocol's producer-contract registry rows for them end with
+  requirement; filament-protocol's producer-contract registry rows for them end with
   QSL-1549, not before (FR-521 row 4).
 
 ### Consumer entry
@@ -339,17 +339,17 @@ together by first use as FR-532 "Atom index" states. For an aggregate atom the
 package carries the aggregate kind, the `quantile` level `q`, the `fraction` predicate,
 the value expression, the optional filter, the window `past[a, b]` (`window_kind`,
 `lower`, `upper`), `min_count`, the comparison (`<`, `<=`, `>=`, `>` or `=`) and the
-threshold of the aggregate's result family (QSpec FR-414; FR-194; FR-337-AC-15). QSpec
-FR-414 defines the aggregate term and its semantics and QSpec FR-370 "Window aggregate
+threshold of the aggregate's result family (FSpec FR-414; FR-194; FR-337-AC-15). FSpec
+FR-414 defines the aggregate term and its semantics and FSpec FR-370 "Window aggregate
 atom" defines the node's wire bindings, which FR-337 "Aggregate formula emission"
-writes. QSL does not evaluate the value expression, the predicate or the filter
+writes. FSL does not evaluate the value expression, the predicate or the filter
 on this route: as a `holds` condition is, they are the observation owner's, supplied
 per position.
 
 - **Sample.** `aggregate_samples` maps an aggregate atom index to an
   `AggregateSample` at the position: `Excluded` (the filter is false there, or the
   position is not admitted), `Value(Rational)` (the value expression's exact value in
-  the aggregate's value unit; QSL converts no unit), `Holds(bool)` (the `fraction`
+  the aggregate's value unit; FSL converts no unit), `Holds(bool)` (the `fraction`
   predicate's value, for a `fraction` term), `Counted` (for `count`, the filter
   holds) or `Undefined(cause)` (the filter, the value or the predicate is undefined
   there). A sample of a kind the term does not take is refused at request
@@ -370,11 +370,11 @@ per position.
   compared with the threshold by the comparison and is `Boolean`.
 - **Undefined and insufficient.** The first `Undefined(cause)` sample in oldest-first
   order makes the atom undefined with that cause and stops the window; this is
-  QSpec FR-414's undefined evaluation (O-16 category violation) and reads as an
+  FSpec FR-414's undefined evaluation (O-16 category violation) and reads as an
   undefined `holds` valuation: `truth = None`, `activation = Active` and a `Refused`
   non-value with code `undefined-atom`. A window holding fewer than `min_count`
   samples makes the atom have no value with cause `insufficient-data{count,
-  min_count}`, which is QSpec FR-414's O-16 category `undefined`, never an undefined
+  min_count}`, which is FSpec FR-414's O-16 category `undefined`, never an undefined
   evaluation: it reads as a missing valuation, `truth = None` and a `Missing`
   non-value with code `insufficient-data`, dimension `valuation:<atom>@<pos>`. When
   a window is both short of `min_count` and holds an undefined sample, the undefined
@@ -384,9 +384,9 @@ per position.
 - **Limit.** A window that would hold more than the FR-255 setting
   `monitor.max_window_values` (default 1,048,576) stops the call with an
   `Incomplete` result carrying `limit-reached` naming `max_window_values` as `LimitReached{limit, value, setting:
-  monitor.max_window_values}` (QSpec FR-414) and no truth, as the progress-ledger capacity stop is
+  monitor.max_window_values}` (FSpec FR-414) and no truth, as the progress-ledger capacity stop is
   (above); the setting is a system setting, not a request member.
-- **Charges.** QSpec FR-414-AC-8 charges one unit of clause work at `temporal.visit`
+- **Charges.** FSpec FR-414-AC-8 charges one unit of clause work at `temporal.visit`
   per window position visited, whether or not the filter admits it, up to and
   including the first undefined position. FR-523 "Window aggregate visit" maps it:
   the atom lookup is charged as a `holds` lookup, and each window position read is
@@ -395,8 +395,8 @@ per position.
   new counter exists: the thirteen stay thirteen, and an exhausted counter stops the
   call as FR-523 states.
 
-QSL's emitter writes the aggregate node (FR-337 "Aggregate formula emission"),
-QSpec FR-370 catalogues `quire.op.temporal.aggregate` and the Contract IR reader QSL
+FSL's emitter writes the aggregate node (FR-337 "Aggregate formula emission"),
+FSpec FR-370 catalogues `filament.op.temporal.aggregate` and the Contract IR reader FSL
 locks reads and admits it. The package subject view reads the node's argument and the
 request carries `aggregate_samples`, so a package route over a clause with an
 aggregate atom evaluates it from those samples as above and never reads the atom as a
@@ -407,7 +407,7 @@ in-process route to emit the clause ("Dependencies").
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-516-AC-1 | A compile-fail test that sets `truth`, `settlement`, `support` or `instance` on `EvidenceRequest` fails to compile, and the type has no member holding a QSL document or a QSL-computed digest. | Test (TC-1311) |
+| FR-516-AC-1 | A compile-fail test that sets `truth`, `settlement`, `support` or `instance` on `EvidenceRequest` fails to compile, and the type has no member holding an FSL document or an FSL-computed digest. | Test (TC-1311) |
 | FR-516-AC-2 | Over **R**'s event-position clause with a closed complete trigger scope and no delivery, the result has `activation = Inactive`, `truth = None` and `non_value.kind = Inactive`; with an open trigger scope `Unknown` and `ActivationUnknown`; with one admitted delivery `Active` and a truth; with a delivery whose capture is missing `Unavailable` and a `Missing` non-value naming the capture; with the anchor withdrawn (absent or naming no observed position) `Unavailable`; a request naming a clause the package does not hold returns `Err(CallFailure::Admission)` with an empty charge log and no result. | Test (TC-1311) |
 | FR-516-AC-3 | With one fact withdrawn from an otherwise Active request (decision closure, completeness record, a support fact), the result truth, settlement and support are the FR-043 values of the remaining evidence, the result carries a `Missing` non-value with code `fact-withdrawn` and the dimension the Withdrawn facts rule states for the withdrawn fact, and no field defaults to false, closed, settled or complete. | Test (TC-1311) |
 | FR-516-AC-4 | Two requests that differ only in one byte of the trigger identity give two different `result_identity` values, and an empty identity is refused at construction. | Test (TC-1311) |
@@ -455,7 +455,7 @@ in-process route to emit the clause ("Dependencies").
 | FR-516-AC-47 | Under the event-position profile with samples at positions 0 to 3 of 3, 4, 5, 6 for a `sum` term over `past[0, 2]` compared `<= 15`, the atom is true at position 3 (window 4 + 5 + 6 = 15) and false with threshold `<= 14`; at position 1 the window is positions 0 and 1 and the sum is 7; `min` over the same is 4 and `max` is 6 at position 3; `count` over `Counted` samples at positions 0, 1 and 3 and `Excluded` at 2 is 2 at position 3 for `past[0, 2]`. | Test (TC-1311) |
 | FR-516-AC-48 | With the values 4, 5, 6 in the window, `quantile 1/2` is 5 (the `ceil(3/2) = 2`nd smallest) and `quantile 3/4` is 6 (the `ceil(9/4) = 3`rd); with `Holds` samples `true, false, true`, `fraction` is 2/3 and compares exactly with a threshold of `2/3` as equal; an `Excluded` sample is not counted. | Test (TC-1311) |
 | FR-516-AC-49 | With `min_count 2` and one admitted sample in the window the atom is undefined with cause `insufficient-data{count: 1, min_count: 2}` and the result has `truth = None` and a `non_value` for `valuation:<atom>@<pos>`; a `count` or `sum` term with `min_count 0` over an empty window is 0; an `Undefined(cause)` sample at the second of three window positions stops the window there with that cause; a window position the request does not list gives a `Missing` non-value; a window with one admitted sample, `min_count 2` and an `Undefined(cause)` sample at its second position returns the `Refused` non-value `undefined-atom` with that cause and not `insufficient-data`; `insufficient-data` is a `Missing` non-value with `truth = None` and an undefined sample is a `Refused` non-value with `truth = None`. | Test (TC-1311) |
-| FR-516-AC-50 | Over the event-position false-extension profile, the clause `on origin always[0,3] (sum(v) over past[0,2] <= 15)` and a request of four positions 0 to 3 with `Value` samples 3, 4, 5, 6 of the one aggregate atom (index 0), progress `Complete { through: 3 }` and a closed decision scope, the call returns `truth = True`, and `usage` reports `formula_nodes` 2, `instances` 1, `positions` 4, `valuations` 13 (four atom lookups and window reads of 1, 2, 3 and 3 positions), `captures` 0, `evaluation_steps` 19 (the origin, the `always` node, four atom lookups, four scans and nine window reads) and `visited` 19 (2 + 4 + 13 + 0); the nine window units of QSpec FR-414-AC-8 (1 + 2 + 3 + 3 window positions) are the `valuations` and `evaluation_steps` units of the window reads, and FR-523 adds the four atom lookups on top of them (13 and 19 are 9 + 4 and 9 + 4 + 6); the comparison of the other six counters with the values the in-process route measures for the same request, and the agreement of every route, are gated on the aggregate emission dependency, since the in-process route cannot yet emit the clause. With `monitor.max_window_values` 2 the call returns `Ok` with `Incomplete` carrying `LimitReached{limit: 2, value: 3, setting: monitor.max_window_values}` at position 2 and `truth = None`; at 3 it completes. With `valuations` one below 13, or `evaluation_steps` one below 19, the call returns `Incomplete` naming that counter. A `Value` sample for a `fraction` term is refused `aggregate-sample-kind` with an empty charge log. | Test (TC-1311) |
+| FR-516-AC-50 | Over the event-position false-extension profile, the clause `on origin always[0,3] (sum(v) over past[0,2] <= 15)` and a request of four positions 0 to 3 with `Value` samples 3, 4, 5, 6 of the one aggregate atom (index 0), progress `Complete { through: 3 }` and a closed decision scope, the call returns `truth = True`, and `usage` reports `formula_nodes` 2, `instances` 1, `positions` 4, `valuations` 13 (four atom lookups and window reads of 1, 2, 3 and 3 positions), `captures` 0, `evaluation_steps` 19 (the origin, the `always` node, four atom lookups, four scans and nine window reads) and `visited` 19 (2 + 4 + 13 + 0); the nine window units of FSpec FR-414-AC-8 (1 + 2 + 3 + 3 window positions) are the `valuations` and `evaluation_steps` units of the window reads, and FR-523 adds the four atom lookups on top of them (13 and 19 are 9 + 4 and 9 + 4 + 6); the comparison of the other six counters with the values the in-process route measures for the same request, and the agreement of every route, are gated on the aggregate emission dependency, since the in-process route cannot yet emit the clause. With `monitor.max_window_values` 2 the call returns `Ok` with `Incomplete` carrying `LimitReached{limit: 2, value: 3, setting: monitor.max_window_values}` at position 2 and `truth = None`; at 3 it completes. With `valuations` one below 13, or `evaluation_steps` one below 19, the call returns `Incomplete` naming that counter. A `Value` sample for a `fraction` term is refused `aggregate-sample-kind` with an empty charge log. | Test (TC-1311) |
 | FR-516-AC-46 | Over each `EvidencePackage` of FR-515-AC-24 (one built by `from_emission`, one by `from_read`) whose written package differs from the source clause, the first `evaluate_temporal_evidence` call that reaches the clause returns `Err(CallFailure::Admission)` with exactly the cause `clause-unreadable` and an empty charge log, and returns no `EvidenceResult`. | Test (TC-1311) |
 
 ## Dependencies
@@ -466,7 +466,7 @@ in-process route to emit the clause ("Dependencies").
   does not replace. FR-522 supplies `binding`, `authenticated` and the
   `result_identity` rule, FR-523 the thirteen counters, FR-524 the activation
   states and faults, FR-526 the relation checks.
-- **Window aggregates (FR-516-AC-47 to AC-50 and FR-532-AC-11):** QSL's emission of an aggregate clause as a `quire.op.temporal.aggregate` node, QSpec FR-370's catalog entry and wire bindings for the node (Contract IR admits it), the package subject view's reading of the node's argument and the request's `aggregate_samples` (all delivered), and the in-process route's emission of an aggregate clause (for the all-route agreement); QSpec FR-414 and FR-194 (the window, `min_count`, quantile, undefined and charge rules), FR-337-AC-15 (the emitted aggregate argument), FR-255 (`monitor.max_window_values`). FR-194 evaluation needs, beyond the per-position sample stream above, nothing from the observation: the window, `min_count`, comparison and converted threshold come from the package, and the value expression and filter are evaluated by the observation owner.
+- **Window aggregates (FR-516-AC-47 to AC-50 and FR-532-AC-11):** FSL's emission of an aggregate clause as a `filament.op.temporal.aggregate` node, FSpec FR-370's catalog entry and wire bindings for the node (Contract IR admits it), the package subject view's reading of the node's argument and the request's `aggregate_samples` (all delivered), and the in-process route's emission of an aggregate clause (for the all-route agreement); FSpec FR-414 and FR-194 (the window, `min_count`, quantile, undefined and charge rules), FR-337-AC-15 (the emitted aggregate argument), FR-255 (`monitor.max_window_values`). FR-194 evaluation needs, beyond the per-position sample stream above, nothing from the observation: the window, `min_count`, comparison and converted threshold come from the package, and the value expression and filter are evaluated by the observation owner.
 - **Delivery:** FR-516-AC-18, AC-29, AC-30, AC-45 and AC-46 are delivered by QSL-1608 (see FR-515 Dependencies).
-- **Downstream:** quire-protocol `src/assessment.rs`, `src/conformance/kernel.rs`,
+- **Downstream:** filament-protocol `src/assessment.rs`, `src/conformance/kernel.rs`,
   `tests/it002_observation_temporal.rs` (QSL-1549).

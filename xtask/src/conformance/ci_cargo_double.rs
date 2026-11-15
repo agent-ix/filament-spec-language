@@ -7,7 +7,7 @@ use std::io::Write;
 
 fn main() {
     let log = std::env::var("CI_CARGO_DOUBLE_LOG").expect("log path");
-    let checkout = std::env::var("QSPEC_DIR").expect("QSpec path");
+    let checkout = std::env::var("FSPEC_DIR").expect("FSpec path");
     let command = std::env::args().nth(1).expect("Cargo command");
     writeln!(
         OpenOptions::new()

@@ -3,7 +3,7 @@ id: TC-432
 title: "A family check's stage limit names its kind, bound and actual counter, and the counter is where the limit stops"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
 ---
 # TC-432: A family check's stage limit names its kind, bound and actual counter, and the counter is where the limit stops

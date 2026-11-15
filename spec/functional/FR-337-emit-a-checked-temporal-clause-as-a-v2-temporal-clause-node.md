@@ -3,29 +3,29 @@ id: FR-337
 title: "Emit a checked temporal clause as a v2 temporal clause node"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-447
+  - target: ix://agent-ix/filament-spec-language/FR-447
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: depends_on
 ---
 # FR-337: Emit a checked temporal clause as a v2 temporal clause node
@@ -33,12 +33,12 @@ relationships:
 ## Description
 
 The S4 package emitter (ADR-011 layer 4 `package`, edge E4) SHALL emit each
-checked temporal clause as one `quire.checked-semantic-graph/v2` node with
+checked temporal clause as one `filament.checked-semantic-graph/v2` node with
 `node_tag: "temporal"` and `semantic_form: "temporal_clause"`, whose body is
-the `quire.op.temporal.clause` application QSpec FR-370 states, and QSL's
-I2 reader SHALL read that node back. This is the compiler side of QSpec
-FR-370 (ADR-018 QS-11): QSpec owns the body, the operation identities, the
-member kinds and the reader's refusals; QSL emits them from its checked
+the `filament.op.temporal.clause` application FSpec FR-370 states, and FSL's
+I2 reader SHALL read that node back. This is the compiler side of FSpec
+FR-370 (ADR-018 QS-11): FSpec owns the body, the operation identities, the
+member kinds and the reader's refusals; FSL emits them from its checked
 clause and reads them through its I2 reader. It also states the S3 check
 of an `on each` activation's `when` guard and of the clause's captures, which
 S4 lowers into the node, and how the engine observes a capture.
@@ -48,7 +48,7 @@ S4 lowers into the node, and how the engine observes a capture.
 A verification operator compiles a unit with a liveness claim under weak
 fairness. The emitted package carries the clause as a temporal node that
 any FR-370 reader admits, so the claim's obligation identity, its fairness
-set and its intervals are the same for QSL, the model checker and every
+set and its intervals are the same for FSL, the model checker and every
 backend that reads the package. They also write a response claim that
 starts at every state where a counter reaches 2, `on each (q: M::Counter)
 when (c.value >= 2)`: the package carries the activation's trigger and
@@ -60,10 +60,10 @@ too.
 
 ## Semantic authority and boundary
 
-QSpec FR-370 owns the node's body, the `quire.op.temporal.*` catalog
+FSpec FR-370 owns the node's body, the `filament.op.temporal.*` catalog
 entries, the `temporal_interval` and `fairness` member kinds, the placement
 and profile-fit rules and the reader order (References). This requirement
-specifies what QSL's emitter writes from its checked clause and what its I2
+specifies what FSL's emitter writes from its checked clause and what its I2
 reader returns.
 
 ## Inputs
@@ -89,8 +89,8 @@ reader returns.
   declaration has its own triple. The triple is the clause root of FR-338's
   automaton-state context.
 - The clause's `over` node: the NodeId of the parameter node the first
-  argument of the `quire.op.temporal.clause` application references. A
-  clause always has an `over` node: QSpec FR-370 admits no temporal clause
+  argument of the `filament.op.temporal.clause` application references. A
+  clause always has an `over` node: FSpec FR-370 admits no temporal clause
   without an `over` parameter (FR-370-AC-13), and S1 refuses one with
   `invalid_syntax`/`unexpected-token` at the token that stands where `over` is
   required.
@@ -99,17 +99,17 @@ reader returns.
 
 ## Behavior
 
-- The emitter SHALL write the body as one `quire.op.temporal.clause`
+- The emitter SHALL write the body as one `filament.op.temporal.clause`
   application with one `temporal_profile` law, equal to the package's
   `profile_selections` row of that role, and the six arguments over, clock,
-  activation, captures, fairness and formula, in that order (QSpec FR-370).
+  activation, captures, fairness and formula, in that order (FSpec FR-370).
 - The emitter SHALL write each temporal operator of the formula as an
-  application with its own `quire.op.temporal.*` identity, and each `holds`
+  application with its own `filament.op.temporal.*` identity, and each `holds`
   atom's Boolean operand as FR-093 lowers a Boolean expression.
 - The emitter SHALL write an interval operator's member as
   `temporal_interval` with `{lower, upper}` as decimal strings, an `[a,*]`
   operator's interval as `{lower, upper: null}`, and an unbounded
-  operator's interval as `null` (QSpec FR-370).
+  operator's interval as `null` (FSpec FR-370).
 - The emitter SHALL write an interval of a clause under the finite-window
   profile as `temporal_interval` `{lower, upper}` of its integer tick bounds,
   never as a `timed_interval` or a rational. The check admits only integral
@@ -119,13 +119,13 @@ reader returns.
   as a binding or write it.
 - The I2 reader SHALL refuse a clause node selecting the finite-window profile
   whose interval member is a `timed_interval` or a `temporal_interval` with
-  `upper: null`, `invalid_package`/`operation-member-mismatch` (QSpec FR-370),
+  `upper: null`, `invalid_package`/`operation-member-mismatch` (FSpec FR-370),
   so a package from other bytes meets the same rule at read time.
-- The emitter SHALL write one `quire.op.temporal.fair` application per
+- The emitter SHALL write one `filament.op.temporal.fair` application per
   member of the resolved fairness set, in fairness-set order, each with the
   resolved `fairness_kind` and `granularity`, so an unmarked constraint and
   its written `weak whole` form emit identical bytes (ADR-018 FA-6).
-- The emitter SHALL write strong previous as `quire.op.temporal.once` with
+- The emitter SHALL write strong previous as `filament.op.temporal.once` with
   interval `{lower: "1", upper: "1"}`.
 - The emitter SHALL emit, for every clause, a node that carries the
   clause's `over` reference and one `claim` occurrence per declaration, so
@@ -144,7 +144,7 @@ reader returns.
   node that is not a `temporal`/`temporal_clause` node, or an occurrence
   whose role or ordinal differs, then the I2 reader SHALL return the lookup
   refusal `clause-root-unresolved` at the looked-up triple. This is a
-  QSL lookup result, not an FR-370 package refusal, because the package
+  FSL lookup result, not an FR-370 package refusal, because the package
   itself is well-formed. Whether it rejects a certificate or refuses a
   request is decided by the caller: FR-338 refuses the request when the
   request's own clause root is unresolved and rejects the certificate when
@@ -241,7 +241,7 @@ that object that the guard may read, as a hybrid claim's guard reads its
   condition is lowered: a read of `c` is a reference to the `over`
   parameter's node, and a read of `q` a reference to the level-1 trigger
   node, as FR-447 lowers `ActivationVariable`. With no `when`, the aggregate
-  binds no `guard` (QSpec FR-370: absent otherwise).
+  binds no `guard` (FSpec FR-370: absent otherwise).
 - The emitter SHALL key the clause node over the guard and the trigger node
   by FR-322's application-node rule, so `on each (q: T)` with no guard,
   `on each (q: T) when (true)` and `on origin` emit three different clause
@@ -251,14 +251,14 @@ that object that the guard may read, as a hybrid claim's guard reads its
 - The I2 reader SHALL return for an emitted `each` clause the identity
   triple and `over` node of "Outputs", never the trigger node as the `over`
   node.
-- The I2 reader SHALL admit an emitted `each` clause node. QSpec FR-370
+- The I2 reader SHALL admit an emitted `each` clause node. FSpec FR-370
   states no reader refusal for the activation argument, so this requirement
   adds none.
 
 ### Captures at S3
 
 A capture `capture n: T = e;` fixes the value of `e` at the position where an
-instance of the clause activates and keeps it for that activation (QSpec
+instance of the clause activates and keeps it for that activation (FSpec
 FR-093: immutable, evaluated once at the activation anchor). S3 checks it as
 FR-381 checks a protocol capture and keeps it.
 
@@ -352,7 +352,7 @@ FR-381 checks a protocol capture and keeps it.
   twice and different from the key of the same clause without its captures.
 - The I2 reader SHALL admit an emitted clause with captures and return its
   identity triple and `over` node of "Outputs", never a trigger or capture
-  node as the `over` node. QSpec FR-370 states no reader refusal for the
+  node as the `over` node. FSpec FR-370 states no reader refusal for the
   captures argument beyond its shape (an aggregate of named bindings), so this
   requirement adds none.
 
@@ -427,38 +427,38 @@ FR-381 checks a protocol capture and keeps it.
 
 ### Notes for the implementation
 
-- `qsl-analyze/src/model_check/liveness.rs` still returns
+- `fsl-analyze/src/model_check/liveness.rs` still returns
   `ModelCheckRefusal::GuardedActivation` for a guarded TP-4 clause (lines
   176 and 283). FR-126 decides such a clause over FR-338's guarded automaton
   and FR-126-AC-16's TP-4 halves require it, so the coding change removes
   that refusal.
 - The trait method `ModelLetters::activation` (`pub trait ModelLetters`,
-  `qsl-eval/src/model_subject.rs`, lines 178-183) returns
+  `fsl-eval/src/model_subject.rs`, lines 178-183) returns
   `Result<AtomReading, Incomplete>`, and so does its production
   implementation `ClauseLetters::activation` (`impl ModelLetters for
-  ClauseLetters`, `qsl-eval/src/simulation/model/letters.rs`, lines
+  ClauseLetters`, `fsl-eval/src/simulation/model/letters.rs`, lines
   271-278), which today returns `True` unconditionally. FR-125 requires a
   guard evaluation that gives no reading to stop the check as a `holds`
   atom's does, so the trait method's error type widens to `AtomStop` and
   the implementation evaluates the guard.
-- `qsl-semantics/src/check/temporal_clause/tests.rs`'s
+- `fsl-semantics/src/check/temporal_clause/tests.rs`'s
   `the_package_check_refuses_a_clause_no_emission_writes` expects
   `NotEmitted` for `on each (d: Counter) when (d.level = 1)`; that clause
   now checks and emits.
 
 For QSL-1081 (captures):
 
-- `qsl-semantics/src/check/temporal_clause.rs`'s `is_emitted` stops testing
+- `fsl-semantics/src/check/temporal_clause.rs`'s `is_emitted` stops testing
   `form.captures.is_empty()`, and the checked clause keeps the captures
   beside the guard (`TypedConditions` in `temporal_clause/condition.rs`
   gains the typed initializers; the slot names of every condition list the
   captures after `c` and `q`).
-- `qsl-semantics/src/check/lowering/temporal.rs` writes the captures
+- `fsl-semantics/src/check/lowering/temporal.rs` writes the captures
   aggregate (it writes `GroupTerm::new(Vec::new())` today) and mints the
   capture parameter nodes, with a `TemporalSite::Capture(index)` site for
   their occurrences.
-- `ModelLetters` (`qsl-eval/src/model_subject.rs`) gains a capture reading at
-  an activation, and `qsl-analyze/src/model_check/liveness.rs` and the
+- `ModelLetters` (`fsl-eval/src/model_subject.rs`) gains a capture reading at
+  an activation, and `fsl-analyze/src/model_check/liveness.rs` and the
   bounded monitors refuse a clause whose `holds` reads a capture with
   `ModelCheckRefusal::CaptureRead`.
 
@@ -469,7 +469,7 @@ declaration, so its identity says nothing about which declaration, name or
 clock a consumer is reading. The package therefore carries that information in
 two sidecar arrays keyed by `claim` occurrence, not by node, and the emitter
 writes them from the checked graph at the same point as the nodes
-(QSpec FR-322-AC-342 to FR-322-AC-370).
+(FSpec FR-322-AC-342 to FR-322-AC-370).
 
 - The emitter SHALL write exactly one `temporal_clause_names` row
   `{declaration, occurrence, name}` for every `claim` occurrence of every
@@ -483,7 +483,7 @@ writes them from the checked graph at the same point as the nodes
   `{declaration, occurrence, clock_name, clock}` for every `claim` occurrence
   of a clause whose selected profile is clock-configured (the event-position
   and fixed-sample false-extension profiles, and
-  `quire.temporal.timestamped-event.finite-window/v1`): `occurrence` is the
+  `filament.temporal.timestamped-event.finite-window/v1`): `occurrence` is the
   occurrence's ordinal and `clock_name` and `clock` are that declaration's own
   clock text and `ClockConfiguration`. The configuration is per occurrence,
   not per node, so two declarations sharing a node may carry different
@@ -493,12 +493,12 @@ writes them from the checked graph at the same point as the nodes
   profile selects no clock writes a name row and no binding, and a package
   with no binding omits `temporal_bindings`.
 - The emitter SHALL write no `temporal_bindings` row for a clause under
-  `quire.temporal.timed/v1` (QSpec FR-322 "Temporal clock bindings",
+  `filament.temporal.timed/v1` (FSpec FR-322 "Temporal clock bindings",
   FR-322-AC-386): that profile selects none of the three clock
   configurations and its `clock_name` is `model-time`. For a clause over a
   model subject the model time binding and exact unit come from the
   package's `timed_model` root and `time_source` that the emitter writes for
-  the model's `time` declaration (QSpec FR-415), which the reader joins to
+  the model's `time` declaration (FSpec FR-415), which the reader joins to
   the clause's subject; S3 refuses such a clause over a model with no `time`
   declaration, so no package is written. A clock selection supplied for a
   Timed clause is a selection no occurrence uses and the emitter refuses it
@@ -528,31 +528,31 @@ FR-488 and FR-447.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-337-AC-1 | Compiling ADR-018 §6's example unit emits the clause `ReachesTwo` as a `temporal`/`temporal_clause` node whose body is a `quire.op.temporal.clause` application with one `temporal_profile` law naming `quire.temporal.infinite-trace/v1`, a `null` member and the arguments over (a reference to `c`'s parameter node), clock `"model-steps"`, activation `origin`, an empty captures aggregate, one `quire.op.temporal.fair` application (`weak`, `each`, `attemptUpdate`) and the formula `always(eventually(holds(...)))` with `null` intervals; the package's I2 reader admits it. | Test (TC-524) |
+| FR-337-AC-1 | Compiling ADR-018 §6's example unit emits the clause `ReachesTwo` as a `temporal`/`temporal_clause` node whose body is a `filament.op.temporal.clause` application with one `temporal_profile` law naming `filament.temporal.infinite-trace/v1`, a `null` member and the arguments over (a reference to `c`'s parameter node), clock `"model-steps"`, activation `origin`, an empty captures aggregate, one `filament.op.temporal.fair` application (`weak`, `each`, `attemptUpdate`) and the formula `always(eventually(holds(...)))` with `null` intervals; the package's I2 reader admits it. | Test (TC-524) |
 | FR-337-AC-2 | The clause written with `fair weak attemptUpdate` and with `fair weak whole attemptUpdate` emits byte-identical fairness applications and equal node keys; changing `each` to `whole`, or the formula's `eventually` to `eventually[0,5]`, changes the node key and the `package_id`. | Test (TC-524) |
-| FR-337-AC-3 | `eventually[0,5] holds(c.versionNumber = 2)` under event-position false-extension emits `quire.op.temporal.eventually` with member `temporal_interval` `{lower: "0", upper: "5"}` and an empty fairness argument; strong previous emits `quire.op.temporal.once` with `{lower: "1", upper: "1"}`; under infinite-trace `eventually[3,*] holds(c.versionNumber = 2)` emits `{lower: "3", upper: null}`. | Test (TC-524) |
-| FR-337-AC-4 | Fed to QSL's I2 reader, AC-1's node with its arguments reordered fails the schema; with a `null` interval under a bounded profile it refuses `invalid_package`/`operation-member-mismatch`; with a fairness member naming an absent operation it refuses `missing_declaration`/`missing-name`; with a `quire.op.temporal.fair` application inside the formula it refuses `ill_typed`/`operator-ineligible`, each at FR-370's locus. | Test (TC-524) |
+| FR-337-AC-3 | `eventually[0,5] holds(c.versionNumber = 2)` under event-position false-extension emits `filament.op.temporal.eventually` with member `temporal_interval` `{lower: "0", upper: "5"}` and an empty fairness argument; strong previous emits `filament.op.temporal.once` with `{lower: "1", upper: "1"}`; under infinite-trace `eventually[3,*] holds(c.versionNumber = 2)` emits `{lower: "3", upper: null}`. | Test (TC-524) |
+| FR-337-AC-4 | Fed to FSL's I2 reader, AC-1's node with its arguments reordered fails the schema; with a `null` interval under a bounded profile it refuses `invalid_package`/`operation-member-mismatch`; with a fairness member naming an absent operation it refuses `missing_declaration`/`missing-name`; with a `filament.op.temporal.fair` application inside the formula it refuses `ill_typed`/`operator-ineligible`, each at FR-370's locus. | Test (TC-524) |
 | FR-337-AC-5 | Compiling ADR-018 §6's example unit, the I2 reader returns for `ReachesTwo` the triple `[node, "claim", ordinal]` with `node` equal to the emitted node's NodeId and the `over` node equal to `c`'s parameter node; resolving that triple in the recompiled package finds the clause. Two structurally identical clause declarations share one node and the reader returns two triples with distinct ordinals, each resolving to its own declaration. A temporal clause written with no `over` parameter refuses `invalid_syntax`/`unexpected-token` at the token that stands where `over` is required, with no node. A triple with an unknown NodeId, a non-temporal node's NodeId, role `invariant` or another ordinal returns `clause-root-unresolved` at that triple. | Test (TC-1079) |
-| FR-337-AC-6 | Over FR-124-AC-1's `Counter` unit (`over (c: M::Counter)`), under infinite-trace, `always holds(c.value <= 1)` `on each (q: M::Counter) when (c.value >= 3)` compiles with no `NotEmitted` refusal and emits a `temporal`/`temporal_clause` node whose activation argument binds `kind` `each`, `trigger` a reference to the `value`/`parameter` node named `q` at level 1 typed by `Counter`'s type node, and `guard` the term of `c.value >= 3` whose field read references `c`'s parameter node at level 0; the same clause `on each (q: M::Counter)` binds `kind` and `trigger` and no `guard`, `when (true)` binds `guard` the lowered term of `true`, and `on origin` binds `kind` `origin` alone. The four give four different clause keys and `package_id`s; `when (c.value >= 2)` and the binder renamed `r` each change the clause key; reformatting changes neither. The trigger node's `expression` occurrence and its type node's `type` occurrence are located at the binder's name `q`. QSL's I2 reader admits each package and returns each clause's triple and `over` node. | Test (TC-1265) |
+| FR-337-AC-6 | Over FR-124-AC-1's `Counter` unit (`over (c: M::Counter)`), under infinite-trace, `always holds(c.value <= 1)` `on each (q: M::Counter) when (c.value >= 3)` compiles with no `NotEmitted` refusal and emits a `temporal`/`temporal_clause` node whose activation argument binds `kind` `each`, `trigger` a reference to the `value`/`parameter` node named `q` at level 1 typed by `Counter`'s type node, and `guard` the term of `c.value >= 3` whose field read references `c`'s parameter node at level 0; the same clause `on each (q: M::Counter)` binds `kind` and `trigger` and no `guard`, `when (true)` binds `guard` the lowered term of `true`, and `on origin` binds `kind` `origin` alone. The four give four different clause keys and `package_id`s; `when (c.value >= 2)` and the binder renamed `r` each change the clause key; reformatting changes neither. The trigger node's `expression` occurrence and its type node's `type` occurrence are located at the binder's name `q`. FSL's I2 reader admits each package and returns each clause's triple and `over` node. | Test (TC-1265) |
 | FR-337-AC-7 | Over the same unit: `when (q.value = 1)` checks, and its guard term's field read references the level-1 trigger node; a refused clause gives no package: `when (c.value)` refuses `ill_typed`/`non-boolean-root` at the guard; `holds(q.value <= 1)` in the body refuses `missing_declaration`/`missing-name` at the read of `q`; `when (c.value = c.value + 1)` refuses `undefined_expression`/`unproved-range` at `c.value + 1`, as FR-104-AC-12 refuses the unguarded sum; `when (6 mod (2 - c.value) = 0)` checks, its divisor having no S3 law; `on each (q: M::Absent)` refuses `missing_declaration`/`missing-name` at `Absent`; `on each (q: Integer)` refuses `ill_typed`/`type-mismatch` at `Integer`; `on each (c: M::Counter)` refuses `conflicting_declaration`/`duplicate-declaration` at the binder `c`, naming both declarations; a clause whose guard is `c.value` and whose `holds` condition is non-Boolean refuses once, at the guard. | Test (TC-1265) |
 | FR-337-AC-8 | Over the same unit, `always holds(c.value <= 1)` `on each (q: M::Counter) when (c.value >= 1)` with the body capture `n: Int[0, 3] = c.value;` then `m: Int[0, 3] = q.value;` checks, and the checked clause keeps `n` then `m`, each with its declared type, typed initializer and slot count (2 and 3 under `on each`, 1 and 2 under `on origin`; a `holds` condition's count is 4 under `on each` and 3 under `on origin`); `holds(c.value >= n)` and `holds(m = n)` check; the same captures under `on origin` check. Each refuses with no package: `b: Boolean = c.value` `ill_typed`/`type-mismatch` at the initializer, `expected` `Boolean`; `x: M::Absent = c.value` `missing_declaration`/`missing-name` at `Absent`; `n: Int[0, 3] = c.value + 1` `undefined_expression`/`unproved-range` at `c.value + 1`; a capture initializer reading a later capture or itself, and the `when` guard reading a capture, each `missing_declaration`/`missing-name` at the read; a capture named `c`, `q` or as an earlier capture `conflicting_declaration`/`duplicate-declaration` at the capture's name, naming both declarations. A clause whose guard is `c.value` and whose capture initializer is ill typed refuses once, at the guard; one whose capture is ill typed and whose `holds` condition is non-Boolean refuses once, at the capture. | Test (TC-1267) |
-| FR-337-AC-9 | Over the same unit, `on each (q: M::Counter) when (c.value >= 1)` with the captures of AC-8 emits a clause node whose captures argument binds `n` to the term of `c.value`, whose field read references `c`'s parameter node at level 0, and `m` to the term of `q.value`, whose read references the level-1 trigger node; the `value`/`parameter` nodes `n` and `m` are at levels 2 and 3 typed by `Int[0, 3]`'s type node, and `holds(c.value >= n)` lowers its read of `n` as a reference to `n`'s node; under `on origin` the nodes are at levels 1 and 2; a clause with no capture binds the empty aggregate. Each capture node's `expression` occurrence and its type node's `type` occurrence are located at the capture's name. QSL's I2 reader admits each package and returns each clause's triple and `over` node, never a trigger or capture node as `over`. | Test (TC-1267) |
+| FR-337-AC-9 | Over the same unit, `on each (q: M::Counter) when (c.value >= 1)` with the captures of AC-8 emits a clause node whose captures argument binds `n` to the term of `c.value`, whose field read references `c`'s parameter node at level 0, and `m` to the term of `q.value`, whose read references the level-1 trigger node; the `value`/`parameter` nodes `n` and `m` are at levels 2 and 3 typed by `Int[0, 3]`'s type node, and `holds(c.value >= n)` lowers its read of `n` as a reference to `n`'s node; under `on origin` the nodes are at levels 1 and 2; a clause with no capture binds the empty aggregate. Each capture node's `expression` occurrence and its type node's `type` occurrence are located at the capture's name. FSL's I2 reader admits each package and returns each clause's triple and `over` node, never a trigger or capture node as `over`. | Test (TC-1267) |
 | FR-337-AC-10 | The clause of AC-9 and the same clause with the capture `n` renamed `p`, with `n`'s initializer `q.value`, with `n` declared `Int[0, 9]`, with `n` and `m` in the other order, with a third capture added and with no capture each emit a different clause key and `package_id`; reformatting changes neither; `requires temporal Due;` over the clause with the captures (FR-218-AC-16) binds to `Due`'s position among the unit's temporal clauses, and the node the protocol's `requirements` set holds for it is the emitted clause node, so its key equals the clause key of AC-9 and differs from the key over the same clause with no capture. | Test (TC-1267) |
-| FR-337-AC-11 | Read through QSL's production letter seam over the `Counter` subject under event-position false-extension, `eventually[0,1] holds(c.value = 3)` `on each (q: M::Counter) when (c.value = 1)` with an added unread `capture n: Int[0, 3] = c.value;` returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2`, as AC-18 of FR-125 returns it without the capture, and with `when (c.value >= 2)` returns `Holds{Exhaustive}`; under infinite-trace `always holds(true)` `on each (q: M::Counter) when (true)` with `capture z: Boolean = (6 mod (2 - c.value) = 0);` returns `Violated` with `kind: UndefinedEvaluation` at position 2, cause `division-by-zero`, its site naming the capture `z`, and with `when (false)` (S3 refuses `c.value = 7` over `Int[0, 3]`, an unproved range) returns `Holds{Exhaustive}` because no activation evaluates the capture. | Test (TC-1267) |
+| FR-337-AC-11 | Read through FSL's production letter seam over the `Counter` subject under event-position false-extension, `eventually[0,1] holds(c.value = 3)` `on each (q: M::Counter) when (c.value = 1)` with an added unread `capture n: Int[0, 3] = c.value;` returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2`, as AC-18 of FR-125 returns it without the capture, and with `when (c.value >= 2)` returns `Holds{Exhaustive}`; under infinite-trace `always holds(true)` `on each (q: M::Counter) when (true)` with `capture z: Boolean = (6 mod (2 - c.value) = 0);` returns `Violated` with `kind: UndefinedEvaluation` at position 2, cause `division-by-zero`, its site naming the capture `z`, and with `when (false)` (S3 refuses `c.value = 7` over `Int[0, 3]`, an unproved range) returns `Holds{Exhaustive}` because no activation evaluates the capture. | Test (TC-1267) |
 | FR-337-AC-12 | The standing `CaptureRead` refusal of "Capture observation" (QSL-1092): the clause `eventually[0,1] holds(n < 3 and c.value = n + 1)` under event-position false-extension, `on each (q: M::Counter) when (c.value = 1)` with `capture n: Int[0, 3] = c.value;` checks and S4 emits it, and the engine returns `ModelCheckRefusal::CaptureRead` naming the clause and `n` and no verdict, exploring no state (no state is charged to the meter); the same refusal results for `always holds(n < 3 and c.value <= n + 1)` under infinite-trace `on each`, for a bounded monitor clause `on origin` with `capture n: Int[0, 3] = c.value;` and `always holds(c.value >= n)`, and for a clause reading its second capture only, naming that capture; a clause whose unit has an unbounded root returns `RequiresBound`, not `CaptureRead`; the same clause with the `holds` condition `c.value = 3` returns AC-11's verdict with the capture unread. | Test (TC-1267) |
 | FR-337-AC-13 | Over the `Counter` subject with a capture `n: Int[0, 3] = c.value;` no `holds` reads: infinite-trace `always holds(c.value <= 1)` `on each (q: M::Counter) when (c.value >= 3)` is `Violated`, as FR-125-AC-18 returns it, and FR-128 replays its counterexample to `reproduced-with-evaluated-witness`; the unguarded `on each (q: M::Counter)` clause with the same capture is `Holds{Exhaustive}` (a guarded clause carries no closure certificate) and FR-338's checker accepts the `ClosureCertificate`, reading the captures from the recompiled package. For AC-11's `z` clause, FR-338's checker rejects a certificate for a reached state at which `z` is undefined `BadState` at the reached product state, as it rejects an undefined atom. FR-128 replays the same clause's `UndefinedEvaluation` counterexample to `reproduced-with-evaluated-witness` with the undefined value at position 2 located at `z`, and the payload with `where.locus` naming the activation or another capture, or with `where.position` 1, settles `inconclusive`, `ReplayParity`; FR-339's component checker is not built, so its rejection of the same certificate waits on it. | Test (TC-1267) |
 | FR-337-AC-14 | The footprint (FR-156 "Atom footprints") of `always holds(true)` `on each (q: M::Counter) when (true)` with `capture n: Int[0, 3] = c.value;` holds the location `Counter::value` with the `over` parameter as its receiver, which the same clause with no capture does not, and FR-126's partial-order run joins it into the atoms'; a capture initializer reading through `q` has the same receiver. | Test (TC-1267) |
-| FR-337-AC-15 | A clause with an aggregate atom emits a `temporal`/`formula` node applying `quire.op.temporal.aggregate` whose one argument is QSpec FR-370's "Window aggregate atom" `aggregate`: for each kind its bindings and literals are those of the QSpec accepted vector over the same inputs (AG-01 to AG-06, AG-08, AG-09); its `predicate`, `value` and `filter` references reach the clause's `over` parameter; spans resolve through the source map; an omitted and an explicit `min_count 1` give one node; changing the window, `min_count`, value, filter, comparison, threshold or kind changes the formula key and package identity; a `duration` window lowers to quantity literals of the selected clock unit when S3 is given the clock, `past[0 M::s, 300000 M::ms]` to `0` and `300000` of `M::ms` under a clock in `M::ms` and to `0` and `300` of `M::s` under a clock in `M::s`, and otherwise of its lower bound's unit, `past[0 ms, 300 s]` to `0` and `300000` of `ms`; a bound whose converted value is past `s3.rational_bits` refuses `LimitExceeded(S3RationalBits)` at the bound, `past[0 ms, 255 s]` under a ceiling of 16 (the converted `255000` is 18 bits) and checks under 18; and a `duration` window whose unit node is not the `scalar_type`/`unit` node the selected `timestamp_unit` names refuses the emission with no package. | Test (TC-1267) |
+| FR-337-AC-15 | A clause with an aggregate atom emits a `temporal`/`formula` node applying `filament.op.temporal.aggregate` whose one argument is FSpec FR-370's "Window aggregate atom" `aggregate`: for each kind its bindings and literals are those of the FSpec accepted vector over the same inputs (AG-01 to AG-06, AG-08, AG-09); its `predicate`, `value` and `filter` references reach the clause's `over` parameter; spans resolve through the source map; an omitted and an explicit `min_count 1` give one node; changing the window, `min_count`, value, filter, comparison, threshold or kind changes the formula key and package identity; a `duration` window lowers to quantity literals of the selected clock unit when S3 is given the clock, `past[0 M::s, 300000 M::ms]` to `0` and `300000` of `M::ms` under a clock in `M::ms` and to `0` and `300` of `M::s` under a clock in `M::s`, and otherwise of its lower bound's unit, `past[0 ms, 300 s]` to `0` and `300000` of `ms`; a bound whose converted value is past `s3.rational_bits` refuses `LimitExceeded(S3RationalBits)` at the bound, `past[0 ms, 255 s]` under a ceiling of 16 (the converted `255000` is 18 bits) and checks under 18; and a `duration` window whose unit node is not the `scalar_type`/`unit` node the selected `timestamp_unit` names refuses the emission with no package. | Test (TC-1267) |
 | FR-337-AC-16 | Two structurally equal clauses `eventually[0,1] holds(true)` over one subject named `Alpha` and `Beta` emit one `temporal_clause` node and two `temporal_clause_names` rows at occurrences 0 and 1 with the names `Alpha` and `Beta`, whatever the clause's profile. | Test (TC-1326) |
 | FR-337-AC-17 | Renaming `Alpha` changes that name row and no NodeId or `package_id` of any node. | Test (TC-1326) |
 | FR-337-AC-18 | A unit with no clause omits `temporal_clause_names`, and a unit whose clauses each have one occurrence carries one row at occurrence 0 per clause. | Test (TC-1326) |
-| FR-337-AC-19 | The two clauses of AC-16 under event-position false-extension with two distinct clock configurations emit one `temporal_bindings` row per occurrence, each with its own `clock_name` and `clock`; the same holds under `quire.temporal.timestamped-event.finite-window/v1` with timestamped-event configurations. | Test (TC-1326) |
+| FR-337-AC-19 | The two clauses of AC-16 under event-position false-extension with two distinct clock configurations emit one `temporal_bindings` row per occurrence, each with its own `clock_name` and `clock`; the same holds under `filament.temporal.timestamped-event.finite-window/v1` with timestamped-event configurations. | Test (TC-1326) |
 | FR-337-AC-20 | A compile with an occurrence that has no clock selection, with a selection no occurrence uses, or with a selection of a kind its profile does not determine refuses and produces no package. | Test (TC-1326) |
 | FR-337-AC-21 | Under an unclocked profile (infinite-trace) the package carries the name rows and no `temporal_bindings` member. | Test (TC-1326) |
 | FR-337-AC-22 | The same declarations written in reversed source order emit `temporal_clause_names` and `temporal_bindings` arrays equal to those of the original order, each sorted by (`declaration` NodeId, `occurrence`); an emitter that writes rows in node or declaration order fails this. | Test (TC-1326) |
 | FR-337-AC-23 | For two structurally equal clauses with ordinals 0 and 1 under a clocked profile, `Emission` returns two `TemporalClauseRef` values whose `declaration` and `occurrence` equal the two `temporal_clause_names` rows read back from the emitted bytes, whose `clause` positions name the two declarations in the checked graph, and whose rows for `profile_selections` and `temporal_bindings` equal the lock's and the package's byte for byte; reordering the declarations changes `clause` and no `declaration`. | Test (TC-1326) |
 | FR-337-AC-24 | `eventually[0,5] holds(p)` under the finite-window profile emits `temporal_interval` `{lower: "0", upper: "5"}`; a checked clause of that profile whose interval is constructed as the timed interval `(0 ms, 5 ms]` (past the check) makes the emitter fail with an internal fault and writes no node; fed to the I2 reader, the emitted node with its interval replaced by a `timed_interval` member, and with `temporal_interval` `{lower: "0", upper: null}`, each refuse `invalid_package`/`operation-member-mismatch`. | Test (TC-524) |
-| FR-337-AC-25 | A clause under `quire.temporal.timed/v1` over a model with a `time` declaration emits with no clock selection and writes no `temporal_bindings` row, in the bytes or in `Emission`'s rows, while its name row is written; the package carries the `timed_model` root whose `model` is the clause subject's model and whose `source` is the `time_source` whose unit is the declared unit, and QSL's I2 read admits it. | Test (TC-1326) |
+| FR-337-AC-25 | A clause under `filament.temporal.timed/v1` over a model with a `time` declaration emits with no clock selection and writes no `temporal_bindings` row, in the bytes or in `Emission`'s rows, while its name row is written; the package carries the `timed_model` root whose `model` is the clause subject's model and whose `source` is the `time_source` whose unit is the declared unit, and FSL's I2 read admits it. | Test (TC-1326) |
 | FR-337-AC-26 | A Timed clause over a model with no `time` declaration refuses at S3 (`ModelTimeOnUntimedModel`, located at the clause's `model-time` clock text) and no package is written. | Test (TC-1326) |
 | FR-337-AC-27 | A clock selection of any kind supplied for a Timed clause is refused as a surplus selection at the clause's span, `invalid_package`/`timed-node-reference`, and no package is written. | Test (TC-1326) |
 | FR-337-AC-28 | A `temporal_bindings` row supplied for a Timed clause in an otherwise emitted package refuses in the reader `invalid_package`/`timed-node-reference` at `/temporal_bindings/0`; the package without the row is admitted. | Test (TC-1326) |
@@ -562,7 +562,7 @@ FR-488 and FR-447.
 
 For a checked temporal clause containing aggregate atoms, the emitter SHALL
 write each aggregate atom as a `temporal`/`formula` node applying
-`quire.op.temporal.aggregate` with exactly the wire shape of QSpec FR-370
+`filament.op.temporal.aggregate` with exactly the wire shape of FSpec FR-370
 "Window aggregate atom" (QSL-1644): operator class `temporal_formula`, no
 law, member or mode, the result type the `Boolean` node, and one argument,
 an `aggregate` of these bindings in this order, a binding the row does not
@@ -578,7 +578,7 @@ require omitted:
    under timestamped-event;
 7. `lower` and `upper`: the bounds `a` and `b` of `past[a, b]`, integer
    literals for `positions`; for `duration` quantity literals typed by the
-   clause's clock unit node, both bounds converted exactly to it (QSpec
+   clause's clock unit node, both bounds converted exactly to it (FSpec
    FR-370), so `past[0 s, 300000 ms]` under a clock in `ms` is `0` and
    `300000` of `ms`;
 8. `min_count`: the integer literal `min_count`, 1 when the source omits it;
@@ -592,7 +592,7 @@ literal SHALL be bound as a literal of the result family: `integer` for
 literal written as the rational of its value where a rational is required,
 and an exact fraction `n/d` of integer literals (FR-194) as the rational
 literal `n/d`, so `fraction holds(e.w = 0) over past[0, 3] >= 1/2` binds the
-threshold of QSpec's AG-05 vector; a quantity threshold in another unit of the value's dimension is converted to
+threshold of FSpec's AG-05 vector; a quantity threshold in another unit of the value's dimension is converted to
 the value's unit and bound as a reference to the converted node; any other
 threshold is bound as a reference to its node. S3 refuses, before emission,
 a value that is not of family `integer`, `rational` or `quantity` and a
@@ -616,7 +616,7 @@ magnitude, and a converted value past it SHALL be refused
 by the emitter, with an empty body, the model owner and a `generated`
 occurrence at the clause, as a timed source's are. The clock unit node is
 the unit's one model-owned node, and its `node_id.package` is the identity of
-the domain package that declares `T` (QSpec FR-322 "Structural node
+the domain package that declares `T` (FSpec FR-322 "Structural node
 identity"), not the clause node's package: in a unit compiled as package
 `acme/orders` with `model M = "acme/rpc"`, a window under a clock in `M::ms`
 types both bounds by the node `{package: "acme/rpc", path: ["scalar_type",
@@ -624,7 +624,7 @@ types both bounds by the node `{package: "acme/rpc", path: ["scalar_type",
 second `scalar_type`/`unit` node, in the clause's package or any other, to
 stand for the clock unit, so the bounds and every other quantity of that
 unit name one node; a reader matches the bounds' `type` against the clock
-unit by path, as QSpec FR-370-AC-20 states. Without a selected
+unit by path, as FSpec FR-370-AC-20 states. Without a selected
 clock, or when no time unit has the clock unit node, S3 converts both
 bounds to the lower bound's written unit. The emitter SHALL refuse a clause
 whose `duration` window's unit node is not the clock unit node with
@@ -653,20 +653,20 @@ enter the identity preimage.
   [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md)
   (the `over` binding and the instances of a clause),
   [FR-338](FR-338-check-an-en-1-closure-certificate.md) (the clause root
-  that consumes the triple), ADR-013 O-07 (occurrence ordinals), QSpec
+  that consumes the triple), ADR-013 O-07 (occurrence ordinals), FSpec
   FR-322 (NodeId).
 
 ## References
 
-- QSpec FR-370 (checked-package temporal clause body and temporal operation
+- FSpec FR-370 (checked-package temporal clause body and temporal operation
   identities), FR-322 (the artifact and its reader order): Linear STD-99 and
   STD-131.
-- QSpec FR-093 (a capture is immutable and evaluated once at the activation
+- FSpec FR-093 (a capture is immutable and evaluated once at the activation
   anchor) and FR-370 item 4 (the captures aggregate: one binding per capture,
   named by the capture, holding its initializer term). FR-370 states no term
   for a `holds` read of a capture; this requirement uses the `value`/`parameter`
   reference FR-447 uses for a hybrid claim's `Capture(j)`.
-- QSpec FR-370-AC-13 owns the rule that a temporal clause always names an
+- FSpec FR-370-AC-13 owns the rule that a temporal clause always names an
   `over` parameter, which FR-337-AC-5 and TC-1079 step 3 apply.
 - Owning ticket: Linear QSL-366. The `on each` activation rules are
   specified under Linear QSL-926; their implementation (the S3 guard check,

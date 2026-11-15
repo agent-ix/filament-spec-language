@@ -3,50 +3,50 @@ id: FR-315
 title: "Encode a model subject's transition relation as SMT-LIB"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-336
+  - target: ix://agent-ix/filament-spec-language/FR-336
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-487
+  - target: ix://agent-ix/filament-spec-language/FR-487
     type: depends_on
 ---
 # FR-315: Encode a model subject's transition relation as SMT-LIB
 
 ## Description
 
-QSL SHALL own the one SMT-LIB 2 encoding of a model subject's transition
+FSL SHALL own the one SMT-LIB 2 encoding of a model subject's transition
 relation and of a temporal item's proof queries, the bounded unrolling of
-V-2 and the base and step cases of EN-3's `k`-induction, in `qsl-eval` (layer 5), exposed through the `qsl-replay` facade
+V-2 and the base and step cases of EN-3's `k`-induction, in `fsl-eval` (layer 5), exposed through the `fsl-replay` facade
 as `encode_smt_query` (ADR-018 LA-2, LA-3, PC-6). CG's SMT backend calls it
 to build the queries it sends to the solver, and FR-314's checker calls it
 to rebuild the queries a certificate claims to refute, so the two compare
@@ -54,8 +54,8 @@ byte for byte under the canonical printing below. The same encoding gives
 EN-3's base and step queries over an HP-2 item's self-composition product
 (ADR-023 HC-1, HC-7) through `encode_hyper_query`, which CG's SMT backend
 calls for HP-2 `k`-induction. `encode_hyper_query`, `HyperQueryRequest`, `HyperQuery` and
-`HyperProductIdentity` are defined in `qsl-replay`, because the identity holds FR-336's `SubjectIdentity`,
-which `qsl-replay` defines; `qsl-eval` supplies the script entry that runs the checks after the identity
+`HyperProductIdentity` are defined in `fsl-replay`, because the identity holds FR-336's `SubjectIdentity`,
+which `fsl-replay` defines; `fsl-eval` supplies the script entry that runs the checks after the identity
 checks, and the refusal codes.
 
 ## Use case
@@ -159,7 +159,7 @@ because a well-formed request cannot break one. A well-formed request is a
 model subject admitted by FR-120 and an item S3 checked in the subject's
 checked package. Such a request guarantees these invariants:
 
-- a temporal clause's `over` parameter is an object reference (QSpec
+- a temporal clause's `over` parameter is an object reference (FSpec
   FR-370, FR-125);
 - a TP-1, TP-3 or deadlock-freedom item binds infinite-trace, and only a
   TP-2 item binds event-position false-extension (FR-123, ADR-014 TR-3,
@@ -195,7 +195,7 @@ invariant, and no script. It SHALL NOT return `Refused` with a code such as
 `item-form`. `encode_hyper_query`, `HyperProductIdentity::of` and
 `encode_refinement_query` return the same two arms.
 
-A fault is QSL's internal failure and settles like CG's `BackendFault`, as
+A fault is FSL's internal failure and settles like CG's `BackendFault`, as
 `failed`, basis `unavailable`, `TerminalValue::Failed`, in the ADR-013 O-16
 internal-failure category, never `inconclusive` or `unsupported`:
 
@@ -325,7 +325,7 @@ internal-failure category, never `inconclusive` or `unsupported`:
      infinite-trace. A model whose stutters before `p` form one
      tail, from a position `q` to `p`, is the lasso of CX-1 with the prefix
      to `q` and the `terminal-stutter` loop, which CG replays through
-     `qsl_replay::replay_model_trace` (FR-128). That entry refuses a
+     `fsl_replay::replay_model_trace` (FR-128). That entry refuses a
      `terminal-stutter` loop on a state that is not terminal with
      `invalid_runtime_input`/`invalid-value` naming the `terminal-stutter`
      step, so it is the terminality check, and FR-315 adds no facade entry.
@@ -391,7 +391,7 @@ Under event-position false-extension (every TP-2 item, `on origin` or
 `on each`) a behaviour that
 reaches a terminal state is closed there (ADR-018 SM-4), and the positions
 after it are read by the closed-boundary rule, every atomic predicate false
-(QSpec FR-091). TP-2 is the only form under that profile. Under
+(FSpec FR-091). TP-2 is the only form under that profile. Under
 false-extension every temporal operator carries an interval (ADR-014 TR-3:
 S3 refuses one without, `MissingInterval`), FR-123 classifies a
 false-extension clause as TP-2 before it tries TP-3, and TP-1, TP-3 and
@@ -482,7 +482,7 @@ below hold for every TP-2 item.
   condition at each position through the letter seam, as FR-126 reads it,
   and replay through FR-128.
 - The property of a monitor item is read through the deterministic monitor
-  that `qsl-eval`'s property-automaton translation builds for it (ADR-018
+  that `fsl-eval`'s property-automaton translation builds for it (ADR-018
   SM-6, EN-3, LA-2; FR-126): the bad-prefix monitor of a TP-3 item, the
   bounded monitor of a TP-2 item for its activation (`on origin` or
   `on each`), and, for a guarded item, that monitor under FR-338's guarded
@@ -498,7 +498,7 @@ below hold for every TP-2 item.
   of a model letter is the value of member `j` at the position for the
   instance. Under event-position false-extension the monitor has one more
   letter, the **end letter**, which it reads at a position past the end of a
-  behaviour: the closed-boundary letter of QSpec FR-091, every atomic
+  behaviour: the closed-boundary letter of FSpec FR-091, every atomic
   predicate false and every constant unchanged, at which no condition is
   read and no activation starts, so it only advances the debt already live
   (FR-338). The end letter is numbered `2^a`, `a` the number of letter
@@ -729,16 +729,16 @@ The table of Outputs places each measure's check among the other refusals.
 request's `encoding` (Hyper self-composition queries).
 
 Each limit is a request setting with one name at every entry point (FR-255
-"Engine limit setting names", QSpec FR-461 Behavior 5): the library field of
+"Engine limit setting names", FSpec FR-461 Behavior 5): the library field of
 `SmtEncodingLimits`, a replay request's `stage_limits` entry and the driver
 CLI's `--limit <setting>=<n>` all raise it, and a model-check item
 carries the values as FR-126's `ModelCheckRequest.smt_encoding` and, on a
-provider request, as QSpec FR-368's `temporal.smt_encoding` member. Its
+provider request, as FSpec FR-368's `temporal.smt_encoding` member. Its
 value as a request setting is a positive count. A direct library caller may
 pass zero in `SmtEncodingLimits`; the first nonzero measure exceeds that
 limit and is refused as `too-large`, with no script. The values change the result (a `too-large`
 stop against a proof), so they are part of the request identity
-(QSpec FR-368). A `too-large` refusal names the measure's limit and
+(FSpec FR-368). A `too-large` refusal names the measure's limit and
 setting from this table:
 
 | Measure | Limit name | Setting | `ModelCheckLimit` |
@@ -786,7 +786,7 @@ CG's SMT backend SHALL run every query of an item's EN-2 and EN-3 methods
 searches, and an HP-2 item's base, step and lasso queries) under the
 request's `SmtRunLimits`, which bound the SMT run itself. A model-check
 item carries them as FR-126's `ModelCheckRequest.smt_run` and, on a
-provider request, as QSpec FR-368's `temporal.limits.max_solver_steps` and
+provider request, as FSpec FR-368's `temporal.limits.max_solver_steps` and
 `max_solver_time`:
 
 ```rust
@@ -803,10 +803,10 @@ pub struct SmtRunLimits {
   units under `--rlimit-per`, Z3's `rlimit`), and a report of it SHALL state
   the count as the solver counts it and SHALL NOT convert it to time. It is
   deterministic, so it is part of the request identity
-  (QSpec FR-331).
+  (FSpec FR-331).
 - `max_solver_time` SHALL bound each query to that many whole seconds of
   wall-clock time, independent of the backend's own wall-clock limit and of
-  QSpec FR-331's `deadline_ms`. It is a wall-clock setting: the request
+  FSpec FR-331's `deadline_ms`. It is a wall-clock setting: the request
   identity excludes it.
 - Both are positive counts. Each has one setting name at every entry point:
   `smt.max_solver_steps` and `smt.max_solver_time` (FR-255), with the limit
@@ -834,7 +834,7 @@ pub struct SmtRunLimits {
 
 ### Refinement queries
 
-For a refinement's per-step simulation obligations (QSpec FR-468, FR-146) QSL
+For a refinement's per-step simulation obligations (FSpec FR-468, FR-146) FSL
 SHALL expose `encode_refinement_query(request, kind) -> Result<Vec<u8>,
 SmtEncodingRefusal>`, `request` FR-314's `RefinementCertificateRequest` (the
 recompiled package, the refinement node and the concrete and abstract
@@ -1039,7 +1039,7 @@ part `QueryMismatch` at `Base`, so the refinement fails closed at `Base`
 ### Hyper self-composition queries
 
 For EN-3's `k`-induction of an HP-2 item with a safety body (ADR-023 HC-7,
-DS-3) QSL SHALL expose `encode_hyper_query(request, kind)` through the same
+DS-3) FSL SHALL expose `encode_hyper_query(request, kind)` through the same
 facade. Its queries encode FR-176's self-composition product (ADR-023 HC-1)
 as one copy of the transition relation per trace variable, the copies
 stepping together on the joint steps `μ_U` matches, with this requirement's
@@ -1160,7 +1160,7 @@ HV-3 reads.
   way this requirement reads a temporal item's property. For a body that
   is `always` over a state predicate, the property is the predicate at that
   position. For any other body, it is the deterministic bad-prefix monitor
-  that `qsl-eval`'s property-automaton translation builds for the body
+  that `fsl-eval`'s property-automaton translation builds for the body
   (ADR-018 SM-6) not rejecting at `m<i>`, with its steps asserted as for a
   monitor item (Monitors), the query's one instance's monitor being
   `m<i>` itself. An indexed atom `e @ t` SHALL read `t`'s copy at the position
@@ -1265,14 +1265,14 @@ HV-3 reads.
 
 #### Product identity
 
-`HyperProductIdentity` SHALL be QSL's one public identity of the HP-2
+`HyperProductIdentity` SHALL be FSL's one public identity of the HP-2
 product and instance a hyper query encodes. It is the in-process value that
 passes from `encode_hyper_query` through CG's SMT backend to FR-182's
 `settle_hyper_smt`, so every SMT outcome names the exact item and instance
-it answers. It SHALL be a type of the `qsl-replay` facade, at
-`qsl_replay::HyperProductIdentity`, beside `HyperQueryRequest`,
+it answers. It SHALL be a type of the `fsl-replay` facade, at
+`fsl_replay::HyperProductIdentity`, beside `HyperQueryRequest`,
 `HyperQuery`, `SmtQueryKind`, `SmtEncodingRefusal` and FR-336's
-`SubjectIdentity`. CG depends on QSL only through `qsl-replay` (FR-059),
+`SubjectIdentity`. CG depends on FSL only through `fsl-replay` (FR-059),
 and it names these types and calls `encode_hyper_query`,
 `HyperProductIdentity::of` and `settle_hyper_smt` from its `replay` adapter
 module, the one module FR-060's T12-A allows to call the facade. CG's SMT
@@ -1311,7 +1311,7 @@ impl HyperProductIdentity {
   implement neither `Serialize` nor `Deserialize`. CG holds it in memory
   between the query and the settlement call and keeps no copy of it on a
   run record.
-- **QSL mints it.** Only `HyperProductIdentity::of` and `encode_hyper_query`
+- **FSL mints it.** Only `HyperProductIdentity::of` and `encode_hyper_query`
   SHALL make a `HyperProductIdentity`. The facade SHALL expose no
   constructor from members, so a caller cannot mint one (ADR-013 O-09: no
   re-mint of a clause identity). CG keeps the value it receives and passes
@@ -1375,7 +1375,7 @@ impl HyperProductIdentity {
   `HyperProductIdentity::of` SHALL evaluate no `μ_U` conjunct and charge
   nothing to `meter`.
 - **Outcome handoff.** CG SHALL return every SMT result for an HP-2 item,
-  EN-3's and EN-2's alike, to QSL as FR-182's `HyperSmtOutcome`, whose
+  EN-3's and EN-2's alike, to FSL as FR-182's `HyperSmtOutcome`, whose
   `product` is the `product` of the `HyperQuery` values it answers, or
   `HyperProductIdentity::of` over the same request when
   `encode_hyper_query` refused. `product` is
@@ -1406,7 +1406,7 @@ impl HyperProductIdentity {
 | FR-315-AC-11 | Over the secure vault, a matched joint step sets `l` to the same input `i` in both copies, so `InductionBase{depth: 1}` and `InductionStep{depth: 1}` for `NonInterference` are both unsatisfiable, the HP-2 outcome `Inductive{depth: 1}` that FR-182-AC-7 settles. Over a vault whose post clause is `self.l = self.h`, `InductionBase{depth: 1}` is satisfiable from the initial tuple `((0, 0), (1, 0))` with the joint step `(step(0), step(0))`. That model is a matched bad prefix, not a `HyperCounterexample`: it has no lasso, so no outcome follows from it alone, and the clause is refuted only through EN-2's lasso and FR-183's replay. | Analysis (TC-1120) |
 | FR-315-AC-12 | Over ADR-023 §8's secure vault with the `vaults` universe `{v, w}`, `NonInterference`'s `InductionBase{depth: 1}`, `InductionStep{depth: 1}` and `InductionStep{depth: 2}` queries for instance `v` carry three equal `product` values, each equal to `HyperProductIdentity::of` over the same request. Its `clause()` is the `claim` occurrence of the clause's `hyperproperty` node in the vault package's checked-package v2 emission; its `subjects()` holds one member, equal to FR-336's projection of the vault subject; its `instance()` is the one pair binding the clause's parameter to `v`. The request for instance `w` gives an identity that differs only in `instance()`. The clause with `fair { weak V::Vault::step }` on `a` gives byte-equal scripts and an identity that differs in `clause()` and in the checked package of `subjects()`, because the clause is a node of the subject's checked package, and not in `instance()`. A subject that differs only in a proof bound gives an identity that differs only in `subjects()`. Meters of different budgets give equal identities. | Test (TC-1190) |
 | FR-315-AC-13 | Each of these requests is refused `SmtEncodingRefusal` with the same code by both `HyperProductIdentity::of` and `encode_hyper_query`, with no identity and no script: `NonInterference` with an empty `instance` names `instance-binding` at the clause's parameter; with the key `x`, outside the universe `{v}`, it names `instance-binding` at that parameter; ADR-023 §1's `SavesPower` with its `N` subject over a checked package other than the `S` subject's names `subject-binding` at alias `N`; the HP-3 clause of FR-315-AC-10 names `hyper-form`; FR-176-AC-3's liveness clause with an empty `instance` names `instance-binding`, not `hyper-body`. `HyperProductIdentity::of` over `NonInterference` with a `match` conjunct whose evaluation exhausts the request's `meter` returns the identity and leaves the meter's consumed counters at zero. | Test (TC-1190) |
-| FR-315-AC-14 | A crate whose only QSL dependency is `qsl-replay` names `qsl_replay::HyperProductIdentity`, `HyperQuery`, `HyperQueryRequest` and `SubjectIdentity` from its `replay` module, calls `encode_hyper_query` and `HyperProductIdentity::of` there, and compiles. In that crate a struct literal of `HyperProductIdentity` fails to compile with E0451, and serializing one and deserializing one each fail with E0277. `HyperSmtOutcome` and `settle_hyper_smt` are the settle half of the facade, checked by FR-182-AC-16. | Test (TC-1190) |
+| FR-315-AC-14 | A crate whose only FSL dependency is `fsl-replay` names `fsl_replay::HyperProductIdentity`, `HyperQuery`, `HyperQueryRequest` and `SubjectIdentity` from its `replay` module, calls `encode_hyper_query` and `HyperProductIdentity::of` there, and compiles. In that crate a struct literal of `HyperProductIdentity` fails to compile with E0451, and serializing one and deserializing one each fail with E0277. `HyperSmtOutcome` and `settle_hyper_smt` are the settle half of the facade, checked by FR-182-AC-16. | Test (TC-1190) |
 | FR-315-AC-15 | Over the `Tally` subject of FR-315-AC-4 under infinite-trace, each step assertion of `Unrolling{depth: 3}` for `always holds(t.tally < 2)` is the disjunction of exactly two disjuncts, `bump`'s and then the proof-query stutter. The stutter between copies `i` and `i+1` is the conjunction of `(= s<i+1>.t.next s<i>.t.next)` and `(= s<i+1>.t.tally s<i>.t.tally)` and holds no other conjunct: no precondition, enabledness or candidate term. | Test (TC-900) |
 | FR-315-AC-16 | Read by a `QF_LIA` solver: over `Tally`, `Unrolling{depth: 3}` and `InductionBase{depth: 3}` for `always holds(t.tally < 2)` are satisfiable, the path `(0, 1)`, `(1, 2)`, `(2, 3)` reaching the violation at position 2 and depth 3 by the stutter at `(2, 3)`, where `G` holds and no candidate satisfies `C`. `InductionBase{depth: 1}` and `InductionStep{depth: 1}` for `always holds(t.tally < 3)` are both unsatisfiable. For `Tally`'s deadlock-freedom item, with no `terminal` declaration, `InductionBase{depth: 2}` is satisfiable, `(2, 3)` being a deadlock at position 2, and `InductionBase{depth: 1}` is unsatisfiable; with DL-1's `terminal when P` for `P` the state predicate `t.tally = 2`, `InductionBase{depth: 3}` is unsatisfiable. | Analysis (TC-900) |
 | FR-315-AC-17 | Over FR-315-AC-1's `Counter` under event-position false-extension, `Unrolling{depth: 5}` for `always[0,5] holds(c.value <= 3)` declares `h0` to `h5` and asserts `(not h0)`. Each step assertion `i` is printed as `(and (= h<i+1> (or h<i> (not E))) (or h<i+1> D))`, with no stutter disjunct: `D` is `inc`'s disjunct between copies `i` and `i+1`, and `E` is `inc`'s enabledness, `(and A (or B0 B1 B2 B3))`, `A` being `CanInc` on copy `i` and `Bv` being `Inc` read with `value` `v` as a literal, for the candidates 0, 1, 2 and 3 in that order. The violation at each position `p` in `0..=5` includes `h<p>`. `InductionBase{depth: 3}` for `always[0,3] holds(c.value <= 3)` refuses `query-kind`, and so does `Unrolling{depth: 2}` for `eventually[0,3] holds(c.value = 3)`. | Test (TC-900) |
@@ -1421,10 +1421,10 @@ impl HyperProductIdentity {
 | FR-315-AC-26 | Over FR-315-AC-1's `Counter` under infinite-trace, a model of `InductionBase{depth: 3}` for `always holds(c.value <= 1)` that takes `inc` twice and then the stutter at value 2, where `inc` is still enabled, has failing position 2. CG reads it as the prefix `0, 1, 2`, a counterexample that FR-128 replays to `refuted`, and the stutter after position 2 is not read. For `always (holds(c.value = 0) implies eventually[0,1] holds(c.value = 1))`, a base model that stutters at value 0 and then fails is no candidate: rebuilt as the lasso with the `terminal-stutter` loop at value 0, it is refused by `replay_model_trace` with `invalid-value` naming the `terminal-stutter` loop step, and the base query settles `InductionNotClosed{depth}`, not `ReplayParity` or `ReplayRefused`. | Analysis (TC-900) |
 | FR-315-AC-27 | Over FR-315-AC-4's `Tally` with an added operation `peek(): Boolean` (empty frame, postcondition `post P { result = (self.tally < 3 and self.next = self.tally + 1) }`), `bump` unchanged, the postcondition failure of `peek` at copy `i` is printed over its one candidate as `(or U1 (and (not A1) U2))`: `U1` and `A1` read with `result` `false` (first in FR-120's result order), `U2` with `true`. `peek`'s disjunct has the postcondition part `(or A1 A2)`. | Test (TC-900) |
 | FR-315-AC-28 | Over FR-315-AC-1's `Counter` under event-position false-extension, a model of `Unrolling{depth: 5}` for `always[0,5] holds(c.value <= 3)` has live copies `0` to `3` and `h4`, `h5` true; CG reads it as the prefix `0, 1, 2, 3` ending at the terminal state 3, which FR-128 replays to `refuted`. A model of `Unrolling{depth: 2}` for `eventually[0,2] holds(c.value = 3)` gives the prefix `0, 1, 2`. Over the AC-26 base model for `always holds(c.value <= 1)` with a prefix step altered so that it is not enabled at its pre-state, replay refuses naming that step, and CG settles it as FR-127's table settles that refusal, V-6 `ReplayRefused` (FR-127-AC-3), not `InductionNotClosed`. A model of `Unrolling{depth: 2}` for `always[0,5] holds(c.value <= 1)` fails at the live, non-terminal position 2, below the horizon 5, so it is no CX-1 counterexample and the query gives no outcome at depth 2. | Analysis (TC-900) |
-| FR-315-AC-29 | Inside `qsl-eval`, `encode_smt_query` called with FR-315-AC-2's TP-1 item `always holds(c.value <= 3)` whose checked clause has had its profile set to event-position false-extension after S3, and with FR-315-AC-23's TP-3 item altered the same way, returns `SmtEncodingRefusal::Fault` carrying `InternalFault` (`runtime_invariant`, `established-invariant-broken`) naming the invariant that a TP-1, TP-3 or deadlock-freedom item binds infinite-trace, with no script and no `Refused` code. No well-formed request carries such an item. | Test (TC-900) |
-| FR-315-AC-30 | Settlement of a fault: an SMT `Inductive{depth: 1}` result for FR-315-AC-2's item whose FR-314 rebuild of the base query meets `SmtEncodingRefusal::Fault` gives `SmtProofCheck::Fault`, and FR-127 settles it `failed`, basis `unavailable`, `TerminalValue::Failed`, category failed. Over ADR-023 §8's secure vault, `settle_hyper_smt` for `NonInterference` at instance `v` with an `EncodingRefused` outcome carrying `Fault` from a later check of `encode_hyper_query`, whose `product` is `Ok` and equal to the item's identity, settles `failed`, `Failed`, not V-8. Inside `qsl-replay`'s own tests, with the request's checked clause altered after S3 so that `HyperProductIdentity::of` returns `Fault(f)`, CG's outcome is `EncodingRefused { refusal: Fault(f) }` with `product: Err(f)`, and `settle_hyper_smt` over that item writes a `failed`, `Failed` record and refuses no `ItemIdentity`. The same `Err` outcome settled for an item whose `of` returns an identity is refused `ProductMismatch` naming `clause`. | Test (TC-900) |
+| FR-315-AC-29 | Inside `fsl-eval`, `encode_smt_query` called with FR-315-AC-2's TP-1 item `always holds(c.value <= 3)` whose checked clause has had its profile set to event-position false-extension after S3, and with FR-315-AC-23's TP-3 item altered the same way, returns `SmtEncodingRefusal::Fault` carrying `InternalFault` (`runtime_invariant`, `established-invariant-broken`) naming the invariant that a TP-1, TP-3 or deadlock-freedom item binds infinite-trace, with no script and no `Refused` code. No well-formed request carries such an item. | Test (TC-900) |
+| FR-315-AC-30 | Settlement of a fault: an SMT `Inductive{depth: 1}` result for FR-315-AC-2's item whose FR-314 rebuild of the base query meets `SmtEncodingRefusal::Fault` gives `SmtProofCheck::Fault`, and FR-127 settles it `failed`, basis `unavailable`, `TerminalValue::Failed`, category failed. Over ADR-023 §8's secure vault, `settle_hyper_smt` for `NonInterference` at instance `v` with an `EncodingRefused` outcome carrying `Fault` from a later check of `encode_hyper_query`, whose `product` is `Ok` and equal to the item's identity, settles `failed`, `Failed`, not V-8. Inside `fsl-replay`'s own tests, with the request's checked clause altered after S3 so that `HyperProductIdentity::of` returns `Fault(f)`, CG's outcome is `EncodingRefused { refusal: Fault(f) }` with `product: Err(f)`, and `settle_hyper_smt` over that item writes a `failed`, `Failed` record and refuses no `ItemIdentity`. The same `Err` outcome settled for an item whose `of` returns an identity is refused `ProductMismatch` naming `clause`. | Test (TC-900) |
 | FR-315-AC-31 | FR-315-AC-1's `Unrolling{depth: 3}` for `always[0,3] holds(c.value <= 3)` has, at each position `p` in `0..=3`, the violation disjuncts `h<p>` and then `(not (<= s<p>.c.value 3))`, followed by `inc`'s postcondition failure `(and (not h<p>) F)`, and no disjunct for a position past 3. `inc` has that failure term because `Inc`'s right side `pre(self.value) + 1` is an integer sum compared by `=` with the `Int[0, 3]` field `self.value`, so FR-104's equality typing (TC-1084) coerces it into `Int[0, 3]`, a range coercion with a definedness condition. The query has no atom-failure disjunct, because `c.value <= 3` holds no partial construct, and no precondition-failure disjunct, because `CanInc` (`self.value < 3`) holds none. | Test (TC-900) |
-| FR-315-AC-32 | `SmtEncodingRefusal` has exactly the two arms `Refused { code, locus }`, its code one of the closed refusal set, and `Fault(InternalFault)`. No refusal code names a broken invariant. None of FR-315-AC-21's requests returns `Fault`. Inside `qsl-eval`, an encoding called with a TP-1 item whose checked clause has had its one atom removed after S3, which no well-formed request carries, returns `Fault` naming the atom invariant, not `Refused` with `item-form`. | Test (TC-900) |
+| FR-315-AC-32 | `SmtEncodingRefusal` has exactly the two arms `Refused { code, locus }`, its code one of the closed refusal set, and `Fault(InternalFault)`. No refusal code names a broken invariant. None of FR-315-AC-21's requests returns `Fault`. Inside `fsl-eval`, an encoding called with a TP-1 item whose checked clause has had its one atom removed after S3, which no well-formed request carries, returns `Fault` naming the atom invariant, not `Refused` with `item-form`. | Test (TC-900) |
 | FR-315-AC-33 | Over FR-315-AC-1's `Counter` under event-position false-extension, `Unrolling{depth: 2}` for the TP-2 claim `eventually[0,1] holds(c.value = 3)` with activation `on each` declares `s0.c.value`, `m0.0`, `h0`, `s1.c.value`, `m1.0`, `h1`, `s2.c.value`, `m2.0`, `h2` in that order; asserts at each position the range assertion of `s<i>.c.value` and then `(and (<= 0 m<i>.0) (<= m<i>.0 s-1))`, `s` the tabulated monitor states; asserts `(= s0.c.value 0)`, `(not h0)` and two step assertions in FR-315-AC-17's false-extension form with no stutter disjunct; and then the monitor implications. The monitor has one letter member, the atom `A<i>` = `(= s<i>.c.value 3)`, so the position-0 implications are one per move from the initial state on the letters 0, 1 and the end letter 2, whose terms are `(and (not h0) (not A0))`, `(and (not h0) A0)` and `h0`; positions 1 and 2 have one implication per tabulated move. The negated property has, at each position `p` in `0..=2`, the violation `(= m<p>.0 r)`, `r` the rejecting state's number, followed by `inc`'s postcondition failure `(and (not h<p>) F)` (FR-315-AC-31). Encoding it twice gives byte-equal scripts. `InductionBase{depth: 1}` and `InductionStep{depth: 1}` for the same item are encoded, not refused `query-kind`; the step asserts no initial-state predicate, no `(not h0)` and no position-0 implication, and its one distinctness assertion is `(not (and (= h1 h0) (or h1 (= s1.c.value s0.c.value)) (= m1.0 m0.0)))`. | Test (TC-1201) |
 | FR-315-AC-34 | Read by a `QF_LIA` solver over FR-315-AC-1's `Counter` under event-position false-extension, for `eventually[0,1] holds(c.value = 3)` `on each`: `Unrolling{depth: 2}` is satisfiable, the monitor rejecting first at position 1, where the activation at position 0 has read the values 0 and 1; CG reads it by rule 4b as the prefix `0, 1, 2` (`e` the least of the cover position `1 + 1` and the last live position 2), which FR-128 replays to `refuted`, the counterexample FR-126-AC-2 finds by EN-1. `Unrolling{depth: 1}` is satisfiable with the same rejection, and its prefix `0, 1` neither reaches the cover position 2 nor ends at a terminal state, so the query gives no outcome at depth 1. For `eventually[0,1] holds(c.value >= 1)` `on each`, `InductionStep{depth: 1}` is satisfiable, from a copy past the end whose monitor state holds an open activation, and `InductionBase{depth: 2}` and `InductionStep{depth: 2}` are both unsatisfiable, the outcome `Inductive{depth: 2}` (ADR-018 V-3). | Analysis (TC-1201) |
 | FR-315-AC-35 | Over FR-315-AC-1's `Counter` under event-position false-extension, the TP-2 `on origin` claim `always[0,3] eventually[0,1] holds(c.value >= 1)`, whose horizon is 4, is a monitor item: `Unrolling{depth: 4}` declares `m<i>.0` and `h<i>` at each position 0 to 4, asserts the monitor implications of its one letter member `(>= s<i>.c.value 1)` with the end letter `h<i>`, and its violation at each position is `(= m<p>.0 r)`. Read by a `QF_LIA` solver it is unsatisfiable, the V-2 outcome `BoundedComplete{depth: 4}`. For `always[0,3] eventually[0,1] holds(c.value = 3)`, `Unrolling{depth: 4}` is satisfiable, the monitor rejecting at position 1; CG reads the prefix `0, 1, 2, 3`, ending at the terminal state 3 before the cover position 4, which FR-128 replays to `refuted`. `Unrolling{depth: 0}`, `Unrolling{depth: 1}` and `Unrolling{depth: 3}` for either claim refuse `query-kind`, below the horizon 4, so no unsatisfiable answer below the horizon can stand as a `BoundedComplete` proof of the refuted `= 3` claim; `InductionBase{depth: 4}` for either claim refuses `query-kind`. | Analysis (TC-1201) |
@@ -1439,13 +1439,13 @@ impl HyperProductIdentity {
 
 | FR-315-AC-44 | Over FR-315-AC-1's `Counter` with `Unrolling{depth: 3}` for `always[0,3] holds(c.value <= 3)`, whose canonical script declares 8 constants, direct calls with `max_constants` 8 and the default produce byte-equal scripts; limits 7 and 0 each refuse `too-large` with measure `constants`, value 8, the corresponding limit and setting `smt_encoding.max_constants`, and no script. With `max_script_bytes` 0, the query refuses `too-large` at value 1, limit 0 and setting `smt_encoding.max_script_bytes`; raising it to exactly the canonical script length succeeds, and lowering it by one refuses at the first byte past the limit. | Test (TC-1250) |
 | FR-315-AC-45 | For FR-315-AC-1's `Counter`, direct calls with `max_applications` 1 and `max_candidates` 4 produce the default script; values 0 and 3 respectively refuse `too-large` with the measure's value 1 or 4, the supplied limit and corresponding `smt_encoding.*` setting. For the TP-3 item `always (holds(c.value = 3) implies always holds(c.value = 3))`, whose monitor letter has two atoms and whose tabulation reaches three states, limits `max_monitor_atoms` 2 and `max_monitor_states` 3 produce the default script; limits 1 and 2 respectively refuse `too-large` with values 2 and 3 and their corresponding setting names. | Test (TC-1250) |
-| FR-315-AC-46 | `qsl_replay::HyperQueryRequest` is built by a struct literal with exactly the members `clause`, `subjects`, `instance`, `meter` and `encoding`, and has no member of type `StepMatch`, `HyperLetters` or any `dyn` reader. Over the secure vault, `encode_hyper_query` for `NonInterference` at instance `v` and `InductionBase{depth: 1}` leaves the `Meter` that the request borrows with the consumed counters that one fresh `Meter` of the same budget has after nine `CheckedStepMatch::universal` calls on it in sequence, one per tuple of FR-315-AC-7's nine in lexicographic order with the labels the encoder gives that tuple, and no other charge. `InductionBase{depth: 3}`, `InductionStep{depth: 1}` and the same request at instance `w` leave the same counters. The consumed counters of `HyperProductIdentity::of` for the request stay at zero. The vault here holds only the instance's vault in its `vaults` universe (`{v}`, and `{w}` for the request at `w`), so the nine tuples are those of one receiver, unlike FR-315-AC-12's universe `{v, w}`. | Test (TC-1120) |
-| FR-315-AC-47 | `NonInterference` with a third conjunct 2 that the kernel refuses, is refused `SmtEncodingRefusal` `match-conjunct` with no script by `InductionBase{depth: 1}` and `InductionStep{depth: 1}`, naming conjunct 2 of `mu_universal()`, its site `hyper <c> match 2` and the tuple `(step(0), step(0))`, the first tuple in joint-step order on which conjuncts 0 and 1 hold. The refused conjunct is the exhausting-function conjunct of FR-315-AC-10, which names that tuple, and the refusal is given again with an equal budget. FR-487-AC-5's `quire::value::ieee::sqrt` comparison under `Float64[exact]`, which the kernel refuses `ieee_not_exact`, takes the `Refused` arm of the same code path and names the same fields; no test here authors it, because S2 represents no float literal, and the arm is checked when it does. Both give the same refusal when repeated with an equal budget. `HyperProductIdentity::of` returns its identity and charges nothing. | Test (TC-1120) |
+| FR-315-AC-46 | `fsl_replay::HyperQueryRequest` is built by a struct literal with exactly the members `clause`, `subjects`, `instance`, `meter` and `encoding`, and has no member of type `StepMatch`, `HyperLetters` or any `dyn` reader. Over the secure vault, `encode_hyper_query` for `NonInterference` at instance `v` and `InductionBase{depth: 1}` leaves the `Meter` that the request borrows with the consumed counters that one fresh `Meter` of the same budget has after nine `CheckedStepMatch::universal` calls on it in sequence, one per tuple of FR-315-AC-7's nine in lexicographic order with the labels the encoder gives that tuple, and no other charge. `InductionBase{depth: 3}`, `InductionStep{depth: 1}` and the same request at instance `w` leave the same counters. The consumed counters of `HyperProductIdentity::of` for the request stay at zero. The vault here holds only the instance's vault in its `vaults` universe (`{v}`, and `{w}` for the request at `w`), so the nine tuples are those of one receiver, unlike FR-315-AC-12's universe `{v, w}`. | Test (TC-1120) |
+| FR-315-AC-47 | `NonInterference` with a third conjunct 2 that the kernel refuses, is refused `SmtEncodingRefusal` `match-conjunct` with no script by `InductionBase{depth: 1}` and `InductionStep{depth: 1}`, naming conjunct 2 of `mu_universal()`, its site `hyper <c> match 2` and the tuple `(step(0), step(0))`, the first tuple in joint-step order on which conjuncts 0 and 1 hold. The refused conjunct is the exhausting-function conjunct of FR-315-AC-10, which names that tuple, and the refusal is given again with an equal budget. FR-487-AC-5's `filament::value::ieee::sqrt` comparison under `Float64[exact]`, which the kernel refuses `ieee_not_exact`, takes the `Refused` arm of the same code path and names the same fields; no test here authors it, because S2 represents no float literal, and the arm is checked when it does. Both give the same refusal when repeated with an equal budget. `HyperProductIdentity::of` returns its identity and charges nothing. | Test (TC-1120) |
 | FR-315-AC-48 | `NonInterference` with FR-176-AC-5's body `always holds(1 mod (1 - v.h @ a) = 1 mod (1 - v.h @ b))`, whose divisors are not literals, is refused `SmtEncodingRefusal` `out-of-fragment` with no script by `InductionBase{depth: 1}` and `InductionStep{depth: 1}`, located at the atom's site `hyper <c> holds <n>`. The same clause with a `match` conjunct that exhausts the meter is refused `match-conjunct`, not `out-of-fragment`, the refusal order being as this requirement states. The scripts of FR-315-AC-7 and FR-315-AC-9 and the base script of FR-315-AC-43 are accepted by a `QF_LIA` solver. | Test (TC-1120) |
 | FR-315-AC-49 | `HyperProductIdentity::of` and `encode_hyper_query` over `NonInterference` as S3 checked it, before any package assembled it (`assembled_occurrence()` is `None`), each refuse `SmtEncodingRefusal` `product-identity` at the clause, with no identity and no script, charging nothing to the meter. The same request over the assembled clause returns the identity of FR-315-AC-12. | Test (TC-1190) |
 | FR-315-AC-50 | **RETIRED (the MonitorTable equality check was a golden-comparison ceremony).** | Test (TC-1264), retired |
 | FR-315-AC-51 | Over ADR-023 §8's secure vault, `encode_hyper_query` for `NonInterference` at instance `v` over a subject that FR-120 does not admit (its `snapshots` provision lacks the document an initial state names) is refused `SmtEncodingRefusal` `subject-binding` at alias `V`, with no script, after `HyperProductIdentity::of` has returned the identity for the same request. | Test (TC-1190) |
-| FR-315-AC-52 | Inside `qsl-replay`'s tests, with the request's checked clause altered after S3 so that an object parameter names an alias the clause does not hold, `HyperProductIdentity::of` returns `Fault` and not `instance-binding`, and `encode_hyper_query` returns the same `Fault`. | Test (TC-1190) |
+| FR-315-AC-52 | Inside `fsl-replay`'s tests, with the request's checked clause altered after S3 so that an object parameter names an alias the clause does not hold, `HyperProductIdentity::of` returns `Fault` and not `instance-binding`, and `encode_hyper_query` returns the same `Fault`. | Test (TC-1190) |
 | FR-315-AC-53 | Layout of the refinement queries, over `CasRefinesCounter2` (TC-900 "Fixtures"), `CasRefinesCounter` whose population `counters` holds two counters `c0` < `c1`, with `AaInv` and `CasInv` on `Impl::Counter` and `AbsInv` on `Spec::Counter`. The `Initial` query's commands are, in order and by their head: `set-logic`; the `declare-const` commands of `s0` in (object key, field name) order; the range assertions of `s0`; one assertion of the initial-state predicate; four hypothesis assertions in the order `AaInv` on `c0`, `AaInv` on `c1`, `CasInv` on `c0`, `CasInv` on `c1` (no `AbsInv`, no key-derived order: renaming `AaInv` to `ZzInv` moves its two assertions after `CasInv`'s, and writing the clauses in the opposite source order changes no byte); one assertion `(not R)` (the normal form of `(or (not D) (not R))` with `D` `true`); `check-sat`. The `Step { row }` query of the `commitA` row has the same four hypothesis assertions on `s0` only, no initial-state predicate, `s0`'s then `s1`'s declarations and ranges, and exactly one row assertion that is a two-way disjunction, the application on `c0` first and the application on `c1` second, each the normal form of `(and <precondition clauses> <postcondition part> <frame equalities> (or (not D_a) (not R_a)))`, a flat conjunction ending in `(not R_a)` because `D_a` is `true`, with `R_a` the abstract `inc` transition over `map(s0)`, `map(s1)` for that application's receiver. Encoding either twice gives byte-equal scripts. Each of these mutations changes the script and makes FR-314's checker reject a certificate carried over the unmutated query `QueryMismatch`: the two applications swapped, `AaInv` and `CasInv` swapped, a hypothesis asserted on `s1`, the initial-state predicate added to a `Step` query, a `Step` query with one assertion per application, and the row assertion printed as `(not (or R_c0 R_c1))` beside a separate disjunction of the applications. | Test (TC-900) |
 | FR-315-AC-54 | Multi-application row against the negated rule, over the lost-update variant of `CasRefinesCounter2` and its `commitB` `Step` query, solved with the exact `s0` tuples of TC-900 "Fixtures" added as equalities: with `c0` at `(0, 0, f, 0, f)` (`commitB` not enabled) and `c1` at `(1, 0, f, 0, t)` (FR-146-AC-4) the script is satisfiable, because the row assertion is a disjunction over the applications and `c1`'s application is enabled and breaks the rule; with `c0` at `(0, 0, f, 0, t)` (`commitB` enabled, the rule holds) and `c1` at `(0, 0, f, 0, f)` (not enabled), the script is unsatisfiable, because an application that obeys the rule adds no model and no other application's rule is negated. A row with one application prints the row assertion as that application's conjunction alone, and a row with no application prints `(assert false)`. Two applications whose conjunctions print equal are printed once, at the first place. | Test (TC-900) |
 | FR-315-AC-55 | Refusals of the refinement queries, each case refusing as stated: (1) with the refinement's concrete model given a hidden field or a history field, a direct call of `Initial` and of every `Step` refuses `out-of-fragment` naming the field (FR-314 never reaches this case, since FR-146 writes no record); (2) an `any` row refuses `refinement-any-row` naming the row, before a `_` argument of the same row is read; (3) a protocol-subject refinement's delivery, `memory` or `activate` row refuses `out-of-fragment` naming the row; (4) `RingIsQueue`'s `put` and `take` rows (FR-136-AC-1, `binds_result: true`) refuse `out-of-fragment` naming the row; (5) a row with two `_` arguments refuses `refinement-open-argument` naming the first in written order. For cases 2 to 5 FR-314 settles that row's part `Unencodable` and every record of the refinement `Uncertified`. For case 6, a mapping row outside `QF_LIA` refuses `Initial` `out-of-fragment` naming the row, and FR-314 rejects the base part `QueryMismatch` at `Base`, never `Unencodable`. | Test (TC-900) |
@@ -1484,8 +1484,8 @@ impl HyperProductIdentity {
 - [FR-336](FR-336-bound-a-model-subject-by-its-universes.md) (the subject
   identity projection), ADR-013 O-07 and O-09 (the clause occurrence and
   its no-re-mint rule), [FR-059](FR-059-check-backend-dependency-direction.md)
-  and [FR-060](FR-060-check-qsl-api-surface-boundary.md) (CG names QSL only
-  through `qsl-replay`, from its `replay` adapter module).
+  and [FR-060](FR-060-check-fsl-api-surface-boundary.md) (CG names FSL only
+  through `fsl-replay`, from its `replay` adapter module).
 
 ## References
 
@@ -1500,5 +1500,5 @@ impl HyperProductIdentity {
   activations, guarded clauses) and per-instance monitors: Linear STD-407;
   the hyper queries' checked atoms, `match` conjuncts and body monitor:
   Linear QSL-1072; `encode_hyper_query` and its request: Linear QSL-1010
-  and QSL-1083. The earlier seam-carrying draft (quire-spec-language #1484)
+  and QSL-1083. The earlier seam-carrying draft (filament-spec-language #1484)
   was closed by SR-17048 to SR-17053.

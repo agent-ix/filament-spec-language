@@ -3,24 +3,24 @@ id: FR-276
 title: "Cancel a lifecycle operation through a caller-owned handle"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
 ---
 # FR-276: Cancel a lifecycle operation through a caller-owned handle
 
 ## Description
 
-`Cancel` is a cloneable handle the caller owns (ADR-029 LC-3). Every QSL
+`Cancel` is a cloneable handle the caller owns (ADR-029 LC-3). Every FSL
 lifecycle operation (FR-275) SHALL poll it wherever it charges a work meter
 or a stage limit, so a cancelled run stops within one charge. A cancellation
 carries a `CancelCause`: `Requested`, when the caller asks for it, or
@@ -67,7 +67,7 @@ Every cancelled outcome is O-16 category incomplete, which exits 22
 - When the handle is cancelled during `analyze`, the operation shall settle
   each open item `incomplete` with the cancellation cause, and shall keep
   each item already settled.
-- No QSL library operation shall read a clock to decide a deadline; the
+- No FSL library operation shall read a clock to decide a deadline; the
   frontend that owns the timer cancels with cause `Deadline`.
 
 ## Acceptance Criteria
@@ -87,9 +87,9 @@ Every cancelled outcome is O-16 category incomplete, which exits 22
 - ADR-013 T-4 and O-16: the failure types and the incomplete category.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md): the operations.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md): the exit code.
-- QSpec FR-300: cancellation on every request.
+- FSpec FR-300: cancellation on every request.
 
 ## References
 
 - QSL-390 (ARCH-50), QSL-393 (V1-A06).
-- QSpec FR-300 (STD-141): the QSpec half.
+- FSpec FR-300 (STD-141): the FSpec half.

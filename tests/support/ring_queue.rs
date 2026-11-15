@@ -14,14 +14,14 @@
     reason = "each test binary uses the part of the fixture it needs"
 )]
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
-use qsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
-use qsl_semantics::model::accounting::ModelNormalizationLimits;
-use qsl_semantics::model::intake::{admit_unit, meaning, package_input};
-use quire_checked::key::DeclarationKey;
-use quire_semantic_value::checking::CheckingLimits;
+use filament_checked::key::DeclarationKey;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use serde_json::{json, Value};
 
 /// The abstract package.
@@ -29,8 +29,8 @@ pub const QUEUE: &str = "example/ring-queue-spec";
 /// The concrete package.
 pub const RING: &str = "example/ring-queue-impl";
 
-const INTEGER: &str = "ix://quire/native/Integer";
-const BOOLEAN: &str = "ix://quire/native/Boolean";
+const INTEGER: &str = "ix://filament/native/Integer";
+const BOOLEAN: &str = "ix://filament/native/Boolean";
 
 /// The identity text of `path` in `package`.
 pub fn node(package: &str, path: &str) -> String {
@@ -168,7 +168,7 @@ pub fn operation(
             .collect::<Vec<_>>(),
         "pre": [], "post": [],
         "origin": {"source": {
-            "sourceIdentity": node(package, "spec"), "path": "spec.qspec",
+            "sourceIdentity": node(package, "spec"), "path": "spec.fspec",
             "startLine": 1, "startColumn": 1,
         }},
         "frame": {
@@ -376,7 +376,7 @@ pub struct Checked {
     /// The checked graph.
     pub graph: CheckedGraph,
     /// The domain packages, by declared identity.
-    pub packages: qsl_semantics::model::intake::PackageInput,
+    pub packages: fsl_semantics::model::intake::PackageInput,
 }
 
 /// The unit holding `body` over both models, checked, or its refusals.
@@ -396,20 +396,20 @@ pub fn check_over(queue: &[u8], body: &str) -> Result<Checked, Vec<Refused>> {
     }
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.value.complete/v1\";\n\
-         profile m = \"quire.model.complete/v1\";\n\
-         profile inf = \"quire.temporal.infinite-trace/v1\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile m = \"filament.model.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          {selections}{body}\n"
     );
-    let parsed = qsl_cst::parse(
-        qsl_foundation::SourceIdentity::new("test", "tc-544"),
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "tc-544"),
         "unit.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 admits the unit");
     assert_eq!(parsed.diagnostics(), [], "the unit is admissible: {text}");
-    let built = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let selected = admit_unit(
         &built.selections().models,
         &packages,

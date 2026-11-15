@@ -3,7 +3,7 @@ id: TC-567
 title: "Symmetry declarations admit on an annotated population and refuse malformed forms"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: verifies
 ---
 # TC-567: Symmetry declarations admit on an annotated population and refuse malformed forms

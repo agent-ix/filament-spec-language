@@ -3,9 +3,9 @@ id: TC-546
 title: "check_step decides initial states and steps by the stutter, abstract-operation and any rules"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-138
+  - target: ix://agent-ix/filament-spec-language/FR-138
     type: verifies
 ---
 # TC-546: check_step decides initial states and steps by the stutter, abstract-operation and any rules

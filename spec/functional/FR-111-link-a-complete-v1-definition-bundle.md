@@ -3,26 +3,26 @@ id: FR-111
 title: "Link a complete-V1 definition bundle over a caller-supplied definition catalog"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-131
+  - target: ix://agent-ix/filament-specification/FR-131
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-339
+  - target: ix://agent-ix/filament-specification/FR-339
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-467
+  - target: ix://agent-ix/filament-specification/FR-467
     type: references
 ---
 # FR-111: Link a complete-V1 definition bundle over a caller-supplied definition catalog
 
 ## Description
 
-QSL SHALL link a set of root definition selections, against a
+FSL SHALL link a set of root definition selections, against a
 caller-supplied definition catalog, into a dependency-closed complete-V1
-bundle, or refuse with a catalogued code and cause (QSpec FR-131, and
+bundle, or refuse with a catalogued code and cause (FSpec FR-131, and
 FR-339-AC-3's backend-independence).
 
 This is the closure, cycle, facet and bundle capability of
@@ -30,19 +30,19 @@ This is the closure, cycle, facet and bundle capability of
 retires (FR-087, ruling on QSL-234, 2026-09-26). It lives in layer-3
 `library` as `library::bundle`, the owner ADR-011 §6.2 gives
 `complete::package`. It computes a bundle only: it builds no checked
-package, no `quire.checked-package/v2` bytes and no backend artifact, and
+package, no `filament.checked-package/v2` bytes and no backend artifact, and
 no stage of the S1 to S4 spine calls it.
 
 ## Inputs
 
 - `roots: &[DefinitionRef]`: the root selections, each a definition
-  identity: its authority and identity (`qsl_foundation::selection`).
+  identity: its authority and identity (`fsl_foundation::selection`).
 - `catalog: &DefinitionCatalog`: the caller's definitions. Each
   `Definition` holds its identity (authority and identity), its
   `DefinitionRole` (which gives its facet), its dependency edges
   (definition identities), its `CapabilityId`s and its exact bytes. An
   extension definition also holds the grammar schema and typed-node schema
-  QSpec defines for it, which QSL reads (FR-354). A `Definition` is built
+  FSpec defines for it, which FSL reads (FR-354). A `Definition` is built
   with a `ReaderAuthority`.
 - `limits: PackageLimits`.
 
@@ -137,13 +137,13 @@ names the field, its bound, the count reached and its setting
 | FR-111-AC-3 | Two roots, or a root and a reached definition, selecting one identity under two authorities refuse `ambiguous_declaration`/`conflicting-authority` naming both; a dependency cycle refuses `invalid_package`/`definition-cycle` naming the cycle in path order. | Test (TC-491) |
 | FR-111-AC-4 | Removing the definitions of one facet refuses `invalid_package`/`feature-set-mismatch` naming that facet; removing one capability refuses `unknown_required_feature`/`unsupported-feature`. | Test (TC-491) |
 | FR-111-AC-6 | Each `PackageLimits` field admits at its bound and refuses one past it, at catalog construction and at link, with the table's code and cause; a caller-raised `definitions` ceiling admits a catalog the default refuses, and the link records the limits it ran under. | Test (TC-491) |
-| FR-111-AC-7 | Every refusal's (code, cause) pair is one `quire.native.diagnostics/v1` lists. | Test (TC-491) |
+| FR-111-AC-7 | Every refusal's (code, cause) pair is one `filament.native.diagnostics/v1` lists. | Test (TC-491) |
 
 ## Dependencies
 
-- QSpec FR-131 (AC-1 to AC-3), FR-339 (AC-3) and `native-diagnostics.md`.
-- QSpec FR-133 and FR-467: an extension definition's grammar schema and
-  typed-node schema members are QSpec's definition format (FR-467 "Members").
+- FSpec FR-131 (AC-1 to AC-3), FR-339 (AC-3) and `native-diagnostics.md`.
+- FSpec FR-133 and FR-467: an extension definition's grammar schema and
+  typed-node schema members are FSpec's definition format (FR-467 "Members").
   The catalog carries them as part of the definition's bytes, and FR-354
   reads them from the linked bundle.
 - [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md) §6.1, §6.2 (`complete::package` → layer-3 `library`).

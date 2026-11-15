@@ -3,7 +3,7 @@ id: TC-403
 title: "Every Value Expression node carries the span of its CST node"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-403: Every Value Expression node carries the span of its CST node

@@ -3,7 +3,7 @@ id: TC-818
 title: "S3 refuses ill-formed union declarations and bounds them only by checking ceilings"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-316
+  - target: ix://agent-ix/filament-spec-language/FR-316
     type: verifies
 ---
 # TC-818: S3 refuses ill-formed union declarations and bounds them only by checking ceilings
@@ -17,7 +17,7 @@ Scope: FR-316-AC-2, FR-316-AC-3, FR-316-AC-4.
 1. Check `union L { Nil, Cons(Integer, L) }`.
 2. Check `record Box { inner: U; }` with `union U { Wrap(Box) }`.
 3. Check `union U { A, A(Integer) }` and `union U { A(Missing) }`.
-4. Run QSpec TC-263's refused cases (tag `QSpec-TC-263`).
+4. Run FSpec TC-263's refused cases (tag `FSpec-TC-263`).
 5. Check a generated union of 5,000 nullary members, and a union whose one
    payload type nests `Option<...>` 1,000 levels, under default ceilings.
 6. Check the 5,000-member union with the work ceiling one below its charge,

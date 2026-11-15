@@ -3,7 +3,7 @@ id: TC-386
 title: "F diagnostic maps every snapshot-cause and model-refusal catalog code to category refusal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-386: F diagnostic maps every snapshot-cause and model-refusal catalog code to category refusal
@@ -31,7 +31,7 @@ layer 3.
    the cause.
 2. Do the same for every `ModelRefusal` cause `ModelRefusal::catalog_code()`
    covers.
-3. Read `qsl-foundation/Cargo.toml`'s `[dependencies]` table.
+3. Read `fsl-foundation/Cargo.toml`'s `[dependencies]` table.
 
 Tag the test `#[trace("FR-090-AC-5", "TC-386")]`.
 
@@ -39,5 +39,5 @@ Tag the test `#[trace("FR-090-AC-5", "TC-386")]`.
 
 - Every code in steps 1 and 2 maps to `Category::Refusal`.
 - The step-3 table names neither the crate that defines `FamilyOutcome` nor
-  any crate at layer 3 or above. It may name `quire-exact` and
-  `quire-semantic-value`, because ADR-011 §6.1 lets F depend on K and SV.
+  any crate at layer 3 or above. It may name `filament-exact` and
+  `filament-semantic-value`, because ADR-011 §6.1 lets F depend on K and SV.

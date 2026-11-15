@@ -1,12 +1,12 @@
 ---
 id: TC-1400
-title: "arch-lint confines unsafe code to qsl_jit::exec, and the safe wrapper upholds its contract"
+title: "arch-lint confines unsafe code to fsl_jit::exec, and the safe wrapper upholds its contract"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-568
+  - target: ix://agent-ix/filament-spec-language/FR-568
     type: verifies
 ---
-# TC-1400: arch-lint confines unsafe code to qsl_jit::exec, and the safe wrapper upholds its contract
+# TC-1400: arch-lint confines unsafe code to fsl_jit::exec, and the safe wrapper upholds its contract
 
 ## Description
 
@@ -27,13 +27,13 @@ Scope: FR-568-AC-1 to FR-568-AC-4.
    call a test entry that returns a status outside the closed status type.
 5. Run the FR-561-AC-3 call-target check and the FR-563 parity gate over the
    Cranelift JIT at the default seed, counting the calls that enter
-   generated code and the calls that pass through `qsl_jit::exec`.
+   generated code and the calls that pass through `fsl_jit::exec`.
 
 Tag the tests `#[trace("TC-1400", "<AC id>")]`.
 
 ## Expected Results
 
-- Step 1: the check passes; the list is exactly `(qsl-jit, exec)`; both
+- Step 1: the check passes; the list is exactly `(fsl-jit, exec)`; both
   targets list `arch-lint-unsafe`.
 - Step 2: each violation fixture fails, naming its package, file and item;
   the crate-root `forbid` fixture passes.

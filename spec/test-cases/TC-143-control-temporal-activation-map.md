@@ -3,7 +3,7 @@ id: TC-143
 title: "Publish and read control temporal activation mappings"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-054, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-054, type: verifies }
 ---
 # TC-143: Publish and read control temporal activation mappings
 

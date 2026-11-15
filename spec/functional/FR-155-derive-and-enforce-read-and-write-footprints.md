@@ -3,19 +3,19 @@ id: FR-155
 title: "Derive and enforce read and write footprints of model transitions"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: depends_on
 ---
 # FR-155: Derive and enforce read and write footprints of model transitions
@@ -37,7 +37,7 @@ most-specific type (`object_type`, FR-120), so the derivation needs no state.
 The partial-order closure asks for the enabling footprint of every disabled
 transition, among them transitions whose objects no state holds yet, such as
 `bump(d)` before `spawn` creates `d`. The locations, their meets and the derivation of
-`W(t)`, `R(t)` and the enabling footprint are QSpec FR-383's; this
+`W(t)`, `R(t)` and the enabling footprint are FSpec FR-383's; this
 requirement implements them and does not restate them. Two transitions are
 independent when neither writes a location the other reads or writes
 (POR-4).
@@ -57,8 +57,8 @@ step that read or wrote outside its footprint would stop the run (US-019).
 
 ## Outputs
 
-`Location`, `Footprint` and `independent` are owned by `qsl-eval`
-(`qsl_eval::simulation`), beside FR-101's `TransitionSystem`, whose
+`Location`, `Footprint` and `independent` are owned by `fsl-eval`
+(`fsl_eval::simulation`), beside FR-101's `TransitionSystem`, whose
 `footprint` hook returns a `Footprint`.
 
 ```rust
@@ -94,7 +94,7 @@ the type the operation or parameter declares.
 ## Behavior
 
 - **Derivation.** S3 SHALL compute each operation's symbolic read, write
-  and enabling footprints exactly by QSpec FR-383's "Locations", "Write
+  and enabling footprints exactly by FSpec FR-383's "Locations", "Write
   footprint", "Read footprint" and "Enabling footprint", with `self` as
   `Receiver` and a reference parameter `p` as `Param(p)`. `Field`,
   `AnyField`, `Membership` and `AnyMembership` encode FR-383's four model
@@ -126,7 +126,7 @@ the type the operation or parameter declares.
   reference-valued field whose referenced type `C` conforms to. A
   footprint derived from the operation's declaring type would omit the
   locations of `B`.
-- **Meeting.** A written location SHALL affect a location exactly when QSpec
+- **Meeting.** A written location SHALL affect a location exactly when FSpec
   FR-383 says it does: a written `Membership{P, k}` affects the membership cell
   and every field cell of `k`, a read `Membership{P, k}` covers the membership
   cell only, and a field write does not affect a membership read. Two written
@@ -174,10 +174,10 @@ the type the operation or parameter declares.
   (scoped frames and the frame decision).
 - ADR-027 FT-1 to FT-4 give the protocol locations and `ProtocolSystem`'s
   footprints.
-- QSpec FR-383 owns locations, meets and footprint derivation as normative
-  semantics (ADR-021 QS-4); QSpec FR-013 owns scoped `deletes`.
+- FSpec FR-383 owns locations, meets and footprint derivation as normative
+  semantics (ADR-021 QS-4); FSpec FR-013 owns scoped `deletes`.
 
 ## References
 
-- QSpec half: QSpec FR-383 (Linear STD-134; ADR-021 §9 QS-4). Protocol transition system:
+- FSpec half: FSpec FR-383 (Linear STD-134; ADR-021 §9 QS-4). Protocol transition system:
   ADR-027, Linear QSL-396. Owning ticket: Linear QSL-368.

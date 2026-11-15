@@ -25,7 +25,7 @@
         "identity": "none",
         "shape": "record",
         "members": {},
-        "meaning": "quire.meaning.model.object-type/v1"
+        "meaning": "filament.meaning.model.object-type/v1"
       }
     },
     {
@@ -38,7 +38,7 @@
         "identity": "none",
         "shape": "record",
         "members": {},
-        "meaning": "quire.meaning.model.population/v1"
+        "meaning": "filament.meaning.model.population/v1"
       }
     },
     {
@@ -51,7 +51,7 @@
         "identity": "none",
         "shape": "record",
         "members": {},
-        "meaning": "quire.meaning.model.value-type/v1"
+        "meaning": "filament.meaning.model.value-type/v1"
       }
     }
   ],
@@ -83,7 +83,7 @@
           "operands": {
             "value": "0"
           },
-          "appliesTo": "ix://quire/native/Integer",
+          "appliesTo": "ix://filament/native/Integer",
           "diagnosticCode": "bound.min",
           "origin": {
             "generated": {
@@ -101,7 +101,7 @@
           "operands": {
             "value": "1000"
           },
-          "appliesTo": "ix://quire/native/Integer",
+          "appliesTo": "ix://filament/native/Integer",
           "diagnosticCode": "bound.max",
           "origin": {
             "generated": {
@@ -190,7 +190,7 @@
           "name": "attemptUpdate",
           "params": [],
           "returns": {
-            "typeRef": "ix://quire/native/Boolean",
+            "typeRef": "ix://filament/native/Boolean",
             "multiplicity": {
               "lower": 1,
               "upper": 1,
@@ -204,7 +204,7 @@
           "origin": {
             "source": {
               "sourceIdentity": "ix://example/config-version/spec",
-              "path": "spec.qspec",
+              "path": "spec.fspec",
               "startLine": 1,
               "startColumn": 1
             }

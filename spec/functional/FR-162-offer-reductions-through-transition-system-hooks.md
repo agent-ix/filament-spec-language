@@ -3,23 +3,23 @@ id: FR-162
 title: "Offer reductions through TransitionSystem hooks and expand the reduced product"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-156
+  - target: ix://agent-ix/filament-spec-language/FR-156
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: depends_on
 ---
 # FR-162: Offer reductions through TransitionSystem hooks and expand the reduced product
@@ -32,7 +32,7 @@ partial-order reduction and `holds_constraint` for a state constraint
 (ADR-021 EI-4), and `offered_reductions` says which of them it implements.
 `ModelSystem` implements all three. The model checker's product system
 delegates each hook to its model component, so the property automaton is
-never reduced. `model_check`, in `qsl-analyze`, SHALL expand the reduced product
+never reduced. `model_check`, in `fsl-analyze`, SHALL expand the reduced product
 in FR-101's breadth-first order, canonicalising each initial state and
 successor, choosing ample sets, cutting at the constraint, and retaining
 each edge with its permutation (EI-2, EI-3). FR-101's `explore` and `sample`
@@ -52,10 +52,10 @@ every reachable state (US-019).
 
 The hooks `offered_reductions`, `canonical`, `footprint` and
 `holds_constraint` are members of FR-101's `TransitionSystem`, which
-`qsl-eval` owns; this FR states their behaviour and does not restate the
+`fsl-eval` owns; this FR states their behaviour and does not restate the
 trait. `Footprint` is FR-155's, `OfferedReductions` FR-159's and
 `ConstraintValue` FR-158's. `RetainedEdge` is owned by `model_check` in
-`qsl-analyze` (ADR-018 LA-1).
+`fsl-analyze` (ADR-018 LA-1).
 
 ```rust
 pub struct RetainedEdge {
@@ -125,17 +125,17 @@ pub struct RetainedEdge {
 ## Dependencies
 
 - ADR-021 RD-2, EI-2 to EI-5, §2 "Combining reductions"; ADR-014 TR-7.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (the trait and engine), [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (`ModelSystem`, `explore_model`), [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (the product and its phases), [FR-152](FR-152-canonicalise-a-model-state-by-sorting-its-symmetry-classes.md),
   [FR-155](FR-155-derive-and-enforce-read-and-write-footprints.md),
   [FR-156](FR-156-expand-ample-sets-with-the-breadth-first-proviso.md),
   [FR-158](FR-158-cut-the-search-with-a-state-constraint.md).
-- QSpec owns reduced exhaustive exploration as normative semantics (ADR-021
+- FSpec owns reduced exhaustive exploration as normative semantics (ADR-021
   QS-2).
 
 ## References
 
-- QSpec half: QSpec FR-383 (Linear STD-134; ADR-021 §9 QS-2). Owning ticket: Linear
+- FSpec half: FSpec FR-383 (Linear STD-134; ADR-021 §9 QS-2). Owning ticket: Linear
   QSL-368.

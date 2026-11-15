@@ -11,23 +11,23 @@ description = "Workspace developer tooling: cargo xtask seam-probe / string-edge
 # FR-059's `graph::classify` (ecosystem packages, ADR-032 DT-4).
 arch-lint = { path = "../tools/arch-lint" }
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
-# FR-340: the refinement gate runs cases through `qsl_replay::spine::run_clause`
+# FR-340: the refinement gate runs cases through `fsl_replay::spine::run_clause`
 # and reads its inputs as FR-106 observation documents.
-qsl-foundation = { path = "../qsl-foundation" }
-qsl-analyze = { path = "../qsl-analyze" }
-qsl-conformance = { path = "../qsl-conformance" }
+fsl-foundation = { path = "../fsl-foundation" }
+fsl-analyze = { path = "../fsl-analyze" }
+fsl-conformance = { path = "../fsl-conformance" }
 # FR-567-AC-5: the report names this package's own `CARGO_PKG_VERSION`.
-quire-spec-language = { path = ".." }
-qsl-cst = { path = "../qsl-cst" }
+filament-spec-language = { path = ".." }
+fsl-cst = { path = "../fsl-cst" }
 logos = "0.16.1"
-qsl-route = { path = "../qsl-route" }
-qsl-replay = { path = "../qsl-replay" }
-qsl-semantics = { path = "../qsl-semantics" }
-quire-exact = { workspace = true }
+fsl-route = { path = "../fsl-route" }
+fsl-replay = { path = "../fsl-replay" }
+fsl-semantics = { path = "../fsl-semantics" }
+filament-exact = { workspace = true }
 quire-canonical = { workspace = true, features = ["serde_json"] }
-quire-semantic-value = { git = "https://github.com/agent-ix/quire-semantic-value", branch = "main" }
-# FR-064: `xtask string-edge` calls the one standalone scanner with QSL's roots.
-qsl-string-edge = { path = "../qsl-string-edge" }
+filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", branch = "main" }
+# FR-064: `xtask string-edge` calls the one standalone scanner with FSL's roots.
+fsl-string-edge = { path = "../fsl-string-edge" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }

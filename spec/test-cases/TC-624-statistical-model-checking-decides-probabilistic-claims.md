@@ -3,7 +3,7 @@ id: TC-624
 title: "EN-4 decides probabilistic claims with Okamoto, SPRT and Clopper–Pearson, with Bonferroni, symmetry and activation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-189
+  - target: ix://agent-ix/filament-spec-language/FR-189
     type: verifies
 ---
 # TC-624: EN-4 decides probabilistic claims with Okamoto, SPRT and Clopper–Pearson, with Bonferroni, symmetry and activation

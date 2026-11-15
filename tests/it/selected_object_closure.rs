@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Selected-document object roots reach the ordinary identity handoff and IR.
 
-use ix_trace_rs::trace;
-use qsl_package::ReadIdentityRows;
-use quire_contract_model::{
+use filament_contract_model::{
     CheckedNodeOwner, CheckedOccurrenceRole, CheckedOperationEffect, CheckedOperationEffectOrigin,
     CheckedPackageEvidence, CheckedPackageV2, ExactTypeProjectionErrorCode,
     SelectedExactIdentities, SelectedExactIdentity, SelectedTypeDeclarations,
 };
-use quire_exact::{Presence, ValueType};
-use quire_spec_language::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
-use quire_spec_language::emit_checked_v2::Request;
+use filament_exact::{Presence, ValueType};
+use filament_spec_language::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
+use filament_spec_language::emit_checked_v2::Request;
+use fsl_package::ReadIdentityRows;
+use ix_trace_rs::trace;
 use serde_json::Value;
 
 use super::bare_equality::tc1070;
@@ -46,7 +46,7 @@ fn fixture_with_source(document: &Value, source_text: &str) -> Fixture {
             out: None,
         },
         corpus: Corpus::None,
-        native_join: qsl_package::V2ReadLimits::fixture().native_join_limits(),
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
     };
     let output = directory.path().join("handoff");
     write(&request, &output).expect("the genuine handoff writes");
@@ -57,7 +57,7 @@ fn fixture_with_source(document: &Value, source_text: &str) -> Fixture {
     let rows = ReadIdentityRows::read(
         &files["identities.json"],
         &package,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the required identity carrier joins the admitted package");
     Fixture {
@@ -74,7 +74,7 @@ fn project(fixture: &Fixture) -> SelectedTypeDeclarations {
         .rows
         .selected(
             &fixture.package,
-            &mut quire_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
         )
         .expect("native row join");
     fixture
@@ -83,7 +83,7 @@ fn project(fixture: &Fixture) -> SelectedTypeDeclarations {
             &identities,
             &[],
             &[],
-            &mut quire_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
         )
         .expect("every selected document object has its genuine declaration witness")
 }
@@ -298,7 +298,7 @@ fn selected_object_closure_refuses_missing_and_foreign_object_witnesses() {
             .filter(|row| row.structural_node != other.structural_node)
             .cloned(),
         fixture.rows.fields().iter().cloned(),
-        &mut quire_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+        &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
     )
     .expect("the remaining genuine rows join individually");
     let refusal = fixture
@@ -307,7 +307,7 @@ fn selected_object_closure_refuses_missing_and_foreign_object_witnesses() {
             &missing,
             &[],
             &[],
-            &mut quire_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
         )
         .expect_err("a model reference cannot substitute for its missing object witness");
     assert_eq!(
@@ -331,7 +331,7 @@ fn selected_object_closure_refuses_missing_and_foreign_object_witnesses() {
         &fixture.package,
         foreign,
         fixture.rows.fields().iter().cloned(),
-        &mut quire_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+        &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
     )
     .expect_err("an original object identity cannot join another object's real node");
     assert_eq!(
@@ -375,7 +375,7 @@ fn selected_object_closure_refuses_a_model_reference_whose_object_node_is_absent
             .filter(|row| row.structural_node != other.structural_node)
             .cloned(),
         fixture.rows.fields().iter().cloned(),
-        &mut quire_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+        &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
     )
     .expect("only the remaining genuine declaration rows are supplied");
     let refusal = package
@@ -383,7 +383,7 @@ fn selected_object_closure_refuses_a_model_reference_whose_object_node_is_absent
             &identities,
             &[],
             &[],
-            &mut quire_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
         )
         .expect_err("retained model references cannot invent their absent object declaration");
     assert_eq!(
@@ -400,25 +400,25 @@ fn selected_object_closure_refuses_a_model_reference_whose_object_node_is_absent
 #[trace("FR-533-AC-22", "TC-1333")]
 #[test]
 fn a_budget_short_of_the_population_catalog_is_the_catalog_failure() {
-    use quire_contract_model::{
+    use filament_contract_model::{
         CheckedModelPopulationCatalogError as CatalogError,
         CheckedModelPopulationCatalogLimitKind as Kind, CheckedModelPopulationCatalogLimits,
         NativeJoinBudget,
     };
     let fixture = fixture(&tc1070::document_ep());
-    let supply = qsl_package::BareSupply {
+    let supply = fsl_package::BareSupply {
         identities: &fixture.rows,
         equality: None,
     };
     let mut measure = NativeJoinBudget::new(10_000_000, 10_000_000);
-    qsl_package::BarePackage::new(&fixture.package)
+    fsl_package::BarePackage::new(&fixture.package)
         .with_supply(supply, &mut measure)
         .expect("a large budget pays every read");
     let paid = measure.consumed();
-    let error = qsl_package::BarePackage::new(&fixture.package)
+    let error = fsl_package::BarePackage::new(&fixture.package)
         .with_supply(supply, &mut NativeJoinBudget::new(paid.work, paid.storage))
         .expect_err("nothing is left for the catalog");
-    let qsl_package::NativeJoinFailure::PopulationCatalog { setting, limit } = error else {
+    let fsl_package::NativeJoinFailure::PopulationCatalog { setting, limit } = error else {
         panic!("the catalog is the failing read: {error:?}")
     };
     let Err(CatalogError::Limit {
@@ -438,8 +438,8 @@ fn a_budget_short_of_the_population_catalog_is_the_catalog_failure() {
     assert_eq!(
         setting,
         match kind {
-            Kind::Work => qsl_foundation::Setting::I2WorkUnits,
-            Kind::Entries => qsl_foundation::Setting::I2NativeJoinStorage,
+            Kind::Work => fsl_foundation::Setting::I2WorkUnits,
+            Kind::Entries => fsl_foundation::Setting::I2NativeJoinStorage,
         }
     );
     assert_eq!(limit.configured_bound(), bound);

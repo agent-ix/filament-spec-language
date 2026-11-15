@@ -3,7 +3,7 @@ id: TC-236
 title: "Two declarations sharing a display title classify and resolve independently by key"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: verifies
 ---
 # TC-236: Two declarations sharing a display title classify and resolve independently by key

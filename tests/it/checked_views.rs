@@ -3,17 +3,17 @@
 //! packages of the ported IT-001 recipe R that the checked-package handoff
 //! writer emits (FR-517).
 
-use ix_trace_rs::trace;
-use qsl_package::checked_views::{
-    checked_predicate, temporal_subject, Activation, PredicateKind, PredicateSelection,
-    TemporalSubjectView,
-};
-use quire_contract_model::{
+use filament_contract_model::{
     CheckedBindingNameKind, CheckedLiteralValue, CheckedNodeId, CheckedNodeKind,
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedPackageV2, CheckedTerm, ProtocolForm,
     ValueForm,
 };
-use quire_spec_language::checked_handoff::{evidence, write, Corpus};
+use filament_spec_language::checked_handoff::{evidence, write, Corpus};
+use fsl_package::checked_views::{
+    checked_predicate, temporal_subject, Activation, PredicateKind, PredicateSelection,
+    TemporalSubjectView,
+};
+use ix_trace_rs::trace;
 use serde_json::Value;
 
 use super::checked_handoff::{admitted, request, tree, KINDS};
@@ -56,7 +56,7 @@ fn requiring(package: &CheckedPackageV2, clause: &CheckedNodeId) -> Vec<CheckedN
             };
             arguments.iter().any(|argument| match argument {
                 CheckedTerm::Binding { name, value }
-                    if quire_contract_model::CheckedBindingNameKind::Other("requirements")
+                    if filament_contract_model::CheckedBindingNameKind::Other("requirements")
                         == name.kind() =>
                 {
                     matches!(&**value, CheckedTerm::Aggregate { members }
@@ -178,10 +178,10 @@ fn every_clause_of_each_recipe_package_reads_its_node_facts() {
                 bounds(&view),
                 [
                     (
-                        "quire.op.temporal.always".to_owned(),
+                        "filament.op.temporal.always".to_owned(),
                         Some(("0".to_owned(), Some(upper.to_owned())))
                     ),
-                    ("quire.op.temporal.holds".to_owned(), None)
+                    ("filament.op.temporal.holds".to_owned(), None)
                 ],
                 "{name}"
             );

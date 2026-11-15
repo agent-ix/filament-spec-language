@@ -3,42 +3,42 @@ id: FR-098
 title: "Execute a replay request through the layer-6 replay facade"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-145
+  - target: ix://agent-ix/filament-spec-language/FR-145
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-006
+  - target: ix://agent-ix/filament-spec-language/FR-006
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
 ---
 # FR-098: Execute a replay request through the layer-6 replay facade
 
 ## Description
 
-QSL SHALL provide the replay executor entry, `qsl_replay::replay`, as the
+FSL SHALL provide the replay executor entry, `fsl_replay::replay`, as the
 layer-6 `replay` facade's public API (ADR-013 O-26, C-13, TK-01; ADR-011
 §2.1 E9, §6.1). It takes an FR-071 replay request. It recompiles the proved
 package's source units, one or more (FR-480), through the spine (S1 to S4, the same
@@ -48,14 +48,14 @@ package reference's `dependencies` entries name (ADR-015 D-4). A changed
 dependency document is not detected: the recompile reads the bytes the byte
 provision carries and compares the result with no identity the request
 carries. It selects the function
-its `function` replay target names (QSpec FR-323) in the recompiled
+its `function` replay target names (FSpec FR-323) in the recompiled
 package's declarations, joins the
 replay source's arguments to the function's parameters by parameter node
 id, calls the function through S6a (`CheckedPackage::call`), and settles
 an FR-072 replay result. The counterexample a request replays refuted its
 property, so the proved verdict is `violation`.
 
-A `function` request decides one of two claims, and its QSpec FR-323
+A `function` request decides one of two claims, and its FSpec FR-323
 `occurrence_key` selects which (FR-071). At the function's `declaration`
 occurrence it decides the **predicate claim**: the function, whose declared
 result is `Boolean`, returns `true` on the arguments (ADR-013 O-09's
@@ -67,7 +67,7 @@ that occurrence is defined and its result lies in the record's result bound.
 
 The spine compile is public only because `command`, another crate, calls
 it. It is not part of the facade CG may call: the FR-060 T12-A rule
-refuses any CG reference to `qsl_replay::spine` -- a `use` of it, a path
+refuses any CG reference to `fsl_replay::spine` -- a `use` of it, a path
 through it, or a crate alias or glob import that reaches it.
 
 A replay runs its call over an object environment. A request without
@@ -103,8 +103,8 @@ list.
   package input keyed by identity.
 - The executor SHALL refuse a request by the first of ADR-015 D-4's rules,
   each rule applied over all `dependencies` entries, in entry order, before
-  the next rule, with QSpec FR-323's codes for the rules FR-323 states; the
-  one-source rule and the dependency-input rule are QSL's own and run
+  the next rule, with FSpec FR-323's codes for the rules FR-323 states; the
+  one-source rule and the dependency-input rule are FSL's own and run
   before the recompile.
 - The executor SHALL refuse entries not in strictly ascending UTF-8 byte
   order of `identity`, a repeated identity included, as
@@ -113,7 +113,7 @@ list.
   any dependency input.
 - The complete package's `lock.sources` SHALL name the proved package's source
   units, one or more sources, each named by its authority and identity, in any order. Each
-  separate request `dependencies` entry (QSpec FR-323) SHALL name that dependency's
+  separate request `dependencies` entry (FSpec FR-323) SHALL name that dependency's
   source units the same way. The executor recompiles each list as one unit
   list in FR-480's canonical unit order, each source under its two FR-001
   labels (authority and identity). A `sources` list or an entry that is empty, names a definition
@@ -135,7 +135,7 @@ list.
   pointer, `/package/lock/refinement_internals` for the proved package's value
   or `/dependencies/<n>/refinement_internals` for the `n`th
   dependency entry's, followed by the pointer into the value that FR-147
-  gives (QSpec FR-323-AC-17). The boundary pointer SHALL be additional
+  gives (FSpec FR-323-AC-17). The boundary pointer SHALL be additional
   request context; it SHALL NOT replace the native relative locus. For a
   dependency, the executor SHALL locate the exact supplied entry using the
   compiler's actual dependency-owner path, not the refinement spelling or
@@ -167,20 +167,20 @@ list.
   `s1.input_bytes` bound above `replay.input_bytes` refuses before the
   recompile.
   Supplied admission/conversion ceilings SHALL instead use the paired
-  QSpec FR-323 typed `limits.supplied` carrier; they are not recompile
+  FSpec FR-323 typed `limits.supplied` carrier; they are not recompile
   stage settings and SHALL NOT be passed through `stage_limits`.
 - No `CheckedPackage` is built from wire bytes.
 - If the request's replay target is not `function` and it carries no observed
   temporal counterexample arm, then the executor SHALL
   refuse `invalid_runtime_input`/`unknown-member` at that member's
   `/replay/<member>` pointer, naming the target, the entry `replay` and the
-  member it reads (`function`), after the request decodes by FR-071 (QSpec FR-323 decode rule 1, then the byte-provision rule) and before it recompiles. The code
-  and pointer tell this refusal apart from QSpec FR-323's refusal of a
+  member it reads (`function`), after the request decodes by FR-071 (FSpec FR-323 decode rule 1, then the byte-provision rule) and before it recompiles. The code
+  and pointer tell this refusal apart from FSpec FR-323's refusal of a
   request carrying two targets (`invalid-value`). A frame or a state-clause
   target replays through its own entry (FR-116, FR-122).
 - When a decoded request carries the observed temporal counterexample arm
   with a `state_clause` target, the executor SHALL dispatch it through
-  `qsl_replay::replay` to [FR-331](FR-331-replay-a-temporal-counterexample-over-an-observed-trace.md)
+  `fsl_replay::replay` to [FR-331](FR-331-replay-a-temporal-counterexample-over-an-observed-trace.md)
   after the shared request decode, dependency validation and recompile have
   completed once; the executor SHALL pass that
   checked package and the typed request to FR-331 without recompiling them.
@@ -254,7 +254,7 @@ list.
   builds each node through the kernel's value constructors. It SHALL decide a reference's universe correspondence after its value
   shape and before its conformance, as FR-100 orders them. A
   reference whose `universe` differs from the universe of the declared
-  `Reference<T>`'s object type (QSL FR-084) refuses
+  `Reference<T>`'s object type (FSL FR-084) refuses
   `ReplayRefusal::ForeignReference` (`foreign_reference`/`foreign-universe`),
   naming the parameter's position and carrying the required and supplied
   universes as lowercase hex, before conformance is considered, so a reference
@@ -276,7 +276,7 @@ list.
   - an arity differs from the declaration;
   - a reference's `object_type` names no object type of the model, or names a
     type that is neither the declared `Reference<T>`'s object type nor a type
-    that conforms to it (QSpec FR-151; the reference admission of FR-100), so
+    that conforms to it (FSpec FR-151; the reference admission of FR-100), so
     a proper subtype's reference is a `Reference<T>`; or a reference's
     `identity` is empty or not UTF-8, which the kernel's object identity
     constructor never accepts (FR-100);
@@ -310,9 +310,9 @@ list.
   does not admit. Union arguments follow FR-321's admission.
 - The conversion SHALL stop at the request's limits, never at a depth. Before
   the call, it SHALL count the occurrences of each converted argument
-  (`quire.value.accounting/v1` `occ`) against the request's accounting
+  (`filament.value.accounting/v1` `occ`) against the request's accounting
   limit `value_occurrences`, and the nodes it converts against
-  `work_units`. These are `quire.value.accounting/v1` accounting limits
+  `work_units`. These are `filament.value.accounting/v1` accounting limits
   (ADR-014 B-2), not stage limits. FR-255 names each by its setting,
   `accounting.` and its counter name (`accounting.value_occurrences`,
   `accounting.work_units`), and a `stage_limits` entry of that setting name
@@ -335,10 +335,10 @@ list.
 - Conversion SHALL retain the preceding per-argument semantic node and
   occurrence rules unchanged (QSL-681 settlement option 1). It SHALL bound
   helper work separately by public `supplied.conversion_work_units`, with one
-  cumulative caller-owned budget for the entire argument list. QSL helper
+  cumulative caller-owned budget for the entire argument list. FSL helper
   events SHALL follow the deterministic event table below. Conversion SHALL
-  include a counted scheduling step only for QSL witness bookkeeping, never
-  twice. Each required QSV child-scheduling event SHALL remain
+  include a counted scheduling step only for FSL witness bookkeeping, never
+  twice. Each required FSV child-scheduling event SHALL remain
   a separate unit under FR-109; bookkeeping SHALL neither absorb nor
   duplicate that delegated event.
   Conversion SHALL admit each helper step
@@ -352,7 +352,7 @@ list.
   independently of whether membership trusts an admitted nested value.
   Conversion SHALL check counts before the operation that would exceed them,
   preserving the successful per-argument prefix and denied next amount.
-- Membership and iterative type comparison SHALL use QSV's reviewed FR-109
+- Membership and iterative type comparison SHALL use FSV's reviewed FR-109
   value-visit/type-comparison/child-schedule/descriptor-query event sequence
   and the initiating phase's cumulative budget: conversion when invoked
   from conversion, admission when invoked by direct/final admission.
@@ -360,7 +360,7 @@ list.
   Cancel SHALL reach conversion, nested helpers, membership and the eventual
   call. A denial SHALL preserve its owning phase and FR-277 typed payload,
   with no later argument converted or evaluated. Union-specific event
-  integration SHALL await the reviewed QSV union declaration/member/type
+  integration SHALL await the reviewed FSV union declaration/member/type
   comparison baseline; no candidate event total defines this contract.
 
 Each delegated type-comparison unit SHALL be exactly ONE compared PAIR OF
@@ -386,8 +386,8 @@ successful prefix, never a fictitious limit.
 | Event | Exactly one unit before | Boundary/order |
 | --- | --- | --- |
 | Witness preflight | Reading one witness node's discriminant and validating its local shape/arity | Before resolving its declared type or visiting children; first invalid node stops all later work |
-| Descriptor inspection | One logical descriptor query for a declaration header, member or field/position under QSV FR-109 | Header before selected member/positions; declaration order; preserve logical count on cache hits and count a delegated query only once |
-| Runtime type resolution | The actual logical compared-pair-of-type-chain-links or descriptor-query steps prescribed by QSV FR-109 for that resolution, including the initial expected/actual pair | No extra entry or facade-invocation debit for the same delegated step; independently bounded type/link/registry inputs constrain unhooked internal work under FR-277 |
+| Descriptor inspection | One logical descriptor query for a declaration header, member or field/position under FSV FR-109 | Header before selected member/positions; declaration order; preserve logical count on cache hits and count a delegated query only once |
+| Runtime type resolution | The actual logical compared-pair-of-type-chain-links or descriptor-query steps prescribed by FSV FR-109 for that resolution, including the initial expected/actual pair | No extra entry or facade-invocation debit for the same delegated step; independently bounded type/link/registry inputs constrain unhooked internal work under FR-277 |
 | Witness materialization | Constructing one converted kernel node after its children | Postorder; no semantic evaluation charge; the same completed node counts once in the separate per-argument C counter |
 
 Retrieving a descriptor is a descriptor event, not a second runtime-type
@@ -399,7 +399,7 @@ leaf text/numeric validation, equality/deduplication and reference walks)
 SHALL use the logical helper events and independently bounded helper inputs
 of FR-277, with one budget owner. They SHALL NOT claim that one outer
 event bounds an unbounded internal walk. Their input/event contract SHALL be agreed with the shared
-helper owner before this contract is frozen; QSL prescribes no missing
+helper owner before this contract is frozen; FSL prescribes no missing
 union descriptor signature. Semantic conversion-node counting SHALL remain
 one per converted node, independently of all such helper events.
 
@@ -412,7 +412,7 @@ NOT produce a semantic ChargePoint or override the original refusal cause.
 
 A function that takes a `Reference` reads the object it names through an
 object environment. A counterexample over such a function supplies, besides
-its arguments, the environment document: a `quire.state.snapshot/v1` document
+its arguments, the environment document: a `filament.state.snapshot/v1` document
 (FR-106) listing the objects the argument references name and every object
 reachable from them by reference fields, each with every declared field, in
 populations marked `complete`. A reference argument arrives in FR-070's one
@@ -485,7 +485,7 @@ the first paragraph of the Description states.
 ### The claim a function request decides
 
 A `function` request carries the occurrence key of the counterexample's
-failing node (ADR-013 O-25, QSpec FR-323 `occurrence_key`, FR-071). The
+failing node (ADR-013 O-25, FSpec FR-323 `occurrence_key`, FR-071). The
 executor SHALL select the claim by that key after it resolves the `function`
 replay target and before the argument join. It converts the key's node, a
 `WireNodeId`, to a `NodeKey` only by lookup in the recompiled package
@@ -513,7 +513,7 @@ the first of these that holds:
    a key that names no declaration and no record (`UnknownOccurrence`).
 
 This selection runs after every refusal that precedes the resolution: the
-decode refusals (FR-071, QSpec FR-323 decode rule 1, which refuses an
+decode refusals (FR-071, FSpec FR-323 decode rule 1, which refuses an
 occurrence key on a frame or a state-clause request and a `function` request
 without one), the replay-target refusal, the dependency checks
 and the unresolved function. It runs before the argument join,
@@ -609,7 +609,7 @@ own evaluation of the site fails, as for a function that is not recursive.
   predicate claim.
 
 The result carries the claim's Boolean as its evaluated value, the charges
-the call consumed up to its stop, and no QSpec FR-351 record, as for a
+the call consumed up to its stop, and no FSpec FR-351 record, as for a
 predicate claim (ADR-031 SW-7).
 
 ### Refusal and settlement
@@ -642,7 +642,7 @@ predicate claim (ADR-031 SW-7).
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-098-AC-1 | A request whose byte provision carries its one source and, under their package identities, the domain packages the source selects recompiles from those bytes alone and replays. A package reference naming a definition document refuses before any recompile; one naming a package's two source units in canonical unit order recompiles them as one unit list and replays (FR-480-AC-7). | Test (TC-444) |
-| FR-098-AC-2 | The selection resolves by `QualifiedName` in the recompiled package; `Input` assignments and `Witness` entries join the function's parameters by parameter node id, in declared parameter order (`Input` assignments in any order; transcript entries in FR-070's ascending node-id order), and a Boolean parameter takes a witness entry `0` or `1` and an `Input` assignment's `WitnessValue::Boolean` (an `Input` `WitnessValue::Integer` for it refuses `WrongValueKind`); the call runs through S6a, and an agreeing replay settles `reproduced-without-witness` (`Input`) or `reproduced-with-evaluated-witness` (`Witness`) with no QSpec FR-351 record, since a function call's result has no decisive occurrence (ADR-031 SW-7), carrying the call's charges. | Test (TC-444) |
+| FR-098-AC-2 | The selection resolves by `QualifiedName` in the recompiled package; `Input` assignments and `Witness` entries join the function's parameters by parameter node id, in declared parameter order (`Input` assignments in any order; transcript entries in FR-070's ascending node-id order), and a Boolean parameter takes a witness entry `0` or `1` and an `Input` assignment's `WitnessValue::Boolean` (an `Input` `WitnessValue::Integer` for it refuses `WrongValueKind`); the call runs through S6a, and an agreeing replay settles `reproduced-without-witness` (`Input`) or `reproduced-with-evaluated-witness` (`Witness`) with no FSpec FR-351 record, since a function call's result has no decisive occurrence (ADR-031 SW-7), carrying the call's charges. | Test (TC-444) |
 | FR-098-AC-3 | **RETIRED (staleness check withdrawn).** The criterion asserted that a meaning-affecting source edit refuses `stale_dependency`/`content-mismatch` on a package identity difference; no replacement. | Test (TC-444), retired |
 | FR-098-AC-4 | Each refusal in Behavior -- a missing input, a selection naming no function node, an arity mismatch, a type mismatch and a value outside the declared domain (each `WrongValueKind`), a limit above the reader limit, a recompile stage limit at S1 or S3, and a selection whose declared result is not `Boolean` (refused before any call, even with no accounting budget) -- refuses with its typed variant and no partial result. | Test (TC-444) |
 | FR-098-AC-5 | A replay that disagrees with the refuted property settles `inconclusive` with cause `Verdicts`, and one that completes no value with cause `NoValue`, each holding both verdicts; neither is repaired. | Test (TC-444) |
@@ -651,7 +651,7 @@ predicate claim (ADR-031 SW-7).
 | FR-098-AC-8 | Over `record Inner { a: Int[0, 9]; b?: Boolean; }`, `union Shape { Circle(Int[0, 9]), Empty }` and `record Outer { i: Inner; o: Option<Int[0, 9]>; s: Sequence<Int[0, 9]>[0, 3]; u: Shape; }`, a predicate `p(x: Outer): Boolean` replays its counterexample from an `Input` assignment and from a `Witness` entry, and each settles as AC-2 states, with the replayed call evaluating the nested values. Each of these refuses `WrongValueKind` naming position 0, before the call and with no charge: a sequence given for `o`; an `Inner` whose `name` is `Outer`'s node id; a record missing `a`, and one with an undeclared field; an absent `a`; union member `Square`; `Circle` with no component; a leaf `12` for `a`; and four elements for `s`. Over `g(v): Boolean`, whose `v` is a `Set` of a `Decimal` type with scales 0 to 2, a set holding `1.0` and `1.00` (distinct value texts, numerically equal) refuses `WrongValueKind` the same way. | Test (TC-906) |
 | FR-098-AC-9 | For the AC-8 counterexample and TC-906's unchanged full Tree, with other bounds permitting progress, occurrence-count-minus-one and converted-node-count C-1 make no call and settle `inconclusive`/`NoValue` with conversion-phase `Incomplete` preserving the configured `value_occurrences` or `work_units` and denied count. Counts at the bound admit the argument; successful replay also requires sufficient evaluation allowance. C remains converted nodes per argument, not helper visits, and contributes zero to the evaluation Meter. Direct/replay evaluation charge sequences are equal. | Test (TC-906) |
 | FR-098-AC-10 | One predicate per leaf family, each taking one parameter of that family (an enum `Color`, `Text[0, 8]`, `Rational`, a `Decimal` with scales `[0, 2]`, `Float64`, a quantity in a declared unit `m`, and a `Reference<T>`), replays its counterexample from a `Witness` entry in FR-070's witness value text and settles as AC-2 states; the reference predicate tests the reference for equality with itself and does not dereference it. Positive replay requires FR-277 AC-6's reviewed capability and typed integration for the invoked helpers: Decimal remains a mandatory positive family once IR-718's reviewed capability is enabled through IR-719 and its typed mapping is approved. Missing proof blocks implementation qualification, not a runtime unsupported/invalid/limit/storage outcome. Each of these refuses `WrongValueKind` naming position 0, before the call: an enum value naming another enum's declaration; a nine-scalar text; a decimal with scale 3; a `float32` for the `Float64`; a quantity in another unit; and a reference whose `object_type` is another type's. A predicate that dereferences its reference settles `inconclusive` with cause `NoValue` when the request carries no `object_environment`. | Test (TC-906) |
-| FR-098-AC-11 | A proved package whose one source declares `function wide using v(x: Int[0, 18446744073709551615]): Boolean pure { x <= 18446744073709551614 }` recompiles from its byte provision, and an `Input` assignment of `x` = 18446744073709551615, carried on the replay wire as the decimal string `"18446744073709551615"`, settles `reproduced-without-witness` with the call's result `false`. The same holds for `x: Int[0, 9223372036854775808]` with body `x <= 9223372036854775807` and `x` = `"9223372036854775808"`, for `x: Int[0, 18446744073709551616]` with body `x <= 18446744073709551615` and `x` = `"18446744073709551616"`, and for `x: Int[-170141183460469231731687303715884105728, 170141183460469231731687303715884105727]` with body `x > -170141183460469231731687303715884105728` and `x` = `"-170141183460469231731687303715884105728"`. As the QSL-source stand-in for QSL-642's CG wide-range model (the u64 range CG admits under IR-624 AC35), a unit declaring `record Meter { reading: Int[0, 18446744073709551615]; }` and `function meter_over using v(m: Meter): Boolean pure { m.reading <= 18446744073709551614 }` recompiles from its byte provision to the request's `package_id`. | Test (TC-913) |
+| FR-098-AC-11 | A proved package whose one source declares `function wide using v(x: Int[0, 18446744073709551615]): Boolean pure { x <= 18446744073709551614 }` recompiles from its byte provision, and an `Input` assignment of `x` = 18446744073709551615, carried on the replay wire as the decimal string `"18446744073709551615"`, settles `reproduced-without-witness` with the call's result `false`. The same holds for `x: Int[0, 9223372036854775808]` with body `x <= 9223372036854775807` and `x` = `"9223372036854775808"`, for `x: Int[0, 18446744073709551616]` with body `x <= 18446744073709551615` and `x` = `"18446744073709551616"`, and for `x: Int[-170141183460469231731687303715884105728, 170141183460469231731687303715884105727]` with body `x > -170141183460469231731687303715884105728` and `x` = `"-170141183460469231731687303715884105728"`. As the FSL-source stand-in for QSL-642's CG wide-range model (the u64 range CG admits under IR-624 AC35), a unit declaring `record Meter { reading: Int[0, 18446744073709551615]; }` and `function meter_over using v(m: Meter): Boolean pure { m.reading <= 18446744073709551614 }` recompiles from its byte provision to the request's `package_id`. | Test (TC-913) |
 | FR-098-AC-12 | TC-906 counts the specified conversion helper events as H: H-1 denies its actual next event unspent, H permits conversion when other bounds fit. Across multiple arguments H is cumulative and independent of each argument's node C. Original Cancel, invalid input and storage/capacity failures retain their FR-277 typed phase causes and zero evaluation consumption. | Test (TC-906) |
 | FR-098-AC-13 | TC-1028 E1 to E5 replay through the real spine. A unit declaring `function eqs using v(a: String, b: String): Boolean pure { a = b }`, its `!=` counterpart and `function equ using v(a: UUID, b: UUID): Boolean pure { a = b }` is composed and replayed from `Input` assignments that carry String values (the String wire object, `{"kind":"string","text":...}`), and each replay completes with the Boolean TC-1028 states as its evaluated value (the proved verdict is `violation`, so a `true` result settles `inconclusive` with cause `Verdicts` and a `false` result settles `reproduced-without-witness`): `""` and `""` give `true`; `"abc"` and `"abc"` give `true`; U+00E9 and U+0065 U+0301 give `false`; `"A"` and `"a"` give `false`; the text `00112233-4455-6677-8899-aabbccddeeff` and itself give `true`; the `!=` function gives the negation of each. Before the call and with no charge, each of these refuses `WrongValueKind` (`invalid_runtime_input`) naming the parameter's position, from an `Input` assignment and from a `Witness` entry: the String object whose text is `00112233-4455-6677-8899-aabbccddeeff` at position 0 of `equ`; a UUID object at position 1 of `eqs`; a Timestamp object at position 0 of `eqs`; `{"type":"text","value":"abc"}` at position 0 of `eqs`; and a String object at position 0 of the Text-parameter predicate of FR-098-AC-10. | Test (TC-1028) |
 | FR-098-AC-14 | Over the fixture of TC-1042 (`Node` with `items: Sequence<Int[0, 9]>[0, 3]`, `Hub` specializing `Node`, a complete population `G`) and the environment document S1, `function fa using v(n: Reference<M::Node>): Boolean pure { forall(x in deref(n).items: x < 5) }` replays a reference to `a` (items 3, 7) to `false` from an `Input` assignment (`reproduced-without-witness`) and from a `Witness` entry (`reproduced-with-evaluated-witness`); a reference to `b` (items 1, 2) completes `true` and settles `inconclusive` with cause `Verdicts`; a reference to the `Hub` object `h` (items 9), whose `object_type` is the proper subtype, completes `false`; a sequence of references to `b` then `a` completes `false` through two reference reads (`forall` stops at the first false); and a different `anchor` in S1 changes none of these. | Test (TC-1042) |
@@ -662,13 +662,13 @@ predicate claim (ADR-031 SW-7).
 | FR-098-AC-19 | Against a complete population, a reference argument whose object the environment does not list refuses `dangling_reference`/`absent-target-in-complete-population` naming position 0 and the reference, and so does one whose `object_type` is another type's, within the same universe, from the held object of the same identity (a different universe refuses earlier, at conversion, as `foreign-universe`); against a population not marked `complete`, such a reference refuses `incomplete_population`/`incomplete-scope`. In a sequence of references the first one that is not present is named, and a present reference before it is not. | Test (TC-1042) |
 | FR-098-AC-20 | A request for a proved package whose refinement `CasTwice` has the internal list `[{"refinement": "CasTwice", "internal": ["Spec::Twice::Done"]}]` carries it at `/package/lock/refinement_internals` and recompiles. A well-shaped list naming an unknown refinement or an unresolved internal class (`Spec::Twice::zz` at index 0) refuses `RefinementInternals`, retaining the complete native compiler refusal with its original code, cause and relative locus, and separately locating the request at `/package/lock/refinement_internals` followed by that relative pointer. A root value of `{}` is instead a bounded descriptor-decode `InvalidPackage`/`wrong-value-kind` refusal at `/package/lock/refinement_internals`, because the full checked-package carrier requires an array; it is not a fabricated S3 result. A semantic defect on dependency entry 1, with an unrelated entry 0 present, is located at `/dependencies/1/refinement_internals/<native-relative-pointer>` using the compiler's actual dependency-owner identity. Boundary pointer reads leave the complete native refusal unchanged. Each supplied dependency list applies only to that dependency's refinements, and genuine protocol results are retained only when present. | Test (TC-444) |
 | FR-098-AC-21 | TC-444's `small` request with its replay target replaced by `frame_operation` (`Config::ConfigVersion`, `attemptUpdate`) given to `replay` refuses `invalid_runtime_input`/`unknown-member` at `/replay/frame_operation` naming the target, the entry `replay` and the member `function`, before the recompile: the same request with its source edited so it does not compile refuses the same way. With its source's byte-provision entry also removed it refuses by the byte-provision rule instead (`missing_import`/`missing-selection`), which decode applies first. | Test (TC-444) |
-| FR-098-AC-22 | Over a unit declaring `function p using v(x: Int[0, 9]): Boolean pure { x > 3 }`, `function q using v(x: Int[0, 9]): Integer pure { x + 1 }` and `function r using v(x: Int[0, 9]): Integer pure { 10 mod x }`, each request carrying an `Input` assignment and an occurrence key read from the compiled package: `p` at its `declaration` occurrence with `x = 0` settles `reproduced-without-witness` with value `false` (the predicate claim); `p` at its `x > 3` record's occurrence with `x = 0` completes the application (`false`, a `Boolean`) and settles `inconclusive` with cause `Verdicts` (`violation`/`success`) and value `true`; `r` at its `10 mod x` record's occurrence with `x = 0` settles `reproduced-without-witness` with value `false`, the application being undefined there, and the same request from a `Witness` entry binding `x` to 0 settles `reproduced-with-evaluated-witness`; `r` there with `x = 3` (`1`) and `q` at its `x + 1` record's occurrence with `x = 9` (`10`, inside its result bound `Integer`) each settle `inconclusive` with cause `Verdicts` and value `true`. None carries a QSpec FR-351 record. A request for `p`'s `x > 3` claim whose `obligation_identity` was minted for `p`'s function contract settles the same way and carries that identity unchanged. | Test (TC-444) |
+| FR-098-AC-22 | Over a unit declaring `function p using v(x: Int[0, 9]): Boolean pure { x > 3 }`, `function q using v(x: Int[0, 9]): Integer pure { x + 1 }` and `function r using v(x: Int[0, 9]): Integer pure { 10 mod x }`, each request carrying an `Input` assignment and an occurrence key read from the compiled package: `p` at its `declaration` occurrence with `x = 0` settles `reproduced-without-witness` with value `false` (the predicate claim); `p` at its `x > 3` record's occurrence with `x = 0` completes the application (`false`, a `Boolean`) and settles `inconclusive` with cause `Verdicts` (`violation`/`success`) and value `true`; `r` at its `10 mod x` record's occurrence with `x = 0` settles `reproduced-without-witness` with value `false`, the application being undefined there, and the same request from a `Witness` entry binding `x` to 0 settles `reproduced-with-evaluated-witness`; `r` there with `x = 3` (`1`) and `q` at its `x + 1` record's occurrence with `x = 9` (`10`, inside its result bound `Integer`) each settle `inconclusive` with cause `Verdicts` and value `true`. None carries an FSpec FR-351 record. A request for `p`'s `x > 3` claim whose `obligation_identity` was minted for `p`'s function contract settles the same way and carries that identity unchanged. | Test (TC-444) |
 | FR-098-AC-23 | Over `function s using v(x: Int[0, 9]): Integer pure { (if x > 0 then 10 mod x else 0) + 10 mod x }`, whose two `10 mod x` occurrences are two records of one node: the request at the `then` branch's occurrence with `x = 0` settles `inconclusive` with cause `NoValue`, because that occurrence is not evaluated and the call stops undefined at the other one; the request at the right operand's occurrence with `x = 0` settles `reproduced-without-witness` with value `false`; the request at the `then` branch's occurrence with `x = 3` settles `inconclusive` with cause `Verdicts`. | Test (TC-444) |
 | FR-098-AC-24 | Over `function b using v(t: Sequence<Int[0, 9]>[0, 3]): Boolean pure { forall(v in t: 10 mod v > 0) }` and `function u using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { 10 mod x }`: `b` at its `10 mod v` record's occurrence with `t = [3, 0]` settles `reproduced-without-witness`, the second evaluation of the binder body being undefined, and with `t = [3]` settles `inconclusive` with cause `Verdicts`; the same `b` request with an assignment naming `v`'s binder node refuses `UnknownParameter`. `u` at its `10 mod x` record's occurrence with only `x = 0` assigned binds `y` to `0` and settles `reproduced-without-witness`; with only `y = 1` assigned it refuses `UnboundParameter` naming `x`, an extent root. | Test (TC-444) |
 | FR-098-AC-25 | Over AC-22's unit with `function inc using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }` added, each of these refuses `ClaimOccurrence` (`missing_declaration`/`missing-name`) naming the request's occurrence key and the selected function, before any call and with no charge: `p` with the occurrence of `r`'s `10 mod x` record (a record `r` owns); `p` with `r`'s `declaration` occurrence; `inc` with the `expression` occurrence of the narrow that wraps its `x + 1` (no record); and `p` with an occurrence key whose node is 64 `1` hex digits (no node of the package). `r` at its `declaration` occurrence refuses `NotAPredicate`, and `r` at its `10 mod x` record's occurrence with `x = 12` refuses `WrongValueKind` naming position 0. | Test (TC-444) |
 | FR-098-AC-26 | Refusal order: AC-25's request of `p` with `r`'s occurrence refuses `UnknownFunction` when its `function` names no declaration, rather than `ClaimOccurrence`; with an assignment naming a node that is no parameter of `p` added, it still refuses `ClaimOccurrence`, not `UnknownParameter`; AC-21's `frame_operation` request refuses at its target before the recompile and reads no occurrence key. | Test (TC-444) |
 | FR-098-AC-27 | Over `function d using v(n: Int[0, 9]): Integer pure decreases(n) { if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }`, each request at the occurrence of its `10 mod (n - 1)` record, from an `Input` assignment: `n = 1` settles `reproduced-without-witness` with value `false`, the selected call's own evaluation of the site being undefined (`frame_depth` 0) after `d(0)` completes `0`; `n = 2` and `n = 3` settle `inconclusive` with cause `NoValue`, the call stopping undefined at the same `Location` inside a nested call (`frame_depth` 1 for `n = 2`, 2 for `n = 3`), which is no observation; `n = 0` evaluates the site on no path and settles `inconclusive` with cause `Verdicts` and value `true`. Calling `d` through S6a directly, the `Evaluation` of `d(1)` is undefined at that `Location` with `frame_depth` 0 and that of `d(3)` with `frame_depth` 2. | Test (TC-444) |
-| FR-098-AC-28 | An observed temporal request with a `state_clause` target and the typed `TemporalCounterexample::Observed` payload is dispatched to FR-331 through `qsl_replay::replay` and reaches observed-document admission. | Test (TC-847) |
+| FR-098-AC-28 | An observed temporal request with a `state_clause` target and the typed `TemporalCounterexample::Observed` payload is dispatched to FR-331 through `fsl_replay::replay` and reaches observed-document admission. | Test (TC-847) |
 | FR-098-AC-29 | A `ProtocolAssumption` request is decoded, its package references are validated and its concrete and abstract packages are recompiled exactly once before `ProtocolAssumptionWitness` dispatch to FR-145; a malformed refinement identity refuses before witness replay, and the existing Witness/Input and observed-temporal dispatches retain their own arms. | Test (TC-553) |
 | FR-098-AC-30 | **RETIRED (source-byte integrity removed).** Withdrawn with no replacement. | Test (TC-1324), retired |
 | FR-098-AC-31 | **RETIRED (source-byte integrity removed).** Withdrawn with no replacement. | Test (TC-1324), retired |
@@ -678,7 +678,7 @@ predicate claim (ADR-031 SW-7).
 
 The union cases of AC-8 and AC-9 depend on QSL-503's S6a union
 arguments. A quantity-typed parameter in source (AC-10) depends on
-QSpec FR-142's `Quantity<u>`, S1's `Quantity<qualified-name>` production and FR-091's unit-namespace type lookup; the quantity conversion is tested directly.
+FSpec FR-142's `Quantity<u>`, S1's `Quantity<qualified-name>` production and FR-091's unit-namespace type lookup; the quantity conversion is tested directly.
 
 ## Dependencies
 
@@ -709,4 +709,4 @@ QSpec FR-142's `Quantity<u>`, S1's `Quantity<qualified-name>` production and FR-
 - [FR-099](FR-099-compile-against-supplied-libraries.md): the dependency
   input and the S4 source resolution; ADR-015 D-4.
 - ADR-013 O-25, O-26, C-11, C-13, OQ-5; ADR-011 §2.1 E9, §4, §6.1.
-- QSpec FR-323 (`byte_provision`, `replay`).
+- FSpec FR-323 (`byte_provision`, `replay`).

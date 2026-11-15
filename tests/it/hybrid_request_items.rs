@@ -3,25 +3,25 @@
 //! its request item the `hybrid-dynamics` requirement, which routes it to
 //! the registered hybrid provider and never to EN-6.
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeSet;
 
-use ix_trace_rs::trace;
-use qsl_foundation::bound::DomainKind;
-use qsl_foundation::{BackendId, SourceIdentity};
-use qsl_replay::{settle_hybrid_candidates, TerminalValue, UnavailabilityCause};
-use qsl_route::request::items_from_requirements;
-use qsl_route::{
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_foundation::bound::DomainKind;
+use fsl_foundation::{BackendId, SourceIdentity};
+use fsl_replay::{settle_hybrid_candidates, TerminalValue, UnavailabilityCause};
+use fsl_route::request::items_from_requirements;
+use fsl_route::{
     BackendDescriptor, Candidate, CandidateOutcome, DynamicsKind, Mode, ProviderOrigin, Registry,
     SolverBounds,
 };
-use qsl_semantics::check::{Capability, CheckedGraph, PackageDeclarations};
-use quire_semantic_value::checking::CheckingLimits;
+use fsl_semantics::check::{Capability, CheckedGraph, PackageDeclarations};
+use ix_trace_rs::trace;
 
 /// FR-447's `Braking` and `SlowEnough`, and `Reaches`, a temporal claim over
 /// a model that is not hybrid. `{}` is the model's digest.
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
-     profile p = \"quire.temporal.infinite-trace/v1\";\n\
+     profile p = \"filament.temporal.infinite-trace/v1\";\n\
      model Config = \"example/config-version\";\n\
      hybrid Braking using p {\n\
        mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }\n\
@@ -37,22 +37,22 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
 
 fn graph() -> CheckedGraph {
     let document = crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes();
-    let packages = qsl_semantics::model::intake::package_input([document]).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let text = SOURCE.to_owned();
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:hybrid"),
         "program.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let raw = parsed.source().reference().clone();
-    let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let models = qsl_semantics::model::intake::admit_unit(
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
         &unit.selections().models,
         &packages,
-        qsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("the model is admitted");
     PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
@@ -63,7 +63,7 @@ fn graph() -> CheckedGraph {
 
 fn discrete() -> BackendDescriptor {
     BackendDescriptor::new(
-        Candidate::new(BackendId::new("qsl-model-check")),
+        Candidate::new(BackendId::new("fsl-model-check")),
         ProviderOrigin::Linked,
         [(Capability::TemporalSatisfaction, Mode::Bounded)],
         Some(BTreeSet::from([DomainKind::Collection])),
@@ -130,7 +130,7 @@ fn routed(descriptors: impl IntoIterator<Item = BackendDescriptor>) -> Vec<(bool
 #[test]
 fn a_checked_hybrid_claim_routes_to_the_hybrid_provider_only() {
     let both = vec![
-        (false, vec!["qsl-model-check".to_owned()]),
+        (false, vec!["fsl-model-check".to_owned()]),
         (true, vec!["hybrid-fixture".to_owned()]),
     ];
     for descriptors in [[discrete(), hybrid()], [hybrid(), discrete()]] {
@@ -140,7 +140,7 @@ fn a_checked_hybrid_claim_routes_to_the_hybrid_provider_only() {
     assert_eq!(
         alone,
         vec![
-            (false, vec!["qsl-model-check".to_owned()]),
+            (false, vec!["fsl-model-check".to_owned()]),
             (true, Vec::new())
         ]
     );

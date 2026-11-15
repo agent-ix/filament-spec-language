@@ -3,7 +3,7 @@ id: TC-820
 title: "S3 resolves qualified member names by candidate and refuses ambiguity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-317
+  - target: ix://agent-ix/filament-spec-language/FR-317
     type: verifies
 ---
 # TC-820: S3 resolves qualified member names by candidate and refuses ambiguity

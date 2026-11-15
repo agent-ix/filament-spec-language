@@ -130,8 +130,8 @@ impl Lane {
 enum LaneKind {
     DefaultWorkspace,
     AllFeaturesWorkspace,
-    DefaultQslSemantics,
-    DefaultQslCst,
+    DefaultFslSemantics,
+    DefaultFslCst,
 }
 
 impl LaneKind {
@@ -140,8 +140,8 @@ impl LaneKind {
         match name {
             "default-workspace" => Self::DefaultWorkspace,
             "all-features-workspace" => Self::AllFeaturesWorkspace,
-            "default-qsl-semantics" => Self::DefaultQslSemantics,
-            "default-qsl-cst" => Self::DefaultQslCst,
+            "default-fsl-semantics" => Self::DefaultFslSemantics,
+            "default-fsl-cst" => Self::DefaultFslCst,
             _ => unreachable!("only named make ci lanes reach this check"),
         }
     }
@@ -193,22 +193,22 @@ const NO_DOC_EXAMPLE: &str = "no executable doc example in the library";
 /// run at a head is what checks this list against the tree.
 const WORKSPACE_EMPTY: &[EmptySuite] = &[
     EmptySuite {
-        source: "qsl-bench/src/bin/qsl-bench-probe.rs",
+        source: "fsl-bench/src/bin/fsl-bench-probe.rs",
         kind: SuiteKind::Tests,
         reason: "benchmark probe binary; no #[test] item in it",
     },
     EmptySuite {
-        source: "qsl-source/src/lib.rs",
+        source: "fsl-source/src/lib.rs",
         kind: SuiteKind::Tests,
         reason: "no unit tests in src/; the crate's tests are its tests/it target",
     },
     EmptySuite {
-        source: "qsl-string-edge/src/main.rs",
+        source: "fsl-string-edge/src/main.rs",
         kind: SuiteKind::Tests,
         reason: "the command entry point; its tests are the tests/it target that runs the binary",
     },
     EmptySuite {
-        source: "qsl-walk-grow/src/lib.rs",
+        source: "fsl-walk-grow/src/lib.rs",
         kind: SuiteKind::Tests,
         reason: "no unit tests in src/; the crate's tests are in its tests/ directory",
     },
@@ -218,7 +218,7 @@ const WORKSPACE_EMPTY: &[EmptySuite] = &[
         reason: "the xtask binary entry point; no #[test] item in it",
     },
     EmptySuite {
-        source: "tools/qsl-probability-check/src/main.rs",
+        source: "tools/fsl-probability-check/src/main.rs",
         kind: SuiteKind::Tests,
         reason: "the command entry point; its tests are the tests/it target that runs the binary",
     },
@@ -228,47 +228,47 @@ const WORKSPACE_EMPTY: &[EmptySuite] = &[
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-conformance/src/lib.rs",
+        source: "fsl-conformance/src/lib.rs",
         kind: SuiteKind::Tests,
         reason: "no unit tests in src/; the crate's tests are its tests/ directory",
     },
     EmptySuite {
-        source: "qsl-conformance/src/lib.rs",
+        source: "fsl-conformance/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-bench/src/lib.rs",
+        source: "fsl-bench/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-command/src/lib.rs",
+        source: "fsl-command/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-foundation/src/lib.rs",
+        source: "fsl-foundation/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-route/src/lib.rs",
+        source: "fsl-route/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-source/src/lib.rs",
+        source: "fsl-source/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-string-edge/src/lib.rs",
+        source: "fsl-string-edge/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
-        source: "qsl-walk-grow/src/lib.rs",
+        source: "fsl-walk-grow/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
     },
@@ -306,12 +306,12 @@ pub const LANES: &[Lane] = &[
         extra: ROOT_DOCTESTS_EMPTY,
     },
     Lane {
-        name: "default-qsl-semantics",
+        name: "default-fsl-semantics",
         empty: &[],
         extra: &[],
     },
     Lane {
-        name: "default-qsl-cst",
+        name: "default-fsl-cst",
         empty: &[],
         extra: &[],
     },
@@ -1179,11 +1179,11 @@ fn validate_lane_selection(lane: &Lane, cargo_args: &[OsString]) -> Result<()> {
         LaneKind::DefaultWorkspace | LaneKind::AllFeaturesWorkspace => {
             matches!(selection.packages, Packages::Workspace { ref excluded } if excluded.is_empty())
         }
-        LaneKind::DefaultQslSemantics => {
-            selection.packages == Packages::Named(vec!["qsl-semantics".to_owned()])
+        LaneKind::DefaultFslSemantics => {
+            selection.packages == Packages::Named(vec!["fsl-semantics".to_owned()])
         }
-        LaneKind::DefaultQslCst => {
-            selection.packages == Packages::Named(vec!["qsl-cst".to_owned()])
+        LaneKind::DefaultFslCst => {
+            selection.packages == Packages::Named(vec!["fsl-cst".to_owned()])
         }
     };
     let expects_all_features = matches!(lane_kind, LaneKind::AllFeaturesWorkspace);
@@ -1655,7 +1655,7 @@ mod tests {
     /// two crates. The unit sections come from the log's unit-test phase and
     /// the doc-test sections from its doc-test phase, so the order here is
     /// Cargo's own order for this subset, not a contiguous slice of the log.
-    const PRODUCER_LOG: &str = r"     Running unittests src/lib.rs (target/debug/deps/qsl_analyze-ef5a3cd7850e747b)
+    const PRODUCER_LOG: &str = r"     Running unittests src/lib.rs (target/debug/deps/fsl_analyze-ef5a3cd7850e747b)
 
 running 5 tests
 test zone_check::dbm::tests::tc_693_includes_orders_a_strict_bound_inside_its_non_strict_twin ... ok
@@ -1666,38 +1666,38 @@ test zone_check::scale::tests::tc_693_constants_scale_by_the_lcm_of_their_denomi
 
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.55s
 
-     Running unittests src/lib.rs (target/debug/deps/qsl_walk_grow-5c690327f0f96fda)
+     Running unittests src/lib.rs (target/debug/deps/fsl_walk_grow-5c690327f0f96fda)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/qsl-bench-probe.rs (target/debug/deps/qsl_bench_probe-6b51de41aa582e2f)
+     Running unittests src/bin/fsl-bench-probe.rs (target/debug/deps/fsl_bench_probe-6b51de41aa582e2f)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-   Doc-tests qsl_analyze
+   Doc-tests fsl_analyze
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-   Doc-tests qsl_walk_grow
+   Doc-tests fsl_walk_grow
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ";
 
-    const EMPTY_UNIT_SECTION: &str = "     Running unittests src/lib.rs (target/debug/deps/qsl_walk_grow-5c690327f0f96fda)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
-    const ANALYZE_DOC_SECTION: &str = "   Doc-tests qsl_analyze\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
-    const ANALYZE_UNIT: &str = "qsl-analyze/src/lib.rs";
-    const ANALYZE_DOC: &str = "qsl-analyze/src/lib.rs (doctests)";
-    const EMPTY_UNIT: &str = "qsl-walk-grow/src/lib.rs";
-    const EMPTY_DOC: &str = "qsl-walk-grow/src/lib.rs (doctests)";
-    const PROBE: &str = "qsl-bench/src/bin/qsl-bench-probe.rs";
+    const EMPTY_UNIT_SECTION: &str = "     Running unittests src/lib.rs (target/debug/deps/fsl_walk_grow-5c690327f0f96fda)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
+    const ANALYZE_DOC_SECTION: &str = "   Doc-tests fsl_analyze\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
+    const ANALYZE_UNIT: &str = "fsl-analyze/src/lib.rs";
+    const ANALYZE_DOC: &str = "fsl-analyze/src/lib.rs (doctests)";
+    const EMPTY_UNIT: &str = "fsl-walk-grow/src/lib.rs";
+    const EMPTY_DOC: &str = "fsl-walk-grow/src/lib.rs (doctests)";
+    const PROBE: &str = "fsl-bench/src/bin/fsl-bench-probe.rs";
 
     fn package_id_for_manifest(manifest_path: &str) -> String {
         let package_dir = Path::new(manifest_path)
@@ -1777,31 +1777,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
     /// The build behind [`PRODUCER_LOG`], plus the targets a build also
     /// reports and `cargo test` does not run as suites: a workspace library
-    /// built only as a dependency (`qsl-cst`) and a registry dependency.
+    /// built only as a dependency (`fsl-cst`) and a registry dependency.
     fn artifacts() -> Artifacts {
         artifacts_from(&[
             workspace_artifact(
-                Some("target/debug/deps/qsl_analyze-ef5a3cd7850e747b"),
+                Some("target/debug/deps/fsl_analyze-ef5a3cd7850e747b"),
                 ANALYZE_UNIT,
-                "qsl_analyze",
+                "fsl_analyze",
                 true,
-                "qsl-analyze",
+                "fsl-analyze",
             ),
             workspace_artifact(
-                Some("target/debug/deps/qsl_walk_grow-5c690327f0f96fda"),
+                Some("target/debug/deps/fsl_walk_grow-5c690327f0f96fda"),
                 EMPTY_UNIT,
-                "qsl_walk_grow",
+                "fsl_walk_grow",
                 true,
-                "qsl-walk-grow",
+                "fsl-walk-grow",
             ),
             workspace_artifact(
-                Some("target/debug/deps/qsl_bench_probe-6b51de41aa582e2f"),
+                Some("target/debug/deps/fsl_bench_probe-6b51de41aa582e2f"),
                 PROBE,
-                "qsl-bench-probe",
+                "fsl-bench-probe",
                 false,
-                "qsl-bench",
+                "fsl-bench",
             ),
-            workspace_artifact(None, "qsl-cst/src/lib.rs", "qsl_cst", true, "qsl-cst"),
+            workspace_artifact(None, "fsl-cst/src/lib.rs", "fsl_cst", true, "fsl-cst"),
             artifact_json(
                 None,
                 "/registry/serde-1.0.0/src/lib.rs",
@@ -1824,22 +1824,22 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
     const DECLARES_EMPTY: &[EmptySuite] = &[
         EmptySuite {
-            source: "qsl-walk-grow/src/lib.rs",
+            source: "fsl-walk-grow/src/lib.rs",
             kind: SuiteKind::Tests,
             reason: "no unit tests",
         },
         EmptySuite {
-            source: "qsl-bench/src/bin/qsl-bench-probe.rs",
+            source: "fsl-bench/src/bin/fsl-bench-probe.rs",
             kind: SuiteKind::Tests,
             reason: "probe binary",
         },
         EmptySuite {
-            source: "qsl-analyze/src/lib.rs",
+            source: "fsl-analyze/src/lib.rs",
             kind: SuiteKind::Doctests,
             reason: "no doc example",
         },
         EmptySuite {
-            source: "qsl-walk-grow/src/lib.rs",
+            source: "fsl-walk-grow/src/lib.rs",
             kind: SuiteKind::Doctests,
             reason: "no doc example",
         },
@@ -1853,7 +1853,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     /// sections [`PRODUCER_LOG`] holds.
     fn doc_packages() -> Option<BTreeSet<PathBuf>> {
         Some(
-            ["qsl-analyze", "qsl-walk-grow", "qsl-bench"]
+            ["fsl-analyze", "fsl-walk-grow", "fsl-bench"]
                 .into_iter()
                 .map(manifest_of)
                 .collect(),
@@ -2027,17 +2027,17 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
     const DECLARES_NO_ANALYZE_DOC: &[EmptySuite] = &[
         EmptySuite {
-            source: "qsl-walk-grow/src/lib.rs",
+            source: "fsl-walk-grow/src/lib.rs",
             kind: SuiteKind::Tests,
             reason: "no unit tests",
         },
         EmptySuite {
-            source: "qsl-bench/src/bin/qsl-bench-probe.rs",
+            source: "fsl-bench/src/bin/fsl-bench-probe.rs",
             kind: SuiteKind::Tests,
             reason: "probe binary",
         },
         EmptySuite {
-            source: "qsl-walk-grow/src/lib.rs",
+            source: "fsl-walk-grow/src/lib.rs",
             kind: SuiteKind::Doctests,
             reason: "no doc example",
         },
@@ -2090,7 +2090,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         assert_eq!(
             ids,
             [ANALYZE_UNIT, ANALYZE_DOC, PROBE, EMPTY_UNIT, EMPTY_DOC],
-            "neither qsl-cst nor the registry crate is a suite of this run"
+            "neither fsl-cst nor the registry crate is a suite of this run"
         );
     }
 
@@ -2098,8 +2098,8 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     #[trace("TC-950", "NFR-014-AC-3")]
     fn a_header_naming_no_target_of_the_build_fails() {
         let log = PRODUCER_LOG.replace(
-            "qsl_analyze-ef5a3cd7850e747b",
-            "qsl_analyze-ffffffffffffffff",
+            "fsl_analyze-ef5a3cd7850e747b",
+            "fsl_analyze-ffffffffffffffff",
         );
         let findings = check(&lane(DECLARES_EMPTY), &log);
         assert!(
@@ -2114,7 +2114,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     #[test]
     #[trace("TC-950", "NFR-014-AC-3")]
     fn a_doc_test_header_naming_no_library_fails() {
-        let log = PRODUCER_LOG.replace("Doc-tests qsl_walk_grow", "Doc-tests qsl_unknown");
+        let log = PRODUCER_LOG.replace("Doc-tests fsl_walk_grow", "Doc-tests fsl_unknown");
         assert!(check(&lane(DECLARES_EMPTY), &log)
             .iter()
             .any(|finding| finding.starts_with("unrecognised suite header")));
@@ -2506,7 +2506,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         assert!(outside_only.executables.is_empty() && outside_only.doc_libraries.is_empty());
         let artifacts = artifacts();
         let libraries: Vec<&str> = artifacts.doc_libraries.keys().map(String::as_str).collect();
-        assert_eq!(libraries, ["qsl_analyze", "qsl_cst", "qsl_walk_grow"]);
+        assert_eq!(libraries, ["fsl_analyze", "fsl_cst", "fsl_walk_grow"]);
         assert_eq!(artifacts.executables.len(), 3);
     }
 
@@ -2561,7 +2561,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         for (arguments, doctests) in [
             (&[][..], true),
             (&["--locked", "--workspace"][..], true),
-            (&["--locked", "-p", "qsl-semantics"][..], true),
+            (&["--locked", "-p", "fsl-semantics"][..], true),
             (&["--locked", "--workspace", "--all-features"][..], true),
             (&["--workspace", "--", "--lib"][..], true),
             (&["--lib"][..], false),
@@ -2660,7 +2660,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
             ),
             (&["--manifest-path=other/Cargo.toml"][..], "--manifest-path"),
             (&["--workspace", "-p", "a"][..], "--workspace"),
-            (&["-p", "qsl-*"][..], "-p"),
+            (&["-p", "fsl-*"][..], "-p"),
             (&["--package", "https://example.invalid/a"][..], "--package"),
             (&["-p"][..], "-p"),
             (&["--exclude", "a/b", "--workspace"][..], "--exclude"),
@@ -3298,9 +3298,9 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     #[trace("TC-950", "NFR-014-AC-1")]
     fn named_lanes_refuse_inconsistent_package_and_feature_selections_before_cargo() {
         for (lane, arguments) in [
-            ("default-qsl-cst", &["-p", "qsl-semantics"][..]),
-            ("default-qsl-semantics", &["-p", "qsl-cst"][..]),
-            ("default-workspace", &["-p", "qsl-cst"][..]),
+            ("default-fsl-cst", &["-p", "fsl-semantics"][..]),
+            ("default-fsl-semantics", &["-p", "fsl-cst"][..]),
+            ("default-workspace", &["-p", "fsl-cst"][..]),
             ("all-features-workspace", &["--workspace"][..]),
             ("default-workspace", &["--workspace", "--all-features"][..]),
             (
@@ -3308,12 +3308,12 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                 &["--workspace", "--features", "extra"][..],
             ),
             (
-                "default-qsl-cst",
-                &["-p", "qsl-cst", "--no-default-features"][..],
+                "default-fsl-cst",
+                &["-p", "fsl-cst", "--no-default-features"][..],
             ),
             (
                 "all-features-workspace",
-                &["--workspace", "--all-features", "--exclude", "qsl-cst"][..],
+                &["--workspace", "--all-features", "--exclude", "fsl-cst"][..],
             ),
         ] {
             let operands = std::iter::once(OsString::from(lane))
@@ -3329,10 +3329,10 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         for (lane, arguments) in [
             ("default-workspace", &["--locked", "--workspace"][..]),
             (
-                "default-qsl-semantics",
-                &["--locked", "-p", "qsl-semantics"][..],
+                "default-fsl-semantics",
+                &["--locked", "-p", "fsl-semantics"][..],
             ),
-            ("default-qsl-cst", &["--locked", "-p", "qsl-cst"][..]),
+            ("default-fsl-cst", &["--locked", "-p", "fsl-cst"][..]),
             (
                 "all-features-workspace",
                 &["--locked", "--workspace", "--all-features"][..],
@@ -3351,8 +3351,8 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                 .expect("Makefile");
         for (lane, arguments) in [
             ("default-workspace", "--locked --workspace"),
-            ("default-qsl-semantics", "--locked -p qsl-semantics"),
-            ("default-qsl-cst", "--locked -p qsl-cst"),
+            ("default-fsl-semantics", "--locked -p fsl-semantics"),
+            ("default-fsl-cst", "--locked -p fsl-cst"),
             (
                 "all-features-workspace",
                 "--locked --workspace --all-features",

@@ -3,33 +3,33 @@ id: FR-326
 title: "Admit temporal operators by the unit's temporal profile and record the clause's requirement"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-250
+  - target: ix://agent-ix/filament-specification/FR-250
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-255
+  - target: ix://agent-ix/filament-specification/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-233
+  - target: ix://agent-ix/filament-spec-language/FR-233
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-393
+  - target: ix://agent-ix/filament-spec-language/FR-393
     type: references
 ---
 # FR-326: Admit temporal operators by the unit's temporal profile and record the clause's requirement
@@ -41,7 +41,7 @@ by the one temporal profile its unit selects (ADR-014 §5 A-2, §3 TR-3), build
 each admitted interval as a validated `TemporalInterval`, compute a bounded
 formula's horizon (TR-4), and return the clause's requirement record through
 `FamilyContract::requirements()` (A-3, FR-062). Under
-`quire.temporal.infinite-trace/v1` an operator is unbounded or an interval
+`filament.temporal.infinite-trace/v1` an operator is unbounded or an interval
 operator; FR-123 states the interval-operator and fairness rules under that
 profile, and this requirement states the profile identity, the bounded
 profiles, the bare-operator rule and the requirement record.
@@ -79,17 +79,17 @@ for negotiation whether the claim is bounded.
 
 - A temporal clause SHALL be checked under exactly one temporal profile: the
   unit's one temporal profile selection resolved by FR-110 to one of
-  `quire.temporal.event-position.false-extension/v1`,
-  `quire.temporal.fixed-sample.false-extension/v1`,
-  `quire.temporal.timestamped-event.finite-window/v1`,
-  `quire.temporal.infinite-trace/v1` and `quire.temporal.timed/v1` (QSpec
+  `filament.temporal.event-position.false-extension/v1`,
+  `filament.temporal.fixed-sample.false-extension/v1`,
+  `filament.temporal.timestamped-event.finite-window/v1`,
+  `filament.temporal.infinite-trace/v1` and `filament.temporal.timed/v1` (FSpec
   FR-250, FR-234).
 - When a unit holds a temporal clause and selects no temporal profile, or
   selects two, the check SHALL refuse `unknown_profile`/
   `unsupported-selection` at the clause's span, naming the selections it
   found.
 - The infinite-trace profile SHALL read positions with the event-position
-  sequence authority and no false-extension closure (QSpec FR-250-AC-6).
+  sequence authority and no false-extension closure (FSpec FR-250-AC-6).
 
 ### Bounded profiles
 
@@ -104,7 +104,7 @@ for negotiation whether the claim is bounded.
 - When an interval has `a > b`, under every profile, the check SHALL refuse
   `ill_typed`/`type-mismatch` at the interval's span, the refusal
   `TemporalInterval`'s constructor gives.
-- Under `quire.temporal.timestamped-event.finite-window/v1`, each operator
+- Under `filament.temporal.timestamped-event.finite-window/v1`, each operator
   interval SHALL be a step interval `[a,b]` of unsigned integer tick bounds,
   closed at both ends, and the check SHALL admit no other shape.
 - Under that profile the check SHALL apply one rule to each interval, by its
@@ -128,7 +128,7 @@ for negotiation whether the claim is bounded.
 
 ### Infinite-trace profile
 
-- Under `quire.temporal.infinite-trace/v1`, an operator with no interval
+- Under `filament.temporal.infinite-trace/v1`, an operator with no interval
   SHALL be admitted as an unbounded operator holding `None`, and an operator
   with a closed interval or an `[a,*]` interval SHALL be admitted as FR-123
   states, `[a,*]` holding `upper: Open` (ADR-018 IV-1).
@@ -137,7 +137,7 @@ for negotiation whether the claim is bounded.
 ### Representation
 
 - An interval's key SHALL carry the selected profile identity and clock
-  binding (QSpec FR-255), so equal numbers under two profiles give unequal
+  binding (FSpec FR-255), so equal numbers under two profiles give unequal
   keys.
 - A bounded-profile operator and an infinite-trace operator SHALL never
   share a checked representation (ADR-014 TR-3).
@@ -174,11 +174,11 @@ for negotiation whether the claim is bounded.
   (`ClaimExtent`, `IntervalKey`), [FR-123](FR-123-check-fairness-and-interval-operators-of-infinite-trace-clauses.md)
   (interval operators and fairness under infinite-trace),
   [FR-325](FR-325-parse-temporal-operators-with-an-optional-interval.md).
-- QSpec FR-090-AC-7, FR-250-AC-6, FR-255, FR-091 and FR-092.
+- FSpec FR-090-AC-7, FR-250-AC-6, FR-255, FR-091 and FR-092.
 
 ## References
 
 - Linear QSL-384 (spec ticket); QSL-43 (implementation).
-- QSpec FR-361 (profiles over a model subject) and FR-367 (interval
+- FSpec FR-361 (profiles over a model subject) and FR-367 (interval
   operators under infinite-trace): Linear STD-131 (QS-3, QS-13); Linear
   STD-99.

@@ -3,7 +3,7 @@ id: TC-1299
 title: "Carry progress on event-position and fixed-sample traces"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-504
+  - target: ix://agent-ix/filament-spec-language/FR-504
     type: verifies
 ---
 # TC-1299: Carry progress on event-position and fixed-sample traces

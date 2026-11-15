@@ -31,7 +31,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 # The largest legitimate tracked text file today is
-# qsl-semantics/src/model/intake.rs at 447,259 bytes. 1 MiB (1,048,576 bytes)
+# fsl-semantics/src/model/intake.rs at 447,259 bytes. 1 MiB (1,048,576 bytes)
 # is ~2.3x that measured largest file -- real headroom for source files to
 # grow, while sitting far below the two ELF executables (5.2 MB, 5.8 MB) this
 # gate exists to catch. It's a multiple of a measured artifact, not a round

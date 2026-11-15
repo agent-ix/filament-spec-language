@@ -3,7 +3,7 @@ id: TC-211
 title: "A refusal cause from any of the four envelopes renders with no unredacted transcript, byte or value content, while the typed accessor stays fully readable"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-073
+  - target: ix://agent-ix/filament-spec-language/FR-073
     type: verifies
 ---
 # TC-211: A refusal cause from any of the four envelopes renders with no unredacted transcript, byte or value content, while the typed accessor stays fully readable

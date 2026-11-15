@@ -3,25 +3,25 @@ id: FR-283
 title: "Monitor a supplied trace offline against temporal clauses"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-194
+  - target: ix://agent-ix/filament-spec-language/FR-194
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
 ---
 # FR-283: Monitor a supplied trace offline against temporal clauses
@@ -30,7 +30,7 @@ relationships:
 
 `monitor` applies the layer-5 trace evaluator to a trace the caller supplies
 (ADR-029 OP-3). It uses the semantics replay uses: ADR-014 A-4's finite-prefix
-and lasso evaluation. It lives in layer A, crate `qsl-analyze`.
+and lasso evaluation. It lives in layer A, crate `fsl-analyze`.
 
 A runtime monitor generated from S5 IR is a `generate` target owned by the
 driver with CG and RT (FR-280). It is held to the verdicts `monitor` gives on
@@ -127,12 +127,12 @@ pub struct MonitorLimits {
 
 ### Trace document
 
-A `Document` trace holds a trace document. The trace document is a UTF-8 JSON object, format `quire.monitor-trace/1`,
+A `Document` trace holds a trace document. The trace document is a UTF-8 JSON object, format `filament.monitor-trace/1`,
 with the closed member set `format`, `prefix` and `loop`:
 
 ```json
 {
-  "format": "quire.monitor-trace/1",
+  "format": "filament.monitor-trace/1",
   "prefix": [
     {"identity": {"authority": "agent-ix", "identity": "ix://example/counter/run-1/0"}}
   ],
@@ -142,7 +142,7 @@ with the closed member set `format`, `prefix` and `loop`:
 }
 ```
 
-- `format` is the string `quire.monitor-trace/1`.
+- `format` is the string `filament.monitor-trace/1`.
 - `prefix` and `loop` are arrays of snapshot `DocumentRef`s, each spelled
   as an FR-106 invocation's `pre` member: `identity`, the FR-001 labels,
   the snapshot's document identity.
@@ -171,7 +171,7 @@ naming its JSON pointer:
    naming the first missing in the order `format`, `prefix`; a member
    outside the set: `invalid_runtime_input`/`unknown-member`, naming the
    first in document order.
-4. A present `format` other than the string `quire.monitor-trace/1`:
+4. A present `format` other than the string `filament.monitor-trace/1`:
    `unknown_wire`/`unsupported-wire` at `/format`.
 5. A `prefix` or `loop` that is not an array, or an element that is not a
    `DocumentRef` object: `invalid_runtime_input`/`wrong-value-kind`; an
@@ -224,7 +224,7 @@ in the place of `holds`, under ADR-014 A-4:
 | --- | --- | --- | --- | --- |
 | `Violated` | `Completed(false)`, finite or lasso | `position`, `counterexample`, `decisive` when the report holds one (FR-330) | violation | 10 |
 | `Undefined` | `Undefined` with a kernel or family cause | `position`, `counterexample`, `cause` (`UndefinedEvaluation{where, cause}`) | violation | 10 |
-| `InsufficientData` | FR-327's insufficient-data outcome, `InsufficientData{where, atom, count, min_count}` (a window aggregate short of data, QSpec FR-414) over a `Samples` trace, not an `Undefined` | `position`, `atom`, `count`, `min_count` | undefined, with the label `undefined` and reason `insufficient-data` | 10 |
+| `InsufficientData` | FR-327's insufficient-data outcome, `InsufficientData{where, atom, count, min_count}` (a window aggregate short of data, FSpec FR-414) over a `Samples` trace, not an `Undefined` | `position`, `atom`, `count`, `min_count` | undefined, with the label `undefined` and reason `insufficient-data` | 10 |
 | `Pending` | `Pending`, finite trace | none | pending | 0 |
 | `Indeterminate` | `Indeterminate`, a finite-window clause (FR-501) over a `Typed` `Timestamped` trace, whose window is closed and whose evidence stays unresolved | the FR-501 reason, with its `atom` where the reason names one (`MissingValuation`, `ConflictingValuation`), and `position` where that reason names one | indeterminate | 11 |
 | `Tested` | `Completed(true)` | none | success | 0 |
@@ -236,8 +236,8 @@ in the place of `holds`, under ADR-014 A-4:
 
 - `position` is the `TemporalPosition` (FR-327) of the trace.
 - `counterexample` is the `TemporalCounterexample` FR-330's report holds:
-  QSpec FR-364's observed arm, built from the trace's `DocumentRef`
-  identities, with `trace_position` equal to `position`. It lets QSpec FR-364's
+  FSpec FR-364's observed arm, built from the trace's `DocumentRef`
+  identities, with `trace_position` equal to `position`. It lets FSpec FR-364's
   replayer re-run the trace. A `Samples` trace has no document identities,
   so a record over it carries no `counterexample`; its `position` is the
   sample's zero-based index and its `decisive` is FR-330's trace-subject
@@ -247,7 +247,7 @@ in the place of `holds`, under ADR-014 A-4:
   of a temporal violation: `{ position, quantifier, element, index, value_path }`,
   as FR-330 defines it, including which atom is decisive, when there is none,
   and its `position`. The clause run report carries it as
-  `ClauseRunReport::decisive`. The `counterexample` stays QSpec FR-364's closed
+  `ClauseRunReport::decisive`. The `counterexample` stays FSpec FR-364's closed
   record, and FR-267's `temporal` member and the FR-364 wire are unchanged by
   `decisive`.
 - A temporal `Violated` or `Undefined` record has no `witness` member: FR-266
@@ -255,7 +255,7 @@ in the place of `holds`, under ADR-014 A-4:
   witness record, and FR-267 writes the counterexample in its `temporal`
   member. The FR-351 `witness` appears only on a non-temporal decisive
   violation.
-- `constraint` is QSpec FR-364's fairness member `{kind, operation,
+- `constraint` is FSpec FR-364's fairness member `{kind, operation,
   granularity}`.
 - An internal failure (an evaluator fault, a `TemporalRefusal::Fault`, a
   refused condition holding `Refusal::CheckedInvariant`) fails the whole
@@ -263,16 +263,16 @@ in the place of `holds`, under ADR-014 A-4:
 
 `tested` is evidence for that trace only, and is never `proved`. A clause
 still pending when the trace ends observed no violation, so it exits 0, the
-QSpec FR-301 code for a run completed without violation. A clause record
+FSpec FR-301 code for a run completed without violation. A clause record
 of an undefined evaluation (`Undefined`) never carries the label
-`undefined` (FR-286): it is a violation. `InsufficientData` is QSpec
+`undefined` (FR-286): it is a violation. `InsufficientData` is FSpec
 FR-414's window outcome, not an undefined evaluation; its record is O-16
 category undefined and keeps the label `undefined` with reason
 `insufficient-data`, as FR-285 requires of a category-undefined item.
 
 A supplied trace carries states and steps and no enabledness, so it gives a
 fairness constraint no premise to read. A clause with a non-empty fairness
-set settles unsupported over it, as QSpec FR-362 states; a clause with an
+set settles unsupported over it, as FSpec FR-362 states; a clause with an
 empty fairness set admits every lasso.
 
 `MonitorRefusal` is the cause of a whole-request `StageFailure::Refused`:
@@ -308,7 +308,7 @@ pub enum MonitorRefusal {
   present over `Samples`, a record-trace-subject clause over a `Document` or
   `Typed` trace, and a model-subject clause over `Samples`, each
   `invalid_runtime_input`/`invalid-value`. And the request defects of a
-  `Progressed` or `Timestamped` run's FR-522 authentication, each a QSpec
+  `Progressed` or `Timestamped` run's FR-522 authentication, each an FSpec
   FR-272 closed cause variant, its record fields as listed:
   - A clock-bearing temporal declaration of `package` with no element of
     `temporal_selections`: `missing_declaration`/`missing-selection`, field
@@ -347,11 +347,11 @@ pub enum MonitorRefusal {
     `TimestampUnit`, `asserted` the binding's unit and `expected` the
     selection's.
   - The field names `member`, `stage` (here the read-back step, not a
-    limits-type stage label) and FR-522's `asserted` are QSL's own record
-    fields; QSpec FR-272's canonical payload names (`path`, `stage`,
+    limits-type stage label) and FR-522's `asserted` are FSL's own record
+    fields; FSpec FR-272's canonical payload names (`path`, `stage`,
     `actual`) do not list them in these senses. The `missing-selection`
     record names the input member only and carries neither the
-    declaration's identity nor its span, which QSpec FR-272's
+    declaration's identity nor its span, which FSpec FR-272's
     `missing_declaration` row asks for.
   - "The first selected clause" is the first element of `clauses` as
     supplied: emission precedes the stage-`select` check, so a request
@@ -489,7 +489,7 @@ clause reports no verdict for the others.
   settle that clause's record unsupported, cause
   `unsupported_projection`/`missing-fairness-premise`, naming the first
   constraint of the fairness set, without evaluating the clause (ADR-014
-  A-4, QSpec FR-362).
+  A-4, FSpec FR-362).
 - When the clause's fairness set is empty and the clause evaluates true
   over the trace, `monitor` shall report `tested`; when it evaluates false
   over a lasso, a violation.
@@ -508,8 +508,8 @@ clause reports no verdict for the others.
 | FR-283-AC-4 | For each AC-1 and AC-2 trace, the verdict `monitor` reports equals the verdict layer-6 replay's trace evaluation reports for the same clause and trace. | Test (TC-766) |
 | FR-283-AC-5 | Over a three-position finite trace whose `x` is 0 at position 1, `always (10 / x > 0)` reports a violation at position 1, category violation, with cause `UndefinedEvaluation` whose `cause` is `division-by-zero`; the record carries no `undefined` label, and FR-285 maps the outcome to exit 10. | Test (TC-765) |
 | FR-283-AC-6 | Over AC-2's lasso, `always eventually q` under `fair weak inc` settles its record unsupported, cause `unsupported_projection`/`missing-fairness-premise` naming `fair weak whole inc`, and FR-285 maps the outcome to exit 21; in a request selecting it beside AC-2's clause without fairness, the second clause still reports `tested`. | Test (TC-766) |
-| FR-283-AC-7 | AC-1's three-position trace as the document `{"format":"quire.monitor-trace/1","prefix":[R0,R1,R2]}`, each `Ri` a snapshot `DocumentRef` in `snapshots`, gives the AC-1 records; AC-2's lasso as `{"format":"quire.monitor-trace/1","prefix":[R0,R1],"loop":[R2,R3]}` gives the AC-2 records. Each record is a `MonitorRecord` naming its clause; AC-1's violation is `Violated` at position 0 whose `counterexample` is FR-330's `TemporalCounterexample` with `prefix` the three identities, an empty `loop` and `trace_position` 0. | Test (TC-765) |
-| FR-283-AC-8 | Each of these trace documents refuses the whole request with `MonitorRefusal::TraceDocument`, no position admitted and no record: bytes `[` (`invalid_runtime_input`/`invalid-value` at `""`); the JSON array `[]` (`invalid_runtime_input`/`wrong-value-kind` at `""`); `{"prefix":[]}` with no `format` (`invalid_runtime_input`/`missing-member` naming `format`, not `unknown_wire`); `format` `quire.monitor-trace/2` (`unknown_wire`/`unsupported-wire` at `/format`); no `prefix` (`missing-member`); an extra member `fairness` (`unknown-member`); `prefix` a string (`wrong-value-kind` at `/prefix`); an element with a blank `authority` label (`invalid_source_identity`/`blank-label` at `/prefix/0/identity`); `{"format":"quire.monitor-trace/1","prefix":[]}` (`invalid-value` at `/prefix`); and a document one byte above `observation.input_bytes` (`stage_limit_exceeded`/`input-bytes-exceeded` naming `observation.input_bytes`). | Test (TC-766) |
+| FR-283-AC-7 | AC-1's three-position trace as the document `{"format":"filament.monitor-trace/1","prefix":[R0,R1,R2]}`, each `Ri` a snapshot `DocumentRef` in `snapshots`, gives the AC-1 records; AC-2's lasso as `{"format":"filament.monitor-trace/1","prefix":[R0,R1],"loop":[R2,R3]}` gives the AC-2 records. Each record is a `MonitorRecord` naming its clause; AC-1's violation is `Violated` at position 0 whose `counterexample` is FR-330's `TemporalCounterexample` with `prefix` the three identities, an empty `loop` and `trace_position` 0. | Test (TC-765) |
+| FR-283-AC-8 | Each of these trace documents refuses the whole request with `MonitorRefusal::TraceDocument`, no position admitted and no record: bytes `[` (`invalid_runtime_input`/`invalid-value` at `""`); the JSON array `[]` (`invalid_runtime_input`/`wrong-value-kind` at `""`); `{"prefix":[]}` with no `format` (`invalid_runtime_input`/`missing-member` naming `format`, not `unknown_wire`); `format` `filament.monitor-trace/2` (`unknown_wire`/`unsupported-wire` at `/format`); no `prefix` (`missing-member`); an extra member `fairness` (`unknown-member`); `prefix` a string (`wrong-value-kind` at `/prefix`); an element with a blank `authority` label (`invalid_source_identity`/`blank-label` at `/prefix/0/identity`); `{"format":"filament.monitor-trace/1","prefix":[]}` (`invalid-value` at `/prefix`); and a document one byte above `observation.input_bytes` (`stage_limit_exceeded`/`input-bytes-exceeded` naming `observation.input_bytes`). | Test (TC-766) |
 | FR-283-AC-9 | Over AC-1's trace, a request selecting `always p` and `always (10 / x > 0)` returns two records in request order; over FR-327-AC-1's closed `Counter` trace (`c.value` 0, 1, 2) as a three-position finite document, `eventually[0,2] holds(c.value = 2)` under event-position false-extension, `on origin`, reports `Tested`, category success, exit 0, and `eventually[0,1] holds(c.value = 2)` reports `Violated` at position 0. | Test (TC-765) |
 | FR-283-AC-10 | AC-1's `always p` violation carries a `counterexample` with `trace_position` 0, a `decisive` beside it with `position` 2, no `quantifier` and no `index`, `element` `false` and the empty `value_path` at the observation's root, and no `witness`. Over a three-position finite trace whose position-0 and position-1 snapshots hold a collection field `items` of values 1, 2, 3 and whose position-2 snapshot holds `items` of values 3, 0, 5, the clause `always holds(forall i in self.items : i > 0)` with activation `on origin` reports `Violated` at position 0 with a `counterexample` of `trace_position` 0 and a `decisive` of `position` 2 naming the `forall` occurrence key as `quantifier`, `element` 0, `index` 1 and the FR-207 `value_path` to `items`, equal to the values FR-107's evaluator retains for that `holds` atom over the position-2 observation, and no `witness`. | Test (TC-765) |
 | FR-283-AC-11 | Over FR-327-AC-7's non-model subject `c: Counter` (a record with the attribute `level`, `Int[0, 9]`) as a `Samples` trace with `level` samples 0, 1, 2 and no `over`, under event-position false-extension: `always[0,2] (count over past[0, 9] min_count 2 >= 1)` `on origin` reports `InsufficientData` at position 0 with `count` 1 and `min_count` 2, `MonitorRecord::atom()` the source text `count over past[0, 9] min_count 2 >= 1`, category undefined, the label `undefined` with reason `insufficient-data`, and exit 10; `always[0,0] (count where holds(c.level > 9) over past[0, 0] min_count 0 >= 1)` `on origin` reports `Violated` at position 0 with no `counterexample` and a `decisive` naming its aggregate occurrence at position 0 (FR-330-AC-17); the first clause selected with an `over` present refuses the whole request with `MonitorRefusal::ClauseRefused`, `invalid_runtime_input`/`invalid-value`, and no record. | Test (TC-765) |
@@ -529,14 +529,14 @@ clause reports no verdict for the others.
 - FR-194: window aggregates and `max_window_values`; FR-501 and FR-504: the finite-window and progressed evaluations; FR-522 and FR-515: binding authentication against the package's rows; FR-100: the rendered `locus`.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md): the call shape.
 - ADR-018 (draft): the temporal clauses.
-- QSpec FR-300: the `monitor` operation; QSpec FR-362: the missing fairness
+- FSpec FR-300: the `monitor` operation; FSpec FR-362: the missing fairness
   premise over a supplied trace.
 
 ## References
 
 - QSL-393 (V1-A06): typed library APIs.
-- QSpec FR-300 (STD-141): the QSpec half.
-- QSpec FR-362: the missing fairness premise.
+- FSpec FR-300 (STD-141): the FSpec half.
+- FSpec FR-362: the missing fairness premise.
 - QSL-366: an undefined evaluation settles as a violation with cause
   `UndefinedEvaluation`, and the team-leader decision ADR-029's References
   records applies it to `monitor`.

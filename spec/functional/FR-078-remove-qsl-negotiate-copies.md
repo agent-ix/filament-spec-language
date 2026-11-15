@@ -1,23 +1,23 @@
 ---
 id: FR-078
-title: "Remove QSL's negotiate_* copies from value::ieee and value::division"
+title: "Remove FSL's negotiate_* copies from value::ieee and value::division"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-011
+  - target: ix://agent-ix/filament-spec-language/US-011
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
 ---
-# FR-078: Remove QSL's negotiate_* copies from value::ieee and value::division
+# FR-078: Remove FSL's negotiate_* copies from value::ieee and value::division
 
 ## Description
 
-QSL SHALL remove the `negotiate_*` functions in `value::ieee` and
+FSL SHALL remove the `negotiate_*` functions in `value::ieee` and
 `value::division` (`negotiate_ieee` and `negotiate_integer_division`, and
 the `IeeeBackendCapabilities` type they use). These are RT capability
-predicates, not settlement points: `quire-contract-codegen`'s `negotiate_*`
+predicates, not settlement points: `filament-contract-codegen`'s `negotiate_*`
 arms over the closed backend-kind enum (S9) are the only settlement points
-(ADR-012 §5.1, §10 OBS-004). QSL's value semantics SHALL retain their
+(ADR-012 §5.1, §10 OBS-004). FSL's value semantics SHALL retain their
 evaluation functions for IEEE and integer-division arithmetic; those
 functions evaluate values and are not negotiation, and this requirement
 removes no evaluation behavior.
@@ -43,7 +43,7 @@ matches the pattern `negotiate_*`, and SHALL define no
 another name serving the same purpose. Renaming the function, moving it
 behind a feature flag, or reintroducing an equivalent predicate under a
 different identifier does not satisfy this requirement; the negotiation-
-shaped logic is removed from QSL, not relocated within QSL.
+shaped logic is removed from FSL, not relocated within FSL.
 
 ### Evaluation functions are unaffected
 
@@ -52,19 +52,19 @@ evaluates an IEEE or integer-division value expression, with unchanged
 input/output behavior. A test suite exercising these evaluation functions
 before the removal SHALL pass unchanged after it.
 
-### CG may take these predicates as inputs, but QSL does not own them
+### CG may take these predicates as inputs, but FSL does not own them
 
-A `quire-contract-codegen` `negotiate_*` arm MAY take an equivalent
+A `filament-contract-codegen` `negotiate_*` arm MAY take an equivalent
 predicate as one of its own inputs when CG needs it (ADR-012 §10 OBS-004);
-that predicate, if CG defines one, is CG's own code, not a QSL copy this
+that predicate, if CG defines one, is CG's own code, not an FSL copy this
 requirement is required to keep in sync.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-078-AC-1 | **RETIRED (2026-09-23): `value::ieee` is deleted as a module.** `value::ieee` defined no `negotiate_*`-named function and no `IeeeBackendCapabilities` type, verified by a source scan of the module after removal. This criterion was satisfied when Slice A (PR #290) removed `negotiate_ieee` and `IeeeBackendCapabilities` from the file. `value::ieee` no longer exists at all: the module is deleted and every caller repointed onto `quire_exact::evaluate_ieee`/`compare_ieee` directly, so there is no module left for a source scan to read. The criterion's claim was true when made and is now permanently unfalsifiable rather than false; it is retired, not amended, since there is no successor module for it to describe. TC-201's doctest continues to assert the stronger, still-live fact that `negotiate_ieee` and `IeeeBackendCapabilities` are unresolvable from the crate's `value` path at all. | Test (TC-201), retired |
-| FR-078-AC-2 | **RETIRED (#339): `value::division` is deleted as a module.** `value::division` defined no `negotiate_*`-named function, verified by a source scan of the module after removal. This criterion was satisfied when Slice A (PR #290) removed `negotiate_integer_division` from the file. `value::division` no longer exists at all: the module is deleted and every caller repointed onto `quire_exact::divide`/`modulo` directly, so there is no module left for a source scan to read. The criterion's claim was true when made and is now permanently unfalsifiable rather than false; it is retired, not amended, since there is no successor module for it to describe. | Test (TC-201), retired |
+| FR-078-AC-1 | **RETIRED (2026-09-23): `value::ieee` is deleted as a module.** `value::ieee` defined no `negotiate_*`-named function and no `IeeeBackendCapabilities` type, verified by a source scan of the module after removal. This criterion was satisfied when Slice A (PR #290) removed `negotiate_ieee` and `IeeeBackendCapabilities` from the file. `value::ieee` no longer exists at all: the module is deleted and every caller repointed onto `filament_exact::evaluate_ieee`/`compare_ieee` directly, so there is no module left for a source scan to read. The criterion's claim was true when made and is now permanently unfalsifiable rather than false; it is retired, not amended, since there is no successor module for it to describe. TC-201's doctest continues to assert the stronger, still-live fact that `negotiate_ieee` and `IeeeBackendCapabilities` are unresolvable from the crate's `value` path at all. | Test (TC-201), retired |
+| FR-078-AC-2 | **RETIRED (#339): `value::division` is deleted as a module.** `value::division` defined no `negotiate_*`-named function, verified by a source scan of the module after removal. This criterion was satisfied when Slice A (PR #290) removed `negotiate_integer_division` from the file. `value::division` no longer exists at all: the module is deleted and every caller repointed onto `filament_exact::divide`/`modulo` directly, so there is no module left for a source scan to read. The criterion's claim was true when made and is now permanently unfalsifiable rather than false; it is retired, not amended, since there is no successor module for it to describe. | Test (TC-201), retired |
 | FR-078-AC-3 | **RETIRED: a refactor-unchanged check, not behaviour.** It compared evaluation results before and after the `negotiate_*` removal, which was satisfied when the removal landed. The behaviour of `value::ieee` and `value::division` is covered by their own criteria and tests, so no test carries this tag. | Test (TC-202), retired |
 
 ## Dependencies
@@ -72,12 +72,12 @@ requirement is required to keep in sync.
 - [ADR-012](../decisions/ADR-012-semantic-family-extension-contracts.md) §10
   (ADR-010 OBS-004): "`negotiate_integer_division`, `negotiate_ieee` and
   `IeeeBackendCapabilities` are RT capability predicates... they are not
-  settlement points and settle no disposition... QSL has no copy of them:
-  X-1 (#213 S-1) moved `division` and `ieee` into `quire-exact` without
-  cutting these (its own summary said so), so QSL carried both until
-  #213 S-1b removed them (ADR-011 §6.1's K-leaf bullet). QSL value semantics
+  settlement points and settle no disposition... FSL has no copy of them:
+  X-1 (#213 S-1) moved `division` and `ieee` into `filament-exact` without
+  cutting these (its own summary said so), so FSL carried both until
+  #213 S-1b removed them (ADR-011 §6.1's K-leaf bullet). FSL value semantics
   keep their evaluation functions, which are not negotiation."
-- ADR-012 §14.1's ownership row assigns "Removal of the QSL `negotiate_*`
-  copies from `value::ieee` and `value::division` (OBS-004); `quire-exact`'s
+- ADR-012 §14.1's ownership row assigns "Removal of the FSL `negotiate_*`
+  copies from `value::ieee` and `value::division` (OBS-004); `filament-exact`'s
   own `division`/`ieee` (moved in by X-1, #213 S-1) never carried them" to
   this requirement.

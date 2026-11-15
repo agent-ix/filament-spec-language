@@ -3,32 +3,32 @@ id: FR-231
 title: "Read a timed subject's behaviours as timed traces"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-161
+  - target: ix://agent-ix/filament-specification/FR-161
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
 ---
 # FR-231: Read a timed subject's behaviours as timed traces
 
 ## Description
 
-QSL SHALL extend FR-125's model subject to a **timed subject**, a model
+FSL SHALL extend FR-125's model subject to a **timed subject**, a model
 subject whose model has a `time` member (FR-230), and read each of its
 time-divergent behaviours as a timed trace for the layer-5 TemporalTrace
 evaluator (ADR-026 TS-1 to TS-7). The evaluator's value on one timed trace
@@ -128,13 +128,13 @@ false when they replay it.
 - ADR-026 §3 TS-1 to TS-7; ADR-018 SM-1 to SM-5 as amended by ADR-026.
 - [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md),
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md),
   [FR-230](FR-230-check-time-declarations-clocks-and-clock-constraints.md).
-- QSpec FR-090, FR-161 and FR-181 own the timed subject, delay moves, the
+- FSpec FR-090, FR-161 and FR-181 own the timed subject, delay moves, the
   time-divergence premise, quiescent states and the idle tail as normative
   semantics (ADR-026 OV-5).
 
 ## References
 
-- QSpec half: QSpec FR-415 and FR-416, with the timed subject in QSpec
+- FSpec half: FSpec FR-415 and FR-416, with the timed subject in FSpec
   FR-161 and FR-181 (Linear STD-139).

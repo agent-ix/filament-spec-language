@@ -1,0 +1,982 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! ADR-012 §2's sixth contract part, `requirements` (FR-062-AC-4), and
+//! ADR-014 §4's extent of a requested item.
+//!
+//! A family whose claim form carries an FR-057 capability kind records one
+//! [`Requirements`] value per checked item: the kind and the item's
+//! [`ClaimExtent`]. A form with no kind records none. The family computes
+//! the extent at `check`, where the stage limits are, with
+//! [`classify_extent`], and `FamilyContract::requirements` reads it back:
+//! the method is pure and total.
+//!
+//! Three concepts stay apart (ADR-014 §4). *Finite* is a property of a
+//! concrete value and is never an extent. *Extent* is a property of a
+//! requested item: [`ClaimExtent`]. It is not named `Extent`, because
+//! `model::Extent{Closed, Open}` is FSpec FR-153 population closure. *Mode*
+//! is a property of a backend advertisement: `fsl_route::Mode`.
+//!
+//! **Extent rule** (ADR-014 §4). Over the transitive closure of a claim's
+//! argument and bound-variable types, each of these positions is one
+//! unbounded domain, keyed by the carrying node and the child-index path:
+//!
+//! | Position | [`DomainKind`] | Boundable by |
+//! | --- | --- | --- |
+//! | collection with no bound | `Collection` | `FiniteBound::Cardinality` |
+//! | population with no maximum | `Population` | `FiniteBound::Cardinality` |
+//! | `Integer` with no range | `Integer` | `FiniteBound::IntegerRange` |
+//! | recursive record or tuple (FSpec FR-143) | `Recursive` | `FiniteBound::Depth` |
+//! | quantity (its magnitude is an unbounded `Rational`) | `Quantity` | nothing |
+//! | loop admitted under FSpec FR-228-AC-5 | `Loop` | nothing |
+//! | infinite-trace temporal formula | `InfiniteTrace` | nothing |
+//!
+//! [`classify_extent`] finds the five type positions. The loop and
+//! infinite-trace domains belong to the families that admit those forms
+//! (QSL-42, QSL-43), which add them with [`ClaimExtent::from_domains`].
+//! A quantity is unbounded and takes no finite bound: no `FiniteBound`
+//! variant ranges over a rational magnitude, so a bounded-only backend
+//! settles it `unsupported`, never `supported` (ADR-013 C-22). Every other
+//! type (`Int[a,b]`, `Rational`, `Decimal`, `Text`, `Float`, `Boolean`,
+//! `Enum`, a reference) carries its own finite domain or is not a value
+//! domain, so it adds none.
+//!
+//! No domain gives [`ClaimExtent::Bounded`]. No stage limit, accounting
+//! limit, profile ceiling or backend budget ever makes a domain bounded
+//! (ADR-014 §1).
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use filament_exact::{NodeKey, ValueType};
+use filament_semantic_value::catalog::InternalFault;
+use fsl_foundation::bound::{DomainKey, DomainKind};
+use fsl_foundation::diagnostic::LimitExceeded;
+use fsl_foundation::Setting;
+
+use crate::check::{Capability, HyperForm, HyperUnsupported};
+use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
+use filament_semantic_value::fairness::{FairnessKind, PropertyForm};
+
+/// The non-empty set of an item's unbounded domains, each with its kind,
+/// in [`DomainKey`] order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnboundedDomains(BTreeMap<DomainKey, DomainKind>);
+
+impl UnboundedDomains {
+    /// Every domain and its kind, in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&DomainKey, DomainKind)> {
+        self.0.iter().map(|(key, kind)| (key, *kind))
+    }
+
+    /// The kind of `key`, if it is one of these domains.
+    pub fn kind(&self, key: &DomainKey) -> Option<DomainKind> {
+        self.0.get(key).copied()
+    }
+
+    /// How many domains there are. Never zero.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Always `false`: an unbounded extent has at least one domain.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether a finite bound can stand for every domain (ADR-014 §4
+    /// "Available finite bound").
+    pub fn all_boundable(&self) -> bool {
+        self.0.values().all(|kind| kind.finite_kind().is_some())
+    }
+}
+
+/// The extent of a requested item (ADR-014 §4). Wire spelling: FSpec
+/// FR-290 `bounded`/`unbounded`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClaimExtent {
+    /// No unbounded domain.
+    Bounded,
+    /// At least one unbounded domain.
+    Unbounded(UnboundedDomains),
+}
+
+impl ClaimExtent {
+    /// `Bounded` for no domains, otherwise `Unbounded` over exactly these.
+    pub fn from_domains(domains: BTreeMap<DomainKey, DomainKind>) -> Self {
+        if domains.is_empty() {
+            Self::Bounded
+        } else {
+            Self::Unbounded(UnboundedDomains(domains))
+        }
+    }
+
+    /// The FR-290 wire spelling: `bounded` or `unbounded`.
+    pub const fn to_wire(&self) -> &'static str {
+        match self {
+            Self::Bounded => "bounded",
+            Self::Unbounded(_) => "unbounded",
+        }
+    }
+}
+
+/// Why the request writer disposes an item `Unsupported` before any engine
+/// sees it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum UnsupportedItem {
+    /// FR-234 "Punctuality" (ADR-026 DF-5): a timed invariant, timed safety
+    /// or timed liveness claim over a timed subject holding a punctual
+    /// interval, at the interval's span.
+    PunctualInterval {
+        /// The punctual interval's span.
+        span: fsl_foundation::Span,
+    },
+    /// FR-396, FR-399: a hyper item whose checked HP-4 form has no
+    /// negotiation arm.
+    HyperForm {
+        /// The one classifier's reason for placing the form in HP-4.
+        reason: HyperUnsupported,
+    },
+}
+
+/// The evidence kind a `probabilistic-satisfaction` claim is decided by
+/// (FR-195, FSpec FR-290): the kind FR-075's request builder writes on the
+/// claim's item when the request names none.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ClaimEvidence {
+    /// Sampled evidence: EN-4.
+    Statistical,
+    /// Exact evidence: EN-5.
+    Exact,
+}
+
+/// One item's requirements (ADR-012 §2, FR-062-AC-4; ADR-014 §4, §6 step
+/// 1): the FR-057 capability kind it requests, its extent, the fairness
+/// kinds its fairness set uses (FR-134; empty for an item with none), and
+/// the cause the request writer disposes it `Unsupported` for, if any.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Requirements {
+    kind: Capability,
+    extent: ClaimExtent,
+    fairness: BTreeSet<FairnessKind>,
+    unsupported: Option<UnsupportedItem>,
+    model_subject: bool,
+    hybrid_dynamics: bool,
+    evidence: Option<ClaimEvidence>,
+    property_form: Option<PropertyForm>,
+    timed: bool,
+}
+
+impl Requirements {
+    /// The requirements of an item requesting `kind` over `extent`.
+    pub fn new(kind: Capability, extent: ClaimExtent) -> Self {
+        Self {
+            kind,
+            extent,
+            fairness: BTreeSet::new(),
+            unsupported: None,
+            model_subject: false,
+            hybrid_dynamics: false,
+            evidence: None,
+            property_form: None,
+            timed: false,
+        }
+    }
+
+    /// The requirements of a timed item EN-6 decides (FSL FR-243, FR-430):
+    /// a clause over a timed subject, `dense` or `tick`, or a refinement
+    /// whose concrete model is `time dense`. Negotiation routes it to the
+    /// engines that decide timed subjects (EN-6). The mark is FSL's own; the
+    /// item's wire `requirements` do not carry it.
+    #[must_use]
+    pub fn over_timed(mut self) -> Self {
+        self.timed = true;
+        self
+    }
+
+    /// Whether the item is a timed item EN-6 decides ([`Self::over_timed`]).
+    pub fn timed(&self) -> bool {
+        self.timed
+    }
+
+    /// The requirements with the property form the record is routed and
+    /// settled as (FR-144: a refinement's TP-5 `Refinement` form).
+    #[must_use]
+    pub fn with_property_form(mut self, form: PropertyForm) -> Self {
+        self.property_form = Some(form);
+        self
+    }
+
+    /// The property form the record carries; `None` for a record whose form
+    /// is read from its checked node (a temporal clause's) or that has none.
+    pub fn property_form(&self) -> Option<PropertyForm> {
+        self.property_form
+    }
+
+    /// The requirements of a checked hyper form, including its model
+    /// subject extent. HP-4 is marked unsupported by the shared
+    /// [`HyperForm::unsupported_reason`] classifier; admitted forms remain
+    /// available for negotiation with their backends (FR-396, FR-399).
+    pub fn hyper_form(extent: ClaimExtent, form: &HyperForm) -> Self {
+        let requirements = Self::new(Capability::TemporalSatisfaction, extent).over_model_subject();
+        match form.unsupported_reason() {
+            Some(reason) => requirements.with_unsupported(UnsupportedItem::HyperForm { reason }),
+            None => requirements,
+        }
+    }
+
+    /// The requirements with the evidence kind a `probabilistic-satisfaction`
+    /// claim is decided by (FR-195).
+    #[must_use]
+    pub fn with_evidence(mut self, evidence: ClaimEvidence) -> Self {
+        self.evidence = Some(evidence);
+        self
+    }
+
+    /// The evidence kind recorded for a `probabilistic-satisfaction` claim;
+    /// `None` for every other kind.
+    pub fn evidence(&self) -> Option<ClaimEvidence> {
+        self.evidence
+    }
+
+    /// The requirements of an item over a model subject (FR-331, FR-368:
+    /// only such a temporal item has a `subject`).
+    #[must_use]
+    pub fn over_model_subject(mut self) -> Self {
+        self.model_subject = true;
+        self
+    }
+
+    /// Whether the item is over a model subject.
+    pub fn model_subject(&self) -> bool {
+        self.model_subject
+    }
+
+    /// Mark a temporal claim whose checked subject contains hybrid dynamics.
+    /// The provider request writes `hybrid-dynamics` for this item.
+    #[must_use]
+    pub fn with_hybrid_dynamics(mut self) -> Self {
+        self.hybrid_dynamics = self.kind == Capability::TemporalSatisfaction;
+        self
+    }
+
+    /// Whether this item needs a provider with hybrid dynamics.
+    pub fn hybrid_dynamics(&self) -> bool {
+        self.hybrid_dynamics
+    }
+
+    /// The requirements of an item the request writer disposes
+    /// `Unsupported` for `cause`, routing it to no engine (FR-234).
+    #[must_use]
+    pub fn with_unsupported(mut self, cause: UnsupportedItem) -> Self {
+        self.unsupported = Some(cause);
+        self
+    }
+
+    /// Why the request writer disposes the item `Unsupported`, if it does.
+    pub fn unsupported(&self) -> Option<&UnsupportedItem> {
+        self.unsupported.as_ref()
+    }
+
+    /// The requirements with the fairness kinds the item's fairness set
+    /// uses (FR-134): a backend is a candidate only when it advertises each.
+    #[must_use]
+    pub fn with_fairness(mut self, kinds: impl IntoIterator<Item = FairnessKind>) -> Self {
+        self.fairness = kinds.into_iter().collect();
+        self
+    }
+
+    /// The fairness kinds the item's fairness set uses.
+    pub fn fairness(&self) -> &BTreeSet<FairnessKind> {
+        &self.fairness
+    }
+
+    /// The requested capability kind.
+    pub fn kind(&self) -> Capability {
+        self.kind
+    }
+
+    /// The item's extent.
+    pub fn extent(&self) -> &ClaimExtent {
+        &self.extent
+    }
+}
+
+/// Why [`classify_extent`] stopped without an extent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClassifyFailure {
+    /// The walk visited more type positions than its ceiling allows: a
+    /// check-stage limit (ADR-014 B-3), kind node count.
+    Limit(LimitExceeded),
+    /// A checked type named a record or tuple the environment does not
+    /// hold, or a position index past `u32`: a broken check invariant.
+    Fault(InternalFault),
+}
+
+/// The fault stage name [`classify_extent`] reports.
+const STAGE: &str = "check.requirements";
+
+/// One pending type position: its root's index, the child-index path from
+/// that root, and its type.
+struct Position<'t> {
+    root: usize,
+    path: Vec<u32>,
+    value_type: &'t ValueType,
+    /// The records and tuples on the path to this position, each with the
+    /// path at which it was entered, outermost first.
+    composites: Vec<(NodeKey, Vec<u32>)>,
+}
+
+/// Classify the extent of an item whose arguments and bound variables are
+/// `roots`: each root is the carrying node's wire id and its checked type.
+///
+/// The walk uses an explicit stack. It visits at most `position_limit`
+/// type positions, each position once per path that reaches it, and
+/// refuses past that with a node-count stage limit. The limit carries no
+/// locus: this walk sees types, not source. The family's `check` that calls
+/// it attaches its declaration's `Locus::Region` with `LimitExceeded::at`,
+/// as FR-096's family-`check` row requires. A record or tuple that
+/// reaches itself is one `Recursive` domain at the position where the
+/// recursion starts, and the walk does not descend into it again.
+pub fn classify_extent(
+    roots: &[(NodeKey, &ValueType)],
+    types: &TypeEnvironment,
+    position_limit: u64,
+) -> Result<ClaimExtent, ClassifyFailure> {
+    let rooted: Vec<(NodeKey, Vec<u32>, &ValueType)> = roots
+        .iter()
+        .map(|(node, value_type)| (node.clone(), Vec::new(), *value_type))
+        .collect();
+    classify_extent_at(&rooted, types, position_limit)
+}
+
+/// [`classify_extent`] over roots that sit below a base child-index path in
+/// their node: a model member's domain is `{node, path}` with the member's
+/// own path first (FSpec FR-331 "Model member domain keys"), and the path
+/// into the member's type after it.
+pub fn classify_extent_at(
+    roots: &[(NodeKey, Vec<u32>, &ValueType)],
+    types: &TypeEnvironment,
+    position_limit: u64,
+) -> Result<ClaimExtent, ClassifyFailure> {
+    let types_only: Vec<&ValueType> = roots.iter().map(|(_, _, value_type)| *value_type).collect();
+    let mut domains = BTreeMap::new();
+    for ((root, path), kind) in classify_domains(&types_only, types, position_limit)? {
+        let Some((node, base, _)) = roots.get(root) else {
+            return Err(ClassifyFailure::Fault(InternalFault::new(
+                STAGE,
+                "domain-root-classified",
+            )));
+        };
+        let mut full = base.clone();
+        full.extend(path);
+        domains.insert(
+            DomainKey::Node {
+                node: node.clone(),
+                path: full,
+            },
+            kind,
+        );
+    }
+    Ok(ClaimExtent::from_domains(domains))
+}
+
+/// [`classify_extent`]'s walk over roots named by their index in `roots`:
+/// each unbounded domain keyed by (root index, child-index path), under the
+/// same position ceiling. A caller that knows its roots before their wire
+/// ids exist keys the domains by its own root names.
+pub fn classify_domains(
+    roots: &[&ValueType],
+    types: &TypeEnvironment,
+    position_limit: u64,
+) -> Result<BTreeMap<(usize, Vec<u32>), DomainKind>, ClassifyFailure> {
+    let mut domains = BTreeMap::new();
+    let mut pending: Vec<Position<'_>> = roots
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(root, value_type)| Position {
+            root,
+            path: Vec::new(),
+            value_type,
+            composites: Vec::new(),
+        })
+        .collect();
+    let mut visited: u64 = 0;
+    while let Some(position) = pending.pop() {
+        if visited >= position_limit {
+            return Err(ClassifyFailure::Limit(LimitExceeded::new(
+                Setting::S3Nodes,
+                position_limit,
+                u128::from(visited) + 1,
+            )));
+        }
+        visited += 1;
+        let key = || (position.root, position.path.clone());
+        match position.value_type {
+            ValueType::Integer => {
+                domains.insert(key(), DomainKind::Integer);
+            }
+            ValueType::Population(None) => {
+                domains.insert(key(), DomainKind::Population);
+            }
+            ValueType::Quantity(_)
+            | ValueType::BoundedQuantity(_)
+            | ValueType::CarriedQuantity(_) => {
+                domains.insert(key(), DomainKind::Quantity);
+            }
+            ValueType::Map(map) => {
+                pending.push(child(&position, 0, map.values(), None)?);
+            }
+            ValueType::Collection(collection) => {
+                if collection.bound().is_none() {
+                    domains.insert(key(), DomainKind::Collection);
+                }
+                pending.push(child(&position, 0, collection.element(), None)?);
+            }
+            ValueType::Option(payload) => {
+                pending.push(child(&position, 0, payload, None)?);
+            }
+            ValueType::Composite(declaration) => {
+                if let Some((_, entered)) = position
+                    .composites
+                    .iter()
+                    .find(|(open, _)| open == declaration)
+                {
+                    domains.insert((position.root, entered.clone()), DomainKind::Recursive);
+                    continue;
+                }
+                let Some(composite) = types.composite(declaration.clone()) else {
+                    return Err(ClassifyFailure::Fault(InternalFault::new(
+                        STAGE,
+                        "checked-composite-type-not-in-environment",
+                    )));
+                };
+                let members: Vec<&ValueType> = match composite.shape() {
+                    CompositeShape::Record(fields) => {
+                        fields.iter().map(|field| field.value_type()).collect()
+                    }
+                    CompositeShape::Tuple(positions) => positions.iter().collect(),
+                    CompositeShape::Union(union_members) => union_members
+                        .iter()
+                        .flat_map(|member| member.positions())
+                        .collect(),
+                };
+                // Pushed last-first so the stack visits them in order.
+                for (index, member) in members.into_iter().enumerate().rev() {
+                    pending.push(child(&position, index, member, Some(declaration.clone()))?);
+                }
+            }
+            ValueType::Boolean
+            | ValueType::Int(_)
+            | ValueType::Rational(_)
+            | ValueType::Decimal(_)
+            | ValueType::Float(_)
+            | ValueType::Text(_)
+            | ValueType::String
+            | ValueType::Enum(_)
+            | ValueType::Reference(_)
+            | ValueType::Population(Some(_))
+            | ValueType::Uuid
+            | ValueType::Timestamp => {}
+        }
+    }
+    Ok(domains)
+}
+
+/// The child position `index` of `parent`, typed `value_type`; `entered`
+/// is the record or tuple `parent` is, when it is one.
+fn child<'t>(
+    parent: &Position<'t>,
+    index: usize,
+    value_type: &'t ValueType,
+    entered: Option<NodeKey>,
+) -> Result<Position<'t>, ClassifyFailure> {
+    let index = u32::try_from(index).map_err(|_| {
+        ClassifyFailure::Fault(InternalFault::new(STAGE, "type-position-index-past-u32"))
+    })?;
+    let mut composites = parent.composites.clone();
+    if let Some(declaration) = entered {
+        composites.push((declaration, parent.path.clone()));
+    }
+    let mut path = parent.path.clone();
+    path.push(index);
+    Ok(Position {
+        root: parent.root,
+        path,
+        value_type,
+        composites,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_exact::{
+        CardinalityBound, CollectionKind, CollectionType, Integer, IntegerInterval, Presence,
+    };
+    use filament_semantic_value::declaration::{CompositeDeclaration, FieldDeclaration};
+    use fsl_foundation::bound::FiniteBoundKind;
+    use fsl_foundation::diagnostic::LimitKind;
+    use ix_trace_rs::trace;
+
+    const LIMIT: u64 = 1_000;
+
+    fn node(fill: u8) -> NodeKey {
+        NodeKey::new(
+            "test",
+            vec![filament_exact::PathSegment::Text(fill.to_string())],
+            0,
+        )
+        .expect("a test node key")
+    }
+
+    fn int_0_9() -> ValueType {
+        ValueType::Int(IntegerInterval::new(Integer::from(0_i64), Integer::from(9_i64)).unwrap())
+    }
+
+    fn sequence(element: ValueType, bound: Option<(u64, u64)>) -> ValueType {
+        ValueType::collection(CollectionType::new(
+            CollectionKind::Sequence,
+            element,
+            bound.map(|(minimum, maximum)| CardinalityBound::new(minimum, maximum).unwrap()),
+        ))
+    }
+
+    fn point_key() -> NodeKey {
+        node(1)
+    }
+
+    fn tree_key() -> NodeKey {
+        node(2)
+    }
+
+    /// `record Point { x: Int[0, 9]; y: Integer; }` and the recursive
+    /// `record Tree { kids: Sequence<Tree>[0, 3]; }`.
+    fn types() -> TypeEnvironment {
+        TypeEnvironment::new(
+            [
+                CompositeDeclaration::new(
+                    point_key(),
+                    "Point",
+                    CompositeShape::Record(vec![
+                        FieldDeclaration::new("x", int_0_9(), Presence::Required),
+                        FieldDeclaration::new("y", ValueType::Integer, Presence::Required),
+                    ]),
+                ),
+                CompositeDeclaration::new(
+                    tree_key(),
+                    "Tree",
+                    CompositeShape::Record(vec![FieldDeclaration::new(
+                        "kids",
+                        sequence(ValueType::Composite(tree_key()), Some((0, 3))),
+                        Presence::Required,
+                    )]),
+                ),
+            ],
+            [],
+        )
+        .expect("FR-143 admits Point and Tree")
+    }
+
+    fn extent(value_type: &ValueType) -> ClaimExtent {
+        classify_extent(&[(node(7), value_type)], &types(), LIMIT).unwrap()
+    }
+
+    fn unbounded(domains: &[(Vec<u32>, DomainKind)]) -> ClaimExtent {
+        ClaimExtent::from_domains(
+            domains
+                .iter()
+                .map(|(path, kind)| {
+                    (
+                        DomainKey::Node {
+                            node: node(7),
+                            path: path.clone(),
+                        },
+                        *kind,
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// TC-437 (ADR-014 §4 extent rule): each unbounded type position is one
+    /// domain keyed by its carrying node and child-index path, with its
+    /// kind; every type that carries its own finite domain is bounded.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_each_unbounded_type_position_is_one_domain() {
+        assert_eq!(
+            extent(&ValueType::Integer),
+            unbounded(&[(vec![], DomainKind::Integer)])
+        );
+        assert_eq!(
+            extent(&sequence(int_0_9(), None)),
+            unbounded(&[(vec![], DomainKind::Collection)])
+        );
+        assert_eq!(
+            extent(&sequence(ValueType::Integer, Some((0, 3)))),
+            unbounded(&[(vec![0], DomainKind::Integer)])
+        );
+        assert_eq!(
+            extent(&sequence(ValueType::Integer, None)),
+            unbounded(&[
+                (vec![], DomainKind::Collection),
+                (vec![0], DomainKind::Integer),
+            ])
+        );
+        assert_eq!(
+            extent(&ValueType::option(ValueType::Integer)),
+            unbounded(&[(vec![0], DomainKind::Integer)])
+        );
+        assert_eq!(
+            extent(&ValueType::Population(None)),
+            unbounded(&[(vec![], DomainKind::Population)])
+        );
+        assert_eq!(
+            extent(&ValueType::Composite(point_key())),
+            unbounded(&[(vec![1], DomainKind::Integer)])
+        );
+        assert_eq!(
+            extent(&ValueType::Composite(tree_key())),
+            unbounded(&[(vec![], DomainKind::Recursive)])
+        );
+        // Every finite-domain type is bounded.
+        for bounded in [
+            int_0_9(),
+            ValueType::Boolean,
+            ValueType::Population(Some(3)),
+            sequence(int_0_9(), Some((0, 3))),
+            ValueType::option(int_0_9()),
+        ] {
+            assert_eq!(extent(&bounded), ClaimExtent::Bounded, "{bounded:?}");
+        }
+    }
+
+    /// TC-437: domains of several roots are keyed by their own nodes, and
+    /// classifying the same roots twice gives equal extents.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_roots_key_their_own_domains_and_classification_repeats() {
+        let integer = ValueType::Integer;
+        let collection = sequence(int_0_9(), None);
+        let roots = [(node(1), &integer), (node(2), &collection)];
+        let first = classify_extent(&roots, &types(), LIMIT).unwrap();
+        assert_eq!(first, classify_extent(&roots, &types(), LIMIT).unwrap());
+        let ClaimExtent::Unbounded(domains) = &first else {
+            panic!("two unbounded roots");
+        };
+        let listed: Vec<_> = domains
+            .iter()
+            .map(|(key, kind)| (key.clone(), kind))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                (
+                    DomainKey::Node {
+                        node: node(1),
+                        path: vec![]
+                    },
+                    DomainKind::Integer
+                ),
+                (
+                    DomainKey::Node {
+                        node: node(2),
+                        path: vec![]
+                    },
+                    DomainKind::Collection
+                ),
+            ]
+        );
+        assert!(domains.all_boundable());
+        assert_eq!(first.to_wire(), "unbounded");
+        assert_eq!(ClaimExtent::Bounded.to_wire(), "bounded");
+    }
+
+    /// TC-437: the walk stops at its position ceiling with a node-count
+    /// stage limit (ADR-014 B-3), not with an extent; one more position
+    /// admits it.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_the_walk_stops_at_its_position_ceiling() {
+        // Point, its two fields: three positions.
+        let point = ValueType::Composite(point_key());
+        let roots = [(node(7), &point)];
+        assert_eq!(
+            classify_extent(&roots, &types(), 2),
+            Err(ClassifyFailure::Limit(LimitExceeded::new(
+                Setting::S3Nodes,
+                2,
+                3
+            )))
+        );
+        assert!(classify_extent(&roots, &types(), 3).is_ok());
+    }
+
+    /// TC-437: a checked composite missing from the environment is a broken
+    /// invariant, never a bounded extent.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_a_composite_outside_the_environment_is_a_fault() {
+        let missing = ValueType::Composite(node(9));
+        let Err(ClassifyFailure::Fault(fault)) =
+            classify_extent(&[(node(7), &missing)], &types(), LIMIT)
+        else {
+            panic!("expected a fault");
+        };
+        assert_eq!(
+            fault.invariant(),
+            "checked-composite-type-not-in-environment"
+        );
+    }
+
+    /// ADR-014 §4: loop and infinite-trace domains are not boundable, the
+    /// four type domains are.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_only_the_type_domains_are_boundable() {
+        assert_eq!(
+            DomainKind::Collection.finite_kind(),
+            Some(FiniteBoundKind::Cardinality)
+        );
+        assert_eq!(
+            DomainKind::Population.finite_kind(),
+            Some(FiniteBoundKind::Cardinality)
+        );
+        assert_eq!(
+            DomainKind::Integer.finite_kind(),
+            Some(FiniteBoundKind::IntegerRange)
+        );
+        assert_eq!(
+            DomainKind::Recursive.finite_kind(),
+            Some(FiniteBoundKind::Depth)
+        );
+        assert_eq!(DomainKind::Loop.finite_kind(), None);
+        assert_eq!(DomainKind::InfiniteTrace.finite_kind(), None);
+        let mixed = ClaimExtent::from_domains(BTreeMap::from([
+            (
+                DomainKey::Node {
+                    node: node(1),
+                    path: vec![],
+                },
+                DomainKind::Integer,
+            ),
+            (
+                DomainKey::Node {
+                    node: node(2),
+                    path: vec![],
+                },
+                DomainKind::Loop,
+            ),
+        ]));
+        let ClaimExtent::Unbounded(domains) = mixed else {
+            panic!("two domains");
+        };
+        assert!(!domains.all_boundable());
+    }
+
+    /// A claim form with an FR-057 kind, checked through the real contract:
+    /// a `value-validity` claim over its argument types. No claim family is
+    /// migrated onto `FamilyContract` yet (QSL-42 and QSL-43 migrate the
+    /// first), so this test family stands in for one. Its `check` calls the
+    /// real [`classify_extent`] under the context's node-count limit, and
+    /// its `requirements` reads back what `check` recorded.
+    struct ValidityClaim;
+
+    struct CheckedClaim {
+        requirements: Requirements,
+    }
+
+    /// A claim declaration: its source region and its argument types.
+    struct ClaimForm {
+        region: fsl_foundation::source::provenance::SourceRegion,
+        arguments: Vec<(NodeKey, ValueType)>,
+    }
+
+    impl crate::family::FamilyContract for ValidityClaim {
+        type Form = ClaimForm;
+        type Checked = CheckedClaim;
+        type Cause = InternalFault;
+        type Declarations<'a> = TypeEnvironment;
+        type Claim = Requirements;
+
+        fn check<'a>(
+            form: &Self::Form,
+            cx: &mut crate::family::CheckContext<'a, TypeEnvironment>,
+        ) -> crate::family::CheckOutcome<CheckedClaim, InternalFault> {
+            let roots: Vec<(NodeKey, &ValueType)> = form
+                .arguments
+                .iter()
+                .map(|(node, value_type)| (node.clone(), value_type))
+                .collect();
+            let extent = classify_extent(&roots, cx.declarations(), cx.limits().node_count)
+                .map_err(|failure| match failure {
+                    // FR-096's family-`check` row: the declaration's region.
+                    ClassifyFailure::Limit(exceeded) => {
+                        fsl_foundation::diagnostic::StageFailure::Limit(exceeded.at(Some(
+                            fsl_foundation::diagnostic::Locus::Region(form.region.clone()),
+                        )))
+                    }
+                    ClassifyFailure::Fault(fault) => {
+                        fsl_foundation::diagnostic::StageFailure::Refused(fault)
+                    }
+                })?;
+            Ok(fsl_foundation::diagnostic::Staged::new(CheckedClaim {
+                requirements: Requirements::new(Capability::ValueValidity, extent),
+            }))
+        }
+
+        fn requirements(checked: &CheckedClaim) -> Vec<Requirements> {
+            vec![checked.requirements.clone()]
+        }
+    }
+
+    /// The whole fixture unit, as the claim declaration's region.
+    fn claim_region() -> fsl_foundation::source::provenance::SourceRegion {
+        let source =
+            crate::check::admitted_source(fsl_foundation::SourceIdentity::new("a", "u"), b"claim");
+        fsl_foundation::source::provenance::SourceRegion::new(source, 0, 5).unwrap()
+    }
+
+    fn check_claim(form: &[(NodeKey, ValueType)]) -> CheckedClaim {
+        try_check_claim(form, LIMIT)
+            .expect("the claim checks")
+            .into_value()
+    }
+
+    fn try_check_claim(
+        form: &[(NodeKey, ValueType)],
+        node_count: u64,
+    ) -> crate::family::CheckOutcome<CheckedClaim, InternalFault> {
+        use crate::family::{
+            CheckContext, DiagnosticSink, FamilyContract, ScopeStack, StageLimits,
+        };
+        let types = types();
+        let mut meter = filament_exact::Meter::new(filament_exact::ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units: u64::MAX,
+            result_units: u64::MAX,
+        });
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut cx = CheckContext::new(
+            &types,
+            StageLimits {
+                input_bytes: u64::MAX,
+                node_count,
+            },
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        let form = ClaimForm {
+            region: claim_region(),
+            arguments: form.to_vec(),
+        };
+        ValidityClaim::check(&form, &mut cx)
+    }
+
+    /// TC-437 (FR-096 family-`check` row): a claim family's `check` that
+    /// reaches the classifier's node-count ceiling reports the limit at its
+    /// declaration's region.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_a_claim_family_locates_the_classifier_limit_at_its_declaration() {
+        // `Point` and its two fields: three positions, ceiling 2.
+        let Err(fsl_foundation::diagnostic::StageFailure::Limit(exceeded)) =
+            try_check_claim(&[(node(7), ValueType::Composite(point_key()))], 2)
+        else {
+            panic!("expected a node-count limit");
+        };
+        assert_eq!(exceeded.kind(), LimitKind::NodeCount);
+        assert_eq!((exceeded.configured_bound(), exceeded.actual()), (2, 3));
+        assert_eq!(
+            exceeded.locus(),
+            Some(&fsl_foundation::diagnostic::Locus::Region(claim_region()))
+        );
+    }
+
+    /// TC-437 (ADR-014 §10 scenario 3): a claim form with a
+    /// kind yields exactly one `Requirements` naming that kind, here with
+    /// the set's domain as its unbounded extent; two calls on the same
+    /// checked node return equal values.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_a_claim_family_records_its_classified_extent() {
+        use crate::family::FamilyContract;
+        let set = ValueType::collection(CollectionType::new(CollectionKind::Set, int_0_9(), None));
+        let checked = check_claim(&[(node(7), set)]);
+        let [first] = ValidityClaim::requirements(&checked)
+            .try_into()
+            .expect("one requirements value");
+        assert_eq!(first.kind(), Capability::ValueValidity);
+        assert_eq!(
+            first.extent(),
+            &unbounded(&[(vec![], DomainKind::Collection)])
+        );
+        assert_eq!(ValidityClaim::requirements(&checked), [first]);
+
+        let bounded = check_claim(&[(node(7), int_0_9())]);
+        assert_eq!(
+            ValidityClaim::requirements(&bounded),
+            [Requirements::new(
+                Capability::ValueValidity,
+                ClaimExtent::Bounded
+            )]
+        );
+    }
+
+    /// TC-437 (ADR-014 §4 amended; ADR-013 C-22): a quantity is one
+    /// unbounded, unboundable domain, so an item over it has no finite bound
+    /// available and a bounded-only backend can never settle it supported.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_a_quantity_is_an_unboundable_domain() {
+        let metre = ValueType::Quantity(filament_exact::UnitId::declared(node(5)));
+        let extent = extent(&metre);
+        assert_eq!(extent, unbounded(&[(vec![], DomainKind::Quantity)]));
+        let ClaimExtent::Unbounded(domains) = extent else {
+            panic!("a quantity is unbounded");
+        };
+        assert!(!domains.all_boundable());
+        assert_eq!(DomainKind::Quantity.finite_kind(), None);
+    }
+    /// A bounded quantity is a quantity leaf: one unbounded `Quantity`
+    /// domain, as a `Quantity` is (FSV FR-127 item 6).
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_a_bounded_quantity_is_a_quantity_domain() {
+        let metre = filament_exact::UnitId::declared(node(5));
+        let bounded = ValueType::BoundedQuantity(std::sync::Arc::new(
+            filament_exact::BoundedQuantityType::new(metre, None, None).expect("in the unit"),
+        ));
+        assert_eq!(
+            extent(&bounded),
+            unbounded(&[(vec![], DomainKind::Quantity)])
+        );
+    }
+
+    /// A map is type-only (filament-exact FR-386): it is no domain of its own,
+    /// and the classifier follows its value type at child index 0, so a map
+    /// of a finite type is bounded and a map of a quantity is not.
+    #[trace("TC-437", "FR-097-AC-2")]
+    #[test]
+    fn tc_437_a_map_classifies_through_its_value_type() {
+        let map = |values| {
+            ValueType::Map(std::sync::Arc::new(
+                filament_exact::MapType::new(ValueType::String, values, None).expect("a leaf key"),
+            ))
+        };
+        assert_eq!(extent(&map(int_0_9())), ClaimExtent::Bounded);
+        let metre = ValueType::Quantity(filament_exact::UnitId::declared(node(5)));
+        assert_eq!(
+            extent(&map(metre)),
+            unbounded(&[(vec![0], DomainKind::Quantity)])
+        );
+    }
+}

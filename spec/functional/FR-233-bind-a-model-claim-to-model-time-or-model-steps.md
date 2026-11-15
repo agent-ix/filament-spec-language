@@ -3,30 +3,30 @@ id: FR-233
 title: "Bind a model claim to model-time or model-steps"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-231
+  - target: ix://agent-ix/filament-spec-language/FR-231
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-252
+  - target: ix://agent-ix/filament-specification/FR-252
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-255
+  - target: ix://agent-ix/filament-specification/FR-255
     type: depends_on
 ---
 # FR-233: Bind a model claim to model-time or model-steps
 
 ## Description
 
-QSL's S3 checker SHALL give every temporal claim over a model subject one
+FSL's S3 checker SHALL give every temporal claim over a model subject one
 clock binding, `model-steps` or `model-time` (ADR-026 CB-1 to CB-5). Under
 `model-steps` an interval counts steps; under `model-time` it counts time
 units of the model's time source. A claim over a timed model binds
@@ -57,8 +57,8 @@ pub enum ModelClockBinding {
 }
 ```
 
-on the checked clause, its QSpec FR-252 binding key, and each interval's
-QSpec FR-255 key under that binding.
+on the checked clause, its FSpec FR-252 binding key, and each interval's
+FSpec FR-255 key under that binding.
 
 ## Behavior
 
@@ -72,18 +72,18 @@ QSpec FR-255 key under that binding.
   at the clock clause's span, naming the model.
 - A `ModelTime` clause SHALL select the timed profile (FR-234). A
   `ModelSteps` clause SHALL keep ADR-018's profiles.
-- **Identity.** The binding's QSpec FR-252 key SHALL be built from the
+- **Identity.** The binding's FSpec FR-252 key SHALL be built from the
   timed profile identity, the model's qualified name and time source kind,
   the unit, the period for a `Tick` source, and the step-order sequence
   authority. Writing the default binding SHALL give the same key as
   omitting it.
 - **Intervals.** Under `ModelTime`, each interval bound SHALL be a time
-  quantity converted exactly to the model's unit (QSpec FR-142); a bound
+  quantity converted exactly to the model's unit (FSpec FR-142); a bound
   with no unit, or of another dimension, SHALL refuse `ill_typed`/
   `type-mismatch` at its span. Under `ModelSteps`, an interval bound SHALL
   be a step count, and a bound with a time unit SHALL refuse `ill_typed`/
   `type-mismatch`.
-- The interval's QSpec FR-255 key SHALL carry the profile identity and the
+- The interval's FSpec FR-255 key SHALL carry the profile identity and the
   binding, so a time interval's key never equals a step interval's.
 
 ## Acceptance Criteria
@@ -100,11 +100,11 @@ QSpec FR-255 key under that binding.
 - [FR-123](FR-123-check-fairness-and-interval-operators-of-infinite-trace-clauses.md),
   [FR-230](FR-230-check-time-declarations-clocks-and-clock-constraints.md),
   [FR-231](FR-231-read-a-timed-subject-s-behaviours-as-timed-traces.md).
-- QSpec FR-252 (clock binding key), QSpec FR-255 (interval key), QSpec
-  FR-090 (profiles), QSpec FR-142 (units).
+- FSpec FR-252 (clock binding key), FSpec FR-255 (interval key), FSpec
+  FR-090 (profiles), FSpec FR-142 (units).
 
 ## References
 
-- QSpec half: QSpec FR-416 (Linear STD-139) owns the `model-steps` and
-  `model-time` bindings in QSpec FR-252, the timed profile identity in QSpec
+- FSpec half: FSpec FR-416 (Linear STD-139) owns the `model-steps` and
+  `model-time` bindings in FSpec FR-252, the timed profile identity in FSpec
   FR-255's key, and the default-binding grammar (ADR-026 OV-3, OV-4, OV-7).

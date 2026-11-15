@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! S1 parse of a selected extension's declaration forms and the
 //! declaration-form refusal (FR-354 "Admission"; TC-882 parse steps,
-//! TC-883 steps 5 and 6; QSpec FR-467 "Production").
+//! TC-883 steps 5 and 6; FSpec FR-467 "Production").
 use std::collections::BTreeSet;
 
-use ix_trace_rs::trace;
-use qsl_cst::{CompleteCause, CompleteCode, CompleteDiagnostic, Limits, ParsedSource, Production};
-use qsl_foundation::selection::DefinitionRef;
-use qsl_foundation::SourceIdentity;
-use qsl_semantics::library::bundle::{
+use filament_spec_language::complete::parse_with_extensions;
+use fsl_cst::{CompleteCause, CompleteCode, CompleteDiagnostic, Limits, ParsedSource, Production};
+use fsl_foundation::selection::DefinitionRef;
+use fsl_foundation::SourceIdentity;
+use fsl_semantics::library::bundle::{
     Definition, DefinitionCatalog, DefinitionRole, ReaderAuthority,
 };
-use qsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
-use quire_spec_language::complete::parse_with_extensions;
+use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
+use ix_trace_rs::trace;
 
-const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"quire.value.complete/v1\";\n";
+const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n";
 const FORM: &str = "retention Audit { subject: \"audit\", days: 30 }";
 
 fn identity() -> SourceIdentity {
@@ -219,7 +219,7 @@ fn a_form_cut_off_at_the_end_of_the_input_refuses_unexpected_end() {
 #[trace("TC-883", "FR-354-AC-4")]
 #[test]
 fn an_unselected_leading_keyword_refuses_declaration_form_whatever_the_catalog_holds() {
-    let selections = "profile Complete = \"quire.value.complete/v1\"";
+    let selections = "profile Complete = \"filament.value.complete/v1\"";
     let none = parse(&HeldExtensions::default(), FORM);
     let other = parse(&held(&["audit"]), FORM);
     for parsed in [&none, &other] {

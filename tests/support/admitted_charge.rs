@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Project admitted-charge records to their public charge-point values.
 
-pub(crate) fn admitted_charge_points(meter: &quire_exact::Meter) -> Vec<quire_exact::ChargePoint> {
+pub(crate) fn admitted_charge_points(
+    meter: &filament_exact::Meter,
+) -> Vec<filament_exact::ChargePoint> {
     meter
         .admitted_charges()
         .iter()

@@ -3,26 +3,26 @@
 //! item per requirement record of a checked package, with no
 //! caller-supplied item list.
 
-use quire_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
-use ix_trace_rs::trace;
-use qsl_forms::build_unit;
-use qsl_foundation::bound::{DomainKey, DomainKind, FiniteBound};
-use qsl_foundation::{BackendId, SourceIdentity};
-use qsl_package::CheckedPackage;
-use qsl_route::request::{
+use filament_exact::{Integer, IntegerInterval, NodeKey, ValueType};
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_forms::build_unit;
+use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound};
+use fsl_foundation::{BackendId, SourceIdentity};
+use fsl_package::CheckedPackage;
+use fsl_route::request::{
     items_from_requirements, ExtentClassification, RequestWriter, RequirementItem,
 };
-use qsl_route::{BackendDescriptor, Candidate, CandidateOutcome, Mode, ProviderOrigin, Registry};
-use qsl_semantics::check::{
+use fsl_route::{BackendDescriptor, Candidate, CandidateOutcome, Mode, ProviderOrigin, Registry};
+use fsl_semantics::check::{
     ApplicationTerm, BodyTerm, Capability, CheckedGraph, LeafTerm, MemberTerm, PackageDeclarations,
 };
-use quire_exact::{Integer, IntegerInterval, NodeKey, ValueType};
-use quire_semantic_value::checking::CheckingLimits;
+use ix_trace_rs::trace;
 
 pub(super) const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n";
+    profile v = \"filament.value.complete/v1\";\n";
 
 /// FR-062's RR-5.
 const SQ: &str = "function sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }";
@@ -54,14 +54,14 @@ pub(super) fn check(declarations: &str) -> CheckedGraph {
         "unit.native",
         text.as_bytes(),
         &BTreeMap::new(),
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_replay::spine::DependencyInput::default(),
     )
     .expect("each checked request-builder fixture retains its formatted package identity");
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
@@ -329,7 +329,7 @@ fn tc_449_inc_item_carries_its_enclosing_narrow_as_conversion_context() {
     else {
         panic!("the context is an application: {narrow:#?}");
     };
-    assert_eq!(operation.identity(), "quire.op.numeric.narrow");
+    assert_eq!(operation.identity(), "filament.op.numeric.narrow");
     let [MemberTerm::Leaf(LeafTerm::Reference { target })] = arguments.as_slice() else {
         panic!("the narrow has the add as its one operand: {arguments:#?}");
     };
@@ -395,18 +395,18 @@ fn tc_984_items_preserve_occurrence_path_conditions() {
 /// under `role`'s division law, with the sorted integer domains of `a` and `b`.
 fn division_package(
     operator: &str,
-    role: qsl_semantics::value::DefinitionRole,
+    role: fsl_semantics::value::DefinitionRole,
 ) -> (CheckedPackage, Vec<(DomainKey, DomainKind)>) {
-    use qsl_semantics::value::admit_integer_division;
+    use fsl_semantics::value::admit_integer_division;
     let text = format!(
         "{HEADER}function q using v(a: Integer, b: Integer): Integer pure \
          {{ if b != 0 then a {operator} b else 0 }}\n"
     );
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     let unit = build_unit(&parsed).expect("S2 builds the unit");
@@ -455,8 +455,8 @@ fn division_package(
 /// occur downstream.
 #[test]
 fn request_items_keep_integer_division_domains_unbounded() {
-    use qsl_semantics::value::DefinitionRole;
-    use quire_exact::DivisionProfile;
+    use filament_exact::DivisionProfile;
+    use fsl_semantics::value::DefinitionRole;
 
     for profile in [
         DivisionProfile::Truncating,
@@ -521,13 +521,13 @@ fn request_items_keep_integer_division_domains_unbounded() {
 /// narrowed to `Int[..]`. Both a run with a cvc5 provider registered and a run
 /// with the bounded descriptor alone are checked.
 ///
-/// QSpec FR-147-AC-3 coverage (FR-495's trace clause) is the request and
+/// FSpec FR-147-AC-3 coverage (FR-495's trace clause) is the request and
 /// route half only; end-to-end negotiation belongs to codegen's `negotiate_*`.
 #[trace("TC-1284", "FR-495-AC-7")]
 #[test]
 fn requires_bound_division_items_route_to_no_target_in_both_runs() {
-    use qsl_route::routing::{route, Disposition};
-    use qsl_semantics::value::DefinitionRole;
+    use fsl_route::routing::{route, Disposition};
+    use fsl_semantics::value::DefinitionRole;
 
     for role in [
         DefinitionRole::IntegerDivisionTruncating,

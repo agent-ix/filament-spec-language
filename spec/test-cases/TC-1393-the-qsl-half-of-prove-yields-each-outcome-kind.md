@@ -1,23 +1,23 @@
 ---
 id: TC-1393
-title: "The QSL half of prove yields an item of each outcome kind"
+title: "The FSL half of prove yields an item of each outcome kind"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-564
+  - target: ix://agent-ix/filament-spec-language/FR-564
     type: verifies
 ---
-# TC-1393: The QSL half of prove yields an item of each outcome kind
+# TC-1393: The FSL half of prove yields an item of each outcome kind
 
 ## Description
 
-Run the `prove` (QSL half) row of FR-564's matrix: QSL engines served as
+Run the `prove` (FSL half) row of FR-564's matrix: FSL engines served as
 providers, and FR-291's plugin settlement records.
 
 Scope: FR-564-AC-6.
 
 ## Test Procedure
 
-1. Through `qsl_analyze::provider::run`, run FR-281-AC-1's item,
+1. Through `fsl_analyze::provider::run`, run FR-281-AC-1's item,
    FR-281-AC-2's item, FR-280-AC-6's request with the undeclared-population
    binding, FR-281-AC-11's EN-1 `RequiresBound` item and FR-281-AC-6 (a)'s
    budgeted item, each over bytes and a provision; build one FR-286 item from

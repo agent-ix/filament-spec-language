@@ -5,20 +5,20 @@
 //! once as written and once with a relation declaration after its last
 //! declaration, so no span of an earlier declaration moves.
 
-use ix_trace_rs::trace;
-use qsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
-use qsl_foundation::{BackendId, SourceIdentity};
-use qsl_package::{emit_package, export_bindings, CheckedPackage, ExportRefusal};
-use qsl_replay::spine::{run_clause, ClauseRunStage};
-use qsl_route::request::items_from_requirements;
-use qsl_route::routing::{route, Disposition};
-use qsl_route::{
+use filament_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
+use fsl_foundation::{BackendId, SourceIdentity};
+use fsl_package::{emit_package, export_bindings, CheckedPackage, ExportRefusal};
+use fsl_replay::spine::{run_clause, ClauseRunStage};
+use fsl_route::request::items_from_requirements;
+use fsl_route::routing::{route, Disposition};
+use fsl_route::{
     descriptor_from_manifest, Candidate, CandidateOutcome, ManifestMembers, ProviderOrigin,
     Registry,
 };
-use qsl_semantics::check::{CheckedGraph, PackageDeclarations};
-use quire_semantic_value::checking::CheckMode;
-use quire_semantic_value::checking::CheckingLimits;
+use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
+use ix_trace_rs::trace;
 
 use crate::support::config_version_spine::{cases::CASES, spine};
 
@@ -36,21 +36,21 @@ fn with_relation(unit: &str) -> String {
 
 fn graph_of(text: &str) -> CheckedGraph {
     let packages =
-        qsl_semantics::model::intake::package_input([spine::DOMAIN_PACKAGE.as_bytes()]).unwrap();
-    let parsed = qsl_cst::parse(
+        fsl_semantics::model::intake::package_input([spine::DOMAIN_PACKAGE.as_bytes()]).unwrap();
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:abstraction-inert"),
         "program.native",
         text.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let raw = parsed.source().reference().clone();
-    let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let models = qsl_semantics::model::intake::admit_unit(
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
         &unit.selections().models,
         &packages,
-        qsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("the model is admitted");
     PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
@@ -153,7 +153,7 @@ fn a_relation_changes_no_clause_disposition() {
         spine::write(&path, case).expect("the spine files");
         let plain = spine::request(&path, case).expect("a request");
         let mut carried = spine::request(&path, case).expect("a request");
-        let qsl_replay::spine::ClauseRunSource::Program { bytes, .. } = &mut carried.source else {
+        let fsl_replay::spine::ClauseRunSource::Program { bytes, .. } = &mut carried.source else {
             panic!("a program source");
         };
         let text = String::from_utf8(bytes.clone()).expect("UTF-8 source");
@@ -222,7 +222,7 @@ fn a_source_relation_is_emitted_and_unbound_items_name_the_population() {
     let emission = emit_package(
         &package,
         move |_| Some(SourceRegion::new(source.clone(), 0, 1).expect("a source region")),
-        qsl_package::EmitLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
     )
     .expect("the checked package emits");
     let wire: serde_json::Value =
@@ -248,7 +248,7 @@ fn a_source_relation_is_emitted_and_unbound_items_name_the_population() {
         .requirements()
         .iter()
         .find(|(_, record)| {
-            record.requirements().kind() == qsl_semantics::check::Capability::ValueValidity
+            record.requirements().kind() == fsl_semantics::check::Capability::ValueValidity
         })
         .map(|(key, _)| key.clone())
         .expect("the unit has a value-validity item");
@@ -259,7 +259,7 @@ fn a_source_relation_is_emitted_and_unbound_items_name_the_population() {
     assert_eq!(bound.bindings.len(), 1);
     assert!(matches!(
         bound.bindings[0].0,
-        qsl_semantics::check::AbstractionKey::Object(_)
+        fsl_semantics::check::AbstractionKey::Object(_)
     ));
 
     let clause = package
@@ -274,7 +274,7 @@ fn a_source_relation_is_emitted_and_unbound_items_name_the_population() {
     assert_eq!(elements.len(), 1);
     assert!(matches!(
         elements[0].key,
-        qsl_semantics::check::AbstractionKey::Population(_)
+        fsl_semantics::check::AbstractionKey::Population(_)
     ));
     assert_eq!(elements[0].package, spine::PACKAGE_IDENTITY);
 }

@@ -3,7 +3,7 @@ id: TC-381
 title: "The expression-node limit bounds the whole checked package, not each declaration"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
 ---
 # TC-381: The expression-node limit bounds the whole checked package, not each declaration

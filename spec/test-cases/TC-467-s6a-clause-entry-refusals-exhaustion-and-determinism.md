@@ -3,7 +3,7 @@ id: TC-467
 title: "S6a clause entry refuses bad selections, reports exhaustion and is deterministic"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: verifies
 ---
 # TC-467: S6a clause entry refuses bad selections, reports exhaustion and is deterministic

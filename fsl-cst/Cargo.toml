@@ -1,0 +1,33 @@
+[package]
+name = "fsl-cst"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "ADR-011 §6.1 layer 1: the complete-V1 recovering concrete syntax tree -- token vocabulary, lexer, parser, declarative grammar and located diagnostics."
+
+[features]
+# Test-only fixture constructors (`LosslessCst::fixture`) — never enabled in a
+# production build; `fsl-forms`'s `[dev-dependencies]` turns it on so its
+# `dispatch` unit tests can reach it in both feature lanes (mirrors the root
+# crate's own `test-support` convention, PR #140 F13).
+test-support = []
+
+[dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+fsl-foundation = { path = "../fsl-foundation" }
+filament-exact = { workspace = true }
+logos = "0.16.1"
+serde_json = "1.0.151"
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"

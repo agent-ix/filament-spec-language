@@ -4,12 +4,12 @@
 //! checked clause the package holds, and a clause that cannot be paired by
 //! name is refused at construction.
 
-use ix_trace_rs::trace;
-use qsl_eval::temporal::evidence::{
+use fsl_eval::temporal::evidence::{
     ClauseFormula, ClauseWork, EvidencePackage, NonValueKind, PackageMismatch, Truth,
 };
-use qsl_eval::temporal::AggregateSample;
-use qsl_package::CheckedNodeId;
+use fsl_eval::temporal::AggregateSample;
+use fsl_package::CheckedNodeId;
+use ix_trace_rs::trace;
 use serde_json::Value;
 
 use super::temporal_package_route::{
@@ -66,7 +66,7 @@ fn a_package_formula_that_differs_from_the_checked_clause_is_unreadable() {
         let unaltered = EvidencePackage::from_emission(
             &built.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the emission");
         let [clause] = clause_ids(&unaltered).try_into().expect("one clause");
@@ -85,7 +85,7 @@ fn a_package_formula_that_differs_from_the_checked_clause_is_unreadable() {
         let emitted = EvidencePackage::from_emission(
             &changed.emission,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("rows");
         let [clause] = clause_ids(&emitted).try_into().expect("one clause");
@@ -104,7 +104,7 @@ fn a_package_formula_that_differs_from_the_checked_clause_is_unreadable() {
         // graph, so the same bytes are refused the same way.
         let back = EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("the read-back package");
         let mut meter = unlimited();
@@ -132,7 +132,7 @@ fn a_clause_the_package_does_not_hold_is_unresolved() {
     let package = EvidencePackage::from_emission(
         &built.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the emission");
     let due = clause_ids(&package).remove(0);
@@ -145,8 +145,8 @@ fn a_clause_the_package_does_not_hold_is_unresolved() {
         .zip(read.admitted().node_kinds())
         .find(|(_, kind)| {
             **kind
-                == quire_contract_model::CheckedNodeKind::Protocol(
-                    quire_contract_model::ProtocolForm::ProtocolClause,
+                == filament_contract_model::CheckedNodeKind::Protocol(
+                    filament_contract_model::ProtocolForm::ProtocolClause,
                 )
         })
         .map(|(node, _)| node.node_id.clone())
@@ -181,7 +181,7 @@ fn the_call_measures_the_package_listing() {
     let read = built.read(&built.emission);
     let package = EvidencePackage::from_read(
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the read-back package");
     let [clause] = clause_ids(&package).try_into().expect("one clause");
@@ -222,13 +222,13 @@ fn a_clause_reference_at_another_clause_is_refused_at_construction() {
     assert!(EvidencePackage::from_emission(
         &built.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
     )
     .is_ok());
     let refs = built.emission.temporal_rows().clauses().to_vec();
-    let at = |position: fn(usize) -> usize| -> Vec<qsl_package::TemporalClauseRef> {
+    let at = |position: fn(usize) -> usize| -> Vec<fsl_package::TemporalClauseRef> {
         refs.iter()
-            .map(|found| qsl_package::TemporalClauseRef {
+            .map(|found| fsl_package::TemporalClauseRef {
                 clause: position(found.clause),
                 ..found.clone()
             })
@@ -250,7 +250,7 @@ fn a_clause_reference_at_another_clause_is_refused_at_construction() {
                 EvidencePackage::from_emission(
                     &wrong,
                     &read,
-                    &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+                    &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
                 ),
                 Err(PackageMismatch::ClauseRow)
             ),
@@ -271,14 +271,14 @@ fn an_ambiguous_name_is_refused_by_the_read_route_only() {
     assert!(matches!(
         EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
         Err(PackageMismatch::AmbiguousName)
     ));
     assert!(EvidencePackage::from_emission(
         &same.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
     )
     .is_ok());
 
@@ -291,7 +291,7 @@ fn an_ambiguous_name_is_refused_by_the_read_route_only() {
     assert!(matches!(
         EvidencePackage::from_read(
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
         Err(PackageMismatch::AmbiguousName)
     ));
@@ -315,7 +315,7 @@ fn profile_selections_that_are_not_the_packages_are_refused() {
         EvidencePackage::from_emission(
             &wrong,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
         Err(PackageMismatch::ProfileSelections)
     ));
@@ -336,7 +336,7 @@ fn bindings_that_are_not_the_packages_are_refused() {
         EvidencePackage::from_emission(
             &wrong,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
         Err(PackageMismatch::Bindings)
     ));
@@ -345,14 +345,14 @@ fn bindings_that_are_not_the_packages_are_refused() {
         EvidencePackage::from_emission(
             &none,
             &read,
-            &mut qsl_package::V2ReadLimits::fixture().native_join_budget()
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget()
         ),
         Err(PackageMismatch::Bindings)
     ));
 }
 
 /// FR-516-AC-47 (its `count` part only; `sum`, `min` and `max` are covered in
-/// `qsl-eval`) and FR-516-AC-49 (TC-1311): the package subject
+/// `fsl-eval`) and FR-516-AC-49 (TC-1311): the package subject
 /// view reads an aggregate atom, so both clauses of the package are readable
 /// and the aggregate atom is valued from the request's `aggregate_samples`,
 /// never from the `holds` valuation map. `count over past[0,1]` of `Counted`
@@ -374,7 +374,7 @@ fn a_clause_with_an_aggregate_atom_is_read_from_its_samples() {
     let package = EvidencePackage::from_emission(
         &built.emission,
         &read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the emission");
     let ids = clause_ids(&package);

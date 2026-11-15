@@ -3,7 +3,7 @@ id: TC-1082
 title: "The export returns a bound result or a refusal for every requested item"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-307
+  - target: ix://agent-ix/filament-spec-language/FR-307
     type: verifies
 ---
 # TC-1082: The export returns a bound result or a refusal for every requested item

@@ -3,9 +3,9 @@ id: TC-1327
 title: "A hyper clause emits its name row and clock binding on its body wrapper"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-488
+  - target: ix://agent-ix/filament-spec-language/FR-488
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: verifies
 ---
 # TC-1327: A hyper clause emits its name row and clock binding on its body wrapper

@@ -3,9 +3,9 @@ id: TC-481
 title: "The assembler admits source enums and predicates, which check and lowering then use"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: verifies
 ---
 # TC-481: The assembler admits source enums and predicates, which check and lowering then use
@@ -14,7 +14,7 @@ relationships:
 
 Verify that the assembler admits each enum form as an `EnumBinding` whose
 declaration and member keys `check` mints from the required package name and qualified paths, by
-QSpec FR-322; that it admits a predicate as a function
+FSpec FR-322; that it admits a predicate as a function
 of kind `Predicate`; and that the checked package calls both and lowers them
 to the nodes FR-092 fixes.
 

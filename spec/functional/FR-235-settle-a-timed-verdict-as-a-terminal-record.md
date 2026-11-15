@@ -3,40 +3,40 @@ id: FR-235
 title: "Settle a timed verdict as an FR-331 terminal record"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-232
+  - target: ix://agent-ix/filament-spec-language/FR-232
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-236
+  - target: ix://agent-ix/filament-spec-language/FR-236
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-249
+  - target: ix://agent-ix/filament-spec-language/FR-249
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
 ---
 # FR-235: Settle a timed verdict as an FR-331 terminal record
 
 ## Description
 
-QSL SHALL settle every item over a timed subject as exactly one FR-331
+FSL SHALL settle every item over a timed subject as exactly one FR-331
 terminal record, extending FR-127's map with ADR-026's bases and causes
-(ADR-026 TV-1, CF-4, OV-14). `qsl-replay` owns the additions to
+(ADR-026 TV-1, CF-4, OV-14). `fsl-replay` owns the additions to
 `TerminalValue`; the zone engine's outcome (FR-239), its counterexample's
 replay (FR-237) and its certificate's check (FR-245) map to it through one
 function.
@@ -81,7 +81,7 @@ refuted, with its trap evidence.
 - The map SHALL be exhaustive, with no `_` arm, and give each input
   exactly one row:
 
-| Verdict | Input | QSpec FR-360 label | QSpec FR-243 basis | `TerminalValue` | O-16 category |
+| Verdict | Input | FSpec FR-360 label | FSpec FR-243 basis | `TerminalValue` | O-16 category |
 | --- | --- | --- | --- | --- | --- |
 | V-1 | `Holds(certificate)` and the checker accepts | `proved` | `closed-scope` | `Proved{basis: ZoneCertified, certification: Certified}` | success |
 
@@ -90,7 +90,7 @@ refuted, with its trap evidence.
 | V-10 | `Violated` with `kind: TimeLock` whose replay reproduces | `refuted` | `closed-scope` | `Refuted` | violation |
 | V-6 | `Holds(certificate)` and the checker rejects | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected)` | inconclusive |
 | V-6 | `Undecided(NoAdmittedBehaviour)` or `Undecided(LassoNotConcretized)`; a replay that settles `inconclusive` or refuses | `inconclusive` | `unsettled` | `Inconclusive(cause)` | inconclusive |
-| V-7 | `Stopped(cause, limit)`; for task automata this is a bounded search stopped before its proof or counterexample is checked | `failed`, execution `resource-incomplete` for generic stops; `incomplete`, execution `resource-incomplete` for task-search stops | `unavailable` | `Incomplete(LimitReached{limit, value, setting})`, or `Incomplete(Cancelled{source})`; a bounded task search additionally carries QSpec FR-331 `task_search` evidence | incomplete |
+| V-7 | `Stopped(cause, limit)`; for task automata this is a bounded search stopped before its proof or counterexample is checked | `failed`, execution `resource-incomplete` for generic stops; `incomplete`, execution `resource-incomplete` for task-search stops | `unavailable` | `Incomplete(LimitReached{limit, value, setting})`, or `Incomplete(Cancelled{source})`; a bounded task search additionally carries FSpec FR-331 `task_search` evidence | incomplete |
 | V-8 | `PunctualInterval` disposition; no candidate | `unsupported` | `unavailable` | `Unsupported(PunctualInterval)` | unsupported |
 
 - A `Holds(certificate)` outcome SHALL settle `proved` only after
@@ -99,9 +99,9 @@ refuted, with its trap evidence.
   does.
 - A `Violated` outcome SHALL settle `refuted` only through its replay.
 - For a task-automaton `Stopped` outcome, the terminal-record writer SHALL
-  use QSpec FR-331's `incomplete` mapping and include its `task_search`
+  use FSpec FR-331's `incomplete` mapping and include its `task_search`
   evidence. Generic stops continue to use FR-127's generic mapping. The
-  QSpec reader owns frontier validation; the evidence justifies the
+  FSpec reader owns frontier validation; the evidence justifies the
   incomplete status and SHALL NOT settle `proved`.
 - `TerminalValue::category` SHALL map `ZoneCertified`, `ClosedForm`,
   `BoundedSolver` and `InductiveSolver` to success, and `InsufficientHorizon`
@@ -137,6 +137,6 @@ refuted, with its trap evidence.
 
 ## References
 
-- QSpec half: QSpec FR-416 and FR-417 (Linear STD-139) own the verdict
-  rows, the new causes and the `TimeLock` kind in QSpec FR-331 (ADR-026
+- FSpec half: FSpec FR-416 and FR-417 (Linear STD-139) own the verdict
+  rows, the new causes and the `TimeLock` kind in FSpec FR-331 (ADR-026
   OV-6).

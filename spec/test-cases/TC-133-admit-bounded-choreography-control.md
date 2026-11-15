@@ -3,7 +3,7 @@ id: TC-133
 title: "Admit bounded choreography control and visible progress"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-048, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-048, type: verifies }
 ---
 # TC-133: Admit bounded choreography control and visible progress
 

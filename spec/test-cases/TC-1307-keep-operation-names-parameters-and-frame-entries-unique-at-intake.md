@@ -3,7 +3,7 @@ id: TC-1307
 title: "Keep operation names, parameters and frame entries unique at intake"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-512
+  - target: ix://agent-ix/filament-spec-language/FR-512
     type: verifies
 ---
 # TC-1307: Keep operation names, parameters and frame entries unique at intake

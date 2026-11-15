@@ -3,19 +3,19 @@ id: TC-847
 title: "An undefined letter fails a clause over a supplied trace or lasso, and replays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-331
+  - target: ix://agent-ix/filament-spec-language/FR-331
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: verifies
 ---
 # TC-847: An undefined letter fails a clause over a supplied trace or lasso, and replays
@@ -54,7 +54,7 @@ refusal.
 5. Construct, encode and decode both FR-331-AC-4 requests, assert the decoded
    state-clause target and envelope node/occurrence identify the same clause,
    then replay the two undefined-evaluation packets through
-   `qsl_replay::replay`; replay an
+   `fsl_replay::replay`; replay an
    observed-lasso packet for `ReachesFair` whose fairness set matches the
    clause under FR-331-AC-5. Submit a packet with `ReplaySource::Input` and
    one whose `WitnessEnvelope` position differs from its payload position.

@@ -3,7 +3,7 @@ id: TC-542
 title: "S3 checks a refinement's assume and ensure rows into F_C and F_A"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-137
+  - target: ix://agent-ix/filament-spec-language/FR-137
     type: verifies
 ---
 # TC-542: S3 checks a refinement's assume and ensure rows into F_C and F_A

@@ -3,25 +3,25 @@ id: FR-393
 title: "Parse time declarations, Clock fields, quantity literals and timed intervals, and build their S2 forms"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-311
+  - target: ix://agent-ix/filament-spec-language/FR-311
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-233
+  - target: ix://agent-ix/filament-spec-language/FR-233
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-185
+  - target: ix://agent-ix/filament-spec-language/FR-185
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
 ---
 # FR-393: Parse time declarations, Clock fields, quantity literals and timed intervals, and build their S2 forms
@@ -30,11 +30,11 @@ relationships:
 
 When a `1-draft` unit holds a `time-decl`, a `time-invariant`, an
 `urgent-decl`, a field of type `Clock`, a `quantity-literal` expression or a
-temporal operator with a `timed-interval`, S1 (`qsl-cst`) SHALL parse it with
-the productions of QSpec's shared grammar (§ "Probabilistic, timed and
-real-time forms"), and S2 (`qsl-forms`) SHALL build one form for it, so that
-S3 can check it (FR-230, FR-233, FR-234). QSpec owns the productions and
-their meaning; this requirement specifies the forms QSL builds. Parsing
+temporal operator with a `timed-interval`, S1 (`fsl-cst`) SHALL parse it with
+the productions of FSpec's shared grammar (§ "Probabilistic, timed and
+real-time forms"), and S2 (`fsl-forms`) SHALL build one form for it, so that
+S3 can check it (FR-230, FR-233, FR-234). FSpec owns the productions and
+their meaning; this requirement specifies the forms FSL builds. Parsing
 selects no meaning: whether a time member, a clock read or an interval is
 admitted is the S3 check's decision. S2 builds these forms whether or not the
 unit selects any facet. Whether a unit admits a `time-decl`, a `time-invariant`, an `urgent-decl` or the `Clock` type is decided after S2, by S3.
@@ -213,7 +213,7 @@ the type reference `Clock` to `TypeForm::Clock{span}`. `TemporalOperatorForm`
 
 ## References
 
-- QSpec half: the shared grammar's `time-decl`, `time-invariant`,
+- FSpec half: the shared grammar's `time-decl`, `time-invariant`,
   `clock-bound`, `urgent-decl`, `quantity-literal`, `exact-number` and
-  `timed-interval` productions, and QSpec FR-142.
+  `timed-interval` productions, and FSpec FR-142.
 - Owning ticket: Linear QSL-580.

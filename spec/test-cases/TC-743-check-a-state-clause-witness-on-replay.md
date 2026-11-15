@@ -3,7 +3,7 @@ id: TC-743
 title: "Replay re-derives a state-clause witness and checks that the element separates the clause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-268
+  - target: ix://agent-ix/filament-spec-language/FR-268
     type: verifies
 ---
 # TC-743: Replay re-derives a state-clause witness and checks that the element separates the clause

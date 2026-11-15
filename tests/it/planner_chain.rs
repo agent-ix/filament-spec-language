@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared helpers of TC-1329 and TC-1330: compile a unit from real source
 //! through S1 to S4, derive the planner declaration, write the request items
-//! with `qsl-route`'s writer, and build QSpec FR-492 settlement requests
+//! with `fsl-route`'s writer, and build FSpec FR-492 settlement requests
 //! from them.
 //!
 //! The request item JSON is built from the route-written [`RequestItem`]:
@@ -10,19 +10,19 @@
 //! the fairness set are the producer's, not the checked package's, so they
 //! come from the derived slot key.
 
-use qsl_foundation::node_wire::node_key_to_json;
-use qsl_package::CheckedPackage;
-use qsl_replay::planner::{
+use filament_exact::NodeKey;
+use filament_semantic_value::checking::CheckMode;
+use filament_semantic_value::checking::CheckingLimits;
+use filament_semantic_value::fairness::FairnessConstraint;
+use fsl_foundation::node_wire::node_key_to_json;
+use fsl_package::CheckedPackage;
+use fsl_replay::planner::{
     read_settlement_request, settle, subject_text, Budget, PlannerDeclaration, PlannerResult,
     ReadLimits, RequestRefusal, SettlementRequest,
 };
-use qsl_route::declaration::{DeclaredItem, ItemPremise};
-use qsl_route::request::RequestItem;
-use qsl_semantics::check::{ComponentGuaranteeKey, PackageDeclarations, SlotKey};
-use quire_exact::NodeKey;
-use quire_semantic_value::checking::CheckMode;
-use quire_semantic_value::checking::CheckingLimits;
-use quire_semantic_value::fairness::FairnessConstraint;
+use fsl_route::declaration::{DeclaredItem, ItemPremise};
+use fsl_route::request::RequestItem;
+use fsl_semantics::check::{ComponentGuaranteeKey, PackageDeclarations, SlotKey};
 use serde_json::{json, Value};
 
 /// The checked package identity text every fixture unit is assembled under.
@@ -35,9 +35,9 @@ pub(crate) const PACKAGE: &str = "pkg";
     reason = "the refusal is read through `Debug` in a failure message"
 )]
 pub(crate) enum Failure {
-    Syntax(Vec<qsl_cst::CompleteDiagnostic>),
-    Assembly(qsl_semantics::check::AssemblyRefusal),
-    Check(Vec<qsl_semantics::check::CheckRefusal>),
+    Syntax(Vec<fsl_cst::CompleteDiagnostic>),
+    Assembly(fsl_semantics::check::AssemblyRefusal),
+    Check(Vec<fsl_semantics::check::CheckRefusal>),
 }
 
 /// Compile `unit` over the domain package `documents` through S1 to S4.
@@ -47,23 +47,23 @@ pub(crate) fn compile_with(unit: &str, documents: &[Value]) -> Result<CheckedPac
         .map(|document| serde_json::to_vec(document).expect("the fixture serializes"))
         .collect();
     let packages =
-        qsl_semantics::model::intake::package_input(bytes.iter().map(Vec::as_slice)).unwrap();
-    let parsed = qsl_cst::parse(
-        qsl_foundation::SourceIdentity::new("agent-ix", "test:planner-chain"),
+        fsl_semantics::model::intake::package_input(bytes.iter().map(Vec::as_slice)).unwrap();
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:planner-chain"),
         "program.native",
         unit.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     if !parsed.is_admissible() {
         return Err(Failure::Syntax(parsed.diagnostics().to_vec()));
     }
     let raw = parsed.source().reference().clone();
-    let built = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let models = qsl_semantics::model::intake::admit_unit(
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
         &built.selections().models,
         &packages,
-        qsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("the models are admitted");
     let assembled =
@@ -197,7 +197,7 @@ pub(crate) fn entry_of(kind: &str, index: usize, extra: Value) -> Value {
 }
 
 /// One declaration of a compiled package, with its planner declaration and
-/// the request items `qsl-route` wrote for it.
+/// the request items `fsl-route` wrote for it.
 pub(crate) struct Chain {
     pub(crate) package: CheckedPackage,
     pub(crate) declaration: PlannerDeclaration,
@@ -215,7 +215,7 @@ impl Chain {
         node: &NodeKey,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let declaration = PlannerDeclaration::from_package(&package, node)?;
-        let mut writer = qsl_route::request::RequestWriter::new();
+        let mut writer = fsl_route::request::RequestWriter::new();
         let items = writer.declaration_items(package.graph());
         let keys = declared_keys(&package, node);
         Ok(Self {
@@ -273,13 +273,13 @@ impl Chain {
                     "identity": derived.key.to_wire().expect("an identity"),
                 });
                 match &derived.backing {
-                    qsl_replay::planner::SlotBacking::Item => {
+                    fsl_replay::planner::SlotBacking::Item => {
                         wire["result"] = json!({
                             "request": self.item_json(index),
                             "result": self.proved(index),
                         });
                     }
-                    qsl_replay::planner::SlotBacking::Environment { member: Some(name) } => {
+                    fsl_replay::planner::SlotBacking::Environment { member: Some(name) } => {
                         wire["record"] = environment(name.as_str());
                     }
                     _ => {}
@@ -288,7 +288,7 @@ impl Chain {
             })
             .collect();
         json!({
-            "format": qsl_replay::planner::FORMAT,
+            "format": fsl_replay::planner::FORMAT,
             "package": self.package.graph().package_name(),
             "item": {
                 "role": self.declaration.role().as_str(),
@@ -352,7 +352,7 @@ fn declared_keys(package: &CheckedPackage, node: &NodeKey) -> Vec<Option<(SlotKe
                 .slots()
                 .into_iter()
                 .map(|slot| match slot.key {
-                    Some(qsl_semantics::check::CompositionSlotKey::ComponentGuarantee(key)) => {
+                    Some(fsl_semantics::check::CompositionSlotKey::ComponentGuarantee(key)) => {
                         Some((key.key, key.assumptions))
                     }
                     _ => None,

@@ -3,7 +3,7 @@ id: TC-846
 title: "A model subject is finite by its universes, apart from proof bounds"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-336
+  - target: ix://agent-ix/filament-spec-language/FR-336
     type: verifies
 ---
 # TC-846: A model subject is finite by its universes, apart from proof bounds

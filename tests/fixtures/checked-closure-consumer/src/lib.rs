@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! A CG-shaped external caller enters QSL only through qsl-replay.
+//! A CG-shaped external caller enters FSL only through fsl-replay.
 
-use qsl_replay::{
-    acquire_checked_closure, call_site, ApplicationEnvironment, DependencyInput, Identifier,
-    QualifiedName, ReplayLimits, SourceIdentity, StageLimits,
-};
-use quire_eval::{
+use filament_eval::{
     Admission, Body, BodyFactory, BodyFailure, Evaluation, FamilyOutcome, Resume, Transition,
 };
-use quire_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
-use quire_semantic_value::object_closure::ObjectClosure;
+use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
+use filament_semantic_value::object_closure::ObjectClosure;
+use fsl_replay::{
+    acfilament_checked_closure, call_site, ApplicationEnvironment, DependencyInput, Identifier,
+    QualifiedName, ReplayLimits, SourceIdentity, StageLimits,
+};
 
-const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.value.complete/v1\";\nfunction f using v(x: Int[0, 9]): Integer pure { x }\n";
+const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(x: Int[0, 9]): Integer pure { x }\n";
 
 struct Generated;
 struct GeneratedCall;
@@ -53,8 +53,8 @@ pub fn run() {
         &name,
     )
     .expect("function site");
-    let compilation = acquire_checked_closure(
-        qsl_replay::CompileUnit {
+    let compilation = acfilament_checked_closure(
+        fsl_replay::CompileUnit {
             source,
             package_name: "consumer.native".to_owned(),
             path: "consumer.native",
@@ -99,8 +99,8 @@ pub fn run() {
         )
         .expect("admitted call");
     let result = match session.step() {
-        qsl_replay::CheckedApplicationProgress::Runnable(next) => next.run().expect("run"),
-        qsl_replay::CheckedApplicationProgress::Terminal(result) => result.expect("terminal"),
+        fsl_replay::CheckedApplicationProgress::Runnable(next) => next.run().expect("run"),
+        fsl_replay::CheckedApplicationProgress::Terminal(result) => result.expect("terminal"),
     };
     assert!(matches!(result.outcome,
         FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(ref n))) if n.to_u64() == Some(7)));

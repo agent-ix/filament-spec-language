@@ -8,11 +8,11 @@
 //!
 //! `CheckedPackage` is a concrete type, so a panicking test double cannot be
 //! substituted for it. This file backs the criterion's API-surface half
-//! instead: `qsl-eval` has no direct dependency on `qsl-cst` or `qsl-forms`,
+//! instead: `fsl-eval` has no direct dependency on `fsl-cst` or `fsl-forms`,
 //! and the evaluator's own source calls nothing that renders text or
 //! reads a string-shaped accessor of the checked package. The behavioural
 //! half (renaming declared names changes no result) is
-//! `qsl-eval/tests/it/evaluation_ignores_display_strings.rs`.
+//! `fsl-eval/tests/it/evaluation_ignores_display_strings.rs`.
 
 use ix_trace_rs::trace;
 use std::path::Path;
@@ -108,11 +108,11 @@ fn findings(source: &str, only_fn: Option<&'static str>) -> Vec<String> {
     scan.findings
 }
 
-/// `qsl-eval`'s `[dependencies]` table text.
+/// `fsl-eval`'s `[dependencies]` table text.
 fn shipped_dependencies(manifest: &str) -> &str {
     let start = manifest
         .find("\n[dependencies]")
-        .expect("qsl-eval has a [dependencies] table");
+        .expect("fsl-eval has a [dependencies] table");
     let rest = &manifest[start + 1..];
     let body = &rest["[dependencies]".len()..];
     body.find("\n[").map_or(body, |end| &body[..end])
@@ -121,16 +121,16 @@ fn shipped_dependencies(manifest: &str) -> &str {
 #[trace("TC-160", "FR-062-AC-6")]
 #[test]
 fn the_evaluator_has_no_path_to_source_text_or_rendering() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("qsl-eval");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval");
 
-    // No direct dependency on `qsl-cst` (the S1 reader) or `qsl-forms` (the
-    // S2 forms); `qsl-forms` is reachable through `qsl-semantics`.
+    // No direct dependency on `fsl-cst` (the S1 reader) or `fsl-forms` (the
+    // S2 forms); `fsl-forms` is reachable through `fsl-semantics`.
     let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("manifest reads");
     let shipped = shipped_dependencies(&manifest);
-    for forbidden in ["qsl-cst", "qsl-forms"] {
+    for forbidden in ["fsl-cst", "fsl-forms"] {
         assert!(
             !shipped.contains(forbidden),
-            "qsl-eval ships a dependency on {forbidden}:\n{shipped}"
+            "fsl-eval ships a dependency on {forbidden}:\n{shipped}"
         );
     }
 

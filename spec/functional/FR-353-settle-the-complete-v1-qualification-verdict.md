@@ -3,17 +3,17 @@ id: FR-353
 title: "Settle the complete-V1 qualification verdict"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-035
+  - target: ix://agent-ix/filament-spec-language/US-035
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-351
+  - target: ix://agent-ix/filament-spec-language/FR-351
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-352
+  - target: ix://agent-ix/filament-spec-language/FR-352
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-311
+  - target: ix://agent-ix/filament-specification/FR-311
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-567
+  - target: ix://agent-ix/filament-spec-language/FR-567
     type: references
 ---
 # FR-353: Settle the complete-V1 qualification verdict
@@ -21,13 +21,13 @@ relationships:
 ## Description
 
 When the `qualify` repository gate finishes a conformance run, the gate SHALL
-report QSL qualified for the run's scope if and only if every capability in
+report FSL qualified for the run's scope if and only if every capability in
 that scope is `passed` (FR-351), the scope is nonempty, and the
 `lifecycle-matrix` and `parity` parts FR-567 adds pass.
 
 The label `complete-v1: qualified` denotes a `qualified` verdict over the
 default scope defined by
-[FR-350](FR-350-run-the-conformance-corpus-against-qsl.md). A caller-selected
+[FR-350](FR-350-run-the-conformance-corpus-against-fsl.md). A caller-selected
 scope is reported as `qualified` without that label.
 
 ## Inputs
@@ -51,7 +51,7 @@ cargo run --package xtask -- qualify --corpus <dir> [--capability <id>]... [--li
 make qualify CORPUS=<dir>
 ```
 
-`--corpus` names the QSpec conformance corpus, read in place (FR-350).
+`--corpus` names the FSpec conformance corpus, read in place (FR-350).
 Each `--capability` adds one capability id to a caller-selected scope;
 with none, the scope is the default scope. Each `--limit` raises or lowers
 one FR-255 setting. `--text` writes the FR-352 report as text instead of
@@ -69,8 +69,8 @@ the per-vector `tool-failure` of FR-350, not a corpus preflight refusal.
 If the resolved scope contains zero capabilities, then the gate SHALL
 refuse before executing any vector, naming `empty-scope` as the cause and
 the resolved qualification scope as the locus. This includes a valid
-corpus whose capabilities all name only non-QSL consumers or profiles
-absent from QSL's definition catalog. The refusal emits no verdict,
+corpus whose capabilities all name only non-FSL consumers or profiles
+absent from FSL's definition catalog. The refusal emits no verdict,
 coverage report or coverage percentage, and exits 2 in both JSON and text
 modes. This check concerns the capability count, not the vector count:
 one selected capability with no applicable vectors settles `uncovered`
@@ -89,10 +89,10 @@ and yields `not-qualified`, coverage zero and exit 1.
 - If any in-scope capability is not `passed`, then the gate SHALL report
   `not-qualified`, naming every such capability with its outcome, and SHALL
   exit 1.
-- If the corpus location cannot be read, if QSpec FR-336 refuses the corpus,
+- If the corpus location cannot be read, if FSpec FR-336 refuses the corpus,
   if a `--capability` id is absent from the corpus capability inventory
   (FR-351), or if an argument is malformed, then the gate SHALL report the
-  QSL preflight refusal, give no verdict and exit 2. For a schema violation,
+  FSL preflight refusal, give no verdict and exit 2. For a schema violation,
   the report SHALL include the validator's instance path (for example,
   `/contract_version` for an unsupported corpus version); a strict-JSON or
   canonical-JSON refusal SHALL identify the corresponding parse or encoding
@@ -113,14 +113,14 @@ and yields `not-qualified`, coverage zero and exit 1.
 | FR-353-AC-1 | A fixture corpus whose in-scope vectors all pass, run over the default scope, reports `complete-v1: qualified` and exits 0. | Test |
 | FR-353-AC-2 | The same corpus with one vector's expected cause changed reports `not-qualified`, naming that vector's capability as `failed`, and exits 1; the same corpus with one capability's vectors removed reports `not-qualified`, naming it `uncovered`. Separate one-capability runs settling `unsupported`, `incomplete` and `tool-failure` each report `not-qualified` and exit 1; a missing vector input is the latter case, while a missing corpus is AC-4's exit 2. | Test |
 | FR-353-AC-3 | A run scoped to the capabilities that pass, over the corpus of AC-2, reports `qualified` for that named scope, does not report `complete-v1: qualified`, and exits 0. | Test |
-| FR-353-AC-4 | A run over a corpus location that does not exist reports the I/O refusal, gives no verdict and exits 2. A corpus rejected by QSpec FR-336 is refused before vector execution; for a schema violation, the QSL diagnostic includes the validator instance path (for example, `/contract_version` for an unsupported corpus version), gives no verdict and exits 2. A run with `--capability CAP-Z` that the corpus does not declare refuses naming `CAP-Z`. Runs with `--limit s9.nodes=1`, `--limit s3.nodes=ten`, `--limit s3.nodes=-1`, or two `--limit s3.nodes=5` operands each refuse naming the offending operand. No vector executes and no verdict is emitted in any of them. | Test |
-| FR-353-AC-5 | Valid corpora containing only monitor capabilities, only language capabilities with profiles absent from QSL's catalog, and a mix of those two kinds each resolve to an empty default scope: the gate refuses with cause `empty-scope` and locus the resolved scope, executes no vector, emits no verdict or coverage report, and exits 2 in JSON and text modes. Explicitly selecting one listed monitor-only capability from the same corpus instead reports that capability `uncovered`, coverage zero, `not-qualified` and exit 1. | Test |
+| FR-353-AC-4 | A run over a corpus location that does not exist reports the I/O refusal, gives no verdict and exits 2. A corpus rejected by FSpec FR-336 is refused before vector execution; for a schema violation, the FSL diagnostic includes the validator instance path (for example, `/contract_version` for an unsupported corpus version), gives no verdict and exits 2. A run with `--capability CAP-Z` that the corpus does not declare refuses naming `CAP-Z`. Runs with `--limit s9.nodes=1`, `--limit s3.nodes=ten`, `--limit s3.nodes=-1`, or two `--limit s3.nodes=5` operands each refuse naming the offending operand. No vector executes and no verdict is emitted in any of them. | Test |
+| FR-353-AC-5 | Valid corpora containing only monitor capabilities, only language capabilities with profiles absent from FSL's catalog, and a mix of those two kinds each resolve to an empty default scope: the gate refuses with cause `empty-scope` and locus the resolved scope, executes no vector, emits no verdict or coverage report, and exits 2 in JSON and text modes. Explicitly selecting one listed monitor-only capability from the same corpus instead reports that capability `uncovered`, coverage zero, `not-qualified` and exit 1. | Test |
 
 ## Dependencies
 
 - [FR-351](FR-351-settle-each-capability-from-its-executed-vectors.md),
   [FR-352](FR-352-report-capability-coverage.md).
-- QSpec FR-311 (a gap prevents only its containing scope from claiming
+- FSpec FR-311 (a gap prevents only its containing scope from claiming
   complete success, FR-311-AC-2).
-- QSpec FR-336 (the corpus contract validated during the qualification
+- FSpec FR-336 (the corpus contract validated during the qualification
   preflight, including its schema and corpus-level validation criteria).

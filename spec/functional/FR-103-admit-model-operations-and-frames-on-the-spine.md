@@ -3,21 +3,21 @@ id: FR-103
 title: "Admit a domain package's operations and their frames on the spine"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-154
+  - target: ix://agent-ix/filament-specification/FR-154
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-340
+  - target: ix://agent-ix/filament-specification/FR-340
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-103: Admit a domain package's operations and their frames on the spine
@@ -33,10 +33,10 @@ name it as `M::T::op` (FR-104).
 
 This amends FR-056's Complete-V1 paragraph, which this PR edits to match.
 Today intake refuses any operation whose frame declares an entry
-(`qsl-semantics/src/model/intake.rs:1263-1289`,
+(`fsl-semantics/src/model/intake.rs:1263-1289`,
 `unsupported_at(.., "operation.frame")`), and the assembler refuses every
 `OperationMember` record as `AssemblyCause::UnsupportedModelMember` (the match
-arm at `qsl-semantics/src/check/assemble.rs:405-409`), so no unit can use a
+arm at `fsl-semantics/src/check/assemble.rs:405-409`), so no unit can use a
 model that has an operation. This is the `StateModel` share of ADR-012 §15.3.
 
 Beyond frames, this FR keeps and checks each operation's own `requires` and
@@ -45,7 +45,7 @@ operation `pre`/`post` text is shape-checked and not kept (QSL-726).
 
 ## Inputs
 
-- One admitted domain package (FR-056, QSpec FR-154), Semantic IR 2.0.0.
+- One admitted domain package (FR-056, FSpec FR-154), Semantic IR 2.0.0.
 - `ModelNormalizationLimitsV1`.
 
 ## Outputs
@@ -70,10 +70,10 @@ operation `pre`/`post` text is shape-checked and not kept (QSL-726).
 
 - Intake SHALL resolve each `modifies` entry to a field declaration or a
   navigation relationship of the package, and each `creates` and `deletes` entry to an object type or process
-  declaration, under QSpec `model-complete.md`'s Frames row, checking the
+  declaration, under FSpec `model-complete.md`'s Frames row, checking the
   entries of `modifies`, then `creates`, then `deletes`, each in document
   order, and reporting the first that fails.
-- A `modifies` entry has a scope and a `deletes` entry has a scope (QSpec
+- A `modifies` entry has a scope and a `deletes` entry has a scope (FSpec
   FR-013). FR-154 states how intake reads them, which entries a scope admits,
   and the refusals a scoped entry gives; the scoped members are
   checked in the order FR-154 states, in document order within each member, and a conflict between
@@ -113,7 +113,7 @@ operation `pre`/`post` text is shape-checked and not kept (QSL-726).
   clauses with the resolved operation's `DeclarationKey` and keep them
   available to checking and dispatch linking. It SHALL bind the body's
   receiver-less parameter names positionally to the operation's parameters in
-  signature order, as required by the QSpec Complete-V1 grammar, and type its
+  signature order, as required by the FSpec Complete-V1 grammar, and type its
   body against the operation's declared result. The parameter count and
   types and the body type are checked for every body, whether or not a
   dispatched call reaches it (FR-302, FR-576), before any consumer uses it, and a mismatch refuses
@@ -127,16 +127,16 @@ operation `pre`/`post` text is shape-checked and not kept (QSL-726).
   types and operations, with its effective fields, invariant clauses and
   supertypes, and SHALL allow object and record fields to use that type by
   value. It SHALL carry a record-typed field through checking and checked
-  package emission as QSpec FR-322's self-typed `model`/
+  package emission as FSpec FR-322's self-typed `model`/
   `record_value_type` node, including a record field named by a frame's
-  `modifies` entry under QSpec FR-340. The record node SHALL keep its
+  `modifies` entry under FSpec FR-340. The record node SHALL keep its
   `ModelOwner`; it is never an object-reference target.
 - The assembler SHALL still refuse systems parts, ports and allocations as
   `UnsupportedModelMember`.
 ### A domain package operation's own requires and ensures
 
-Target design (QSpec TC-235 M06 run 7 and M15 run 6 are the reference rows;
-[QSpec TC-235](ix://agent-ix/quire-specification/TC-235) owns them). An
+Target design (FSpec TC-235 M06 run 7 and M15 run 6 are the reference rows;
+[FSpec TC-235](ix://agent-ix/filament-specification/TC-235) owns them). An
 operation declared in a domain package carries its own contract, authored as
 the operation's `pre` (its `requires`) and `post` (its `ensures`) clause
 lists. That contract is part of the model. Intake keeps it and the checker
@@ -209,12 +209,12 @@ evaluates it; it is not discarded and it is not shape-checked only.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-103-AC-1 | The ConfigVersion domain package (TC-458 fixture: object type `ConfigVersion` with `versionNumber: VersionNumber` bound to `Int[0, 1000]` and optional `parent: ConfigVersion`, population `config_history` over `ConfigVersion` with extent `closed`, and operation `attemptUpdate` with no parameters, result `Boolean` and frame `modifies [ConfigVersion/versionNumber]`) admits. The assembled `Config::ConfigVersion` has fields `versionNumber: Int[0, 1000]` and `parent: Option<Reference<Config::ConfigVersion>>`, and operation `attemptUpdate` with no parameters, result `Boolean` and an effect whose `modifies` is exactly the `versionNumber` field key. FR-056's `value-type/v1` scalar reader is verified end to end through `admit_unit`/`PackageDeclarations::assemble` by a dedicated bound-scalar fixture (`qsl-semantics/tests/it/model_operations.rs::bound_integer_value_type_admits_and_assembles`), and the shared `ConfigVersion` fixture this row's own tests use declares `versionNumber` as that same bound `VersionNumber` scalar. | Test |
+| FR-103-AC-1 | The ConfigVersion domain package (TC-458 fixture: object type `ConfigVersion` with `versionNumber: VersionNumber` bound to `Int[0, 1000]` and optional `parent: ConfigVersion`, population `config_history` over `ConfigVersion` with extent `closed`, and operation `attemptUpdate` with no parameters, result `Boolean` and frame `modifies [ConfigVersion/versionNumber]`) admits. The assembled `Config::ConfigVersion` has fields `versionNumber: Int[0, 1000]` and `parent: Option<Reference<Config::ConfigVersion>>`, and operation `attemptUpdate` with no parameters, result `Boolean` and an effect whose `modifies` is exactly the `versionNumber` field key. FR-056's `value-type/v1` scalar reader is verified end to end through `admit_unit`/`PackageDeclarations::assemble` by a dedicated bound-scalar fixture (`fsl-semantics/tests/it/model_operations.rs::bound_integer_value_type_admits_and_assembles`), and the shared `ConfigVersion` fixture this row's own tests use declares `versionNumber` as that same bound `VersionNumber` scalar. | Test |
 | FR-103-AC-2 | The same package with `modifies [ConfigVersion/missing]` refuses `missing_declaration`/`missing-name` at that entry; with `modifies [ConfigVersion]` (an object type) or `creates [ConfigVersion/versionNumber]` (a field) it refuses `invalid_model_binding`/`malformed-declaration` at that entry; with a relationship `Supersedes` declared, `modifies [Supersedes]` admits and the operation's effect modifies `Supersedes`, while `creates [Supersedes]` refuses `invalid_model_binding`/`malformed-declaration` at that entry; with both `modifies [ConfigVersion/missing]` and `creates [ConfigVersion/versionNumber]` it reports only the `modifies` refusal. No declaration is admitted in a refusing case. | Test |
-| FR-103-AC-3 | An operation with a parameter `note: Decimal` refuses `unsupported_construct`/`declaration-form` at the parameter, at I1 (intake) -- the same stage and cause a field of that type refuses at, per this FR's own Behavior ("as a field of that type does"); an operation with parameter `delta: VersionNumber` admits it typed `Int[0, 1000]`. FR-056's `value-type/v1` scalar reader is verified against both halves over the shared `ConfigVersion` fixture. The parameter type is `Decimal`, not this row's earlier `Text`: the FCD schema validator's native-scalar vocabulary has no `Text` entry (it spells the concept `String`), so `Text` cannot reach even I1 through the real pipeline, and QSL's own `NativeValueType` has no `String` variant either -- that cross-repo vocabulary gap is QSL-290, not fixed here. | Test |
+| FR-103-AC-3 | An operation with a parameter `note: Decimal` refuses `unsupported_construct`/`declaration-form` at the parameter, at I1 (intake) -- the same stage and cause a field of that type refuses at, per this FR's own Behavior ("as a field of that type does"); an operation with parameter `delta: VersionNumber` admits it typed `Int[0, 1000]`. FR-056's `value-type/v1` scalar reader is verified against both halves over the shared `ConfigVersion` fixture. The parameter type is `Decimal`, not this row's earlier `Text`: the FCD schema validator's native-scalar vocabulary has no `Text` entry (it spells the concept `String`), so `Text` cannot reach even I1 through the real pipeline, and FSL's own `NativeValueType` has no `String` variant either -- that cross-repo vocabulary gap is QSL-290, not fixed here. | Test |
 | FR-103-AC-4 | A package holding `Address { street: Text[0, 64; nfc] }` and object `Account { address: Address }` assembles both declarations beside an object operation. A clause that reads `deref(a).address.street` checks against the record's effective fields, and checked-package emission types `Account.address` by the self-typed `model`/`record_value_type` node with its `ModelOwner`. No `UnsupportedModelMember` names `Address`, and no `Reference<Address>` is emitted. | Test |
 | FR-103-AC-5 | Admission is deterministic: admitting the ConfigVersion package twice, and admitting it with its operation and population records reordered in the document, gives equal `PackageDeclarations` and equal effect key lists. | Test |
-| FR-103-AC-6 | A frame modifying `Account.address` and a frame entry naming `Address.street` bind distinct declaration-and-field pairs; a record subtype's inherited field resolves through its effective fields. An operation parameter and result typed `Address` retain record value typing through check and emission; a record node supplied as an object-reference target refuses the QSpec FR-322 derived-shape check. | Test |
+| FR-103-AC-6 | A frame modifying `Account.address` and a frame entry naming `Address.street` bind distinct declaration-and-field pairs; a record subtype's inherited field resolves through its effective fields. An operation parameter and result typed `Address` retain record value typing through check and emission; a record node supplied as an object-reference target refuses the FSpec FR-322 derived-shape check. | Test |
 | FR-103-AC-7 | K2's `OrderLifecycle` with operation `place` given `ensures` `self.placed` admits after the same 21 charges as K2 and adds no declaration. The `OperationMemberRecord` of `place` holds one `ensures` clause with language `quire`, text `self.placed`, position 0, and the source identity of its `origin` (operation key, artifact id, span), and no `requires` clause; `self.placed` is bound as the postcondition of `place`. A domain package whose operation declares no `pre` and `post` keeps empty lists. | Test (TC-993) |
 | FR-103-AC-8 | K2 with `OrderLifecycle` given field `cancelled`, and `place` given `requires` `pre(self.placed) = false`, refuses `wrong_snapshot`/`forbidden-pre-read` naming `ix://test/orders/OrderLifecycle/place` at `Operation.pre[0]`, with no checked package. A kept clause is checked under no profile: integer `div` in it refuses `profile_prohibited_operator`. The same package with `requires` `not self.placed` and `ensures` `self.placed and not self.cancelled` checks, and an `ensures` that reads `pre(self.placed)` checks. | Test (TC-993) |
 | FR-103-AC-9 | A domain operation's `requires` and `ensures` texts do not become unit clauses or bodies: with domain texts `false` on `A.size` and `B.size` and unit `pre`/`post` clauses `true`, the retained unit clauses are `true`, and `has_body` is set only by the unit `operation-body` declarations. | Test (TC-986) |
@@ -224,7 +224,7 @@ evaluates it; it is not discarded and it is not shape-checked only.
 
 - FR-056 (intake and assembler), FR-081 (effective view), FR-084
   (population records).
-- QSpec FR-154, FR-340 and `model-complete.md`'s Frames row.
+- FSpec FR-154, FR-340 and `model-complete.md`'s Frames row.
 - filament-core-data's Semantic IR reader already validates an operation's
   `frame` shape
   (`crates/semantic-ir/src/schema.rs:1656-1663`).

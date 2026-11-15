@@ -3,7 +3,7 @@ id: TC-609
 title: "max_witness_set and max_relation_tuples are caller budgets with published defaults"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: verifies
 ---
 # TC-609: max_witness_set and max_relation_tuples are caller budgets with published defaults

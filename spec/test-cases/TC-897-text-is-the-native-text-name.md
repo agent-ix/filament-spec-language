@@ -3,7 +3,7 @@ id: TC-897
 title: "Domain natives retain Text profiles and canonical K2 payloads"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-897: Domain natives retain Text profiles and canonical K2 payloads
@@ -11,17 +11,17 @@ relationships:
 ## Description
 
 Verify that model intake admits a scalar type bound to `Text` with each of
-QSpec FR-141's six profiles as `Text[min, max; profile]`, refuses bounds
+FSpec FR-141's six profiles as `Text[min, max; profile]`, refuses bounds
 outside `0 <= min <= max`, refuses a profile
-FR-141 does not define, admits bare `ix://quire/native/Text`,
-`ix://quire/native/Rational` and `ix://quire/native/Decimal` members with no
+FR-141 does not define, admits bare `ix://filament/native/Text`,
+`ix://filament/native/Rational` and `ix://filament/native/Decimal` members with no
 checked type and refuses each use of them, and refuses an undeclared native name,
-`ix://quire/native/UnknownText`. K2's `String` remains a declared native;
+`ix://filament/native/UnknownText`. K2's `String` remains a declared native;
 it is neither this unknown-name case nor a parameterized Text alias.
 Verify the exact native-payload controls of
 [FR-056](../functional/FR-056-admit-domain-package-model-declarations.md#fr-056-ac-17).
 Scope: FR-056-AC-11, FR-056-AC-43 and the canonical-payload part of FR-056-AC-17;
-QSpec TC-235 retains K2's model binding and complete business vectors.
+FSpec TC-235 retains K2's model binding and complete business vectors.
 
 ## Test Procedure
 
@@ -41,8 +41,8 @@ Start from a domain package whose object type `Note` declares a field
    each of `unicode-scalars`, `nfd`, `nfkc`, `nfkd` and `binary-utf8`.
 2. Set `Label`'s profile to `nfx` and admit. Then restore `nfc` and admit
    with `Label`'s bounds `-1` and `64`, then `65` and `64`.
-3. Set `label`'s `typeRef` to `ix://quire/native/Text` and admit.
-4. Set `label`'s `typeRef` to `ix://quire/native/UnknownText` and admit.
+3. Set `label`'s `typeRef` to `ix://filament/native/Text` and admit.
+4. Set `label`'s `typeRef` to `ix://filament/native/UnknownText` and admit.
 5. Repeat steps 1 to 4 with `label` restored and the `typeRef` set on
    `rename`'s parameter `to`, then on `rename`'s result.
 6. Through the actual shared kernel's public admission APIs, execute every
@@ -60,7 +60,7 @@ Start from a domain package whose object type `Note` declares a field
 8. Build FR-056-AC-43's package: `Note` with `memo` (`Text`), `ratio`
    (`Rational`), `amount` (`Decimal`), `amounts` (`Decimal`, `[0, 3]`),
    `count` (`Integer`), `scale(by: Rational): Integer` and `peek(): Text`,
-   every `typeRef` under `ix://quire/native/`. Compile a unit selecting it
+   every `typeRef` under `ix://filament/native/`. Compile a unit selecting it
    with no clause naming these members. Then, one at a time, add the
    invariants `self.memo = self.memo`, `self.ratio = self.ratio`,
    `self.amount = self.amount` and `self.amounts = self.amounts`, an
@@ -84,7 +84,7 @@ Start from a domain package whose object type `Note` declares a field
   `unsupported_construct`/`declaration-form` at `Label`, naming the bounds.
 - Step 3: admitted, `label` with no checked type and no refusal.
 - Step 4: refused `invalid_model_binding`/`malformed-declaration` at
-  `label`, naming `ix://quire/native/UnknownText`.
+  `label`, naming `ix://filament/native/UnknownText`.
 - Step 5: the same outcomes at the parameter and at the result.
 - Step 6: exactly FR-056-AC-17's admissions and typed payload failures, with
   noncanonical text decided before Timestamp range. Every adapter vector below
@@ -94,7 +94,7 @@ Start from a domain package whose object type `Note` declares a field
   native value, repaired payload or Boolean. Generic `invalid-value` for a
   missing/duplicate/unknown member, or a lost path, fails this oracle.
 - Step 7: equal same-kind payloads give true and equal keys; changed payloads
-  give false and unequal keys. Mixed kinds refuse under QSpec FR-149, never
+  give false and unequal keys. Mixed kinds refuse under FSpec FR-149, never
   give false or convert. Each native key orders canonical payload content
   unsigned ASCII bytewise with a proper prefix first; it grants no ordering
   operator. Payload/codec success alone is no claim that K2 was admitted.
@@ -118,7 +118,7 @@ Start from a domain package whose object type `Note` declares a field
 
 ### Step 6 adapter vectors
 
-Use the QSL canonical-native adapter boundary, not a fabricated new document
+Use the FSL canonical-native adapter boundary, not a fabricated new document
 format or a direct kernel call pretending to decode JSON. The nested origins
 come from the existing
 [FR-106](../functional/FR-106-admit-snapshots-and-invocations.md)
@@ -130,7 +130,7 @@ slots; it does not assert that the current whole-document reader or its schema
 already admits them.
 
 The expected locations use
-[FR-274](ix://agent-ix/quire-specification/FR-274)'s existing `json_path`
+[FR-274](ix://agent-ix/filament-specification/FR-274)'s existing `json_path`
 kind, document identity and tagged field/index steps. Define fixed expected
 step sequences independently of the adapter result:
 
@@ -154,7 +154,7 @@ The `Input` column contains exact envelope bytes presented at the indicated
 origin. In rows that omit the unchanged UUID payload, `u` denotes exactly
 the string `00112233-4455-6677-8899-aabbccddeeff`; expand it before execution.
 All rows expect code `invalid_runtime_input` and the exact cause and location
-listed. Kernel classes below refer to quire-exact's `ConstructionCause`
+listed. Kernel classes below refer to filament-exact's `ConstructionCause`
 classes at `Component::Value`, not new diagnostic-catalog causes.
 
 | Vector | Origin / expected native | Input | Exact cause | Exact JSON path | Deciding boundary / kernel construction result |
@@ -177,7 +177,7 @@ effective model view or truth value. Retain the selected expected native kind
 and original envelope bytes as inputs; neither is overwritten with a fallback
 kind or a repaired spelling. A07's wrong-kind result is decided before any
 attempt to treat the Timestamp payload as UUID. A08–A11 preserve the three
-typed kernel failure classes while projecting their existing QSL code/cause
+typed kernel failure classes while projecting their existing FSL code/cause
 and retaining the full nested origin. The original positive and negative
 canonical-payload controls remain required; this table adds diagnostic and
 boundary assertions, not weaker admission alternatives.

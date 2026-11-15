@@ -3,13 +3,13 @@ id: FR-191
 title: "Bound and reproduce a statistical run"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-189
+  - target: ix://agent-ix/filament-spec-language/FR-189
     type: depends_on
 ---
 # FR-191: Bound and reproduce a statistical run
@@ -66,7 +66,7 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
   published default above when the request omits it. Its setting name SHALL
   be `statistical.` followed by the member name (`statistical.max_samples`,
   `statistical.max_draws`, `statistical.max_cycle_steps`), by FR-255's
-  convention. QSpec FR-408 owns each limit and its setting name; QSL
+  convention. FSpec FR-408 owns each limit and its setting name; FSL
   publishes the default value. No member SHALL be
   fixed by the language, and none enters the obligation identity.
 - When a test has counted `max_samples` samples or cycles and its method
@@ -77,7 +77,7 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
   way before the next draw or step. The stop carries the limit, its value, the
   setting name (`statistical.max_samples`, `statistical.max_draws`,
   `statistical.max_cycle_steps`) and the counts reached, and settles
-  `incomplete`, `limit-reached{limit, value, setting}` (QSpec FR-408). A
+  `incomplete`, `limit-reached{limit, value, setting}` (FSpec FR-408). A
   stopped sample expansion (the clause meter) and a cancelled `Cancel` handle
   (FR-276) SHALL stop the run the same way with their own stops.
 - A run stopped before its method completes SHALL never carry a decision; an
@@ -144,7 +144,7 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
 
 ## References
 
-- QSpec half, which owns `StatisticalLimits` and its setting names in the
-  request and the trace-index assignment, while QSL publishes the default
-  values: QSpec FR-408 (Linear STD-137).
+- FSpec half, which owns `StatisticalLimits` and its setting names in the
+  request and the trace-index assignment, while FSL publishes the default
+  values: FSpec FR-408 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

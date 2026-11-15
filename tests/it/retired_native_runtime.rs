@@ -32,7 +32,7 @@ fn assert_import_is_absent(
     std::fs::write(
         project.join("Cargo.toml"),
         format!(
-            "[package]\nname = \"{probe}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nquire-spec-language = {{ path = \"{}\" }}\n",
+            "[package]\nname = \"{probe}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nfilament-spec-language = {{ path = \"{}\" }}\n",
             repo.display()
         ),
     )
@@ -71,7 +71,7 @@ fn native_package_and_runtime_surfaces_are_absent() {
         assert_no_retired_names(&repo.join(area), &retired_names);
     }
 
-    let formats = qsl_foundation::wire_format::WireFormat::ALL;
+    let formats = fsl_foundation::wire_format::WireFormat::ALL;
     assert!(formats.iter().all(|format| {
         format.as_str() != ["native-linked-", "package/1"].concat()
             && format.as_str() != ["native-state-", "input/1"].concat()
@@ -84,19 +84,23 @@ fn native_package_and_runtime_surfaces_are_absent() {
     for (probe, source) in [
         (
             "qsl_836_package_module_probe",
-            concat!("use quire_spec_language::", "package;\n"),
+            concat!("use filament_spec_language::", "package;\n"),
         ),
         (
             "qsl_836_runtime_module_probe",
-            concat!("use quire_spec_language::", "runtime;\n"),
+            concat!("use filament_spec_language::", "runtime;\n"),
         ),
         (
             "qsl_836_native_package_type_probe",
-            concat!("use quire_spec_language::package::", "Native", "Package;\n"),
+            concat!(
+                "use filament_spec_language::package::",
+                "Native",
+                "Package;\n"
+            ),
         ),
         (
             "qsl_836_runtime_execute_probe",
-            concat!("use quire_spec_language::runtime::", "execute;\n"),
+            concat!("use filament_spec_language::runtime::", "execute;\n"),
         ),
     ] {
         assert_import_is_absent(&repo, &target, probe, source, temporary.path());

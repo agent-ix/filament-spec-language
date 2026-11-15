@@ -3,17 +3,17 @@ id: US-031
 title: "Bind model elements to the implementation code a proof backend checks"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-305
+  - target: ix://agent-ix/filament-spec-language/FR-305
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-306
+  - target: ix://agent-ix/filament-spec-language/FR-306
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-307
+  - target: ix://agent-ix/filament-spec-language/FR-307
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: references
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-031: Bind model elements to the implementation code a proof backend checks
@@ -34,7 +34,7 @@ reinterpret a contract generated earlier.
 ## Context
 
 US-012 binds the model graph itself. This story starts from that bound graph
-and relates it to code. The mapping is authored, never inferred: QSL checks
+and relates it to code. The mapping is authored, never inferred: FSL checks
 that each binding's model key exists and that its Rust names are well formed,
 and leaves resolving those names against the code to the generator that emits
 it. A specification may bind part of its model; only the items that reference
@@ -73,7 +73,7 @@ would let a backend prove a contract about the wrong field.
 
 ## Dependencies (Contextual)
 
-Upstream: the model graph of US-012 and QSpec FR-353's abstraction relation.
+Upstream: the model graph of US-012 and FSpec FR-353's abstraction relation.
 Downstream: CG's Kani and Verus generators, which read the relation from the
 checked package.
 

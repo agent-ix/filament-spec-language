@@ -3,15 +3,15 @@ id: FR-108
 title: "Run the ConfigVersion corpus through the spine with typed dispositions"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-032
+  - target: ix://agent-ix/filament-spec-language/FR-032
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-180
+  - target: ix://agent-ix/filament-specification/FR-180
     type: depends_on
 ---
 # FR-108: Run the ConfigVersion corpus through the spine with typed dispositions
@@ -22,13 +22,13 @@ The ConfigVersion corpus SHALL run through the spine (FR-109) from a
 `1-draft` unit, a Semantic IR 2.0.0 domain package and FR-106 observation
 documents, and each case SHALL give its independently specified typed
 disposition. The report SHALL retain stage, category, truth and code across
-FR-267's native-run-result/2 writer and reader (QSpec FR-352). This is QSL's
-share of QSpec FR-180-AC-1, AC-4 and AC-5 for ConfigVersion (QSpec TC-209's
-ownership table: QSL #121).
+FR-267's native-run-result/2 writer and reader (FSpec FR-352). This is FSL's
+share of FSpec FR-180-AC-1, AC-4 and AC-5 for ConfigVersion (FSpec TC-209's
+ownership table: FSL #121).
 
 The corpus is FR-032's 13 original cases in
 `examples/config-version/cases.rs`, extended with the four domain boundaries
-QSpec FR-180-AC-4 names (0, 1000, -1, 1001). The spine test owns the
+FSpec FR-180-AC-4 names (0, 1000, -1, 1001). The spine test owns the
 independent `expected()` oracle.
 
 ## Inputs
@@ -43,14 +43,14 @@ independent `expected()` oracle.
   `model.json` and the generated `program.native`, which FR-032 authors as
   `AGPL-3.0-only`; one example keeps one licence.
 - One `1-draft` unit, generated with the fixtures. Its header selects the
-  `root` profile FR-110 resolves, `quire.value.complete/v1`, by identity,
-  and the domain package by its identity (QSpec FR-272). The `model` line is
-  QSpec's shared-grammar `model` production, with no `version`:
+  `root` profile FR-110 resolves, `filament.value.complete/v1`, by identity,
+  and the domain package by its identity (FSpec FR-272). The `model` line is
+  FSpec's shared-grammar `model` production, with no `version`:
 
 ```text
 // SPDX-License-Identifier: AGPL-3.0-only
 language "ix:native" edition "1-draft";
-profile v = "quire.value.complete/v1";
+profile v = "filament.value.complete/v1";
 model Config = "example/config-version";
 invariant ParentOrder using v on Config::ConfigVersion at current { present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }
 invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }
@@ -111,9 +111,9 @@ snapshot data (ADR-012 §15.1).
 - The independent expected table SHALL include the four boundary cases:
   boundary-zero and boundary-max success/true, below-range and above-range
   admission refusal with `invalid_runtime_input`.
-- With `qsl-replay`'s feature `quire-extraction`, each case's unit SHALL also
+- With `fsl-replay`'s feature `quire-extraction`, each case's unit SHALL also
   be embedded in a Markdown fence and run through the I3 adapter. This check
-  runs in `qsl-replay`'s tests built with that feature; the root crate has no
+  runs in `fsl-replay`'s tests built with that feature; the root crate has no
   `quire-extraction` feature (ADR-011 §7.3 X-4). Its disposition (stage,
   category, truth and exit code) SHALL equal the direct run's, and its
   package SHALL be the extracted body's own, compiled under its body
@@ -127,18 +127,18 @@ snapshot data (ADR-012 §15.1).
 |----|----------|--------------|
 | FR-108-AC-1 | Every one of the 17 cases gives the disposition and exit code in the Corpus table through `run_clause`, checked against the independent expected table. | Test (TC-469) |
 | FR-108-AC-2 | For each of the 17 cases, the FR-267 native-run-result/2 writer and strict reader retain the report's stage, category, truth and code. | Test (TC-469) |
-| FR-108-AC-3 | Below-range and above-range refuse at admission with `invalid_runtime_input`; their native-run-result/2 records name the object (`root`, `child`) and field `versionNumber`. Boundary-zero and boundary-max complete with `true` (QSpec FR-180-AC-4, QSL's share). | Test (TC-469) |
-| FR-108-AC-4 | Generating the corpus twice gives identical files, and running it twice gives identical reports, each holding the disposition and the usage FR-109 states, so the case is fixed by its inputs (QSpec FR-180-AC-5). | Test (TC-469) |
-| FR-108-AC-5 | In `qsl-replay`'s tests built with `qsl-replay`'s `quire-extraction` feature, the Markdown run of each case, its unit extracted through I3 under its own body identity, gives the direct run's stage, category, truth and exit code. | Test (TC-469) |
-| FR-108-AC-6 | The emitted package bytes of the FR-108 unit admit through QSpec I04 `read` (QSpec FR-180's reference verdict contract). | Test (TC-469) |
+| FR-108-AC-3 | Below-range and above-range refuse at admission with `invalid_runtime_input`; their native-run-result/2 records name the object (`root`, `child`) and field `versionNumber`. Boundary-zero and boundary-max complete with `true` (FSpec FR-180-AC-4, FSL's share). | Test (TC-469) |
+| FR-108-AC-4 | Generating the corpus twice gives identical files, and running it twice gives identical reports, each holding the disposition and the usage FR-109 states, so the case is fixed by its inputs (FSpec FR-180-AC-5). | Test (TC-469) |
+| FR-108-AC-5 | In `fsl-replay`'s tests built with `fsl-replay`'s `quire-extraction` feature, the Markdown run of each case, its unit extracted through I3 under its own body identity, gives the direct run's stage, category, truth and exit code. | Test (TC-469) |
+| FR-108-AC-6 | The emitted package bytes of the FR-108 unit admit through FSpec I04 `read` (FSpec FR-180's reference verdict contract). | Test (TC-469) |
 
 ## Dependencies
 
 - FR-102 to FR-107 and FR-109.
 - FR-032 (the native corpus and its catalog), FR-031 (the extracted Markdown clause run).
-- QSpec FR-180 and TC-209. QSL's share is the reference dispositions; the
+- FSpec FR-180 and TC-209. FSL's share is the reference dispositions; the
   generated-oracle, property and proof consumers of FR-180-AC-1 are CG's and
   IR's (ADR-012 §15.7).
-- STD-111 (QSpec), which FR-105 names, for the emitted package's `state`
-  bodies, frame entries and `reaches_field` member; AC-6's I04 `read` half needs `quire-contract-model`'s
+- STD-111 (FSpec), which FR-105 names, for the emitted package's `state`
+  bodies, frame entries and `reaches_field` member; AC-6's I04 `read` half needs `filament-contract-model`'s
   `reaches_field` reference-edge check.

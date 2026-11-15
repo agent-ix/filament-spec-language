@@ -1,0 +1,1393 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-774: FR-290-AC-5 to FR-290-AC-14, the plugin result readers and the
+//! plugin replay context.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use filament_exact::{Cancel, Integer, Origin, Role};
+use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::{BackendId, Code, RequestIndex, SourceIdentity};
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+
+use super::*;
+use crate::bounds::ReplayLimits;
+use crate::execute::{process_provider_obligation, BoundEntries};
+use crate::limits::CallerLimits;
+use crate::result::ReplayResult;
+use crate::spine::{check, package, parse, select, DependencyInput, PackageLimits, ParseRequest};
+use crate::witness::{CanonicalAssignment, WitnessValue};
+
+fn wrong(pointer: &str) -> PluginResultRefusal {
+    PluginResultRefusal::Malformed {
+        pointer: pointer.to_owned(),
+        cause: ValueFault::WrongValueKind,
+    }
+}
+
+fn invalid(pointer: &str) -> PluginResultRefusal {
+    PluginResultRefusal::Malformed {
+        pointer: pointer.to_owned(),
+        cause: ValueFault::InvalidValue,
+    }
+}
+
+fn no_counterexample(pointer: &str, cause: ValueFault) -> PluginResultRefusal {
+    PluginResultRefusal::MissingCounterexample {
+        pointer: pointer.to_owned(),
+        cause,
+    }
+}
+
+fn missing(pointer: &str) -> PluginResultRefusal {
+    PluginResultRefusal::MissingMember {
+        pointer: pointer.to_owned(),
+    }
+}
+
+fn unknown(pointer: &str) -> PluginResultRefusal {
+    PluginResultRefusal::UnknownMember {
+        pointer: pointer.to_owned(),
+    }
+}
+
+fn plugin() -> BackendId {
+    BackendId::new("acme")
+}
+
+#[trace("TC-774", "FR-290-AC-18")]
+#[test]
+fn hybrid_plugin_basis_reads_coverage_and_the_closed_method_table() {
+    let bounded = json!({"type":"bounded-solver","method":"unclassified",
+        "horizon":{"numerator":"10","denominator":"1"},"jumps":0,"exhaustive":[]});
+    assert_eq!(
+        read_plugin_basis(&bounded),
+        Ok(ProofBasis::BoundedSolver {
+            method: SolverMethod::Unclassified,
+            horizon: SolverHorizon::new(filament_exact::Rational::from_integer(Integer::from(
+                10_i64
+            )))
+            .expect("nonnegative"),
+            jumps: 0,
+            exhaustive: BTreeSet::new(),
+        })
+    );
+    assert_eq!(
+        read_plugin_basis(&json!({"type":"inductive-solver","method":"inductive-enclosure"})),
+        Ok(ProofBasis::InductiveSolver {
+            method: SolverMethod::InductiveEnclosure
+        })
+    );
+    for invalid_basis in [
+        json!({"type":"bounded-solver","method":"inductive-enclosure","horizon":{"numerator":"10","denominator":"1"},"jumps":0,"exhaustive":[]}),
+        json!({"type":"inductive-solver","method":"delta-complete"}),
+        json!({"type":"bounded-solver","method":"dreal","horizon":{"numerator":"10","denominator":"1"},"jumps":0,"exhaustive":[]}),
+    ] {
+        assert_eq!(
+            read_plugin_basis(&invalid_basis),
+            Err(invalid("/basis/method"))
+        );
+    }
+    let mut missing_exhaustive = bounded.clone();
+    missing_exhaustive
+        .as_object_mut()
+        .expect("object")
+        .remove("exhaustive");
+    assert_eq!(
+        read_plugin_basis(&missing_exhaustive),
+        Err(missing("/basis/exhaustive"))
+    );
+    for exhaustive in [json!(["time", "time"]), json!(["positions"])] {
+        let mut bad = bounded.clone();
+        bad["exhaustive"] = exhaustive;
+        assert_eq!(read_plugin_basis(&bad), Err(invalid("/basis/exhaustive")));
+    }
+}
+
+#[trace("TC-774", "FR-290-AC-18")]
+#[test]
+fn hybrid_plugin_cause_reads_insufficient_horizon() {
+    let cause = json!({"type":"insufficient-horizon", "horizon":
+        {"numerator":"1","denominator":"1"}, "jumps":1, "exhaustive":["time"]});
+    let horizon = SolverHorizon::new(filament_exact::Rational::from_integer(Integer::from(1_i64)))
+        .expect("nonnegative");
+    let expected = InconclusiveCause::InsufficientHorizon {
+        horizon,
+        jumps: 1,
+        exhaustive: BTreeSet::from([crate::hybrid::BoundDimension::Time]),
+    };
+    assert_eq!(read_plugin_inconclusive_cause(&cause), Ok(expected.clone()));
+    let record = TerminalRecord::from_plugin_inconclusive(RequestIndex::new(0), plugin(), expected)
+        .expect("plugin cause is admitted");
+    let item = serde_json::to_value(crate::outcome::OutcomeItem::from_terminal(&record))
+        .expect("serializes");
+    assert_eq!(item["cause"]["kind"], "insufficient-horizon");
+    assert_eq!(item["cause"]["exhaustive"], json!(["time"]));
+    assert_eq!(item["cause"]["jumps"], 1);
+}
+
+/// FR-290-AC-6.
+#[trace("TC-774", "FR-290-AC-6")]
+#[test]
+fn tc_774_basis_reader_refuses_in_order() {
+    for basis in [
+        json!({"type": "bounded-proof", "checks": 3}),
+        json!({"type": "closed-form", "extra": 1}),
+        json!({"type": "witnessed", "sources": []}),
+        json!({"type": "zone-certified"}),
+        json!({"type": "exact-value", "value": "1"}),
+        json!({"type": "value-bounds", "lower": "0", "upper": "1"}),
+    ] {
+        assert_eq!(
+            read_plugin_basis(&basis),
+            Err(PluginResultRefusal::CoreOnlyBasis)
+        );
+    }
+    let spelling = |pointer: &str| PluginResultRefusal::UnknownSpelling {
+        pointer: pointer.to_owned(),
+    };
+    let solver = |horizon: Value, method: &str| json!({"type": "bounded-solver", "horizon": horizon, "jumps": 1, "method": method, "exhaustive": []});
+    let one = json!({"denominator": "1", "numerator": "1"});
+    let cases: Vec<(Value, PluginResultRefusal)> = vec![
+        (json!({"type": "replay-parity"}), spelling("/basis/type")),
+        (
+            json!({"type": "bounded_complete", "depth": 4}),
+            spelling("/basis/type"),
+        ),
+        (json!("exhaustive"), wrong("/basis")),
+        (json!({"depth": 4}), missing("/basis/type")),
+        (json!({"type": 7}), wrong("/basis/type")),
+        (json!({"type": "inductive"}), missing("/basis/depth")),
+        // A missing payload member comes before an undefined one.
+        (
+            json!({"type": "inductive", "extra": 1}),
+            missing("/basis/depth"),
+        ),
+        (
+            json!({"type": "exhaustive", "depth": 3}),
+            unknown("/basis/depth"),
+        ),
+        (
+            json!({"type": "inductive", "depth": "3"}),
+            wrong("/basis/depth"),
+        ),
+        (
+            json!({"type": "inductive", "depth": -1}),
+            invalid("/basis/depth"),
+        ),
+        (
+            json!({"type": "inductive", "depth": 9_007_199_254_740_992_u64}),
+            invalid("/basis/depth"),
+        ),
+        (solver(one.clone(), "dreal"), invalid("/basis/method")),
+        (solver(one, ""), invalid("/basis/method")),
+        (
+            solver(
+                json!({"denominator": "1", "numerator": "-1"}),
+                "delta-complete",
+            ),
+            invalid("/basis/horizon"),
+        ),
+        (
+            solver(
+                json!({"denominator": "4", "numerator": "2"}),
+                "delta-complete",
+            ),
+            invalid("/basis/horizon"),
+        ),
+        (
+            json!({"type": "reduced", "reductions": [
+                {"parameters": {"declarations": []}, "reduction": "symmetry", "row": "r"}]}),
+            PluginResultRefusal::Unsupported {
+                pointer: "/basis/reductions/0/reduction".to_owned(),
+                feature: "symmetry".to_owned(),
+            },
+        ),
+        (
+            json!({"type": "reduced", "reductions": [
+                {"parameters": {"classes": [["a", "a"]]}, "reduction": "copy-swap", "row": "r"}]}),
+            invalid("/basis/reductions/0/parameters/classes/0"),
+        ),
+    ];
+    for (basis, expected) in cases {
+        assert_eq!(read_plugin_basis(&basis), Err(expected), "{basis}");
+    }
+}
+
+/// FR-290-AC-7.
+#[trace("TC-774", "FR-290-AC-7")]
+#[test]
+fn tc_774_certification_reader_accepts_only_trusted() {
+    assert_eq!(read_plugin_certification(Some(&json!("trusted"))), Ok(()));
+    assert_eq!(
+        read_plugin_certification(None),
+        Err(missing("/certification"))
+    );
+    assert_eq!(
+        read_plugin_certification(Some(&json!("vouched"))),
+        Err(invalid("/certification"))
+    );
+    assert_eq!(
+        read_plugin_certification(Some(&json!(7))),
+        Err(wrong("/certification"))
+    );
+    for received in ["certified", "uncertified"] {
+        assert_eq!(
+            read_plugin_certification(Some(&json!(received))),
+            Err(PluginResultRefusal::CertificationNotTrusted {
+                received: received.to_owned()
+            })
+        );
+    }
+    // The driver reads `certification` before `basis`.
+    let entry =
+        json!({"certification": "certified", "basis": {"type": "bounded-proof", "checks": 3}});
+    let driver = read_plugin_certification(entry.get("certification"))
+        .and_then(|()| read_plugin_basis(&entry["basis"]));
+    assert!(matches!(
+        driver,
+        Err(PluginResultRefusal::CertificationNotTrusted { .. })
+    ));
+}
+
+/// FR-290-AC-8.
+#[trace("TC-774", "FR-290-AC-8")]
+#[test]
+fn tc_774_cause_reader_accepts_the_plugin_spellings() {
+    for (spelling, expected) in [
+        ("undecided-successor", InconclusiveCause::UndecidedSuccessor),
+        ("no-initial-state", InconclusiveCause::NoInitialState),
+        ("no-instance", InconclusiveCause::NoInstance),
+        (
+            "sufficient-test-failed",
+            InconclusiveCause::SufficientTestFailed,
+        ),
+        (
+            "solver-inconclusive",
+            InconclusiveCause::SolverInconclusive {
+                trace: None,
+                replay: None,
+            },
+        ),
+        ("match-undetermined", InconclusiveCause::MatchUndetermined),
+        ("vacuous-match", InconclusiveCause::VacuousMatch),
+    ] {
+        assert_eq!(
+            read_plugin_inconclusive_cause(&json!({"type": spelling})),
+            Ok(expected)
+        );
+    }
+    let cases: Vec<(Value, InconclusiveCause)> = vec![
+        (
+            json!({"type": "bound-reached", "depth": 7}),
+            InconclusiveCause::BoundReached { depth: 7 },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": "liveness", "reduction": "constraint"}),
+            InconclusiveCause::ReductionNotPreserving {
+                reduction: ReductionKind::StateConstraint,
+                form: PropertyForm::Liveness,
+            },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": "possible", "reduction": "symmetry"}),
+            InconclusiveCause::StateGraphReductionNotPreserving {
+                reduction: ReductionKind::Symmetry,
+                form: crate::StateGraphPropertyForm::Possible,
+            },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": "always-possible", "reduction": "partial-order"}),
+            InconclusiveCause::StateGraphReductionNotPreserving {
+                reduction: ReductionKind::PartialOrder,
+                form: crate::StateGraphPropertyForm::AlwaysPossible,
+            },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": "unique-path", "reduction": "symmetry"}),
+            InconclusiveCause::StateGraphReductionNotPreserving {
+                reduction: ReductionKind::Symmetry,
+                form: crate::StateGraphPropertyForm::UniquePath,
+            },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": {"refinement": {"liveness": false}}, "reduction": "constraint"}),
+            InconclusiveCause::ReductionNotPreserving {
+                reduction: ReductionKind::StateConstraint,
+                form: PropertyForm::Refinement { liveness: false },
+            },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": {"refinement": {"liveness": true}}, "reduction": "constraint"}),
+            InconclusiveCause::ReductionNotPreserving {
+                reduction: ReductionKind::StateConstraint,
+                form: PropertyForm::Refinement { liveness: true },
+            },
+        ),
+        (
+            json!({"type": "constraint-reached", "boundary_states": 2}),
+            InconclusiveCause::ConstraintReached { boundary_states: 2 },
+        ),
+        (
+            json!({"type": "reduction-horizon", "max_depth": 5}),
+            InconclusiveCause::ReductionHorizon { max_depth: 5 },
+        ),
+        (
+            json!({"type": "memory-bound-reached", "limit": "max_messages", "states": 3, "value": 2}),
+            InconclusiveCause::MemoryBoundReached {
+                bound: MemoryBound {
+                    member: MemoryBoundMember::MaxMessages,
+                    value: 2,
+                },
+                states: 3,
+            },
+        ),
+        (
+            json!({"type": "instance-bound-reached", "limit": "max_live_instances", "states": 1, "value": 4}),
+            InconclusiveCause::InstanceBoundReached {
+                bound: InstanceBound { value: 4 },
+                states: 1,
+            },
+        ),
+    ];
+    for (cause, expected) in cases {
+        let read = read_plugin_inconclusive_cause(&cause).unwrap();
+        assert_eq!(read, expected, "{cause}");
+        let record =
+            TerminalRecord::from_plugin_inconclusive(RequestIndex::new(1), plugin(), read).unwrap();
+        assert_eq!(record.value(), &TerminalValue::Inconclusive(expected));
+    }
+}
+
+/// FSpec FR-468 and FR-331: a plugin's `hypotheses-not-established` cause
+/// reads to its invariant clause node and its item's result; a node id
+/// outside the node-key domain, a bad digest, an extra member or a result
+/// outside FR-331's vocabulary is refused at its member.
+#[trace("TC-774")]
+#[test]
+fn the_cause_reader_reads_hypotheses_not_established() {
+    let node = |ordinal: u64| json!({"package": "fixture", "path": ["clause"], "ordinal": ordinal});
+    let hypothesis = crate::fixture_node(0xdc);
+    let wire = fsl_foundation::node_wire::node_key_to_json(&hypothesis).unwrap();
+    assert_eq!(
+        read_plugin_inconclusive_cause(&json!({
+            "type": "hypotheses-not-established",
+            "hypothesis": wire,
+            "result": "refuted",
+        })),
+        Ok(InconclusiveCause::HypothesesNotEstablished {
+            hypothesis,
+            result: crate::outcome::ItemLabel::Refuted,
+        })
+    );
+    let cases: Vec<(Value, PluginResultRefusal)> = vec![
+        (
+            json!({"type": "hypotheses-not-established", "result": "refuted"}),
+            missing("/cause/hypothesis"),
+        ),
+        (
+            json!({"type": "hypotheses-not-established", "hypothesis": "dc", "result": "refuted"}),
+            wrong("/cause/hypothesis"),
+        ),
+        (
+            json!({"type": "hypotheses-not-established",
+                   "hypothesis": {"package": "", "path": ["clause"], "ordinal": 0}, "result": "refuted"}),
+            invalid("/cause/hypothesis"),
+        ),
+        (
+            json!({"type": "hypotheses-not-established",
+                   "hypothesis": node(1), "result": "undefined"}),
+            invalid("/cause/result"),
+        ),
+        (
+            json!({"type": "hypotheses-not-established",
+                   "hypothesis": node(1), "result": 1}),
+            wrong("/cause/result"),
+        ),
+    ];
+    for (cause, expected) in cases {
+        assert_eq!(
+            read_plugin_inconclusive_cause(&cause),
+            Err(expected),
+            "{cause}"
+        );
+    }
+}
+
+/// FR-290-AC-9.
+#[trace("TC-774", "FR-290-AC-9")]
+#[test]
+fn tc_774_cause_reader_refuses_in_order() {
+    for (spelling, cause) in [
+        ("replay-parity", FslOnlyCause::ReplayParity),
+        ("replay-refused", FslOnlyCause::ReplayRefused),
+        ("kani_vacuous_proof", FslOnlyCause::KaniVacuousProof),
+        ("premise-unproved", FslOnlyCause::PremiseUnproved),
+        (
+            "transfer-not-preserving",
+            FslOnlyCause::TransferNotPreserving,
+        ),
+    ] {
+        for body in [
+            json!({"type": spelling}),
+            json!({"type": spelling, "extra": 1}),
+        ] {
+            assert_eq!(
+                read_plugin_inconclusive_cause(&body),
+                Err(PluginResultRefusal::FslOnlyCause(cause))
+            );
+        }
+    }
+    for spelling in [
+        "closed-form",
+        "kani-vacuous-proof",
+        "scalar-agrees",
+        "bound_reached",
+    ] {
+        assert_eq!(
+            read_plugin_inconclusive_cause(&json!({"type": spelling, "analysis": "edf"})),
+            Err(PluginResultRefusal::UnknownSpelling {
+                pointer: "/cause/type".to_owned()
+            })
+        );
+    }
+    for spelling in [
+        "certificate-rejected",
+        "well-definedness-unchecked",
+        "symmetry-broken",
+        "lasso-not-concretized",
+        "no-admitted-behaviour",
+    ] {
+        assert_eq!(
+            read_plugin_inconclusive_cause(&json!({"type": spelling})),
+            Err(PluginResultRefusal::Unsupported {
+                pointer: "/cause/type".to_owned(),
+                feature: spelling.to_owned()
+            })
+        );
+    }
+    let cases: Vec<(Value, PluginResultRefusal)> = vec![
+        (
+            json!({"type": "reduction-not-preserving", "form": "fairness", "reduction": "symmetry"}),
+            PluginResultRefusal::Unsupported {
+                pointer: "/cause/form".to_owned(),
+                feature: "fairness".to_owned(),
+            },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": {"refinement": {}}, "reduction": "symmetry"}),
+            PluginResultRefusal::MissingMember {
+                pointer: "/cause/form/refinement/liveness".to_owned(),
+            },
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": {"refinement": {"liveness": "yes"}}, "reduction": "symmetry"}),
+            wrong("/cause/form/refinement/liveness"),
+        ),
+        (
+            json!({"type": "reduction-not-preserving", "form": {"safety": {}}, "reduction": "symmetry"}),
+            PluginResultRefusal::UnknownMember {
+                pointer: "/cause/form/safety".to_owned(),
+            },
+        ),
+        (
+            json!({"type": "constraint-reached", "boundary_states": 0}),
+            invalid("/cause/boundary_states"),
+        ),
+        (
+            json!({"type": "memory-bound-reached", "limit": "max_store", "states": 1, "value": 1}),
+            invalid("/cause/limit"),
+        ),
+        (
+            json!({"type": "mapping-undetermined", "row": "r", "state_key": "abc", "prefix": []}),
+            invalid("/cause/state_key"),
+        ),
+        (
+            json!({"type": "no-instance", "depth": 1}),
+            unknown("/cause/depth"),
+        ),
+    ];
+    for (cause, expected) in cases {
+        assert_eq!(
+            read_plugin_inconclusive_cause(&cause),
+            Err(expected),
+            "{cause}"
+        );
+    }
+}
+
+fn entry(values: Value) -> Value {
+    json!({"backend": "acme", "request_index": 0,
+           "counterexample": {"type": "assignments", "values": values}})
+}
+
+/// FR-290-AC-10.
+#[trace("TC-774", "FR-290-AC-10")]
+#[test]
+fn tc_774_assignment_reader_reads_and_refuses_in_order() {
+    let parameter = fsl_foundation::node_wire::node_key_to_json(&crate::fixture_node(0x11))
+        .expect("a fixture node spells");
+    let value = json!({"type": "integer", "value": "0"});
+    assert_eq!(
+        read_plugin_assignments(&entry(json!([{"parameter": parameter, "value": value}]))),
+        Ok(vec![CanonicalAssignment {
+            parameter: crate::fixture_node(0x11),
+            value: WitnessValue::ExactInteger(Integer::from(0_i64)),
+        }])
+    );
+    assert_eq!(read_plugin_assignments(&entry(json!([]))), Ok(Vec::new()));
+    let counterexample = |body: Value| json!({"counterexample": body});
+    let mut with_extra = entry(json!([]));
+    with_extra["extra"] = json!(1);
+    let element = |parameter: &Value, value: Value| json!({"parameter": parameter, "value": value});
+    let cases: Vec<(Value, PluginResultRefusal)> = vec![
+        (json!([]), wrong("")),
+        (
+            json!({"transcript": {}}),
+            no_counterexample("/counterexample", ValueFault::MissingMember),
+        ),
+        (
+            json!({}),
+            no_counterexample("/counterexample", ValueFault::MissingMember),
+        ),
+        (
+            json!({"transcript": {}, "counterexample": {"type": "assignments", "values": []}}),
+            unknown("/transcript"),
+        ),
+        (
+            counterexample(json!(7)),
+            no_counterexample("/counterexample", ValueFault::WrongValueKind),
+        ),
+        (
+            counterexample(json!({"values": []})),
+            no_counterexample("/counterexample/type", ValueFault::MissingMember),
+        ),
+        (
+            counterexample(json!({"type": 7, "values": []})),
+            no_counterexample("/counterexample/type", ValueFault::WrongValueKind),
+        ),
+        (
+            counterexample(json!({"type": "temporal", "values": []})),
+            no_counterexample("/counterexample/type", ValueFault::InvalidValue),
+        ),
+        (with_extra, unknown("/extra")),
+        (
+            counterexample(json!({"type": "assignments"})),
+            missing("/counterexample/values"),
+        ),
+        (
+            counterexample(json!({"type": "assignments", "values": {}})),
+            wrong("/counterexample/values"),
+        ),
+        (
+            entry(json!([{"parameter": parameter}])),
+            missing("/counterexample/values/0/value"),
+        ),
+        (
+            entry(json!([element(
+                &json!({"package": "fixture"}),
+                value.clone()
+            )])),
+            invalid("/counterexample/values/0/parameter"),
+        ),
+        (
+            entry(json!([element(&json!("11".repeat(32)), value.clone())])),
+            wrong("/counterexample/values/0/parameter"),
+        ),
+        (
+            entry(json!([element(
+                &parameter,
+                json!({"type": "integer", "value": "07"})
+            )])),
+            invalid("/counterexample/values/0/value"),
+        ),
+        (
+            entry(json!([
+                element(&parameter, value.clone()),
+                element(&parameter, value)
+            ])),
+            invalid("/counterexample/values/1/parameter"),
+        ),
+    ];
+    for (body, expected) in cases {
+        assert_eq!(read_plugin_assignments(&body), Err(expected), "{body}");
+    }
+}
+
+/// FR-290-AC-11.
+#[trace("TC-774", "FR-290-AC-11")]
+#[test]
+fn tc_774_refusal_diagnostics_carry_the_table_codes() {
+    use ValueFault::{InvalidValue, MissingMember, WrongValueKind};
+    let spelling = PluginResultRefusal::UnknownSpelling {
+        pointer: "/cause/type".to_owned(),
+    };
+    // (refusal, code, cause, the document_pointer its detail names)
+    let expectations = [
+        (
+            PluginResultRefusal::CoreOnlyBasis,
+            "invalid_result",
+            Some("unknown-cause"),
+            "/basis/type",
+        ),
+        (
+            PluginResultRefusal::FslOnlyCause(FslOnlyCause::ReplayParity),
+            "invalid_result",
+            Some("unknown-cause"),
+            "/cause/type",
+        ),
+        (
+            spelling,
+            "invalid_result",
+            Some("unknown-cause"),
+            "/cause/type",
+        ),
+        (
+            missing("/basis/depth"),
+            "invalid_result",
+            Some("missing-member"),
+            "/basis/depth",
+        ),
+        (
+            unknown("/basis/depth"),
+            "invalid_result",
+            Some("unknown-member"),
+            "/basis/depth",
+        ),
+        (
+            wrong("/basis/depth"),
+            "invalid_result",
+            Some("wrong-value-kind"),
+            "/basis/depth",
+        ),
+        (
+            invalid("/basis/depth"),
+            "invalid_result",
+            Some("invalid-value"),
+            "/basis/depth",
+        ),
+        (
+            no_counterexample("/counterexample", MissingMember),
+            "invalid_result",
+            Some("missing-member"),
+            "/counterexample",
+        ),
+        (
+            no_counterexample("/counterexample", WrongValueKind),
+            "invalid_result",
+            Some("wrong-value-kind"),
+            "/counterexample",
+        ),
+        (
+            no_counterexample("/counterexample/type", InvalidValue),
+            "invalid_result",
+            Some("invalid-value"),
+            "/counterexample/type",
+        ),
+        (
+            PluginResultRefusal::CertificationNotTrusted {
+                received: "certified".to_owned(),
+            },
+            "invalid_result",
+            Some("certification-mismatch"),
+            "/certification",
+        ),
+        (
+            PluginResultRefusal::Unsupported {
+                pointer: "/basis/method".to_owned(),
+                feature: "dreal".to_owned(),
+            },
+            "unknown_required_feature",
+            Some("unsupported-feature"),
+            "/basis/method",
+        ),
+    ];
+    for (refusal, code, cause, pointer) in expectations {
+        let diagnostic = refusal.diagnostic(3, "received-text");
+        assert_eq!(diagnostic.code(), code, "{refusal:?}");
+        assert_eq!(diagnostic.cause(), cause, "{refusal:?}");
+        let message = diagnostic.message();
+        assert!(message.contains("result item 3"), "{message}");
+        assert!(message.contains(pointer), "{message}");
+        if code == "invalid_result" {
+            assert!(
+                message.contains(&format!("document_pointer `{pointer}`")),
+                "{message}"
+            );
+            assert!(message.contains("received `received-text`"), "{message}");
+        }
+        if cause == Some("certification-mismatch") {
+            assert!(
+                message.contains("expected `trusted`, actual `certified`"),
+                "{message}"
+            );
+        }
+        let record = refusal.record(RequestIndex::new(3), plugin());
+        assert_eq!(record.value(), &TerminalValue::Failed);
+        assert_eq!(record.backend(), Some(&plugin()));
+    }
+}
+
+const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
+    function p using v(x: Int[0, 9]): Boolean pure { x > 3 }\n\
+    function q using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
+    function r using v(x: Int[0, 9]): Boolean pure { x + 1 > 3 }\n";
+
+struct Fixture {
+    checked: crate::spine::CheckedUnit,
+    emitted: crate::spine::EmittedUnit,
+    models: crate::spine::AdmittedModels,
+}
+
+fn fixture() -> Fixture {
+    fixture_of(SOURCE, &BTreeMap::new(), &DependencyInput::default())
+}
+
+fn fixture_of(
+    source: &str,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+) -> Fixture {
+    let identity = SourceIdentity::new("agent-ix", "test:plugin");
+    let limits = CallerLimits::default();
+    let cancel = Cancel::new();
+    let parsed = parse(
+        &ParseRequest {
+            source: &identity,
+            path: "unit.native",
+            bytes: source.as_bytes(),
+        },
+        limits.spine.source,
+        &cancel,
+    )
+    .unwrap_or_else(|failure| panic!("parse: {failure:?}"))
+    .into_value();
+    let models = select(&parsed, packages, limits.spine.model, &cancel)
+        .unwrap_or_else(|failure| panic!("select: {failure:?}"))
+        .into_value();
+    let checked = check(
+        &parsed,
+        "fixture".to_owned(),
+        &models,
+        dependencies,
+        limits.spine,
+        &cancel,
+    )
+    .unwrap_or_else(|failure| panic!("check: {failure:?}"))
+    .into_value();
+    let emitted = package(&checked, PackageLimits::default(), &cancel)
+        .unwrap_or_else(|failure| panic!("package: {failure:?}"))
+        .into_value();
+    Fixture {
+        checked,
+        emitted,
+        models,
+    }
+}
+
+fn context(fixture: &Fixture, limits: CallerLimits) -> PluginReplayContext {
+    PluginReplayContext::new(&fixture.checked, &fixture.emitted, &fixture.models, limits)
+}
+
+fn declaration(fixture: &Fixture, name: &str) -> (OccurrenceKey, NodeKey) {
+    let graph = fixture.checked.package().graph();
+    let callable = graph.callable(name).expect("declared");
+    let parameter = &crate::execute::callable_parameter_keys(fixture.checked.package(), &callable)
+        .expect("a function node")[0];
+    let node = callable.identity.clone();
+    (
+        OccurrenceKey::new(node, Origin::new(Role::new("declaration"), 0)),
+        parameter.clone(),
+    )
+}
+
+fn bound_at(node: NodeKey) -> ProofBound {
+    ProofBound::new(
+        DomainKey::Node { node, path: vec![] },
+        Some(DomainKind::Integer),
+        FiniteBound::integer_range(Integer::from(0_i64), Integer::from(9_i64)).unwrap(),
+    )
+    .unwrap()
+}
+
+fn input(parameter: NodeKey, x: i128) -> Vec<CanonicalAssignment> {
+    vec![CanonicalAssignment {
+        parameter,
+        value: WitnessValue::Integer(x),
+    }]
+}
+
+fn settle(
+    context: &PluginReplayContext,
+    key: &OccurrenceKey,
+    bounds: &[ProofBound],
+    assignments: Vec<CanonicalAssignment>,
+) -> TerminalRecord {
+    match context.request(key, bounds, &plugin(), assignments) {
+        Ok(wire) => {
+            let replayed = crate::replay(wire, ReplayLimits::default());
+            TerminalRecord::from_plugin_counterexample(RequestIndex::new(0), plugin(), &replayed)
+        }
+        Err(refusal) => refusal.record(RequestIndex::new(0), plugin()),
+    }
+}
+
+/// FR-290-AC-12 and the QSL-977 correctness fix: a value-validity item is not
+/// replayed as the owning function's predicate but as its application claim.
+#[trace("TC-774", "FR-290-AC-12")]
+#[test]
+fn tc_774_function_contract_and_application_items_replay() {
+    let fixture = fixture();
+    let context = context(&fixture, CallerLimits::default());
+    let (p, p_x) = declaration(&fixture, "p");
+    let bounds = [bound_at(p_x.clone())];
+    let wire = context
+        .request(&p, &bounds, &plugin(), input(p_x.clone(), 0))
+        .expect("a function-contract item");
+    assert_eq!(
+        wire.replay_target
+            .members
+            .function
+            .as_ref()
+            .map(ToString::to_string),
+        Some("p".to_owned())
+    );
+    assert_eq!(wire.backend, "acme");
+    assert_eq!(
+        crate::ReplayRequest::decode(wire.clone(), crate::ReplayLimits::default())
+            .unwrap()
+            .sources()
+            .len(),
+        1
+    );
+    assert_eq!(wire.declared_domains.len(), 1);
+    assert!(wire.state_environment.entries().is_empty());
+    assert!(wire.object_environment.is_none());
+    assert_eq!(wire.byte_provision.len(), 1);
+    assert_eq!(wire.byte_provision[0].2, SOURCE.as_bytes());
+    let replayed = crate::replay(wire.clone(), ReplayLimits::default());
+    let Ok(ReplayResult::Input(arm)) = &replayed else {
+        panic!("expected an input replay, got {replayed:?}");
+    };
+    assert_eq!(
+        arm.category(),
+        filament_semantic_value::catalog::Category::Violation
+    );
+
+    // `p`'s `x > 3` application item is the application claim: at `x = 0`
+    // the application is defined (`replay-parity`) while `p`'s
+    // function-contract item for the same assignment is `refuted`.
+    let p_application = fixture
+        .checked
+        .package()
+        .graph()
+        .requirements()
+        .iter()
+        .find(|(_, record)| record.owner() == Some("p"))
+        .map(|(key, _)| key.clone())
+        .expect("p's application has a requirement record");
+    assert_ne!(p_application, p);
+    assert!(matches!(
+        settle(&context, &p_application, &bounds, input(p_x.clone(), 0)).value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+
+    let refuted = settle(&context, &p, &bounds, input(p_x.clone(), 0));
+    assert_eq!(refuted.value(), &TerminalValue::Refuted);
+    assert_eq!(refuted.backend(), Some(&plugin()));
+    let parity = settle(&context, &p, &bounds, input(p_x, 5));
+    assert!(matches!(
+        parity.value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+
+    // The item's identity is the process-provider preimage of its bounds.
+    let entries = BoundEntries::new(bounds.to_vec()).unwrap();
+    let identity = process_provider_obligation(p.node(), p.origin(), &entries).unwrap();
+    assert_eq!(wire.obligation_identity, identity);
+
+    // `r(x) = x + 1 > 3` holds for every x, yet `r(0)` is false: the item at
+    // an application of `r` is a value-validity item, so it replays the
+    // application claim, which holds (the application is defined), and
+    // settles `inconclusive`, while `r`'s own function-contract item is the
+    // predicate claim and settles `refuted`.
+    let (r, r_x) = declaration(&fixture, "r");
+    let r_applications: Vec<OccurrenceKey> = fixture
+        .checked
+        .package()
+        .graph()
+        .requirements()
+        .iter()
+        .filter(|(_, record)| record.owner() == Some("r"))
+        .map(|(key, _)| key.clone())
+        .collect();
+    assert_eq!(r_applications.len(), 2, "`+` and `>`");
+    for application in &r_applications {
+        // The item's identity is the process-provider preimage of its node
+        // and occurrence.
+        let wire = context
+            .request(
+                application,
+                &[bound_at(r_x.clone())],
+                &plugin(),
+                input(r_x.clone(), 0),
+            )
+            .expect("an application item");
+        let entries = BoundEntries::new(vec![bound_at(r_x.clone())]).unwrap();
+        let identity =
+            process_provider_obligation(application.node(), application.origin(), &entries)
+                .unwrap();
+        assert_eq!(wire.obligation_identity, identity);
+        let record = settle(
+            &context,
+            application,
+            &[bound_at(r_x.clone())],
+            input(r_x.clone(), 0),
+        );
+        assert!(
+            matches!(
+                record.value(),
+                TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+            ),
+            "{record:?}"
+        );
+        assert_eq!(record.backend(), Some(&plugin()));
+    }
+    assert_eq!(
+        settle(&context, &r, &[bound_at(r_x.clone())], input(r_x, 0)).value(),
+        &TerminalValue::Refuted
+    );
+
+    // FR-290-AC-12: the application item of `q`'s `x + 1` at `x = 9` selects
+    // `q` at the item's occurrence and settles `replay-parity`.
+    let (q, q_x) = declaration(&fixture, "q");
+    let application = fixture
+        .checked
+        .package()
+        .graph()
+        .requirements()
+        .iter()
+        .find(|(_, record)| record.owner() == Some("q"))
+        .map(|(key, _)| key.clone())
+        .expect("q's application has a requirement record");
+    let wire = context
+        .request(
+            &application,
+            &[bound_at(q_x.clone())],
+            &plugin(),
+            input(q_x.clone(), 9),
+        )
+        .expect("an application item");
+    assert_eq!(
+        wire.replay_target
+            .members
+            .function
+            .as_ref()
+            .map(ToString::to_string),
+        Some("q".to_owned())
+    );
+    assert_eq!(
+        wire.replay_target.occurrence_key.as_ref(),
+        Some(&application)
+    );
+    let entries = BoundEntries::new(vec![bound_at(q_x.clone())]).unwrap();
+    let identity =
+        process_provider_obligation(application.node(), application.origin(), &entries).unwrap();
+    assert_eq!(wire.obligation_identity, identity);
+    let record = settle(
+        &context,
+        &application,
+        &[bound_at(q_x.clone())],
+        input(q_x.clone(), 9),
+    );
+    assert!(matches!(
+        record.value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+    assert_eq!(record.backend(), Some(&plugin()));
+
+    // A function declaration whose result is not `Boolean` is no
+    // function-contract item.
+    let refusal = context
+        .request(
+            &q,
+            &[bound_at(q_x.clone())],
+            &plugin(),
+            input(q_x.clone(), 9),
+        )
+        .err()
+        .expect("a non-predicate declaration");
+    assert_eq!(
+        refusal,
+        PluginReplayRefusal::NotReplayable { key: q.clone() }
+    );
+    let record = settle(&context, &q, &[bound_at(q_x.clone())], input(q_x, 9));
+    assert_eq!(
+        record.value(),
+        &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
+            Code::UnknownRequiredFeature
+        ))
+    );
+    assert!(record.replay_result().is_none());
+    assert_eq!(record.backend(), Some(&plugin()));
+}
+
+/// FR-290-AC-15: an application item whose application is undefined under
+/// the assignments is refuted, and a value outside the owner's declared
+/// domain is a replay refusal.
+#[trace("TC-774", "FR-290-AC-15")]
+#[test]
+fn tc_774_an_undefined_application_item_is_refuted() {
+    let source = format!("{SOURCE}function m using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
+    let fixture = fixture_of(&source, &BTreeMap::new(), &DependencyInput::default());
+    let context = context(&fixture, CallerLimits::default());
+    let (_, x) = declaration(&fixture, "m");
+    let application = fixture
+        .checked
+        .package()
+        .graph()
+        .requirements()
+        .iter()
+        .find(|(_, record)| record.owner() == Some("m"))
+        .map(|(key, _)| key.clone())
+        .expect("m's application has a requirement record");
+    let bounds = [bound_at(x.clone())];
+    let refuted = settle(&context, &application, &bounds, input(x.clone(), 0));
+    assert_eq!(refuted.value(), &TerminalValue::Refuted);
+    assert_eq!(refuted.backend(), Some(&plugin()));
+    let defined = settle(&context, &application, &bounds, input(x.clone(), 3));
+    assert!(matches!(
+        defined.value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+    let outside = settle(&context, &application, &bounds, input(x, 12));
+    assert_eq!(
+        outside.value(),
+        &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(Code::InvalidRuntimeInput))
+    );
+}
+
+/// FR-290-AC-14.
+#[trace("TC-774", "FR-290-AC-14")]
+#[test]
+fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
+    let fixture = fixture();
+    let limits = CallerLimits::from_operands([
+        "s1.tokens=200000",
+        "library.definitions=9000",
+        "accounting.work_units=5000",
+    ])
+    .unwrap();
+    let defaults = CallerLimits::default();
+    let context = context(&fixture, limits);
+    let (p, p_x) = declaration(&fixture, "p");
+    let wire = context
+        .request(&p, &[], &plugin(), input(p_x.clone(), 0))
+        .unwrap();
+    assert_eq!(wire.stage_limits["s1.tokens"], 200_000);
+    assert_eq!(wire.stage_limits["library.definitions"], 9000);
+    assert_eq!(wire.accounting_limits.work_units, 5000);
+    assert!(!wire.stage_limits.contains_key("replay.input_bytes"));
+    assert!(!wire.stage_limits.contains_key("format.output_bytes"));
+    use fsl_foundation::SettingLimits;
+    for (setting, bound) in defaults.bounds() {
+        let name = setting.name();
+        if matches!(
+            name,
+            "s1.tokens" | "library.definitions" | "replay.input_bytes" | "format.output_bytes"
+        ) {
+            continue;
+        }
+        assert_eq!(wire.stage_limits.get(name), Some(&bound), "{name}");
+    }
+
+    // The occurrence checks come before the bound check: a non-replayable
+    // item (a non-`Boolean` function's declaration) with two bounds at one key is `NotReplayable`, not a duplicate.
+    let (q_declaration, q_x) = declaration(&fixture, "q");
+    assert_eq!(
+        context
+            .request(
+                &q_declaration,
+                &[bound_at(q_x.clone()), bound_at(q_x)],
+                &plugin(),
+                Vec::new()
+            )
+            .err(),
+        Some(PluginReplayRefusal::NotReplayable {
+            key: q_declaration.clone()
+        })
+    );
+    // Only the `declaration` occurrence at ordinal 0 names a function.
+    let off_ordinal =
+        OccurrenceKey::new(p.node().clone(), Origin::new(Role::new("declaration"), 1));
+    assert_eq!(
+        context
+            .request(&off_ordinal, &[], &plugin(), Vec::new())
+            .err(),
+        Some(PluginReplayRefusal::UnknownOccurrence { key: off_ordinal })
+    );
+
+    // An unknown key comes before NotReplayable; duplicate bounds come last.
+    let unknown_key = OccurrenceKey::new(
+        crate::fixture_node(0x99),
+        Origin::new(Role::new("declaration"), 0),
+    );
+    assert_eq!(
+        context
+            .request(&unknown_key, &[], &plugin(), Vec::new())
+            .err(),
+        Some(PluginReplayRefusal::UnknownOccurrence {
+            key: unknown_key.clone()
+        })
+    );
+    let duplicate = [bound_at(p_x.clone()), bound_at(p_x.clone())];
+    let refusal = context
+        .request(&p, &duplicate, &plugin(), input(p_x, 0))
+        .err()
+        .expect("two bounds at one key");
+    assert!(matches!(
+        refusal,
+        PluginReplayRefusal::DuplicateBoundKey { .. }
+    ));
+    for (refusal, code, cause) in [
+        (
+            PluginReplayRefusal::UnknownOccurrence { key: unknown_key },
+            "missing_declaration",
+            "missing-name",
+        ),
+        (refusal, "invalid_runtime_input", "duplicate-member"),
+    ] {
+        let record = refusal.record(RequestIndex::new(0), plugin());
+        assert_eq!(record.value(), &TerminalValue::Failed);
+        assert_eq!(record.backend(), Some(&plugin()));
+        let diagnostic = refusal.diagnostic(0);
+        assert_eq!(diagnostic.code(), code);
+        assert_eq!(diagnostic.cause(), Some(cause));
+    }
+}
+
+/// FR-290-AC-14: a record no function holds (an operation frame's or a state
+/// clause's `operation-contract` record) is non-replayable.
+#[trace("TC-774", "FR-290-AC-14")]
+#[test]
+fn tc_774_a_state_clause_record_is_not_replayable() {
+    let (source, packages) = crate::spine::clause::tests::config_version_unit_and_packages();
+    let fixture = fixture_of(&source, &packages, &DependencyInput::default());
+    let context = context(&fixture, CallerLimits::default());
+    let keys: Vec<OccurrenceKey> = fixture
+        .checked
+        .package()
+        .graph()
+        .requirements()
+        .iter()
+        .filter(|(_, record)| record.owner().is_none())
+        .map(|(key, _)| key.clone())
+        .collect();
+    assert!(!keys.is_empty(), "the unit has operation-contract records");
+    for key in keys {
+        assert_eq!(
+            context.request(&key, &[], &plugin(), Vec::new()).err(),
+            Some(PluginReplayRefusal::NotReplayable { key: key.clone() })
+        );
+        let record = settle(&context, &key, &[], Vec::new());
+        assert_eq!(
+            record.value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
+                Code::UnknownRequiredFeature
+            ))
+        );
+    }
+}
+
+/// FR-290 "Replay context": `dependencies` carries every resolved library, so
+/// a unit that imports `b`, which imports `c`, replays end to end.
+#[trace("TC-774", "FR-290-AC-12")]
+#[test]
+fn tc_774_a_transitive_dependency_replays() {
+    let header =
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let c = format!("{header}function big using v(x: Int[0, 9]): Boolean pure {{ x > 3 }}\n");
+    let b = format!(
+        "{header}import \"test/c\" as c;\nfunction big using v(x: Int[0, 9]): Boolean pure {{ c::big(x) }}\n"
+    );
+    let a = format!(
+        "{header}import \"test/b\" as b;\nfunction q using v(x: Int[0, 9]): Boolean pure {{ b::big(x) }}\n"
+    );
+    let library = |identity: &str, bytes: &String| crate::spine::SuppliedLibrary {
+        identity: format!("test/{identity}"),
+        source: SourceIdentity::new("agent-ix", format!("test:{identity}")),
+        path: format!("{identity}.native"),
+        bytes: bytes.as_bytes().to_vec(),
+    };
+    let supplied =
+        DependencyInput::new(vec![library("b", &b), library("c", &c)]).expect("supplied");
+    let fixture = fixture_of(&a, &BTreeMap::new(), &supplied);
+    let context = context(&fixture, CallerLimits::default());
+    let (q, q_x) = declaration(&fixture, "q");
+    let wire = context
+        .request(
+            &q,
+            &[bound_at(q_x.clone())],
+            &plugin(),
+            input(q_x.clone(), 0),
+        )
+        .expect("a function-contract item");
+    let identities: Vec<&str> = wire
+        .dependencies
+        .iter()
+        .map(|entry| entry.identity.as_str())
+        .collect();
+    assert_eq!(identities, ["test/b", "test/c"]);
+    assert_eq!(
+        settle(
+            &context,
+            &q,
+            &[bound_at(q_x.clone())],
+            input(q_x.clone(), 0)
+        )
+        .value(),
+        &TerminalValue::Refuted
+    );
+    assert!(matches!(
+        settle(&context, &q, &[bound_at(q_x.clone())], input(q_x, 7)).value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+}
+
+#[trace("TC-444", "FR-098-AC-7")]
+#[trace("TC-774", "FR-290-AC-12")]
+#[test]
+fn plugin_replay_retains_every_source_of_each_selected_library() {
+    let header =
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let first =
+        format!("{header}function big using v(x: Int[0, 9]): Boolean pure {{ helper(x) }}\n");
+    let second =
+        format!("{header}function helper using v(x: Int[0, 9]): Boolean pure {{ x > 3 }}\n");
+    let sibling = format!("{header}function big using v(x: Int[0, 9]): Boolean pure {{ x < 8 }}\n");
+    let root = format!(
+        "{header}import \"test/b\" as b;\nimport \"test/c\" as c;\n\
+         function q using v(x: Int[0, 9]): Boolean pure {{ b::big(x) and c::big(x) }}\n"
+    );
+    let library = |identity: &str, authority: &str, source: &str, bytes: &str| {
+        crate::spine::SuppliedLibrary {
+            identity: identity.to_owned(),
+            source: SourceIdentity::new(authority, source),
+            path: format!("{source}.native"),
+            bytes: bytes.as_bytes().to_vec(),
+        }
+    };
+    let first = library("test/b", "agent-ix", "b1", &first);
+    let second = library("test/b", "agent-ix", "b2", &second);
+    let sibling = library("test/c", "other", "c1", &sibling);
+    let dependencies = DependencyInput::new([first.clone(), sibling.clone()])
+        .unwrap()
+        .with_library_units("test/b", vec![second.clone(), first.clone()])
+        .unwrap();
+    let fixture = fixture_of(&root, &BTreeMap::new(), &dependencies);
+    let context = context(&fixture, CallerLimits::default());
+    let (q, parameter) = declaration(&fixture, "q");
+    let wire = context
+        .request(
+            &q,
+            &[bound_at(parameter.clone())],
+            &plugin(),
+            input(parameter, 0),
+        )
+        .unwrap();
+    assert_eq!(wire.package.bytes(), fixture.emitted.package().bytes());
+    assert_eq!(wire.dependencies.len(), 2);
+    assert_eq!(wire.dependencies[0].identity, "test/b");
+    assert_eq!(
+        wire.dependencies[0].sources,
+        [
+            ("agent-ix".to_owned(), "b1".to_owned()),
+            ("agent-ix".to_owned(), "b2".to_owned()),
+        ]
+    );
+    assert_eq!(wire.dependencies[1].identity, "test/c");
+    assert_eq!(
+        wire.dependencies[1].sources,
+        [("other".to_owned(), "c1".to_owned())]
+    );
+    for library in [&first, &second, &sibling] {
+        assert!(wire
+            .byte_provision
+            .iter()
+            .any(|(authority, identity, bytes)| {
+                authority == &library.source.authority
+                    && identity == &library.source.identity
+                    && bytes == &library.bytes
+            }));
+    }
+    let ReplayResult::Input(result) = crate::replay(wire, ReplayLimits::default()).unwrap() else {
+        panic!("the genuine multi-source function replays");
+    };
+    assert_eq!(result.value(), Some(crate::EvaluatedValue::Boolean(false)));
+}
+
+/// FR-290-AC-1, the two clauses `main` can assert. The driver below reads an
+/// entry's `certification`, then its `basis`, and builds a record only when
+/// both readers accept: a `trusted` entry settles `proved` with the read
+/// basis, the provider's `BackendId` and certification `trusted`; a
+/// `certified` entry is refused with `CertificationNotTrusted` and builds no
+/// record. `bounded-solver` is refused on the non-hybrid path. A Kani
+/// `proved` record built as C-09 carries `certified`.
+///
+/// Not asserted here, so no `FR-290-AC-1` tag: FR-281-AC-1's `certified`
+/// record naming the EN-5 checker (EN-5 has no certificate checker or
+/// `analyze` item adapter until QSL-574 and QSL-575). FR-281-AC-4's
+/// `uncertified` record is assertable now, from EN-1 under partial-order
+/// reduction (TC-763); the tag waits only on the EN-5 record. The tag moves
+/// to a test that asserts all four.
+#[trace("TC-774")]
+#[test]
+fn tc_774_plugin_proof_settles_trusted_and_kani_proof_certified() {
+    let settle_entry = |entry: &Value| {
+        read_plugin_certification(entry.get("certification"))?;
+        let basis = read_plugin_basis(&entry["basis"])?;
+        TerminalRecord::from_plugin_proof(RequestIndex::new(3), plugin(), basis)
+    };
+    let basis = json!({"type": "inductive-solver", "method": "inductive-enclosure"});
+    let record = settle_entry(&json!({"certification": "trusted", "basis": basis})).unwrap();
+    assert_eq!(
+        record.value(),
+        &TerminalValue::Proved {
+            basis: read_plugin_basis(&basis).unwrap(),
+            certification: Certification::Trusted,
+        }
+    );
+    assert_eq!(record.backend(), Some(&plugin()));
+    assert_eq!(record.request_index(), RequestIndex::new(3));
+    assert_eq!(
+        settle_entry(&json!({"certification": "certified", "basis": basis})),
+        Err(PluginResultRefusal::CertificationNotTrusted {
+            received: "certified".to_owned()
+        })
+    );
+
+    let solver = read_plugin_basis(&json!({
+        "type": "bounded-solver", "exhaustive": [], "jumps": 0, "method": "unclassified",
+        "horizon": {"denominator": "1", "numerator": "10"},
+    }))
+    .unwrap();
+    assert_eq!(
+        TerminalRecord::from_plugin_proof(RequestIndex::new(3), plugin(), solver),
+        Err(PluginResultRefusal::Malformed {
+            pointer: "/basis/type".to_owned(),
+            cause: ValueFault::InvalidValue,
+        })
+    );
+
+    let kani = TerminalRecord::proved(RequestIndex::new(4), BackendId::new("kani-backend-1"), 3);
+    assert_eq!(
+        kani.value(),
+        &TerminalValue::Proved {
+            basis: ProofBasis::Checks { success_checks: 3 },
+            certification: Certification::Certified,
+        }
+    );
+    assert_eq!(kani.backend(), Some(&BackendId::new("kani-backend-1")));
+}

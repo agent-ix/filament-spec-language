@@ -3,11 +3,11 @@ id: FR-352
 title: "Report capability coverage for a conformance run"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-035
+  - target: ix://agent-ix/filament-spec-language/US-035
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-351
+  - target: ix://agent-ix/filament-spec-language/FR-351
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-311
+  - target: ix://agent-ix/filament-specification/FR-311
     type: depends_on
 ---
 # FR-352: Report capability coverage for a conformance run
@@ -30,7 +30,7 @@ The capability outcomes of FR-351 and the vector outcomes of FR-350.
 A report, written to standard output as JSON, or as text when the caller
 asks for text. It holds:
 
-- the QSL version that ran: the `quire-spec-language` package's
+- the FSL version that ran: the `filament-spec-language` package's
   `CARGO_PKG_VERSION` from the build (FR-567);
 - the scope;
 - the count of capabilities with each outcome, and the coverage, which is
@@ -60,10 +60,10 @@ asks for text. It holds:
 | --- | --- | --- |
 | FR-352-AC-1 | Over a fixture corpus with four in-scope capabilities, two `passed`, one `failed` and one `uncovered`, the report gives counts 2, 1, 0, 0, 0, 1 for `passed`, `failed`, `tool-failure`, `unsupported`, `incomplete` and `uncovered`, and coverage 50 per cent. When a valid corpus resolves to an empty default scope, both JSON and text modes emit the empty-scope refusal with no coverage report or percentage. | Test |
 | FR-352-AC-2 | The `failed` capability's entry holds its failing vector's id with the expected and the actual result; the `passed` capabilities' entries hold no vector detail. Adding a `tool-failure`, `unsupported` and `incomplete` vector to the failed capability leaves it `failed` with the same deciding vector id, while the report retains all four non-passing vectors with their own outcomes and expected and actual results. | Test |
-| FR-352-AC-3 | The JSON report of two runs over the fixture corpus is byte-equal, capabilities and vectors are in ascending id order, and the report names the QSL version that ran. The text report holds the same counts and coverage. | Test |
+| FR-352-AC-3 | The JSON report of two runs over the fixture corpus is byte-equal, capabilities and vectors are in ascending id order, and the report names the FSL version that ran. The text report holds the same counts and coverage. | Test |
 
 ## Dependencies
 
 - [FR-351](FR-351-settle-each-capability-from-its-executed-vectors.md)
   (capability outcomes).
-- QSpec FR-311 (per-capability results and coverage report).
+- FSpec FR-311 (per-capability results and coverage report).

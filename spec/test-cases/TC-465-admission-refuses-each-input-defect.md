@@ -3,7 +3,7 @@ id: TC-465
 title: "Admission refuses or reports incomplete for each input defect, in check order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-465: Admission refuses or reports incomplete for each input defect, in check order

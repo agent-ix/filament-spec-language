@@ -3,7 +3,7 @@ id: TC-836
 title: "S3 admits temporal operators by the unit's temporal profile and records the requirement"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: verifies
 ---
 # TC-836: S3 admits temporal operators by the unit's temporal profile and records the requirement

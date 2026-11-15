@@ -3,28 +3,28 @@ id: FR-179
 title: "Check a step relation over a model's reachable transitions (EN-1)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
 ---
 # FR-179: Check a step relation over a model's reachable transitions (EN-1)
 
 ## Description
 
-QSL's layer-A `qsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL decide the model claim of an HP-1 step
+FSL's layer-A `fsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL decide the model claim of an HP-1 step
 relation (ADR-023 HM-9, HC-3) by exploring each subject's reachable graph
 once, retaining edges, and evaluating the relation's body over every tuple
 of reachable transitions, one per execution variable, each labelled with
@@ -69,7 +69,7 @@ each with a path from an initial state to its pre-state.
   return `Violated`, each execution carrying the canonical breadth-first
   path from an initial state to its pre-state followed by its transition.
 - If the body evaluates `Undefined` on that tuple, then the engine SHALL
-  return QSpec FR-400's `Undefined` counterexample over the same execution
+  return FSpec FR-400's `Undefined` counterexample over the same execution
   paths, carrying `UndefinedEvaluation{where, cause}` with `where` the tuple and
   `cause` the evaluator's undefined cause (ADR-018 UE-1, UE-2).
 - When every tuple evaluated `true`, the engine SHALL return
@@ -94,16 +94,16 @@ each with a path from an initial state to its pre-state.
 ## Dependencies
 
 - ADR-023 §2 HM-9, §4 HC-3, HC-9, HC-10; HV-3; §12 RU-2.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md),
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md),
   [FR-107](FR-107-evaluate-state-clauses-at-s6a.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-173](FR-173-classify-hyper-clauses-into-forms.md),
   [FR-176](FR-176-check-a-universal-hyperproperty-by-self-composition.md)
   (pre-check), [FR-184](FR-184-bound-hyper-runs-with-caller-budgets.md).
 - FR-180 hands over the code claim of the same relation.
-- QSpec owns the step relation's meaning (ADR-023 QS-2) and the `StepTuple`
+- FSpec owns the step relation's meaning (ADR-023 QS-2) and the `StepTuple`
   counterexample (QS-6).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-397 (Linear STD-136; ADR-023 QS-2, QS-6).
+- ADR-023. FSpec half: FSpec FR-397 (Linear STD-136; ADR-023 QS-2, QS-6).

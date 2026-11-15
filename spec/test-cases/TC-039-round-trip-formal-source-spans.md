@@ -3,7 +3,7 @@ id: TC-039
 title: "Round-trip a bounded generated source family"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-014
+  - target: ix://agent-ix/filament-spec-language/FR-014
     type: verifies
 ---
 # TC-039: Round-trip a bounded generated source family

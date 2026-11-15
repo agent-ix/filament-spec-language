@@ -3,7 +3,7 @@ id: TC-238
 title: "Replaying normalization over a permuted IR node order reproduces the same correspondence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-238: Replaying normalization over a permuted IR node order reproduces the same correspondence
@@ -17,7 +17,7 @@ effective identities and correspondence ordering. Scope: FR-081-AC-7.
 Distinct from TC-216 (which varies a `displayName`/title field) and TC-217
 (which varies the process the binder runs in): this test varies neither —
 it varies only the order in which the same, otherwise byte-identical IR
-nodes are presented to the binder, the axis quire-specification
+nodes are presented to the binder, the axis filament-specification
 FR-150-AC-4 names explicitly ("independent of IR node order").
 
 Catches an implementation whose declaration-building or correspondence-sort

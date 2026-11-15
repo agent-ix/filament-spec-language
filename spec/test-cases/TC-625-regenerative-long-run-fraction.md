@@ -3,7 +3,7 @@ id: TC-625
 title: "EN-4 measures a long-run fraction by regeneration with asymptotic coverage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-190
+  - target: ix://agent-ix/filament-spec-language/FR-190
     type: verifies
 ---
 # TC-625: EN-4 measures a long-run fraction by regeneration with asymptotic coverage

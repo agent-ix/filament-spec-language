@@ -3,7 +3,7 @@ id: TC-200
 title: "Requests are still recorded as data after negotiation removal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-077
+  - target: ix://agent-ix/filament-spec-language/FR-077
     type: verifies
 ---
 # TC-200: Requests are still recorded as data after negotiation removal

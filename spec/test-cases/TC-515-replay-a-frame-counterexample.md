@@ -3,7 +3,7 @@ id: TC-515
 title: "The replay facade replays a frame counterexample and keeps its identities"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-116
+  - target: ix://agent-ix/filament-spec-language/FR-116
     type: verifies
 ---
 # TC-515: The replay facade replays a frame counterexample and keeps its identities

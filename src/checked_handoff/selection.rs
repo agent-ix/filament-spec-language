@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The selection sidecar, `quire.checked-handoff.selection/1` (FR-517), and
+//! The selection sidecar, `filament.checked-handoff.selection/1` (FR-517), and
 //! its comparison with an admitted package.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
-use qsl_semantics::check::Activation;
-use quire_contract_model::{
+use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedPackageReadLimits, CheckedPackageV2, CheckedTerm,
     ClockConfiguration, ProtocolForm, TemporalForm,
 };
+use fsl_semantics::check::Activation;
 use serde::{Deserialize, Serialize};
 
 use super::{Error, SELECTION_FORMAT};
 use crate::emit_checked_v2::{Compiled, Request};
 
-/// The authority of every profile definition QSL selects.
+/// The authority of every profile definition FSL selects.
 const PROFILE_AUTHORITY: &str = "agent-ix";
 
 /// The read limits the writer used.
@@ -303,9 +303,9 @@ impl Selection {
         bytes: &[u8],
     ) -> Result<Self, Error> {
         let graph = compiled.checked.package().graph();
-        let wire = qsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
+        let wire = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
             .map_err(|what| Error::Unnameable { what })?;
-        let id = |key: &quire_exact::NodeKey, what: &str| {
+        let id = |key: &filament_exact::NodeKey, what: &str| {
             wire.wire_id(key).map_err(|_| Error::Unnameable {
                 what: what.to_owned(),
             })
@@ -417,7 +417,7 @@ impl Selection {
         let mut models = Vec::with_capacity(compiled.models.len());
         for (index, model) in compiled.models.iter().enumerate() {
             let input =
-                qsl_semantics::model::intake::package_input([model.as_slice()]).map_err(|_| {
+                fsl_semantics::model::intake::package_input([model.as_slice()]).map_err(|_| {
                     Error::Unnameable {
                         what: format!("identity of models/{index}.json"),
                     }
@@ -445,7 +445,7 @@ impl Selection {
         Ok(Self {
             format: text(SELECTION_FORMAT),
             package: PackageRows {
-                contract_version: text(quire_contract_model::CHECKED_PACKAGE_V2),
+                contract_version: text(filament_contract_model::CHECKED_PACKAGE_V2),
                 read_limits: super::READ_LIMITS.into(),
                 evidence: EvidenceRows { models, libraries },
                 node_counts,
@@ -526,7 +526,7 @@ fn literal_text(term: &CheckedTerm) -> Option<&str> {
 fn binding_members<'a>(arguments: &'a [CheckedTerm], name: &str) -> Option<&'a [CheckedTerm]> {
     arguments.iter().find_map(|argument| match argument {
         CheckedTerm::Binding { name: bound, value }
-            if matches!(bound.kind(), quire_contract_model::CheckedBindingNameKind::Other(other) if other == name) =>
+            if matches!(bound.kind(), filament_contract_model::CheckedBindingNameKind::Other(other) if other == name) =>
         {
             match value.as_ref() {
                 CheckedTerm::Aggregate { members } => Some(members.as_slice()),
@@ -540,7 +540,7 @@ fn binding_members<'a>(arguments: &'a [CheckedTerm], name: &str) -> Option<&'a [
 fn named_literal<'a>(members: &'a [CheckedTerm], name: &str) -> Option<&'a str> {
     members.iter().find_map(|member| match member {
         CheckedTerm::Binding { name: bound, value }
-            if matches!(bound.kind(), quire_contract_model::CheckedBindingNameKind::Other(other) if other == name) =>
+            if matches!(bound.kind(), filament_contract_model::CheckedBindingNameKind::Other(other) if other == name) =>
         {
             literal_text(value)
         }
@@ -551,7 +551,7 @@ fn named_literal<'a>(members: &'a [CheckedTerm], name: &str) -> Option<&'a str> 
 fn has_binding(members: &[CheckedTerm], name: &str) -> bool {
     members.iter().any(|member| {
         matches!(member, CheckedTerm::Binding { name: bound, .. }
-            if matches!(bound.kind(), quire_contract_model::CheckedBindingNameKind::Other(other) if other == name))
+            if matches!(bound.kind(), filament_contract_model::CheckedBindingNameKind::Other(other) if other == name))
     })
 }
 
@@ -616,7 +616,7 @@ fn binding_members_or_aggregate(arguments: &[CheckedTerm], index: usize) -> Opti
 
 fn check_profile(
     row: &ClauseRow,
-    node: &quire_contract_model::CheckedSemanticNodeV2,
+    node: &filament_contract_model::CheckedSemanticNodeV2,
 ) -> Result<(), SelectionRefusal> {
     let law = match &node.body {
         CheckedTerm::Application { operation, .. } => operation

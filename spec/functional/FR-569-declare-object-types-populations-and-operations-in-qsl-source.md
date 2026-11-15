@@ -1,58 +1,58 @@
 ---
 id: FR-569
-title: "Declare object types, populations and operations in QSL source"
+title: "Declare object types, populations and operations in FSL source"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-001
+  - target: ix://agent-ix/filament-spec-language/US-001
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-531
+  - target: ix://agent-ix/filament-spec-language/FR-531
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-150
+  - target: ix://agent-ix/filament-specification/FR-150
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-342
+  - target: ix://agent-ix/filament-specification/FR-342
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-464
+  - target: ix://agent-ix/filament-specification/FR-464
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-465
+  - target: ix://agent-ix/filament-specification/FR-465
     type: depends_on
 ---
-# FR-569: Declare object types, populations and operations in QSL source
+# FR-569: Declare object types, populations and operations in FSL source
 
 ## Description
 
@@ -64,16 +64,16 @@ source-declared object type SHALL check, lower and evaluate exactly as an
 object type that a selected domain package declares (FR-056, FR-094), except
 that it is owned by the unit's source rather than by a domain package. Its
 operations take the unit's existing `pre`, `post` and `body` declarations
-(FR-104, QSpec FR-151 `operation-body`), and its `state`/`operation_anchor`
+(FR-104, FSpec FR-151 `operation-body`), and its `state`/`operation_anchor`
 nodes are the source-declared anchors that FR-390 "Source-declared operation
 calls from the reader" evaluates.
 
 Today a unit names object types and operations only through a model alias
 (`M::Node`, `M::Node::step`); the grammar has no object or operation
-declaration (`qsl-cst/src/grammar.rs`, `source_and_types`), and QSpec's
+declaration (`fsl-cst/src/grammar.rs`, `source_and_types`), and FSpec's
 shared grammar states "A native declaration cannot declare a domain object"
-(`proposals/quire-v1/shared-grammar.md`). This requirement adds the
-declaration, and ADR-013 QC-30 carries the QSpec changes it needs.
+(`proposals/filament-v1/shared-grammar.md`). This requirement adds the
+declaration, and ADR-013 QC-30 carries the FSpec changes it needs.
 
 Out of scope: a source object type declares no relationship, component,
 endpoint, interface feature, state machine or process; a source field
@@ -158,7 +158,7 @@ alias (below), so the two never compete.
 
 The parts of an object declaration mean:
 
-- `abstract`: the type has no direct instances (QSpec FR-151, D05).
+- `abstract`: the type has no direct instances (FSpec FR-151, D05).
 - `extends`: the type's direct supertypes, in source order.
 - `identity`: the type's identity fields, own or inherited, in source order;
   without it the type declares none of its own and its identity fields are
@@ -170,7 +170,7 @@ The parts of an object declaration mean:
   written type, a collection type for a many-valued field, exactly as a
   source record field.
 - a `population-member`: a closed population whose member type is the
-  declaring type; `symmetric` marks it symmetric (QSpec FR-150). A population
+  declaring type; `symmetric` marks it symmetric (FSpec FR-150). A population
   is not inherited: an object of a subtype is a member of a population of its
   supertype, as an object of a domain subtype is.
 - an `operation-member`: an operation with its parameters in order, its
@@ -194,7 +194,7 @@ assembler check them. An `object-decl` that does not parse is the
 
 The assembler SHALL build, from the unit's object declarations, the same
 normalized records that domain intake builds from an admitted domain package
-(FR-056, `qsl-semantics/src/model/domain_package.rs`): one
+(FR-056, `fsl-semantics/src/model/domain_package.rs`): one
 `ObjectTypeRecord` per type (its `abstract_type`, its `supertypes`, no
 `interface_features`), one `FieldMemberRecord` per field (exactly-one
 multiplicity, the declared presence, no subsets), one `OperationMemberRecord`
@@ -206,7 +206,7 @@ declaring type, extent `closed`, the `symmetric` marker). Their declaration
 keys belong to the unit's source owner, never to a domain package, and
 no ModelSelection, domain package bytes, FR-154 admission or `ModelOwner`
 takes part. The source model is one closed declaration set: FR-081's
-effective view, FR-103's operations and frames, QSpec FR-150 and FR-151
+effective view, FR-103's operations and frames, FSpec FR-150 and FR-151
 (conformance, redefinition, abstract types and closed dispatch), FR-104's
 clause resolution and FR-106 and FR-107's admission and evaluation SHALL run
 over it with the same code paths and the same rules as over a model's
@@ -214,7 +214,7 @@ effective view.
 
 The `pre` and `post` state clauses that name a source-declared operation are
 that operation's contract clauses, its `requires` and `ensures` in source
-order: FR-104 checks them as clauses, and QSpec FR-151 combines them by
+order: FR-104 checks them as clauses, and FSpec FR-151 combines them by
 construction (an effective precondition is the disjunction of the
 redefining operation's own clauses with the inherited ones, own first, and an
 effective postcondition their conjunction) and its dispatch reads them as a
@@ -272,7 +272,7 @@ The assembler and S3 SHALL refuse, each at the offending name:
   `missing_declaration`/`missing-name`;
 - a `redefines T::op` whose `T` is not a proper supertype or whose `op` `T`
   does not expose: `missing_declaration`/`missing-name`; a redefinition that
-  breaks a QSpec FR-151 conformance axis: that axis's refusal, as FR-151
+  breaks an FSpec FR-151 conformance axis: that axis's refusal, as FR-151
   gives it for the same domain declaration (`ill_typed`/`variance-parameter`,
   `variance-result`, `type-mismatch` for arity, `multiplicity-narrowing` or
   `effect-escape`);
@@ -291,13 +291,13 @@ model-owned value types (`M::Total`) and `Reference<M::Order>` included.
 
 This section, "Source-object identity rows" and FR-383's `owner_model` state
 the target emission: what S4 produces for a unit that declares a source object
-type once ADR-013 QC-30 is adopted by QSpec and IR. Until then S4 refuses such
+type once ADR-013 QC-30 is adopted by FSpec and IR. Until then S4 refuses such
 a unit as "Interim behavior" below states and writes none of it.
 
 In the target emission, S4 SHALL emit, for every source-declared object type,
 whether or not a checked node names it, one `model`/`object_type` node with:
 
-- `node_id`: QSpec FR-322's structural id of a declared node, as FR-092
+- `node_id`: FSpec FR-322's structural id of a declared node, as FR-092
   keys every declared node: `package` the checked package's name, `path` the
   declaration path `[<type name>]`, ordinal by FR-092's producer rule;
 - `declaration`: `{qualified_name: [<type name>]}`;
@@ -410,7 +410,7 @@ A source population that a checked node names (FR-391) is lowered as a
 `relation`/`population` population reference node with `declaration`
 `{qualified_name: [<population name>]}` and the unit's `SourceOwner`, keyed
 as a declared node; a source population no checked node names has no node.
-That shape is ADR-013 QC-30's proposal to QSpec FR-322 (item (2c)).
+That shape is ADR-013 QC-30's proposal to FSpec FR-322 (item (2c)).
 
 ### Source-object identity rows
 
@@ -476,15 +476,15 @@ twin, the domain package type with the same fields, identity, supertypes,
 populations, operations, frames and clauses: invariants, constraints,
 preconditions and postconditions over pre and post snapshots (FR-107),
 `allInstances`, `lookup` and population domains (FR-084, FR-391), dispatched
-query calls and operation bodies (QSpec FR-151), frame checks (FR-103,
+query calls and operation bodies (FSpec FR-151), frame checks (FR-103,
 FR-154), protocol slots (FR-390), and every temporal claim and offline monitor
 (FR-283) whose `over` parameter or state reads the type. Only the node ids,
 owners and identity rows differ.
 
-### Interim behavior until QSpec and IR adopt QC-30
+### Interim behavior until FSpec and IR adopt QC-30
 
 IR's strict reader assumes model ownership in many joins, so no part of the
-target emission is claimed admissible before ADR-013 QC-30 lands. Until QSpec
+target emission is claimed admissible before ADR-013 QC-30 lands. Until FSpec
 adopts QC-30 items (1) to (3) and IR adopts every change of item (4) other
 than the FR-352 witness kind:
 
@@ -513,7 +513,7 @@ lands, as FR-390 states.
 | FR-569-AC-1 | Passes now (source route). TC-1408 fixture S parses: one `ObjectForm` per object declaration, `Order` with fields `total: Int[0, 9]` (required) and `note: Text[0, 8; nfc]?` (optional), identity `(total)`, population `orders`, operations `size(): Integer`, `count(): Integer`, `scaled(n: Integer): Integer` and `bump(): Boolean modifies self.total`; `Sub extends Order` with `size(): Integer redefines Order::size` and `scaled(m: Integer): Integer redefines Order::scaled`; `abstract object Shape { population shapes; }` with one population and no field or operation; each part in source order with its span. `operation step()` with no `;`, `modifies self.` with no field name and `object Node extends {}` each give one `invalid_syntax` diagnostic at the offending token and no `ObjectForm`. A parameter named `extends`, and one named `modifies`, each give one `invalid_syntax`/`unexpected-token` diagnostic at the word. | Test (TC-1408) |
 | FR-569-AC-2 | Passes now (source route). Over fixture S, `invariant I using P on Order at current { self.total >= 0 }`, `pre Q using P on Order::bump { self.total < 9 }`, `body B using P on Sub::size() { 7 }`, `forall(o in orders : deref(o).total >= 0)` and `Reference<Sub>` resolve to the source declarations; `on Order::reset` refuses `missing_declaration`/`missing-name` at `reset`; `on Receipt` naming a source record and `on Nothing` refuse `missing_declaration`/`missing-name` at the name. With a domain package that also declares `Order` selected as `M`, `on Order` checks against the source fields and `on M::Order` against the model's, and no name resolves to the other; in a protocol of that unit, `role w on M` checks as FR-218's role on the whole model `M`. | Test (TC-1408) |
 | FR-569-AC-3 | Passes now (source route). Each refuses `ambiguous_declaration`/`ambiguous-name` at the stated spans and yields no checked package: a source `record Order` beside `object Order` (both declarations); `object M` in a unit with `model M` (both); population `orders` beside a function `orders` (both); a quantifier binder `orders` over `orders` (the use, naming both); two fields `total` in one type (the second); a field of `Sub` named `total` (the field); an operation `size` in `Sub` without `redefines` (the operation); `deletes Order` in an operation whose parameter is also named `Order` (the entry). | Test (TC-1408) |
-| FR-569-AC-4 | Passes now (source route). Each refuses with the code and cause stated, at the offending name: `extends M::Order` and `extends Receipt` (a source record) `invalid_model_binding`/`malformed-declaration`; `extends Ghost` `missing_declaration`/`missing-name`; `A extends B` with `B extends A` `invalid_package`/`definition-cycle` naming both edges; `identity (ghost)`, `redefines Order::reset`, `modifies self.ghost` and `creates Ghost` `missing_declaration`/`missing-name`; `deletes n` with `n: Integer` `invalid_model_binding`/`malformed-declaration`; `Sub`'s `scaled` redeclared `scaled(m: Text[0, 8; nfc]): Integer redefines Order::scaled` `ill_typed`/`variance-parameter` on the member `Sub.scaled`, as QSpec FR-151 refuses it in D. | Test (TC-1408) |
+| FR-569-AC-4 | Passes now (source route). Each refuses with the code and cause stated, at the offending name: `extends M::Order` and `extends Receipt` (a source record) `invalid_model_binding`/`malformed-declaration`; `extends Ghost` `missing_declaration`/`missing-name`; `A extends B` with `B extends A` `invalid_package`/`definition-cycle` naming both edges; `identity (ghost)`, `redefines Order::reset`, `modifies self.ghost` and `creates Ghost` `missing_declaration`/`missing-name`; `deletes n` with `n: Integer` `invalid_model_binding`/`malformed-declaration`; `Sub`'s `scaled` redeclared `scaled(m: Text[0, 8; nfc]): Integer redefines Order::scaled` `ill_typed`/`variance-parameter` on the member `Sub.scaled`, as FSpec FR-151 refuses it in D. | Test (TC-1408) |
 | FR-569-AC-5 | Passes now (source route). Over fixture S and its model twin D (TC-1408), the checked effective views, the dispatch tables and the checked types agree member for member: `self.size()` in a state clause on `Sub` dispatches to `Sub.size` and on `Order` has candidates `Order.size` and `Sub.size`; `deref(s).total` over `s: Reference<Sub>` names `Sub`'s node and `total`; `allInstances<Order>(orders)` has type `Set<Reference<Order>>`, and `Set<Reference<Order>>[0, 3]` with `bound b on orders [3]`. `Q` is `bump`'s `requires` and `Qs` is `size`'s. In variant S-R, where the unit adds `pre Qs2 using P on Sub::size { self.total >= 1 }`, `Sub.size`'s effective precondition is `Qs2 or Qs`, own clause first, as in D-R; in variant S-R', where `Sub` adds `operation bump(): Boolean redefines Order::bump modifies self.total, self.note;`, both S-R' and D-R' refuse `ill_typed`/`effect-escape` once, on the member `Sub.bump` and the field `note`. | Test (TC-1408) |
 | FR-569-AC-6 | Waits on QC-30 (target emission). S4 over fixture S emits `Order`, `Sub` and `Shape` as `model`/`object_type` nodes with `declaration` `["Order"]`, `["Sub"]` and `["Shape"]`, the unit's `SourceOwner`, self `semantic_type` and one `declaration` occurrence each; `Order`'s body binds `total` then `note` (with its `optional` group), `Sub`'s binds the inherited `total` and `note`, and `Shape`'s is `aggregate{[]}`; `Shape`, which nothing names, is emitted. No node is emitted for a field, operation or population member. `Q`'s anchor has `context` `Order`'s node, `operation` `"bump"` and a frame node whose `semantic_type` is `Order`'s node and whose `modifies` holds (`Order`'s node, `total`, `receiver`). Clause functions, built for the queries only: `Qs`'s authored precondition has `declaration` `["Order", "size", "precondition", "Qs"]`, `C`'s body `["Order", "size", "body"]` and `B`'s body `["Sub", "size", "body"]`, each with the `SourceOwner`, its declaration as id path, ordinal `0`, one `declaration` occurrence at the authoring declaration's span and its `clause` binding; `bump`, which is not a query, has none. In S-R, `Qs2`'s is `["Sub", "size", "precondition", "Qs2"]` and `Sub.size`'s effective precondition `["Sub", "size", "effective_precondition"]`, with its occurrence at `Sub`'s `size` member; no two clause functions share a qualified name, and every segment is an identifier. `operation_effects` has one row per own operation (four of `Order`, two of `Sub`), each with `document` the unit's source identity string, `declaring` the declaring node and `provenance` `{origin: "source_declaration_operation_frame", member: "<type>::<operation>"}`; `bump`'s (`member` `Order::bump`) holds the receiver `modifies` entry for `total`, the others four empty arrays, and the rows are in `(document, declaring, operation)` byte order. The `self.size()` application in `Sized` has a dispatch-table row whose context is `Order`'s node and whose candidates `Order.size` and `Sub.size` carry the body identities of `C` and `B` and the effective-precondition identity of `Qs`'s authored function (in S-R, `Sub.size`'s is its `effective_precondition` function). IR's strict reader admits the package | Test (TC-1408) |
 | FR-569-AC-7 | Waits on QC-30 (target emission). `Order`'s node id is unchanged when a field is added to `Order`, an operation is renamed or the declaration is moved within the unit, and changes when `Order` is renamed; its body changes with the added field. D's `Order` node is `{<domain package>, [model, object_type, <IR node>], 0}` with a `ModelOwner` and S's is `{<checked package>, ["Order"], 0}` with the `SourceOwner`; the two differ | Test (TC-1408) |
@@ -549,11 +549,11 @@ lands, as FR-390 states.
   [FR-517](FR-517-write-a-checked-package-handoff-directory-from-source-in-process.md):
   the source-operation rows and the identity file that carries the
   source-object rows.
-- QSpec FR-150, FR-151 (effective view, conformance, redefinition and
+- FSpec FR-150, FR-151 (effective view, conformance, redefinition and
   dispatch), FR-322 (node identity, owners, field members, population
   references), FR-342 (operation anchors), FR-464 and FR-465 (protocol owner
   and role model).
 - [ADR-013](../decisions/ADR-013-canonical-type-package-conversion-ownership.md)
-  QC-30: the QSpec changes and the IR changes the target emission needs.
+  QC-30: the FSpec changes and the IR changes the target emission needs.
   Until they land, S4 gives the single `SourceObjectEmission` refusal above;
   the source route is complete now.

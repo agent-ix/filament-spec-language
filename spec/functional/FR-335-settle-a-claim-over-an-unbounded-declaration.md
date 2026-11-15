@@ -3,27 +3,27 @@ id: FR-335
 title: "Settle a claim over an unbounded declaration end to end"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-076
+  - target: ix://agent-ix/filament-spec-language/FR-076
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-333
+  - target: ix://agent-ix/filament-spec-language/FR-333
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-144
+  - target: ix://agent-ix/filament-specification/FR-144
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-346
+  - target: ix://agent-ix/filament-specification/FR-346
     type: depends_on
 ---
 # FR-335: Settle a claim over an unbounded declaration end to end
@@ -71,7 +71,7 @@ stays unproved.
   `Unbounded{[s's DomainKey]}`) with domain kind collection, computed from
   the checked types and never from the caller (ADR-014 §6 step 5).
 - When no registrant advertises `value-validity`, the item SHALL settle
-  `unsupported`, warned, naming `value-validity` (FR-076, QSpec FR-290).
+  `unsupported`, warned, naming `value-validity` (FR-076, FSpec FR-290).
 - The request writer SHALL write the item with `finite_bound_available`
   true when every unbounded domain is boundable, and a `requires-bound`
   disposition for it SHALL settle it `requires-bound`, with no harness
@@ -109,12 +109,12 @@ stays unproved.
   application records), [FR-075](FR-075-compute-candidates-from-registered-backends.md),
   [FR-076](FR-076-settle-backend-absence-as-unsupported.md),
   [FR-333](FR-333-read-an-optional-collection-bound-and-population-maximum.md).
-- QSL's tests supply each negotiation disposition and backend result as a
+- FSL's tests supply each negotiation disposition and backend result as a
   fixture and run no CG or driver code; the end-to-end run through CG
-  `negotiate_*` and the driver lives in quire-integration.
-- QSpec FR-144-AC-12, FR-290, FR-346.
+  `negotiate_*` and the driver lives in filament-integration.
+- FSpec FR-144-AC-12, FR-290, FR-346.
 
 ## References
 
 - Linear QSL-385 (spec ticket); QSL-42 (implementation).
-- QSpec half: QSpec FR-144 (merged).
+- FSpec half: FSpec FR-144 (merged).

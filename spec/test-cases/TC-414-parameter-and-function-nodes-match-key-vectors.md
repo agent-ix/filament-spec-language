@@ -3,7 +3,7 @@ id: TC-414
 title: "Parameter, literal and function nodes retain their checked shapes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: verifies
 ---
 # TC-414: Parameter, literal and function nodes retain their checked shapes
@@ -12,7 +12,7 @@ relationships:
 
 Verify FR-092-AC-4/5/6/10: parameter level and type, function parameter
 order, separate expression nodes, literal values and measure references.
-Compare node ids as QSpec FR-322 structural `{package, path, ordinal}`
+Compare node ids as FSpec FR-322 structural `{package, path, ordinal}`
 objects, never as preimage bytes or digests.
 
 ## Test Procedure

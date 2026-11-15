@@ -3,7 +3,7 @@ id: TC-190
 title: "A replay disagreement settles inconclusive with a typed cause and is never repairable"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: verifies
 ---
 # TC-190: A replay disagreement settles inconclusive with a typed cause and is never repairable

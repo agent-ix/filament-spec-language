@@ -3,11 +3,11 @@ id: TC-1273
 title: "Lower and read a checked present option"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-140
+  - target: ix://agent-ix/filament-spec-language/FR-140
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-264
+  - target: ix://agent-ix/filament-spec-language/FR-264
     type: verifies
 ---
 
@@ -15,7 +15,7 @@ relationships:
 
 ## Description
 
-Verify S4 lowering and FR-264's QSL I2 read-back for the present option
+Verify S4 lowering and FR-264's FSL I2 read-back for the present option
 expression used by FR-140-AC-11, plus the S3 type-mismatch refusal.
 
 ## Test Procedure
@@ -26,7 +26,7 @@ Require `Verified`. (Retired: the emitted package id is not compared with an id
 recomputed from the read package.)
 Confirm the option value and its key,
 type, payload dependency, and absence of a `Some` application follow the
-carrier contract in QSpec FR-322; this test does not redefine that wire
+carrier contract in FSpec FR-322; this test does not redefine that wire
 contract or record a copied package id.
 
 Check a second function with `x: Integer`, result `Option<Boolean>`, and body
@@ -38,4 +38,4 @@ Tag the tests `#[trace("TC-1273", "FR-093-AC-48", "FR-140-AC-11")]`.
 
 ## Expected Results
 
-FR-264 returns `Verified` for the admitted function's emitted package. The mismatched function has no emitted package and refuses `ill_typed`/`type-mismatch` at the `Some(x)` source span. The present-option carrier is governed by QSpec FR-322.
+FR-264 returns `Verified` for the admitted function's emitted package. The mismatched function has no emitted package and refuses `ill_typed`/`type-mismatch` at the `Some(x)` source span. The present-option carrier is governed by FSpec FR-322.

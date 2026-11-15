@@ -2,21 +2,21 @@
 //! Actual refinement lists cross the complete-package replay boundary.
 
 use crate::support::refinement_cas::{self, Variant};
-use ix_trace_rs::trace;
-use qsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary};
-use qsl_replay::{
+use filament_exact::Cancel;
+use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary};
+use fsl_replay::{
     AccountingLimits, EvaluatedValue, Identifier, InputSettlement, QualifiedName, ReplayLimits,
     ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
     StateEnvironment,
 };
-use quire_exact::Cancel;
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 const ROOT: &str = "test/refinement-root";
 const LIBRARY: &str = "test/geometry";
 const HEADER: &str =
-    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"quire.model.complete/v1\";\n";
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n";
 
 fn documents() -> Vec<Vec<u8>> {
     let mut documents = refinement_cas::documents(Variant::CAS);
@@ -37,8 +37,8 @@ fn documents() -> Vec<Vec<u8>> {
 
 fn unit(protocol: &str, refinement: &str, imports: &str, function: &str) -> String {
     format!(
-        "{HEADER}profile inf = \"quire.temporal.infinite-trace/v1\";\n\
-         profile p = \"quire.protocol.finite-global/v1\";\n\
+        "{HEADER}profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile p = \"filament.protocol.finite-global/v1\";\n\
          {imports}model Spec = \"{spec}\";\n\
          model Impl = \"{concrete}\";\n\
          protocol {protocol} using p over (c: Spec::Counter) on origin {{\n\
@@ -63,14 +63,14 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
         vec![
             SuppliedLibrary {
                 identity: "test/aaa".into(),
-                source: qsl_foundation::SourceIdentity::new("test", "earlier"),
+                source: fsl_foundation::SourceIdentity::new("test", "earlier"),
                 path: "earlier.native".into(),
                 bytes: format!("{HEADER}function unused using v(): Boolean pure {{ true }}\n")
                     .into_bytes(),
             },
             SuppliedLibrary {
                 identity: LIBRARY.into(),
-                source: qsl_foundation::SourceIdentity::new("test", "geometry"),
+                source: fsl_foundation::SourceIdentity::new("test", "geometry"),
                 path: "geometry.native".into(),
                 bytes: unit(
                     "Other",
@@ -105,9 +105,9 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
     } else {
         dependencies
     };
-    let source = qsl_foundation::SourceIdentity::new("test", "root");
+    let source = fsl_foundation::SourceIdentity::new("test", "root");
     let selection = QualifiedName::new(vec![Identifier::new("entry").unwrap()]).unwrap();
-    let located = qsl_replay::call_site(
+    let located = fsl_replay::call_site(
         source.clone(),
         ROOT.into(),
         "root.native",
@@ -129,7 +129,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
         .into_value();
     let admitted = spine::admit_parsed_unit_list(vec![parsed], &dependencies).unwrap();
     let packages =
-        qsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
+        fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
     let models = spine::select_units(&admitted, &packages, limits.model, limits.source, &cancel)
         .unwrap()
         .into_value();
@@ -183,7 +183,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
         profile_selections: Vec::new(),
         dependencies: libraries
             .iter()
-            .map(|library| qsl_replay::DependencyEntryWire {
+            .map(|library| fsl_replay::DependencyEntryWire {
                 identity: library.identity.clone(),
                 sources: vec![("test".into(), library.source.identity.to_owned())],
                 refinement_internals: (library.identity == LIBRARY)
@@ -206,7 +206,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
 }
 
 fn assert_false_replay(wire: ReplayRequestWire) {
-    let result = qsl_replay::replay(wire, ReplayLimits::default())
+    let result = fsl_replay::replay(wire, ReplayLimits::default())
         .expect("the complete genuine package admits and replays");
     let ReplayResult::Input(input) = result else {
         panic!("an input replay");
@@ -237,8 +237,8 @@ fn unresolved_internal_class_keeps_its_native_cause_and_request_locus() {
     let mut raw: Value = serde_json::from_slice(wire.package.bytes()).unwrap();
     raw["lock"]["refinement_internals"][0]["internal"][0] = json!("Spec::Twice::zz");
     wire.package = ReplayPackage::read(&serde_json::to_vec(&raw).unwrap(), u64::MAX).unwrap();
-    let error = qsl_replay::replay(wire, ReplayLimits::default()).unwrap_err();
-    assert_eq!(error.code(), qsl_foundation::Code::MissingDeclaration);
+    let error = fsl_replay::replay(wire, ReplayLimits::default()).unwrap_err();
+    assert_eq!(error.code(), fsl_foundation::Code::MissingDeclaration);
     assert_eq!(error.cause(), Some("missing-name"));
     assert_eq!(
         error.pointer().as_deref(),
@@ -247,16 +247,16 @@ fn unresolved_internal_class_keeps_its_native_cause_and_request_locus() {
     let ReplayRefusal::RefinementInternals { refusal, .. } = error else {
         panic!("actual native list refusal");
     };
-    let qsl_replay::CompileRefusal::Check { refusals, .. } = *refusal else {
+    let fsl_replay::CompileRefusal::Check { refusals, .. } = *refusal else {
         panic!("native root S3 check");
     };
-    let qsl_semantics::check::CheckCause::Refinement(refusal) = &refusals[0].cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refusal) = &refusals[0].cause else {
         panic!("native refinement cause");
     };
-    let qsl_semantics::check::RefinementCause::InternalList(defect) = &refusal.cause else {
+    let fsl_semantics::check::RefinementCause::InternalList(defect) = &refusal.cause else {
         panic!("native list defect");
     };
-    assert_eq!(defect.kind, qsl_semantics::check::ListDefectKind::Missing);
+    assert_eq!(defect.kind, fsl_semantics::check::ListDefectKind::Missing);
     assert_eq!(defect.pointer, "/0/internal/0");
 }
 
@@ -280,8 +280,8 @@ fn each_supplied_list_reaches_only_its_root_or_dependency_refinement() {
     let mut misassigned = wire.clone();
     misassigned.dependencies[1].refinement_internals =
         Some(serde_json::from_value(internals("CasTwice", "Twice")).unwrap());
-    let error = qsl_replay::replay(misassigned, ReplayLimits::default()).unwrap_err();
-    assert_eq!(error.code(), qsl_foundation::Code::MissingDeclaration);
+    let error = fsl_replay::replay(misassigned, ReplayLimits::default()).unwrap_err();
+    assert_eq!(error.code(), fsl_foundation::Code::MissingDeclaration);
     assert_eq!(error.cause(), Some("missing-name"));
     assert_eq!(
         error.pointer().as_deref(),

@@ -3,7 +3,7 @@ id: TC-571
 title: "Strong each fairness refines on the quotient, and every verdict equals the unreduced verdict"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-153
+  - target: ix://agent-ix/filament-spec-language/FR-153
     type: verifies
 ---
 # TC-571: Strong each fairness refines on the quotient, and every verdict equals the unreduced verdict

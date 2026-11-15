@@ -3,7 +3,7 @@ id: TC-656
 title: "Protocol terminal declarations check and protocol deadlocks are reported with blocked threads"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-211
+  - target: ix://agent-ix/filament-spec-language/FR-211
     type: verifies
 ---
 # TC-656: Protocol terminal declarations check and protocol deadlocks are reported with blocked threads

@@ -3,38 +3,38 @@ id: US-033
 title: "Write unbounded temporal claims and unbounded declarations"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-331
+  - target: ix://agent-ix/filament-spec-language/FR-331
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-332
+  - target: ix://agent-ix/filament-spec-language/FR-332
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-333
+  - target: ix://agent-ix/filament-spec-language/FR-333
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-334
+  - target: ix://agent-ix/filament-spec-language/FR-334
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-335
+  - target: ix://agent-ix/filament-spec-language/FR-335
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-336
+  - target: ix://agent-ix/filament-spec-language/FR-336
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-033: Write unbounded temporal claims and unbounded declarations
 
 ## Story
 
-**As a** specification author writing QSL claims about a system
+**As a** specification author writing FSL claims about a system
 **I want** to write `eventually p` and `always (fail implies eventually
 always[0,10] healthy)` with no artificial horizon, and to declare `Set<Account>`
 or a population with no maximum, and have each one mean exactly what it says
@@ -45,8 +45,8 @@ or unsupported with the reason and what would help.
 
 ## Context
 
-ADR-014 gives QSL one rule for absent bounds and one infinite-trace profile,
-`quire.temporal.infinite-trace/v1`. ADR-018 lets interval operators nest
+ADR-014 gives FSL one rule for absent bounds and one infinite-trace profile,
+`filament.temporal.infinite-trace/v1`. ADR-018 lets interval operators nest
 inside infinite-trace formulas and makes the trace evaluator the semantics
 that every engine answers to. US-015 covers checking such a claim over every
 behaviour of a model; this story covers writing it, evaluating it on a given
@@ -57,7 +57,7 @@ declarations.
 
 ### US-033-EX-1: An unbounded formula is admitted only where it means something
 
-- **Given** a unit that selects `quire.temporal.infinite-trace/v1` and a
+- **Given** a unit that selects `filament.temporal.infinite-trace/v1` and a
   clause `eventually holds(c.value = 3)`.
 - **When** the author compiles it, and then compiles the same clause in a
   unit that selects the event-position false-extension profile.

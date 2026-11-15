@@ -3,7 +3,7 @@ id: TC-1383
 title: "Generated blocks call only kernel-table entries and their own blocks"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-561
+  - target: ix://agent-ix/filament-spec-language/FR-561
     type: verifies
 ---
 # TC-1383: Generated blocks call only kernel-table entries and their own blocks
@@ -24,7 +24,7 @@ Scope: FR-561-AC-3 and FR-561-AC-4.
    an address outside the kernel table and the prepared blocks, and one with
    a generator that emits an indirect call through a pointer loaded from the frame; run the same
    check on each.
-3. Inside `qsl_jit::exec`, scan the field types of `EntryFrame` for a function-pointer or `KernelTable` type; cancel
+3. Inside `fsl_jit::exec`, scan the field types of `EntryFrame` for a function-pointer or `KernelTable` type; cancel
    `&Cancel` after a call starts and before its first charge.
 
 Tag the tests `#[trace("TC-1383", "FR-561-AC-3")]` and

@@ -3,25 +3,25 @@ id: FR-138
 title: "Check and compute a refinement's history fields"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: depends_on
 ---
 # FR-138: Check and compute a refinement's history fields
 
 ## Description
 
-QSL SHALL check a refinement's `history` rows at S3 and compute history
-values along a concrete behaviour in layer 6, crate `qsl-replay`, where
+FSL SHALL check a refinement's `history` rows at S3 and compute history
+values along a concrete behaviour in layer 6, crate `fsl-replay`, where
 `check_step` and the certificate checker (FR-149) read them (ADR-020 AX-1,
 AX-3). A history
 field belongs to the refinement only: it never enters the concrete package,
@@ -37,10 +37,10 @@ exactly as they were.
 
 ## Inputs
 
-- The parsed `history` rows, as QSpec FR-375's history-row production
+- The parsed `history` rows, as FSpec FR-375's history-row production
   defines them, with spans.
 - The concrete model's object types, fields and operations.
-- In `qsl-replay`: a concrete state, the history values at it, and a concrete
+- In `fsl-replay`: a concrete state, the history values at it, and a concrete
   step (its transition identity and post-state).
 
 ## Outputs
@@ -76,7 +76,7 @@ exactly as they were.
   or another history field of the same type, SHALL refuse
   `invalid_model_binding`/`conflicting-binding`.
 - The initial `history-literal` SHALL conform to the declared type under
-  QSpec FR-375's history-literal rule (FR-375-AC-9), which covers value-set
+  FSpec FR-375's history-literal rule (FR-375-AC-9), which covers value-set
   membership including range, `none`, `true`/`false` and enum members. A
   non-member refuses `ill_typed`/`type-mismatch` at the literal, decided
   statically and not at run time.
@@ -168,15 +168,15 @@ and not its range, so the range is left only at run time.
 
 ## References
 
-- The QSpec half (history field semantics): QSpec FR-378 (Linear STD-133).
-  QSpec FR-378 words the product key's order as "history-row order"; the key
-  here orders by object, then field name. QSpec's wording should be aligned
+- The FSpec half (history field semantics): FSpec FR-378 (Linear STD-133).
+  FSpec FR-378 words the product key's order as "history-row order"; the key
+  here orders by object, then field name. FSpec's wording should be aligned
   to it.
-- The enum and decimal refusal departs from QSpec in the three ways FR-135's
+- The enum and decimal refusal departs from FSpec in the three ways FR-135's
   References state.
 - The history-row production, the `history-literal` spellings and the
-  history-literal conformance rule: QSpec FR-375. The covering test for the
+  history-literal conformance rule: FSpec FR-375. The covering test for the
   `none`, `true`/`false` and enum-member cases, which FR-138 does not
-  restate, is QSpec TC-310 mutation 10 (FR-375-AC-9). This build refuses an
+  restate, is FSpec TC-310 mutation 10 (FR-375-AC-9). This build refuses an
   enum-typed history row before its literal is checked (FR-138-AC-9), so it
   admits no enum-member history literal for now.

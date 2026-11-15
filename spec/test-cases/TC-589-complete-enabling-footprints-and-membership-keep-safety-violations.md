@@ -3,9 +3,9 @@ id: TC-589
 title: "Complete enabling footprints and membership locations keep safety violations under partial-order reduction"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-156
+  - target: ix://agent-ix/filament-spec-language/FR-156
     type: verifies
 ---
 # TC-589: Complete enabling footprints and membership locations keep safety violations under partial-order reduction

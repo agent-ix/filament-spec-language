@@ -3,7 +3,7 @@ id: TC-720
 title: "A reached limit names its kind, bound, count and setting"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: verifies
 ---
 # TC-720: A reached limit names its kind, bound, count and setting

@@ -3,7 +3,7 @@ id: TC-691
 title: "Timed counterexamples carry exact rational delays, a final delay for time-locks, and a time-divergent lasso"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-236
+  - target: ix://agent-ix/filament-spec-language/FR-236
     type: verifies
 ---
 # TC-691: Timed counterexamples carry exact rational delays, a final delay for time-locks, and a time-divergent lasso

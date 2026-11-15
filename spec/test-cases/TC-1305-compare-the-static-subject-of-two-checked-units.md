@@ -3,7 +3,7 @@ id: TC-1305
 title: "Compare the static subject of two checked units"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-510
+  - target: ix://agent-ix/filament-spec-language/FR-510
     type: verifies
 ---
 # TC-1305: Compare the static subject of two checked units
@@ -16,15 +16,15 @@ Verify the static subject of FR-510. Scope: FR-510-AC-1 to FR-510-AC-5
 ## Test Procedure
 
 Fixture `Z0`: a unit importing library `Lib`, selecting domain package `Pkg`
-at version 1 as `model M`, header profiles `v` (`quire.value.complete/v1`) and
-`pp` (`quire.protocol.finite-global/v1`), one function and one protocol. `S0`
+at version 1 as `model M`, header profiles `v` (`filament.value.complete/v1`) and
+`pp` (`filament.protocol.finite-global/v1`), one function and one protocol. `S0`
 is the subject of checking `Z0` under default limits.
 
 | Row | Change to Z0 | Expected |
 | --- | --- | --- |
 | 1 | all limits raised | subject equal to `S0`; `differences` empty; `BuildProvenance` unequal |
 | 2 | replay the emitted unit with two populations, two windows, two traces and two backends; compute the subject before and after | equal to `S0`, empty |
-| 3 | the header changes `v` to select `quire.state.core/v1`, source still checks | [sources, profiles] |
+| 3 | the header changes `v` to select `filament.state.core/v1`, source still checks | [sources, profiles] |
 | 4 | `Pkg` version 2 | [models] |
 | 5 | source text edited (a body literal) | [sources] |
 | 6 | supply an extra library the unit never imports | [] |

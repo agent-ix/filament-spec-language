@@ -3,7 +3,7 @@ id: TC-1194
 title: "The control-to-temporal activation map is derived from the protocol nodes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-449
+  - target: ix://agent-ix/filament-spec-language/FR-449
     type: verifies
 ---
 # TC-1194: The control-to-temporal activation map is derived from the protocol nodes

@@ -3,28 +3,28 @@ id: FR-308
 title: "Build the complete protocol forms at S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-112
+  - target: ix://agent-ix/filament-spec-language/FR-112
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-052
+  - target: ix://agent-ix/filament-specification/FR-052
     type: depends_on
 ---
 # FR-308: Build the complete protocol forms at S2
 
 ## Description
 
-When S2 builds the form of a protocol declaration, it SHALL accept every surface form of QSpec's
+When S2 builds the form of a protocol declaration, it SHALL accept every surface form of FSpec's
 shared grammar "Complete temporal, choreography and analysis forms" that
 the protocol system runs, and SHALL build one typed form for each, holding
 every member the production writes with its span (ADR-012 §1, §3;
@@ -43,18 +43,18 @@ every later refusal points at the text the operator wrote.
 
 ## Inputs
 
-- The CST of one protocol declaration, parsed by QSpec's shared-grammar
+- The CST of one protocol declaration, parsed by FSpec's shared-grammar
   productions `protocol-clause`, `activation`, `role`, `role-lifetime`,
   `channel`, `delivery-policy`, `capacity`, `overflow-policy`, `parallel`,
   `join-policy`, `repetition`, `loop-proof`, `await-control`,
-  `compensation`, `protocol-terminal` and `protocol-scheduling` (QSpec
-  #173's complete forms; QSpec FR-052 for `repetition`), and the same
+  `compensation`, `protocol-terminal` and `protocol-scheduling` (FSpec
+  #173's complete forms; FSpec FR-052 for `repetition`), and the same
   grammar's `capture`, `relationship`, `protocol-requirement`, `related`,
   `event-node` and `node-ref`.
 
 ## Outputs
 
-In crate `qsl-forms`, the protocol form is `ProtocolDeclarationForm`. The
+In crate `fsl-forms`, the protocol form is `ProtocolDeclarationForm`. The
 fields below name its members, written `ProtocolClauseForm` where they are
 the target model. Today it builds `roles` (`RoleForm{name, context}`),
 `activation` (`ActivationForm::{Origin, Each{parameter, when}}`), `captures`,
@@ -143,8 +143,8 @@ the target for their owning slices:
   recovery node SHALL refuse as `FormsCause::RecoveringCst`, with no
   partial form.
 - S2 builds each complete form whether or not the unit selects
-  `quire.protocol.complete/v1`. QSpec's facet rule (an unselected facet gives
-  `unsupported_construct`) applies to it, but QSL has no header layer for that
+  `filament.protocol.complete/v1`. FSpec's facet rule (an unselected facet gives
+  `unsupported_construct`) applies to it, but FSL has no header layer for that
   profile, so the gate is not enforced (FR-361 item 8).
 
 ### Protocol reference expression
@@ -164,8 +164,8 @@ the target for their owning slices:
   source order, with the written target and the span of the whole
   expression, and SHALL resolve nothing. A target that is not a
   `qualified-name` is a parse refusal, not an S2 form.
-- QSpec owns the shared grammar. The `protocol-reference` production and
-  its meaning are QSpec FR-463's.
+- FSpec owns the shared grammar. The `protocol-reference` production and
+  its meaning are FSpec FR-463's.
 
 ## Acceptance Criteria
 
@@ -191,10 +191,10 @@ the target for their owning slices:
 - [FR-112](FR-112-build-protocol-scoped-anchor-forms.md) (scoped anchors in
   the same forms), FR-218 and FR-381 (the S3 checks), FR-309 (the memory
   forms), FR-325 (`CaptureForm`, `IntervalForm` and the `u64` bound rule).
-- QSpec owns the grammar: the shared grammar's complete choreography
-  productions and QSpec FR-052's `repetition`.
+- FSpec owns the grammar: the shared grammar's complete choreography
+  productions and FSpec FR-052's `repetition`.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-052 and the shared
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-052 and the shared
   grammar's complete forms (Linear STD-140).

@@ -1,0 +1,486 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-116 (ADR-012 §12.2 Witness and replay row, ADR-013 O-25 to O-27):
+//! [`replay_frame`], the replay facade's entry for a frame counterexample.
+//!
+//! It checks the envelope's clause node and occurrence key against the
+//! payload's frame node and occurrence, recompiles the request's package by
+//! FR-098's rules ([`recompile`]),
+//! resolves the request's `frame_operation` in the recompiled package, refuses a
+//! payload whose frame, occurrence or anchor identity is not the recompiled
+//! one before any admission, then runs FR-115's frame run -- the very
+//! `check_frame` that `run_clause`'s `Frame` selection runs (FR-109) --
+//! over the invocation, admitted by FR-106 from the byte provision, and
+//! settles an FR-072 result on the envelope's arm.
+
+use filament_exact::NodeKey;
+use filament_semantic_value::catalog::InternalFault;
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_semantics::check::{CheckedGraph, CheckedOperationFrame};
+use fsl_semantics::library::LibraryName;
+use fsl_semantics::model::observation::{DocumentRef, FrameWitness, Provisions};
+
+use super::{
+    charges, check_envelope_target, domain_packages, recompile, wrong_target,
+    MalformedOperationReason, ReplayRefusal,
+};
+use crate::bounds::ReplayLimits;
+use crate::identity::DefinitionSourceRef;
+use crate::request::{ReplayRequest, ReplayRequestWire};
+use crate::result::{
+    EvaluatedValue, InputArmResult, ReplayResult, Verdict, WitnessArmResult, WitnessCheck,
+};
+use crate::spine::{
+    check_frame, CallOutcome, CallValue, ClauseDisposition, CompiledRun, FrameCheck, OperationName,
+};
+use crate::target::{ReplayEntry, ReplayTarget, TargetMember};
+use crate::witness::{ClaimedChange, EnvelopeSource, FrameCounterexample, FrameOperation};
+use crate::WitnessEnvelope;
+use filament_semantic_value::catalog::Category;
+
+/// FR-116's `stale_dependency`/`content-mismatch`: one payload identity
+/// that is not the recompiled package's, or one envelope identity that is
+/// not the payload's, naming both.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum FrameIdentityMismatch {
+    /// The envelope's `clause_node`, which for a frame packet is the
+    /// payload's frame node.
+    #[error(
+        "the envelope names clause node {envelope} but its payload names frame node {payload}"
+    )]
+    EnvelopeFrame {
+        /// The envelope's clause node.
+        envelope: NodeKey,
+        /// The payload's frame node.
+        payload: NodeKey,
+    },
+    /// The envelope's `occurrence_key`, which for a frame packet is the
+    /// payload's frame occurrence.
+    #[error("the envelope names occurrence {envelope:?} but its payload names frame occurrence {payload:?}")]
+    EnvelopeOccurrence {
+        /// The envelope's occurrence key.
+        envelope: OccurrenceKey,
+        /// The payload's frame occurrence key.
+        payload: OccurrenceKey,
+    },
+    /// The operation's `state`/`operation_anchor` node.
+    #[error(
+        "the payload names anchor node {payload} but the package recompiles it as {recompiled}"
+    )]
+    Anchor {
+        /// The payload's anchor node.
+        payload: NodeKey,
+        /// The recompiled anchor node.
+        recompiled: NodeKey,
+    },
+    /// The operation's `state`/`frame` node.
+    #[error(
+        "the payload names frame node {payload} but the package recompiles it as {recompiled}"
+    )]
+    Frame {
+        /// The payload's frame node.
+        payload: NodeKey,
+        /// The recompiled frame node.
+        recompiled: NodeKey,
+    },
+    /// The frame node's `generated` occurrence.
+    #[error("the payload names frame occurrence {payload:?} but the package recompiles it as {recompiled:?}")]
+    Occurrence {
+        /// The payload's occurrence key.
+        payload: OccurrenceKey,
+        /// The recompiled occurrence key.
+        recompiled: OccurrenceKey,
+    },
+}
+
+/// FR-116 Outputs: an FR-072 result on the envelope's arm, with the
+/// identities the replay kept: the source unit's reference, the
+/// package name, the request's `frame_operation`, the payload's anchor, frame and occurrence
+/// (each equal to the recompiled one, or the replay refused), the three
+/// admitted documents, the payload's claimed change and the change the
+/// replay found.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrameReplayResult {
+    result: ReplayResult,
+    source: DefinitionSourceRef,
+    package_name: LibraryName,
+    operation: FrameOperation,
+    anchor: NodeKey,
+    frame: NodeKey,
+    occurrence: OccurrenceKey,
+    invocation: DocumentRef,
+    pre: DocumentRef,
+    post: DocumentRef,
+    claimed: ClaimedChange,
+    found: Option<FrameWitness>,
+}
+
+impl FrameReplayResult {
+    /// The FR-072 result, on the envelope's arm.
+    pub fn result(&self) -> &ReplayResult {
+        &self.result
+    }
+    /// The recompiled source unit's caller-named reference.
+    pub fn source(&self) -> &DefinitionSourceRef {
+        &self.source
+    }
+    /// The recompiled package's name.
+    pub fn package_name(&self) -> &LibraryName {
+        &self.package_name
+    }
+    /// The request's `frame_operation`.
+    pub fn operation(&self) -> &FrameOperation {
+        &self.operation
+    }
+    /// The operation's anchor node.
+    pub fn anchor(&self) -> &NodeKey {
+        &self.anchor
+    }
+    /// The operation's frame node.
+    pub fn frame(&self) -> &NodeKey {
+        &self.frame
+    }
+    /// The frame node's `generated` occurrence key.
+    pub fn occurrence(&self) -> &OccurrenceKey {
+        &self.occurrence
+    }
+    /// The admitted invocation's identity and digest.
+    pub fn invocation(&self) -> &DocumentRef {
+        &self.invocation
+    }
+    /// The admitted pre snapshot's identity and digest.
+    pub fn pre(&self) -> &DocumentRef {
+        &self.pre
+    }
+    /// The admitted post snapshot's identity and digest.
+    pub fn post(&self) -> &DocumentRef {
+        &self.post
+    }
+    /// The change the payload claims.
+    pub fn claimed(&self) -> &ClaimedChange {
+        &self.claimed
+    }
+    /// The frame witness the replay's check found (FR-115), when it found a
+    /// change outside the frame; it may name another change than
+    /// [`Self::claimed`], and both are kept as found.
+    pub fn found(&self) -> Option<&FrameWitness> {
+        self.found.as_ref()
+    }
+}
+
+/// FR-116: replay `envelope`'s frame counterexample. `wire` is FR-098's
+/// request, supplying the package reference, byte provision and limits and
+/// the `frame_operation` replay target that selects the operation; its
+/// replay source is FR-098's function-replay member, which a frame replay
+/// does not read: its result arm is the envelope's.
+///
+/// Refuses, with no partial result, when the request does not decode, then
+/// (before recompiling, in this order) when the request's target is not
+/// `frame_operation`, when the envelope's target differs from the request's,
+/// and when the envelope's `clause_node` or `occurrence_key` is not the
+/// payload's frame node or frame occurrence, then by FR-098's rules (in
+/// FR-098's order), /// when the request's `frame_operation` names no operation frame, names an
+/// object that only inherits the operation or is ambiguous, when a payload
+/// identity is stale (before any admission), and when FR-106 admission
+/// fails. The counterexample refuted the frame, so the proved
+/// verdict is `violation`: a violation reproduces; a frame the invocation
+/// respects is `inconclusive`, `Verdicts`; a check that completed no value
+/// (a declared delta that disagrees) is `inconclusive`, `NoValue`.
+///
+/// Admission and the domain package re-normalization run under the request's
+/// `stage_limits` entries for their settings, or their published defaults.
+pub fn replay_frame(
+    wire: ReplayRequestWire,
+    envelope: &WitnessEnvelope<FrameCounterexample>,
+    replay_limits: ReplayLimits,
+) -> Result<FrameReplayResult, ReplayRefusal> {
+    let request = ReplayRequest::decode(wire, replay_limits)?;
+    // FR-116's three envelope checks, in order, after decode and before the
+    // recompile.
+    let Some(replay_target) = request.replay_target() else {
+        return Err(ReplayRefusal::WrongModelGraphEntry);
+    };
+    let ReplayTarget::FrameOperation(target) = replay_target else {
+        return Err(wrong_target(
+            replay_target,
+            ReplayEntry::ReplayFrame,
+            TargetMember::FrameOperation,
+        ));
+    };
+    check_envelope_target(&request, envelope.replay_target())?;
+    check_envelope(envelope).map_err(ReplayRefusal::FrameIdentity)?;
+    let limits = super::request_limits(
+        request.stage_limits(),
+        request.accounting_limits(),
+        replay_limits,
+    )?;
+    let compiled = recompile(&request, &limits)?;
+    let package_name = compiled.package.clone();
+    let payload = envelope.family_payload();
+    let graph = compiled.checked.package().graph();
+    let (context, operation_frame) = resolve_target(graph, target, &package_name)?;
+    check_identities(payload, operation_frame).map_err(ReplayRefusal::FrameIdentity)?;
+
+    // The source is the request reference whose unit declares the frame's
+    // anchor, through the recompiled package's own occurrences.
+    let source_reference = graph
+        .occurrences()
+        .find_map(|(node, _, location)| {
+            (node == payload.anchor)
+                .then(|| graph.region(location))
+                .flatten()
+        })
+        .map(|region| region.source().clone())
+        .ok_or_else(|| {
+            ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "checked-frame-anchor-has-source-region",
+            ))
+        })?;
+    let source = request
+        .sources()
+        .iter()
+        .find(|source| {
+            source.authority() == source_reference.authority()
+                && source.identity() == source_reference.identity()
+        })
+        .ok_or_else(|| {
+            ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "checked-frame-source-is-in-package-reference",
+            ))
+        })?;
+    let packages = domain_packages(&request)?;
+    // FR-106 reads the invocation and its snapshots only from the byte
+    // provision, by their identity labels.
+    let documents = request.byte_provision().snapshots();
+    let mut sources = Vec::with_capacity(1 + compiled.checked.libraries().len());
+    sources.push(compiled.checked.source().clone());
+    sources.extend(compiled.checked.libraries().iter().cloned());
+    let run = CompiledRun {
+        packages: &packages,
+        model_limits: limits.spine.model,
+        provisions: Provisions {
+            snapshots: &documents,
+            invocations: &documents,
+        },
+        observation_limits: limits.observation,
+        accounting: request.accounting_limits(),
+        package: compiled.checked.package(),
+        sources: &sources,
+        progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+    };
+    let FrameCheck { report, documents } =
+        check_frame(&run, context, operation_frame, &payload.invocation);
+
+    let (replayed, value, found) = match report.disposition {
+        ClauseDisposition::FrameViolation(witness) => (
+            Category::Violation,
+            Some(EvaluatedValue::Boolean(false)),
+            Some(*witness),
+        ),
+        ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(true))) => {
+            (Category::Success, Some(EvaluatedValue::Boolean(true)), None)
+        }
+        // FR-115: a false verdict always carries its witness, and a frame
+        // check completes a Boolean.
+        ClauseDisposition::Evaluate(CallOutcome::Completed(
+            CallValue::Boolean(false) | CallValue::Integer(_) | CallValue::Reference(_),
+        )) => {
+            return Err(ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "frame-check-completes-true-or-a-witnessed-violation",
+            )))
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Refused(_)) => (Category::Refusal, None, None),
+        ClauseDisposition::Evaluate(CallOutcome::Incomplete(_)) => {
+            (Category::Incomplete, None, None)
+        }
+        // O-16's `undefined` row is not a proof category (as in FR-098).
+        ClauseDisposition::Evaluate(CallOutcome::Undefined { .. }) => {
+            (Category::Inconclusive, None, None)
+        }
+        ClauseDisposition::Admit(failure) => return Err(ReplayRefusal::Admission(failure)),
+        ClauseDisposition::EvaluateFault(fault) => return Err(ReplayRefusal::Fault(fault)),
+        // `check_frame` reports only admission or evaluation: the compile,
+        // selection and argument stages are behind it.
+        ClauseDisposition::Compile(_)
+        | ClauseDisposition::UnknownLanguage { .. }
+        | ClauseDisposition::MissingName { .. }
+        | ClauseDisposition::NotAPredicate { .. }
+        | ClauseDisposition::Temporal(_)
+        | ClauseDisposition::TemporalRefusal(_)
+        | ClauseDisposition::ProgressContradiction(_)
+        | ClauseDisposition::ArgumentRefusal(_) => {
+            return Err(ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "frame-check-reports-admission-or-evaluation",
+            )))
+        }
+    };
+    let [invocation, pre, post] = <[DocumentRef; 3]>::try_from(documents).map_err(|_| {
+        ReplayRefusal::Fault(InternalFault::new(
+            "replay",
+            "an-evaluated-frame-check-read-three-documents",
+        ))
+    })?;
+    let proved = Verdict::from_category(Category::Violation);
+    let charges = charges(report.usage.evaluation_consumed.iter().copied());
+    // The frame check reports no evaluation location, so the result cites
+    // no region; its identities are the payload's and the documents'.
+    let result = match envelope.source() {
+        EnvelopeSource::Witness(_) => ReplayResult::Witness(WitnessArmResult::settle(
+            proved,
+            Verdict::from_category(replayed),
+            replayed,
+            value,
+            // ADR-031 SW-7: a function call's or a frame check's result
+            // has no decisive occurrence, so it carries no record.
+            WitnessCheck::Agrees(None),
+            Vec::new(),
+            charges,
+        )),
+        EnvelopeSource::Input(_) => ReplayResult::Input(InputArmResult::settle(
+            proved,
+            Verdict::from_category(replayed),
+            replayed,
+            value,
+            &WitnessCheck::Agrees(None),
+            Vec::new(),
+            charges,
+        )),
+    };
+    Ok(FrameReplayResult {
+        result,
+        source: source.clone(),
+        package_name,
+        operation: target.clone(),
+        anchor: payload.anchor.clone(),
+        frame: payload.frame.clone(),
+        occurrence: payload.occurrence.clone(),
+        invocation,
+        pre,
+        post,
+        claimed: payload.change.clone(),
+        found,
+    })
+}
+
+/// The request's `frame_operation` as a `Frame` selection's `M::T::op`:
+/// its object must be exactly a model alias and an operation owner
+/// (an object type, a process or a state machine). `None`
+/// otherwise, so it names no operation.
+fn operation_name(operation: &FrameOperation) -> Option<OperationName> {
+    let [model, object] = operation.object.segments() else {
+        return None;
+    };
+    Some(OperationName {
+        model: model.clone(),
+        object: object.clone(),
+        operation: operation.operation.clone(),
+    })
+}
+
+/// FR-116: resolve `target` by FSpec FR-342's operation resolution. An
+/// object or operation that resolves nothing, or an operation with no frame
+/// node, is `missing-name`; two supertypes exposing the name is
+/// `ambiguous-name`; and an object that only inherits the operation (its
+/// declaring type is another) is `malformed-declaration`, since the target
+/// names the declaring object.
+pub(crate) fn resolve_target<'g>(
+    graph: &'g CheckedGraph,
+    target: &FrameOperation,
+    package: &LibraryName,
+) -> Result<(filament_exact::EffectiveId, &'g CheckedOperationFrame), ReplayRefusal> {
+    let unknown = || ReplayRefusal::UnknownOperation {
+        operation: target.clone(),
+        package: package.clone(),
+    };
+    let name = operation_name(target).ok_or_else(unknown)?;
+    if graph.names_non_owner_declaration(&name.model, &name.object) {
+        return Err(ReplayRefusal::MalformedOperationTarget {
+            operation: target.clone(),
+            package: package.clone(),
+            reason: MalformedOperationReason::NotAnObjectType,
+        });
+    }
+    let selection = graph
+        .resolve_operation(&name.model, &name.object, &name.operation)
+        .ok_or_else(unknown)?;
+    if graph.operation_is_ambiguous(&selection) {
+        return Err(ReplayRefusal::AmbiguousOperation {
+            operation: target.clone(),
+            package: package.clone(),
+        });
+    }
+    let (context, frame) = graph.operation_frame(&selection).ok_or_else(unknown)?;
+    if frame.operation().declaring != context {
+        return Err(ReplayRefusal::MalformedOperationTarget {
+            operation: target.clone(),
+            package: package.clone(),
+            reason: MalformedOperationReason::OnlyInherited,
+        });
+    }
+    Ok((context, frame))
+}
+
+/// FR-116: a frame packet carries its frame node and frame occurrence
+/// twice, as the envelope's `clause_node` and `occurrence_key` and as the
+/// payload's `frame` and `occurrence`; the two must agree. The frame goes
+/// first, as in [`check_identities`], because the occurrence key is
+/// derived from it.
+fn check_envelope(
+    envelope: &WitnessEnvelope<FrameCounterexample>,
+) -> Result<(), Box<FrameIdentityMismatch>> {
+    let payload = envelope.family_payload();
+    if envelope.clause_node() != &payload.frame {
+        return Err(Box::new(FrameIdentityMismatch::EnvelopeFrame {
+            envelope: envelope.clause_node().clone(),
+            payload: payload.frame.clone(),
+        }));
+    }
+    if *envelope.occurrence_key() != payload.occurrence {
+        return Err(Box::new(FrameIdentityMismatch::EnvelopeOccurrence {
+            envelope: envelope.occurrence_key().clone(),
+            payload: payload.occurrence.clone(),
+        }));
+    }
+    Ok(())
+}
+
+/// FR-116: the payload's frame, occurrence and anchor identities, each
+/// against the recompiled one, in that order. No identity is recovered
+/// from a display name.
+///
+/// The frame goes first because the other two are derived from it: the
+/// occurrence key is (frame node, origin), and the `operation_anchor` node's
+/// content references the frame node, so a changed frame changes both. A
+/// payload produced from a package whose frame differs is then refused
+/// naming the two frame identities (FR-116-AC-3), not the anchors that
+/// changed only because the frame did.
+fn check_identities(
+    payload: &FrameCounterexample,
+    recompiled: &CheckedOperationFrame,
+) -> Result<(), Box<FrameIdentityMismatch>> {
+    let frame = recompiled.frame().clone();
+    if frame != payload.frame {
+        return Err(Box::new(FrameIdentityMismatch::Frame {
+            payload: payload.frame.clone(),
+            recompiled: frame,
+        }));
+    }
+    let occurrence = OccurrenceKey::new(frame, recompiled.frame_origin().clone());
+    if occurrence != payload.occurrence {
+        return Err(Box::new(FrameIdentityMismatch::Occurrence {
+            payload: payload.occurrence.clone(),
+            recompiled: occurrence,
+        }));
+    }
+    let anchor = recompiled.anchor().clone();
+    if anchor != payload.anchor {
+        return Err(Box::new(FrameIdentityMismatch::Anchor {
+            payload: payload.anchor.clone(),
+            recompiled: anchor,
+        }));
+    }
+    Ok(())
+}
