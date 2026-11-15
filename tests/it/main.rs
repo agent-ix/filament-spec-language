@@ -78,6 +78,8 @@ mod checked_handoff;
 #[cfg(feature = "checked-handoff")]
 mod checked_handoff_healthy;
 #[cfg(feature = "checked-handoff")]
+mod checked_handoff_realizability;
+#[cfg(feature = "checked-handoff")]
 mod checked_views;
 mod compound_quantity_types;
 mod fairness_item_path;
