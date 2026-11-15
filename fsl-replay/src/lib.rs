@@ -304,8 +304,8 @@ pub use refinement_query::{
 pub use refinement::{
     abstract_classes, check_initial, check_protocol_initial, check_protocol_state_relations,
     check_protocol_step, check_step, initial_history, map_state, open_protocol_systems,
-    open_systems, protocol_observation_label, protocol_step_view, protocol_transition_class,
-    step_history, AbstractClass, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
+    open_systems, protocol_observation_label, protocol_transition_class, step_history,
+    AbstractClass, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
     AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep, EvalFailure,
     HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure, MappingRowRef,
     MappingUndetermined, ObjectKey, ObservationField, ObservationLabel, PairedAssumptionPath,
@@ -317,6 +317,7 @@ pub use refinement::{
     StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
     TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
 };
+pub use spine::protocol_step_view;
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
 // The typed identity and catalog code a `TerminalRecord` and a

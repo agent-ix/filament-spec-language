@@ -15,21 +15,18 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
+use filament_contract_model::CheckedNodeId;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::{ModelFinding, ModelSystem, TerminalClass};
 use fsl_eval::simulation::protocol::{
     ProtocolFairnessError, ProtocolRefusal, ProtocolTransition, StepKind, Unsupported,
 };
 use fsl_eval::simulation::{EncodingRefusal, ExpansionStop};
-use fsl_package::protocol_view::{
-    clause_activation, protocol_view, role_is_replicated, ClauseActivation, ViewRefusal,
-};
+use fsl_package::protocol_view::ViewRefusal;
 use fsl_semantics::model::observation::AdmissionFailure;
 
 use super::protocol_system::{AbstractProtocolSystem, ProtocolAssumptionFairness};
 use crate::protocol_analysis::arena::ArenaNames;
-use crate::protocol_analysis::ProtocolPremises;
 
 /// A state of a [`ProtocolSteps`] view, by its index in discovery order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -153,49 +150,17 @@ impl From<ExpansionStop> for StepViewRefusal {
     }
 }
 
-/// The constructs of the clause `protocol` that `fsl-eval` steps only up to
-/// a bound: `activation on each`, then each replicated role.
-fn dynamic_constructs(
-    package: &CheckedPackageV2,
-    protocol: &CheckedNodeId,
-) -> Result<Vec<UnsteppedConstruct>, ViewRefusal> {
-    let view = protocol_view(package, protocol)?;
-    let node = |id: &CheckedNodeId| {
-        package
-            .resolved_graph()
-            .nodes
-            .iter()
-            .find(|node| &node.node_id == id)
-            .ok_or_else(|| ViewRefusal::UnknownProtocol { node: id.clone() })
-    };
-    let mut found = Vec::new();
-    if clause_activation(node(view.clause())?)? == ClauseActivation::Each {
-        found.push(UnsteppedConstruct::ActivationOnEach(view.clause().clone()));
-    }
-    for role in view.roles() {
-        if role_is_replicated(node(role)?)? {
-            found.push(UnsteppedConstruct::ReplicatedRole((*role).clone()));
-        }
-    }
-    Ok(found)
-}
-
-/// FR-578: the step view of the protocol clause `protocol` of the linked
-/// package `package`, over the protocol subject `subject`, exploring at most
-/// `max_states` states.
-///
-/// # Errors
-///
-/// [`StepViewRefusal`] when the protocol cannot be read, the subject does
-/// not admit, an expansion stops, a state is undetermined or cut, or the
-/// protocol reaches more than `max_states` states.
-pub fn protocol_step_view(
-    package: &CheckedPackageV2,
-    protocol: &CheckedNodeId,
+/// FR-578: the step view over the protocol subject `subject`, whose clause's
+/// steps resolve to the linked package's nodes through `names`, after the
+/// dynamic constructs `unstepped` the linked package holds, exploring at
+/// most `max_states` states. The linked-package entry is
+/// [`crate::spine::protocol_step_view`].
+pub(crate) fn view_over(
+    mut unstepped: Vec<UnsteppedConstruct>,
+    names: &ArenaNames,
     subject: &ProtocolSubject<'_>,
     max_states: usize,
 ) -> Result<ProtocolStepView, StepViewRefusal> {
-    let mut unstepped = dynamic_constructs(package, protocol)?;
     let model = ModelSystem::new(subject.model.simulation.clone())
         .map_err(|failure| StepViewRefusal::Admission(Box::new(failure)))?;
     let system = match AbstractProtocolSystem::new(model, subject) {
@@ -218,8 +183,7 @@ pub fn protocol_step_view(
     if !unstepped.is_empty() {
         return Ok(ProtocolStepView::Unsupported(unstepped));
     }
-    let names = crate::spine::arena_names(package, protocol, &ProtocolPremises::default())?;
-    explore(&system, &names, max_states).map(ProtocolStepView::Steps)
+    explore(&system, names, max_states).map(ProtocolStepView::Steps)
 }
 
 fn explore(

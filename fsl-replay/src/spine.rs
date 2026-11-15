@@ -63,6 +63,7 @@ pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
     UnitCheckOptions,
 };
+pub use protocol_step_view::protocol_step_view;
 pub use protocol_structure::{
     arena_names, replay_protocol_analysis, ProtocolReplayRefusal, StructureError,
 };
@@ -221,6 +222,7 @@ pub use refinement::{
 mod native_result;
 mod protocol_premises;
 mod protocol_proof;
+mod protocol_step_view;
 mod protocol_structure;
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
