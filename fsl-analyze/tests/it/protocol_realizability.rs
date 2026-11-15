@@ -1280,7 +1280,7 @@ fn written_records_read_back(records: &[AnalyzeRecord]) {
             ),
             "item {at}"
         );
-        let (kind, witness) = match artifact {
+        let (kind, witness) = match &**artifact {
             ProtocolAnalysisArtifact::Projection(result) => (
                 ProtocolAnalysisKind::LocalProjection,
                 match &result.outcome {
@@ -1325,7 +1325,7 @@ fn a_declined_item_writes_no_protocol_analysis_record() {
     let mut missing = fixture.request(64);
     missing.definition_key = None;
     let records = analyze_items(
-        &Engines::qsl().expect("they register"),
+        &Engines::fsl().expect("they register"),
         vec![realizability_item(
             RequestIndex::new(0),
             &fixture.admitted,

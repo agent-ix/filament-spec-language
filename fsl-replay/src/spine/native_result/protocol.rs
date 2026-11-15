@@ -56,7 +56,7 @@ pub enum ProtocolProofBasis {
 }
 
 /// A closed FR-331 inconclusive cause of a protocol analysis (FSpec FR-331
-/// "Result entries", QSL FR-573).
+/// "Result entries", FSL FR-573).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ProtocolInconclusiveCause {
@@ -114,7 +114,7 @@ enum UnsupportedCode {
     UnsupportedProjection,
 }
 
-/// The `detail` of an `unsupported` diagnostic (QSL FR-574 Outputs).
+/// The `detail` of an `unsupported` diagnostic (FSL FR-574 Outputs).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UnsupportedDetail {
