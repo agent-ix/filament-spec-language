@@ -828,7 +828,6 @@ dependencies = [
  "ix-trace-rs",
  "nix",
  "quire-canonical",
- "regex",
  "serde_json",
 ]
 

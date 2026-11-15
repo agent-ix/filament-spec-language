@@ -173,3 +173,6 @@ Optional whole-repository semantic audit was not selected. Direct code/test agre
 
 Scratch artifact only. The dispatching lead or fix-round coder must copy this latest artifact to reviews/qsl-1918-spec-review-integrity.md; this reviewer never commits or pushes the frozen candidate.
 
+## Disposition pass 1 confirmation
+
+Reviewed at 4e7e95c268dc5686f37255299f70c4a3e5f51052. MP-012 and BENCHMARKING.md are unchanged from the original review. No new specification defect was found; the original PASS stands. The parser implementation findings are recorded in code-review, not treated as defects in the unchanged measurement plan. MP-012 validation exits 0 with the previously reported module warnings.

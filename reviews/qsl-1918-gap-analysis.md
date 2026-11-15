@@ -173,3 +173,56 @@ Optional whole-repository semantic audit was not selected. Direct code/test agre
 
 Scratch artifact only. The dispatching lead or fix-round coder must copy this latest artifact to reviews/qsl-1918-gap-analysis.md; this reviewer never commits or pushes the frozen candidate.
 
+## Dispositions
+
+| ID | Outcome | Evidence |
+| --- | --- | --- |
+| FND-001 | fixed | Three committed Rust report tests now assert fresh-pair normalization at both sizes, stale/partial-pair rejection and successful parser/interpreter filters through the actual collection implementation. |
+
+## Disposition pass 1 verdict
+
+**PASS for the recorded gap finding.** The new report tests close the reported absence of evidence. The remaining filter behavior and duplicated parser are tracked by code-review FND-003/FND-004; this disposition does not approve them.
+
+## Disposition pass 1 scope
+
+```yaml
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "after_excerpt": "        assert_eq!(sum_five.interpreter_per_frame, 100.0);\n        assert_eq!(sum_five.interpreter_per_operation, 120.0);\n        assert_eq!(sum_five.rust_per_frame, 10.0);\n        assert_eq!(sum_five.rust_per_operation, 12.0);\n        assert_eq!(sum_five.ratio, 10.0);"
+    }
+  ],
+  "new_findings": [],
+  "scope": [
+    {
+      "id": "MP-012",
+      "path": "spec/assurance/MP-012-evaluator-kernel-wall-time.md",
+      "role": "examined",
+      "excerpt": "The report prints the\nCriterion estimate divided by the frame and operation counts, plus the ratio\nof interpreter ns per operation to Rust ns per operation."
+    }
+  ],
+  "bindings": []
+}
+```
+
+## Disposition pass 1 verification
+
+Reviewed head: 4e7e95c268dc5686f37255299f70c4a3e5f51052; fix commits d8119bfa and 4e7e95c; original reviewed head 1dce3f80fb4bc9a5967dacb4398f4b78933e721f. Original findings above remain unchanged. No repository source edits or pushes were made by the reviewer. No aggregate gate ran.
+
+The kernel population now has one KernelKind::ALL catalog and one SIZES constant shared by the bench, reporter and generator test. Both report CLI boundaries carry ix_trace_rs::string_edge. The specialized Make recipe is excluded from the generic recipe set; make -n bench-evaluator_kernel BENCH_ARGS=parser and make -n bench BENCH_ARGS=parser both succeed without the previous override warning and retain the axis.
+
+The report now has three Rust tests covering fresh normalization for both sizes, stale and incomplete expected pairs, and the parser/interpreter filters. MP-012 and BENCHMARKING.md have no fix-round delta; no new specification issue was found, and the base/integrity reviews remain PASS. MP-012 validation exits 0 with the previously reported module warnings.
+
+The Criterion source at installed criterion 0.8.2 src/lib.rs::configure_from_args is the authority for flag behavior. Its exact filter and --ignored paths accept no benchmark for --exact evaluator/kernel and --ignored respectively; its --list mode emits no measurements. The copied criterion_filter does not preserve these distinctions. Additional missing option spellings include -c, --colour, --baseline-lenient and --output-format. This is a functional review, not a live performance comparison.
+
+Plan completion: not assessed
+
+## Disposition pass 1 execution results
+
+The slot-wrapped cargo test --locked -p fsl-bench --all-features --bin fsl-bench-kernel-report exits 0: all three new tests pass. Slot-wrapped make string-edge exits 2 and reports exactly 15 unchanged base occurrences, with none in fsl-bench-kernel-report.rs. No aggregate gate was run.
+
+A scratch Rust driver compiled the unchanged current report source against this worktree's built dependencies and executed its real CLI. report -- parser and report -- interpreter exit 0. report -- --exact evaluator/kernel, report -- --ignored and report -- --list each exit 1 with "expected fresh interpreter Criterion estimate for sum/5". The Criterion benchmark executable accepts the corresponding no-match exact and ignored invocations with exit 0. Logs: /private/tmp/qsl-1918-review-round1-report-tests.log, /private/tmp/qsl-1918-review-round1-string-edge.log and /private/tmp/qsl-1918-review-round1-cli-probe.log.
+
+The new source has no whitespace errors. The full fix-round diff check also identified trailing blank lines in the copied original review artifacts; the updated scratch artifacts are normalized for their next custody commit.
