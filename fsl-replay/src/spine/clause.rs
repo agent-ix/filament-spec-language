@@ -1020,7 +1020,11 @@ impl ClauseRunReport {
             activation,
             execution,
             truth,
-            settlement: Some(self.basis),
+            settlement: Some(
+                self.finite_window
+                    .as_ref()
+                    .map_or(self.basis, |window| window.basis),
+            ),
         }
     }
 }

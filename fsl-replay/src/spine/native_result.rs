@@ -246,6 +246,11 @@ impl ClauseRunRecord {
         self.0.basis.as_str()
     }
 
+    /// The document's four outcome axes (FR-622).
+    pub fn axes(&self) -> crate::OutcomeAxes {
+        self.0.axes
+    }
+
     /// Whether the document carries a separating witness.
     pub fn has_witness(&self) -> bool {
         self.0.witness.is_some()
@@ -1774,12 +1779,6 @@ pub fn read_native_run_result_bounded(
             .transpose()?;
         if document.format != format {
             return Err(NativeRunReadError::UnsupportedFormat(document.format));
-        }
-        if document.axes.settlement.map(crate::proof_result::SettlementBasis::as_str) != Some(document.basis.as_str()) {
-            return Err(NativeRunReadError::Invalid {
-                member: "axes.settlement",
-                reason: "disagrees with basis",
-            });
         }
         if let Some(value) = &document.disposition.temporal {
             let record = temporal::decode(value)?;

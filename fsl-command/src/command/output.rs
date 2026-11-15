@@ -16,6 +16,11 @@ use serde_json::Value;
 pub struct NativeResult(Value);
 
 impl NativeResult {
+    /// The FR-621 `analyze` document, written by `fsl-analyze`.
+    pub(super) fn analyze_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// Inspect the encoded observations without changing the admitted shape.
     pub fn as_value(&self) -> &Value {
         &self.0
@@ -121,7 +126,10 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::Libraries(_)
         | RunCause::CompleteRunSelection(_)
         | RunCause::ExtractionRequiresRun
-        | RunCause::EmptyCompileProgram => (types::Stage::Request, types::Details::None),
+        | RunCause::EmptyCompileProgram
+        | RunCause::AnalyzeRequest { .. }
+        | RunCause::AnalyzeRefused(_) => (types::Stage::Request, types::Details::None),
+        RunCause::AnalyzeFault => (types::Stage::Output, types::Details::None),
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
             types::Details::Spine {

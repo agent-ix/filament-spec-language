@@ -320,11 +320,13 @@ pub(crate) fn analyze_bound(
         .collect::<Vec<_>>();
     let settled = super::analyze_items(engines, items, cancel);
     let aggregate = super::aggregate(&requirements, &settled);
+    let details = settled.iter().map(super::ItemDetail::of).collect();
     let (records, counterexamples) = super::split_records(settled, package);
     Ok(Staged::new(super::AnalyzeOutcome {
         records,
         counterexamples,
         aggregate,
+        details,
     }))
 }
 

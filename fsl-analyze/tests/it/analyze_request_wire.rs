@@ -18,7 +18,6 @@ use crate::analyze_cli_support::{
 #[trace("TC-1580", "FR-620-AC-2")]
 #[trace("TC-1080", "FSpec-FR-520-AC-1")]
 #[test]
-#[ignore = "QSL-2121: the native-analyze/1 reader and the echoed request item are not implemented yet"]
 fn an_admitted_item_echoes_its_request_and_round_trips() {
     let ws = Workspace::new("wire-echo");
     let path = counter_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -51,7 +50,6 @@ fn an_admitted_item_echoes_its_request_and_round_trips() {
 #[trace("TC-1580", "FR-620-AC-3")]
 #[trace("TC-1080", "FSpec-FR-520-AC-2")]
 #[test]
-#[ignore = "QSL-2121: the closed native-analyze/1 reader is not implemented yet"]
 fn computed_and_unknown_members_refuse_the_request() {
     let forged = [
         json!({"claim": "Bounded", "request_index": 0}),
@@ -80,7 +78,6 @@ fn computed_and_unknown_members_refuse_the_request() {
 /// FR-620-AC-4: an unknown claim settles only its own item.
 #[trace("TC-1580", "FR-620-AC-4")]
 #[test]
-#[ignore = "QSL-2121: per-item claim resolution by name is not implemented yet"]
 fn an_unknown_claim_settles_only_its_item() {
     let ws = Workspace::new("wire-unknown-claim");
     let run = analyze(&counter_request(
@@ -102,7 +99,6 @@ fn an_unknown_claim_settles_only_its_item() {
 /// FR-620-AC-5: with no `items`, every claim then the derived items.
 #[trace("TC-1580", "FR-620-AC-5")]
 #[test]
-#[ignore = "QSL-2121: default items are not implemented yet"]
 fn absent_items_analyze_every_claim_then_the_derived_items() {
     let ws = Workspace::new("wire-default-items");
     let body = format!("{}{}", bounded(), below_three());
@@ -124,7 +120,6 @@ fn absent_items_analyze_every_claim_then_the_derived_items() {
 #[trace("TC-1580", "FR-620-AC-6")]
 #[trace("TC-1580", "FR-620-AC-7")]
 #[test]
-#[ignore = "QSL-2121: request deadlines and per-item limits are not implemented yet"]
 fn the_deadline_and_item_limits_settle_incomplete() {
     let ws = Workspace::new("wire-deadline");
     let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
@@ -181,7 +176,6 @@ fn a_run_request_handed_to_analyze_refuses() {
 #[trace("TC-1581", "FR-621-AC-3")]
 #[trace("TC-1080", "FSpec-FR-520-AC-3")]
 #[test]
-#[ignore = "QSL-2121: the analyze outcome item members are not implemented yet"]
 fn outcome_items_carry_verdict_certificate_counterexample_and_budget_use() {
     let ws = Workspace::new("result-members");
     let body = format!("{}{}", bounded(), below_three());
@@ -206,7 +200,8 @@ fn outcome_items_carry_verdict_certificate_counterexample_and_budget_use() {
     assert_eq!(stopped["exploration"]["states"], "2");
     assert!(stopped.get("counterexample").is_none());
     assert_eq!(run.document()["aggregate"]["status"], "incomplete");
-    assert_eq!(run.exit, 10);
+    // FR-285-AC-2: items with codes {0, 10, 22} exit 22, the most severe.
+    assert_eq!(run.exit, 22);
 }
 
 /// FR-621-AC-6: each item carries the members the driver's text line is
@@ -214,7 +209,6 @@ fn outcome_items_carry_verdict_certificate_counterexample_and_budget_use() {
 /// mode reads no other source. The driver tests the rendered line.
 #[trace("TC-1581", "FR-621-AC-6")]
 #[test]
-#[ignore = "QSL-2121: the analyze outcome item members are not implemented yet"]
 fn items_carry_the_members_text_mode_renders() {
     let ws = Workspace::new("result-text");
     let run = analyze(&counter_request(
@@ -233,7 +227,6 @@ fn items_carry_the_members_text_mode_renders() {
 #[trace("TC-1582", "FR-622-AC-3")]
 #[trace("TC-1081", "FSpec-FR-521-AC-2")]
 #[test]
-#[ignore = "QSL-2121: outcome axes on analyze items are not implemented yet"]
 fn analyze_items_carry_the_mapped_axes() {
     let ws = Workspace::new("axes");
     let body = format!("{}{}", bounded(), below_three());

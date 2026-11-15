@@ -305,3 +305,77 @@ fn supplied_limits<'de, D: serde::Deserializer<'de>>(
         .map(Some)
         .map_err(serde::de::Error::custom)
 }
+
+impl RequestKind for AnalyzeRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::AnalyzeRequest;
+}
+
+/// FR-620's closed `native-analyze/1` request (FSpec FR-520 "Document
+/// members").
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeRequest {
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub program: Option<Program>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<FileSelection>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub documents: Vec<FileSelection>,
+    #[serde(default)]
+    pub memory: Vec<serde_json::Value>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub subject: Option<fsl_analyze::analyze::document::SubjectSelection>,
+    #[serde(default)]
+    pub items: Option<Vec<fsl_analyze::analyze::document::ItemSelection>>,
+    #[serde(default, deserialize_with = "from_object")]
+    pub limits: AnalyzeLimits,
+    #[serde(default, deserialize_with = "deadline")]
+    pub deadline_ms: Option<u64>,
+}
+
+/// A `{file}` selection of a supplied document or checked package.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FileSelection {
+    pub file: String,
+}
+
+/// The request-level `limits`: what every item of the run shares.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeLimits {
+    #[serde(default, deserialize_with = "from_object")]
+    pub accounting: Accounting,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub observation: Option<fsl_replay::spine::ObservationLimitsWire>,
+    /// The model-normalization limits; only their published defaults
+    /// (`{}`) are read yet.
+    #[serde(default, rename = "normalization", deserialize_with = "from_object_opt")]
+    _normalization: Option<NormalizationLimits>,
+}
+
+/// The model-normalization limits object, every member at its default.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NormalizationLimits {}
+
+/// The largest integer every JSON reader holds exactly (FSpec FR-520).
+const MAX_DEADLINE_MS: u64 = 9_007_199_254_740_991;
+
+/// `deadline_ms`: a JSON integer from 0 to 2^53 - 1.
+fn deadline<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value > MAX_DEADLINE_MS {
+        return Err(serde::de::Error::custom(format!(
+            "deadline_ms {value} exceeds {MAX_DEADLINE_MS}"
+        )));
+    }
+    Ok(Some(value))
+}

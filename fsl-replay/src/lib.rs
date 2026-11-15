@@ -329,7 +329,7 @@ pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use outcome::undefined_reason;
 pub use outcome::{
-    assignments_wire, probabilistic_wire, protocol_temporal_wire, temporal_wire,
+    assignments_wire, claim_locus_wire, probabilistic_wire, protocol_temporal_wire, temporal_wire,
     ClauseRunNotAnItem, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, Operation,
     OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage,
     OutcomeWriteError, ParityReason, ProtocolWire, ResultLimit, ResultValue, OUTCOME_FORMAT,

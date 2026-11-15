@@ -14,7 +14,6 @@ use crate::analyze_cli_support::{
 /// FR-621-AC-4: every category and record result is a registered kind.
 #[trace("TC-1581", "FR-621-AC-4")]
 #[test]
-#[ignore = "QSL-2121: the analyze outcome document is not written by fsl analyze yet"]
 fn every_written_kind_is_registered() {
     let categories = [
         "success",
@@ -54,7 +53,6 @@ fn every_written_kind_is_registered() {
 /// one request (the library and driver write one serializer's output).
 #[trace("TC-1581", "FR-621-AC-5")]
 #[test]
-#[ignore = "QSL-2121: the analyze outcome document is not written by fsl analyze yet"]
 fn the_machine_document_is_deterministic_bytes() {
     let ws = Workspace::new("cov-bytes");
     let path = counter_request(&ws, &below_three(), json!([{"claim": "BelowThree"}]));
@@ -70,7 +68,6 @@ fn the_machine_document_is_deterministic_bytes() {
 /// form.
 #[trace("TC-1581", "FR-621-AC-7")]
 #[test]
-#[ignore = "QSL-2121: analyze counterexample values are not written yet"]
 fn counterexample_values_use_the_fr181_typed_form() {
     let ws = Workspace::new("cov-values");
     let run = analyze(&counter_request(

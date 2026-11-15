@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Local orchestration for the `1-draft` spine compiler and runner.
 
+mod analyze;
 mod clause;
 mod output;
 mod wire;
 
+pub use analyze::{analyze, analyze_with_limits, prepare_analyze, AnalyzeInput, PreparedAnalyze};
 pub use output::NativeResult;
 
 use crate::formal_source::FormalSource;
@@ -278,6 +280,24 @@ pub enum RunCause {
     /// FR-100: the spine run entry refused, at its own stage and cause code.
     #[error("{0}")]
     SpineRun(Box<fsl_replay::spine::RunRefusal>),
+    /// FR-620: a `native-analyze/1` request member is unknown, forbidden,
+    /// mistyped or inconsistent, or a document of another format was
+    /// handed to the analyze reader or an analyze document to another
+    /// reader.
+    #[error("invalid analyze request member {member}: {reason}")]
+    AnalyzeRequest {
+        /// The member at fault.
+        member: String,
+        /// Why it is refused.
+        reason: String,
+    },
+    /// FR-624: the shared subject binding or source provision of an
+    /// analyze request was refused before any item ran.
+    #[error("{0}")]
+    AnalyzeRefused(Box<fsl_analyze::analyze::AnalyzeRefusal>),
+    /// An analyze run faulted while writing its document.
+    #[error("the analyze run faulted")]
+    AnalyzeFault,
 }
 
 /// The two owner projections of the same source-intake refusal.
@@ -349,6 +369,14 @@ impl RunCause {
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
             Self::Spine(failure) => failure.refusal.code(),
             Self::SpineRun(refusal) => refusal.code(),
+            Self::AnalyzeRequest { .. } => Code::InvalidRequest,
+            Self::AnalyzeRefused(refusal) => refusal
+                .document()
+                .diagnostics()
+                .first()
+                .and_then(|diagnostic| Code::from_code(diagnostic.code()))
+                .unwrap_or(Code::RuntimeInvariant),
+            Self::AnalyzeFault => Code::RuntimeInvariant,
         }
     }
 
@@ -368,6 +396,8 @@ impl RunCause {
                 filament_semantic_value::catalog::Category::InternalFailure
             }
             Self::SpineRun(refusal) => refusal.category(),
+            Self::AnalyzeRefused(refusal) => refusal.document().category(),
+            Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
             _ => self.code().category(),
         }
     }
@@ -407,6 +437,7 @@ impl RunError {
                 &failure.refusal,
             )]),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
+            RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -452,7 +483,9 @@ impl RunError {
             | RunCause::ExtractionRequiresRun
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
-            | RunCause::CompleteRunSelection(_) => {
+            | RunCause::CompleteRunSelection(_)
+            | RunCause::AnalyzeRequest { .. }
+            | RunCause::AnalyzeFault => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         None,
@@ -780,6 +813,34 @@ fn complete_sources(
     sources: &[FormalSource],
     unit_list: bool,
 ) -> Result<CompileOutcome> {
+    check_sources(request, intake, sources, unit_list, |checked, _, _, failure| {
+        let cancel = filament_exact::Cancel::new();
+        let limits = fsl_replay::spine::SpineLimits::default();
+        let result = fsl_replay::spine::package(checked, limits.package, &cancel);
+        let document = fsl_replay::OutcomeDocument::from_package(&result);
+        let emitted = result.map_err(failure)?.into_value();
+        Ok(CompileOutcome {
+            package_bytes: emitted.package().bytes().to_vec(),
+            document,
+        })
+    })
+}
+
+/// The pipeline of [`complete_sources`] through S4: the checked unit is
+/// handed to `finish` with the admitted domain packages, the library
+/// sources and the map from a spine failure to its located cause.
+fn check_sources<T>(
+    request: &wire::CompileRequest,
+    intake: &mut Intake<'_>,
+    sources: &[FormalSource],
+    unit_list: bool,
+    finish: impl FnOnce(
+        &fsl_replay::spine::CheckedUnit,
+        fsl_semantics::model::intake::PackageInput,
+        Vec<&FormalSource>,
+        &dyn Fn(fsl_replay::spine::FrontEndFailure) -> RunCause,
+    ) -> Result<T>,
+) -> Result<T> {
     if request.models.iter().any(|model| !is_domain_package(model)) {
         return Err(RunCause::CompleteSelection(CompleteSelection::NativeModels));
     }
@@ -911,13 +972,12 @@ fn complete_sources(
         .map_err(failure)?
         .into_value()
     };
-    let result = fsl_replay::spine::package(&checked, limits.package, &cancel);
-    let document = fsl_replay::OutcomeDocument::from_package(&result);
-    let emitted = result.map_err(failure)?.into_value();
-    Ok(CompileOutcome {
-        package_bytes: emitted.package().bytes().to_vec(),
-        document,
-    })
+    finish(
+        &checked,
+        packages,
+        libraries.iter().map(|(_, source)| source).collect(),
+        &failure,
+    )
 }
 
 /// The request's `libraries`, each with its source read under its caller-named
@@ -1001,6 +1061,15 @@ fn with_request_limits<T>(
 
 fn request<T: wire::RequestKind>(bytes: &[u8]) -> Result<T> {
     let Object(envelope): Object<wire::Envelope<'_>> = serde_json::from_slice(bytes)?;
+    let analyze = fsl_foundation::wire_format::WireFormat::AnalyzeRequest.as_str();
+    if (envelope.format == analyze) != (T::FORMAT.as_str() == analyze) {
+        // FR-620: an analyze document handed to another reader, or another
+        // document handed to the analyze reader, is an invalid request.
+        return Err(RunCause::AnalyzeRequest {
+            member: "format".to_owned(),
+            reason: format!("{} is not read here", envelope.format),
+        });
+    }
     if envelope.format != T::FORMAT.as_str() {
         return Err(RunCause::Format);
     }

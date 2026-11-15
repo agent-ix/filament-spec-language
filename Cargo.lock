@@ -781,6 +781,7 @@ dependencies = [
 name = "fsl-analyze"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "filament-checked",
  "filament-contract-model",
  "filament-eval",
@@ -803,6 +804,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "quire-canonical",
+ "serde",
  "serde_json",
  "thiserror",
 ]
@@ -839,9 +841,11 @@ dependencies = [
  "filament-contract-model",
  "filament-exact",
  "filament-semantic-value",
+ "fsl-analyze",
  "fsl-cst",
  "fsl-foundation",
  "fsl-replay",
+ "fsl-route",
  "fsl-semantics",
  "ix-trace-rs",
  "serde",

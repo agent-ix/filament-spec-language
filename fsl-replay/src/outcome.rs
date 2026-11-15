@@ -324,6 +324,18 @@ impl WireLocus {
     }
 }
 
+/// The FSpec FR-331 `{node, occurrence}` locus of `claim`, the spelling a
+/// request item's `claim` member takes.
+///
+/// # Errors
+///
+/// When the node key has no wire spelling.
+pub fn claim_locus_wire(
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+) -> Result<serde_json::Value, serde_json::Error> {
+    serde_json::to_value(WireLocus::of(claim))
+}
+
 /// The value of an item cause's `limit` member.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
