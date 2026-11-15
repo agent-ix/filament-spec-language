@@ -439,7 +439,7 @@ $(addprefix bench-,$(BENCH_AXES)): bench-%:
 bench-evaluator_kernel:
 	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start
 	cargo bench --locked -p fsl-bench --bench evaluator_kernel -- $(BENCH_ARGS)
-	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- report
+	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- report -- $(BENCH_ARGS)
 
 # One process per `check`/`eval` size: peak RSS is process-wide.
 BENCH_PROBE := cargo run --locked --release -q -p fsl-bench --bin fsl-bench-probe --

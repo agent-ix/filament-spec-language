@@ -33,6 +33,13 @@ pub enum KernelKind {
 }
 
 impl KernelKind {
+    /// Every kernel included in the evaluator-kernel benchmark population.
+    pub const ALL: [Self; 3] = [
+        Self::ArithmeticRecursion,
+        Self::ComparisonHeavy,
+        Self::CollectionFold,
+    ];
+
     /// The stable benchmark label.
     pub const fn name(self) -> &'static str {
         match self {
@@ -288,11 +295,7 @@ mod tests {
     use super::*;
     #[test]
     fn smallest_kernels_match_their_plain_rust_references() {
-        for kind in [
-            KernelKind::ArithmeticRecursion,
-            KernelKind::ComparisonHeavy,
-            KernelKind::CollectionFold,
-        ] {
+        for kind in KernelKind::ALL {
             let case = KernelCase::new(kind, SIZES[0]);
             assert_eq!(case.operations, 5);
             assert_eq!(

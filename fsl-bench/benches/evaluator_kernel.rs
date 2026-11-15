@@ -6,16 +6,10 @@ use fsl_bench::kernel::{KernelCase, KernelKind, SIZES};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use std::hint::black_box;
 
-const KERNELS: [KernelKind; 3] = [
-    KernelKind::ArithmeticRecursion,
-    KernelKind::ComparisonHeavy,
-    KernelKind::CollectionFold,
-];
-
 fn evaluator_kernel(c: &mut Criterion) {
     let objects = ObjectEnvironment::default();
     let mut group = c.benchmark_group("evaluator/kernel");
-    for kind in KERNELS {
+    for kind in KernelKind::ALL {
         for size in SIZES {
             let case = KernelCase::new(kind, size);
             group.throughput(Throughput::Elements(case.operations));
