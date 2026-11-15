@@ -80,7 +80,8 @@ pub enum ProbabilisticDeclaration {
     Claim(Box<ProbabilisticForm>),
 }
 
-/// Whose weight is not a positive exact rational.
+/// Whose weight violates its rule: distributions require positive weights;
+/// workloads require non-negative weights.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum WeightOwner {
     /// A value of a random parameter's distribution.
@@ -131,7 +132,8 @@ pub enum ConfidenceFault {
 /// which `region::DeclarationRegions::refusal_region` reads directly.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProbabilisticCause {
-    /// A weight that is not a positive exact rational.
+    /// A distribution weight that is not positive, or a workload weight that
+    /// is negative.
     /// `invalid_probabilistic_model`/`invalid-weight`.
     InvalidWeight {
         /// Whose weight it is.
