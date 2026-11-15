@@ -7,6 +7,7 @@ mod analyze_cli_support;
 mod analyze_coverage_cli;
 mod analyze_family_cli;
 mod analyze_request_wire;
+mod analyze_wire;
 mod bounded_closure;
 mod bounded_probabilistic_replay;
 mod claim_family;

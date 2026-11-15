@@ -78,7 +78,11 @@ pub fn prepare_analyze(
     })
 }
 
-fn prepare_bytes(directory: &Path, bytes: &[u8], dependent_bytes: usize) -> Result<PreparedAnalyze> {
+fn prepare_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: usize,
+) -> Result<PreparedAnalyze> {
     read(directory, bytes, dependent_bytes).map(|(input, _)| PreparedAnalyze {
         input: Box::new(input),
     })
@@ -288,8 +292,7 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
             let timer = cancel.clone();
             scope.spawn(move || {
                 let wait = std::time::Duration::from_millis(milliseconds);
-                if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
-                    finished.recv_timeout(wait)
+                if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = finished.recv_timeout(wait)
                 {
                     timer.cancel(CancelCause::Deadline);
                 }

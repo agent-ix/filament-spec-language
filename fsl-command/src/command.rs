@@ -485,16 +485,13 @@ impl RunError {
             | RunCause::Libraries(_)
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
-            | RunCause::AnalyzeFault => {
-                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
-                    OutcomeDiagnostic::new(
-                        None,
-                        self.cause.code().as_str(),
-                        None,
-                        self.outcome_message(),
-                    ),
-                ])
-            }
+            | RunCause::AnalyzeFault => OutcomeDocument::new(operation, None, self.category())
+                .with_diagnostics(vec![OutcomeDiagnostic::new(
+                    None,
+                    self.cause.code().as_str(),
+                    None,
+                    self.outcome_message(),
+                )]),
         }
     }
 
@@ -813,17 +810,23 @@ fn complete_sources(
     sources: &[FormalSource],
     unit_list: bool,
 ) -> Result<CompileOutcome> {
-    check_sources(request, intake, sources, unit_list, |checked, _, _, failure| {
-        let cancel = filament_exact::Cancel::new();
-        let limits = fsl_replay::spine::SpineLimits::default();
-        let result = fsl_replay::spine::package(checked, limits.package, &cancel);
-        let document = fsl_replay::OutcomeDocument::from_package(&result);
-        let emitted = result.map_err(failure)?.into_value();
-        Ok(CompileOutcome {
-            package_bytes: emitted.package().bytes().to_vec(),
-            document,
-        })
-    })
+    check_sources(
+        request,
+        intake,
+        sources,
+        unit_list,
+        |checked, _, _, failure| {
+            let cancel = filament_exact::Cancel::new();
+            let limits = fsl_replay::spine::SpineLimits::default();
+            let result = fsl_replay::spine::package(checked, limits.package, &cancel);
+            let document = fsl_replay::OutcomeDocument::from_package(&result);
+            let emitted = result.map_err(failure)?.into_value();
+            Ok(CompileOutcome {
+                package_bytes: emitted.package().bytes().to_vec(),
+                document,
+            })
+        },
+    )
 }
 
 /// The pipeline of [`complete_sources`] through S4: the checked unit is

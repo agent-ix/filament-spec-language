@@ -110,11 +110,17 @@ impl SubjectSelection {
     ) -> SubjectBinding<'a> {
         let mut universes: BTreeMap<DeclarationKey, BTreeSet<String>> = BTreeMap::new();
         for selection in &self.universes {
-            let Some(read) = documents.get(&selection.reference()).and_then(|bytes| snapshot(bytes))
+            let Some(read) = documents
+                .get(&selection.reference())
+                .and_then(|bytes| snapshot(bytes))
             else {
                 continue;
             };
-            for population in read.populations.iter().filter(|population| population.complete) {
+            for population in read
+                .populations
+                .iter()
+                .filter(|population| population.complete)
+            {
                 universes
                     .entry(DeclarationKey {
                         package: read.model.identity.clone(),
@@ -388,7 +394,10 @@ impl ItemSelection {
             || self.assessed_root.is_some()
             || self.trace.is_some()
             || self.simulation.is_some()
-            || self.options.as_ref().is_some_and(|options| !options.is_empty())
+            || self
+                .options
+                .as_ref()
+                .is_some_and(|options| !options.is_empty())
             || temporal.is_some_and(|temporal| {
                 temporal.abstract_subject.is_some()
                     || temporal.smt_encoding.is_some()
@@ -485,20 +494,16 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
 fn declared_nodes(
     package: &CheckedPackage,
 ) -> impl Iterator<Item = (String, filament_exact::NodeKey)> + '_ {
-    package
-        .graph()
-        .semantic_graph()
-        .nodes()
-        .filter_map(|node| {
-            node.declaration().map(|name| {
-                let name = name
-                    .iter()
-                    .map(|segment| segment.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::");
-                (name, node.key())
-            })
+    package.graph().semantic_graph().nodes().filter_map(|node| {
+        node.declaration().map(|name| {
+            let name = name
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            (name, node.key())
         })
+    })
 }
 
 /// The declared name of the declaration `node`, when it declares one.
@@ -526,7 +531,10 @@ fn claim_occurrence(
         .iter()
         .find(|clause| clause.identity() == *node)
     {
-        return Some(OccurrenceKey::new(clause.identity(), clause.claim().clone()));
+        return Some(OccurrenceKey::new(
+            clause.identity(),
+            clause.claim().clone(),
+        ));
     }
     graph
         .occurrences()
@@ -596,8 +604,10 @@ fn resolve_one(
     };
     let named = selection.backend.as_deref().map(BackendId::new);
     let records = requirement_items(package, registry, named.as_ref());
-    let own: Vec<&fsl_route::request::RequirementItem> =
-        records.iter().filter(|record| record.node() == &node).collect();
+    let own: Vec<&fsl_route::request::RequirementItem> = records
+        .iter()
+        .filter(|record| record.node() == &node)
+        .collect();
     let kind = match selection.kind.as_deref() {
         Some(label) => match Capability::from_wire(label) {
             Ok(kind) => kind,
@@ -892,7 +902,10 @@ impl ClaimItem {
     /// # Errors
     ///
     /// When the claim's node key has no wire spelling.
-    pub fn request_item_wire(&self, subject: &SubjectSelection) -> Result<Value, serde_json::Error> {
+    pub fn request_item_wire(
+        &self,
+        subject: &SubjectSelection,
+    ) -> Result<Value, serde_json::Error> {
         let mut item = Map::new();
         item.insert("request_index".to_owned(), json!(self.request_index.get()));
         item.insert("kind".to_owned(), json!(self.kind.to_wire()));
@@ -932,10 +945,7 @@ impl ClaimItem {
         if let Some(ItemForm::Temporal(temporal)) = &self.form {
             let mut member = Map::new();
             member.insert("subject".to_owned(), subject.wire());
-            member.insert(
-                "item_kind".to_owned(),
-                json!(temporal.item_kind.to_wire()),
-            );
+            member.insert("item_kind".to_owned(), json!(temporal.item_kind.to_wire()));
             member.insert(
                 "fairness".to_owned(),
                 Value::Array(temporal.fairness.iter().map(fairness_wire).collect()),
@@ -1093,8 +1103,7 @@ pub fn analyze_document(
     records.sort_by_key(TerminalRecord::request_index);
     let base = super::analyze_document(&records, &outcome.counterexamples)
         .map_err(|_| AnalyzeDocumentError::Fault)?;
-    let mut document =
-        serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
+    let mut document = serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
     let mut items = Vec::with_capacity(records.len());
     let mut gaps = Vec::new();
@@ -1105,9 +1114,12 @@ pub fn analyze_document(
             .iter()
             .find(|detail| detail.request_index == index);
         let (claim_name, request, required, scoped) = match echoes.get(&index) {
-            Some((name, request, required, scoped)) => {
-                (Some(name.clone()), Some(request.clone()), *required, *scoped)
-            }
+            Some((name, request, required, scoped)) => (
+                Some(name.clone()),
+                Some(request.clone()),
+                *required,
+                *scoped,
+            ),
             None => (
                 settled.get(&index).and_then(|(name, _)| name.clone()),
                 None,
@@ -1145,8 +1157,12 @@ pub fn analyze_document(
             .map(|descriptor| json!(descriptor.id().as_str()))
             .collect(),
     );
-    let category = Category::most_severe(records.iter().map(|record| record.value().category().exit_code()))
-        .unwrap_or(0);
+    let category = Category::most_severe(
+        records
+            .iter()
+            .map(|record| record.value().category().exit_code()),
+    )
+    .unwrap_or(0);
     Ok((document, category))
 }
 
@@ -1255,4 +1271,3 @@ fn item_document(
     item.insert("record".to_owned(), Value::Object(record));
     Value::Object(item)
 }
-

@@ -104,11 +104,9 @@ impl OutcomeAxes {
                 Some(TruthAxis::False),
                 SettlementBasis::DecisiveCounterexample,
             ),
-            TerminalValue::Inconclusive(_) => active(
-                ExecutionAxis::Completed,
-                None,
-                SettlementBasis::Unsettled,
-            ),
+            TerminalValue::Inconclusive(_) => {
+                active(ExecutionAxis::Completed, None, SettlementBasis::Unsettled)
+            }
             TerminalValue::Incomplete(_) => {
                 active(ExecutionAxis::Failed, None, SettlementBasis::Unsettled)
             }

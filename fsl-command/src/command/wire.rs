@@ -357,7 +357,11 @@ pub(super) struct AnalyzeLimits {
     pub observation: Option<fsl_replay::spine::ObservationLimitsWire>,
     /// The model-normalization limits; only their published defaults
     /// (`{}`) are read yet.
-    #[serde(default, rename = "normalization", deserialize_with = "from_object_opt")]
+    #[serde(
+        default,
+        rename = "normalization",
+        deserialize_with = "from_object_opt"
+    )]
     _normalization: Option<NormalizationLimits>,
 }
 

@@ -25,6 +25,7 @@ filament-semantic-value = { workspace = true }
 thiserror = "2.0.20"
 
 [dev-dependencies]
+fsl-command = { path = "../fsl-command" }
 serde_json = "1.0.151"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 tempfile = "3.27.0"

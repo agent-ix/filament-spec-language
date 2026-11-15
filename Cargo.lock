@@ -863,6 +863,7 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "fsl-analyze",
+ "fsl-command",
  "fsl-cst",
  "fsl-eval",
  "fsl-forms",

@@ -268,8 +268,7 @@ pub use model_check::replay::{
 };
 pub use model_check::settle::{
     settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
-    RecordWarning,
-    ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
+    RecordWarning, ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
@@ -324,9 +323,9 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 // The typed identity and catalog code a `TerminalRecord` and a
 // `TerminalValue` are built from, so the code generator, which depends on
 // this crate alone, names them without naming `fsl_foundation`.
+pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
-pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, claim_locus_wire, probabilistic_wire, protocol_temporal_wire, temporal_wire,
