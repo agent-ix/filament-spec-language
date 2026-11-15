@@ -428,12 +428,13 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
 BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4
+BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
 
 .PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
 
 bench: $(addprefix bench-,$(BENCH_AXES))
 
-$(addprefix bench-,$(BENCH_AXES)): bench-%:
+$(addprefix bench-,$(BENCH_GENERIC_AXES)): bench-%:
 	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
 
 bench-evaluator_kernel:
