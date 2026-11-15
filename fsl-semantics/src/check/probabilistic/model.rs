@@ -129,7 +129,7 @@ impl RandomParameter {
     }
 }
 
-/// A checked workload: one positive weight per operation of its model
+/// A checked workload: one non-negative weight per operation of its model
 /// (FR-185 "Workloads").
 #[derive(Clone, Debug, PartialEq)]
 pub struct Workload {

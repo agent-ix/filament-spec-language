@@ -7,7 +7,7 @@
 //! checked graph ([`model`]): a random parameter's operation, parameter,
 //! typed support and probabilities; a reward's operation and its integer or
 //! quantity expression over the operation's parameters; a workload's model
-//! and one positive weight per operation of it. Each refusal is the
+//! and one non-negative weight per operation of it. Each refusal is the
 //! `invalid_probabilistic_model` cause FR-185 names, a `missing_declaration`
 //! or `ambiguous_declaration` for a name that resolves to no single
 //! declaration, or the typer's own refusal.

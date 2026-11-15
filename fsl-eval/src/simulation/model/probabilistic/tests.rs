@@ -538,17 +538,18 @@ fn the_stutter_step_carries_every_reward_at_zero() {
     assert_eq!(integer_of(value), 0);
 }
 
-/// FR-187-AC-5 (TC-2064): a weight-0 operation is never chosen while an
-/// operation of positive weight is enabled, and a workload of weight 0 on
-/// every operation behaves like equal weights. Over `Link` under `Lean`
-/// (`send_b` at 0), the initial state's steps are `send_a`'s alone, with
-/// its draw probabilities `9/10` and `1/10`; over `Service` under `Zero`
-/// every reachable state gives the steps it gives under `Steady`.
+/// FR-187-AC-5 (TC-2064): zero-weight operations are omitted when positive
+/// alternatives are enabled, a zero-weight operation chosen alone has total
+/// probability 1, and an all-zero workload behaves like equal weights.
+/// Over `Link` under `Lean` (`send_b` at 0), the initial state's steps are
+/// `send_a`'s alone, with draw probabilities `9/10` and `1/10`. Over `Service`
+/// under `Lean`, `reset` has weight 0 and is enabled only on its own; its
+/// steps sum to 1. Under `Zero`, every state gives the steps it gives under
+/// `Steady`.
 #[trace("TC-2064", "FR-187-AC-5")]
 #[trace("FSpec-TC-1561", "FSpec-FR-406-AC-7")]
 #[test]
-#[ignore = "QSL-1991: weight-0 workload step probabilities not implemented yet"]
-fn a_weight_zero_operation_is_chosen_only_when_no_positive_one_is_enabled() {
+fn zero_weight_workloads_follow_enabled_operation_weights() {
     let mut link = world::link();
     link.body
         .push_str("workload Lean on M { weight Msg::send_a = 1; weight Msg::send_b = 0; }\n");
@@ -570,6 +571,65 @@ fn a_weight_zero_operation_is_chosen_only_when_no_positive_one_is_enabled() {
         .collect();
     probabilities.sort();
     assert_eq!(probabilities, [ratio(1, 10), ratio(9, 10)]);
+
+    let world = World::new(&world::service(
+        "workload Lean on M { weight Server::request = 1; weight Server::attempt = 1; \
+         weight Server::reset = 0; }\n",
+    ));
+    let system = world.system();
+    let reset = operation_text(&system, "reset");
+    let mut queue = VecDeque::from([initial(&system)]);
+    let mut seen = BTreeSet::new();
+    let mut reset_enabled_alone = false;
+    while let Some(state) = queue.pop_front() {
+        if !seen.insert(format!("{state:?}")) {
+            continue;
+        }
+        let actions = system.actions(&state).expect("expands").expect("decided");
+        let reset_enabled = actions
+            .iter()
+            .any(|action| action.identity.operation == reset);
+        let other_enabled = actions
+            .iter()
+            .any(|action| action.identity.operation != reset);
+        let lean = steps(&system, &state, &world, "Lean");
+        assert_eq!(sum(&lean), ratio(1, 1), "{state:?}");
+        if reset_enabled && other_enabled {
+            assert!(
+                lean.iter().all(|step| !matches!(
+                    &step.transition,
+                    TransitionId::Operation(transition)
+                        if transition.operation() == reset
+                )),
+                "zero-weight reset is omitted while another operation is enabled"
+            );
+        }
+        if reset_enabled && !other_enabled {
+            reset_enabled_alone = true;
+            let reset_steps: Vec<_> = lean
+                .iter()
+                .filter(|step| {
+                    matches!(
+                        &step.transition,
+                        TransitionId::Operation(transition)
+                            if transition.operation() == reset
+                    )
+                })
+                .collect();
+            assert!(
+                !reset_steps.is_empty(),
+                "reset is stepped when enabled alone"
+            );
+            assert_eq!(
+                reset_steps
+                    .iter()
+                    .fold(ratio(0, 1), |total, step| total.add(&step.probability)),
+                ratio(1, 1)
+            );
+        }
+        queue.extend(lean.into_iter().map(|step| step.post));
+    }
+    assert!(reset_enabled_alone, "Service reaches its reset-only state");
 
     let world = World::new(&world::service(
         "workload Zero on M { weight Server::request = 0; weight Server::attempt = 0; \
