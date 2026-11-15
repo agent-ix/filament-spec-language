@@ -450,6 +450,7 @@ fn retarget(
             temporal_clause_names: base.temporal_clause_names(),
             schedulability_claims: base.schedulability_claim_rows(),
             operation_effects: base.operation_effect_rows(),
+            operation_bodies: base.operation_body_rows(),
         },
         base.capability_report(),
         base.diagnostics(),
