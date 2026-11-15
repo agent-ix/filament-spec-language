@@ -251,6 +251,8 @@ fn probe_parse_volume(functions: usize) -> ExitCode {
 
 /// Build the world of `axis` at `sizes` and run it once; the run alone is
 /// timed. The `Work` and the seconds the run took.
+/// `#[string_edge]`: this CLI boundary selects a benchmark axis from its word.
+#[string_edge]
 fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
     let at = |index: usize| {
         sizes
@@ -311,6 +313,8 @@ fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
 }
 
 /// The sizes after the axis name, up to a `--`, and those after it.
+/// `#[string_edge]`: this CLI boundary parses size words and the separator.
+#[string_edge]
 fn size_lists(arguments: &[String]) -> Result<(Vec<usize>, Vec<usize>), String> {
     let mut halves = arguments.splitn(2, |word| word == "--");
     let parse = |words: &[String]| -> Result<Vec<usize>, String> {

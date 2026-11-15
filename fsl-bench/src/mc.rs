@@ -247,8 +247,9 @@ pub fn run_state_graph(world: &World, symmetric: bool) -> Result<Work, AxisError
         .package
         .graph()
         .state_graph_claims()
-        .iter()
-        .find(|claim| claim.name() == "Wraps")
+        // `ring_state_graph` builds exactly one `Wraps` claim, so use the
+        // model's first checked claim instead of selecting it by wire text.
+        .first()
         .ok_or_else(|| fail("claim", "Wraps is not checked"))?;
     let mut reductions = fsl_route::reductions::Reductions::default();
     if symmetric {
