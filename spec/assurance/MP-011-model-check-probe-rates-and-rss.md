@@ -15,9 +15,9 @@ subject_identity:
   version: "fsl-analyze/Cargo.toml"
 statistical_design:
   population: >-
-    The fixed, generated inputs `fsl-bench-probe mc <axis> <sizes...>` builds, one dimension per axis, size and quantity: peak RSS (KiB: Linux `VmHWM`; macOS peak physical footprint from `vmmap`) and, from `mc-marginal`, bytes per added state (unit: bytes per state, from the peak RSS added by a larger run after a smaller one in one process). Every input is deterministic.
+    The fixed, generated inputs `fsl-bench-probe mc <axis> <sizes...>` builds, one dimension per axis, size and quantity: peak RSS in KiB (Linux `VmHWM`; macOS `getrusage(RUSAGE_SELF)` `ru_maxrss`, converted from bytes) and, from `mc-marginal`, bytes per added state (unit: bytes per state, from the peak RSS added by a larger run after a smaller one in one process). Every input is deterministic.
   sampling: >-
-    One probe process per input per repetition, five repetitions, on one machine; `make bench-probe` lists every axis and size. The process builds the input, times one run and reads its own peak RSS afterward. Peak RSS is process-wide and monotone, which is why a plain run measures one input and a marginal run measures an ascending pair. Compare macOS runs with macOS runs only: the macOS figure counts compressed pages that a resident set omits.
+    One probe process per input per repetition, five repetitions, on one machine; `make bench-probe` lists every axis and size. The process builds the input, times one run and reads its own peak RSS afterward. Peak RSS is process-wide and monotone, which is why a plain run measures one input and a marginal run measures an ascending pair. Compare measurements on the same OS; macOS rows using the earlier `vmmap` reader start a separate series.
   repetitions: 5
   estimator: median
   error_model: >-
@@ -83,11 +83,11 @@ fsl-bench/BENCHMARKING.md. This plan grades no release and gates no merge.
 
 ## Population
 
-The fixed, generated inputs `fsl-bench-probe mc <axis> <sizes...>` builds, one dimension per axis, size and quantity: peak RSS (KiB: Linux `VmHWM`; macOS peak physical footprint from `vmmap`) and, from `mc-marginal`, bytes per added state (unit: bytes per state, from the peak RSS added by a larger run after a smaller one in one process). Every input is deterministic.
+The fixed, generated inputs `fsl-bench-probe mc <axis> <sizes...>` builds, one dimension per axis, size and quantity: peak RSS in KiB (Linux `VmHWM`; macOS `getrusage(RUSAGE_SELF)` `ru_maxrss`, converted from bytes) and, from `mc-marginal`, bytes per added state (unit: bytes per state, from the peak RSS added by a larger run after a smaller one in one process). Every input is deterministic.
 
 ## Collection Procedure
 
-One probe process per input per repetition, five repetitions, on one machine; `make bench-probe` lists every axis and size. The process builds the input, times one run and reads its own peak RSS afterward. Peak RSS is process-wide and monotone, which is why a plain run measures one input and a marginal run measures an ascending pair. Compare macOS runs with macOS runs only: the macOS figure counts compressed pages that a resident set omits.
+One probe process per input per repetition, five repetitions, on one machine; `make bench-probe` lists every axis and size. The process builds the input, times one run and reads its own peak RSS afterward. Peak RSS is process-wide and monotone, which is why a plain run measures one input and a marginal run measures an ascending pair. Compare measurements on the same OS; macOS rows using the earlier `vmmap` reader start a separate series.
 
 ## Interpretation
 

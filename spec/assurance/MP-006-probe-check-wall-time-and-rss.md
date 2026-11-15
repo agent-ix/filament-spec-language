@@ -21,8 +21,8 @@ statistical_design:
   sampling: >-
     One probe process per input per repetition: the process builds the
     input, times one `PackageDeclarations::check` over the whole package,
-    and reads its own peak RSS after the check: `VmHWM` on Linux and, on macOS,
-    the peak physical footprint from `vmmap -summary`.
+    and reads its own peak RSS after the check: `VmHWM` on Linux and
+    `getrusage(RUSAGE_SELF)` on macOS (`ru_maxrss`, converted from bytes to KiB).
   repetitions: 5
   estimator: median
   error_model: >-
@@ -87,10 +87,10 @@ observation dimension:
   package. Building the input is excluded.
 - `peak_rss`, in KiB: `VmHWM` of the probe process on Linux, which builds and
   checks only that one input. `fsl-bench/src/rss.rs` also has a macOS reader
-  (QSL-1906), which reports the peak physical footprint from `vmmap -summary`;
-  that figure counts compressed pages a resident set omits, so macOS and Linux
-  figures are never compared. The Linux path is unchanged by that edit, so the
-  Linux rows of this plan need no fresh A/B; macOS rows start a new series.
+  (QSL-1906), which reports `ru_maxrss` through `getrusage(RUSAGE_SELF)`,
+  converted from bytes to KiB. Compare measurements on the same OS; macOS rows
+  using the earlier `vmmap` reader start a separate series. The Linux path is
+  unchanged by that edit, so the Linux rows of this plan need no fresh A/B.
 
 ## Collection Procedure
 

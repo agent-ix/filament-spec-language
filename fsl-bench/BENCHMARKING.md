@@ -76,10 +76,10 @@ mc-marginal <axis> <small sizes> -- <large sizes>` runs the small input and
 then the large one in one process and prints the peak RSS the large run added
 per state it added; peak RSS is monotone, so the pair must ascend.
 
-Peak RSS prints a number on Linux (`VmHWM`) and on macOS. macOS has no safe
-`getrusage` reader this crate may use (it forbids `unsafe`), so it reads
-`Physical footprint (peak)` from `vmmap -summary`. That figure counts
-compressed pages a resident set omits: compare macOS runs with macOS runs.
+Peak RSS prints a number on Linux (`VmHWM`) and macOS (`getrusage(RUSAGE_SELF)`
+through nix's safe API). Darwin reports `ru_maxrss` in bytes; the probe converts
+it to KiB. Compare runs on the same OS, and treat macOS measurements made with
+the earlier `vmmap` reader as a separate series.
 
 ### Workload counters
 
