@@ -1185,7 +1185,6 @@ fn with_clock(temporal: &[&str], clock: &str, formula: &str) -> String {
 /// ticks.
 #[trace("TC-1541", "FR-610-AC-1", "FSpec-TC-1040", "FSpec-FR-090-AC-12")]
 #[test]
-#[ignore = "QSL-2141: clock roles are not yet separated from model binding names"]
 fn a_free_clock_role_over_a_trace_subject_checks_and_counts_by_the_profile() {
     for (profile, role) in [
         (INFINITE, "events"),
@@ -1265,7 +1264,6 @@ fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
 /// `filament.temporal.*` profile of the same suffix.
 #[trace("TC-1541", "FR-610-AC-4", "FSpec-TC-1040")]
 #[test]
-#[ignore = "QSL-2141: the retired-spelling refusal is not verified yet"]
 fn a_retired_temporal_profile_spelling_is_an_unknown_profile() {
     use crate::check::profile::{resolve_profiles, ProfileCause};
     let selection = |identity: &str| fsl_foundation::selection::ProfileSelection {

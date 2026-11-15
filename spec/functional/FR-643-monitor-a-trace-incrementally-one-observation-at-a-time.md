@@ -133,16 +133,16 @@ the session keeps at once.
   `retained_positions`, that clause SHALL report `incomplete` with the limit
   record `{limit: "node count", value, setting: "monitor.retained_positions"}`,
   and the other clauses SHALL continue.
-- **Order.** An observation whose stamp is below the previous one (for `Timed`) or
-  at or below the ledger's watermark for its binding (for `Timestamped` and
-  `Progressed`) SHALL refuse with FR-502's contradiction or FR-645's
-  `timed-stamps-decrease`, and the session SHALL be unchanged, so the caller may
-  continue with a correct observation.
+- **Order.** If an observation's stamp is below the previous one (for `Timed`)
+  or at or below the ledger's watermark for its binding (for `Timestamped` and
+  `Progressed`), then the session SHALL refuse it with FR-502's contradiction or
+  FR-645's `timed-stamps-decrease` and SHALL keep its state unchanged; the
+  caller can then continue with a correct observation.
 - **Atomic steps.** A refused step, a cancelled step and an admission failure SHALL
   leave the session exactly as before the call.
-- **Checkpoint.** `resume` from `checkpoint()` SHALL give a session whose every
-  later step reports what the original session would have reported. `resume`
-  SHALL refuse, at stage `admit`, `invalid_runtime_input`/`invalid-value` with
+- **Checkpoint.** The session SHALL resume from `checkpoint()` to a session
+  whose every later step reports what the original session would have
+  reported. `resume` SHALL refuse, at stage `admit`, `invalid_runtime_input`/`invalid-value` with
   `reason` `monitor-state-mismatch`, a state whose package identity, clause
   selections, kind or binding differ from the given package and request, and a
   state document that is not a closed `filament.monitor-state/1`.

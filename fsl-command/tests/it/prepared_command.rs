@@ -447,3 +447,18 @@ fn borrowed_run_failure_projection_preserves_cancellation_and_fault_categories()
         "established-invariant-broken"
     );
 }
+
+/// FR-622-AC-2 and FR-100-AC-21 (TC-1582): a function run's
+/// `spine-run-result/1` carries no `axes` member, because a function call has
+/// no obligation that activates.
+#[test]
+#[trace("TC-1582", "FR-622-AC-2")]
+#[trace("TC-1582", "FR-100-AC-21")]
+fn a_function_run_document_carries_no_axes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = run_request(directory.path(), 100_000);
+    let native = command::run(&path).unwrap();
+    let document = native.value.as_value();
+    assert_eq!(document["format"], "spine-run-result/1", "{document}");
+    assert!(document.get("axes").is_none(), "{document}");
+}

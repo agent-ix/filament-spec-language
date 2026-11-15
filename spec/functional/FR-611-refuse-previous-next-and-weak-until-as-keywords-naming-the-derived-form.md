@@ -35,12 +35,12 @@ An `invalid_syntax` diagnostic, or the parsed formula.
 
 ## Behavior
 
-- Where a temporal formula admits a unary temporal operator and the next token
-  is the identifier `previous` or `next` followed by a formula, the parser
-  SHALL refuse `invalid_syntax` located at the word. The message SHALL name the
-  derived form: `once[1,1]` for `previous` and `eventually[1,1]` for `next`.
-- Where a temporal formula admits a binary temporal operator and the next
-  tokens are the identifier `weak` followed by `until`, the parser SHALL refuse
+- If the identifier `previous` or `next` is followed by a formula where a
+  temporal formula admits a unary temporal operator, then the S1 parser SHALL
+  refuse `invalid_syntax` at the word with a message that names `once[1,1]`
+  for `previous` and `eventually[1,1]` for `next`.
+- If the identifier `weak` followed by `until` stands where a temporal formula
+  admits a binary temporal operator, then the S1 parser SHALL refuse
   `invalid_syntax` located at `weak`, with a message naming
   `(p until[a,b] q) or always[a,b] p` and, under the infinite-trace profile,
   `(p until q) or always p`.

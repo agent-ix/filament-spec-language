@@ -111,7 +111,7 @@ fn domain_document() -> Vec<u8> {
 /// pumps whose `n` spell 2, 3, 1; reference-key order (`p1`, `p2`, `p3`)
 /// spells 1, 2, 3.
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"filament.value.complete/v1\";\n\
+    profile v = \"filament.model.complete/v1\";\n\
     model M = \"test/ordered\";\n\
     type I = Integer;\n\
     invariant Order231 using v on M::Sys at current { \

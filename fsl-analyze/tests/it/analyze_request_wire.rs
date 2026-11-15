@@ -8,8 +8,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, analyze_as, below_three, bounded, counter_request, counter_request_with, label,
-    request_members, Workspace,
+    analyze, below_three, bounded, counter_request, counter_request_with, label, request_members,
+    Workspace,
 };
 
 /// FR-620-AC-1, AC-2: the admitted item is echoed as its FR-331 request item,
@@ -163,7 +163,6 @@ fn the_fsl_registry_holds_en7() {
 /// FR-620-AC-9: each reader refuses the other's format.
 #[trace("TC-1580", "FR-620-AC-9")]
 #[test]
-#[ignore = "QSL-2121: the analyze reader's format check is not implemented yet"]
 fn a_run_request_handed_to_analyze_refuses() {
     let ws = Workspace::new("wire-format");
     let path = counter_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -210,24 +209,24 @@ fn outcome_items_carry_verdict_certificate_counterexample_and_budget_use() {
     assert_eq!(run.exit, 10);
 }
 
-/// FR-621-AC-6: text mode prints one line per item.
+/// FR-621-AC-6: each item carries the members the driver's text line is
+/// rendered from (`request_index`, `claim_name`, `record.result`), so text
+/// mode reads no other source. The driver tests the rendered line.
 #[trace("TC-1581", "FR-621-AC-6")]
 #[test]
-#[ignore = "QSL-2121: the analyze text rendering is not implemented yet"]
-fn text_mode_prints_one_line_per_item() {
+#[ignore = "QSL-2121: the analyze outcome item members are not implemented yet"]
+fn items_carry_the_members_text_mode_renders() {
     let ws = Workspace::new("result-text");
-    let run = analyze_as(
-        &counter_request(&ws, &below_three(), json!([{"claim": "BelowThree"}])),
-        "text",
-    );
+    let run = analyze(&counter_request(
+        &ws,
+        &below_three(),
+        json!([{"claim": "BelowThree"}]),
+    ));
     assert_eq!(run.exit, 10);
-    let text = String::from_utf8_lossy(&run.stdout);
-    assert!(
-        text.lines()
-            .next()
-            .is_some_and(|line| line.starts_with("0 BelowThree refuted")),
-        "{text}"
-    );
+    let item = run.item(0);
+    assert_eq!(item["request_index"], 0, "{item}");
+    assert_eq!(item["claim_name"], "BelowThree");
+    assert_eq!(label(&item), "refuted");
 }
 
 /// FR-622-AC-3: analyze items carry the mapped axes.

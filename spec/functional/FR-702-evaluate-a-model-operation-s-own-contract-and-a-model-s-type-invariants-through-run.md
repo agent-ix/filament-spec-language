@@ -15,6 +15,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-652
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-651
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-207
     type: references
 ---
@@ -34,25 +38,29 @@ the run of that operation over one invocation, the `frame` selection of the
 clause run request (FR-312, FR-115): an invocation is the one observation
 that holds the pre state, the post state and the parameters a contract
 reads, so that run is where "did this invocation keep the operation's
-contract" is asked. A model's type invariants are evaluated by a dedicated
-`invariants` selection over one snapshot and, optionally, one invocation,
-which reaches FR-106's `ValueInvariants` admission and FR-366's evaluation.
+contract" is asked. A model's type invariants are evaluated by FR-652's
+`value_invariants` selection of an FR-651 `items` request, which reaches
+FR-106's `ValueInvariants` admission and FR-366's evaluation; it is the one
+wire form for that selection.
 A false clause is a logical violation of the model, reported like a frame
 violation: category `violation`, `truth: false`, exit 10, naming the clause.
 
 ## Inputs
 
 - A clause run request (FR-312) whose selection is `frame` (an operation and
-  an invocation) or `invariants` (an observation and an optional
-  invocation), the unit, and the selected domain packages.
+  an invocation), or an FR-651 `items` request carrying FR-652's
+  `value_invariants` selection, with the unit and the selected domain
+  packages.
 - The operation's kept `requires` and `ensures` clauses (FR-103) and the
   model's effective type invariants (FR-366), as checked.
 
 ## Outputs
 
-- A clause run report: success with `truth: true`, a violation naming the
-  failing clause, or the refusal or incomplete outcome of the step that
-  stopped.
+- For a `frame` run, a clause run report: success with `truth: true`, a
+  violation naming the failing clause, or the refusal or incomplete outcome
+  of the step that stopped.
+- For a `value_invariants` selection, FR-652's items, one per evaluated
+  invariant and value, in an FR-651 items document.
 
 ## Behavior
 
@@ -79,20 +87,26 @@ violation: category `violation`, `truth: false`, exit 10, naming the clause.
   evaluated contract clause hold. An operation with empty `requires` and
   `ensures` lists runs exactly as FR-115 states.
 
-### Type invariants in an invariants run
+### Type invariants in a value-invariants run
 
-- The clause run request SHALL accept the selection
-  `{"invariants": {"observation": O}}` and
-  `{"invariants": {"observation": O, "invocation": K}}`, where `O` names a
-  `current` snapshot and `K` an invocation in `observations`. The reader
-  SHALL map it to FR-106's `ValueInvariants { snapshot, invocation }`
-  selection and the run SHALL evaluate FR-366's effective invariants over
-  every reachable value of each record value type and event type.
-- A false invariant SHALL give the disposition `evaluate`, category
-  `violation`, `truth: false`, exit 10, naming the invariant's clause key and
-  the FSpec FR-207 runtime value path of the first violating value in
-  FR-366's evaluation order. An undefined or incomplete invariant gives that
-  outcome; every invariant holding gives success with `truth: true`.
+- The `run` command SHALL evaluate a model's type invariants through
+  FR-652's `value_invariants` selection of an FR-651 `items` request,
+  `{"value_invariants": {"snapshot": K}}` or
+  `{"value_invariants": {"snapshot": K, "invocation": K2}}`, which reaches
+  FR-106's `ValueInvariants` admission and FR-366's evaluation of the
+  effective invariants over every reachable value of each record value type
+  and event type. No other selection evaluates them, and FR-652 states that
+  selection's member set, its request-stage refusals and its item order.
+- When an invariant evaluates to `false`, its item SHALL report the
+  disposition `evaluate`, category `violation`, `truth: false`, with
+  FR-652's `invariant` (the clause's declaration key) and `path` (the
+  value's FSpec FR-207 runtime value path), and the items document SHALL
+  take category `violation`, exit 10, as FR-651 settles a document with a
+  violating item.
+- When an invariant's evaluation is undefined or incomplete, its item SHALL
+  report that outcome. When every item holds, each item SHALL report success
+  with `truth: true` and the document SHALL report success, exit 0.
+
 
 ## Acceptance Criteria
 
@@ -100,11 +114,12 @@ violation: category `violation`, `truth: false`, exit 10, naming the clause.
 | --- | --- | --- |
 | FR-702-AC-1 | Over the ConfigVersion unit and invocation where `child.versionNumber` moves from 2 to 3 inside `attemptUpdate`'s frame, with the domain operation given `ensures` text `self.versionNumber = pre(self.versionNumber)`, the `frame` run of `Config::ConfigVersion::attemptUpdate` reports stage `evaluate`, category `violation`, `truth: false`, exit 10, naming the operation, kind `ensures` and position 0. With `ensures` text `self.versionNumber = pre(self.versionNumber) + 1` the same run reports success with `truth: true`. | Test (TC-1908) |
 | FR-702-AC-2 | With `requires` text `self.versionNumber > 5` on the same operation and invocation, the `frame` run reports a violation naming kind `requires` and position 0, and evaluates no `ensures` clause; with `requires` text `self.versionNumber < 5` it evaluates the `ensures` clause next. A `requires` or `ensures` clause in a language other than `quire` is not evaluated and changes no result. | Test (TC-1908) |
-| FR-702-AC-3 | A clause run request whose selection is `{"invariants": {"observation": "s1"}}` over a snapshot holding an object whose `Money` field has `amount_minor` −1, with `Money`'s invariant `NonNegative` `self.amount_minor >= 0`, reports `violation`, `truth: false`, exit 10, naming `NonNegative` and the runtime value path of that field; over a snapshot where every `Money` value is non-negative it reports success with `truth: true`. | Test (TC-1908) |
+| FR-702-AC-3 | Through `run`, over TC-235 K2 with `Money`'s invariant `NonNegative` `self.amount_minor >= 0` and an `orders` population, an `items` request with the selection `{"value_invariants": {"snapshot": "s1"}}` over a snapshot holding an `Order` whose `total` has `amount_minor` -1 reports exactly one violating item, whose `invariant` is `NonNegative`'s clause key and whose `path` names that `total` field, and the document reports `violation`, exit 10; with `amount_minor` 7 the document reports success, exit 0. | Test (TC-1908) |
 
 ## Dependencies
 
 - FR-103 keeps and checks an operation's own `requires` and `ensures`;
   FR-366 classifies, checks and evaluates type invariants; FR-115 owns the
-  frame run; FR-312 owns the clause run request reader; FR-106 owns the
-  `ValueInvariants` admission.
+  frame run; FR-312 owns the clause run request reader; FR-651 owns the
+  `items` request and FR-652 its `value_invariants` selection; FR-106 owns
+  the `ValueInvariants` admission.

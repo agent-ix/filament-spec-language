@@ -25,9 +25,10 @@ relationships:
 FR-106 admits two observations that select no ordinary clause: `Context`,
 the invariant of a state machine over one side of an invocation, and
 `ValueInvariants`, the type-level invariants of every type over every value
-an observation reaches (FR-366). A run request SHALL be able to select both,
-so that every observation FR-106 admits is reachable from a request file and
-not only from a library call.
+an observation reaches (FR-366). The run request reader SHALL accept a
+`context` selection and a `value_invariants` selection, so that every
+observation FR-106 admits is reachable from a request file and not only from
+a library call.
 
 ## Inputs
 
@@ -75,7 +76,7 @@ and an FR-651 `items` selection):
   A `snapshot` naming a `pre` or `post` snapshot is a document of the right
   format and reaches FR-106, which refuses it `wrong_snapshot`/
   `wrong-observation` at stage `admit`.
-- A `value_invariants` selection SHALL be admitted only as an `items`
+- The reader SHALL admit a `value_invariants` selection only as an `items`
   selection, because it yields one verdict per invariant and value
   (FR-651). Its admission is one FR-106 admission; an admission refusal is
   one item whose `result` is the refusal's clause-run document, with no

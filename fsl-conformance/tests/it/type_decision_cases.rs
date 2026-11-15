@@ -116,7 +116,6 @@ fn scale_pair() {
 
 #[trace("TC-1825", "FR-680-AC-6", "FSpec-FR-149-AC-29")]
 #[test]
-#[ignore = "QSL-1986: equality-sum refusal detail not confirmed against the kept rule yet"]
 fn eq_sum_pair() {
     assert_pair(
         case!("eq-sum-accepted.native"),

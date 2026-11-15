@@ -366,6 +366,7 @@ fn health_variants_are_not_markov() {
 /// FR-187-AC-4 (TC-622 step 4): `refund = n - 3` over `n: Int[0, 5]`
 /// refuses admission `invalid_probabilistic_model`/`negative-reward`,
 /// naming the operation, the reward and `n = 0`.
+#[trace("FSpec-TC-1561", "FSpec-FR-411-AC-17")]
 #[trace("TC-622", "FR-187-AC-4")]
 #[test]
 fn a_negative_reward_refuses_admission() {
@@ -544,6 +545,7 @@ fn the_stutter_step_carries_every_reward_at_zero() {
 /// its draw probabilities `9/10` and `1/10`; over `Service` under `Zero`
 /// every reachable state gives the steps it gives under `Steady`.
 #[trace("TC-2064", "FR-187-AC-5")]
+#[trace("FSpec-TC-1561", "FSpec-FR-406-AC-7")]
 #[test]
 #[ignore = "QSL-1991: weight-0 workload step probabilities not implemented yet"]
 fn a_weight_zero_operation_is_chosen_only_when_no_positive_one_is_enabled() {
@@ -590,5 +592,86 @@ fn a_weight_zero_operation_is_chosen_only_when_no_positive_one_is_enabled() {
         };
         assert_eq!(view(&zero), view(&steady), "{state:?}");
         queue.extend(steady.into_iter().map(|step| step.post));
+    }
+}
+
+/// FR-740-AC-2 (TC-2062), FSpec FR-640-AC-1 and AC-5 (TC-1563): S4 emits
+/// `Service` with two `random_parameter` nodes, one `reward` node and one
+/// `workload` node, and the step probabilities FR-187-AC-1 states hold for
+/// the model that package carries.
+#[trace("TC-2062", "FR-740-AC-2")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-5")]
+#[test]
+#[ignore = "QSL-2000: Service emitted as v2 probabilistic nodes not implemented yet"]
+fn service_is_emitted_and_its_steps_hold_for_the_emitted_model() {
+    let world = World::new(&world::service(""));
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .unwrap_or_else(|refusal| panic!("S4 emits Service: {refusal:?}"));
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+    let count = |form: &str| {
+        wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .filter(|node| node["node_tag"] == "probabilistic" && node["semantic_form"] == form)
+            .count()
+    };
+    assert_eq!(count("random_parameter"), 2);
+    assert_eq!(count("reward"), 1);
+    assert_eq!(count("workload"), 1);
+
+    let system = world.system();
+    let idle = initial(&system);
+    let [request] = <[_; 1]>::try_from(steps(&system, &idle, &world, "Steady")).expect("one step");
+    let busy = steps(&system, &request.post, &world, "Steady");
+    assert_eq!(busy.len(), 6);
+    assert_eq!(sum(&busy), ratio(1, 1));
+}
+
+/// FSpec FR-406-AC-6 (TC-351): under a workload that gives `send_b` weight
+/// 0, every step of positive probability from every reachable state of
+/// `Link` is one of FR-120's successors, so every behaviour of positive
+/// probability is a behaviour of the model.
+#[trace("FSpec-TC-351", "FSpec-FR-406-AC-6")]
+#[test]
+#[ignore = "QSL-1991: weight-0 workloads keep behaviours inside the state graph not implemented yet"]
+fn a_weight_zero_workload_keeps_every_step_inside_the_state_graph() {
+    let mut link = world::link();
+    link.body
+        .push_str("workload Lean on M { weight Msg::send_a = 1; weight Msg::send_b = 0; }\n");
+    let world = World::new(&link);
+    let system = world.system();
+    let mut seen = BTreeSet::new();
+    let mut queue = VecDeque::from([initial(&system)]);
+    while let Some(state) = queue.pop_front() {
+        let (key, _) = system.state_key(&state).expect("a key");
+        if !seen.insert(key) {
+            continue;
+        }
+        let successors: BTreeSet<(Vec<u8>, Vec<u8>)> = system
+            .successors(&state)
+            .expect("expands")
+            .successors
+            .iter()
+            .map(|(transition, post)| {
+                (
+                    system.transition_key(transition).expect("bytes"),
+                    system.state_key(post).expect("key").0,
+                )
+            })
+            .collect();
+        let weighted = steps(&system, &state, &world, "Lean");
+        assert_eq!(sum(&weighted), ratio(1, 1));
+        for step in &weighted {
+            if let TransitionId::Operation(transition) = &step.transition {
+                let edge = (
+                    system.transition_key(transition).expect("bytes"),
+                    system.state_key(&step.post).expect("key").0,
+                );
+                assert!(successors.contains(&edge), "{state:?}");
+            }
+        }
+        queue.extend(weighted.into_iter().map(|step| step.post));
     }
 }

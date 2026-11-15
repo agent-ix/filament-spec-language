@@ -61,9 +61,9 @@ fn row(value: &Value) -> (Value, Value, bool, bool, Value) {
 /// FR-267-AC-20, FSpec FR-352-AC-16: the three pending rows carry category
 /// `pending`, basis `unsettled`, no `truth` and no `outcome`.
 #[trace("TC-1980", "FR-267-AC-20")]
+#[trace("FSpec-TC-1485", "FSpec-FR-352-AC-10", "FSpec-FR-352-AC-11")]
 #[trace("FSpec-TC-1485", "FSpec-FR-352-AC-16")]
 #[test]
-#[ignore = "QSL-1610: the pending rows conforming to FSpec FR-352's registered rows are not verified yet"]
 fn the_pending_rows_match_their_fspec_rows() {
     for (verdict, temporal) in [
         (TemporalVerdict::Pending, json!({"kind": "pending"})),
@@ -91,7 +91,6 @@ fn the_pending_rows_match_their_fspec_rows() {
 #[trace("TC-1980", "FR-267-AC-20")]
 #[trace("FSpec-TC-1485", "FSpec-FR-352-AC-16")]
 #[test]
-#[ignore = "QSL-1610: the indeterminate, activation and progress rows conforming to FSpec FR-352 are not verified yet"]
 fn the_indeterminate_and_incomplete_rows_match_their_fspec_rows() {
     let indeterminate = document(&with_disposition(ClauseDisposition::Temporal(
         TemporalVerdict::Indeterminate {
@@ -159,7 +158,7 @@ fn the_indeterminate_and_incomplete_rows_match_their_fspec_rows() {
 #[trace("TC-1980", "FR-267-AC-20")]
 #[trace("FSpec-TC-1485", "FSpec-FR-352-AC-17")]
 #[test]
-#[ignore = "QSL-1610: refusal of an unregistered temporal wire kind is not verified yet"]
+#[ignore = "QSL-1610: an unregistered kind is refused naming `disposition.temporal.`, not `disposition.temporal.kind`"]
 fn an_unregistered_temporal_kind_refuses() {
     let pending = document(&with_disposition(ClauseDisposition::Temporal(
         TemporalVerdict::Pending,

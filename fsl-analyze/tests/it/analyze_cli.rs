@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-624 to FR-636 (TC-1584 to TC-1596): one `fsl analyze` per engine family
 //! settles to the documented FR-621 item, and every refusal and every unrouted
-//! verb exits with a named outcome document. Driven through the driver binary
-//! (`$FSL_BIN`), because the request document and the exit code are the
-//! public contract.
-
-use std::ffi::OsStr;
+//! request exits with a named outcome document. Driven through the in-process
+//! command adapter (`fsl_command::command::run`), the library half of the
+//! driver's `analyze` verb; the driver's own rendering of unrouted verbs and
+//! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, analyze_as, below_three, bounded, clause, counter_request, fsl, label, litmus_request,
-    order_protocol, Workspace,
+    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
+    Workspace,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
 
-/// FR-624-AC-1: a malformed document is a named refusal in both modes.
+/// FR-624-AC-1: a malformed document is a named refusal.
 #[trace("TC-1584", "FR-624-AC-1")]
 #[test]
 #[ignore = "QSL-1976: analyze refusals are not written as named outcome documents yet"]
@@ -34,9 +33,6 @@ fn a_malformed_request_is_a_named_refusal() {
     assert_eq!(document["category"], "refusal");
     assert_eq!(document["items"], json!([]));
     assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
-    let text = analyze_as(&path, "text");
-    assert_eq!(text.exit, 20);
-    assert!(String::from_utf8_lossy(&text.stderr).contains("fsl analyze: invalid-request:"));
 }
 
 /// FR-624-AC-2: a checker refusal of the program refuses the request at `check`.
@@ -56,54 +52,34 @@ fn a_refused_program_refuses_at_its_stage() {
     assert_eq!(run.document()["items"], json!([]));
 }
 
-/// FR-624-AC-4, AC-5: every unrouted verb is refused by name, never silently.
-#[trace("TC-1584", "FR-624-AC-4")]
-#[trace("TC-1584", "FR-624-AC-5")]
+/// FR-624-AC-1, FSpec FR-522-AC-2: `analyze` is routed through the command
+/// adapter. A well-formed request is never answered with the
+/// `operation-not-routed` refusal or an empty document; it writes an
+/// `analyze` document with one item per requested item.
+#[trace("TC-1584", "FR-624-AC-1")]
 #[trace("TC-1082", "FSpec-FR-522-AC-2")]
-#[trace("TC-1082", "FSpec-FR-522-AC-1")]
-#[trace("TC-1082", "FSpec-FR-301-AC-4")]
 #[test]
-#[ignore = "QSL-1976: unrouted verbs exit 21 with no output instead of the named unsupported_operation refusal"]
-fn unrouted_verbs_are_refused_by_name() {
-    let ws = Workspace::new("cli-unrouted");
-    let operand = ws.write("operand.json", b"{}");
-    for verb in [
-        "generate", "prove", "replay", "inspect", "render", "monitor",
-    ] {
-        let run = fsl(&[
-            OsStr::new(verb),
-            OsStr::new("--format"),
-            OsStr::new("json"),
-            operand.as_os_str(),
-        ]);
-        if run.exit == 21 {
-            assert!(
-                !run.stdout.is_empty(),
-                "{verb}: machine output is never empty"
-            );
-            let document = run.document();
-            assert_eq!(document["operation"], verb);
-            assert_eq!(document["category"], "unsupported");
-            assert_eq!(document["diagnostics"][0]["code"], "unsupported_operation");
-            assert_eq!(document["diagnostics"][0]["cause"], "operation-not-routed");
-            assert_eq!(document["diagnostics"][0]["payload"]["verb"], verb);
-            let text = fsl(&[
-                OsStr::new(verb),
-                OsStr::new("--format"),
-                OsStr::new("text"),
-                operand.as_os_str(),
-            ]);
-            assert_eq!(text.exit, 21);
-            assert!(String::from_utf8_lossy(&text.stderr).contains(&format!(
-                "fsl {verb}: this build does not route the {verb} operation (unsupported_operation)"
-            )));
-        } else {
-            assert!(
-                !run.stdout.is_empty(),
-                "{verb}: a routed verb writes its outcome"
-            );
-        }
-    }
+#[ignore = "QSL-1976: the command adapter does not route native-analyze/1 requests yet"]
+fn analyze_is_routed_and_never_refused_as_not_routed() {
+    let ws = Workspace::new("cli-routed");
+    let run = analyze(&counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded"}]),
+    ));
+    assert!(!run.stdout.is_empty(), "the outcome is never empty");
+    let document = run.document();
+    assert_ne!(document["diagnostics"][0]["cause"], "operation-not-routed");
+    assert_ne!(
+        document["diagnostics"][0]["code"], "invalid-request",
+        "{document}"
+    );
+    assert_eq!(document["operation"], "analyze");
+    assert_eq!(
+        document["items"].as_array().map(Vec::len),
+        Some(1),
+        "{document}"
+    );
 }
 
 /// FR-625-AC-1, AC-2: one accepting and one refuted explicit-state item.
@@ -149,7 +125,7 @@ fn invariant_items_prove_and_refute() {
 #[test]
 #[ignore = "QSL-2122: deadlock-freedom items are not reachable through fsl analyze yet"]
 fn deadlock_freedom_respects_terminal_states() {
-    let item = json!([{"claim": "M", "item_kind": "deadlock-freedom"}]);
+    let item = json!([{"claim": "M", "temporal": {"item_kind": "deadlock-freedom"}}]);
     let ws = Workspace::new("cli-deadlock");
     let run = analyze(&counter_request(&ws, "", item.clone()));
     assert_eq!(label(&run.item(0)), "refuted");
@@ -167,7 +143,7 @@ fn time_lock_freedom_over_an_untimed_subject_is_inapplicable() {
     let run = analyze(&counter_request(
         &ws,
         "",
-        json!([{"claim": "M", "item_kind": "time-lock-freedom"}]),
+        json!([{"claim": "M", "temporal": {"item_kind": "time-lock-freedom"}}]),
     ));
     assert_eq!(
         run.item(0)["record"]["diagnostic"]["cause"],
@@ -338,7 +314,7 @@ fn protocol_deadlock_proves_and_refutes() {
         let run = analyze(&litmus_request(
             &ws,
             &order_protocol(receive),
-            json!({"items": [{"claim": "Flow", "item_kind": "deadlock-freedom"}]}),
+            json!({"items": [{"claim": "Flow", "temporal": {"item_kind": "deadlock-freedom"}}]}),
         ));
         let item = run.item(0);
         assert_eq!(label(&item), expected, "receive {receive}");

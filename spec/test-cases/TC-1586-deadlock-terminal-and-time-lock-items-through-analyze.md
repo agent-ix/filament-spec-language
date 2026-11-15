@@ -14,7 +14,7 @@ Verify FR-626's derived items. Scope: FR-626-AC-1 to FR-626-AC-3.
 
 ## Test Procedure
 
-1. Analyze `{"claim": "M", "item_kind": "deadlock-freedom"}` over the Counter fixture.
+1. Analyze `{"claim": "M", "temporal": {"item_kind": "deadlock-freedom"}}` over the Counter fixture.
 2. Repeat with `terminal Done using v on M when { self.value = 3 };`.
 3. Analyze `time-lock-freedom` over the Counter subject and over a timed subject that blocks time.
 

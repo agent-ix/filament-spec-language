@@ -10,11 +10,11 @@ relationships:
 
 ## Description
 
-Verify FR-702-AC-1 to AC-3: the `frame` run evaluates the operation's own `requires` and `ensures`, and the `invariants` selection evaluates the model's type invariants.
+Verify FR-702-AC-1 to AC-3: the `frame` run evaluates the operation's own `requires` and `ensures`, and FR-652's `value_invariants` items selection evaluates the model's type invariants.
 
 ## Test Procedure
 
-Run the ConfigVersion `frame` selection over the invocation of FR-702-AC-1 with each domain contract variant; run the `invariants` selection of AC-3. Test: `fsl-replay/src/spine/clause/tests/operation_contract_run.rs`.
+Run the ConfigVersion `frame` selection over the invocation of FR-702-AC-1 with each domain contract variant; run the `items` request with FR-652's `value_invariants` selection of AC-3. Tests: `fsl-replay/src/spine/clause/tests/operation_contract_run.rs` (AC-1, AC-2) and `tests/it/value_invariants_run.rs` (AC-3).
 
 ## Expected Results
 

@@ -883,7 +883,6 @@ const PREVIOUS_SAFETY: &str =
 /// proved.
 #[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
 #[test]
-#[ignore = "QSL-2247: the step-for-step transfer rule for previous is not implemented yet"]
 fn previous_does_not_transfer_through_a_refinement_that_is_not_step_for_step() {
     let source = unit(
         &format!("{PREVIOUS_SAFETY}{SAFETY}"),

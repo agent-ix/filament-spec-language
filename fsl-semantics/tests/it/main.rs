@@ -70,6 +70,7 @@ mod model_subject_bound;
 mod model_systems;
 #[cfg(feature = "test-support")]
 mod model_systems_resolve;
+mod model_unit_input;
 mod moved_item_paths;
 mod named_population;
 mod native_literals;
@@ -82,6 +83,7 @@ mod option_values;
 #[cfg(feature = "test-support")]
 mod population_bound;
 mod probabilistic_declarations;
+mod profile_defaults;
 mod quantities;
 mod rational_value_types;
 #[cfg(feature = "test-support")]

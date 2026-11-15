@@ -20,7 +20,7 @@ fn protocol_deadlock_agrees_with_projection() {
             &ws,
             &order_protocol(receive),
             json!({"items": [
-                {"claim": "Flow", "item_kind": "deadlock-freedom"},
+                {"claim": "Flow", "temporal": {"item_kind": "deadlock-freedom"}},
                 {"claim": "Flow", "kind": "local-projection", "assessed_root": root,
                  "options": {"role": "Seller"}},
                 {"claim": "Flow", "kind": "realizability", "assessed_root": root},

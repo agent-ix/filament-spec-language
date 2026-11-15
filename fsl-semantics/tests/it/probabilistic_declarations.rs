@@ -3248,6 +3248,7 @@ fn a_claims_subject_is_its_own_units_package() {
 /// with no diagnostic, a workload of all zero weights is admitted, and an
 /// omitted operation is still refused `incomplete-workload`.
 #[trace("TC-2060", "FR-185-AC-10")]
+#[trace("FSpec-TC-1560", "FSpec-FR-405-AC-10")]
 #[test]
 #[ignore = "QSL-1991: workload weight 0 admitted not implemented yet"]
 fn a_workload_admits_weight_zero_and_all_zero_weights() {
@@ -3288,8 +3289,8 @@ fn a_workload_admits_weight_zero_and_all_zero_weights() {
 /// value, is still refused `invalid-weight` naming the workload and the
 /// operation (negative stub for the weight ruling).
 #[trace("TC-2060", "FR-185-AC-3")]
+#[trace("FSpec-TC-350", "FSpec-FR-405-AC-5")]
 #[test]
-#[ignore = "QSL-1991: negative weight refusal under the weight 0 ruling not verified yet"]
 fn a_negative_workload_weight_is_refused() {
     let body = service(Some((STEADY, &steady_with_request("rational(-1, 1)"))), "");
     assert_eq!(
@@ -3306,6 +3307,7 @@ fn a_negative_workload_weight_is_refused() {
 /// negative for some argument vector, naming the reward; `d` ranges over its
 /// support `{1, 3, 12}`, so `d - 3` is negative at `d = 1`.
 #[trace("TC-2061", "FR-185-AC-11")]
+#[trace("FSpec-TC-1560", "FSpec-FR-405-AC-11")]
 #[test]
 #[ignore = "QSL-2252: negative-reward refusal at S3 not implemented yet"]
 fn s3_refuses_a_reward_that_can_be_negative() {
@@ -3330,6 +3332,7 @@ fn s3_refuses_a_reward_that_can_be_negative() {
 /// `unsupported_construct`/`expression-form`, never `unbounded-event`;
 /// under the infinite-trace profile `[a,*]` stays `unbounded-event`.
 #[trace("TC-2063", "FR-186-AC-7")]
+#[trace("FSpec-TC-1562", "FSpec-FR-407-AC-16")]
 #[trace("TC-2063", "FR-186-AC-3")]
 #[trace("TC-2063", "FR-195-AC-1")]
 #[test]

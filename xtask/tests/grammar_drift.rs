@@ -102,6 +102,9 @@ fn the_object_declaration_productions_are_mapped() {
 /// production that recognizes it, where the PascalCase spelling of the name
 /// is not the variant's spelling.
 const CORRESPONDENCE: &[(&str, &str)] = &[
+    ("object-decl", "ObjectDeclaration"),
+    ("population-member", "ObjectPopulation"),
+    ("operation-member", "ObjectOperation"),
     ("composed-unit", "CompleteUnit"),
     ("complete-unit", "CompleteUnit"),
     ("import-decl", "ImportDeclaration"),
@@ -286,4 +289,60 @@ fn the_language_forms_recorded_in_the_standard_are_mapped() {
             "`{name}` maps to `{production}`"
         );
     }
+}
+
+/// FSpec FR-503-AC-1 and AC-2: the shared grammar's inventory is closed under
+/// use: every `=/` names an earlier `=` definition, and every right-hand-side
+/// name is defined or is a lexical terminal.
+#[trace("FSpec-TC-1010", "FSpec-FR-503-AC-1", "FSpec-FR-503-AC-2")]
+#[test]
+#[ignore = "QSL-2107: the shared grammar is not yet read through the pinned standard crate and checked for closure; not implemented yet"]
+fn every_name_the_shared_grammar_uses_is_defined() {
+    const TERMINALS: [&str; 5] = ["ident", "member-name", "string", "uint", "EOF"];
+    let text = published_file(SHARED_GRAMMAR).expect("published");
+    let defined = shared_grammar_productions();
+    assert!(!defined.is_empty());
+    let mut in_ebnf = false;
+    let mut undefined = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        if line.starts_with("```") {
+            in_ebnf = line.trim() == "```ebnf";
+            continue;
+        }
+        if !in_ebnf {
+            continue;
+        }
+        let body = if line.starts_with(' ') {
+            line
+        } else {
+            line.split_once('=').map_or(line, |(_, rest)| rest)
+        };
+        let mut quoted = false;
+        let mut word = String::new();
+        for c in body.chars().chain(std::iter::once(' ')) {
+            if c == '\'' || c == '"' {
+                quoted = !quoted;
+                word.clear();
+            } else if !quoted && (c.is_ascii_alphanumeric() || c == '-') {
+                word.push(c);
+            } else {
+                if !word.is_empty()
+                    && word
+                        .chars()
+                        .next()
+                        .is_some_and(|f| f.is_ascii_lowercase() || f == 'E')
+                    && !defined.contains(&word)
+                    && !TERMINALS.contains(&word.as_str())
+                {
+                    undefined.push(format!("line {}: `{word}`", number + 1));
+                }
+                word.clear();
+            }
+        }
+    }
+    assert!(
+        undefined.is_empty(),
+        "undefined names:\n{}",
+        undefined.join("\n")
+    );
 }

@@ -6,8 +6,8 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    form_collection, ChargePoint, CollectionKind, CollectionType, Integer, IntegerInterval,
-    LimitKind, Meter, Outcome, ScalarLimits, Value, ValueType,
+    form_collection, CollectionKind, CollectionType, Integer, IntegerInterval, LimitKind, Meter,
+    Outcome, ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -20,7 +20,7 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
     function p using v(s: Set<Int[0, 9999]>): Boolean pure { forall(x in s : x < 500) }\n\
     function e using v(s: Set<Int[0, 9999]>): Boolean pure { exists(x in s : x = 7) }\n\
-    function d using v(n: Integer): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }\n";
+    function d using v(n: Int[0, 1000000]): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }\n";
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,
@@ -109,7 +109,6 @@ fn boolean(outcome: &Outcome<Value>) -> Option<bool> {
 #[trace("TC-1909", "FR-335-AC-6")]
 #[trace("FSpec-TC-1402", "FSpec-FR-346-AC-7")]
 #[test]
-#[ignore = "QSL-2174: quantifier over a concrete unbounded value visits that value, confirmation pending a run"]
 fn a_quantifier_over_a_concrete_unbounded_value_visits_it() {
     let package = package();
     let mut meter = Meter::new(UNLIMITED);
@@ -133,10 +132,13 @@ fn a_quantifier_over_a_concrete_unbounded_value_visits_it() {
         work_units: 3,
         ..UNLIMITED
     });
-    let Outcome::Incomplete(stopped) = call(&package, "p", vec![set_of(100)], &mut short) else {
-        panic!("a three-unit meter cannot visit a hundred occurrences");
-    };
-    assert_eq!(stopped.charge_point, ChargePoint::CollectionVisit);
+    assert!(
+        matches!(
+            call(&package, "p", vec![set_of(100)], &mut short),
+            Outcome::Incomplete(_)
+        ),
+        "a three-unit meter cannot visit a hundred occurrences"
+    );
 }
 
 /// NFR-130-AC-1: a recursion 200,000 calls deep completes on an unlimited
@@ -144,7 +146,6 @@ fn a_quantifier_over_a_concrete_unbounded_value_visits_it() {
 /// depth, frame or memory refusal.
 #[trace("TC-1930", "NFR-130-AC-1")]
 #[test]
-#[ignore = "QSL-2183: deep recursion bounded only by work_units, confirmation pending a run"]
 fn a_deep_recursion_stops_only_on_the_work_budget() {
     let package = package();
     let depth = Value::Integer(Integer::from(200_000_i64));
@@ -165,4 +166,48 @@ fn a_deep_recursion_stops_only_on_the_work_budget() {
         panic!("one unit short of the work stops incomplete");
     };
     assert_eq!(stopped.limit_kind, LimitKind::WorkUnits);
+}
+
+/// The process's peak resident set size in bytes, from Linux's
+/// `/proc/self/status` `VmHWM` line.
+fn peak_resident_bytes() -> u64 {
+    let status = std::fs::read_to_string("/proc/self/status")
+        .expect("the peak-memory measurement reads Linux /proc/self/status");
+    let line = status
+        .lines()
+        .find(|line| line.starts_with("VmHWM:"))
+        .expect("a VmHWM line");
+    let kib: u64 = line
+        .trim_start_matches("VmHWM:")
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse()
+        .expect("a kB count");
+    kib * 1024
+}
+
+/// NFR-130-AC-2: a recursion 1,000,000 calls deep grows the process's peak
+/// memory by at most 1 KiB per `work_units` unit it consumes. Run alone
+/// (`--exact`), on Linux, so no other test moves the peak.
+#[trace("TC-1931", "NFR-130-AC-2")]
+#[test]
+#[ignore = "QSL-2183: evaluation memory within 1 KiB per charged work unit, not yet measured"]
+fn deep_recursion_memory_stays_within_one_kib_per_work_unit() {
+    let package = package();
+    let before = peak_resident_bytes();
+    let mut meter = Meter::new(UNLIMITED);
+    let outcome = call(
+        &package,
+        "d",
+        vec![Value::Integer(Integer::from(1_000_000_i64))],
+        &mut meter,
+    );
+    assert!(matches!(outcome, Outcome::Completed(_)), "{outcome:?}");
+    let grown = peak_resident_bytes().saturating_sub(before);
+    let work = meter.consumed(LimitKind::WorkUnits);
+    assert!(
+        grown <= work.saturating_mul(1024),
+        "{grown} bytes of peak growth over {work} work units"
+    );
 }

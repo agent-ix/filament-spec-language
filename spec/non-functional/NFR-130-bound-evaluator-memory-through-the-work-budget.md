@@ -46,23 +46,23 @@ Intake and model normalization keep their own limits (FR-056, FR-106).
 
 | Metric | Target | Threshold | Method |
 | --- | --- | --- | --- |
-| Peak evaluation memory per charged work unit over a recursion of depth 1,000,000 | at most 1 KiB | at most 1 KiB | benchmark: peak heap growth of the evaluation divided by the `work_units` consumed |
+| Peak evaluation memory per charged work unit over a recursion of depth 1,000,000 | at most 1 KiB | at most 1 KiB | test: growth of the peak resident set across the evaluation divided by the `work_units` consumed |
 | Deep recursion outcome | completes, or `incomplete` at the work budget | no depth refusal, no native stack overflow | negative-abuse-testing |
 
 ## Verification
 
 A Rust public-API test calls the recursive function of AC-1 through the
 checked-package call entry on an unlimited meter and on a short one and
-reads the outcome and the consumed `work_units`. A benchmark in a dedicated
-binary with a counting global allocator runs the AC-2 call and divides the
-peak heap growth by the consumed `work_units`.
+reads the outcome and the consumed `work_units`. A second test, run alone on
+Linux, runs the AC-2 call and divides the growth of the process's peak
+resident set (`VmHWM`) by the consumed `work_units`.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| NFR-130-AC-1 | `function d using v(n: Integer): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }` called with `n = 200000` on a meter with unlimited `work_units` completes with `0` on the default thread stack; called on a meter whose `work_units` is below the work the call needs, it returns `Incomplete` naming the `work_units` limit, with no completed value; no outcome of either call names depth, frames or memory. | Test (TC-1930) |
-| NFR-130-AC-2 | For the call of AC-1 with `n = 1000000`, the peak heap growth of the evaluation divided by the `work_units` it consumed is at most 1 KiB. | Test (TC-1931) |
+| NFR-130-AC-1 | `function d using v(n: Int[0, 1000000]): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }` called with `n = 200000` on a meter with unlimited `work_units` completes with `0` on the default thread stack; called on a meter whose `work_units` is below the work the call needs, it returns `Incomplete` naming the `work_units` limit, with no completed value; no outcome of either call names depth, frames or memory. | Test (TC-1930) |
+| NFR-130-AC-2 | For the call of AC-1 with `n = 1000000`, the growth of the process's peak resident set across the evaluation divided by the `work_units` it consumed is at most 1 KiB. | Test (TC-1931) |
 
 ## Dependencies
 

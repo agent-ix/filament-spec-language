@@ -53,7 +53,7 @@ into one envelope would give every clause-run request members it can never
 use, and every analyze request a single-trace shape it does not have.
 
 The items of the document reuse the request-item members of FSpec FR-331
-(`kind`, `item_kind`, `temporal`, `probabilistic`, `hybrid`, `check`,
+(`kind`, `temporal` with its `item_kind`, `probabilistic`, `hybrid`, `check`,
 `options`, `reductions`, `correspondence`, `premises`, `assessed_root`,
 `backend`), with FR-331's spellings and closure rules. So `analyze`, `prove`
 and an external provider share one item vocabulary, and the standard owns
@@ -64,35 +64,15 @@ written by the caller.
 
 ## Inputs
 
-A `native-analyze/1` request document. Its `request` object has these
-members:
-
-| Member | Multiplicity | Meaning |
-| --- | --- | --- |
-| `program` | 0..1 | FR-026's program source selection `{source: {file, authority, identity, document, formal_revision}}`. Required unless `package` is present. |
-| `package` | 0..1 | A selection `{file}` of an existing `filament.checked-package/v2` artifact; FR-027's strict reader admits it and no source is compiled. |
-| `models` | 0..* | `semantic-ir/2.0.0` domain package selections, read as FR-027 reads them for compile. |
-| `libraries` | 0..* | `{identity, source}` library selections with an optional `refinement_internals`, as FR-027 reads them. |
-| `refinement_internals` | 0..1 | The program's own refinement internals, as FR-027 reads the top-level member. |
-| `documents` | 0..* | `{file}` selections of supplied documents: initial-state snapshots (`filament.state.snapshot/v1`) and supplied finite protocol traces (FR-636). Each is provisioned under the identity it declares for itself (FR-106 document provision). |
-| `memory` | 0..* | FSpec FR-331's `request.memory` weak-memory selections (FR-629). |
-| `subject` | 0..1 | The default model subject `{initial_states, universes, proof_bounds}` in FSpec FR-331's `temporal.subject` spelling; each reference names a provisioned document by `{authority, identity}`. |
-| `items` | 0..* | The analysis items below. |
-| `limits` | 0..1 | `{accounting, observation, normalization}`, each optional: `accounting` is any subset of the ten `filament.value.accounting/v1` counters (FR-100's spelling and defaults); `observation` and `normalization` are the FR-277 members of `ObservationLimits` and `ModelNormalizationLimits`, each with its published default. |
-| `deadline_ms` | 0..1 | The run's deadline in milliseconds, a JSON integer from 0 to `u64::MAX`. Absent means `DeadlineSupply::Unbounded`. |
-
-An analysis item has these members:
-
-| Member | Multiplicity | Meaning |
-| --- | --- | --- |
-| `claim` | 0..1 | The declared qualified name of the checked declaration the item decides: a temporal or state clause, a state-graph claim, a hyper clause, a refinement declaration, a schedulability or response claim, a probabilistic claim, a protocol clause, or, for a derived item, the declaration the derived item anchors at (FR-368 "Claim and anchor"). Absent only for a `simulation` item (FR-634). |
-| `kind` | 0..1 | The FSpec FR-290 kind. Absent means the one kind the claim's declaration family admits (FR-507). |
-| `item_kind` | 0..1 | For a `temporal-satisfaction` item: `formula` (the default), `deadlock-freedom`, `time-lock-freedom`, `race-freedom` or `refinement`. |
-| `backend` | 0..1 | A `BackendId` the caller names. |
-| `required` | 0..1 | Boolean, default `true`: whether complete aggregate success requires this item (FR-507-AC-5). |
-| `temporal`, `probabilistic`, `hybrid`, `check`, `options`, `reductions`, `correspondence`, `premises`, `assessed_root` | 0..1 each | FSpec FR-331's members, with its spellings and its rule for which kinds carry each. `temporal.subject` is optional and defaults to the request's `subject`. `reductions` names a constraint by its declared name (FR-623). |
-| `trace` | 0..1 | For a `finite-replay` item, the `{authority, identity}` of a provisioned trace document (FR-636). |
-| `simulation` | 0..1 | For a `simulation` item, its settings (FR-634). |
+A `native-analyze/1` request document. FSpec FR-520 "Document members"
+defines its request members and its analysis-item members, their
+multiplicities and spellings: the program or package selection, `models`,
+`libraries`, `refinement_internals`, `documents`, `memory`, `subject`,
+`items`, `limits` and `deadline_ms` (0 to 2^53 - 1 milliseconds, absent
+meaning `DeadlineSupply::Unbounded`); and per item `claim`, `kind` (an FSpec
+FR-290 kind or `simulation`, FR-634), `backend`, `required`, the FSpec FR-331
+members with `temporal.item_kind`, `trace` and `simulation`. This requirement
+states how FSL reads them.
 
 ## Outputs
 
@@ -214,7 +194,7 @@ and one initialization snapshot `start` holding counter `a` at 0.
 |----|----------|--------------|
 | FR-620-AC-1 | A `native-analyze/1` document over the Counter fixture with the one item `{"claim": "Bounded"}` is read; its outcome has one item whose `request` member is the FSpec FR-331 request item with `request_index` 0, the clause's occurrence key, kind `temporal-satisfaction`, `item_kind` `formula`, a `bounded` or `unbounded` extent as the package classifies it, and every `temporal.limits` member at EN-1's published default. | Test (TC-1580) |
 | FR-620-AC-2 | Rewriting that `request` member as a document item (removing `request_index`, `extent` and `candidates`, and writing the claim by its name) and reading it again gives an equal `request` member: the item round-trips. | Test (TC-1580) |
-| FR-620-AC-3 | An item carrying `request_index`, `extent`, `candidates`, `temporal.fairness` or an unknown member, and a request carrying an unknown member, each refuse the whole request at the request stage with `invalid-request`, exit 20, naming the member, and run no item. | Test (TC-1580) |
+| FR-620-AC-3 | An item carrying `request_index`, `extent`, `candidates`, `temporal.fairness` or an unknown member, and a request carrying an unknown member, and a request whose `deadline_ms` is 9007199254740992 (2^53), each refuse the whole request at the request stage with `invalid-request`, exit 20, naming the member, and run no item. | Test (TC-1580) |
 | FR-620-AC-4 | A document with the items `{"claim": "Bounded"}` and `{"claim": "Missing"}` settles the second item `invalid-request` with `invalid_capability`/`unknown-claim` naming `Missing`, settles the first `proved`, and exits 20. | Test (TC-1580) |
 | FR-620-AC-5 | The Counter document without `items` gives one item per checked claim in declaration order followed by the subject's derived deadlock-freedom item. | Test (TC-1580) |
 | FR-620-AC-6 | `deadline_ms` 0 settles every item `incomplete` with the deadline cause and exits 22; the same document without `deadline_ms` settles `Bounded` `proved`. | Test (TC-1580) |

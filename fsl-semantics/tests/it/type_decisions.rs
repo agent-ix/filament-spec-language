@@ -163,7 +163,7 @@ fn a_source_map_type_checks_with_its_guarded_read() {
     );
 }
 
-#[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
+#[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21", "FSpec-FR-375-AC-17")]
 #[test]
 #[ignore = "QSL-2169: a Some payload checked against the expected element type not implemented yet"]
 fn some_takes_the_expected_bounded_element_type() {
@@ -176,15 +176,31 @@ fn some_takes_the_expected_bounded_element_type() {
     );
 }
 
-#[trace("TC-1824", "FR-680-AC-5", "FSpec-FR-142-AC-41")]
+#[trace(
+    "TC-1824",
+    "FR-680-AC-5",
+    "FSpec-FR-142-AC-41",
+    "FSpec-TC-1326",
+    "FSpec-FR-322-AC-451"
+)]
 #[test]
 #[ignore = "QSL-2168: quantity scaling by an exact number not implemented yet"]
 fn a_quantity_scaled_by_a_number_keeps_its_unit() {
-    assert_checks(&format!(
+    let graph = check(&format!(
         "{UNITS}function f using v(d: Quantity<ms>): Quantity<ms> pure {{ d * 2 }}\n\
          function g using v(d: Quantity<ms>): Quantity<ms> pure {{ 2 * d }}\n\
          function h using v(d: Quantity<ms>): Quantity<ms> pure {{ d / 2 }}"
-    ));
+    ))
+    .unwrap_or_else(|refusals| panic!("the scalings check: {refusals:?}"));
+    let rendered = format!("{graph:?}");
+    assert!(
+        rendered.contains("filament.op.quantity.scale"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("filament.op.quantity.scale_div"),
+        "{rendered}"
+    );
 }
 
 #[trace("TC-1824", "FR-680-AC-5", "FSpec-FR-142-AC-42")]

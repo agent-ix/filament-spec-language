@@ -5960,7 +5960,6 @@ fn strict_flipped_and_negated_orderings_record_the_difference_bound() {
 #[trace("FSpec-TC-1360", "FSpec-FR-146-AC-17")]
 #[trace("FSpec-TC-1360", "FSpec-FR-146-AC-18")]
 #[test]
-#[ignore = "QSL-2177: the closed precondition and difference fact rules not implemented yet"]
 fn a_range_obligation_not_provable_from_the_precondition_still_refuses() {
     let document = withdraw_document();
     let unproved = vec![(Code::UndefinedExpression, Some("unproved-range"))];

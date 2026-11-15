@@ -54,7 +54,7 @@ can name.
 ### Request item
 
 - `claim`: the hyper clause or step relation's name; `kind`
-  `temporal-satisfaction`, `item_kind` `formula`.
+  `temporal-satisfaction`, `temporal.item_kind` `formula`.
 - `temporal.subject` as FR-625; every copy reads the same subject.
 - `temporal.limits`: FR-625's limits plus `max_witness_set` and
   `max_relation_tuples` (FR-184).

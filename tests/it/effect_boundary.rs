@@ -45,7 +45,6 @@ fn shipped_sources(dir: &Path, found: &mut Vec<PathBuf>) {
 /// NFR-139-AC-1: no shipped source file of the covered crates names a
 /// process, network or connection API.
 #[trace("TC-2024", "NFR-139-AC-1", "FSpec-TC-1523", "FSpec-FR-182-AC-6")]
-#[ignore = "QSL-2211: the effect-boundary guard is not adopted into the gate yet"]
 #[test]
 fn evaluation_and_analysis_crates_name_no_process_or_network_api() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));

@@ -205,6 +205,7 @@ fn refusal_of(wire: ReplayRequestWire) -> ReplayRefusal {
 /// against the dependency input and returns the value the function's body
 /// gives, for distinct parameter values in both argument orders.
 #[trace("FR-098-AC-32", "TC-444")]
+#[trace("FSpec-TC-1484", "FSpec-FR-323-AC-36")]
 #[test]
 fn an_owner_carrying_request_executes_the_imported_function() {
     let unit = unit_source("test/units", "u", UNIT_BODY);
@@ -263,6 +264,7 @@ fn an_owner_carrying_request_executes_the_imported_function() {
 /// owner-carrying request for the library's `big` (`x > 5`), and the library's
 /// never answers the owner-less one.
 #[trace("FR-098-AC-32", "TC-444")]
+#[trace("FSpec-TC-1484", "FSpec-FR-323-AC-36")]
 #[test]
 fn a_same_named_unit_function_never_answers_the_owner() {
     let unit = unit_source("test/units", "u", &format!("{UNIT_BODY}{UNIT_OWN_BIG}"));
@@ -310,6 +312,7 @@ fn a_same_named_unit_function_never_answers_the_owner() {
 /// the lock, or present in it only through another library -- refuses
 /// `UnknownOwner` before any call.
 #[trace("FR-098-AC-33", "TC-444")]
+#[trace("FSpec-TC-1484", "FSpec-FR-323-AC-37")]
 #[test]
 fn an_owner_the_unit_does_not_import_refuses_typed() {
     let unit = unit_source("test/units", "u", UNIT_BODY);
@@ -372,6 +375,7 @@ fn an_owner_the_unit_does_not_import_refuses_typed() {
 /// whose signature is not package-independent, refuse typed paired with the
 /// owner; the owner-less request for the same name is the unit's, unaffected.
 #[trace("FR-098-AC-33", "TC-444")]
+#[trace("FSpec-TC-1484", "FSpec-FR-323-AC-37")]
 #[test]
 fn a_function_the_owner_cannot_call_refuses_typed() {
     let unit = unit_source("test/units", "u", UNIT_BODY);

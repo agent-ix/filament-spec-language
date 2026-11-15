@@ -37,7 +37,7 @@ requirement is.
   state clause, whose subject is a model. An invariant is decided as the
   safety claim that it holds at every reachable state.
 - `kind`: `temporal-satisfaction` (the default for these families);
-  `item_kind` `formula`.
+  `temporal.item_kind` `formula`.
 - `temporal.subject`: optional; the request's default subject otherwise
   (FR-620).
 - `temporal.limits`: `max_states`, `max_transitions`, `max_automaton_states`

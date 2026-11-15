@@ -48,7 +48,7 @@ fn related_document() -> Vec<u8> {
         .iter_mut()
         .find(|ty| ty["identity"] == json!(id("Cell")))
         .expect("the Cell type");
-    let many = json!({"lower": 0, "upper": null, "ordered": false, "unique": true});
+    let many = json!({"lower": 0, "upper": 2, "ordered": false, "unique": true});
     cell["relationships"] = json!([{
         "identity": id("relationship/owns"), "category": "structural", "composite": false,
         "direction": "source-to-target",
@@ -236,4 +236,25 @@ fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_repla
         (refusal.code(), refusal.cause()),
         (Code::InvalidRuntimeInput, "invalid-value")
     );
+}
+
+/// FR-731-AC-2: a second clause no peer satisfies leaves `Pick` with no
+/// step, and the two clauses in either order give the same states.
+#[trace("TC-2023", "FR-731-AC-2")]
+#[ignore = "QSL-2204: related-by clauses as step premises are not implemented yet"]
+#[test]
+fn an_unsatisfiable_clause_leaves_no_step_in_either_order() {
+    let model = related_document();
+    let (documents, start) = related_documents(&model);
+    let mut reached_counts = Vec::new();
+    for clauses in [
+        "related by Owns (k, r.p) related by Owns (r.p, k)",
+        "related by Owns (r.p, k) related by Owns (k, r.p)",
+    ] {
+        let checked = package_over(model.clone(), "package", "", &body(clauses));
+        let subject = subject(&checked, &documents, &start);
+        assert!(picks(&subject).is_empty(), "{clauses}: no Pick step");
+        reached_counts.push(reachable(&sc_system(&subject)).len());
+    }
+    assert_eq!(reached_counts[0], reached_counts[1], "{reached_counts:?}");
 }

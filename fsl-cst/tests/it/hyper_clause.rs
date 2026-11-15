@@ -155,7 +155,6 @@ fn an_indexed_read_is_the_base_of_a_power_and_a_power_is_not_indexed() {
 /// the refusal is the checker's named `unsupported_construct`.
 #[trace("FSpec-TC-1003", "FSpec-FR-501-AC-2")]
 #[test]
-#[ignore = "QSL-2162: an indexed read in a non-hyper temporal clause is not yet asserted to parse for the S3 refusal; not implemented yet"]
 fn an_indexed_read_in_an_ordinary_temporal_clause_parses_for_the_checker_refusal() {
     let text = source("temporal T using inf over (v: M::V) on origin { always holds(v.l @ a) }");
     let parsed = parse(&text);

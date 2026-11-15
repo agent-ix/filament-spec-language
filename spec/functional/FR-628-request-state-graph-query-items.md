@@ -22,17 +22,17 @@ relationships:
 
 ## Description
 
-A `native-analyze/1` item naming a checked state-graph claim (`possible`,
-`always possible` or `unique path`, FR-165) SHALL be decided over the
-explored state graph (FR-167, FR-168) and report its verdict, witness or
-counterexample and certificate in the FR-621 members.
+When a `native-analyze/1` item names a checked state-graph claim
+(`possible`, `always possible` or `unique path`, FR-165), FSL SHALL decide the
+claim over the explored state graph (FR-167, FR-168). The FR-621 members of the
+item carry its verdict, witness or counterexample and certificate.
 
 ## Inputs
 
 ### Request item
 
 - `claim`: the declared name of a state-graph claim; `kind`
-  `temporal-satisfaction`, `item_kind` `formula`.
+  `temporal-satisfaction`, `temporal.item_kind` `formula`.
 - `temporal.subject`, `temporal.limits` (FR-625's members) and
   `temporal.witness_samples` with `temporal.seed`, the number of sampled
   witnesses for a `possible` claim and their seed (FR-166).

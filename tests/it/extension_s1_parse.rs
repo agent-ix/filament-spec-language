@@ -114,6 +114,7 @@ fn invalid_syntax(declarations: &str, from: &str, token: &str, expected: &str) {
 }
 
 #[trace("TC-882", "FR-354-AC-1")]
+#[trace("FSpec-TC-949", "FSpec-FR-467-AC-1")]
 #[test]
 fn a_selected_extension_form_parses_as_one_node_spanning_the_whole_form() {
     let parsed = parse(&held(&["retention"]), FORM);
@@ -343,4 +344,40 @@ fn compile_applies_request_extension_definitions() {
     let package = String::from_utf8(package).unwrap();
     assert!(package.contains("\"retention\""), "{package}");
     assert!(package.contains("ext.retention"), "{package}");
+}
+
+/// FR-660-AC-6 (TC-1740): with the catalog holding `ext.retention`, the
+/// parse admits one `retention` form; the `parse` operation given no catalog
+/// refuses the same form as an unselected extension form.
+#[test]
+#[trace("TC-1740", "FR-660-AC-6")]
+fn the_parse_operation_admits_a_form_only_with_its_catalog() {
+    let with = parse(&held(&["retention"]), FORM);
+    assert!(with.is_admissible(), "{:?}", with.diagnostics());
+    let identity = identity();
+    let bytes = format!("{HEADER}{FORM}\n");
+    let without = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: &identity,
+            path: "unit.native",
+            bytes: bytes.as_bytes(),
+        },
+        Limits::default(),
+        &filament_exact::Cancel::new(),
+    );
+    let document: serde_json::Value = serde_json::from_slice(
+        &fsl_replay::OutcomeDocument::from_parse(&without)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(document["category"], "unsupported", "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["code"], "unsupported_construct",
+        "{document}"
+    );
+    assert_eq!(
+        document["diagnostics"][0]["cause"], "declaration-form",
+        "{document}"
+    );
 }

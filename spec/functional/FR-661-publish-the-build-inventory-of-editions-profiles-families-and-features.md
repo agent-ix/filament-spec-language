@@ -22,8 +22,8 @@ relationships:
 
 A user who writes a header needs the exact edition and profile spellings the
 build admits, and a consumer that reads a package's required-feature set
-needs the exact capability ids the build knows (FSpec FR-132-AC-3). FSL
-SHALL publish that inventory as one library operation,
+needs the exact capability ids the build knows (FSpec FR-132-AC-3). The
+`fsl-replay` crate SHALL publish that inventory as one library operation,
 `fsl_replay::build_inventory(&fsl_route::Registry) -> BuildInventory`, whose
 `BuildInventory::to_bytes()` is exactly FSpec FR-560's
 `filament.build-inventory/v1` document. The driver's `version` verb writes

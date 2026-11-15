@@ -14,7 +14,7 @@ Verify that a current-snapshot, context or value-invariants selection carrying `
 
 ## Test Procedure
 
-1. Send FR-312's current-snapshot clause-run request with `parameters` `{}` and with one parameter, then with every dependent file absent, then without the member.
+1. Send FR-312's current-snapshot clause-run request with `parameters` `{}` and with one parameter, then with the model and program files absent, then without the member.
 2. Send a `Context` and a `ValueInvariants` selection with `parameters` `{}`.
 
 Tag the tests `#[trace("TC-1747", "<AC id>")]`.

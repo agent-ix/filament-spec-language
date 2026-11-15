@@ -3074,3 +3074,128 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
         "{refusals:?}"
     );
 }
+
+/// [`rpc_document_with`]`(&["x"])` with the tuple `Slot(Clock, Integer)` and
+/// the variant type `Phase { Armed(Clock), Idle }`, held by the `Call` fields
+/// `s` and `p`, both written by `bump`.
+fn clock_tuple_and_union_document() -> Vec<u8> {
+    let mut document: Value =
+        serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
+    let (slot, phase) = (package("Slot"), package("Phase"));
+    let origin = |identity: &str| {
+        json!({"generated": {
+            "generatorIdentity": identity,
+            "generatorVersion": "1.0.0",
+            "inputIdentities": [identity],
+        }})
+    };
+    let types = document["types"].as_array_mut().expect("types");
+    types.push(wire_type(
+        &slot,
+        "tuple_type",
+        json!({"positions": [
+            {"identity": format!("{slot}/p0"), "typeRef": "ix://filament/native/Clock",
+             "origin": origin(&format!("{slot}/p0"))},
+            {"identity": format!("{slot}/p1"), "typeRef": "ix://filament/native/Integer",
+             "origin": origin(&format!("{slot}/p1"))},
+        ]}),
+    ));
+    types.push(wire_type(
+        &phase,
+        "variant_type",
+        json!({"variants": [
+            {"identity": package("variant/Phase-Armed"), "name": "Armed",
+             "payloadType": "ix://filament/native/Clock",
+             "origin": origin(&package("variant/Phase-Armed"))},
+            {"identity": package("variant/Phase-Idle"), "name": "Idle",
+             "origin": origin(&package("variant/Phase-Idle"))},
+        ]}),
+    ));
+    let call_type = &mut types[1];
+    let fields = call_type["fields"].as_array_mut().expect("Call fields");
+    fields.push(field("s", &slot));
+    fields.push(field("p", &phase));
+    for operation in call_type["operations"].as_array_mut().expect("operations") {
+        if operation["name"] == "bump" {
+            let modifies = operation["frame"]["modifies"]
+                .as_array_mut()
+                .expect("frame");
+            modifies.push(json!(call("s")));
+            modifies.push(json!(call("p")));
+        }
+    }
+    let constructs = document["constructs"].as_array_mut().expect("constructs");
+    for (name, meaning, shape, members) in [
+        (
+            "tuple_type",
+            meaning::TUPLE_VALUE_TYPE,
+            "tuple",
+            json!({"positions": "required"}),
+        ),
+        (
+            "variant_type",
+            meaning::VARIANT_TYPE,
+            "enumeration",
+            json!({"variants": "required"}),
+        ),
+    ] {
+        let mut construct = wire_construct(name, meaning, members);
+        construct["construct"]["shape"] = json!(shape);
+        constructs.push(construct);
+    }
+    serde_json::to_vec(&document).expect("JSON")
+}
+
+/// FR-230-AC-63 and FSpec FR-415-AC-28: a `Clock` tuple position is an
+/// unguarded clock place and a `Clock` union case payload a place guarded by
+/// its case; both are read only in clock constraints and written by resets,
+/// and `=` over a clock-bearing union reads a clock.
+#[trace("TC-1860", "FR-230-AC-63")]
+#[trace("FSpec-TC-1361", "FSpec-FR-415-AC-28")]
+#[trace("FSpec-TC-1361", "FSpec-FR-322-AC-399")]
+#[test]
+#[ignore = "QSL-2251: Clock tuple positions and union case payloads as clock places not implemented yet"]
+fn a_clock_tuple_position_and_union_case_are_clock_places() {
+    let document = clock_tuple_and_union_document();
+    let body = format!(
+        "{UNITS}{DENSE}\
+         pre Armed using v on Config::Call::bump {{ present(self.p.Armed) and value(self.p.Armed) >= 1 ms }}\n\
+         pre Slotted using v on Config::Call::reply {{ self.s[0] >= 2 ms }}\n\
+         post Arm using v on Config::Call::bump {{ self.p = Phase::Armed(0 ms) }}\n"
+    );
+    let graph = check(&document, &body).expect("clock tuple and union places check");
+    let model = timed(&graph);
+    let names: Vec<_> = model
+        .clock_fields()
+        .map(|(_, field)| field.name().to_owned())
+        .collect();
+    assert!(names.iter().any(|name| name == "s"), "{names:?}");
+    assert!(names.iter().any(|name| name == "p"), "{names:?}");
+    assert_eq!(
+        model
+            .resets()
+            .iter()
+            .flat_map(|resets| resets.resets())
+            .count(),
+        1
+    );
+
+    let presence = |clause: &str| {
+        check(&document, &format!("{UNITS}{DENSE}{clause}"))
+            .expect_err("refused")
+            .iter()
+            .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        presence("pre Late using v on Config::Call::bump { value(self.p.Armed) >= 1 ms }\n"),
+        [(Code::UndefinedExpression, Some("unproved-presence"))]
+    );
+    assert_eq!(
+        presence("invariant Same using v on Config::Call at current { self.p = self.p }\n"),
+        [(
+            Code::InvalidTimedModel,
+            Some("clock-read-outside-constraint")
+        )]
+    );
+}

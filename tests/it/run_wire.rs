@@ -516,3 +516,369 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
         assert_eq!(summary["disposition"], status, "{clause} summary");
     }
 }
+
+/// FR-640-AC-4, AC-6 (TC-1661): a malformed configuration refuses at stage
+/// `request` naming the member, and a member named after a model binding is
+/// refused as a reserved clock name.
+#[test]
+#[trace("TC-1661", "FR-640-AC-4", "FR-640-AC-6")]
+#[ignore = "QSL-1964: the request `clocks` member is not implemented yet"]
+fn malformed_and_reserved_clock_members_refuse() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut unknown = clocks();
+    unknown["events"] = json!({"kind": "wall_clock", "sequence_authority": "events"});
+    let mut zero = clocks();
+    zero["sample"]["period"] = json!({"kind": "integer", "decimal": "0"});
+    for (index, (selection, member)) in [(unknown, "events"), (zero, "sample")]
+        .into_iter()
+        .enumerate()
+    {
+        let output = compile_file(&write(
+            directory.path(),
+            &format!("malformed-{index}.json"),
+            &compile_request(selection),
+        ));
+        assert_eq!(output.status.code(), Some(20));
+        let envelope = refusal(&output);
+        assert_eq!(envelope["stage"], "request", "{envelope}");
+        assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+        assert!(envelope.to_string().contains(member), "{envelope}");
+    }
+    for (index, name) in ["model-steps", "model-time"].into_iter().enumerate() {
+        let mut reserved = clocks();
+        reserved[name] = json!({"kind": "event_position", "sequence_authority": "events"});
+        let output = compile_file(&write(
+            directory.path(),
+            &format!("reserved-{index}.json"),
+            &compile_request(reserved),
+        ));
+        assert_eq!(output.status.code(), Some(20));
+        let envelope = refusal(&output);
+        assert_eq!(envelope["stage"], "emit", "{envelope}");
+        assert_eq!(
+            envelope["details"]["cause"], "reserved-clock-name",
+            "{envelope}"
+        );
+        assert_eq!(envelope["details"]["clock"], name, "{envelope}");
+    }
+}
+
+/// FR-641-AC-4, FR-312-AC-8 (TC-1663, TC-1160): position forms that do not
+/// fit the selection, a `timestamped` observation without `stamp`, an empty
+/// `timestamped` member and a ledger repeating a binding refuse at stage
+/// `request` naming the member; a lasso of samples reaches evaluation.
+#[test]
+#[trace("TC-1663", "FR-641-AC-4", "TC-1160", "FR-312-AC-8")]
+#[ignore = "QSL-2133: record samples and the new trace kinds are not on the run wire yet"]
+fn malformed_trace_members_refuse_at_the_request_stage() {
+    let directory = tempfile::tempdir().unwrap();
+    let over = json!({"reference": {"population": "P", "key": "c1"}});
+    let duplicate = json!({"format": "filament.progress-ledger/1", "entries": [
+        {"binding": {"package": "p", "clause": "c", "occurrence": 0, "clock": "events",
+            "profile": EVENTS}, "watermark": 1, "completeness": "incomplete",
+            "scope": "open", "execution": "open", "covered": []},
+        {"binding": {"package": "p", "clause": "c", "occurrence": 0, "clock": "events",
+            "profile": EVENTS}, "watermark": 2, "completeness": "incomplete",
+            "scope": "open", "execution": "open", "covered": []}]});
+    std::fs::write(
+        directory.path().join("duplicate.json"),
+        serde_json::to_vec(&duplicate).unwrap(),
+    )
+    .unwrap();
+    let cases = [
+        (
+            json!({"name": "Reaches", "trace": {"finite": [json!("s0"), sample(1)]}}),
+            "trace",
+        ),
+        (
+            json!({"name": "Reaches", "trace": {"finite": samples(&[1])}, "over": over}),
+            "over",
+        ),
+        (
+            json!({"name": "T", "trace": {"timestamped": {
+                "observations": [{"position": sample(1)}],
+                "progress": progress(1), "lower_boundary": "authoritative-origin",
+                "binding": binding(STAMPED, "plant-ms")}}}),
+            "stamp",
+        ),
+        (
+            json!({"name": "T", "trace": {"timestamped": {}}}),
+            "observations",
+        ),
+        (
+            json!({"name": "E", "trace": {"progressed": {
+                "positions": samples(&[1]), "progress": progress(1),
+                "lower_boundary": "authoritative-origin", "binding": binding(EVENTS, "events")}},
+                "ledger": "duplicate.json"}),
+            "ledger",
+        ),
+    ];
+    for (index, (temporal, member)) in cases.into_iter().enumerate() {
+        let output = run_file(&write(
+            directory.path(),
+            &format!("malformed-trace-{index}.json"),
+            &run_request(temporal),
+        ));
+        assert_eq!(output.status.code(), Some(20));
+        let envelope = refusal(&output);
+        assert_eq!(envelope["stage"], "request", "{envelope}");
+        assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+        assert!(
+            envelope.to_string().contains(member),
+            "{member}: {envelope}"
+        );
+    }
+    let lasso = run_request(json!({"name": "Reaches",
+        "trace": {"lasso": {"prefix": samples(&[0]), "loop": samples(&[1, 2])}}}));
+    let document = result(&run_file(&write(directory.path(), "lasso.json", &lasso)));
+    assert_eq!(document["disposition"]["category"], "success", "{document}");
+}
+
+/// FR-641-AC-5 (TC-1663): a ledger read from a file and written back by a run
+/// that adds nothing reproduces its bytes.
+#[test]
+#[trace("TC-1663", "FR-641-AC-5")]
+#[ignore = "QSL-2133: the `ledger` file is not on the run wire yet"]
+fn a_ledger_round_trips_through_a_run_that_changes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = |ledger: Option<&str>| {
+        let mut temporal = json!({"name": "E", "trace": {"progressed": {
+            "positions": samples(&[0, 1]), "progress": progress(3),
+            "lower_boundary": "authoritative-origin", "binding": binding(EVENTS, "events")}}});
+        if let Some(ledger) = ledger {
+            temporal["ledger"] = json!(ledger);
+        }
+        run_request(temporal)
+    };
+    let first = result(&run_file(&write(
+        directory.path(),
+        "first.json",
+        &request(None),
+    )));
+    let bytes = serde_json::to_vec(&first["ledger"]).unwrap();
+    std::fs::write(directory.path().join("ledger.json"), &bytes).unwrap();
+    let again = result(&run_file(&write(
+        directory.path(),
+        "again.json",
+        &request(Some("ledger.json")),
+    )));
+    assert_eq!(serde_json::to_vec(&again["ledger"]).unwrap(), bytes);
+}
+
+/// FR-645-AC-5 (TC-1671): the refusal of the same trace built in process
+/// carries the same reason, without a request pointer.
+#[test]
+#[trace("TC-1671", "FR-645-AC-5")]
+#[ignore = "QSL-2133: trace refusals carry no reason fields yet"]
+fn an_in_process_trace_refusal_carries_no_request_pointer() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = write(
+        directory.path(),
+        "lasso.json",
+        &run_request(json!({"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": []}}})),
+    );
+    let prepared = fsl_command::command::prepare_run(&path, Default::default())
+        .unwrap_or_else(|error| panic!("the request prepares: {error:?}"));
+    let fsl_command::command::PreparedRun::Clause(request) = prepared else {
+        panic!("a clause run");
+    };
+    let report = fsl_replay::spine::run_clause(*request).expect("a report");
+    let text = format!("{report:?}");
+    assert!(text.contains("empty-lasso-loop"), "{text}");
+    assert!(!text.contains("request_pointer"), "{text}");
+}
+
+/// The `native-monitor/1` request over `records`, run through `command::run`.
+fn monitor_run(
+    directory: &Path,
+    name: &str,
+    request: Value,
+    records: &[Value],
+) -> crate::command_harness::Output {
+    let lines: Vec<String> = records.iter().map(Value::to_string).collect();
+    std::fs::write(directory.join(format!("{name}.jsonl")), lines.join("\n")).unwrap();
+    let mut request = request;
+    request["request"]["records"] = json!(format!("{name}.jsonl"));
+    run_file(&write(directory, &format!("{name}.json"), &request))
+}
+
+fn monitor_request(clauses: Value, trace: Value) -> Value {
+    json!({"format": "native-monitor/1", "request": {
+        "models": [], "program": program(), "clocks": clocks(),
+        "clauses": clauses, "trace": trace}})
+}
+
+fn observations(levels: &[i64]) -> Vec<Value> {
+    levels
+        .iter()
+        .map(|level| json!({"observation": sample(*level)}))
+        .collect()
+}
+
+/// FR-643-AC-2, FR-643-AC-5 (TC-1666, TC-1667): a timestamped stream with
+/// progress after each observation ends with the batch run's verdict and
+/// ledger; a stamp at the retained watermark is refused and the stream goes on.
+#[test]
+#[trace("TC-1666", "FR-643-AC-2", "TC-1667", "FR-643-AC-5")]
+#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
+fn a_timestamped_stream_matches_the_batch_run_and_refuses_a_regressing_stamp() {
+    let directory = tempfile::tempdir().unwrap();
+    let trace = json!({"kind": "timestamped", "lower_boundary": "authoritative-origin",
+        "binding": binding(STAMPED, "plant-ms")});
+    let mut records = Vec::new();
+    for (stamp, level) in [(0, 0), (2, 0), (5, 1)] {
+        records.push(json!({"observation": sample(level), "stamp": stamp}));
+        records.push(json!({"progress": progress(stamp)}));
+    }
+    records.insert(4, json!({"observation": sample(1), "stamp": 2}));
+    records.push(json!({"end": "closed"}));
+    let output = monitor_run(
+        directory.path(),
+        "stamped",
+        monitor_request(json!([{"name": "T"}]), trace),
+        &records,
+    );
+    let run = result(&output);
+    let events = run["events"].as_array().expect("events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event["record"] == 4 && event["category"] == "refusal"),
+        "the regressing stamp is refused: {run}"
+    );
+    let batch = request_batch(directory.path());
+    assert_eq!(
+        run["summary"]["clauses"][0]["disposition"], batch["disposition"],
+        "{run}"
+    );
+    assert_eq!(run["summary"]["ledger"], batch["ledger"], "{run}");
+}
+
+/// The batch timestamped run FR-641-AC-1 states, open at the end.
+fn request_batch(directory: &Path) -> Value {
+    let observations: Vec<Value> = [(0, 0), (2, 0), (5, 1)]
+        .into_iter()
+        .map(|(stamp, level)| json!({"position": sample(level), "stamp": stamp}))
+        .collect();
+    let request = run_request(json!({"name": "T", "trace": {"timestamped": {
+        "observations": observations, "progress": progress(5),
+        "lower_boundary": "authoritative-origin", "binding": binding(STAMPED, "plant-ms")}}}));
+    result(&run_file(&write(directory, "batch.json", &request)))
+}
+
+/// FR-643-AC-3, FR-644-AC-1 (TC-1666, TC-1668): a settled violation is
+/// reported once, at the observation that decides it, and never changes.
+#[test]
+#[trace("TC-1666", "FR-643-AC-3", "TC-1668", "FR-644-AC-1")]
+#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
+fn a_settled_result_is_reported_once_and_never_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut records = observations(&[0, 1, 2, 1, 0]);
+    records.push(json!({"end": "open"}));
+    let output = monitor_run(
+        directory.path(),
+        "settled",
+        monitor_request(json!([{"name": "Never"}]), json!({"kind": "finite"})),
+        &records,
+    );
+    assert_eq!(output.status.code(), Some(10));
+    let run = result(&output);
+    let events: Vec<&Value> = run["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["clause"] == "Never")
+        .collect();
+    let settled: Vec<&&Value> = events
+        .iter()
+        .filter(|event| event["category"] == "violation")
+        .collect();
+    assert_eq!(settled.len(), 1, "{run}");
+    assert_eq!(settled[0]["record"], 2, "{run}");
+    assert!(
+        events
+            .iter()
+            .all(|event| event["record"].as_u64() <= Some(2)),
+        "{run}"
+    );
+}
+
+/// FR-643-AC-4, FR-644-AC-3 (TC-1667, TC-1669): a checkpoint record and a
+/// resumed request give the later events of the uninterrupted stream.
+#[test]
+#[trace("TC-1667", "FR-643-AC-4", "TC-1669", "FR-644-AC-3")]
+#[ignore = "QSL-1977: the monitor command does not checkpoint or resume yet"]
+fn a_checkpointed_stream_resumes_to_the_same_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        json!({"kind": "finite"}),
+    );
+    let mut whole = observations(&[0, 1, 2, 1, 0]);
+    whole.push(json!({"end": "open"}));
+    let full = result(&monitor_run(
+        directory.path(),
+        "whole",
+        request.clone(),
+        &whole,
+    ));
+
+    let mut head = observations(&[0, 1]);
+    head.push(json!({"checkpoint": "state.json"}));
+    head.push(json!({"end": "open"}));
+    monitor_run(directory.path(), "head", request.clone(), &head);
+    let mut resumed_request = request;
+    resumed_request["request"]["state"] = json!("state.json");
+    let mut tail = observations(&[2, 1, 0]);
+    tail.push(json!({"end": "open"}));
+    let resumed = result(&monitor_run(
+        directory.path(),
+        "tail",
+        resumed_request,
+        &tail,
+    ));
+    assert_eq!(
+        resumed["summary"]["clauses"], full["summary"]["clauses"],
+        "{resumed}"
+    );
+}
+
+/// FR-644-AC-2, AC-4 (TC-1668, TC-1669): a malformed record is reported as a
+/// refusal event and the stream goes on; a request naming a missing clause
+/// returns the command-error envelope before any record.
+#[test]
+#[trace("TC-1668", "FR-644-AC-2", "TC-1669", "FR-644-AC-4")]
+#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
+fn a_bad_record_is_an_event_and_a_bad_request_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(json!([{"name": "Never"}]), json!({"kind": "finite"}));
+    let mut good = observations(&[0, 1, 2]);
+    good.push(json!({"end": "open"}));
+    let clean = result(&monitor_run(
+        directory.path(),
+        "clean",
+        request.clone(),
+        &good,
+    ));
+    let mut bad = good.clone();
+    bad.insert(1, json!({"observation": sample(0), "colour": "red"}));
+    let noisy = result(&monitor_run(directory.path(), "noisy", request, &bad));
+    let refusals: Vec<&Value> = noisy["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["category"] == "refusal")
+        .collect();
+    assert_eq!(refusals.len(), 1, "{noisy}");
+    assert_eq!(refusals[0]["record"], 1, "{noisy}");
+    assert_eq!(
+        noisy["summary"]["clauses"], clean["summary"]["clauses"],
+        "{noisy}"
+    );
+
+    let missing = monitor_request(json!([{"name": "Absent"}]), json!({"kind": "finite"}));
+    let output = monitor_run(directory.path(), "missing", missing, &good);
+    assert_eq!(output.status.code(), Some(20));
+    let envelope = refusal(&output);
+    assert!(envelope.to_string().contains("Absent"), "{envelope}");
+}

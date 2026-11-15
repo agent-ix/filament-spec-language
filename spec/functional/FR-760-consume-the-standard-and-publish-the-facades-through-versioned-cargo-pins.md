@@ -24,10 +24,10 @@ relationships:
 
 ## Description
 
-FSL SHALL build against a released version of every other Filament repository it
-depends on, named in Cargo, and SHALL read the standard's published files only
-through the pinned standard library; and FSL's consumer facades SHALL be
-versioned with FSL's release, so a consumer that pins an FSL release keeps
+FSL SHALL build against a released version, named in Cargo, of every other
+Filament repository it depends on. FSL SHALL read the standard's published
+files only through the pinned standard library. FSL's consumer facades SHALL
+be versioned with FSL's release, so a consumer that pins an FSL release keeps
 building whatever FSL merges next (FSpec FR-660).
 
 ## Rationale

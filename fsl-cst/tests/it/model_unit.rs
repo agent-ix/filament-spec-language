@@ -121,7 +121,6 @@ fn a_domain_with_no_string_refuses_at_the_semicolon() {
 
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
-#[ignore = "QSL-1980: `domain` after a profile refuses at `domain`; not implemented yet"]
 fn a_domain_after_a_profile_refuses_at_the_word() {
     let text = format!("{HEADER}profile P = \"filament.model.complete/v1\";\n{SHOP}");
     let parsed = parse(&text);

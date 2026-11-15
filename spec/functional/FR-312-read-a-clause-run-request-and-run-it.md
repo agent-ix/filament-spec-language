@@ -65,9 +65,6 @@ place of `call`. `clause` is a closed object:
   - `{"frame": {"operation": Op, "invocation": K}}`, FR-115's frame
     selection, which also evaluates the operation's own `requires` and
     `ensures` (FR-702);
-  - `{"invariants": {"observation": O}}` or `{"invariants": {"observation":
-    O, "invocation": K}}`, FR-702's type-invariants selection over FR-106's
-    `ValueInvariants`;
   - `{"function": {"name": N, "arguments": A, "snapshot": K}}`, FR-109's
     `Function` selection, with `A` as FR-109 states and each argument
     `value` in FR-650's run value form;

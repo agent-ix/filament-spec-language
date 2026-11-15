@@ -90,7 +90,7 @@ computed over the package compiled with these rows.
   and that configuration, in source order, before the emitter runs.
 - A declaration over a model subject takes its binding from the model
   (FR-233) and no `clocks` member serves it. Under the event-position profile
-  its `model-steps` binding SHALL be emitted as the configuration
+  the command SHALL emit its `model-steps` binding as the configuration
   `{"kind": "event_position", "sequence_authority": M}`, `M` the model's
   declaration identity text, because the model's step sequence is the
   authoritative sequence (FSpec FR-090); the command derives it, so a unit whose
@@ -116,6 +116,7 @@ computed over the package compiled with these rows.
   | A declaration needs a configuration and `clocks` has no member for its clock name | `missing-clock-selection` | `clock "<name>" used by <declaration> under <profile> has no configuration; add "<name>" to the request's clocks member` |
   | A member names a clock that no declaration taking its configuration from `clocks` writes | `unused-clock-selection` | `the clocks member "<name>" names a clock no temporal declaration uses` |
   | A member's `kind` is not the one a declaration's profile serves | `clock-kind-mismatch` | `clock "<name>" is a <kind> configuration but <declaration> uses <profile>, which needs <expected kind>` |
+  | A member named `model-steps` or `model-time` | `reserved-clock-name` | `clock "<name>" is a model binding name; a trace-subject clock role cannot be named model-steps or model-time, and a model subject's binding comes from the model` |
 
 - A `clocks` value that is not an object, a member value that is not a closed
   well-formed configuration (unknown `kind`, a missing, extra or empty member, a
@@ -139,6 +140,7 @@ computed over the package compiled with these rows.
 | FR-640-AC-3 | Removing the `"plant-ms"` member refuses at stage `emit`, `invalid-request`, exit 20, `details.cause` `missing-clock-selection`, `details.clock` `plant-ms`, with a message naming `plant-ms` and the locus of that clause's `clock` argument; adding a member `"spare"` that no clause writes refuses `unused-clock-selection`; configuring `"events"` as `timestamped_event` refuses `clock-kind-mismatch`. FR-330-AC-1's `Bounded` (event-position over the `Counter` model, clock `"model-steps"`) compiles with no `clocks` member and its row holds the derived `event_position` configuration. | Test (TC-1661) |
 | FR-640-AC-4 | A `clocks` member with an unknown `kind`, a `fixed_sample` with `period` `{"kind": "integer", "decimal": "0"}`, and a request carrying `clocks` with a package selection each refuse `invalid-request` at stage `request`, exit 20, naming the member. | Test (TC-1661) |
 | FR-640-AC-5 | Two compile requests differing only in the `"events"` `sequence_authority` give packages with different identities; two differing only in member order give equal bytes. | Test (TC-1660) |
+| FR-640-AC-6 | A `clocks` member named `model-steps` or `model-time` refuses at stage `emit`, `invalid-request`, exit 20, `details.cause` `reserved-clock-name`, `details.clock` the name, whatever the unit declares: a model binding name is never a configurable clock role (FR-610). | Test (TC-1661) |
 
 ## Dependencies
 

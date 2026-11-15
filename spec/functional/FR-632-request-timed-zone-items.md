@@ -43,7 +43,7 @@ digitised and checked explicitly (FR-243).
 ### Request item
 
 - `claim`: a timed temporal clause's name, or the subject anchor with
-  `item_kind` `time-lock-freedom` (FR-626); `kind` `temporal-satisfaction`.
+  `temporal.item_kind` `time-lock-freedom` (FR-626); `kind` `temporal-satisfaction`.
 - `temporal.limits`: FR-625's limits plus `max_clocks`.
 - `options.method`: `zones` (the default) or `digital-clocks`; the second is
   admitted only for a closed subject (FR-243).

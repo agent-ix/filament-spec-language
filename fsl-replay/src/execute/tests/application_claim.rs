@@ -656,3 +656,33 @@ fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
         Settled::Verdicts(boolean(true))
     );
 }
+
+/// FR-098-AC-27: in the recursive `d`, only the selected call's own stop at
+/// its `10 mod (n - 1)` site reproduces; a nested stop at the same
+/// `Location` is no observation.
+#[trace("TC-444", "FR-098-AC-27")]
+#[test]
+#[ignore = "QSL-2002: the unit must be checked and replayed under the recorded Kernel mode, and S6a reports no frame_depth yet"]
+fn tc_444_a_recursive_site_reproduces_only_at_frame_depth_zero() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function d using v(n: Int[0, 9]): Integer pure decreases(n) \
+         {{ if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }}\n"
+    );
+    let compiled = spine(&source, &BTreeMap::new());
+    let n = parameter(&compiled, "d", 0);
+    let key = record(&compiled, &source, "d", "10 mod (n - 1)", 0);
+    let at = |value| {
+        settled(run(
+            &source,
+            &compiled,
+            "d",
+            &key,
+            &[(n.clone(), int(value))],
+        ))
+    };
+    assert_eq!(at(1), Settled::Reproduced(boolean(false)));
+    assert_eq!(at(2), Settled::NoValue);
+    assert_eq!(at(3), Settled::NoValue);
+    assert_eq!(at(0), Settled::Verdicts(boolean(true)));
+}

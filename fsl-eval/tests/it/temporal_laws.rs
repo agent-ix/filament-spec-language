@@ -35,7 +35,6 @@ fn lasso_ones(body: &str) -> TemporalOutcome {
 /// to position 1.
 #[trace("TC-1544", "FR-327-AC-14", "FSpec-TC-1041", "FSpec-FR-092-AC-9")]
 #[test]
-#[ignore = "QSL-2148: the FSpec FR-092 pre-origin reading under every origin profile is not verified yet"]
 fn a_closed_past_interval_reads_the_pre_origin_extension() {
     for read in [closed_ones as fn(&str) -> TemporalOutcome, lasso_ones] {
         assert_eq!(read("once[1,1] holds(c.level = 1)"), violated(0));
@@ -105,7 +104,6 @@ fn reference(len: usize, holds_at: impl Fn(usize) -> bool) -> TemporalOutcome {
 /// closure and before the origin.
 #[trace("TC-1542", "FR-611-AC-3", "FSpec-TC-1041", "FSpec-FR-092-AC-10")]
 #[test]
-#[ignore = "QSL-2142: the derived-form laws of FSpec FR-092 are not verified yet"]
 fn the_derived_forms_carry_previous_next_and_weak_until() {
     const PREVIOUS: &str = "holds(c.level = 1) implies once[1,1] holds(c.level = 0)";
     const NEXT: &str = "eventually[1,1] holds(c.level = 1)";

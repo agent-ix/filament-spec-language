@@ -22,11 +22,11 @@ relationships:
 
 ## Description
 
-A `native-analyze/1` item naming a temporal clause with a liveness formula
-SHALL be decided over every fair behaviour of the subject under the clause's
-own fairness constraints, weak or strong, each (per operation instance) or
-whole (FR-123, FR-129, FR-130), and report its verdict, lasso counterexample
-and certificate in the FR-621 members.
+When a `native-analyze/1` item names a temporal clause with a liveness
+formula, FSL SHALL decide the clause over every behaviour of the subject that
+is fair under the clause's own fairness constraints (weak or strong, each or
+whole; FR-123, FR-129, FR-130). The FR-621 members of the item carry its
+verdict, lasso counterexample and certificate.
 
 ## Inputs
 

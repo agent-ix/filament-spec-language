@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared harness for the `native-analyze/1` stubs (FR-620 to FR-636): writes
-//! a request document and its files into a fresh directory, runs the driver's
-//! `fsl analyze --format json` on it, and returns the exit code and the
-//! outcome document. The binary is `$FSL_BIN`, or `fsl` on `PATH`.
+//! a request document and its files into a fresh directory, hands it to the
+//! in-process command adapter (`fsl_command::command::run`), and returns the
+//! exit code and the FR-286 outcome document. The driver binary is not used:
+//! the language repository cannot depend on the driver, and the adapter is
+//! the library half every frontend calls.
 
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
 use crate::counter::{clause_text, document, unit_text, CONTRACT};
 
-/// One driver invocation's exit code and streams.
+/// One command-adapter outcome: its exit code and its document bytes.
 pub(crate) struct Run {
     pub(crate) exit: i32,
     pub(crate) stdout: Vec<u8>,
-    pub(crate) stderr: Vec<u8>,
 }
 
 impl Run {
@@ -23,9 +23,8 @@ impl Run {
     pub(crate) fn document(&self) -> Value {
         serde_json::from_slice(&self.stdout).unwrap_or_else(|error| {
             panic!(
-                "stdout is one JSON outcome document ({error}); exit {}, stderr {}",
-                self.exit,
-                String::from_utf8_lossy(&self.stderr)
+                "the outcome is one JSON document ({error}); exit {}",
+                self.exit
             )
         })
     }
@@ -56,33 +55,23 @@ impl Workspace {
     }
 }
 
-/// Run the driver with `args`.
-pub(crate) fn fsl(args: &[&OsStr]) -> Run {
-    let binary = std::env::var_os("FSL_BIN").unwrap_or_else(|| "fsl".into());
-    let output = std::process::Command::new(binary)
-        .args(args)
-        .output()
-        .expect("the fsl driver binary runs");
-    Run {
-        exit: output.status.code().unwrap_or(-1),
-        stdout: output.stdout,
-        stderr: output.stderr,
-    }
-}
-
-/// `fsl analyze --format <format> <request>`.
-pub(crate) fn analyze_as(request: &Path, format: &str) -> Run {
-    fsl(&[
-        OsStr::new("analyze"),
-        OsStr::new("--format"),
-        OsStr::new(format),
-        request.as_os_str(),
-    ])
-}
-
-/// `fsl analyze --format json <request>`.
+/// Hand `request` to the command adapter and return its exit code and its
+/// outcome document: the result document of an accepted request, or the
+/// FR-286 `analyze` document of a refused one.
 pub(crate) fn analyze(request: &Path) -> Run {
-    analyze_as(request, "json")
+    match fsl_command::command::run(request) {
+        Ok(result) => Run {
+            exit: i32::from(result.exit_code),
+            stdout: result.value.to_string().into_bytes(),
+        },
+        Err(error) => Run {
+            exit: i32::from(error.category().exit_code()),
+            stdout: error
+                .outcome_document(fsl_replay::Operation::Analyze)
+                .to_bytes()
+                .expect("the outcome document serializes"),
+        },
+    }
 }
 
 /// An initialization snapshot `start` of the Counter fixture's counters.

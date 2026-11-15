@@ -22,9 +22,10 @@ relationships:
 
 ## Description
 
-Every refusal of a supplied trace's shape (an empty finite trace, an empty lasso
-loop, a trace kind the clause's profile does not read, disordered timed stamps)
-SHALL say which rule failed, in a message a person can act on, and where: the
+The spine run entry and the request reader SHALL give every refusal of a
+supplied trace's shape (an empty finite trace, an empty lasso loop, a trace kind
+the clause's profile does not read, disordered timed stamps) a record that says
+which rule failed, in a message a person can act on, and where: the
 trace member of the request and the clause whose profile decided it. Today these
 cases share `invalid_runtime_input`/`invalid-value` with no message, so a user
 cannot tell an empty recording from a timed clause run over untimed snapshots.

@@ -49,7 +49,7 @@ fn refusal_codes(document: &Value) -> Vec<Code> {
 /// the package map type `ClockMap` and every node reads.
 #[trace("FSpec-TC-1481", "FSpec-FR-154-AC-50")]
 #[test]
-#[ignore = "STD-544: the corrected orders vector loading through the public spine is not verified yet"]
+#[ignore = "STD-544: the published orders document does not read through domain-package intake yet (refuses invalid_model_binding)"]
 fn the_published_orders_document_names_its_clock_map_and_reads() {
     let document = orders();
     assert_eq!(
@@ -64,7 +64,6 @@ fn the_published_orders_document_names_its_clock_map_and_reads() {
 /// `invalid_model_binding`/`malformed-declaration`.
 #[trace("FSpec-TC-1481", "FSpec-FR-154-AC-50")]
 #[test]
-#[ignore = "STD-544: refusal of a rendered type text typeRef is not verified yet"]
 fn a_rendered_type_text_type_ref_refuses() {
     for rendered in [
         "Map<Text, ix://filament/native/Clock>",
@@ -107,7 +106,6 @@ fn anchor_with_point(point: Value) -> Value {
 /// the V2 schema; applicability is the reader's join.
 #[trace("FSpec-TC-1480", "FSpec-FR-342-AC-12")]
 #[test]
-#[ignore = "STD-555: execution_point on operation_anchor validating against the V2 schema is not verified yet"]
 fn an_operation_anchor_with_an_execution_point_validates_against_the_v2_schema() {
     let schema = v2_schema();
     for point in [
@@ -125,7 +123,6 @@ fn an_operation_anchor_with_an_execution_point_validates_against_the_v2_schema()
 /// member fail the schema.
 #[trace("FSpec-TC-1480", "FSpec-FR-342-AC-12")]
 #[test]
-#[ignore = "STD-555: schema refusal of a malformed execution_point is not verified yet"]
 fn a_malformed_execution_point_fails_the_v2_schema() {
     let schema = v2_schema();
     for point in [

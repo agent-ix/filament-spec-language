@@ -101,7 +101,6 @@ fn a_law_header_admits_div_and_rem_under_that_law() {
 
 #[trace("TC-1780", "FR-670-AC-2", "FSpec-TC-1280", "FSpec-FR-570-AC-2")]
 #[test]
-#[ignore = "QSL-1989: negative control for header law selection, verified with that change"]
 fn div_and_rem_with_no_law_refuse_missing_selection() {
     let refusals = check(VALUE, DIV_REM, CheckMode::Linked).expect_err("no law is selected");
     assert_eq!(
@@ -113,7 +112,7 @@ fn div_and_rem_with_no_law_refuse_missing_selection() {
     );
     check(
         VALUE,
-        "function m using v(a: Int[-7, 7], b: Int[1, 3]): Int[0, 2] pure { a mod b }",
+        "function m using v(a: Int[-7, 7], b: Int[1, 3]): Integer pure { a mod b }",
         CheckMode::Linked,
     )
     .expect("a mod-only unit needs no law");

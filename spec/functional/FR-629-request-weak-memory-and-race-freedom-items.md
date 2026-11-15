@@ -28,9 +28,9 @@ relationships:
 
 ## Description
 
-A `native-analyze/1` request whose subject has a weak `parallel` SHALL
-select that parallel's memory model in the request-level `memory` member,
-and its items SHALL be decided under that model: sequential consistency,
+When a `native-analyze/1` request selects a memory model for a weak
+`parallel` of its subject, FSL SHALL decide the request's items under that
+model. The model is one of sequential consistency,
 x86-TSO (FR-221) or release/acquire with the RC11 partial SC order (FR-222,
 FR-223). The derived race-freedom item reports data races on non-atomic
 locations (FR-224).
@@ -41,7 +41,7 @@ locations (FR-224).
   `parallel`, naming it and its model `sc`, `tso` or `ra`. A weak `parallel`
   with no selection is `sc`.
 - Items: formula items over the subject (FR-625, FR-627) and
-  `{"claim": "<parallel name>", "item_kind": "race-freedom"}`.
+  `{"claim": "<parallel name>", "temporal": {"item_kind": "race-freedom"}}`.
 - `temporal.limits.max_store_buffer` bounds each store buffer (FR-225),
   beside FR-625's limits.
 

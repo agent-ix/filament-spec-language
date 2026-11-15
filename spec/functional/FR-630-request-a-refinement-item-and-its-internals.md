@@ -65,7 +65,7 @@ compiles, and only this item finds it.
 ### Request item
 
 - `claim`: the refinement declaration's name; `kind` `refinement`;
-  `item_kind` `refinement`.
+  `temporal.item_kind` `refinement`.
 - `temporal.subject`: the concrete subject; `temporal.abstract_subject`: the
   abstract subject's initial states and universes, defaulting to the
   abstract states the mapping gives the concrete initial states (FR-144).

@@ -34,11 +34,12 @@ A unit selects an extension by a header `profile <alias> = "<identity>";`
 whose identity the supplied `DefinitionCatalog` holds as an extension
 definition (FR-110 "Extension selection"), and the compiler admits the
 extension's forms from that definition (FR-354). The catalog is the caller's
-input. A `native-compile/1` request (FR-027) and a `native-run/1` request
-(FR-100) SHALL supply it through one optional top-level member,
-`extensions`, and the `parse` and `check` lifecycle operations (FR-275)
-SHALL take the same catalog as an optional input, so that every path that
-reaches S1 reads extension forms from the same caller-supplied definitions.
+input. The request reader SHALL read the catalog from one optional
+top-level member, `extensions`, of a `native-compile/1` request (FR-027) or
+a `native-run/1` request (FR-100). The `parse` and `check` lifecycle
+operations (FR-275) take the same catalog as an optional input, so every
+path that reaches S1 reads extension forms from the same caller-supplied
+definitions.
 
 Definitions come from the request, not from an installed registry, a search
 path or a configuration file: a result then depends only on the bytes the
@@ -104,9 +105,10 @@ and its capability ids; or a typed refusal.
 - A unit that uses an extension form without selecting the extension SHALL
   keep the existing refusal of an unselected form (FR-354 "Admission"),
   whether or not the request supplies the definition.
-- The `parse` and `check` operations SHALL take an optional catalog and SHALL
-  hold and parse with its selected extensions exactly as spine compile does
-  (FR-354 steps 1 to 3); without a catalog they behave as today.
+- The `parse` and `check` operations SHALL take an optional catalog.
+- Given a catalog, the `parse` and `check` operations SHALL hold and parse
+  with its selected extensions exactly as spine compile does (FR-354 steps 1
+  to 3); without a catalog they behave as today.
 
 ## Acceptance Criteria
 

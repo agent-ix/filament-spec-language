@@ -188,3 +188,47 @@ fn model_time_over_a_record_trace_subject_names_the_missing_time_source() {
         "expected the model-time-on-trace-subject refusal, got {refusal}"
     );
 }
+
+/// FR-642-AC-4, FSpec FR-541-AC-2 (TC-1664, FSpec TC-1161): a timed interval
+/// is compared exactly on rational stamps: `eventually[0 ms, 500 us]` holds
+/// over stamps 0 and 1/3 ms with the answer at the second, and over stamps 0
+/// and 2/3 ms it does not.
+#[test]
+#[trace("TC-1664", "FR-642-AC-4", "FSpec-TC-1161", "FSpec-FR-541-AC-2")]
+#[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
+fn timed_intervals_compare_rational_stamps_exactly() {
+    let text = unit("plant", "eventually[0 ms, 500 us] holds(r.ack)").replace(
+        "unit ms :",
+        "unit us : Time = rational(1, 1000000) * s;\nunit ms :",
+    );
+    let mut checked = check(&text);
+    let clause = match checked.pop() {
+        Some(Ok(clause)) if checked.is_empty() => clause,
+        other => panic!("one admitted clause, not {other:?}"),
+    };
+    let third = |numerator: i64| {
+        Rational::new(Integer::from(numerator), Integer::from(3_i64)).expect("a rational stamp")
+    };
+    let run = |late: Rational| {
+        let trace = TimedTrace::new(vec![ms(0), late]).unwrap();
+        let mut letters = Samples {
+            text: &text,
+            clause: &clause,
+            samples: vec![(false, false), (false, true)],
+        };
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        evaluate_timed_at(
+            &clause,
+            &trace,
+            TemporalPosition::new(0),
+            &mut letters,
+            &mut meter,
+        )
+        .expect("the trace is readable")
+    };
+    assert_eq!(run(third(1)), TemporalOutcome::Holds);
+    assert!(matches!(
+        run(third(2)),
+        TemporalOutcome::Violated { .. } | TemporalOutcome::Pending
+    ));
+}

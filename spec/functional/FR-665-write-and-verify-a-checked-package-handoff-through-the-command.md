@@ -11,6 +11,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-531
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-027
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-287
@@ -57,16 +59,17 @@ The `handoff` member, a closed record:
   file's directory;
 - `package_name`: the package name FR-517's request takes;
 - `execution_points`: optional array as FR-517 takes it; absent is `[]`;
-- `clock_selections`: optional object from the exact authored name of a
-  `temporal` clause or `compensate` template to its clock configuration, the
-  form of `emit_checked_v2`'s `--clock-selections` file (FR-517); absent is
-  no selection;
 - `corpus`: optional, `"none"` or `"standard"` (FR-518); absent is `"none"`;
 - `native_join`: required, `{"work_units": n, "storage": n}`, the identity
   file's native join budget (FR-531), which has no default.
 
 The unit, libraries and domain package documents are the compile
-request's `program`, `libraries` and `models`.
+request's `program`, `libraries` and `models`. The writer's clock
+configurations are the compile request's `clocks` member
+([FR-640](FR-640-select-clock-configurations-in-compile-and-run-requests.md)),
+taken unchanged: each clock has one configuration, keyed by its clock name,
+and the handoff carries no second clock selection of its own, so the
+handoff and the package it holds can never configure one clock two ways.
 
 ## Outputs
 
@@ -83,11 +86,11 @@ the sidecar, otherwise refusal carrying the reader's typed refusal or the
   other than `none` or `standard` refuses `invalid-request` at stage
   `request`, exit 20, naming the member, before any file is read.
 - If `directory` already exists, then the command SHALL refuse it naming the
-  path, exit 20, and SHALL leave its contents untouched (FR-517).
+  path, exit 20, leaving its contents untouched (FR-517).
 - The command SHALL write the directory only after the package is built and
   read back; a compile refusal writes no directory.
-- `verify` SHALL read only the directory's files, and SHALL refuse a file
-  with any changed byte that changes what the reader admits or what the
+- `verify` SHALL read only the directory's files.
+- `verify` SHALL refuse a file with any changed byte that changes what the reader admits or what the
   sidecar records, with the typed refusal the reader or `Selection::check`
   gives.
 

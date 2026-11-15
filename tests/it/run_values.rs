@@ -330,8 +330,25 @@ fn mistyped_arguments_refuse_with_cause_and_path() {
 #[trace("TC-1705", "FR-650-AC-6")]
 #[ignore = "QSL-2182: every result kind with an FR-181 form completes; unsupported_construct removed, not implemented yet"]
 fn no_identity_function_refuses_unsupported() {
-    for function in ["id_rec", "id_tup", "id_enum", "id_seq", "id_set", "id_txt"] {
-        let output = run_identity(function, json!({"absent": {}}));
+    for (function, argument) in [
+        (
+            "id_rec",
+            json!({"record": {"type": "P", "fields": {"x": {"integer": "1"}, "y": {"integer": "2"}}}}),
+        ),
+        (
+            "id_tup",
+            json!({"tuple": {"type": "Tp", "components": [{"integer": "2"}, {"integer": "1"}]}}),
+        ),
+        (
+            "id_enum",
+            json!({"variant": {"type": "Color", "case": "Red"}}),
+        ),
+        ("id_seq", json!({"sequence": []})),
+        ("id_set", json!({"set": []})),
+        ("id_txt", json!({"kind": "text", "text": "a"})),
+    ] {
+        let output = run_identity(function, argument);
+        assert_eq!(output.status.code(), Some(0), "{function}: {output:?}");
         let failure: Value = serde_json::from_slice(&output.stderr).unwrap_or(Value::Null);
         assert_ne!(
             failure["code"], "unsupported_construct",
@@ -369,4 +386,59 @@ fn seven_completes_as_a_tagged_integer() {
         document["outcome"],
         json!({"kind": "completed", "value": {"integer": "7"}})
     );
+}
+
+/// FSpec FR-550-AC-1: argument and completed values of each kind keep one
+/// typed form, normalized where the form normalizes.
+#[test]
+#[trace("FSpec-TC-1200", "FSpec-FR-550-AC-1")]
+#[ignore = "QSL-2182: every value kind as argument and result not implemented yet"]
+fn fspec_values_round_trip_in_one_form() {
+    let big = "1267650600228229401496703205376";
+    assert_round_trip("id_big", json!({"integer": big}), json!({"integer": big}));
+    assert_round_trip(
+        "id_rat",
+        json!({"kind": "rational", "numerator": "4", "denominator": "6"}),
+        json!({"kind": "rational", "numerator": "2", "denominator": "3"}),
+    );
+    assert_round_trip(
+        "id_set",
+        json!({"set": [{"integer": "3"}, {"integer": "1"}]}),
+        json!({"set": [{"integer": "1"}, {"integer": "3"}]}),
+    );
+    let tuple =
+        json!({"tuple": {"type": "Tp", "components": [{"integer": "2"}, {"integer": "1"}]}});
+    assert_round_trip("id_tup", tuple.clone(), tuple);
+}
+
+/// FSpec FR-550-AC-2: an argument that is not a value of its declared type
+/// refuses with its cause, naming the parameter and the location.
+#[test]
+#[trace("FSpec-TC-1201", "FSpec-FR-550-AC-2")]
+#[ignore = "QSL-1988: typed argument refusals with cause and path not implemented yet"]
+fn fspec_mistyped_arguments_refuse_with_cause_and_location() {
+    assert_call_refusal(
+        "id_rec",
+        json!({"record": {"type": "P", "fields": {"x": {"integer": "1"}}}}),
+        "invalid_runtime_input",
+        "missing-member",
+        "/record/fields",
+    );
+    assert_call_refusal(
+        "id_set",
+        json!({"set": [{"integer": "1"}, {"integer": "1"}]}),
+        "invalid_runtime_input",
+        "duplicate-member",
+        "/set/1",
+    );
+}
+
+/// FR-100-AC-21: a completed function run's result document has no `axes`.
+#[test]
+#[trace("TC-1582", "FR-100-AC-21")]
+fn completed_run_document_carries_no_axes() {
+    let output = run_identity("id_bool", json!(1));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(document.get("axes").is_none(), "{document}");
 }

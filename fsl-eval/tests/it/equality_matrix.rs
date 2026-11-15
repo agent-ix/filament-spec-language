@@ -3911,7 +3911,6 @@ fn a_converted_equality_operand_is_converted_once_and_compared() {
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-10")]
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-22")]
 #[test]
-#[ignore = "QSL-2173: String/Text type-mismatch and the closed equality-conversion property not confirmed yet"]
 fn admits_equality_conversion_is_exactly_the_closed_table() {
     use filament_semantic_value::declaration::admits_equality_conversion;
     use filament_semantic_value::quantity::UnitScope;

@@ -25,9 +25,11 @@ relationships:
 When an author writes a model unit, the compiler SHALL compile it to one
 domain package document in the form FSpec FR-154 admits (an FCD semantic IR
 2.0.0 domain package, serialized with RFC 8785), with every node, member,
-`origin`, multiplicity and `constructs` entry that admission requires, and
-SHALL let a package input supply the model unit in place of the document
-under its identity.
+`origin`, multiplicity and `constructs` entry that admission requires.
+
+When a package input supplies a model unit under a domain package identity,
+the compiler SHALL admit the compiled document in place of a supplied
+document.
 
 A model unit is the language's own route to a domain model. It declares
 everything a domain package holds: object types with fields, identity,

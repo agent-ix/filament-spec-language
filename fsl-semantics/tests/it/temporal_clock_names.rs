@@ -18,8 +18,12 @@ use crate::model_operations::{
     config_unit_with_profiles, config_version_document,
 };
 
-const PROFILES: &str = "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
-                        profile ev = \"filament.temporal.event-position.false-extension/v1\";\n";
+const PROFILES: &str = "profile inf = \"filament.temporal.infinite-trace/v1\";\n";
+
+/// The header profile line selecting `identity` under the alias `t`.
+fn profile_t(identity: &str) -> String {
+    format!("profile t = \"{identity}\";\n")
+}
 
 fn document() -> Vec<u8> {
     config_version_document(
@@ -33,9 +37,17 @@ fn document() -> Vec<u8> {
 /// The checked graph of `body`, or every refusal with the source text each
 /// names.
 fn check(body: &str) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>> {
+    check_with(PROFILES, body)
+}
+
+/// [`check`] with the extra header `profiles`.
+fn check_with(
+    profiles: &str,
+    body: &str,
+) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>> {
     let document = document();
-    let (unit, _) = config_unit_with_profiles(&document, PROFILES, body);
-    let declarations = admit_and_assemble_with_profiles(&document, PROFILES, body)
+    let (unit, _) = config_unit_with_profiles(&document, profiles, body);
+    let declarations = admit_and_assemble_with_profiles(&document, profiles, body)
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
     let regions = declarations.regions();
     declarations
@@ -56,7 +68,12 @@ fn check(body: &str) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>
 
 /// The one refusal of `body`: its code, cause and the text it names.
 fn sole_refusal(body: &str) -> (Code, Option<&'static str>, Option<String>) {
-    let Err(mut refusals) = check(body) else {
+    sole_refusal_with(PROFILES, body)
+}
+
+/// [`sole_refusal`] with the extra header `profiles`.
+fn sole_refusal_with(profiles: &str, body: &str) -> (Code, Option<&'static str>, Option<String>) {
+    let Err(mut refusals) = check_with(profiles, body) else {
         panic!("`{body}` must not check");
     };
     assert_eq!(refusals.len(), 1, "{refusals:?}");
@@ -81,9 +98,13 @@ fn clocked(profile: &str, clock: &str) -> String {
 #[test]
 #[ignore = "QSL-2141: a clock name other than model-steps or model-time over a model subject is not refused yet"]
 fn a_model_subject_refuses_a_clock_name_other_than_the_two_bindings() {
-    for profile in ["inf", "ev"] {
+    for profile in [
+        "filament.temporal.infinite-trace/v1",
+        "filament.temporal.event-position.false-extension/v1",
+    ] {
+        let header = profile_t(profile);
         for clock in ["ms", "wall", "steps"] {
-            let (code, cause, named) = sole_refusal(&clocked(profile, clock));
+            let (code, cause, named) = sole_refusal_with(&header, &clocked("t", clock));
             assert_eq!(
                 (code, cause),
                 (Code::UnsupportedConstruct, Some("declaration-form")),
@@ -91,7 +112,7 @@ fn a_model_subject_refuses_a_clock_name_other_than_the_two_bindings() {
             );
             assert_eq!(named.as_deref(), Some(format!("\"{clock}\"").as_str()));
         }
-        check(&clocked(profile, "model-steps"))
+        check_with(&header, &clocked("t", "model-steps"))
             .unwrap_or_else(|refusals| panic!("{profile}: model-steps checks: {refusals:?}"));
     }
 }
@@ -120,8 +141,8 @@ fn a_state_graph_claim_refuses_a_temporal_profile() {
         .unwrap_or_else(|refusals| panic!("`using v` checks: {refusals:?}"));
 }
 
-/// The S2 outcome of the fixture unit with `body`: the forms refusal and the
-/// text its span covers.
+/// The refusal of the fixture unit with `body` before a checked clause
+/// exists, at S2 or S3: its code and the text it names.
 fn forms_refusal(body: &str) -> (Code, String) {
     let document = document();
     let (unit, _) = config_unit_with_profiles(&document, PROFILES, body);
@@ -137,14 +158,16 @@ fn forms_refusal(body: &str) -> (Code, String) {
         "{body}: S1 admits it: {:?}",
         parsed.diagnostics()
     );
-    let Err(refusal) = fsl_forms::build_unit(&parsed) else {
-        panic!("{body}: S2 refuses it");
-    };
-    let span = refusal.span.expect("a located refusal");
-    (
-        refusal.catalog_code(),
-        unit[span.start..span.end].to_owned(),
-    )
+    if let Err(refusal) = fsl_forms::build_unit(&parsed) {
+        let span = refusal.span.expect("a located refusal");
+        return (
+            refusal.catalog_code(),
+            unit[span.start..span.end].to_owned(),
+        );
+    }
+    // S2 built the forms, so the refusal is S3's, before any checked clause.
+    let (code, _, named) = sole_refusal(body);
+    (code, named.unwrap_or_default())
 }
 
 /// FR-612-AC-1, FR-612-AC-2: an indexed read or a step label in a non-hyper

@@ -134,3 +134,75 @@ fn an_acyclic_plan_checks() {
     .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
     assert!(refusals.is_empty(), "{refusals:?}");
 }
+
+/// FSpec FR-192-AC-9: a repeated step name refuses
+/// `conflicting_declaration`/`duplicate-declaration`, and a `method` named
+/// `fuzz` refuses `missing_declaration`/`missing-name`.
+#[trace("TC-2103", "FR-753-AC-2")]
+#[trace("FSpec-TC-1601", "FSpec-FR-192-AC-9")]
+#[test]
+#[ignore = "QSL-2236: S3 `verify` plan check not implemented yet"]
+fn plan_step_name_and_method_refusals() {
+    let duplicate = check(
+        "verify Twice using p {\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion;\n\
+           check a claim Reaches method model_check domain Config::ConfigVersion;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&duplicate),
+        [Some(CatalogCode::new(
+            "conflicting_declaration",
+            "duplicate-declaration"
+        ))],
+        "{duplicate:?}"
+    );
+    let fuzz = check(
+        "verify Fuzzed using p {\n\
+           check a claim Reaches method fuzz domain Config::ConfigVersion;\n\
+         }",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `verify`: {refusal}"));
+    assert_eq!(
+        codes(&fuzz),
+        [Some(CatalogCode::new(
+            "missing_declaration",
+            "missing-name"
+        ))],
+        "{fuzz:?}"
+    );
+}
+
+/// FSpec FR-194-AC-9: a `grammar` naming nothing refuses
+/// `missing_declaration`/`missing-name`; a `satisfies` block of type
+/// `Integer` refuses `ill_typed`/`non-boolean-root`.
+#[trace("TC-2104", "FR-754-AC-2")]
+#[trace("FSpec-TC-1602", "FSpec-FR-194-AC-9")]
+#[test]
+#[ignore = "QSL-2235: S3 `synthesis` name and type checks not implemented yet"]
+fn synthesis_name_and_type_refusals() {
+    let missing = check(
+        "type Digit = Int[0, 9];\n\
+         synthesis Pick using v grammar Nothing domain Digit satisfies { Pick = 1 };",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `synthesis`: {refusal}"));
+    assert_eq!(
+        codes(&missing),
+        [Some(CatalogCode::new(
+            "missing_declaration",
+            "missing-name"
+        ))],
+        "{missing:?}"
+    );
+    let integer = check(
+        "type Digit = Int[0, 9];\n\
+         synthesis Pick using v grammar Digit domain Digit satisfies { Pick + 1 };",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `synthesis`: {refusal}"));
+    assert_eq!(
+        codes(&integer),
+        [Some(CatalogCode::new("ill_typed", "non-boolean-root"))],
+        "{integer:?}"
+    );
+}

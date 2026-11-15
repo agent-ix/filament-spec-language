@@ -92,13 +92,13 @@ impl World {
 
     /// `SlowEnough`'s hybrid item with `candidates` and `disposition`.
     fn item(&self, candidates: Vec<Candidate>, disposition: Disposition) -> NegotiatedItem {
-        let [clause] = self.package.graph().temporal_clauses() else {
-            panic!("one temporal clause, SlowEnough");
+        let [site] = self.package.graph().hybrid_claim_sites() else {
+            panic!("one hybrid claim, SlowEnough");
         };
         NegotiatedItem {
             item: ClaimItem {
                 request_index: RequestIndex::new(0),
-                claim: OccurrenceKey::new(clause.identity(), clause.claim().clone()),
+                claim: OccurrenceKey::new(site.identity.clone(), site.claim.clone()),
                 kind: Capability::TemporalSatisfaction,
                 extent: ExtentClassification::Bounded,
                 backend: None,

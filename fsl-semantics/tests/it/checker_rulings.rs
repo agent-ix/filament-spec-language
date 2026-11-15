@@ -82,17 +82,16 @@ fn checks(result: Result<CheckedGraph, Vec<CheckRefusal>>, what: &str) -> Checke
 // ----- FR-092-AC-31: recursion groups are always keyed -----
 
 const TWO_GROUPS: &str = "\
-    function a using v(n: Integer): Integer pure decreases(n) { if n > 0 then b(n - 1) else 0 }\n\
-    function b using v(n: Integer): Integer pure decreases(n) { if n > 0 then a(n - 1) else 0 }\n\
-    function c using v(n: Integer): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }\n\
-    function d using v(n: Integer): Integer pure decreases(n) { if n > 0 then c(n - 1) else 0 }";
+    function a using v(n: Int[0, 100]): Integer pure decreases(n) { if n > 0 then b(n - 1) else 0 }\n\
+    function b using v(n: Int[0, 100]): Integer pure decreases(n) { if n > 0 then a(n - 1) else 0 }\n\
+    function c using v(n: Int[0, 100]): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }\n\
+    function d using v(n: Int[0, 100]): Integer pure decreases(n) { if n > 0 then c(n - 1) else 0 }";
 
 /// FR-092-AC-31: two recursion groups with equal bodies check, each keyed
 /// apart by declaration identity, and nothing is refused
 /// `unknown_required_feature`.
 #[trace("TC-1900", "FR-092-AC-31")]
 #[test]
-#[ignore = "QSL-2179: recursion groups always keyed, never refused, not yet confirmed by a run"]
 fn two_recursion_groups_with_equal_bodies_key_apart() {
     let graph = checks(check_source(false, TWO_GROUPS), "two recursion groups");
     let grouped: Vec<_> = graph
@@ -355,6 +354,7 @@ fn reaches_admits_every_destination_multiplicity() {
 /// FR-391-AC-10: a state clause body may use `seq` and the population forms,
 /// and each lowers: checking (which lowers) refuses none of them.
 #[trace("TC-1904", "FR-391-AC-10", "FR-139-AC-2")]
+#[trace("FSpec-TC-1401", "FSpec-FR-376-AC-8", "FSpec-FR-376-AC-9")]
 #[test]
 #[ignore = "QSL-2179: seq and population-form lowering in a state clause not implemented yet"]
 fn population_forms_and_seq_in_a_state_clause_check_and_lower() {
@@ -381,7 +381,6 @@ const CLOCK_FUNCTIONS: &str = "dimension Time;\nunit ms : Time = rational(1, 1);
 /// clock-reading declaration and nothing is refused `not-yet-implemented`.
 #[trace("TC-1905", "FR-230-AC-64")]
 #[test]
-#[ignore = "QSL-2179: Clock parameter of a function admitted under the temporal layer, confirmation pending a run"]
 fn a_clock_parameter_checks_under_the_temporal_layer() {
     checks(
         check_source(true, CLOCK_FUNCTIONS),
@@ -393,7 +392,6 @@ fn a_clock_parameter_checks_under_the_temporal_layer() {
 /// from the facet gate, `unsupported_construct`/`declaration-form`.
 #[trace("TC-1905", "FR-230-AC-64")]
 #[test]
-#[ignore = "QSL-2179: Clock parameter facet gate, confirmation pending a run"]
 fn a_clock_parameter_without_the_temporal_layer_is_gated() {
     let Err(refusals) = check_source(false, CLOCK_FUNCTIONS) else {
         panic!("the facet gate refuses each Clock parameter");
@@ -438,7 +436,6 @@ fn rational_products_and_sums_meet_their_normalized_intervals() {
 #[trace("TC-1906", "FR-700-AC-2", "FR-700-AC-3")]
 #[trace("FSpec-TC-1403", "FSpec-FR-146-AC-19")]
 #[test]
-#[ignore = "QSL-2168: rational range refusal by the FR-146 interval rule, confirmation pending the admitting fix"]
 fn narrower_rational_results_refuse_unproved_range() {
     for body in [
         format!("function f using v(a: {R9}, b: {R9}): Rational[1, 80; 1, 81] pure {{ a * b }}"),
@@ -463,7 +460,6 @@ const FOLD_TYPES: &str = "type I = Integer;\ntype B = Boolean;\ntype R = Rationa
 /// element type; subtraction over a sequence checks.
 #[trace("TC-1907", "FR-701-AC-1", "FR-701-AC-2")]
 #[test]
-#[ignore = "QSL-2174: set fold catalog over any element type, confirmation pending a run"]
 fn catalog_steps_over_a_set_check() {
     for function in [
         "function p using v(s: Set<Int[0, 9]>[0, 5]): I pure { fold<I>(acc, x in s: acc + convert<I>(x), identity: 0) }",
@@ -480,7 +476,6 @@ fn catalog_steps_over_a_set_check() {
 /// `ill_typed`/`operator-ineligible`.
 #[trace("TC-1907", "FR-701-AC-2")]
 #[test]
-#[ignore = "QSL-2174: set fold refusals outside the catalog, confirmation pending a run"]
 fn set_steps_outside_the_catalog_refuse() {
     for function in [
         "function p using v(s: Set<Int[0, 9]>[0, 5]): I pure { fold<I>(acc, x in s: acc - convert<I>(x), identity: 0) }",

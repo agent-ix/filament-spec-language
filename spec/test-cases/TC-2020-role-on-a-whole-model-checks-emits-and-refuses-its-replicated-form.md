@@ -17,9 +17,9 @@ Verify that `role w on M` checks as a role on the whole model `M` selects, that 
 | # | Change | Expected |
 | --- | --- | --- |
 | 1 | a protocol over `(input: M::Actor)` with `role W on M` and `role R on M::Actor` | checks; `W` records the identity of the package `M` selects |
-| 2 | row 1 with `role r each M from pop` added | `invalid_model_binding`/`malformed-declaration`, refusal region text exactly `M`; no refusal for `pop` |
+| 2 | row 1 with `role r each M from pop max 2 lifetime workflow` added | `invalid_model_binding`/`malformed-declaration`, refusal region text exactly `M`; no refusal for `pop` |
 | 3 | ADR-027 §7's `Fill` with `role w on M`, compiled through S4 | a package; the role node's `model` is the text identity of `M`'s package, `replication` empty, no `model` dependency; FSL's I2 reader admits it |
-| 4 | row 3 with `role w each M from cells` | no package; S3 refuses `invalid_model_binding`/`malformed-declaration` at `M` |
+| 4 | row 3 with `role w each M from cells max 2 lifetime workflow` | no package; S3 refuses `invalid_model_binding`/`malformed-declaration` at `M` |
 
 ## Expected Results
 

@@ -26,7 +26,7 @@ relationships:
 
 FSL SHALL bind every fact of the standard's consumer-fact inventory (FSpec
 FR-661) to public accessors of one public module per consumer, in the binding
-document `docs/consumer-facades.json`, and `cargo xtask consumer-facades` SHALL
+document `docs/consumer-facades.json`. `cargo xtask consumer-facades` SHALL
 fail when a fact has no binding, a binding names no fact, or a bound accessor is
 not public.
 

@@ -88,7 +88,6 @@ fn traces() -> Vec<Vec<i64>> {
 /// every activation, or false at the first activation that fails.
 #[trace("FSpec-TC-1041", "FSpec-FR-092-AC-9")]
 #[test]
-#[ignore = "QSL-2148: the differential against tl-mltl and the FSpec FR-092 reference is not implemented yet"]
 fn fsl_eval_agrees_with_the_reference_on_the_bounded_past_and_future_fragment() {
     for (body, truth) in CASES {
         let fx = fixture(EVENT, "c: Counter", "on each (q: Counter)", body);

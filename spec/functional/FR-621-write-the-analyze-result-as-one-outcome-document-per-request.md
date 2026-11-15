@@ -18,7 +18,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-622
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-650
-    type: depends_on
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-651
     type: references
   - target: ix://agent-ix/filament-specification/FR-331
@@ -26,6 +26,8 @@ relationships:
   - target: ix://agent-ix/filament-specification/FR-352
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-520
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
 ---
 # FR-621: Write the analyze result as one filament-outcome/1 document per request
@@ -113,10 +115,12 @@ carries.
   kind is refused by the writer as below. The `axes.settlement` member of
   such an item equals the disposition's `basis`.
 - Every value in a counterexample state, an assignment, a witness or a
-  simulation trace SHALL use the run value form FR-650 defines (the FR-106
-  snapshot grammar with the `tuple`, `variant`, `reference`, `population`,
-  `integer` and `boolean` forms), which maps one to one onto FSpec FR-181's
-  typed forms. An analyze document has no value spelling of its own.
+  simulation trace SHALL use FSpec FR-181's typed canonical forms, such as
+  `{"type": "integer", "value": "3"}`, because the analyze document is the
+  standard's envelope (FSpec FR-520). An analyze document has no value
+  spelling of its own. FSL's run documents keep the run value form FR-650
+  defines; the two map one to one, so a value read from either is the same
+  value.
 - An item settled by the bounded Kani engine settles `refuted` or
   `incomplete` when it reaches its bound, never `proved`, following the
   standard's engine assignment.
@@ -154,7 +158,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-4 | Every `category` and record label in the analyze documents of AC-1 to AC-3 is a kind FSpec FR-352 registers; a writer handed an unregistered kind writes an `internal-failure` document, exit 30, naming it. | Test (TC-1581) |
 | FR-621-AC-5 | The document the library writes for a request and the document the driver writes in machine mode for the same request are byte-equal. | Test (TC-1581) |
 | FR-621-AC-6 | In text mode the AC-2 request prints `0 Bounded refuted` as its first line and exits 10. | Test (TC-1581) |
-| FR-621-AC-7 | A `finite-replay` item whose clause is still pending at the end of the supplied trace carries `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; the refuted counterexample of AC-2 spells `value` as `{"integer": "3"}`. | Test (TC-1581) |
+| FR-621-AC-7 | A `finite-replay` item whose clause is still pending at the end of the supplied trace carries `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
 
 ## Dependencies
 

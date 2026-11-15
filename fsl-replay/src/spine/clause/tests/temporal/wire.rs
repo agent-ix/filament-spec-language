@@ -153,6 +153,7 @@ fn a_lasso_violation_writes_its_observed_counterexample() {
 /// listed edit refuses naming the member.
 #[trace("TC-1160", "FR-267-AC-14")]
 #[trace("TC-1160", "FR-266-AC-4")]
+#[trace("FSpec-TC-1485", "FSpec-FR-352-AC-10", "FSpec-FR-352-AC-11")]
 #[test]
 fn each_temporal_report_writes_its_row_and_each_edit_refuses() {
     let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));

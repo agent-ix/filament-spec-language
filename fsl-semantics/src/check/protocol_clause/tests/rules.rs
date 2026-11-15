@@ -58,14 +58,17 @@ const TRIED: &str = "attempt Tried by R on M::Actor::op contracts [] as (tried: 
 /// FR-218-AC-41: `role W on M` checks beside a role on a model type, and the
 /// replicated form over the alias refuses with the alias as its region.
 #[trace("TC-2020", "FR-218-AC-41")]
-#[ignore = "QSL-2223: role-on-model refusal region at the alias not verified end to end yet"]
 #[test]
 fn a_role_on_a_whole_model_checks_and_its_replicated_form_refuses_at_the_alias() {
     let roles = "role W on M;\nrole R on M::Actor;";
     let run = format!("sequence Main {{ {TRIED} }}");
     super::checks(&protocol("", roles, &run));
 
-    let replicated = protocol("", &format!("{roles}\nrole r each M from pop;"), &run);
+    let replicated = protocol(
+        "",
+        &format!("{roles}\nrole r each M from pop max 2 lifetime workflow;"),
+        &run,
+    );
     let found = located_refusals(&replicated);
     let at_alias: Vec<&String> = found
         .iter()
@@ -85,7 +88,6 @@ fn a_role_on_a_whole_model_checks_and_its_replicated_form_refuses_at_the_alias()
 /// a guard over `input.ready` refuses at that read, and no region covers the
 /// guard block, the choice or the protocol.
 #[trace("TC-2021", "FR-218-AC-42", "FSpec-TC-1521", "FSpec-FR-053-AC-5")]
-#[ignore = "QSL-1971: the over-read refusal region at the read is not implemented yet"]
 #[test]
 fn a_guard_reads_the_input_through_a_capture_and_a_direct_read_refuses_at_the_read() {
     let pick = |yes: &str, no: &str| {

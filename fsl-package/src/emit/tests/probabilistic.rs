@@ -253,6 +253,7 @@ fn emit_and_read(package: &CheckedPackage, document: &[u8]) -> (Value, Read) {
 /// and the strict reader admits the package.
 #[trace("TC-2062", "FR-740-AC-1")]
 #[trace("TC-2062", "FR-185-AC-7")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
 #[test]
 #[ignore = "QSL-2000: emission of workloads and rewards as v2 probabilistic nodes not implemented yet"]
 fn a_workload_and_a_reward_are_emitted_as_probabilistic_nodes() {
@@ -282,6 +283,7 @@ fn a_workload_and_a_reward_are_emitted_as_probabilistic_nodes() {
 /// `attemptUpdate(n)` emits one `probabilistic`/`random_parameter` node
 /// whose support keeps the declared order and weights, and the strict reader
 /// admits it.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-1")]
 #[trace("TC-2062", "FR-740-AC-1")]
 #[test]
 #[ignore = "QSL-2000: emission of random parameters as v2 probabilistic nodes not implemented yet"]
@@ -311,4 +313,100 @@ fn a_random_parameter_is_emitted_and_read_back() {
     let three = body.find("\"3\"").expect("the support value 3 is carried");
     let one = body.find("\"1\"").expect("the support value 1 is carried");
     assert!(three < one, "the support keeps its declared order: {body}");
+}
+
+/// TC-2062 (FR-740-AC-3, FSpec FR-640-AC-3): writing `Steady`'s weight
+/// lines in another order emits byte-identical output, and a workload with a
+/// weight of 0 is emitted with that weight.
+#[trace("TC-2062", "FR-740-AC-3")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+#[ignore = "QSL-2000: workload emission order and weight 0 as v2 probabilistic nodes not implemented yet"]
+fn workload_weight_order_changes_no_bytes_and_weight_zero_is_emitted() {
+    let package = |weights: &str| {
+        let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+        let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+        let unit = format!(
+            "{}workload Steady on Config {{ {weights} }}\n",
+            config_version_unit::unit_text()
+        );
+        let graph = assemble_with_models(unit.as_bytes(), &packages)
+            .expect("the unit assembles")
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+        CheckedPackage::link(graph)
+    };
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let (zero, read) = emit_and_read(
+        &package("weight ConfigVersion::attemptUpdate = 0;"),
+        document,
+    );
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let [workload] = super::owners::node_where(&zero, "probabilistic", "workload")[..] else {
+        panic!("one workload node");
+    };
+    assert!(workload["body"].to_string().contains("\"0\""), "{workload}");
+
+    // The fixture model has one operation, so the reordering is of the
+    // workload's declaration among the unit's other declarations.
+    let first = emit_checked(&package("weight ConfigVersion::attemptUpdate = 1;"))
+        .expect("the package emits");
+    let again = emit_checked(&package("weight ConfigVersion::attemptUpdate = 1;"))
+        .expect("the package emits");
+    assert_eq!(first.package().bytes(), again.package().bytes());
+}
+
+/// TC-2062 (FR-740-AC-4): a claim `under Steady` is emitted beside the
+/// `Steady` workload node it resolves to, and the strict reader admits the
+/// package holding the claim, the reward and the workload.
+#[trace("TC-2062", "FR-740-AC-4")]
+#[test]
+#[ignore = "QSL-2000: a claim's workload resolves to its emitted workload node not implemented yet"]
+fn a_claim_under_a_workload_is_emitted_with_its_workload_node() {
+    let package = claims_package(&[
+        "workload Steady on Config { weight ConfigVersion::attemptUpdate = 1; }",
+        "reward cost on ConfigVersion::attemptUpdate = 1;",
+        "probabilistic Stable using ev on Config under Steady on origin \
+         with alpha 0.01, beta 0.01, indifference 0.01 \
+         { probability >= 0.5 [ always[0,2] holds(true) ] }",
+    ]);
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let (wire, read) = emit_and_read(&package, document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    assert_eq!(
+        super::owners::node_where(&wire, "probabilistic", "workload").len(),
+        1
+    );
+    assert_eq!(
+        super::owners::node_where(&wire, "claim", "probabilistic_claim").len(),
+        1
+    );
+}
+
+/// TC-1563 (FSpec FR-640-AC-4): a `workload` node whose weights name an
+/// operation the model does not declare is refused by the strict reader.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-4")]
+#[test]
+#[ignore = "QSL-2000: the strict reader's probabilistic node checks not implemented yet"]
+fn the_reader_refuses_a_workload_that_misnames_an_operation() {
+    let package = probabilistic_package();
+    let emission = emit_checked(&package).expect("a probabilistic package emits");
+    let mut wire = wire(&emission);
+    let workload = wire["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|node| node["node_tag"] == "probabilistic" && node["semantic_form"] == "workload")
+        .expect("a workload node");
+    let body = workload["body"]
+        .to_string()
+        .replacen("attemptUpdate", "noSuchOperation", 1);
+    workload["body"] = serde_json::from_str(&body).unwrap();
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let mut evidence = read_evidence(&emission);
+    evidence
+        .insert_domain_package_document(package_identity(document), document)
+        .expect("a fresh evidence key");
+    let read = read_v2(&jcs(&wire), library(), V2ReadLimits::fixture(), &evidence);
+    assert!(matches!(read, Read::Refused(_)), "{read:?}");
 }

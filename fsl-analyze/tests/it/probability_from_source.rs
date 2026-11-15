@@ -63,6 +63,7 @@ fn run(name: &str, claims: &str, items: Value) -> Value {
 /// measurement naming its method and seed, and a rerun with four workers
 /// gives the same item.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 #[ignore = "QSL-2158: statistical probability items from source through fsl analyze not implemented yet"]
 fn statistical_items_settle_measured_from_source() {
@@ -86,6 +87,8 @@ fn statistical_items_settle_measured_from_source() {
 /// the exact value `391/400` and carries its accepted `exact` certificate
 /// document in the item result.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-2")]
+#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-2")]
+#[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
 #[test]
 #[ignore = "QSL-2158: exact probability items from source through fsl analyze not implemented yet"]
 fn an_exact_item_settles_proved_with_its_certificate() {
@@ -106,6 +109,7 @@ fn an_exact_item_settles_proved_with_its_certificate() {
 /// FR-741-AC-3 (negative): an exact item whose value misses its threshold
 /// settles `refuted` with a counterexample whose replay reproduced it.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-3")]
+#[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
 #[test]
 #[ignore = "QSL-2158: refuted exact probability items from source through fsl analyze not implemented yet"]
 fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
@@ -126,6 +130,7 @@ fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
 /// statistical evidence settles `unsupported` `exact-only-form` with no
 /// sample drawn.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-4")]
+#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-3")]
 #[test]
 #[ignore = "QSL-2158: probability item refusals from source through fsl analyze not implemented yet"]
 fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {

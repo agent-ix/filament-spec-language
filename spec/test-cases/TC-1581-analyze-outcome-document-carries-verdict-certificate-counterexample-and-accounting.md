@@ -30,5 +30,5 @@ Verify FR-621's item members and document category. Scope: FR-621-AC-1 to FR-621
 - Step 4: every kind registered; the unregistered kind gives `internal-failure`, exit 30.
 - Step 5: byte-equal documents.
 - Step 6: first line `0 Bounded refuted`, exit 10.
-- Step 7: kind `pending`, category `pending`, basis and `axes.settlement` `unsettled`, exit 0; `value` spelled `{"integer": "3"}`.
+- Step 7: kind `pending`, category `pending`, basis and `axes.settlement` `unsettled`, exit 0; `value` spelled `{"type": "integer", "value": "3"}`.
 - Assertions compare the outcome document's typed members and the exit code, never message text.

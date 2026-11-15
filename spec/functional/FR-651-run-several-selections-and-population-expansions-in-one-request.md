@@ -30,10 +30,11 @@ relationships:
 
 ## Description
 
-A model usually has many rules and many objects. A native-run/1 request for
-a `1-draft` program SHALL be able to run several selections, several
-objects and every object of a population in one request, against one
-compilation of the program, and report one result per item. A run of every
+A model usually has many rules and many objects. When a native-run/1
+request for a `1-draft` program carries `items`, the run command SHALL run
+every selection it lists, expanding each population selector into one item
+per object, against one compilation of the program, and SHALL report one
+result per item. A run of every
 rule of a model over its data is one request, not one request file per rule
 and object.
 

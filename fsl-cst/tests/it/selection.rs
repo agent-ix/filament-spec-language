@@ -210,7 +210,6 @@ fn parse_unit(id: &str, text: &str) -> fsl_cst::ParsedSource {
 /// edition string literal, with no other diagnostic.
 #[trace("FSpec-TC-1000", "FSpec-FR-500-AC-1")]
 #[test]
-#[ignore = "QSL-2161: unknown_edition is not asserted with its locus yet; not implemented yet"]
 fn an_edition_other_than_1_draft_refuses_unknown_edition_at_its_literal() {
     let body = "\nfunction f(): Boolean pure { true }";
     let admitted = parse_unit(
@@ -242,7 +241,6 @@ fn an_edition_other_than_1_draft_refuses_unknown_edition_at_its_literal() {
 /// diagnostic and no profile selection.
 #[trace("FSpec-TC-1001", "FSpec-FR-500-AC-2")]
 #[test]
-#[ignore = "QSL-2161: the zero-profile unit is not yet asserted as the standard's admitted form; not implemented yet"]
 fn a_unit_with_no_profile_parses() {
     let text = "language \"ix:native\" edition \"1-draft\";\nfunction f(): Boolean pure { true }";
     let parsed = parse_unit("no-profile", text);
@@ -259,7 +257,6 @@ fn a_unit_with_no_profile_parses() {
 /// clause may not, and refuses `invalid_syntax`/`unexpected-token` at `on`.
 #[trace("FSpec-TC-1001", "FSpec-FR-500-AC-4")]
 #[test]
-#[ignore = "QSL-2161: optional using on functions and predicates is not yet asserted; not implemented yet"]
 fn a_function_or_predicate_may_omit_using_and_a_state_clause_may_not() {
     let unit = |declaration: &str| {
         format!(

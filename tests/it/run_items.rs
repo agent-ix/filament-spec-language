@@ -269,15 +269,7 @@ fn value_invariants_selection_is_an_items_selection() {
 fn reference_argument_without_a_snapshot_refuses() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
-    let unit = std::fs::read_to_string(directory.path().join("spine-unit.native")).unwrap();
-    std::fs::write(
-        directory.path().join("spine-unit.native"),
-        format!(
-            "{unit}function same using v(r: Reference<Config::ConfigVersion>): \
-             Reference<Config::ConfigVersion> pure {{ r }}\n"
-        ),
-    )
-    .unwrap();
+    extend_unit(directory.path(), SAME);
     let call = |snapshot: Option<&str>| {
         let mut call = json!({"function": "same", "arguments": [
             {"parameter": "r", "value": {"reference": child()}}]});
@@ -296,4 +288,190 @@ fn reference_argument_without_a_snapshot_refuses() {
     assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
     assert_eq!(failure["cause"], "missing-member", "{failure}");
     assert_eq!(failure["stage"], "call", "{failure}");
+}
+
+/// Append `functions` to the written spine unit.
+fn extend_unit(directory: &Path, functions: &str) {
+    let unit = std::fs::read_to_string(directory.join("spine-unit.native")).unwrap();
+    std::fs::write(
+        directory.join("spine-unit.native"),
+        format!("{unit}{functions}"),
+    )
+    .unwrap();
+}
+
+const SAME: &str = "function same using v(r: Config::ConfigVersion): \
+                    Config::ConfigVersion pure { r }\n";
+
+/// Call `same` with `value` over the healthy snapshot and return the
+/// completed value.
+fn same_of(directory: &Path, value: Value) -> Value {
+    let output = request(
+        directory,
+        "call",
+        json!({"function": "same", "snapshot": "spine-snapshot.json",
+            "arguments": [{"parameter": "r", "value": value}]}),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["outcome"]["kind"], "completed", "{document}");
+    document["outcome"]["value"].clone()
+}
+
+/// FR-650-AC-5: a Reference result is its identity triple and passes back
+/// unchanged as an argument.
+#[test]
+#[trace("TC-1704", "FR-650-AC-5")]
+#[ignore = "QSL-2182: Reference results in the identity-reference form passed back as arguments not implemented yet"]
+fn reference_result_passes_back_as_an_argument() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    let first = same_of(directory.path(), json!({"reference": child()}));
+    let triple = &first["reference"];
+    for member in ["universe", "type"] {
+        let hex = triple[member].as_str().unwrap();
+        assert_eq!(hex.len(), 64, "{member}: {first}");
+        assert!(hex
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    }
+    assert!(triple["object_identity"].is_string(), "{first}");
+    assert_eq!(same_of(directory.path(), first.clone()), first);
+}
+
+/// FR-650-AC-7: an FR-312 `function` selection admits the run value form.
+#[test]
+#[trace("TC-1706", "FR-650-AC-7")]
+#[ignore = "QSL-1988: run value form arguments in a clause-run function selection not implemented yet"]
+fn function_selection_admits_an_identity_reference() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    let identity = same_of(directory.path(), json!({"reference": child()}));
+    let output = request(
+        directory.path(),
+        "clause",
+        json!({"observations": observations(), "selection": {"function": {
+            "name": "sameIdentity", "snapshot": "current", "arguments": [
+                {"parameter": "a", "value": identity},
+                {"parameter": "b", "value": {"reference": child()}}]}}}),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+}
+
+/// FR-651-AC-4: the most severe item decides the exit, and an item's budget
+/// is its own.
+#[test]
+#[trace("TC-1711", "FR-651-AC-4")]
+#[ignore = "QSL-1987: items severity order and per-item budgets not implemented yet"]
+fn items_take_the_most_severe_exit_and_their_own_budgets() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(
+        directory.path(),
+        "function seven using v(): Int[0, 9] pure { 7 }\n",
+    );
+    let seven = json!({"call": {"function": "seven", "arguments": []}});
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "accounting": {"work_units": 0},
+            "selections": [parent_order("violating", child()), seven.clone()]}),
+    );
+    assert_eq!(output.status.code(), Some(22), "{output:?}");
+    let document = items_document(&output);
+    assert_eq!(
+        document["items"][1]["result"]["outcome"]["kind"],
+        "incomplete"
+    );
+    assert_eq!(document["category"], "incomplete");
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "accounting": {"work_units": 1000},
+            "selections": [seven.clone(), seven]}),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document = items_document(&output);
+    for item in document["items"].as_array().unwrap() {
+        assert_eq!(item["result"]["outcome"]["kind"], "completed", "{item}");
+    }
+}
+
+/// FR-652-AC-1: a `context` selection is read and reaches FR-106 admission,
+/// which refuses an object invariant selected by `Context` (FR-106-AC-46).
+#[test]
+#[trace("TC-1714", "FR-652-AC-1")]
+#[ignore = "QSL-2193: context selection in a run request not implemented yet"]
+fn context_selection_reaches_admission() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::ForbiddenParent).unwrap();
+    for side in ["pre", "post"] {
+        let output = request(
+            directory.path(),
+            "clause",
+            json!({"observations": {"i": "spine-invocation.json"}, "selection":
+                {"context": {"name": "ParentOrder", "invocation": "i", "side": side}}}),
+        );
+        assert_eq!(output.status.code(), Some(20), "{side}: {output:?}");
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+            panic!(
+                "{side}: no clause-run document: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+        assert_eq!(document["format"], "native-run-result/2", "{document}");
+        assert_eq!(document["disposition"]["stage"], "admit", "{document}");
+        assert!(
+            document.to_string().contains("wrong-observation"),
+            "{document}"
+        );
+    }
+}
+
+/// FR-106-AC-48: `ValueInvariants` admits one current snapshot, reachable
+/// through FR-652's `value_invariants` selection.
+#[test]
+#[trace("TC-1051", "FR-106-AC-48")]
+#[ignore = "QSL-2193: ValueInvariants admission from a run request not implemented yet"]
+fn value_invariants_admits_a_current_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "selections": [
+            {"value_invariants": {"snapshot": "current"}}]}),
+    );
+    let document = items_document(&output);
+    assert_ne!(document["category"], "refusal", "{document}");
+}
+
+/// FSpec FR-550-AC-3: items settle independently and the overall category
+/// is the most severe.
+#[test]
+#[trace("FSpec-TC-1202", "FSpec-FR-550-AC-3")]
+#[ignore = "QSL-1987: per-item settlement of an items request not implemented yet"]
+fn fspec_items_settle_independently() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "selections": [
+            parent_order("current", child()),
+            parent_order("current", json!({"population": population(), "key": "ghost"})),
+            parent_order("current", child()),
+        ]}),
+    );
+    let document = items_document(&output);
+    assert_eq!(
+        document["items"][0]["result"],
+        document["items"][2]["result"]
+    );
+    assert_eq!(document["items"][1]["result"]["category"], "refusal");
+    assert_eq!(document["category"], "refusal");
 }

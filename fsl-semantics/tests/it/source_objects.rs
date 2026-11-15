@@ -270,7 +270,7 @@ fn a_name_two_declarations_share_is_refused_at_each() {
 }
 
 /// `object M` in a unit with `model M`: both declarations.
-#[trace("FR-569-AC-3", "TC-1408")]
+#[trace("FR-569-AC-3", "TC-1408", "FSpec-FR-610-AC-2", "FSpec-TC-1440")]
 #[test]
 fn an_object_named_like_a_model_alias_is_refused_at_both() {
     let refused = model_refusals_at("object M { }");
@@ -752,7 +752,7 @@ fn a_redefinition_that_widens_the_frame_refuses_effect_escape_on_both_routes() {
 
 /// FR-569-AC-2: `on Order` and `on M::Order` check against different field
 /// sets when the source `Order` declares a field the model's lacks.
-#[trace("FR-569-AC-2", "TC-1408")]
+#[trace("FR-569-AC-2", "TC-1408", "FSpec-FR-610-AC-2", "FSpec-TC-1440")]
 #[test]
 fn a_bare_and_a_qualified_context_see_different_field_sets() {
     let objects = OBJECTS.replace(
@@ -802,7 +802,13 @@ fn sell(over_type: &str) -> String {
 /// static role on the source `Order`. `over (view: Order)` has the source
 /// `Order` as its model context, so it reads the source-only field `extra`;
 /// `over (view: M::Order)` has the model's, which has none.
-#[trace("FR-218-AC-39", "FR-569-AC-2", "TC-1408")]
+#[trace(
+    "FR-218-AC-39",
+    "FR-569-AC-2",
+    "TC-1408",
+    "FSpec-FR-610-AC-2",
+    "FSpec-TC-1440"
+)]
 #[test]
 fn a_protocol_roles_and_over_resolve_to_the_source_or_the_model_by_spelling() {
     let objects = OBJECTS.replace(
@@ -1357,7 +1363,7 @@ union Mark { Circle(Integer), Blank }
 tuple Pair(Integer, Boolean);
 type Small = Int[0, 3];
 dimension L;
-unit m : L = 1;
+unit m : L = rational(1, 1);
 ";
 
 /// The catalog codes of every refusal of `declarations`, from assembly or,
@@ -1410,98 +1416,98 @@ fn assert_member_checks_like_record_field(ty: &str, operation: bool) {
     );
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_enum_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Tier", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_enum_parameter_and_result_check_as_a_record_field() {
     assert_member_checks_like_record_field("Tier", true);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_record_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Point", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_record_parameter_and_result_check_as_a_record_field() {
     assert_member_checks_like_record_field("Point", true);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_union_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Mark", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_tuple_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Pair", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_alias_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Small", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_decimal_member_checks_as_a_record_field() {
-    assert_member_checks_like_record_field("Decimal[0, 100; 2, 2]", false);
+    assert_member_checks_like_record_field("Decimal[0, 100; 2, 2; exact]", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_rational_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Rational[0, 9; 1, 4]", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_float_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Float64", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_quantity_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Quantity<m>", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_option_of_a_collection_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Option<Sequence<Integer>[0, 3]>", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_nested_collection_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Sequence<Set<Integer>[0, 2]>[0, 2]", false);
 }
 
-#[trace("FR-569-AC-12", "TC-1940")]
+#[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_union_parameter_and_result_check_as_a_record_field() {
@@ -1520,14 +1526,14 @@ fn assert_member_refused_like_record_field(prelude: &str, ty: &str) {
     );
 }
 
-#[trace("FR-569-AC-13", "TC-1940")]
+#[trace("FR-569-AC-13", "TC-1940", "FSpec-FR-610-AC-6", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: a member type outside the record-field rule is refused with the record field's code; not implemented yet"]
 fn a_population_typed_member_is_refused_as_a_record_field_is() {
     assert_member_refused_like_record_field(OBJECTS, "Population<Order>[3]");
 }
 
-#[trace("FR-569-AC-13", "TC-1940")]
+#[trace("FR-569-AC-13", "TC-1940", "FSpec-FR-610-AC-6", "FSpec-TC-1442")]
 #[test]
 #[ignore = "QSL-2175: a member type outside the record-field rule is refused with the record field's code; not implemented yet"]
 fn a_member_typed_by_a_function_name_is_refused_as_a_record_field_is() {

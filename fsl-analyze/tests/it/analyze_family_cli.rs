@@ -50,8 +50,8 @@ fn a_refinement_proves_and_a_wrong_mapping_refutes() {
     let run = analyze(&refinement_request(
         &ws,
         &body,
-        json!([{"claim": "Same", "kind": "refinement", "item_kind": "refinement"},
-            {"claim": "Off", "kind": "refinement", "item_kind": "refinement"}]),
+        json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}},
+            {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
     ));
     assert_eq!(results(&run, 2), ["proved", "refuted"]);
     assert_eq!(run.item(0)["record"]["certification"], "certified");
@@ -67,7 +67,7 @@ fn a_refinement_proves_and_a_wrong_mapping_refutes() {
 fn refinement_internals_are_a_request_member() {
     let ws = Workspace::new("family-refinement-internals");
     let mut request = request_members(Some(json!([
-        {"claim": "Same", "kind": "refinement", "item_kind": "refinement"}
+        {"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}}
     ])));
     request["refinement_internals"] = json!({"Same": []});
     let run = analyze(&counter_request_with(
@@ -78,7 +78,7 @@ fn refinement_internals_are_a_request_member() {
         ),
         request,
     ));
-    assert_eq!(run.exit, 0, "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(run.exit, 0, "{}", String::from_utf8_lossy(&run.stdout));
     assert_eq!(label(&run.item(0)), "proved");
 }
 
@@ -107,7 +107,7 @@ fn decimal_and_enum_history_rows_check_and_prove() {
         let run = analyze(&refinement_request(
             &ws,
             &body,
-            json!([{"claim": name, "kind": "refinement", "item_kind": "refinement"}]),
+            json!([{"claim": name, "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
         ));
         assert_eq!(
             run.document()["last_stage"],
@@ -135,7 +135,7 @@ fn a_nested_reference_row_checks_and_proves() {
     let run = analyze(&refinement_request(
         &ws,
         &body,
-        json!([{"claim": "Nested", "kind": "refinement", "item_kind": "refinement"}]),
+        json!([{"claim": "Nested", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
     ));
     assert_eq!(label(&run.item(0)), "proved");
 }
@@ -340,4 +340,32 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
     assert!(registry.contains(&json!(provider)));
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
     assert_eq!(label(&run.item(1)), "proved");
+}
+
+/// The `Rpc` request at timeout `t` with `claim` and the request members
+/// `extra`.
+pub(crate) fn rpc_request(ws: &Workspace, t: u32, claim: &str, extra: Value) -> std::path::PathBuf {
+    request_over(
+        ws,
+        &rpc_unit(t, claim),
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        extra,
+    )
+}
+
+/// The `Ctl` request (third WCET 5) with `claims` and `items`.
+pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::path::PathBuf {
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n{}",
+        ctl_body(5, claims)
+    );
+    request_over(
+        ws,
+        &unit,
+        &crate::counter::document(false),
+        &[],
+        json!({"models": [], "items": items}),
+    )
 }

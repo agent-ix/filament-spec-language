@@ -63,7 +63,7 @@ FR-433), so one reader serves both.
   protocol model checking, `local-projection`, `realizability`,
   `composition` or `monitorability`, or `finite-replay`; FR-620's
   `absent-kind` rule applies, since a protocol clause admits several kinds.
-- `item_kind` `deadlock-freedom` with the protocol as `claim` requests the
+- `temporal.item_kind` `deadlock-freedom` with the protocol as `claim` requests the
   protocol deadlock item (FR-211).
 - `assessed_root`: required for `local-projection` and `realizability`
   (FSpec FR-331); `options.role` names the role a `local-projection` item
