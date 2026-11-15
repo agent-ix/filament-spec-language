@@ -33,7 +33,7 @@ quire-canonical = { workspace = true }
 # Strict admission authenticates the plan root final clause binding.
 filament-contract-model = { workspace = true }
 # The observation owner admits progress associations independently of FSL.
-filament-observation = { git = "https://github.com/agent-ix/filament-observation", branch = "fsl-rename" }
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", branch = "main" }
 filament-exact = { workspace = true }
 num-bigint = "0.4.8"
 num-integer = "0.1.47"

@@ -624,7 +624,7 @@ dependencies = [
 [[package]]
 name = "filament-observation"
 version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-observation?branch=fsl-rename#ac896dc316cf8c9790cc9ee4f6417a422954214a"
+source = "git+https://github.com/agent-ix/filament-observation?branch=main#594dc0024f2f257dede49cbc60970af8721cd167"
 dependencies = [
  "filament-exact",
  "fsl-foundation",
@@ -638,7 +638,7 @@ dependencies = [
 [[package]]
 name = "filament-semantic-value"
 version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#ad1c93f31f7e417aec27afbf06bfba6dfd7ba7c8"
+source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#c943d9560f1c614ad6b8512bfe8b8f2963f8122d"
 dependencies = [
  "filament-exact",
  "quire-canonical",
