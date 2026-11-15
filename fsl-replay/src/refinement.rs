@@ -12,7 +12,9 @@ mod liveness;
 mod map;
 mod outcome;
 mod protocol_system;
+mod protocol_witness;
 mod step;
+mod step_view;
 mod subject;
 
 pub use failure::{
@@ -46,6 +48,11 @@ pub fn protocol_transition_class(
 ) -> Option<String> {
     step::protocol_class(system, transition)
 }
+pub use protocol_witness::{RefinementWitness, RefinementWitnessError};
+pub use step_view::{
+    protocol_step_view, ProtocolStep, ProtocolStepView, ProtocolSteps, StateIndex, StepViewRefusal,
+    UnsteppedConstruct,
+};
 pub use subject::{open_protocol_systems, open_systems, RefinementSystems, SubjectRefusal};
 
 pub(crate) use step::stop_verdict;

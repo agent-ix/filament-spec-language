@@ -9,11 +9,11 @@ use filament_semantic_value::fairness::FairnessConstraint;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    ProtocolFairness, ProtocolFairnessError, ProtocolRefusal, ProtocolState, ProtocolSystem,
-    ProtocolTransition, Ra, Sc, SubjectMemory, Tso,
+    MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolRefusal, ProtocolState,
+    ProtocolSystem, ProtocolTransition, Ra, Sc, SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{
-    EncodingRefusal, Expansion, ExpansionStop, SubjectSystem, TransitionSystem,
+    Cut, EncodingRefusal, Expansion, ExpansionStop, SubjectSystem, TransitionSystem,
 };
 use fsl_semantics::check::CheckedProtocol;
 
@@ -311,6 +311,61 @@ impl<'a> AbstractProtocolSystem<'a> {
                     ))
                 }),
             _ => Ok(None),
+        }
+    }
+
+    /// [`Self::successors_and_terminal`] with what a method bound (the
+    /// memory bound, the live-instance bound) left of the state unexpanded.
+    pub fn successors_cut_and_terminal(
+        &self,
+        state: &ProtocolCandidate,
+    ) -> Result<Option<(ExpandedAndClassified, Cut)>, ExpansionStop> {
+        fn wrap<M: MemoryModel>(
+            system: &ProtocolSystem<'_, M>,
+            state: &ProtocolState<M>,
+            candidate: fn(ProtocolState<M>) -> ProtocolCandidate,
+        ) -> Result<Option<(ExpandedAndClassified, Cut)>, ExpansionStop> {
+            let (expansion, cut) = system.successors_bounded(state)?;
+            let terminal = SubjectSystem::terminal_class(system, state, &expansion, cut)?;
+            Ok(Some((
+                (
+                    Expansion {
+                        successors: expansion
+                            .successors
+                            .into_iter()
+                            .map(|(transition, state)| (transition, candidate(state)))
+                            .collect(),
+                        findings: expansion.findings,
+                    },
+                    terminal,
+                ),
+                cut,
+            )))
+        }
+        match (&self.inner, state) {
+            (ProtocolSystemKind::Sc(system), ProtocolCandidate::Sc(state)) => {
+                wrap(system, state, ProtocolCandidate::Sc)
+            }
+            (ProtocolSystemKind::Tso(system), ProtocolCandidate::Tso(state)) => {
+                wrap(system, state, ProtocolCandidate::Tso)
+            }
+            (ProtocolSystemKind::Ra(system), ProtocolCandidate::Ra(state)) => {
+                wrap(system, state, ProtocolCandidate::Ra)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The protocol transition's complete binder record as FR-181's typed
+    /// canonical bytes; `None` for a transition with no record binder.
+    pub fn binder_record_bytes(
+        &self,
+        transition: &ProtocolTransition,
+    ) -> Result<Option<Vec<u8>>, ExpansionStop> {
+        match &self.inner {
+            ProtocolSystemKind::Sc(system) => system.binder_record_bytes(transition),
+            ProtocolSystemKind::Tso(system) => system.binder_record_bytes(transition),
+            ProtocolSystemKind::Ra(system) => system.binder_record_bytes(transition),
         }
     }
 

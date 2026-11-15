@@ -117,7 +117,7 @@ impl ArenaNames {
     /// The control `fsl-eval` names by the path `path`: `fsl-eval` exposes
     /// a step's control only as this string.
     #[ix_trace_rs::string_edge]
-    fn node(&self, path: &str) -> Result<&CheckedNodeId, ArenaError> {
+    pub(crate) fn node(&self, path: &str) -> Result<&CheckedNodeId, ArenaError> {
         let name = path.rsplit('/').next().unwrap_or(path);
         self.controls
             .get(name)
@@ -125,15 +125,22 @@ impl ArenaNames {
             .ok_or_else(|| ArenaError::UnnamedNode(path.to_owned()))
     }
 
-    /// The (sender, receiver) roles of the channel `fsl-eval` names
-    /// `qualified`: `fsl-eval` exposes a step's channel only as this string.
+    /// The channel `fsl-eval` names `qualified`: `fsl-eval` exposes a
+    /// step's channel only as this string.
     #[ix_trace_rs::string_edge]
-    fn channel(&self, qualified: &str) -> Result<(usize, usize), ArenaError> {
+    pub(crate) fn channel_node(&self, qualified: &str) -> Result<&CheckedNodeId, ArenaError> {
         let name = qualified.rsplit("::").next().unwrap_or(qualified);
         self.channels
             .get(name)
             .and_then(Option::as_ref)
-            .and_then(|channel| self.ends.get(channel))
+            .ok_or_else(|| ArenaError::UnnamedNode(qualified.to_owned()))
+    }
+
+    /// The (sender, receiver) roles of the channel `fsl-eval` names
+    /// `qualified`.
+    fn channel(&self, qualified: &str) -> Result<(usize, usize), ArenaError> {
+        self.ends
+            .get(self.channel_node(qualified)?)
             .copied()
             .ok_or_else(|| ArenaError::UnnamedNode(qualified.to_owned()))
     }
