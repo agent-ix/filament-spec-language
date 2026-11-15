@@ -2672,7 +2672,6 @@ fn timestamped_report_keeps_four_independent_dimensions() {
 #[trace("TC-1582", "FR-267-AC-22")]
 #[trace("TC-1081", "FSpec-FR-521-AC-1")]
 #[test]
-#[ignore = "QSL-2121: the clause-run document does not carry the four outcome axes yet"]
 fn clause_run_document_carries_four_independent_axes() {
     let base = || {
         timestamped_with(

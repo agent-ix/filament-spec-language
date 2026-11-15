@@ -1059,6 +1059,7 @@ struct ClauseRead {
     basis: Basis,
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    axes: crate::OutcomeAxes,
 }
 
 #[derive(Deserialize)]
@@ -1774,6 +1775,12 @@ pub fn read_native_run_result_bounded(
         if document.format != format {
             return Err(NativeRunReadError::UnsupportedFormat(document.format));
         }
+        if document.axes.settlement.map(crate::proof_result::SettlementBasis::as_str) != Some(document.basis.as_str()) {
+            return Err(NativeRunReadError::Invalid {
+                member: "axes.settlement",
+                reason: "disagrees with basis",
+            });
+        }
         if let Some(value) = &document.disposition.temporal {
             let record = temporal::decode(value)?;
             temporal::validate_temporal(
@@ -2235,6 +2242,7 @@ struct ClauseRunDocument {
     basis: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    axes: crate::OutcomeAxes,
 }
 
 impl Disposition {
@@ -2703,6 +2711,7 @@ fn write_document(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultEr
         },
         basis: report.basis.as_str(),
         witness,
+        axes: report.axes(),
     };
     let json = serde_json::to_vec(&document)?;
     let parsed = quire_canonical::read(&json, u64::MAX)?;
