@@ -373,6 +373,13 @@ pub(crate) struct Compiled {
     /// The supplied libraries with the bytes they were compiled from.
     #[cfg(feature = "checked-handoff")]
     pub(crate) libraries: Vec<SuppliedLibrary>,
+    /// FR-056's package input: the domain package documents by the identity
+    /// each declares.
+    #[cfg(feature = "checked-handoff")]
+    pub(crate) packages: fsl_semantics::model::intake::PackageInput,
+    /// The accepted state-clause execution points the unit was checked with.
+    #[cfg(feature = "checked-handoff")]
+    pub(crate) points: StateClauseExecutionPoints,
     /// The checked unit the package was emitted from.
     #[cfg(feature = "checked-handoff")]
     pub(crate) checked: CheckedUnit,
@@ -429,16 +436,38 @@ fn refusal(failure: spine::FrontEndFailure) -> Error {
     }))
 }
 
-/// Read `request`'s inputs and run the spine over them: parse, select, check
-/// and emit, with each temporal clock selection joined to its clause.
-///
-/// This is the spine pipeline `fsl_replay::compile_package` runs
-/// (`tests/it/emit_checked_v2.rs` compares the two byte for byte), split at the
-/// checked unit so the writer can keep it. The unit-owner check
-/// (`DependencyInput::check_unit_owner`) runs inside the check stage. A
-/// clock selection joins only to a clause of the unit itself: a library's
-/// clause that needs a clock is refused by emission.
-pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
+/// The bytes and parameters one compile reads: the unit's source path and
+/// bytes, the domain package documents, the supplied libraries, the package
+/// name, the accepted execution points and the clock selections.
+pub(crate) struct Inputs {
+    /// The path the unit is labelled and displayed by.
+    pub(crate) source_path: PathBuf,
+    /// The unit's bytes.
+    pub(crate) source: Vec<u8>,
+    /// The domain package documents, in request order.
+    pub(crate) models: Vec<Vec<u8>>,
+    /// The supplied libraries with their bytes.
+    pub(crate) libraries: Vec<SuppliedLibrary>,
+    /// The package's manifest name.
+    pub(crate) package_name: String,
+    /// The accepted state-clause execution points.
+    pub(crate) points: StateClauseExecutionPoints,
+    /// The clock selections, in request order.
+    pub(crate) temporal_selections: Vec<ClockSelection>,
+}
+
+/// A library supplied as `identity`, read from `path` as `bytes`.
+pub(crate) fn supplied_library(identity: String, path: &Path, bytes: Vec<u8>) -> SuppliedLibrary {
+    SuppliedLibrary {
+        identity,
+        source: self::identity("library", path),
+        path: path.display().to_string(),
+        bytes,
+    }
+}
+
+/// Read every file `request` names.
+fn read_inputs(request: &Request) -> Result<Inputs, Error> {
     let source = read(&request.source, false)?;
     let models = request
         .models
@@ -448,25 +477,53 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
     let libraries = request
         .libraries
         .iter()
-        .map(|(library, path)| {
-            Ok(SuppliedLibrary {
-                identity: library.clone(),
-                source: identity("library", path),
-                path: path.display().to_string(),
-                bytes: read(path, true)?,
-            })
-        })
+        .map(|(library, path)| Ok(supplied_library(library.clone(), path, read(path, true)?)))
         .collect::<Result<Vec<_>, Error>>()?;
-    let dependencies = DependencyInput::new(libraries.clone()).map_err(Error::Dependencies)?;
     let points = request
         .execution_points
         .as_deref()
         .map(execution_points)
         .transpose()?
         .unwrap_or_default();
-    let unit = identity("source", &request.source);
-    let path = request.source.display().to_string();
-    let package = LibraryName::new(request.package_name.clone())
+    Ok(Inputs {
+        source_path: request.source.clone(),
+        source,
+        models,
+        libraries,
+        package_name: request.package_name.clone(),
+        points,
+        temporal_selections: request.temporal_selections.clone(),
+    })
+}
+
+/// Read `request`'s inputs and run the spine over them: parse, select, check
+/// and emit, with each temporal clock selection joined to its clause.
+pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
+    compile_inputs(read_inputs(request)?)
+}
+
+/// Run the spine over `inputs`.
+///
+/// This is the spine pipeline `fsl_replay::compile_package` runs
+/// (`tests/it/emit_checked_v2.rs` compares the two byte for byte), split at the
+/// checked unit so the writer can keep it. The unit-owner check
+/// (`DependencyInput::check_unit_owner`) runs inside the check stage. A
+/// clock selection joins only to a clause of the unit itself: a library's
+/// clause that needs a clock is refused by emission.
+pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
+    let Inputs {
+        source_path,
+        source,
+        models,
+        libraries,
+        package_name,
+        points,
+        temporal_selections,
+    } = inputs;
+    let dependencies = DependencyInput::new(libraries.clone()).map_err(Error::Dependencies)?;
+    let unit = identity("source", &source_path);
+    let path = source_path.display().to_string();
+    let package = LibraryName::new(package_name)
         .map_err(|invalid| Error::Producer(Box::new(ReplayRefusal::InvalidPackageName(invalid))))?;
     let packages = fsl_semantics::model::intake::package_input(models.iter().map(Vec::as_slice))
         .map_err(|refused| {
@@ -493,19 +550,19 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
             &parsed,
             package.as_str().to_owned(),
             &points,
-            &clause_clock_selections(&parsed, &request.temporal_selections),
+            &clause_clock_selections(&parsed, &temporal_selections),
             &admitted,
             &dependencies,
             limits,
             &cancel,
         );
     #[cfg(feature = "checked-handoff")]
-    let inventory = formal_identity(&request.source).and_then(|formal| {
+    let inventory = formal_identity(&source_path).and_then(|formal| {
         fsl_replay::source_inventory::fsl_inventory(Some(&parsed), &outcome, &formal)
             .map_err(|refused| refused.to_string())
     });
     let checked = outcome.map_err(refusal)?.into_value();
-    let selections = clock_selections(&checked, &request.temporal_selections)?;
+    let selections = clock_selections(&checked, &temporal_selections)?;
     let emitted =
         spine::package_with_temporal_selections(&checked, &selections, limits.package, &cancel)
             .map_err(refusal)?
@@ -517,6 +574,10 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
         models,
         #[cfg(feature = "checked-handoff")]
         libraries,
+        #[cfg(feature = "checked-handoff")]
+        packages,
+        #[cfg(feature = "checked-handoff")]
+        points,
         #[cfg(feature = "checked-handoff")]
         checked,
         #[cfg(feature = "checked-handoff")]

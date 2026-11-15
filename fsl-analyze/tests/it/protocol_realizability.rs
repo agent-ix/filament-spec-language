@@ -6,16 +6,21 @@ use std::collections::BTreeSet;
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::Cancel;
+use filament_spec_language::checked_handoff::{self, CheckedHandoffRequest, Corpus};
+use filament_spec_language::emit_checked_v2::Request;
 use fsl_analyze::analyze::{analyze_items, AnalyzeRecord, Engines};
 use fsl_analyze::protocol_analysis::{
-    self, projection_item, realizability_item, realize, realize_tampered, replay_counterexample,
-    replay_strategy, ProjectionRequest, ProtocolAnalysisArtifact, RealizabilityOutcome,
-    RealizabilityRefusal, RealizabilityRequest,
+    self, projection_item, protocol_subject, realizability_item, realize, realize_tampered,
+    replay_counterexample, replay_strategy, ProjectionRequest, ProtocolAnalysisArtifact,
+    RealizabilityOutcome, RealizabilityRefusal, RealizabilityRequest, SubjectBindings,
+    SubjectPackage,
 };
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
+use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::StepKind;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
+use fsl_package::NativeJoinLimits;
 use fsl_replay::protocol_analysis::{
     node_text, AnalysisOutcome, AssessedRoot, BoundsDraft, InconclusiveCause, Observed, Play,
     ProjectionBoundsDraft, RealizabilityCounterexample, RealizabilityDisagreement,
@@ -32,10 +37,16 @@ use fsl_route::{
     Registry,
 };
 use fsl_semantics::check::Capability;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::DocumentRef;
+use fsl_semantics::model::observation::ObservationLimits;
 use ix_trace_rs::trace;
 
-use crate::fill::{instance, model_subject, package, source_memory, Documents, PACKAGE};
+use crate::counter::UNLIMITED;
+use crate::fill::{
+    document, instance, model_subject, package, source_memory, unit_text_with, universe, Documents,
+    PACKAGE,
+};
 use crate::protocol_projection::{admitted_source, clause, named, root as assessed_root};
 
 const RECORDS: &str = "record Ack { ok: Boolean; }\nrecord PickMsg { ok: Boolean; }\n\
@@ -101,11 +112,7 @@ impl Fixture {
         run: &str,
         values: &[i64],
     ) -> Self {
-        let text = format!(
-            "{RECORDS}protocol Flow using pp over (k: M::Cell) {activation} {{\n{captures}{}{channels}\nrun {run}\n\
-             finish Done as (zz: Boolean) {{ true }};\n}}\n",
-            members(delivery)
-        );
+        let text = flow_text(activation, delivery, captures, channels, run);
         let mut documents = Documents::new();
         let initial = values
             .iter()
@@ -166,27 +173,44 @@ impl Fixture {
     }
 }
 
+/// The body of the protocol `Flow` with `activation`, `delivery` on the
+/// `Pick` and `Cancelled` channels, `captures` first, `channels` after the
+/// members and the run control `run`.
+fn flow_text(
+    activation: &str,
+    delivery: &str,
+    captures: &str,
+    channels: &str,
+    run: &str,
+) -> String {
+    format!(
+        "{RECORDS}protocol Flow using pp over (k: M::Cell) {activation} {{\n{captures}{}{channels}\nrun {run}\n\
+         finish Done as (zz: Boolean) {{ true }};\n}}\n",
+        members(delivery)
+    )
+}
+
 /// `Buyer` places an order; `Seller` reads it and owns `ship | cancel`.
 fn worked(delivery: &str, ship: &str, cancel: &str) -> Fixture {
     worked_over(delivery, "", ship, cancel)
 }
 
+/// The run control of [`worked`].
+fn worked_run(ship: &str, cancel: &str) -> String {
+    format!(
+        "sequence Main {{\n\
+         send Placed via Order as (placed: Ack) {{ true }};\n\
+         receive Got via Order of Placed as (got: Ack) {{ true }};\n\
+         choice Decide by Seller visible (got.ok) {{\n\
+           case no when {{ not got.ok }} sequence Cancel {{ {cancel} }}\n\
+           case yes when {{ got.ok }} sequence Ship {{ {ship} }}\n\
+         }} }}"
+    )
+}
+
 /// [`worked`] with the protocol declaring `captures` first.
 fn worked_over(delivery: &str, captures: &str, ship: &str, cancel: &str) -> Fixture {
-    Fixture::over(
-        delivery,
-        captures,
-        &format!(
-            "sequence Main {{\n\
-             send Placed via Order as (placed: Ack) {{ true }};\n\
-             receive Got via Order of Placed as (got: Ack) {{ true }};\n\
-             choice Decide by Seller visible (got.ok) {{\n\
-               case no when {{ not got.ok }} sequence Cancel {{ {cancel} }}\n\
-               case yes when {{ got.ok }} sequence Ship {{ {ship} }}\n\
-             }} }}"
-        ),
-        &[0],
-    )
+    Fixture::over(delivery, captures, &worked_run(ship, cancel), &[0])
 }
 
 const PICK: &str = "send PickIt via Pick as (p: PickMsg) { true };\n\
@@ -1338,4 +1362,117 @@ fn a_declined_item_writes_no_protocol_analysis_record() {
         Some(TerminalValue::Declined { .. })
     ));
     assert!(records[0].protocol_analysis.is_none());
+}
+
+/// FR-571-AC-7, FR-517-AC-24: a package that arrives only as a checked
+/// handoff directory reaches the realizability engine. The directory is
+/// compiled back in process, the subject is built from the package it
+/// compiles to, and the item dispatched through the registered engines
+/// settles as the in-process package does: realizable.
+#[trace("TC-1411", "FR-571-AC-7", "TC-1312", "FR-517-AC-24")]
+#[test]
+fn a_package_that_arrives_only_as_a_handoff_reaches_realizability() {
+    let holder = tempfile::tempdir().expect("a temporary directory");
+    let unit = holder.path().join("flow.native");
+    let model = holder.path().join("model.json");
+    let body = flow_text(
+        "on origin",
+        "exactly-once-premise",
+        "",
+        "",
+        &worked_run(PICK, CANCELLED),
+    );
+    std::fs::write(&unit, unit_text_with("", &body)).expect("the unit is written");
+    std::fs::write(&model, document()).expect("the model is written");
+    let directory = holder.path().join("handoff");
+    checked_handoff::write(
+        &CheckedHandoffRequest {
+            emit: Request {
+                source: unit,
+                package_name: "package".to_owned(),
+                models: vec![model],
+                libraries: Vec::new(),
+                execution_points: None,
+                temporal_selections: Vec::new(),
+                out: None,
+            },
+            corpus: Corpus::None,
+            native_join: NativeJoinLimits::new(1 << 20, 1 << 20),
+        },
+        &directory,
+    )
+    .expect("the handoff is written");
+
+    let handoff = checked_handoff::compile(&directory).expect("the directory compiles back");
+    let mut documents = Documents::new();
+    let initial = vec![documents.start("s0", &[("c", 0)])];
+    let subject = protocol_subject(
+        SubjectPackage {
+            package: handoff.checked(),
+            packages: handoff.packages(),
+            snapshots: &documents.snapshots,
+        },
+        SubjectBindings {
+            protocol: "Flow".to_owned(),
+            over: instance("c"),
+            roles: ["Buyer", "Seller", "Warehouse"]
+                .iter()
+                .map(|role| RoleBinding {
+                    role: (*role).to_owned(),
+                    model: PACKAGE.to_owned(),
+                })
+                .collect(),
+            memory: Vec::new(),
+            initial,
+            universes: universe(&["c"]),
+            normalization: ModelNormalizationLimits::default(),
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: UNLIMITED,
+            emit: handoff.emit_limits(),
+        },
+    )
+    .expect("the subject builds");
+    let request = RealizabilityRequest {
+        protocol: clause(handoff.admitted()),
+        subject,
+        definition_key: Some("ix://test/Flow".to_owned()),
+        strategy_profile: Some("bounded-static".to_owned()),
+        role_knowledge: Some(Some(BTreeSet::new())),
+        environment: Some(Some(BTreeSet::new())),
+        bounds: Some(BoundsDraft {
+            max_depth: Some(64),
+            max_history: Some(16),
+        }),
+        assessed_root: Some(assessed_root()),
+        budget: RunBudget::default(),
+    };
+    let records = analyze_items(
+        &Engines::fsl().expect("they register"),
+        vec![realizability_item(
+            RequestIndex::new(0),
+            handoff.admitted(),
+            request,
+        )],
+        &Cancel::new(),
+    );
+    let (value, label, basis, execution, truth) = axes(&records[0]);
+    assert_eq!(
+        (label, basis, execution, truth),
+        (
+            ResultLabel::Proved,
+            SettlementBasis::ClosedScope,
+            Execution::Completed,
+            Truth::Satisfied
+        )
+    );
+    assert_eq!(
+        value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Uncertified,
+        }
+    );
 }

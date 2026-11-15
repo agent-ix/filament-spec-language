@@ -122,6 +122,10 @@ pub enum ErrorCode {
     Unnameable,
     /// The caller's native join work or storage ceiling was consumed.
     NativeJoinExhausted,
+    /// A file of a handoff directory could not be read.
+    Read,
+    /// A handoff directory's `selection.json` is not a sidecar of this format.
+    Sidecar,
 }
 
 /// Why no directory was written.
@@ -198,6 +202,18 @@ pub enum Error {
     /// IR's native refusal; it is not an unnameable value.
     #[error("the native join budget was consumed: {0}")]
     NativeJoinExhausted(Box<fsl_package::NativeJoinLimitError>),
+    /// A file of the handoff directory could not be read, or is over its
+    /// byte ceiling.
+    #[error("cannot read {path}: {source}")]
+    Read {
+        /// The file.
+        path: String,
+        /// The I/O failure.
+        source: std::io::Error,
+    },
+    /// The handoff directory's `selection.json` does not parse.
+    #[error("{0}")]
+    Sidecar(#[from] SelectionReadError),
 }
 
 impl Error {
@@ -217,6 +233,8 @@ impl Error {
             Self::Encode { .. } => ErrorCode::Encode,
             Self::Unnameable { .. } => ErrorCode::Unnameable,
             Self::NativeJoinExhausted(_) => ErrorCode::NativeJoinExhausted,
+            Self::Read { .. } => ErrorCode::Read,
+            Self::Sidecar(_) => ErrorCode::Sidecar,
         }
     }
 }
@@ -297,18 +315,7 @@ pub fn write_with(
     let compiled = emit_checked_v2::compile(&request.emit)?;
     let bytes = compiled.emitted.package().bytes().to_vec();
     let evidence = read_evidence(&compiled)?;
-    let package = match environment.read(&bytes, READ_LIMITS, &evidence) {
-        CheckedPackageDispatchResult::AdmittedV2(package) => package,
-        CheckedPackageDispatchResult::Refused(refusal) => {
-            return Err(Error::ReaderRefused(Box::new(refusal)))
-        }
-        CheckedPackageDispatchResult::Incomplete(incomplete) => {
-            return Err(Error::ReaderIncomplete(format!("{incomplete:?}")))
-        }
-        CheckedPackageDispatchResult::CatalogUnavailable(unavailable) => {
-            return Err(Error::ReaderCatalogUnavailable(format!("{unavailable:?}")))
-        }
-    };
+    let package = admit(environment.read(&bytes, READ_LIMITS, &evidence))?;
     let selection = Selection::derive(&compiled, &request.emit, &bytes)?;
     environment
         .check(&selection, &package)
@@ -342,6 +349,93 @@ pub fn write_with(
         }
     }
     tree::publish(directory, &files, environment)
+}
+
+/// The admitted package of a read, or the reader's refusal.
+fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Error> {
+    match read {
+        CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
+        CheckedPackageDispatchResult::Refused(refusal) => {
+            Err(Error::ReaderRefused(Box::new(refusal)))
+        }
+        CheckedPackageDispatchResult::Incomplete(incomplete) => {
+            Err(Error::ReaderIncomplete(format!("{incomplete:?}")))
+        }
+        CheckedPackageDispatchResult::CatalogUnavailable(unavailable) => {
+            Err(Error::ReaderCatalogUnavailable(format!("{unavailable:?}")))
+        }
+    }
+}
+
+/// A handoff directory compiled back in process ([`compile()`]): the checked
+/// package its sources compile to, the package Contract IR's reader admits
+/// from `checked-package.json`, and the domain package documents. The two
+/// packages are one package: [`compile()`] returns this only when the
+/// recompiled bytes equal the file.
+#[derive(Debug)]
+pub struct CompiledHandoff {
+    compiled: Compiled,
+    admitted: Box<CheckedPackageV2>,
+}
+
+impl CompiledHandoff {
+    /// The in-process checked package.
+    pub fn checked(&self) -> &fsl_package::CheckedPackage {
+        self.compiled.checked.package()
+    }
+
+    /// The package Contract IR's reader admits from `checked-package.json`.
+    pub fn admitted(&self) -> &CheckedPackageV2 {
+        &self.admitted
+    }
+
+    /// FR-056's package input: the directory's domain package documents by
+    /// the identity each declares.
+    pub fn packages(&self) -> &fsl_semantics::model::intake::PackageInput {
+        &self.compiled.packages
+    }
+
+    /// The ceiling on each package emission the compile made
+    /// (`emit.output_bytes`), which an analysis of the package reuses.
+    pub fn emit_limits(&self) -> fsl_package::EmitLimits {
+        self.compiled.emit
+    }
+}
+
+/// Compile the handoff directory at `directory` back in process: read
+/// `selection.json`, compile the unit, library and domain package files it
+/// names with its package name, execution points and clock selections through
+/// the entry [`write()`] compiles through, and read `checked-package.json`
+/// with Contract IR's reader and the evidence [`write()`] assembles.
+///
+/// # Errors
+///
+/// [`Error::Read`] for a file that cannot be read or is over its ceiling,
+/// [`Error::Sidecar`] for a sidecar that does not parse, [`Error::Label`] for
+/// a sidecar path outside the directory or a label the writer does not give,
+/// [`Error::Compile`] for the compiler's refusal, [`Error::ReadBackDiffers`]
+/// when the recompiled bytes are not `checked-package.json` or the admitted
+/// package departs from the sidecar, and the reader's refusals.
+pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
+    let package_ceiling = usize::try_from(READ_LIMITS.bytes).unwrap_or(usize::MAX);
+    let selection = Selection::read(&tree::read(directory, "selection.json", package_ceiling)?)?;
+    let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
+    let inputs = selection
+        .inputs(|file| tree::read(directory, file, fsl_foundation::source::MAX_SOURCE_BYTES))?;
+    let compiled = emit_checked_v2::compile_inputs(inputs)?;
+    if compiled.emitted.package().bytes() != bytes.as_slice() {
+        return Err(Error::ReadBackDiffers {
+            detail: "the sources compile to bytes other than checked-package.json".to_owned(),
+        });
+    }
+    let evidence = read_evidence(&compiled)?;
+    let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
+    selection
+        .check(&admitted)
+        .map_err(|refusal| Error::ReadBackDiffers {
+            detail: refusal.to_string(),
+        })?;
+    Ok(CompiledHandoff { compiled, admitted })
 }
 
 /// `inventory.json` (FR-517 "The inventory file"): `fsl_inventory` over the

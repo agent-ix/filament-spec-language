@@ -780,6 +780,7 @@ dependencies = [
  "filament-exact",
  "filament-observation",
  "filament-semantic-value",
+ "filament-spec-language",
  "fsl-analyze",
  "fsl-cst",
  "fsl-eval",
@@ -796,6 +797,7 @@ dependencies = [
  "num-traits",
  "quire-canonical",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

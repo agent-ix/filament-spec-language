@@ -13,9 +13,9 @@ use filament_contract_model::{
     ProtocolForm, TemporalForm,
 };
 use filament_spec_language::checked_handoff::{
-    evidence, write, write_with, CheckedHandoffRequest, Corpus, Environment, Error, ErrorCode,
-    Inventory, InventoryReadError, InventoryRow, RealEnvironment, Selection, SelectionAxis,
-    SelectionRefusal,
+    compile, evidence, write, write_with, CheckedHandoffRequest, Corpus, Environment, Error,
+    ErrorCode, Inventory, InventoryReadError, InventoryRow, RealEnvironment, Selection,
+    SelectionAxis, SelectionRefusal,
 };
 use filament_spec_language::emit_checked_v2::{self, ClockSelection, Request};
 use ix_trace_rs::trace;
@@ -417,16 +417,16 @@ fn vector_bytes(n0: &str, n1: &str) -> String {
       "kind": "pending_obligation",
       "declaration": 0,
       "unit": 0,
-      "start": 150,
-      "end": 155,
+      "start": 153,
+      "end": 158,
       "capability_kind": "value-validity"
     }},
     {{
       "kind": "pending_obligation",
       "declaration": 0,
       "unit": 0,
-      "start": 161,
-      "end": 166,
+      "start": 164,
+      "end": 169,
       "capability_kind": "value-validity"
     }}
   ]
@@ -568,8 +568,8 @@ fn the_reader_returns_the_rows_the_writer_wrote() {
                 role: "expression".into(),
                 ordinal: 1,
             },
-            pending(150, 155),
-            pending(161, 166),
+            pending(153, 158),
+            pending(164, 169),
         ]
     );
 }
@@ -605,7 +605,7 @@ fn the_reader_refuses_each_vector() {
         InventoryReadError::Malformed(_)
     ));
     assert!(matches!(
-        refused(&swap("\"start\": 150", "\"start\": 10.0")),
+        refused(&swap("\"start\": 153", "\"start\": 10.0")),
         InventoryReadError::Malformed(_)
     ));
     assert!(matches!(
@@ -2814,4 +2814,124 @@ fn the_recover_conditions_compare_the_receipt_sum_with_the_target() {
             sum("recoveredPartial")
         )
     );
+}
+
+/// FR-517-AC-24: a directory `write` wrote compiles back to a package that
+/// passes its sidecar; the sidecar names the package name, the unit's file and
+/// the execution points the request gave; a changed directory returns no
+/// package.
+#[trace("FR-517-AC-24", "TC-1312")]
+#[test]
+fn a_written_directory_compiles_back_and_a_changed_one_refuses() {
+    for kind in KINDS {
+        let (_holder, out) = written(kind, Corpus::None, &Double::default());
+        let handoff = compile(&out).expect("the directory compiles back");
+        let selection = Selection::read(&tree(&out)["selection.json"]).unwrap();
+        selection
+            .check(handoff.admitted())
+            .expect("the admitted package passes its sidecar");
+        let (_, clocks) = recipe(kind);
+        let mut clauses: Vec<&str> = handoff
+            .checked()
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .map(|node| node.clause().name())
+            .collect();
+        clauses.sort_unstable();
+        let mut selected: Vec<&str> = clocks
+            .iter()
+            .map(|(clause, _)| *clause)
+            .filter(|clause| !matches!(*clause, "Full" | "Partial"))
+            .collect();
+        selected.sort_unstable();
+        assert_eq!(clauses, selected, "{kind}");
+        assert!(handoff.packages().contains_key("agent-ix/checked-handoff"));
+    }
+
+    // The execution points reach the sidecar and the compile: without them
+    // the unit compiles to other bytes.
+    let holder = tempfile::tempdir().unwrap();
+    let points = holder.path().join("points.json");
+    std::fs::write(&points, r#"{"Q1": {"kind": "post", "operation": "set"}}"#).unwrap();
+    let switch = CheckedHandoffRequest {
+        emit: Request {
+            source: PathBuf::from("examples/switch-transition/switch.native"),
+            package_name: "switch".into(),
+            models: vec![PathBuf::from(
+                "examples/switch-transition/switch.semantic-ir.json",
+            )],
+            libraries: Vec::new(),
+            execution_points: Some(points),
+            temporal_selections: Vec::new(),
+            out: None,
+        },
+        corpus: Corpus::None,
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
+    };
+    let out = holder.path().join("handoff");
+    write(&switch, &out).expect("the switch handoff is written");
+    let sidecar: Value = serde_json::from_slice(&tree(&out)["selection.json"]).unwrap();
+    assert_eq!(sidecar["package"]["package_name"], "switch");
+    assert_eq!(
+        sidecar["package"]["unit"],
+        "sources/source:examples/switch-transition/switch.native"
+    );
+    assert_eq!(
+        sidecar["package"]["execution_points"],
+        serde_json::json!({"Q1": {"kind": "post", "operation": "set"}})
+    );
+    compile(&out).expect("the switch directory compiles back");
+    let pointless = holder.path().join("pointless");
+    copy_tree(&out, &pointless);
+    edit_sidecar(&pointless, |sidecar| {
+        sidecar["package"]["execution_points"] = serde_json::json!({});
+    });
+    assert_eq!(
+        compile(&pointless).unwrap_err().code(),
+        ErrorCode::ReadBackDiffers
+    );
+
+    // Another admitted package in place of `checked-package.json`.
+    let (_corpus_holder, corpus) = written("event_position", Corpus::Standard, &Double::default());
+    let (_changed_holder, changed) = written("event_position", Corpus::None, &Double::default());
+    std::fs::write(
+        changed.join("checked-package.json"),
+        &tree(&corpus)["mutations/clock-sequence-authority.json"],
+    )
+    .unwrap();
+    let error = compile(&changed).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::ReadBackDiffers, "{error}");
+
+    // A unit path that leaves the directory.
+    let (_escape_holder, escape) = written("event_position", Corpus::None, &Double::default());
+    edit_sidecar(&escape, |sidecar| {
+        sidecar["package"]["unit"] = "sources/../x".into();
+    });
+    assert!(matches!(
+        compile(&escape).unwrap_err(),
+        Error::Label { label } if label == "sources/../x"
+    ));
+
+    // No sidecar.
+    let (_bare_holder, bare) = written("event_position", Corpus::None, &Double::default());
+    std::fs::remove_file(bare.join("selection.json")).unwrap();
+    assert_eq!(compile(&bare).unwrap_err().code(), ErrorCode::Read);
+}
+
+/// Rewrite `directory`'s `selection.json` through `change`.
+fn edit_sidecar(directory: &Path, change: impl Fn(&mut Value)) {
+    let path = directory.join("selection.json");
+    let mut sidecar: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    change(&mut sidecar);
+    std::fs::write(&path, serde_json::to_vec_pretty(&sidecar).unwrap()).unwrap();
+}
+
+/// Copy every file below `from` to the same relative path below `to`.
+fn copy_tree(from: &Path, to: &Path) {
+    for (path, contents) in tree(from) {
+        let target = to.join(path);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, contents).unwrap();
+    }
 }

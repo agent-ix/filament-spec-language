@@ -51,6 +51,10 @@ serde_json = "1.0.151"
 test-support = []
 
 [dev-dependencies]
+# FR-571-AC-7: a package that arrives only as a checked handoff directory is
+# written and compiled back through the root crate's `checked_handoff`.
+filament-spec-language = { path = "..", features = ["checked-handoff"] }
+tempfile = "3.27.0"
 # `V2ReadLimits::fixture`, the explicit finite fixture limits (FR-358).
 fsl-package = { path = "../fsl-package", features = ["test-support"] }
 fsl-analyze = { path = ".", features = ["test-support"] }

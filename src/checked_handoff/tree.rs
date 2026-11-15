@@ -19,21 +19,57 @@ impl Files {
 
     /// Add `contents` at `path`, which must stay inside the directory.
     pub(super) fn insert(&mut self, path: &str, contents: Vec<u8>) -> Result<(), Error> {
-        let inside = !path.is_empty()
-            && Path::new(path)
-                .components()
-                .all(|component| matches!(component, Component::Normal(_)));
-        if !inside {
-            return Err(Error::Label {
-                label: path.to_owned(),
-            });
-        }
+        inside(path)?;
         self.0.insert(path.to_owned(), contents);
         Ok(())
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = (&String, &Vec<u8>)> {
         self.0.iter()
+    }
+}
+
+/// Refuse a relative `path` that is empty or leaves the directory.
+fn inside(path: &str) -> Result<(), Error> {
+    let inside = !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if inside {
+        Ok(())
+    } else {
+        Err(Error::Label {
+            label: path.to_owned(),
+        })
+    }
+}
+
+/// The bytes of the file at the relative `path` inside `root`, at most
+/// `ceiling` of them: a longer file is refused, not truncated.
+pub(super) fn read(root: &Path, path: &str, ceiling: usize) -> Result<Vec<u8>, Error> {
+    use std::io::Read as _;
+    inside(path)?;
+    let target = root.join(path);
+    let failed = io_read(&target);
+    let file = std::fs::File::open(&target).map_err(&failed)?;
+    let limit = u64::try_from(ceiling).unwrap_or(u64::MAX);
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(&failed)?;
+    if bytes.len() > ceiling {
+        return Err(failed(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("over the {ceiling}-byte ceiling; it is not truncated"),
+        )));
+    }
+    Ok(bytes)
+}
+
+fn io_read(path: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
+    move |source| Error::Read {
+        path: path.display().to_string(),
+        source,
     }
 }
 

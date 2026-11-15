@@ -17,6 +17,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-205
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-517
+    type: references
   - target: ix://agent-ix/filament-specification/FR-175
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-170
@@ -46,6 +50,21 @@ root is a request input, not a key member (FR-572). The premises are the project
 knowledge (shared facts) and environment (admitted external events and
 channel outcomes). The last two are optional values: absent is not
 declared-empty (PA-8).
+
+### The protocol subject
+
+The request's subject is an `fsl-eval` protocol subject (FR-205), over the
+in-process checked package of the protocol, its domain package documents and a
+snapshot provision. `fsl_analyze::protocol_analysis::protocol_subject` builds
+it from a `SubjectPackage` (the checked package, the package input and the
+snapshot provision) and `SubjectBindings` (the protocol name, the `over`
+instance, the role bindings, the request's memory selection, the initial
+states, the universes and the limits), resolving each outermost `parallel`'s
+memory model by FR-219 and carrying no proof bounds. A protocol the package
+does not declare is `SubjectRefusal::UnknownProtocol`; a memory selection that
+does not resolve is `SubjectRefusal::Memory`. A consumer that holds the
+package only as a checked handoff directory obtains the checked package and
+package input from FR-517's `checked_handoff::compile`.
 
 ## Outputs
 
@@ -146,11 +165,13 @@ plays explored, the horizon and whether exploration closed (PA-19).
 | FR-571-AC-4 | Recomputing `observation(role, history)` for every explored history, equal observation sequences get equal committed actions in the witness, and a protocol whose class has no common winning action returns refuted or `inconclusive`, never a witness (implements FR-175-AC-4). | Test (TC-1411) |
 | FR-571-AC-5 | The result quantifies over every admitted environment event and channel outcome: a protocol that is realizable on every sampled run but defeated by one admitted loss or event outcome is not realizable, and an outcome not admitted by the premises never appears in a play; under an open delivery range a result that depended on a cut count is `inconclusive` (implements FR-175-AC-5). | Test (TC-1411) |
 | FR-571-AC-6 | In the `bounded-static` profile no arena step is an owner's branch selection: a `choice` decision reads only its owner's received records, protocol captures and constants (FR-218), and `fsl-eval` enters the one case whose guard holds, so no history is avoidable by an owner choice, no owner choice is cut, and an `EnvironmentDefeat` has exactly one entry in `defeats_per_branch`. A role's table may still delay or reorder around a step, so the engine refutes only on forced plays with the role the sole mover at both ends: a protocol in which a role can wait for its committed action, enabled after another role's step in the same class, is not refuted (PA-16, PA-18). | Test (TC-1411) |
+| FR-571-AC-7 | A protocol package that arrives only as a checked handoff directory (FR-517) reaches the engine: the directory compiled back by `checked_handoff::compile`, the subject built by `protocol_subject` from its checked package and package input, and the item dispatched by `realizability_item` through the registered engines settle the repaired worked example as for the in-process package, `proved` with an exhaustive uncertified basis. | Test (TC-1411) |
 
 ## Dependencies
 
 - ADR-036 PA-7, PA-8, PA-16 to PA-19, PA-22, PA-25.
 - [FR-519](FR-519-publish-the-protocol-read-surface-the-filament-protocol-link-layer-imports.md): the graph reader.
+- [FR-205](FR-205-define-the-protocol-subject-and-its-state-key.md): the protocol subject; [FR-517](FR-517-write-a-checked-package-handoff-directory-from-source-in-process.md): the handoff a subject's package may arrive as.
 - [FR-572](FR-572-key-protocol-analysis-results-structurally.md), [FR-573](FR-573-settle-protocol-analysis-results-with-the-fr-360-labels.md), [FR-575](FR-575-answer-unsupported-for-constructs-outside-the-bounded-static-profile.md).
 - FSpec FR-175, FR-170, FR-054.
 

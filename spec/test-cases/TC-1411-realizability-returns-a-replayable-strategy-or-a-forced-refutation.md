@@ -15,7 +15,7 @@ relationships:
 Verify the strategy witness and its replay gate, both refutation forms,
 the premise rules and the environment quantification.
 
-Scope: FR-571-AC-1 to FR-571-AC-6; FSpec FR-175-AC-1 to AC-5.
+Scope: FR-571-AC-1 to FR-571-AC-7; FSpec FR-175-AC-1 to AC-5.
 
 ## Test Procedure
 
@@ -36,6 +36,10 @@ Scope: FR-571-AC-1 to FR-571-AC-6; FSpec FR-175-AC-1 to AC-5.
    `defeats_per_branch`; and a protocol in which a role, in one branch,
    can send while its receive is not yet enabled but another role's step
    will enable it, and must receive in the other, both in one class.
+7. Write the step 1 protocol's unit as a checked handoff directory, compile
+   it back with `checked_handoff::compile`, build the subject with
+   `protocol_subject` and dispatch `realizability_item` through the
+   registered engines.
 
 Tag the tests `#[trace("TC-1411", "FR-571-AC-n")]`.
 
@@ -53,3 +57,5 @@ Tag the tests `#[trace("TC-1411", "FR-571-AC-n")]`.
 - Step 6: one entry; no owner choice exists to avoid a history or to be
   cut, so FR-571-AC-6's cases do not arise; the protocol whose role can wait
   is not refuted.
+- Step 7: `proved`, exhaustive and uncertified, as for the in-process
+  package.
