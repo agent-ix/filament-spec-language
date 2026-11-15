@@ -79,6 +79,70 @@ fn refused(output: &Output, diagnostic: &str) {
     );
 }
 
+const NODE_RECORDER: &str = r#"
+fn main() {
+    let path = std::env::var_os("SPEC_VALIDATION_NODE_CALLS").expect("owned call log");
+    let path_variable = std::env::var("PATH").expect("PATH is set for the child");
+    let arguments = std::env::args_os()
+        .skip(1)
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let mut lines = vec![path_variable];
+    lines.extend(arguments);
+    std::fs::write(path, lines.join("\n")).expect("write child invocation");
+}
+"#;
+
+/// Provenance: QSL-2262.
+#[test]
+fn spec_validation_uses_node_without_exposing_quoin_to_path() {
+    let fixture = owned_fixture();
+    let root = fixture.path();
+    let bin = root.join("node launcher bin");
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::create_dir(root.join("spec")).unwrap();
+
+    let node_source = root.join("node_recorder.rs");
+    std::fs::write(&node_source, NODE_RECORDER).unwrap();
+    let node = bin.join("node");
+    let compiler = run(Command::new("rustc")
+        .args(["--edition=2021", "-D", "warnings"])
+        .arg(&node_source)
+        .arg("-o")
+        .arg(&node));
+    assert!(compiler.status.success(), "compile native Node recorder");
+
+    let quire = bin.join("quire");
+    std::fs::write(&quire, "#!/usr/bin/env node\n").unwrap();
+    let mut permissions = std::fs::metadata(&quire).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&quire, permissions).unwrap();
+
+    let path = std::env::join_paths([&bin]).unwrap();
+    let calls = root.join("node calls");
+    let output = run(make(root)
+        .arg("check-spec-validation")
+        .env("PATH", path)
+        .env("SPEC_VALIDATION_NODE_CALLS", &calls));
+    assert!(output.status.success(), "native Node launcher must start");
+
+    let recorded = std::fs::read_to_string(&calls).unwrap();
+    let mut lines = recorded.lines();
+    assert_eq!(lines.next(), Some(""), "child PATH stays empty");
+    assert_eq!(
+        lines.collect::<Vec<_>>(),
+        [
+            quire.to_str().unwrap(),
+            "validate",
+            "--scope",
+            ".",
+            "spec/**/*.md",
+        ],
+        "start the resolved Node executable with the native quire launcher and original arguments"
+    );
+}
+
 #[trace("TC-920", "NFR-002-AC-3")]
 #[test]
 fn spec_validation_executes_native_schema_controls_and_fails_closed() {
