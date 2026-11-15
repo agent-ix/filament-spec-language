@@ -5847,3 +5847,47 @@ fn recursion_through_a_deref_read_is_not_a_structural_decrease() {
         vec![(Code::UndefinedExpression, Some("unproved-decrease"))]
     );
 }
+
+/// TC-459 step 8 / FR-104-AC-17: a domain-package operation parameter
+/// declared `nullable`, `presence` `optional` and `[0, 1]` is a bounded
+/// collection of its element type, never an `Option`, so `present` and
+/// `value` over it refuse `ill_typed`/`type-mismatch` whether or not a
+/// guard is written, and its collection reads check.
+#[trace("TC-459", "FR-104-AC-17")]
+#[test]
+fn a_nullable_operation_parameter_is_a_bounded_collection_never_an_option() {
+    let mut parameter = crate::model_operations::operation_parameter(
+        "maybe",
+        "p",
+        &crate::model_operations::version_number_identity(),
+    );
+    parameter["nullable"] = json!(true);
+    parameter["presence"] = json!("optional");
+    parameter["multiplicity"] = json!({"lower": 0, "upper": 1, "ordered": false, "unique": true});
+    let document = config_version_document(
+        operation(
+            "maybe",
+            json!([parameter]),
+            Some("ix://filament/native/Boolean"),
+            empty_frame(),
+        ),
+        Vec::new(),
+        Vec::new(),
+        json!([]),
+    );
+    for clause in [
+        "value(p) > 0",
+        "present(p) implies value(p) > 0",
+        "if present(p) then value(p) > 0 else true",
+        "present(p)",
+    ] {
+        let body = format!("post N using v on Config::ConfigVersion::maybe {{ {clause} }}\n");
+        assert_eq!(
+            check(&document, &body).expect_err(&body),
+            vec![(Code::IllTyped, Some("type-mismatch"))],
+            "{body}"
+        );
+    }
+    let collection = "post C using v on Config::ConfigVersion::maybe { exists(x in p: x > 0) }\n";
+    check(&document, collection).expect("a [0, 1] parameter reads as a collection");
+}

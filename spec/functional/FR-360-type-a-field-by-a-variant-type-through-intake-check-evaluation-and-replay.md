@@ -167,7 +167,11 @@ element, tuple position or record field whose declared type is a variant type.
    dispatch guard, `requires`, `ensures` and body binding, and replayed under
    item 9. FR-056's signature refusal path (`Operation.params[i].typeRef`,
    `Operation.returns.typeRef`) SHALL stay for the meanings FR-056 lists and be
-   removed for a variant type.
+   removed for a variant type. A variant type with a payload-bearing case is a
+   union (FR-056), so an operation parameter of it is a valid scrutinee of a
+   `case` in a clause on that operation; a variant type with no payload is an
+   enum and its `case` is refused under item 6. A domain package therefore
+   declares no union whose members all have arity 0.
 9. **Replay observation form.** A variant value in a snapshot, invocation
    parameter or result is exactly `{"variant": {"type": "<declaration
    identity>", "case": "<case name>"}}`, closed: the outer object has exactly
@@ -284,6 +288,7 @@ The cross-repo test cases are FSpec TC-939 to TC-942.
 | FR-360-AC-9 | A replay snapshot whose `Account.tier` holds `{"variant":{"type":"ix://<package identity>/Tier","case":"Gold"}}` admits, and so does the same value as the payload of `{"present": ...}` and as an element of `{"sequence": [...]}` at a `Sequence<Config::Tier>` slot, and as an operation parameter and result. The admitted value equals the literal `Config::Tier::Gold`. | Test (TC-1010) |
 | FR-360-AC-10 | Each of these refuses `invalid_runtime_input` at the nested value path: a payload missing `case` (`missing-member`) or `type` (`missing-member`); an extra payload member (`unknown-member`); a `type` naming `Level`, a record, an object or no declaration, a `{"string":"Gold"}` or `{"integer":"0"}` at the slot, a payload that is not an object, and `{"absent":{}}` at a required variant field (`wrong-value-kind`); `"case":"Silver"` and `"case":"gold"` (`invalid-value`). The order of item 9 decides a value with several defects: `{"variant":{"type":"<Level>"}}` is `missing-member` (the missing `case`), not `wrong-value-kind`; `{"variant":{"type":"<Tier>","case":"Silver","x":1}}` is `unknown-member`, not `invalid-value`; `{"variant":{"type":"<Level>","case":"Silver"}}` is `wrong-value-kind`. | Test (TC-1010) |
 | FR-360-AC-11 | A decode followed by an encode returns the same typed observation with the object members in either order; the encoded value names its own variant type and case. A counterexample witness holding a `Config::Tier` parameter encodes it as the enum shape with the type's checked node id and the case name and decodes to the same value. Two units that select the package as `Config` and as `Cfg` assign equal keys of both kinds, and a case built in one equals the same case built in the other. | Test (TC-1010) |
+| FR-360-AC-12 | Over a package whose variant type `Shape` has the case `Empty` and the case `Circle` carrying an `Integer`, and `Account.describe(s: Shape, t: Tier): Boolean`, the postcondition `case s { Empty: true; Circle(r): r > 0; }` on `describe` checks; the same `case` without the `Empty` arm refuses `undefined_expression`/`unproved-exhaustiveness`; and `case t { Gold: true; Standard: false; }` over the payload-free `Tier` refuses `ill_typed`/`type-mismatch` at the scrutinee. | Test (TC-1009) |
 
 ## Dependencies
 
