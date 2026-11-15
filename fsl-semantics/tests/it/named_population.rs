@@ -16,7 +16,7 @@ use fsl_semantics::model::clause_observation::Observation;
 use ix_trace_rs::trace;
 
 #[path = "../support/named_population.rs"]
-mod fixture;
+pub(crate) mod fixture;
 
 use fixture::{checked, key, refused};
 
@@ -403,15 +403,14 @@ fn a_population_is_the_domain_of_a_quantifier_a_count_and_a_holds_atom() {
     );
 }
 
-/// TC-1076 row 10, two of FR-391-AC-8's three cases: `M::counters` in a
+/// TC-1076 row 10, FR-391-AC-8's function-body case: `M::counters` in a
 /// function body names no population, `missing_declaration`/`missing-name`
-/// at `counters`; `seq` in an invariant refuses
-/// `unsupported_construct`/`expression-form` at its span. The type-level
-/// invariant case has no fixture here (a domain-package clause record), so
-/// the test claims no criterion.
-#[trace("TC-1076", "FSpec-TC-198", "FSpec-FR-153-AC-13")]
+/// at `counters`. The type-level invariant case has no fixture here (a
+/// domain-package clause record). `seq` in an invariant now checks
+/// (FR-391-AC-10, `checker_rulings`).
+#[trace("TC-1076", "FR-391-AC-8", "FSpec-TC-198", "FSpec-FR-153-AC-13")]
 #[test]
-fn a_function_body_names_no_population_and_seq_stays_refused() {
+fn a_function_body_names_no_population() {
     let (code, cause, at) = refused(
         false,
         "function F using v(): Boolean pure { size(M::counters) = 0 }",
@@ -421,15 +420,6 @@ fn a_function_body_names_no_population_and_seq_stays_refused() {
         ("missing_declaration", "missing-name")
     );
     assert_eq!(at, "counters");
-    let (code, cause, at) = refused(
-        false,
-        "invariant S using v on M::Counter at current { size(seq(i in 0 .. 2: i)) = 3 }",
-    );
-    assert_eq!(
-        (code.as_str(), cause.as_str()),
-        ("unsupported_construct", "expression-form")
-    );
-    assert_eq!(at, "seq(i in 0 .. 2: i)");
 }
 
 /// FSpec FR-149-AC-21 (`count`): `count(..)` is an `Integer`, so against an

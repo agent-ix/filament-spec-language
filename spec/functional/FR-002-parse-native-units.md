@@ -49,6 +49,9 @@ argument are the driver's (FR-287, Overlap).
   `StageFailure`.
 - From `OutcomeDocument::from_parse` over that result: one
   `filament-outcome/1` document, whose category gives FR-285's exit code.
+  Its `result` is the `parsed` report of the source labels, path, byte count
+  and S1 usage, and every refusal record carries a `locus`
+  ([FR-663](FR-663-report-the-parsed-unit-and-the-locus-of-every-refusal.md)).
 
 ## Behavior
 
@@ -81,7 +84,7 @@ argument are the driver's (FR-287, Overlap).
 | FR-002-AC-4 | `fsl_cst::parse` over a source whose syntax nodes exceed `s1.nodes` stops with `stage_limit_exceeded` naming `s1.nodes`, its configured value, the count reached and setting `s1.nodes` (FR-255). | Test (TC-012) |
 | FR-002-AC-5 | The CST node of a parenthesized expression spans from its `(` to its `)`, both included. | Test (TC-012) |
 | FR-002-AC-6 | The bounded malformed/truncation corpus returns a `ParsedSource` or a located diagnostic from `fsl_cst::parse` without panic; any admissible variant retains its exact submitted bytes. | Test (TC-019) |
-| FR-002-AC-7 | `OutcomeDocument::from_parse` over the `parse` operation's result for `tests/fixtures/spine-compile.native` is the document with operation `parse`, `last_stage` `S2`, category `success`, empty `items`, `diagnostics` and `artifacts`, and `result` `null`, and its category's FR-285 exit code is 0. Over a unit holding `a < b < c` it is the document with category `refusal`, `last_stage` `S1` and one `invalid_syntax` diagnostic at the second `<`, and its exit code is 20. `make ci-clean-build` runs, in its no-default-features build, a test that calls the `parse` operation over `tests/fixtures/spine-compile.native` and requires category `success`. | Test (TC-012) |
+| FR-002-AC-7 | `OutcomeDocument::from_parse` over the `parse` operation's result for `tests/fixtures/spine-compile.native` is the document with operation `parse`, `last_stage` `S2`, category `success`, empty `items`, `diagnostics` and `artifacts`, and `result` FR-663's `parsed` report (FR-663-AC-1), and its category's FR-285 exit code is 0. Over a unit holding `a < b < c` it is the document with category `refusal`, `last_stage` `S1` and one `invalid_syntax` diagnostic at the second `<`, and its exit code is 20. `make ci-clean-build` runs, in its no-default-features build, a test that calls the `parse` operation over `tests/fixtures/spine-compile.native` and requires category `success`. | Test (TC-012, TC-1745) |
 | FR-002-AC-8 | The `parse` operation over `tests/fixtures/spine-compile.native`, under the `fsl_cst::Limits` FR-255's settings operation returns for `s1.tokens=<n>`, with `n` one less than the fixture's token count, stops with `stage_limit_exceeded` naming `s1.tokens`, bound `n` and the count reached, and its document's exit code is 22; with `n` equal to the token count it succeeds. Those limits hold `s1.tokens` at `n` and every other S1 field at its FR-255 default. | Test (TC-750) |
 
 ## Dependencies

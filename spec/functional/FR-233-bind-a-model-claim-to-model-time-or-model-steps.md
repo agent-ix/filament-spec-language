@@ -21,6 +21,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-255
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
 ---
 # FR-233: Bind a model claim to model-time or model-steps
 
@@ -62,11 +64,29 @@ FSpec FR-255 key under that binding.
 
 ## Behavior
 
+- **Supplied clocks.** Over a model subject the clock binding is always
+  `model-steps` or `model-time` and comes from the model, under every profile:
+  under event-position a `ModelSteps` clause counts the model's steps, and its
+  emitted `event_position` configuration names the model's step sequence as
+  sequence authority, so no request member configures it
+  ([FR-640](FR-640-select-clock-configurations-in-compile-and-run-requests.md)).
+  Over a trace subject the clock name is a free role (FR-610), and that role is
+  the key of the request's `clocks` member (FR-640), a timed clause's role taking
+  a `timed` configuration (FR-642).
 - **Default.** When a clause over a timed model writes no `clock` clause,
   the checker SHALL bind `ModelTime`. When a clause over an untimed model
   writes none, the checker SHALL bind `ModelSteps`.
 - **Explicit.** `clock "model-steps"` SHALL bind `ModelSteps` over any
   model. `clock "model-time"` SHALL bind `ModelTime` over a timed model.
+- **Other names.** Over a model subject the clock name SHALL be `model-steps`
+  or `model-time` under every profile; the name never selects what a tick
+  counts beyond these two bindings (FSpec FR-090 "Clock names"). If a clause
+  over a model subject writes any other name, then the checker SHALL refuse
+  `unsupported_construct`/`declaration-form` at the clock name, with a message
+  naming the written name and the two admitted names, as a hybrid claim
+  refuses `clock "wall"` (FR-447-AC-3). No clause over a model subject is
+  checked with a free clock role, so `clock "ms"` never counts steps silently.
+  The rule for clock roles over a trace subject is FR-610's.
 - If a clause binds `model-time` over a model with no `time` member, then
   the checker SHALL refuse `invalid_timed_model`/`model-time-on-untimed-model`
   at the clock clause's span, naming the model.
@@ -93,6 +113,7 @@ FSpec FR-255 key under that binding.
 | FR-233-AC-1 | Over `Rpc`, `Settles` with `clock "model-time"` and the same clause with no clock clause check to equal bindings and equal FR-252 keys; `NoLateReply` with `clock "model-steps"` binds `ModelSteps`. Over the untimed `Counter` model a clause with no clock clause binds `ModelSteps`, and `clock "model-time"` refuses `invalid_timed_model`/`model-time-on-untimed-model` naming `Counter`. | Test (TC-688) |
 | FR-233-AC-2 | `eventually[0 ms, 3 ms]` under `model-time` over `Rpc` checks with bounds `0` and `3` in `ms`; `eventually[0 s, 3/1000 s]` checks to equal bounds and an equal FR-255 key. `eventually[0, 3]` under `model-time` refuses `ill_typed`/`type-mismatch`, and `eventually[0 ms, 3 ms]` under `model-steps` refuses `ill_typed`/`type-mismatch`. | Test (TC-688) |
 | FR-233-AC-3 | The `Rpc` model with `time dense unit ms` and the same model with `time tick send period 1 ms unit ms` give `model-time` bindings with different FR-252 keys; two tick models that differ only in period give different keys. A `[0,3]` step interval and a `[0 ms, 3 ms]` time interval have different FR-255 keys. | Test (TC-688) |
+| FR-233-AC-4 | Over a model subject under the infinite-trace profile, `eventually[0,3] holds(r.stopped)` with `clock "ms"`, with `clock "wall"` and with `clock "steps"` each refuses `unsupported_construct`/`declaration-form` at the clock string, with a message naming the written name, `model-steps` and `model-time`; the same clause with `clock "model-steps"` checks with the `ModelSteps` binding. The same refusal holds under the event-position profile. | Test (TC-1540) |
 
 ## Dependencies
 

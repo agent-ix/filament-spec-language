@@ -69,7 +69,7 @@ denominator. S3 reduces each weight (FR-185).
   `random_decl`, `reward_decl` and `workload_decl`.
 - S2 SHALL build each form from its production's CST, keeping every
   `weighted-value` and `workload-weight` in declared order with its span.
-- S2 SHALL leave the values' types, the weights' positivity, a workload's
+- S2 SHALL leave the values' types, the weights' signs, a workload's
   completeness and a reward's reads unchecked for S3 (FR-185).
 
 ## Acceptance Criteria

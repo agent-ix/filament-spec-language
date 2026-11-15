@@ -85,8 +85,12 @@ impl ModelSystem {
   least one post-state for some drawn vector. Each `Draw` SHALL carry the
   product of its values' PM-1 probabilities, so the draws of an action sum
   to exactly 1.
-- `weighted_steps` SHALL give each enabled operation `o` probability
-  `w(o) / Σ w(O(s))` over the enabled operations, each of its enabled
+- With `O(s)` the enabled operations at `s` and `P(s)` those of them whose
+  workload weight is positive, `weighted_steps` SHALL give each operation `o`
+  of `P(s)` probability `w(o) / Σ w(P(s))` and each operation of weight 0
+  probability 0 when `P(s)` is not empty, and each operation of `O(s)`
+  probability `1 / |O(s)|` when `P(s)` is empty (FSpec FR-406); then each of
+  the chosen operation's enabled
   scheduled identities `1 / |E_o(s)|`, and each draw its probability; a
   step's probability SHALL be the product, in exact rationals. Steps that
   reach the same post-state by the same transition identity are one step.
@@ -102,12 +106,17 @@ impl ModelSystem {
 - A step's reward values SHALL be its operation's rewards evaluated on the
   transition's arguments, random ones included; an operation without a
   reward of a name contributes 0 for it.
-- When `ModelSystem::new` admits a model, it SHALL evaluate every reward on
-  every argument vector of its operation's finite parameter domains, a random
-  parameter ranging over its support, and refuse admission with the
-  refusal record `invalid_probabilistic_model`/`negative-reward`, carrying
-  `operation`, `reward` and `arguments`, for the first negative value in
-  canonical order.
+- S3 refuses a reward that can be negative (FR-185), so a checked package
+  this compiler produced holds none among the rewards whose read parameters
+  have finite types. When `ModelSystem::new` admits a model from a checked
+  package read from a wire carrier whose producer it did not run, or a model
+  with a reward that reads a parameter whose finite domain only the subject's
+  proof bounds supply (FR-185), it SHALL evaluate every reward on every argument vector of its
+  operation's finite parameter domains, a random parameter ranging over its
+  support, and refuse admission with the refusal record
+  `invalid_probabilistic_model`/`negative-reward`, carrying `operation`,
+  `reward` and `arguments`, for the first negative value in canonical order,
+  the same refusal S3 gives (FSpec FR-411 "Package intake").
 - If a contract conjunction is undecided at an application or at a
   postcondition candidate during expansion (FR-120's `ContractUndetermined`
   finding), then `ModelSystem` SHALL return `UndecidedSuccessor{state}` from
@@ -123,9 +132,12 @@ enumeration represented as a bounded `Int` and its random parameter as
 `Boolean` for that fixture; those choices do not prohibit quantity-valued
 rewards or measures.
 
-- Weights play no part in the support graph: the transitions that
-  `weighted_steps` gives positive probability SHALL be exactly FR-120's
-  successors (ADR-024 PM-6).
+- Positive weights play no part in the support graph: at a state, the
+  transitions that `weighted_steps` gives positive probability SHALL be
+  exactly FR-120's successors by the operations of `P(s)`, or by those of
+  `O(s)` when `P(s)` is empty (ADR-024 PM-6, refined by FSpec FR-406 for
+  weight 0). A weight of 0 therefore never leaves a non-terminal state without
+  a step.
 
 ## Acceptance Criteria
 
@@ -134,7 +146,8 @@ rewards or measures.
 | FR-187-AC-1 | `Service` (ADR-024 §7.2) with `Phase` declared `Int[0, 2]` (`Idle` 0, `Busy` 1, `Done` 2), `outcome` a `Boolean` (true for `Ok`) and `d` typed `Millis`, at the state `phase = 1, attempts = 0` under `Steady`: `weighted_steps` returns six steps of `attempt`, with probabilities `441/500` (`d = 1`, `outcome = true`), `9/500` (`d = 1`, `false`), `343/5000` (`d = 3`, `true`), `7/5000` (`d = 3`, `false`), `147/5000` (`d = 12`, `true`), `3/5000` (`d = 12`, `false`), summing to 1; the `duration` reward is the drawn `d`. At `phase = 0` the only step is `request` with probability 1 and `duration` 0. | Test (TC-622) |
 | FR-187-AC-2 | The `Link` model (object `m: Msg { delivered: Boolean, attempts: Int[0, 2] }`, initially undelivered with 0 attempts; operations `send_a(lost: Boolean)` with `random Msg::send_a(lost) ~ { true: 1, false: 9 };` and `send_b(lost: Boolean)` with `random Msg::send_b(lost) ~ { true: 1, false: 4 };`, each with precondition `not self.delivered and self.attempts < 2` and postcondition `self.attempts = pre(self.attempts) + 1 and self.delivered = not lost`; `terminal when self.delivered or self.attempts = 2`) under the workload `Even` (weight 1 on each operation) at its initial state: `send_a` with `lost = false` has probability `9/20`, `send_a` lost `1/20`, `send_b` delivered `2/5`, `send_b` lost `1/10`. `actions` at the same state returns two actions in canonical order, each with draws summing to 1. At a delivered state the only step is the stutter step with probability 1. | Test (TC-622) |
 | FR-187-AC-3 | A variant of `Health` (ADR-024 §7.1) whose `tick` postcondition leaves a second Boolean field unconstrained: `weighted_steps` at the initial state returns `NotMarkov` naming the state key, `tick`, the drawn `fault` value and 2 post-states; `actions` returns one action whose draws each carry two successors. A variant whose postcondition is unsatisfiable for `fault = true` returns `NotMarkov` with 0 post-states from both. | Test (TC-622) |
-| FR-187-AC-4 | A reward `refund = n - 3` on an operation with parameter `n: Int[0, 5]` refuses admission with `invalid_probabilistic_model`/`negative-reward` naming the operation, `refund` and `n = 0`. Over every state of `Service`, the set of transitions with positive probability under `Steady` equals FR-120's successor set. | Test (TC-622) |
+| FR-187-AC-4 | A reward `refund = n - 3` on an operation with parameter `n: Int[0, 5]`, in a checked package read from the wire whose producer S3 did not check, refuses admission with `invalid_probabilistic_model`/`negative-reward` naming the operation, `refund` and `n = 0`. Over every state of `Service`, the set of transitions with positive probability under `Steady` equals FR-120's successor set. | Test (TC-622) |
+| FR-187-AC-5 | `Service` under a workload with `Server::reset` at weight 0 and weight 1 on `Server::request` and `Server::attempt`: at every state where `reset` and another operation are enabled, `weighted_steps` gives `reset` no step and the other steps sum to 1; at a state where `reset` is the only enabled operation, its steps sum to 1; under weight 0 on all three operations every state gives the steps it gives under weight 1 on all three. A reward `refund = n - 3` over `n: Int[0, 5]` in a package that S3 checked never reaches `ModelSystem::new` (S3 refuses it, FR-185-AC-11); the same reward in a hand-built checked package read from the wire is refused at admission `invalid_probabilistic_model`/`negative-reward` naming `n = 0`. | Test (TC-2064) |
 
 ## Dependencies
 

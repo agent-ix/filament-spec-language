@@ -223,10 +223,10 @@ The slots of a protocol node:
 | `finish` obligation | `constraint` | `finish` | none |
 | `terminal` obligation | `condition` | `terminal` | none |
 
-A `repeat`'s `proof.invariant` and `proof.variant` are not slots: S3 only
-checks and records them, FSL has no prover for them in V1, and a termination
-claim is their only reader
-(FR-218, ADR-014), so nothing at run time evaluates them.
+A `repeat`'s `proof.invariant` and `proof.variant` are not slots of a step:
+S3 checks and records them (FR-218), no protocol step evaluates them, and the
+protocol model checker reads them only to discharge the repeat's invariant
+and termination obligations over the explored subject (FR-730).
 
 ## Outputs
 

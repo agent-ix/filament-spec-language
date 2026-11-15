@@ -61,10 +61,11 @@ engine (FR-239) and replay (FR-237) read one checked form. S3 confines every
 clock read to an atomic clock constraint, so no real value reaches the value
 kernel. Clock members are admitted only at package positions admitted by FSpec
 FR-154 and FR-322: function, predicate or operation parameters and results,
-record fields, alias targets, `Option` arguments and collection positions.
-Tuple positions typed directly by `Clock` and variant payloads typed by
-`Clock` are not admitted; FSpec FR-154-AC-25 refuses the latter as
-`unsupported_construct`/`declaration-form` at `Variant.payloadType`. For each
+record fields, tuple positions, union case payloads, alias targets, `Option`
+arguments and collection positions. A tuple position typed `Clock` is a clock
+place of every value of the tuple, and a union case whose payload is `Clock`
+is a guarded clock place live exactly while that case is the union's active
+member (FSpec FR-322 "Clock positions and payloads", FSpec FR-415). For each
 admitted clock-bearing collection, the checker records one clock place for
 each live element (FSpec FR-415 "Clock collections").
 
@@ -380,8 +381,10 @@ what each such position means.
   slot), one `ClockField` for each. The clocks of the model are
   the places of its objects: a model with `k` objects of a type holding `m`
   places has `k * m` clocks, and no state changes the number.
-- **Guards.** A place under an `Option`, a `?` field or a collection slot SHALL
-  carry the presence test of that case as its `PlaceGuard`. The checker SHALL
+- **Guards.** A place under an `Option`, a `?` field, a union case or a
+  collection slot SHALL carry the presence test of that case as its
+  `PlaceGuard`; the place under case `C` of a union path `p` is named `p.C`, and
+  `present(p.C)` holds exactly while `p` has the case `C`. The checker SHALL
   accept `value(p)` of a guarded place `p` as a clock operand only where
   `present(p)` is established by the same guard conjunct or by the time
   invariant's predicate, and SHALL refuse it otherwise
@@ -484,7 +487,14 @@ what each such position means.
   call. A clock-reading declaration SHALL write no clock; a reset in its body
   refuses `invalid_timed_model`/`clock-write`. The checked package SHALL hold
   no function or predicate node for a clock-reading declaration and no call
-  node for a call of one.
+  node for a call of one. A `Clock`-typed parameter of a function or predicate is
+  admitted on these terms in a unit that selects the temporal layer: it
+  makes its declaration a clock-reading declaration, and S3 SHALL NOT refuse
+  it as a construct this build does not check (`unsupported_construct`/
+  `not-yet-implemented`). In a unit that does not select the layer the
+  facet gate refuses it `unsupported_construct`/`declaration-form`, as it
+  refuses every `Clock` type position (FR-230-AC-7), because the capability
+  belongs to the temporal layer the unit has not selected.
 - **Bounds.** The bound of an atomic clock constraint in a clock-reading
   declaration SHALL be a time quantity literal, or a quantity parameter of the
   declaration; the bound after expansion SHALL be an exact non-negative
@@ -503,9 +513,10 @@ what each such position means.
   those clocks together with the writes of the data components; a guarded
   place written a constant becomes present with that clock, and one written
   `absent` is dropped. A literal with a clock component anywhere else SHALL
-  refuse `invalid_timed_model`/`clock-write`. Tuple positions typed directly
-  by `Clock` and variant payloads typed directly by `Clock` are refused at
-  package admission as FSpec FR-322 and FR-154-AC-25 specify.
+  refuse `invalid_timed_model`/`clock-write`. A union constructor that selects a
+  case whose payload is `Clock`, with a time constant as that payload
+  (`self.p = Phase::Armed(0 ms)`), is such a literal: it resets the case's place
+  and makes it present, and a write selecting another case drops it.
 - **Checked package.** The checked package SHALL hold no value/type node for
   `Clock`, an alias of it, `Option<Clock>`, a clock parameter or a clock result.
   It SHALL emit one `timed_model`/`timed_model` root node owned by the state
@@ -989,6 +1000,8 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-60 | The package emitted for a unit holding AC-58's `HasCalls`, `CallsExist` and `Known` and the precondition `pre UsesCalls using v on Config::Call::reply { forall(c in Config::calls : true) }` holds exactly one `relation`/`population` reference node, keyed by `calls`' declaration key, which the `time_invariant` predicate of `HasCalls`, the `when` `urgency` predicates of `CallsExist` and `Known` (`Known` through its `lookup` application) and the precondition all reference; `CallsExist`'s predicate writes no `self` `parameter` node and `Known`'s writes one. I2 admits the package and reads back the same `TimedModel`, each predicate with its population operand. | Test (TC-1334) |
 | FR-230-AC-61 | A `time invariant when` or an `urgent when` in a timed model whose populations cover no object type refuses `missing_declaration`/`missing-name` at the declaration, and one in a timed model whose populations cover `Call` by two populations (`calls` and `archive`) refuses `ambiguous_declaration`/`ambiguous-name` at the declaration. A timed model whose populations cover two object types (`calls` of `Call` and `servers` of `Server`) has two candidate model nodes, so it refuses earlier, `ambiguous_declaration`/`ambiguous-name` at `Config` in `time Config dense unit ms` (FR-230-AC-38), and the declaration is never checked. Each case reports exactly that one refusal and no `TimedModel`, whether or not the predicate names a population. | Test (TC-1334) |
 | FR-230-AC-62 | Over FR-230-AC-19's `m` and a snapshot whose `m` holds the keys `"b"` and `"a"`, the live instances of `Call.m.[key].x` are those of `"a"` and then `"b"`, each with initial clock 0 and guarded by `m` holding its key. The emitted `clock_place` of `m.x` is one node whose slot step's selector references the `Text` key type node and not the `Integer` type node. With a precondition establishing that `m` holds `"a"` and a frame naming `m`, `self.m["a"].x = 0 ms` resets the `"a"` instance only, and the `"b"` instance keeps its clock; an operation that does not write `m` resets neither, and the same reset under a frame that does not name `m` refuses `invalid_timed_model`/`clock-write` at the reset. `ref(self.m["a"].x)` refuses `ill_typed`/`type-mismatch` at the `ref`. With `Call` also holding a clock `x` and a field `r: Reference<Clock>`, `deref(self.r) >= 1 ms` checks to the convex parts over the instances of `Call.x` only. A snapshot `Reference<Clock>` whose identity names the `clock_place` of `m.x` with `<slots>` `0` refuses `invalid_runtime_input`/`invalid-value`. | Test |
+| FR-230-AC-63 | Under `time dense` with tuple `Slot(Clock, Integer)` and `union Phase { Armed(Clock), Idle }` as fields `s` and `p` of a domain package whose tuple position and case `payloadType` are `ix://filament/native/Clock`: the package is admitted; the checker lists the places `s.0` (unguarded) and `p.Armed` (guarded by `present(self.p.Armed)`); the guard `present(self.p.Armed) and value(self.p.Armed) >= 1 ms` checks to one convex part carrying that data predicate, and `value(self.p.Armed) >= 1 ms` alone refuses `undefined_expression`/`unproved-presence`; `self.p = Phase::Armed(0 ms)` records a reset of `p.Armed`; `self.s.0 >= 2 ms` checks as a guard on `s.0`; `p1 = p2` over two `Phase` operands refuses `invalid_timed_model`/`clock-read-outside-constraint`. | Test (TC-1860) |
+| FR-230-AC-64 | In a unit selecting `filament.temporal.complete/v1`, `function f using t(c: Clock): Boolean pure { true }` and `predicate near using t(c: Clock, b: Quantity<ms>): Boolean { c <= b }` each check with no refusal, and no refusal of the unit has cause `not-yet-implemented`; the same declarations in a unit selecting only `filament.value.complete/v1` each refuse `unsupported_construct`/`declaration-form` from the facet gate, naming the required temporal layer. | Test (TC-1905) |
 
 ## Dependencies
 

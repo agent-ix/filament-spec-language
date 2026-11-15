@@ -955,3 +955,66 @@ fn a_randomized_mdp_entry_is_bounded_by_the_transition_limit() {
         Err(WitnessError::TooManyAlternatives { state }) if state == choosing.index()
     ));
 }
+
+/// FR-740-AC-3 (TC-2062), FSpec FR-640-AC-2 (TC-1563): a `time dense` unit
+/// with `discrete` delays emits one `probabilistic`/`delay_distribution`
+/// node per delayed operation, of family `discrete`.
+#[trace("TC-2062", "FR-740-AC-3")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
+#[test]
+#[ignore = "QSL-2000: delay declarations emitted as v2 probabilistic nodes not implemented yet"]
+fn discrete_delays_are_emitted_as_delay_distribution_nodes() {
+    let world = with_tick(
+        "delay M::Call::send ~ discrete { 1 ms: 90, 3 ms: 10 };\n",
+        &deadline_claim("Late", "under Both", ">= 0.5", "eventually"),
+    );
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .unwrap_or_else(|refusal| panic!("S4 emits the timed unit: {refusal:?}"));
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+    let delays: Vec<&serde_json::Value> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "probabilistic" && node["semantic_form"] == "delay_distribution"
+        })
+        .collect();
+    let [delay] = delays[..] else {
+        panic!("one delay_distribution node: {delays:?}");
+    };
+    assert!(delay["body"].to_string().contains("discrete"), "{delay}");
+}
+
+/// FSpec FR-420-AC-8 (TC-1561): under a workload that gives `tick` weight 0,
+/// the unit checks, its digital product builds, and the probabilities
+/// leaving every product state sum to 1: a tie with the weight-0 `tick`
+/// orders it after `send` with no probability lost to the order draw.
+#[trace("FSpec-TC-1561", "FSpec-FR-420-AC-8")]
+#[test]
+#[ignore = "QSL-1991: weight-0 operations in timed race ties not implemented yet"]
+fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        &format!(
+            "{TICK}delay M::Call::send ~ discrete {{ 1 ms: 1 }};\n\
+             delay M::Call::tick ~ discrete {{ 1 ms: 1 }};\n\
+             workload Lean on M {{ weight Call::send = 1; weight Call::tick = 0; }}\n"
+        ),
+        &deadline_claim("Tie", "under Lean", ">= 0.5", "eventually"),
+    );
+    let built = product(&world, "Tie");
+    let mut totals: std::collections::BTreeMap<usize, Rational> = Default::default();
+    for edge in &built.edges {
+        let total = totals
+            .entry(edge.from.index())
+            .or_insert_with(|| ratio(0, 1));
+        *total = total.add(&edge.probability);
+    }
+    assert!(!totals.is_empty());
+    for (state, total) in totals {
+        assert_eq!(total, ratio(1, 1), "state {state}");
+    }
+}

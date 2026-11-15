@@ -105,14 +105,12 @@ for `AdmissionFailure::Incomplete`, ADR-013 O-16's refusal row. A provision
 that lacks a source the package names settles every item `declined` with
 cause `incomplete-input` and the code `missing_import`/`missing-selection`
 (FR-281). The entry takes the checked
-package because an FSL engine runs in process
-over the checked subject, and because some packages an FSL engine settles have
-no emitted form: S4 refuses to emit a package that holds a random parameter,
-a workload or a reward (FR-185), while its checked package remains; a
-claim-only package is emitted (FR-498). EN-4 decides a probabilistic claim over that checked subject
-(FR-189), and a sampled witness replays over the same subject (FR-193). An
-entry that read an `EmittedPackage` could serve no EN-4 item through `prove`,
-since a claim's workload or reward makes its package one S4 refuses.
+package because an FSL engine runs in process over the checked subject. S4
+emits a package with random parameters, workloads, rewards and delays
+(FR-185, FR-740), and its reader reproduces the same checked package, so the
+entry serves an item over a package read from the wire as over one checked
+in the same run. EN-4 decides a probabilistic claim over that checked subject
+(FR-189), and a sampled witness replays over the same subject (FR-193).
 
 ## Inputs
 
@@ -178,7 +176,7 @@ order, and exactly one `ItemCounterexample` for each `refuted` record, which the
   return one terminal record per item, in `items` order, with exactly one `ItemCounterexample` for each `refuted` record.
 - The provider entry shall read the checked package and take no
   `EmittedPackage`, so it serves an item over a checked package that S4
-  refuses to emit (FR-185) as it serves an item over one that S4 emits.
+  refuses to emit for any reason as it serves an item over one that S4 emits.
 - If FR-120 admission does not admit the subject binding, then the provider
   entry shall settle every item `declined` with the admission
   failure's catalog code, cause `invalid-input` for a refusal and

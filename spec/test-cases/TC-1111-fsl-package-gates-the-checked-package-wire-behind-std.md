@@ -38,8 +38,8 @@ NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
    `ClauseRootUnresolved`, `ImportViewRefusal`, `SourceMapDefect`,
    `UnsupportedWire`, `V2ReadLimits` and `V2ReadRefusal`. Call `link` on a
    checked graph and read `dependencies` and `dependency_selections`.
-5. With default features and `FSPEC_DIR` set, run `cargo test --locked -p
-   fsl-package --lib checked_v2` and the FR-091 round-trip test.
+5. With default features, run `cargo test --locked -p fsl-package --lib
+   checked_v2`, which reads the vectors from the pinned standard dependency (FR-760), and the FR-091 round-trip test.
 6. Search the shipped source of each crate in NFR-015's per-crate table, with
    `#[cfg(feature = "std")]` items excluded, for `serde_json`, `HashMap` and
    `HashSet`.

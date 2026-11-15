@@ -206,10 +206,22 @@ arguments. `P` is the protocol's qualified name.
   (QSL-1142: the reader accepts only Boolean, Integer, Rational, Decimal,
   Text, String, UUID, Timestamp and enum scalars, references, and composites
   of them, so a key that is or contains a bounded domain, a quantity, a float
-  or a model-owned type is refused); and a role on a whole model (IR-874: the reader admits
-  only the reference form of the role's `model`, so the text form FSpec FR-465
-  specifies cannot be proved admitted). A protocol is never written without a
+  or a model-owned type is refused). A protocol is never written without a
   part of its graph.
+
+  A role on a whole model (`role w on M`, FR-218) is not in that list. S4
+  writes it in FSpec FR-465's whole-model form: the role's `model` argument is
+  the text `identity` of the package `M` selects, its `replication` Group is
+  empty, and it has no `model` dependency (FR-383-AC-23). The form is the
+  standard's, so every conforming strict reader admits it (FSpec FR-465-AC-9,
+  FR-465-AC-13); a reader that accepts only the reference form of `model` is
+  a reader defect, and S4 SHALL NOT refuse the role to work around one. A
+  compile of a unit that holds such a role therefore succeeds and writes a
+  package. The replicated form over a model alias (`role r each M from pop`)
+  never reaches S4: S3 refuses it (FR-218, Role on a model alias), and FSL's
+  I2 reader refuses a text `model` with a non-empty `replication` Group with
+  the same `invalid_model_binding`/`malformed-declaration` (FSpec FR-465
+  step 1).
 
 ## Behavior
 
@@ -674,6 +686,7 @@ refusal changes no other protocol's result (see "Per-protocol results").
 | FR-383-AC-65 | In both compiles of FR-383-AC-64 the checked package holds no `Location` and the `protocol_locations` array holds no row under a `related <start> <end>` origin. | Test (TC-1063) |
 | FR-383-AC-66 | A compile of the two-record variant that writes its second `related by` clause twice emits the same nodes, the same `identityRef(view)` occurrences, the same source-map rows and the same `protocol_locations` rows as the compile without the repeat. | Test (TC-1063) |
 | FR-383-AC-67 | Passes now: over TC-1407 fixture E-S, whose `Refunds` is `over (view: Node)` with `Node` source-declared, S3 checks the protocol and the source route evaluates its slots, and S4 refuses `unsupported_construct`/`not-yet-implemented` naming `SourceObjectEmission` at `object Node`, writing no package. Waits on QC-30: the E-S clause carries `owner_model` the source-declared `Node` node, in its preimage and exact `dependencies`; in TC-1408 variant S-M the role `Seller on Order` writes the source-declared `Order` node as its `model`; IR's reader admits both | Test (TC-1407, TC-1408) |
+| FR-383-AC-68 | Compiling ADR-027 §7's `Fill` with `role w on M` through S4 gives no refusal and writes a package whose `role` node for `w` carries the text `identity` of the package `M` selects as its `model` argument, an empty `replication` Group and no `model` dependency, and FSL's I2 reader admits it; the same unit with `role w each M from cells max 2 lifetime workflow` writes no package and S3 refuses `invalid_model_binding`/`malformed-declaration` at `M`. | Test (TC-2020) |
 ## Dependencies
 
 - FR-383-AC-15 rests on FSpec FR-322 "Operand index segments" (QSL-1695): inside a node every operand is an operand slot `{"operand": k}` into the document's required `semantic_graph.operand_rows`, numbered by first occurrence in the node's serialization, and only ids outside nodes keep `{"node": i}`. A node's bytes therefore hold no graph index of its own graph, so adding a node ahead of an operand a protocol reaches changes no protocol node's bytes, only `operand_rows`; node equality across documents is equality of resolved structural keys (each operand slot replaced by the key of the node it names). The path-stability gate (STD-653) is closed by that wire form.

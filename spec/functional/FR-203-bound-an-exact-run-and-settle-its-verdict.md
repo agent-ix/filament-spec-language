@@ -3,6 +3,8 @@ id: FR-203
 title: "Bound an exact run and settle its verdict"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-741
+    type: references
   - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-013
@@ -110,6 +112,12 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
 | Certificate rejected; replay disagrees or refuses | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected{rule, at})`, `Inconclusive(ReplayParity)`, `Inconclusive(ReplayRefused)` | inconclusive |
 | `NotMarkov`, `ZeroWeightComponent`, a timed cause (FR-204) | `unsupported` | `unavailable` | `Unsupported(cause)` | unsupported |
 
+- A `proved` record SHALL carry its accepted certificate (FR-201) and a
+  `refuted` record its replayed witness (FR-202) as members of the item's
+  result in the `fsl analyze` result document (FR-741), so the evidence that
+  settled the item leaves the run with it and can be checked again later by
+  `fsl-probability-check`.
+
 ### Build refusals and stops
 
 - EN-5 SHALL settle a stop or refusal of FR-196's product build as the
@@ -163,6 +171,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
 | FR-203-AC-5 | FR-196-AC-5's refutation settles `refuted`, `decisive-counterexample`, `Refuted`, category violation, with cause `UndefinedEvaluation{where: 1, cause: absent-key}`, after FR-202's replay; the claim's threshold plays no part. | Test (TC-641) |
 | FR-203-AC-6 | A build stopped at `max_automaton_states` settles `incomplete`, `Incomplete(LimitReached{MaxAutomatonStates, value, exact_prob.max_automaton_states})`; a cancelled build settles `Incomplete(Cancelled{source})`; a build that meets an undecided successor settles `inconclusive`, `Inconclusive(UndecidedSuccessor)`; an expansion stop naming no limit settles `failed`, as an internal fault `runtime_invariant`/`established-invariant-broken` and otherwise with the stop's own cause; an `Internal` refusal settles `failed`. | Test (TC-638) |
 | FR-203-AC-7 | The build-result map is exhaustive over `ProductRefusal` and `ClauseOutcome` with no `_` arm. A build whose expansion stops at `max_candidates` 2 settles `incomplete`, `Incomplete(LimitReached{max_candidates, 2, expansion.max_candidates})`. A build whose `ProductRefusal`, asserted before settling, is `Expansion(stop)` naming `EvaluationMeter` (a subject whose successor expansion charges the meter before the claim reads any predicate, under an accounting bound `B` of `work_units` its first expansion exceeds) settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, naming the exhausted counter, `B` and the setting `accounting.<counter>` by FR-255 Behavior 9's rule (FSpec FR-461-AC-5); a build whose `ProductRefusal`, asserted before settling, is `PredicateRefused(Incomplete(i))` (the expansion fits under `B`, the predicate read's charge is the first one denied) settles the same way for `i`'s counter. A predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a constructed `PredicateRefused(NotBoolean)`, `PredicateRefused(KernelRefused(CheckedInvariant))` and `Translation` error each settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal return no terminal record. | Test (TC-1166) |
+| FR-203-AC-8 | The `proved` record of FR-203-AC-1 carries its `Exact` certificate in its item result, and those certificate bytes are accepted by `fsl-probability-check` in a later process; the `refuted` record of FR-203-AC-5 carries its witness, which replays. | Test (TC-2065) |
 
 ## Dependencies
 

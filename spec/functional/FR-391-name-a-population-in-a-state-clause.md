@@ -143,9 +143,13 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   population is `[0, N]` and of a `sum` with summand bounded by `[lo, hi]` is
   `[min(0, N*lo), max(0, N*hi)]`, for the authored maximum `N` (FR-380); with
   no authored maximum the result is unbounded above (and below, for a sum).
-- The checker SHALL refuse `seq` in a clause outside a refinement
-  declaration `unsupported_construct`/`expression-form` at its span: it ranges
-  over integers, has no population domain and is not a population form here.
+- The checker SHALL admit `seq(i in lo .. hi: e)` in a population position
+  with FR-139's typing: it ranges over integers and reads no population, so
+  the reason a population form is confined to population positions does not
+  restrict it, and a clause body may build a sequence as a refinement row
+  does. In a population position `only(` and `seq(` followed by `ident in`
+  read as the forms, as they do in a refinement row, and so hide a pure
+  function of the same name there.
 - The checker SHALL check `T` of `allInstances<T>` and `lookup<T>` as it does
   for a parameter operand (FR-084); the queried type need not be `U`, only
   covered by a member type of the population at evaluation, where an
@@ -181,6 +185,22 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   reference. A population read as a domain emits the population reference, the
   `all_instances` application over it and the quantifier or population form
   over that application, as FR-322 "Quantifier domain" states.
+
+### Lowering of population forms
+
+- Lowering SHALL lower every checked population form (`count`, `sum`,
+  `exists`, `all`, `only` and `seq`) and every population domain in each
+  position where it checks, a refinement row (FR-139) or a population
+  position, and SHALL NOT refuse it as a checked form with no S4
+  representation. A population form over `M::P` lowers as the same form over
+  the `all_instances` application above: `count`, `sum`, `exists` and `all` to
+  the FR-093 collection rows `count`, `sum`, `exists` and `forall` with the
+  condition as a `filter` of the domain, and `only` to the collection `only`
+  row; `seq(i in lo .. hi: e)` lowers to the FR-093 sequence construction over
+  the integer range `lo .. hi` with `e` as its element term. A refinement
+  row's read of a history field lowers as that history field's read under
+  FR-139 and FSpec FR-322. A checked form that lowering cannot place is an
+  internal fault (`runtime_invariant`), never `unknown_required_feature`.
 
 ### Evaluation
 
@@ -227,8 +247,9 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
 | FR-391-AC-5 | Evaluated at S6a over a snapshot whose `counters` holds `a`, `b` and `c`, the precondition of AC-1 decides over exactly those three, in canonical reference-key order; over a snapshot in which `counters` is not marked `complete`, it returns `Incomplete` with `incomplete_population`/`incomplete-scope`, as for a parameter operand; `allInstances<M::Other>(M::counters)` with `Other` uncovered by the population is FR-084's typed incomplete result, whose FSpec code and cause are `incomplete_population`/`unclosed-subtypes` (FR-084-AC-2); a snapshot with no row for `counters` returns `incomplete_population`/`missing-required-artifact`. | Test (TC-1076) |
 | FR-391-AC-6 | With populations `counters` and `archive` of `Counter` and an operation `grow` on `Widget`, a type covered only by `widgets`, the preconditions `pre A using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::counters) : true) }` and `pre B using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::archive) : true) }` check to two different terms, each carrying its own population's declaration key, and of the populations `A` reads `AnyMembership{counters}` and not `AnyMembership{archive}`, and `B` the reverse (each footprint also holds the receiver's own `Membership` per FR-155); a third precondition `pre C using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::counters) : true) }` in the same unit reads `counters` a second time; the precondition of FR-155-AC-2 over `counters`, in a unit without `archive` (with it, a clause on `M::Counter` is ambiguous, AC-4), holds `AnyField{v}` and `AnyMembership{counters}`. The emitted package of the `A`, `B`, `C` unit holds one population reference per declared population read, so `A` and `B` reference two nodes and `C` references the same node as `A`; the package is admitted by the full reader (FSpec FR-322-AC-83). | Test (TC-1076) |
 | FR-391-AC-7 | On the `Counter` unit with `bound B on M::counters [3]` and a `Watch` type with population `watchers`: `post P using v on M::Counter::bump { forall(o in M::counters : o.v < 2) }` checks as a `Postcondition` reading `post`; `pre Q using v on M::Counter::bump { exists(o in M::counters : o.v = 2) }` checks as a `Precondition` reading `pre`; `invariant Cap using v on M::Counter at current { count(o in M::counters where o.v = 0) < 4 }` checks with the `count` result typed `Int[0,3]`, and without the bound the result is unbounded above; `temporal C using t0 over (w: M::Watch) clock "model-steps" on origin { eventually holds(forall(x in M::counters : x.v < 2)) }` checks with `counters` a domain of the temporal clause's record. Each is evaluated at S6a over a snapshot whose `counters` is `complete` to the same result as its `allInstances<M::Counter>(M::counters)` spelling, and over a `counters` that is not `complete` it returns `Incomplete` with `incomplete_population`/`incomplete-scope`. | Test (TC-1076) |
-| FR-391-AC-8 | `M::counters` in a function body and in the type-level invariant of an object type refuses `missing_declaration`/`missing-name` at `counters`, and `seq(i in 0 .. 2: i)` in an invariant refuses `unsupported_construct`/`expression-form` at its span. | Test (TC-1076) |
+| FR-391-AC-8 | `M::counters` in a function body and in the type-level invariant of an object type refuses `missing_declaration`/`missing-name` at `counters`. | Test (TC-1076) |
 | FR-391-AC-9 | On the `Counter` unit, `terminal Done using v on M when { forall(c in M::counters : c.v = 2) };` checks to `When` with `counters` as a domain read at `current`, and is evaluated over the snapshot's population as the `allInstances` spelling is; `M::counters` in a record-value invariant still refuses as AC-8 states. | Test (TC-1076) |
+| FR-391-AC-10 | On the `Counter` unit with `bound B on M::counters [3]`: `invariant S using v on M::Counter at current { size(seq(i in 0 .. 2: i)) = 3 }` checks with the `seq` typed `Sequence<Int[0, 2]>[0, 3]`, and `invariant C using v on M::Counter at current { count(o in M::counters where o.v = 2) <= 3 }`, `invariant E using v on M::Counter at current { exists(o in M::counters where o.v = 2) or true }` and `invariant O using v on M::Counter at current { only(o in M::counters where o.v = 2: o.v) = 2 }` each check and emit a checked package with no refusal: the population forms lower over the `all_instances` application of the `counters` population reference, and no refusal has code `unknown_required_feature`. | Test (TC-1904) |
 
 ## Dependencies
 

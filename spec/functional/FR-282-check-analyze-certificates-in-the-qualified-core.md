@@ -3,6 +3,8 @@ id: FR-282
 title: "Check analyze certificates in the qualified core"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-740
+    type: references
   - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
   - target: ix://agent-ix/filament-spec-language/ADR-029
@@ -43,10 +45,9 @@ native engine with none of these checkers settles `proved`, labelled `uncertifie
 (FR-281, FR-290). A checker recompiles the package from its
 byte provision, as `replay` does, and checks the certificate with its own
 code. It reads nothing from the engine's search but the certificate. The EN-5
-checker has two forms with one set of conditions (FR-201 "Checking"). Over a
-package S4 emits, its wire form recompiles from the byte provision. Over a
-package S4 refuses to emit (FR-185), its
-checked-subject form runs over the `CheckedPackage` that `analyze` holds; a
+checker has two forms with one set of conditions (FR-201 "Checking"). S4 emits
+every probabilistic package (FR-185, FR-740), so the wire form recompiles
+from the byte provision for every EN-5 certificate. Its checked-subject form runs over the `CheckedPackage` that `analyze` holds; a
 separate frontend gets that package by re-checking the provision's source
 bytes (S1 to S3, in the qualified core) into a `CheckedPackage`, admitting
 the `ModelSystem` from it and the subject binding, and running the same form.
@@ -119,7 +120,7 @@ cause; or a `StageFailure` when the package cannot be recompiled.
 | FR-282-AC-8 | The product-closure certificate of a two-copy hyperproperty proved over a finite model is accepted by the product-closure checker; the same certificate with one product-state key removed is rejected with a cause naming the successor it no longer contains. | Test (TC-764) |
 | FR-282-AC-9 | **RETIRED (staleness check withdrawn).** The certificate `package_id` check is deleted. | Test (TC-1141), retired |
 | FR-282-AC-10 | **RETIRED (staleness check withdrawn).** The certificate `package_id` check is deleted. | Test (TC-1141), retired |
-| FR-282-AC-11 | An exact acyclic eventual certificate from a random/workload source package that S4 refuses is written, then accepted in a fresh executable linking only qualified-core crates after bounded source admission and S1 to S3 checking. No emitted-package bytes or fabricated replay request are supplied. The same executable rejects changed values, refuses mismatched identity/objective, and preserves typed source/hash failures. | Test |
+| FR-282-AC-11 | An exact acyclic eventual certificate from a random/workload source package held as a checked package is written, then accepted in a fresh executable linking only qualified-core crates after bounded source admission and S1 to S3 checking. No emitted-package bytes or fabricated replay request are supplied. The same executable rejects changed values, refuses mismatched identity/objective, and preserves typed source/hash failures. | Test |
 | FR-282-AC-12 | With a source provision or certificate document one byte above its caller ceiling, the fresh checker stops/refuses before reading beyond that ceiling; pre-cancellation and cancellation during graph expansion stop without acceptance or a truth value. Exhausted state, edge and arithmetic budgets retain the actual named setting and consumption. | Test |
 | FR-282-AC-13 | A real FR-197 Exact bounded event-position certificate for FR-201-AC-13 is written by analyze and accepted from its canonical document bytes in a fresh qualified-core-only process using the source provision and actual subject/claim binding. The process independently reconstructs formula-monitor keys and terminal closure through fsl-eval, without fsl-analyze or provider linkage. Changing a running monitor horizon, binding or bounded rank prevents acceptance. | Test |
 | FR-282-AC-14 | Analyze writes the exact until and always proof documents of FR-201-AC-15 and AC-16; a fresh executable linking only qualified-core crates accepts their canonical bytes after independent source S1 to S3 admission and actual subject/claim binding, including random/workload packages that S4 cannot emit. It independently derives the original and stopped graphs, predicate labels and terminal-stutter boundary semantics. Changed formula with changed extensional labels, event, optimization, failure/target set, binding or complete key prevents acceptance; a threshold beyond the certified side rejects. Existing reachability/v1 bytes and verdicts are preserved. | Test |
@@ -128,6 +129,7 @@ cause; or a `StageFailure` when the package cannot be recompiled.
 | FR-282-AC-17 | For AC-16, source/document byte ceilings, state/edge/rational/key-representation budgets, pre-cancellation and cancellation during independent reward evaluation/graph expansion preserve the actual typed failure, named limit/consumption or cancellation without acceptance or truth values. Both older probability document profiles retain their canonical bytes and verdicts. | Test |
 | FR-282-AC-18 | Analyze writes real exact cyclic DTMC eventual documents for FR-201-AC-23/24; a fresh qualified-core-only executable accepts their canonical bytes from the bounded source provision and actual S3 subject/claim binding, including random/workload packages S4 refuses. It independently reconstructs original/stopped graphs, predicate/terminal boundaries, support SCCs, Prob0, distances and harmonic checks without analyzer/provider linkage, reused solver graph, emitted-package bytes or fabricated replay request. Wrong values/ranks/full keys/binding, changed objective/identity or source probabilities falsifying equations prevent acceptance; general cyclic MDPs remain unsupported. | Test |
 | FR-282-AC-19 | AC-18 preserves typed source/hash admission failures and actual named byte/state/edge/work/storage/scalar/rational limits and consumption, pre-cancellation and cancellation during independent SCC/distance/equation passes without acceptance or truth values. Existing profiles preserve canonical bytes and verdicts. Raw-model-key owner budget admission and shared FR-413 witness wire remain open prerequisites/gaps, not newly supplied APIs or completed coverage. | Test |
+| FR-282-AC-20 | An exact certificate for a claim over a unit with random parameters, a workload and a reward, written by `analyze` over the package S4 emits, is accepted by the EN-5 checker's wire form in a fresh qualified-core-only process from the certificate bytes, the emitted package's byte provision and the subject binding; the same certificate with one value altered is rejected. | Test (TC-2065) |
 
 ## Dependencies
 

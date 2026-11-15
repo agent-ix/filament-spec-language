@@ -980,10 +980,12 @@ The unit language writes a constant of each native value type `String`,
 with one literal form. The forms are the only way to
 write such a constant, and each has exactly one checked type (a `Text("...")`
 takes the `Text[..]` type of its position). They add no
-production, no token and no reserved word: the quoted text token is already
-read by the lexer, and `UUID("...")`, `Timestamp(n)`, `Bytes("...")`,
-`JsonObject("...")` and `Text("...")` are ordinary calls that the shared complete-V1 grammar
-already parses.
+token and no reserved word: the quoted text token is already read by the
+lexer, and `UUID("...")`, `Timestamp(n)`, `Bytes("...")` and
+`JsonObject("...")` are ordinary calls that the shared complete-V1 grammar
+already parses. `Text` is a reserved type word, so `Text("...")` is the shared
+grammar's own `primary` alternative `'Text', '(', [ expr, { ',', expr } ], ')'`
+(FSpec FR-502 item 6), parsed as the same `Call` shape.
 
 | Literal | Syntax | Checked type | Value |
 |---|---|---|---|

@@ -1,0 +1,62 @@
+{
+  "bindings": "fsl.consumer-facade-bindings/v1",
+  "consumers": [
+    {
+      "consumer": "ir",
+      "module": "fsl_package",
+      "facts": [
+        { "fact": "CF-IR-01", "accessors": ["CHECKED_PACKAGE_V2"] },
+        { "fact": "CF-IR-02", "accessors": ["read_import_view"] },
+        { "fact": "CF-IR-03", "accessors": ["schedulability_roots", "SchedulabilityRoot::occurrence"] },
+        { "fact": "CF-IR-04", "accessors": ["SchedulabilityRoot::obligation_identity"] }
+      ]
+    },
+    {
+      "consumer": "protocol",
+      "module": "fsl_package::protocol_view",
+      "facts": [
+        { "fact": "CF-PR-01", "accessors": ["protocol_view", "ProtocolView::roles", "ProtocolView::channels", "ProtocolView::queues", "ProtocolView::controls", "ProtocolView::compensations", "ProtocolView::run", "ProtocolView::finish"] },
+        { "fact": "CF-PR-02", "accessors": ["causal_relation", "CausalRelation::edges"] },
+        { "fact": "CF-PR-03", "accessors": ["channel_endpoints", "ChannelEndpoints::sender", "ChannelEndpoints::receiver", "ChannelEndpoints::message_type"] },
+        { "fact": "CF-PR-04", "accessors": ["role_internality", "RoleInternality"] },
+        { "fact": "CF-PR-05", "accessors": ["await_anchor", "AwaitAnchor"] },
+        { "fact": "CF-PR-06", "accessors": ["choice_visibility", "ChoiceVisibility"] },
+        { "fact": "CF-PR-07", "accessors": ["attempts_maximum"] }
+      ]
+    },
+    {
+      "consumer": "code-generation",
+      "module": "fsl_replay",
+      "facts": [
+        { "fact": "CF-CG-01", "accessors": ["call_site", "CallSite", "CallSiteSelection"] },
+        { "fact": "CF-CG-02", "accessors": ["ImportedFunctionSite::library", "ImportedFunctionSite::package", "ImportedFunctionSite::function"] },
+        { "fact": "CF-CG-03", "accessors": ["FunctionSite::obligation_identity", "OperationSite::obligation_identity"] },
+        { "fact": "CF-CG-04", "accessors": ["check_closed_form"] }
+      ]
+    },
+    {
+      "consumer": "runtime",
+      "module": "fsl_analyze::monitor_root",
+      "facts": [
+        { "fact": "CF-RT-01", "accessors": ["emit_plan_root", "PlanRoot", "PlanRootRequest"] },
+        { "fact": "CF-RT-02", "accessors": ["admit_progress_view", "PlanAuthoritySelection"] }
+      ]
+    },
+    {
+      "consumer": "driver",
+      "module": "fsl_replay",
+      "facts": [
+        { "fact": "CF-DR-01", "accessors": ["read_native_run_result_bounded", "NativeRunReadError"] },
+        { "fact": "CF-DR-02", "accessors": ["write_clause_run_result"] },
+        { "fact": "CF-DR-03", "accessors": ["NativeRunResult"] }
+      ]
+    },
+    {
+      "consumer": "observation",
+      "module": "fsl_package::checked_views",
+      "facts": [
+        { "fact": "CF-OB-01", "accessors": ["subject_kinds", "SubjectKind"] }
+      ]
+    }
+  ]
+}

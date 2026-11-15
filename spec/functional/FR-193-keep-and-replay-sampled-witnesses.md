@@ -29,10 +29,10 @@ relationships:
 EN-4 SHALL keep, up to `max_witnesses`, the samples on the violating side
 of the claim's bound as **sampled witnesses** (ADR-024 SV-6), the first in trace-index order. The layer-6 replay facade SHALL
 replay a sampled witness through FR-128's re-execution steps plus two
-checks, over the checked subject the sampler ran over: S4 refuses to emit a
-package that declares random parameters, workloads, rewards or probabilistic
-claims (FR-185), but its checked package remains, so the replay reads that
-checked package and has no emitted package to recompile. The checks are that each drawn value is in its support, and that each draw recomputed from
+checks, over the checked subject the sampler ran over: the replay reads that checked
+package, which S4 also emits (FR-185, FR-740) and whose reader reproduces it,
+so a replay given the emitted package reads the same subject and recompiles
+nothing. The checks are that each drawn value is in its support, and that each draw recomputed from
 the seed selects the recorded choice (SV-8). A sampled witness never changes
 the item's `measured` value, and it SHALL replay as an ADR-018 counterexample
 for the qualitative claim "the event holds on every behaviour" (SV-7).
@@ -98,9 +98,9 @@ pub fn replay_sampled_witness(
 - `replay_sampled_witness` SHALL recompile no package: it takes the
   `WitnessReplay`, witness and `WitnessReader` inputs in "Inputs"; the reader
   is built from the checked package, claim and sampler. It takes no package
-  reference or source for recompilation, since S4 refuses to
-  emit a package that holds a random parameter, a workload, a reward or a
-  probabilistic claim (FR-185) while its checked package remains. It SHALL
+  reference or source for recompilation: the checked package, read in process
+  or reproduced by the reader from the package S4 emits (FR-740), is the
+  whole subject. It SHALL
   re-admit the initial state the provenance records for the witness's test from the
   subject's provision, and re-execute each step
   through FR-128's re-execution steps: enabledness, successor selection by

@@ -2664,6 +2664,46 @@ fn timestamped_report_keeps_four_independent_dimensions() {
     assert_eq!(window_report(&incomplete).premises.scope, Closure::Closed);
 }
 
+/// FR-622-AC-1, AC-4 and FR-267-AC-22 (TC-1582); FSpec FR-521-AC-1 (TC-1081):
+/// the clause-run document carries the four axes, and closing or opening
+/// the trace's scope changes only `axes.settlement`.
+#[trace("TC-1582", "FR-622-AC-1")]
+#[trace("TC-1582", "FR-622-AC-4")]
+#[trace("TC-1582", "FR-267-AC-22")]
+#[trace("TC-1081", "FSpec-FR-521-AC-1")]
+#[test]
+#[ignore = "QSL-2121: the clause-run document does not carry the four outcome axes yet"]
+fn clause_run_document_carries_four_independent_axes() {
+    let base = || {
+        timestamped_with(
+            Unit::TimestampedAlwaysFive,
+            &[0, 2, 5],
+            &[1, 0, 1],
+            5,
+            Some(5),
+        )
+    };
+    let written = |report: &ClauseRunReport| -> serde_json::Value {
+        serde_json::from_slice(
+            &crate::spine::write_clause_run_result(report).expect("the record writes"),
+        )
+        .expect("the record is JSON")
+    };
+    let closed = written(&report(base()));
+    let open = written(&report(timestamped_changed(base(), |trace| {
+        trace.progress.scope = crate::spine::ProgressClosure::Open
+    })));
+    let axes = &closed["axes"];
+    for member in ["activation", "execution", "truth", "settlement"] {
+        assert!(axes.get(member).is_some(), "axes.{member} in {closed}");
+    }
+    assert_eq!(axes["activation"], "active");
+    assert_eq!(open["axes"]["activation"], axes["activation"]);
+    assert_eq!(open["axes"]["execution"], axes["execution"]);
+    assert_eq!(open["axes"]["truth"], axes["truth"]);
+    assert_ne!(open["axes"]["settlement"], axes["settlement"]);
+}
+
 /// FR-501-AC-16 (TC-1295 row 30): one result identity per input; each input
 /// changed alone gives a distinct identity.
 #[trace("TC-1295", "FR-501-AC-16", "FR-043-AC-13")]
@@ -3916,6 +3956,7 @@ fn timestamped_progress_is_admitted_into_the_ledger() {
 
 mod checked_route_owner;
 mod differential;
+mod fspec_kinds;
 mod progressed;
 mod refused;
 mod wire;

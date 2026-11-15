@@ -111,10 +111,10 @@ from the checked formula and recorded beside the claim's requirement record.
 
 | ID | Form | Profile | Shape | Engines that settle it (§3) |
 | --- | --- | --- | --- | --- |
-| TP-1 | Reachable-state invariant | infinite-trace | `always holds(I)` where `I` is a state predicate, including an `invariant` clause named by the request | explicit-state (exhaustive); SMT k-induction (inductive); SMT unrolling (refutation, bounded-to-k) |
-| TP-2 | Bounded MLTL | event-position false-extension | any bounded-profile clause. With activation `on origin` its truth on a behaviour depends only on the first `h + 1` positions, `h` its ADR-014 TR-4 horizon. With activation `on each` it holds at every activating position, which makes it an unbounded safety property | `on origin`: explicit-state (exhaustive) and SMT unrolling to `h` (bounded-complete). `on each`: as TP-3 |
-| TP-3 | LTL safety | infinite-trace | a formula in ADR-014 A-4's safety fragment, which admits interval operators (IV-4) | explicit-state (exhaustive); SMT k-induction (inductive); SMT unrolling (refutation, bounded-to-k) |
-| TP-4 | LTL liveness | infinite-trace | any other admitted infinite-trace formula, including one with interval operators nested under unbounded ones (IV-1), with its fairness constraints (§4) | explicit-state (exhaustive); SMT lasso unrolling (refutation, bounded-to-k) |
+| TP-1 | Reachable-state invariant | infinite-trace | `always holds(I)` where `I` is a state predicate, including an `invariant` clause named by the request | explicit-state (exhaustive); SMT k-induction (inductive); SMT unrolling (refutation, bounded-to-k); Kani bounded model checking (refutation, bounded-to-k; EN-4) |
+| TP-2 | Bounded MLTL | event-position false-extension | any bounded-profile clause. With activation `on origin` its truth on a behaviour depends only on the first `h + 1` positions, `h` its ADR-014 TR-4 horizon. With activation `on each` it holds at every activating position, which makes it an unbounded safety property | `on origin`: explicit-state (exhaustive) and SMT unrolling to `h` (bounded-complete), and Kani bounded model checking (refutation, bounded-to-k, never bounded-complete; EN-4). `on each`: as TP-3 |
+| TP-3 | LTL safety | infinite-trace | a formula in ADR-014 A-4's safety fragment, which admits interval operators (IV-4) | explicit-state (exhaustive); SMT k-induction (inductive); SMT unrolling (refutation, bounded-to-k); Kani bounded model checking (refutation, bounded-to-k; EN-4) |
+| TP-4 | LTL liveness | infinite-trace | any other admitted infinite-trace formula, including one with interval operators nested under unbounded ones (IV-1), with its fairness constraints (§4) | explicit-state (exhaustive); SMT lasso unrolling (refutation, bounded-to-k); Kani lasso bounded model checking under the fairness constraints (refutation, bounded-to-k; EN-4) |
 | TP-5 | Refinement | infinite-trace | a refinement declaration between two model subjects (ADR-020), with a safety half (the initial-state and step rules) and, when the abstract fairness set is non-empty, a liveness half. Amended by ADR-020 | explicit-state (both halves, exhaustive); SMT per-step simulation (safety half, inductive, ADR-020 RE-2); SMT unrolling (refutation, bounded-to-k, ADR-020 RE-3) |
 
 The model subject admits two profiles: event-position false-extension and
@@ -260,6 +260,7 @@ whether the source default or the request's selection.
 | EN-1 | **Explicit-state product.** The product of the subject's state graph with the property automaton, explored breadth-first by EN-1's own graph exploration in `fsl-analyze`, in FR-101's canonical successor order and with FR-101's state keys. The product is itself a `TransitionSystem`: its state is (model state, automaton state), its key is (model state key, automaton state index). The engine retains every product edge it explores. A second phase decomposes the retained graph into strongly connected components and finds a fair accepting cycle (§4). A safety form (TP-1, TP-2, TP-3, the deadlock-freedom item) needs only the first phase: reaching the monitor's rejecting state is a violation (SM-6). At a terminal model state a TP-2 monitor is closed by the profile's closed-boundary rule: it reads the remaining positions of its horizon with every atomic predicate false and every constant unchanged (FSpec FR-091), and the item is violated when that closure reaches the rejecting state. Under infinite-trace a terminal model state continues along its stutter edge (SM-4). | FSL layer A, crate `fsl-analyze`, module `model_check` (LA-1) | TP-1 to TP-4. V-1, V-4, V-5 (with `max_depth`), V-6, V-7 |
 | EN-2 | **SMT unrolling.** The transition relation encoded over `k` steps, for bounded violations and for lasso-shaped violations with a loop back-edge inside `k`; fairness constraints are constraints on the loop segment. | the SMT backend in the contract IR lane, reached by negotiation | TP-1 to TP-4 refutation (V-4); V-2 for TP-2 `on origin` at `k >= h`; V-5 otherwise |
 | EN-3 | **`k`-induction.** Base case: no violation in the first `k` steps. Step case: `k` consecutive states that satisfy the property, with pairwise distinct states, have no violating successor. | the same SMT backend | TP-1, TP-3 and TP-2 `on each`, through the safety monitor product. V-3, V-6 `InductionNotClosed` |
+| EN-4 | **Kani bounded model checking.** The transition relation and the property monitor lowered to a Kani harness unrolled to `k` steps: for TP-1, TP-2 and TP-3 a harness asserting that no path of at most `k` steps from an initial state reaches the monitor's rejecting state (a TP-2 `on origin` monitor closed at a terminal state by the profile's closed-boundary rule, as EN-1 closes it); for TP-4 a lasso harness with a loop back-edge inside `k`, each weak or strong fairness constraint encoded as a condition on the loop segment as EN-2 encodes it (ADR-019 BE-6). A failed assertion yields a concrete path, read back from the harness's selector values into the same `TemporalCounterexample` EN-1 and EN-2 produce (CX-4). | the Kani backend in the contract IR lane, reached by negotiation through S5 and E7, as for function contracts | TP-1 to TP-4 refutation only: a counterexample settles V-4 `Refuted` once CX-3 replay reproduces it, and a run that finds none settles V-5 `Inconclusive(BoundReached{depth: k})`, for TP-2 `on origin` at `k >= h` too. EN-4 never settles `proved`: a Kani success over a temporal harness is a statement about Kani's unwinding, which no core checker can recheck (PC-1), so it maps to V-5 and never to `Proved{basis: Checks{..}}`, which stays the function-contract route. A Kani stop maps to V-7, a replay disagreement to V-6 `ReplayParity` (SM-7) |
 
 **Acceptance-cycle detection is SCC-based.** EN-1 uses one algorithm:
 decompose the retained product graph into SCCs, then test each non-trivial
@@ -412,9 +413,14 @@ and `b` both at version 0 with `parent` absent. Write a state as
 The result value is not in the state key, so the choice of result does not
 change the successor. The model has 9 reachable states, each with two successors,
 `upd(a)` and `upd(b)`, both always enabled. The two instances are symmetric.
-The reported counterexample is the shortest across the `over` bindings, and
-a tie goes to the first binding in canonical order (`a`); the same order
-decides which undefined letter is reported first. The two instances are
+The reported counterexample is that of the first refuted instance in
+canonical instance order (FR-125), here `a`, whatever the length of another
+instance's counterexample; the same order decides which undefined letter is
+reported first. The rule is first refuted instance and not shortest
+counterexample because it makes the report a function of the instance order
+alone: a shortest rule would need every instance searched to completion to
+compare lengths, and a bounded engine that stops at `k` could not tell
+whether a shorter counterexample exists. The two instances are
 symmetric, so the rows below bind `c` to `a`, whose loop updates `b`; with
 the names exchanged they describe the other binding.
 

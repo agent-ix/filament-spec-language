@@ -119,6 +119,7 @@ The FR-331 terminal record of the claim.
 
 ## Dependencies
 
+- Consumer facts (FSpec FR-661, bound in FR-761): `CF-CG-04` (`fsl_replay::check_closed_form`).
 - ADR-026 §12 RT-7; ADR-013 O-09 and O-16.
 - [FR-127](FR-127-settle-a-model-check-verdict-as-a-terminal-record.md),
   [FR-235](FR-235-settle-a-timed-verdict-as-a-terminal-record.md),

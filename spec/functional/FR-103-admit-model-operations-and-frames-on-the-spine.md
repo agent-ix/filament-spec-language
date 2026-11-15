@@ -204,6 +204,9 @@ evaluates it; it is not discarded and it is not shape-checked only.
 - The kept `ensures` text is separate from `OperationMemberRecord`'s
   `own_postcondition_clauses`, which are FR-151's refinement guard facts
   (`present(self.f)` or one ordering against an integer literal).
+- The `run` command evaluates the kept `requires` and `ensures` in the run of
+  the operation over one invocation and reports a false clause as a
+  violation (FR-702).
 
 ## Acceptance Criteria
 

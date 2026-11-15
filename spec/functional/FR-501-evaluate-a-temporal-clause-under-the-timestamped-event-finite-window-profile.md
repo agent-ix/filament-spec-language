@@ -33,6 +33,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-160
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
 ---
 # FR-501: Evaluate a temporal clause under the timestamped-event finite-window profile at S6a, with definite verdicts on a closed complete window
 
@@ -92,6 +94,16 @@ that the answer depends on it says indeterminate and names the fact.
   `TimestampedEvent` clock configuration carries the timestamp unit only, so the
   cover has no source in the package and comes from the request's trace input
   (FR-330); an input that omits it is `Exact`.
+  A third cover, `Bounded { uncertainty }`, widens every point stamp `t` to
+  the closed interval `[t-u, t+u]`, and a single observation MAY carry its own
+  **interval stamp** `[earliest, latest]` with an open or closed flag at each
+  end, which overrides the trace's cover for that observation ("Bounded cover
+  and interval stamps").
+- An optional **late-data cutoff**: `AllowedLateness { lateness }` or
+  `FixedInstant { cutoff }`, in ticks, and on each observation an optional
+  **arrival watermark**, the progress watermark at which it was admitted
+  ("Late-data cutoff"). Their request-file spelling is the run request's
+  timestamped trace member (FR-641).
 - A kernel `Meter` (ADR-014 B-2).
 
 A trace with no positions SHALL be refused `invalid_runtime_input`/
@@ -303,6 +315,71 @@ ranks below 10.
   admit no straddle. Establishment under `Counter { uncertainty: u }` SHALL use
   the margin `2u` of "Established window".
 
+### Bounded cover and interval stamps
+
+- Under `Bounded { uncertainty: u }` each point stamp `t` SHALL be the closed
+  interval `[t-u, t+u]`; an interval stamp SHALL be its own interval. Both are
+  read with the endpoint rules of FSpec FR-160 ("Timestamp uncertainty beyond
+  counter ticks"): the difference of two stamps is FR-160's difference
+  interval, a bound the intervals straddle gives `Indeterminate` with reason
+  `StraddlesBound`, or `Pending` while `W` is short, and a definite verdict
+  needs every pair of instants to agree.
+- An observation is in a window when its interval lies inside it, out of it
+  when they are disjoint, and possibly in it otherwise; a verdict that depends
+  on a possibly-in observation is `Indeterminate { reason: StraddlesBound }`.
+- Canonical order SHALL sort by `earliest`, then `latest`, then the order key.
+  Two observations whose intervals overlap with no order key from one
+  authority SHALL be refused by `until`, `release`, `since` and `triggered`
+  as equal stamps are (`invalid_runtime_input`/`invalid-value` at the later
+  position).
+- Establishment SHALL use the margin of the largest upper widening among the
+  window's observations: `u` under `Bounded`, and `latest - t` for an interval
+  stamp whose observation also carries a point stamp `t` (`latest` itself
+  otherwise).
+- An interval stamp with `earliest > latest`, or with `earliest = latest` and
+  an open end, SHALL be refused `invalid_runtime_input`/`invalid-value` at the
+  observation; a midpoint is never substituted.
+
+### Late-data cutoff
+
+- With a late-data cutoff, an observation with event instant `t` (the upper
+  end of its interval, or its stamp) and arrival watermark `A` SHALL be
+  classified `late` when `A > t + lateness` (`AllowedLateness`) or when
+  `t <= cutoff` and `A > cutoff` (`FixedInstant`), and `on-time` otherwise
+  (FSpec FR-094 "Late-data cutoff", FR-294). An observation with no arrival
+  watermark is admitted at the watermark of the observation before it in
+  input order, or at `W` for the first.
+- A window with deadline `D` SHALL be established only when the rules of
+  "Established window" hold and `W` also covers `D + lateness`, or
+  `max(D, cutoff)`.
+- The evaluator SHALL exclude every `late` observation from evaluation and
+  SHALL report it in the result's `late` list with its position in input
+  order, its event instant, its arrival watermark and the anchors of the
+  activations whose windows it falls in. The result identity covers the
+  cutoff and the classification of every observation.
+- The late-data cutoff and the lower-boundary kind are independent inputs: a
+  `HistoryCutoff` never classifies an observation `late`, and a late
+  observation never yields `MissingHistory`.
+- With no late-data cutoff, no observation is classified `late` and the
+  `late` list is empty.
+
+### Request-file spelling
+
+FR-641's `timestamped` trace member carries these inputs, and the run
+result carries the `late` list:
+
+- `cover` also admits `{"bounded": {"uncertainty": N}}`.
+- An observation `O` also admits `"interval": {"earliest": N, "latest": N,
+  "earliest_open": B, "latest_open": B}` (each flag optional, default `false`),
+  which overrides `cover` for that observation, and `"arrival": N`, its
+  arrival watermark. `stamp` stays required and is the nominal stamp `t`.
+- The member admits `"late_data_cutoff": {"allowed_lateness": N}` or
+  `{"fixed_instant": N}`.
+- The result document writes `late`, an array of `{"position": N, "stamp": N,
+  "arrival": N, "anchors": [N, ...]}` in input order, whenever a late-data
+  cutoff is selected (`[]` when no observation is late), and writes no `late`
+  member otherwise.
+
 ### Work
 
 - The evaluator SHALL charge `temporal.visit` (FR-327 "Work") once per visit of
@@ -321,7 +398,13 @@ ranks below 10.
   evaluator SHALL refuse a `Finite` or `Lasso` trace, which carries no stamps,
   `invalid_runtime_input`/`invalid-value` for this profile.
 - Where a progress ledger is supplied, FR-502 governs contradiction, and the
-  report returns the updated ledger (FR-330).
+  report returns the updated ledger (FR-330). A request file supplies the
+  trace as FR-641's `timestamped` member and the ledger as its `ledger` file,
+  and the result writes the updated ledger as its `ledger` member, so this
+  profile is reachable through `command::run` as well as in process. The
+  `TimestampedEvent` clock configuration comes from the request's `clocks`
+  member (FR-640). The refusal of a `Finite` or `Lasso` trace carries FR-645's
+  `trace-kind-mismatch` fields.
 
 ### Required FSpec definition
 
@@ -365,6 +448,10 @@ as its own ticket, referenced from QSL-1493; it is not part of this repository.
 | FR-501-AC-24 | A `Timestamped` input that supplies `Counter { uncertainty: 1 }` gives AC-13's outcomes, and the same input with the cover `Exact` gives a different verdict for `W` 3001 and `Complete { through: 3002 }` and a different result identity. | Test (TC-1295) |
 | FR-501-AC-25 | A `Timestamped` input whose `execution` is `Open` and one whose `execution` is `Closed` report the surrounding-execution closure they carry and give the same verdict. | Test (TC-1295) |
 | FR-501-AC-26 | Stamps 0, 1, 1 with positions 1 and 2 both keyed `(A, 1)` (one order authority, one key) and valuations that differ in a third atom, so that the two observations have distinct identities: `holds(p) until[0,1] holds(q)` and its `release` dual `on origin`, and `holds(p) since[0,1] holds(q)` and its `triggered` dual `on each` (the anchor at position 2, where positions 1 and 2 participate), refuse at stage `evaluate`, `invalid_runtime_input`/`invalid-value` at position 2, for the listed order and for the two keyed observations listed in reverse, and do not evaluate with the identity order as the tie-break; `eventually[0,1] holds(p)` over the same trace evaluates and gives one outcome and one `result_identity` for both listings. | Test (TC-1295) |
+| FR-501-AC-27 | With the cover `Bounded { uncertainty: 2 }` in ms, a request `holds(req)` stamped 0 and `holds(req) implies eventually[0,10] holds(ack)`, `W` and `Complete { through: 17 }`: `ack` stamped 5 gives `Completed(true)`, stamped 10 gives `Indeterminate { reason: StraddlesBound }` and stamped 15 gives `Completed(false)`; with no `ack`, `W` 11 gives `Pending` and `W` 12 gives `Completed(false)`. Under `Exact` the three stamps give true, true and false. | Test (TC-1546) |
+| FR-501-AC-28 | Observations with interval stamps `[3, 5]` and `[4, 6)` and no order keys refuse `holds(p) until[0,5] holds(q)` `invalid_runtime_input`/`invalid-value` at the later position, while `eventually[0,5] holds(q)` evaluates; an interval stamp `[6, 5]` and one `[5, 5)` each refuse `invalid_runtime_input`/`invalid-value` at the observation; an interval stamp `[0, 1]` under `Bounded { uncertainty: 5 }` is read as `[0, 1]`. | Test (TC-1546) |
+| FR-501-AC-29 | With `AllowedLateness { lateness: 2 }` and `eventually[0,5] holds(p)` `on origin` over observations stamped 0 (arrival 0), 4 (arrival 6, `p` true) and 3 (arrival 6, `p` true): `W` 6 gives `Pending` and `W` 7 gives `Completed(true)`; the observation stamped 3 is in the `late` list with arrival 6 and anchor 0 and is not read. With only the stamp-3 observation true, `W` 7 gives `Completed(false)` and the same `late` entry. With `FixedInstant { cutoff: 5 }` the stamp-3 observation is `late` and an observation stamped 6 with arrival 6 is `on-time`. | Test (TC-1547) |
+| FR-501-AC-30 | AC-29's request with no late-data cutoff reads all three observations and its result writes no `late` member; adding the cutoff changes the result identity; with `HistoryCutoff` and the cutoff together, `once[0,4] holds(p)` reports `MissingHistory` for the activation that reaches before the trace and no observation is `late` because of it. | Test (TC-1547) |
 
 ## Dependencies
 

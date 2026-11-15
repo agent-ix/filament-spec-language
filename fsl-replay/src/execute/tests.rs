@@ -32,6 +32,7 @@ mod composite_parity;
 mod native_scalar;
 pub(crate) mod object_environment;
 mod supplied;
+mod unavailable_occurrence;
 mod union;
 mod value_parity_identity;
 mod variant_fields;

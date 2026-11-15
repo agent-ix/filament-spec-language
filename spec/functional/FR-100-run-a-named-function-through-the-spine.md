@@ -41,6 +41,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/interface_005
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
 ---
 # FR-100: Run a named function of a 1-draft program through the spine
 
@@ -94,6 +96,12 @@ uses the typed preparation boundary below and renders FR-286's
 `filament-outcome/1`; FR-286 explicitly replaces the native result document
 for the driver's verbs.
 
+A `1-draft` run request, of a function or of a clause, MAY carry FR-640's
+`clocks` member; the source compile of the run applies it exactly as
+native-compile/1 does, and a request that selects a checked package refuses it
+(FR-640). Every step of the run that re-emits the package uses the same
+selections.
+
 ### Request-file preparation for the driver
 
 `prepare_run(path: &std::path::Path, limits: RunLimits)` returns
@@ -136,7 +144,7 @@ The public Rust call contract SHALL use these existing shared carriers:
 | Boundary member | Carrier and meaning |
 | --- | --- |
 | `CallArgument.parameter` | The declared parameter name, as before |
-| `CallArgument.value` | `filament_exact::Value`, replacing `i64`; this entry admits Boolean, Integer, Reference and Population arguments only |
+| `CallArgument.value` | `filament_exact::Value`, replacing `i64`; this entry admits a value of every declared parameter type that has an FSpec FR-181 form, and Population arguments (FR-650) |
 | `Call.accounting` | The caller's complete `filament_exact::ScalarLimits`, with all ten existing counters |
 | `run` object context | An explicit borrowed `&fsl_semantics::model::object_environment::ObjectEnvironment`, immediately before the existing `&Cancel` argument; the other run inputs retain their roles |
 | Completed Reference | `CallValue::Reference(filament_exact::ObjectReference)` in the existing `CallOutcome::Completed` arm |
@@ -257,14 +265,14 @@ directly. Integer parameters retain exact integer/domain admission.
 
 ### File request encoding
 
-The native-run/1 argument encoding below remains a signed-i64 assignment
-encoding. Its reader converts those assignments to the shared values for
-the same public entry. It carries no Population payload or model-call
-context member. This amendment defines no alternative request dialect,
-compatibility entry or caller-minted population handle. Typed TC-792
-execution is an in-process public call; admitting an I05 envelope's model
-inputs remains the owning strict reader/admission operation. A file/driver
-adapter cannot claim typed-input support without that consumer qualification.
+The native-run/1 argument encoding below is FR-650's run value form, with
+FR-098's signed-i64 canonical integer assignment kept for integer and
+Boolean parameters. Its reader converts each argument to the shared value
+for the same public entry. A Reference or Population argument resolves in
+the object world of the current snapshot `call.snapshot` names, admitted by
+FR-106 and the owning model admission; the reader never mints a population
+handle or an object identity. Typed TC-792 execution through this file
+request uses the same public entry as the in-process call.
 
 A native-run/1 request (FR-026's closed envelope and shared limits). For a
 `1-draft` program the request carries:
@@ -276,7 +284,9 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   record and exactly one `clauses` binding; the request reader decodes these
   only when `fsl-replay` is built with `quire-extraction` (ADR-011 §7.3 X-4).
   A build without that feature refuses the `extraction` member as
-  `invalid-request` at the request stage.
+  `invalid-request` at the request stage. The command owner, `fsl-command`,
+  builds `fsl-replay` with `quire-extraction` in its default build, so the
+  driver's `run` verb always reaches this mode ([FR-662](FR-662-check-every-native-fence-of-a-markdown-specification.md)).
 - `package`: an optional closed selection of an existing `filament.checked-package/v2`
   artifact by package-file path. When present, FR-027's strict package reader
   admits and executes that package without fallback to source compilation.
@@ -287,6 +297,10 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   handed to spine `compile` as its dependency input, exactly as FR-027 does
   for compile ([FR-099](FR-099-compile-against-supplied-libraries.md),
   ADR-015 D-1).
+- `extensions`: zero or more extension definition entries, the caller's
+  definition catalog that every unit of the request selects extensions from
+  ([FR-660](FR-660-supply-extension-definitions-through-the-request-extensions-member.md));
+  a `native-compile/1` request carries the same member.
 - `call`: a closed object naming the call.
   - `function`: the called function's name, a string of one or more
     segments separated by `.`, the separator source paths use. Each segment
@@ -294,10 +308,14 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
     `_`.
   - `arguments`: an array of `{parameter, value}` objects, one per
     parameter, in any order. `parameter` is the parameter's declared name.
-    `value` is a JSON integer in the signed 64-bit range: the canonical
-    integer assignment FR-098 replays, read by the same rule. An integer
-    type's parameter takes the integer. A `Boolean` parameter takes `0`
-    (`false`) or `1` (`true`).
+    `value` is a value of FR-650's run value form for the parameter's
+    declared type (a JSON object), or a JSON integer in the signed 64-bit
+    range: the canonical integer assignment FR-098 replays, read by the same
+    rule, which an integer type's parameter takes as the integer and a
+    `Boolean` parameter takes as `0` (`false`) or `1` (`true`).
+  - `snapshot`: optional, the file of one current
+    `filament.state.snapshot/v1` document whose objects and populations are
+    the call's object world (FR-650).
   - `accounting`: optional, a closed object whose members are any subset of
     the ten `filament.value.accounting/v1` counter names; each value is a JSON
     integer from 0 to 18446744073709551615 (`u64::MAX`). An omitted object
@@ -309,19 +327,19 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
 
 ### Typed result and outcome document
 
-The public entry SHALL admit declared Boolean, Integer/Int and Reference
-results. Other result kinds retain `unsupported_construct` before a call.
-A completed Reference SHALL retain the actual returned identity triple in
-`CallValue::Reference`, without dereferencing or narrowing it.
+The public entry SHALL admit every declared result type that has an FSpec
+FR-181 form, and a population-typed result (FR-650). A result type with no
+such form refuses `unknown_required_feature`/`unsupported-feature` before a
+call. A completed Reference SHALL retain the actual returned identity triple
+in `CallValue::Reference`, without dereferencing or narrowing it.
 An unexpected completed kind remains an internal invariant failure.
 
-Where a completed Reference is serialized in the existing function outcome
-document, its value SHALL reuse the existing canonical typed Reference form:
-`{"kind":"reference","universe":U,"type":T,"object_identity":O}`.
-`U` and `T` are the actual UniverseId and most-specific EffectiveId, each
-64 lowercase hexadecimal characters; `O` is the exact nonempty UTF-8 object
+A completed value is serialized in FR-650's run value form. A Reference is
+`{"reference": {"universe": U, "type": T, "object_identity": O}}`: `U` and
+`T` are the actual UniverseId and most-specific EffectiveId, each 64
+lowercase hexadecimal characters, and `O` is the exact nonempty UTF-8 object
 identity. No population binding or object fields are serialized as a
-Reference result. This does not add a Population argument wire encoding.
+Reference result.
 
 For a call that reaches S6a, `command`'s outcome carries one
 `spine-run-result/1` JSON document as its result document and no refusal
@@ -337,12 +355,12 @@ exhausted limit this document's `outcome` member carries. Its members are:
   FR-001 labels, and its authored path.
 - `function`: the `function` string of the request.
 - `outcome`: exactly one of
-  - `{"kind": "completed", "value": V}`, where `V` is
-    `{"kind": "boolean", "value": true|false}` or
-    `{"kind": "integer", "decimal": "<ASCII decimal>"}`, the integer written
-    exactly, with a leading `-` when negative and no other sign, leading
-    zero or exponent ([FR-038](FR-038-encode-exact-protocol-numbers.md)'s
-    integer spelling, at any magnitude), or the Reference form above;
+  - `{"kind": "completed", "value": V}`, where `V` is the completed value
+    in FR-650's run value form for the function's declared result type:
+    `{"boolean": true|false}`, `{"integer": "<ASCII decimal>"}` (the
+    integer written exactly in [FR-038](FR-038-encode-exact-protocol-numbers.md)'s
+    integer spelling, at any magnitude), the Reference form above, or the
+    form FR-650 gives every other kind;
   - `{"kind": "refused", ...}`, with the members the refusal table below
     states;
   - `{"kind": "undefined", "reason": "<reason>"}`;
@@ -484,15 +502,16 @@ exits with that code's exit status:
 | Refusal | Stage | Code | `details` | Exit |
 |---------|-------|------|-----------|------|
 | A declared edition other than `1-draft`, `0-draft` included | `profile` | `unknown_edition` | as FR-027 | 20 |
-| A `1-draft` function-run request carrying `selection`, `snapshots`, `invocations`, a set `validation_work` or `expression_steps`, `clauses`, `extraction`, or a model in a format other than `semantic-ir/2.0.0`; or carrying no `call` | `request` | `invalid-request` | as FR-026 | 20 |
+| A `1-draft` function-run request carrying `selection`, `snapshots`, `invocations`, a set `validation_work` or `expression_steps`, `clauses`, `extraction`, or a model in a format other than `semantic-ir/2.0.0`; or carrying none of `call`, `clause` (FR-312) and `items` (FR-651), or more than one | `request` | `invalid-request` | as FR-026 | 20 |
 | A clause-run request carrying `extraction` in a build without `quire-extraction` | `request` | `invalid-request` | names `extraction` | 20 |
 | A feature-enabled extraction request with `call` instead of `clause`, a package selection, or a clause-binding count other than one | `request` | `extraction-requires-run`; `extraction-package-conflict`; `extraction-clause-count` | as FR-031; `{"actual": n}` for clause count | 20 |
-| A `call` that is not the closed object above; an argument `value` that is not a JSON integer in the signed 64-bit range; an `accounting` member that is not the closed counter object above or has a value that is not a JSON integer from 0 to `u64::MAX` | `request` | `invalid-request` | as FR-026 | 20 |
+| A `call` that is not the closed object above; an argument `value` that is neither a JSON object nor a JSON integer in the signed 64-bit range (FR-650), naming `/call/arguments/<index>/value`; an `accounting` member that is not the closed counter object above or has a value that is not a JSON integer from 0 to `u64::MAX` | `request` | `invalid-request` | as FR-026 | 20 |
 | A spine compile refusal | the refusing spine stage | that stage's cause code | as FR-027 | that code's |
 | A `function` that is empty, holds an empty segment or a segment that is not an identifier, has more than one segment, or names no function of the compiled package | `call` | `missing_declaration` | `{"function": "<the function string>"}` | 20 |
-| A function whose declared result is neither `Boolean`, an integer type nor `Reference` | `call` | `unsupported_construct` | `{"function": "<the function string>"}` | 21 |
+| A function whose declared result type has no FSpec FR-181 form and is not a population (FR-650) | `call` | `unknown_required_feature`, cause `unsupported-feature` | `{"function": "<the function string>"}` | 21 |
+| A parameter whose declared type has no FSpec FR-181 form and is not a population (FR-650) | `call` | `unknown_required_feature`, cause `unsupported-feature` | `{"position": <the parameter's zero-based position>}` | 21 |
 | An argument naming no parameter, a parameter named twice, or a parameter with no argument | `call` | `invalid_runtime_input` | `{"parameter": "<the parameter name>"}` | 20 |
-| A value that is not of its parameter's declared type (`WrongValueKind`) | `call` | `invalid_runtime_input` | `{"position": <the parameter's zero-based position>}` | 20 |
+| A value that is not of its parameter's declared type (`WrongValueKind`), or a defect FR-650's argument table lists | `call` | the code and cause FR-650's argument table gives (`invalid_runtime_input` for a value not of the declared type) | `{"position": <the parameter's zero-based position>, "path": "<JSON pointer inside the value>"}` | 20 |
 | `Admission` carrying `ForeignModelSelection` with `OfferedSelection::Document(actual)` | `call` | `foreign_reference`, cause `foreign-model-selection` | Exactly `{"position": P, "model_identity": actual, "expected": E}`; `actual` is the original document's modelIdentity string and `E` the cause's full required DomainPackageRef | 20 |
 | `Admission` carrying `ForeignModelSelection` with `OfferedSelection::Population(actual)` | `call` | `foreign_reference`, cause `foreign-model-selection` | Exactly `{"position": P, "population": D, "expected": E}`; `D` is the actual offered population DeclarationKey, not a substitute model selection; `E` the cause's full required DomainPackageRef | 20 |
 | `Admission` carrying `ForeignType { member, type_name }` | `call` | `foreign_reference`, cause `foreign-type` | Exactly `{"position": P, "member": member, "type": D}`; `D` is the cause's actual uncovered/absent type DeclarationKey | 20 |
@@ -509,13 +528,14 @@ offered population key by a guessed package, uses a fallback cause, or
 adds a top-level locus outside FR-267's closed command-error envelope.
 The underlying typed Admission still retains the full original refusal.
 
-An unsupported result type exits 21, where FR-098's predicate replay refuses
-a non-`Boolean` selection as `NotAPredicate` (`invalid_runtime_input`, 20).
-The difference is deliberate: predicate replay requires a predicate, so asking
-it to replay a non-`Boolean` selection is a bad request (a non-`Boolean`
-function's claim is replayed by FR-357's value-parity entry); run calls any function, and a
-result kind the outcome document cannot express is an unsupported construct,
-not bad input.
+A result type with no FSpec FR-181 form exits 21, where FR-098's predicate
+replay refuses a non-`Boolean` selection as `NotAPredicate`
+(`invalid_runtime_input`, 20). The difference is deliberate: predicate replay
+requires a predicate, so asking it to replay a non-`Boolean` selection is a
+bad request (a non-`Boolean` function's claim is replayed by FR-357's
+value-parity entry); run calls any function, and a type no value form can
+express is an unsupported feature, not bad input. Every other result kind
+completes with its FR-650 value.
 
 Writing the result document or the refusal envelope to a stream, and a
 stream that fails or closes, are the driver's (FR-287, Overlap).
@@ -530,7 +550,10 @@ more for each further nested call, a recursive call of the same function
 included. A `Location` names a place in a body and no frame, so the same
 `Location` recurs at every depth of a recursive function; `frame_depth`
 tells those apart. A completed call's `frame_depth` is 0. The outcome
-document carries no `frame_depth` member. FR-098's application claim reads
+document carries no `frame_depth` member. Under `CheckMode::Linked` a division whose divisor
+may be zero is refused at check (FR-495), so an undefined stop at a division
+site is met only by a body checked under `CheckMode::Kernel`, which is the mode
+FR-100-AC-20 uses. FR-098's application claim reads
 it to observe only the selected call's own evaluation of its claim site; the
 consumer is `fsl-replay`'s replay executor, and the producer is the S6a
 session's frame stack (FR-262), which already holds one frame per open call.
@@ -582,9 +605,10 @@ session's frame stack (FR-262), which already holds one frame per open call.
   does (FR-098, OQ-5).
 - If the name resolves to no function, then `fsl_replay::spine::run` shall
   refuse with `missing_declaration` at stage `call`.
-- If the function's declared result is neither `Boolean`, an integer
-  type nor `Reference`, then `fsl_replay::spine::run` shall refuse with
-  `unsupported_construct` at stage `call` before any call or charge.
+- If the function's declared result type has no FSpec FR-181 form and is
+  not a population (FR-650), then `fsl_replay::spine::run` shall refuse with
+  `unknown_required_feature`/`unsupported-feature` at stage `call` before
+  any call or charge.
 - `fsl_replay::spine::run` shall join each argument to the parameter of the
   same declared name, and order the values by declared parameter position,
   whatever order they arrive in.
@@ -630,21 +654,29 @@ session's frame stack (FR-262), which already holds one frame per open call.
   qualification; no default, private helper or full-Tree qualification is
   inferred by this amendment.
 
+## Analyze requests and outcome axes
+
+A `native-analyze/1` request shares FR-026's envelope and this requirement's
+source, model and library selections; FR-620 owns its other members. A
+function run's `spine-run-result/1` carries no `axes` member: a function call
+has no obligation that activates, so the four outcome axes of FR-622 do not
+apply to it.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-100-AC-1 | A native-run/1 request selecting `tests/fixtures/spine-compile.native` (`edition "1-draft"`) with `call` `{"function": "seven", "arguments": []}` has exit code 0 and an outcome carrying no refusal envelope and one result document whose `format` is `spine-run-result/1`, whose `source` names the request's two labels and authored path, whose `function` is `seven`, and whose `outcome` is `{"kind": "completed", "value": {"kind": "integer", "decimal": "7"}}`. | Test |
+| FR-100-AC-1 | A native-run/1 request selecting `tests/fixtures/spine-compile.native` (`edition "1-draft"`) with `call` `{"function": "seven", "arguments": []}` has exit code 0 and an outcome carrying no refusal envelope and one result document whose `format` is `spine-run-result/1`, whose `source` names the request's two labels and authored path, whose `function` is `seven`, and whose `outcome` is `{"kind": "completed", "value": {"integer": "7"}}`. | Test |
 | FR-100-AC-2 | A program declaring `edition "0-draft"`, one declaring `edition "0-draft"` whose request carries `call` and `libraries`, and one declaring `edition "7-draft"` each refuse `unknown_edition` at stage `profile`, exit 20, no result document, with a `message` naming the file and the edition. A program with no header refuses `invalid_syntax` at stage `source`, exit 20, no result document. | Test |
 | FR-100-AC-3 | A `1-draft` function-run request carrying each forbidden member refuses `invalid-request` at stage `request`, exit 20, no result document, before model or library reads; a program `extraction` member with no feature refuses `invalid-request`, while the same `call` request in a build with `quire-extraction` refuses `extraction-requires-run`. A feature-enabled FR-031 clause-run request with one `clauses` binding is admitted to extraction; no-feature, package-bearing, missing-clause and duplicate-clause variants refuse as FR-031-AC-6 specifies. A request carrying neither `call` nor the FR-031 clause-run form refuses `invalid-request`. Values in `call.accounting` of `18446744073709551616`, `-1` or `1.5`, and a legacy `work_units` member directly in `call`, each refuse the same way. A `1-draft` request whose `libraries` supplies an imported library and whose `models` supplies a selected domain package runs successfully. | Test (TC-450, TC-109) |
-| FR-100-AC-4 | For a unit declaring `lt(a: Int[0, 9], b: Int[0, 9]): Boolean { a < b }`, `flag(b: Boolean): Boolean { b }`, `id(x: Int[0, 9]): Int[0, 9] { x }` and `px(p: Point): Digit`: `lt` with `b = 3` given before `a = 5` completes `false`, exit 0; `flag(1)` completes `true`; `id(4)` completes integer `"4"`. `flag(2)`, `id(12)` and `px(1)` each refuse `invalid_runtime_input` at stage `call`, exit 20, no result document, with `details` `{"position": 0}`. An argument naming `y`, `x` bound twice, and no argument each refuse `invalid_runtime_input` at stage `call`, with `details` `{"parameter": "y"}`, `{"parameter": "x"}` and `{"parameter": "x"}`. A `value` of `true`, `"7"`, `1.5` or `9223372036854775808` refuses `invalid-request` at stage `request`, exit 20. | Test |
-| FR-100-AC-5 | `function` `nope`, `module.seven`, `""`, `seven.`, and `7x` each refuse `missing_declaration` at stage `call`, exit 20, no result document, with `details` `{"function": <that string>}`. A function whose declared result is a record refuses `unsupported_construct` at stage `call`, exit 21, before any call. A `1-draft` source with a syntax error refuses at stage `source` (`invalid_syntax`), and one declaring `inv(x: Int[0, 9]): Boolean { 1 / x > 0 }` refuses at stage `check` with `ill_typed` (integer `/` with no `Rational` expected type); each has exit code 20 and no result document (FR-027-AC-8). | Test |
+| FR-100-AC-4 | For a unit declaring `lt(a: Int[0, 9], b: Int[0, 9]): Boolean { a < b }`, `flag(b: Boolean): Boolean { b }`, `id(x: Int[0, 9]): Int[0, 9] { x }` and `px(p: Point): Digit`: `lt` with `b = 3` given before `a = 5` completes `{"boolean": false}`, exit 0; `flag(1)` completes `{"boolean": true}` and `id(4)` completes `{"integer": "4"}`. `flag(2)` and `id(12)` each refuse `invalid_runtime_input`/`invalid-value`, and `px(1)` `invalid_runtime_input`/`wrong-value-kind`, at stage `call`, exit 20, no result document, with `details` `{"position": 0, "path": ""}`. `flag` with `{"boolean": false}` completes `{"boolean": false}`, and `px` with the record `{"record": {"type": "Point", "fields": {"x": {"integer": "3"}, "y": {"integer": "4"}}}}` completes `{"integer": "3"}`. An argument naming `y`, `x` bound twice, and no argument each refuse `invalid_runtime_input` at stage `call`, with `details` `{"parameter": "y"}`, `{"parameter": "x"}` and `{"parameter": "x"}`. A `value` of `true`, `"7"`, `1.5` or `9223372036854775808` refuses `invalid-request` at stage `request`, exit 20, naming `/call/arguments/0/value`. | Test |
+| FR-100-AC-5 | `function` `nope`, `module.seven`, `""`, `seven.`, and `7x` each refuse `missing_declaration` at stage `call`, exit 20, no result document, with `details` `{"function": <that string>}`. `corner`, whose declared result is the record `Point`, called with the AC-4 record completes with that record in FR-650's record form, exit 0. A function whose declared result type has no FSpec FR-181 form refuses `unknown_required_feature`/`unsupported-feature` at stage `call`, exit 21, before any call, with a non-null `cause` and `details` `{"function": <the function string>}` (FR-650-AC-6). A `1-draft` source with a syntax error refuses at stage `source` (`invalid_syntax`), and one declaring `inv(x: Int[0, 9]): Boolean { 1 / x > 0 }` refuses at stage `check` with `ill_typed` (integer `/` with no `Rational` expected type); each has exit code 20 and no result document (FR-027-AC-8). | Test |
 | FR-100-AC-6 | `seven` with `call.accounting` `{"work_units": 0}` returns a result document whose outcome is `{"kind": "incomplete", "limit": "work_units"}`, exit 22. | Test |
 | FR-100-AC-7 | `fsl_replay::spine::run` called directly over each AC-1, AC-4, AC-5 and AC-6 input returns the same outcome category, value, code, reason, counter, and parameter name or position `command`'s result document or refusal envelope carries for it. The root crate names `fsl-eval` in no dependency table (TC-390). | Test |
 | FR-100-AC-8 | No public item of `fsl_replay::spine`, and no `fsl_replay` re-export, names a `fsl_eval` path; a `pub use` of a `fsl_eval` item from `fsl_replay`, or a `fsl_eval` type in `spine::run`'s signature, fails the check. | Test |
 | FR-100-AC-9 | The outcome mapping converts a constructed `Outcome::Completed` of each value kind, `Outcome::Refused` of each of the fourteen kernel refusals, `Outcome::Undefined` of each of the five kernel reasons, `Outcome::Incomplete`, `FamilyResult::Refused` with and without an FR-096 key-table row, `FamilyResult::Undefined` of each family reason, and a `CallFailure::Fault` into the `outcome` member and exit status the mapping tables state: each of the thirteen kernel refusals other than `CheckedInvariant` renders its record's code, cause, fields (JSON strings) and locus, as the kernel-record table states, exit 20; a family cause with a record renders the same members; a family cause without a record renders its `catalog_code()` with no `fields`, exiting by that code (`TypeMismatch`, `ill_typed`, exits 20); and `CheckedInvariant` and `CallFailure::Fault` are `runtime_invariant` command errors with their stage and invariant in `details`, at the internal-failure exit status. | Test |
 | FR-100-AC-10 | With `type Pos = Int[1, 9]` checked under `CheckMode::Kernel`, S6a evaluation of `sum<Pos>(x in q: x)` for an empty `q` of `Sequence<Int[1, 9]>[0, 2]` returns `Outcome::Undefined(Undefined::SumOutOfDomain)` located at the `sum` node, and the outcome mapping renders it `{"kind": "undefined", "reason": "sum-out-of-domain"}`, exit 10. The same `sum` for `q` holding `4` completes with `4`. | Test |
-| FR-100-AC-11 | Every exit status `run` returns equals FR-285's exit code of the outcome's O-16 category: FR-100-AC-10's `sum-out-of-domain` outcome and a `FamilyResult::Undefined` with reason `precondition-false` each write outcome kind `undefined` and exit 10; FR-100-AC-4's `invalid_runtime_input` refusals exit 20; FR-100-AC-5's record-result function exits 21; FR-100-AC-6 exits 22; a `CallFailure::Fault` exits 30. The `execute` operation (FR-279) over each of these inputs returns an outcome whose FR-285 exit code equals the command's. | Test |
+| FR-100-AC-11 | Every exit status `run` returns equals FR-285's exit code of the outcome's O-16 category: FR-100-AC-10's `sum-out-of-domain` outcome and a `FamilyResult::Undefined` with reason `precondition-false` each write outcome kind `undefined` and exit 10; FR-100-AC-4's `invalid_runtime_input` refusals exit 20; FR-650-AC-6's unsupported result type exits 21; FR-100-AC-6 exits 22; a `CallFailure::Fault` exits 30. The `execute` operation (FR-279) over each of these inputs returns an outcome whose FR-285 exit code equals the command's. | Test |
 | FR-100-AC-12 | `fsl_replay::spine::run` over FR-100-AC-1's `seven`, with a `Cancel` that trips during the run and not before it, returns `RunRefusal::Cancelled` carrying the handle's cause, category incomplete, exit 22, and never `RunRefusal::Fault`: tripped with `Requested` at the last front-end charge (before S6a starts) and tripped with `Deadline` at the first S6a charge (inside `CheckedPackage::call`), each gives `Cancelled` with that cause. `OutcomeDocument::from_run` over each writes `category` incomplete, `last_stage` `null` and one `cancelled` diagnostic whose cause is `requested` and `deadline` respectively. | Test |
 | FR-100-AC-13 | A `1-draft` call's optional closed `accounting` object accepts any subset of the ten `filament.value.accounting/v1` counter names with values from 0 to `u64::MAX`; omitted counters use the published defaults, and every supplied counter reaches evaluation unchanged. A direct `work_units` member of `call` refuses `invalid-request` at stage `request`, exit 20, no result document. | Test (TC-450, TC-921) |
 | FR-100-AC-14 | TC-792's exact source-compiled Value lookup with real admitted Population/Reference inputs reaches S6a through `spine::run`; a reference resolving in the object world but absent from the selected population produces the actual enclosing `FamilyResult::Refused`, StateModel `absent-key` cause, refusal category and exit 20, with the owning fields and source location. Compile/select/admit/unsupported-result failures do not satisfy this criterion. | Test |
@@ -653,7 +685,8 @@ session's frame stack (FR-262), which already holds one frame per open call.
 | FR-100-AC-17 | Malformed identity bytes rejected by the actual constructor/reader never become supplied typed references. A well-formed real object absent only from the query population reaches the AC-14 lookup refusal; an object absent from the complete object world produces dangling-reference admission instead. An unresolved-reference context cannot turn the latter into AC-14. | Test |
 | FR-100-AC-18 | The scalar inputs, values, refusals, category/exit mapping and internal-fault oracles in AC-1 through AC-12 remain equal after adapting callers to the shared Value field and explicit context. All ten actual accounting limits reach evaluation unchanged. Requested and Deadline stops remain distinct before and during S6a; applicable pre-call denial has zero evaluation consumption. | Test |
 | FR-100-AC-19 | Public signatures use the carriers in Typed public call and no fsl_eval path. The source, binding and object context are admitted through their actual owner APIs, with no copied/trusted substitute model view or second engine. The driver executes TC-792 through this reviewed public boundary and retains the absent/present and invalid-admission distinctions. | Test (TC-792) |
-| FR-100-AC-20 | Calling `function d using v(n: Int[0, 9]): Integer pure decreases(n) { if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }` through S6a: `d(1)` returns `Undefined` at the `Location` of `10 mod (n - 1)` with `frame_depth` 0; `d(2)` and `d(3)` return `Undefined` at that same `Location` with `frame_depth` 1 and 2; `d(0)` completes `0` with `frame_depth` 0; and `function e using v(n: Int[0, 9]): Integer pure { d(n) }` called with `1` returns `Undefined` at that `Location` with `frame_depth` 1. | Test (TC-444) |
+| FR-100-AC-20 | Under `CheckMode::Linked`, `function d using v(n: Int[0, 9]): Integer pure decreases(n) { if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }` refuses `undefined_expression`/`unproved-nonzero` at `10 mod (n - 1)`, as its only refusal (the range of the divisor `n - 1` contains zero, and no exact nonzero guard excludes it), so no package is linked and `run` never calls it. Checked under `CheckMode::Kernel`, which records no nonzero obligation, and called through S6a: `d(1)` returns `Undefined` at the `Location` of `10 mod (n - 1)` with `frame_depth` 0; `d(2)` and `d(3)` return `Undefined` at that same `Location` with `frame_depth` 1 and 2; `d(0)` completes `0` with `frame_depth` 0; and `function e using v(n: Int[0, 9]): Integer pure { d(n) }` called with `1` returns `Undefined` at that `Location` with `frame_depth` 1. | Test (TC-444) |
+| FR-100-AC-21 | A completed function run's `spine-run-result/1` document carries no `axes` member. | Test (TC-1582) |
 
 The typed-call acceptance criteria supplement all existing scalar oracles;
 FR-100-AC-13 is the QSL-656 accounting-object criterion.

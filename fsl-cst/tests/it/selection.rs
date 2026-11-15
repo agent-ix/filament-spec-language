@@ -190,3 +190,97 @@ fn token_offset(import: &str, token: &str) -> Option<usize> {
     let line = unit.find(import)?;
     import.find(token).map(|at| line + at)
 }
+
+/// Parses `text` as a unit of the selection tests.
+fn parse_unit(id: &str, text: &str) -> fsl_cst::ParsedSource {
+    parse(
+        SourceIdentity {
+            authority: "test".into(),
+            identity: format!("test:{id}"),
+        },
+        format!("{id}.native"),
+        text.as_bytes(),
+        Limits::default(),
+    )
+    .expect("S1 reads the unit")
+}
+
+/// FSpec FR-500-AC-1: `1-draft` is the only edition; any other edition string,
+/// `0-draft` included, refuses `unknown_edition`/`unsupported-selection` at the
+/// edition string literal, with no other diagnostic.
+#[trace("FSpec-TC-1000", "FSpec-FR-500-AC-1")]
+#[test]
+fn an_edition_other_than_1_draft_refuses_unknown_edition_at_its_literal() {
+    let body = "\nfunction f(): Boolean pure { true }";
+    let admitted = parse_unit(
+        "edition-1-draft",
+        &format!("language \"ix:native\" edition \"1-draft\";{body}"),
+    );
+    assert!(admitted.is_admissible(), "{:?}", admitted.diagnostics());
+    for (edition, end) in [("0-draft", 38), ("2-draft", 38), ("", 31)] {
+        let text = format!("language \"ix:native\" edition \"{edition}\";{body}");
+        let parsed = parse_unit("edition-other", &text);
+        let diagnostics = parsed.diagnostics();
+        assert_eq!(diagnostics.len(), 1, "{edition}: {diagnostics:?}");
+        assert_eq!(
+            diagnostics[0].code,
+            fsl_cst::CompleteCode::UnknownEdition,
+            "{edition}"
+        );
+        assert_eq!(
+            diagnostics[0].cause,
+            fsl_cst::CompleteCause::UnsupportedSelection,
+            "{edition}"
+        );
+        let span = diagnostics[0].byte_span().expect("located");
+        assert_eq!((span.start, span.end), (29, end), "{edition}");
+    }
+}
+
+/// FSpec FR-500-AC-2: a unit may declare no `profile`; it parses with no
+/// diagnostic and no profile selection.
+#[trace("FSpec-TC-1001", "FSpec-FR-500-AC-2")]
+#[test]
+fn a_unit_with_no_profile_parses() {
+    let text = "language \"ix:native\" edition \"1-draft\";\nfunction f(): Boolean pure { true }";
+    let parsed = parse_unit("no-profile", text);
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    assert!(parsed.diagnostics().is_empty());
+    assert!(!parsed
+        .cst()
+        .nodes()
+        .iter()
+        .any(|node| node.production() == fsl_cst::Production::Profile));
+}
+
+/// FSpec FR-500-AC-4: a `function` and a `predicate` may omit `using`; a state
+/// clause may not, and refuses `invalid_syntax`/`unexpected-token` at `on`.
+#[trace("FSpec-TC-1001", "FSpec-FR-500-AC-4")]
+#[test]
+fn a_function_or_predicate_may_omit_using_and_a_state_clause_may_not() {
+    let unit = |declaration: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declaration}"
+        )
+    };
+    for declaration in [
+        "function g(x: Integer): Integer pure { x + 1 }",
+        "predicate p(x: Integer): Boolean { x > 0 }",
+    ] {
+        let parsed = parse_unit("no-using", &unit(declaration));
+        assert!(
+            parsed.is_admissible(),
+            "{declaration}: {:?}",
+            parsed.diagnostics()
+        );
+    }
+    let text = unit("invariant I on M::T at current { true }");
+    let parsed = parse_unit("invariant-no-using", &text);
+    let first = parsed.diagnostics().first().expect("refused");
+    assert_eq!(first.code, fsl_cst::CompleteCode::InvalidSyntax);
+    assert_eq!(first.cause, fsl_cst::CompleteCause::UnexpectedToken);
+    assert_eq!(
+        first.byte_span().expect("located").start,
+        text.find(" on ").expect("the on") + 1
+    );
+}

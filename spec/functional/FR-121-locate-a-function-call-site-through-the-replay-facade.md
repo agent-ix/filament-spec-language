@@ -468,6 +468,7 @@ site from text.
 
 ## Dependencies
 
+- Consumer facts (FSpec FR-661, bound in FR-761): `CF-CG-01` (`fsl_replay::call_site`), `CF-CG-02` (`ImportedFunctionSite::library`, `package` and `function`) and `CF-CG-03` (`FunctionSite::obligation_identity`, `OperationSite::obligation_identity`).
 - [FR-027](FR-027-export-compiled-native-package.md): the spine compile
   `call_site` runs.
 - [FR-088](FR-088-clause-name-and-type-identity.md): no identity treats a

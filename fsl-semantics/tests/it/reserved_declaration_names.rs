@@ -42,7 +42,7 @@ fn checks(profile: &str, body: &str) {
 
 const V: &str = "profile v = \"filament.value.complete/v1\";\n";
 
-#[trace("TC-113", "FR-035-AC-7")]
+#[trace("TC-113", "FR-035-AC-7", "FSpec-TC-180", "FSpec-FR-339-AC-5")]
 #[test]
 fn a_function_named_by_the_spelling_is_declared_and_called() {
     for w in SPELLINGS {

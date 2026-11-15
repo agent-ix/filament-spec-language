@@ -149,7 +149,7 @@ fn modelled_with(operations: Vec<serde_json::Value>, body: &str) -> Fixture {
 }
 
 /// `c.level` over `Counter`, `on origin`.
-fn counter(profile: &str, body: &str) -> Fixture {
+pub(crate) fn counter(profile: &str, body: &str) -> Fixture {
     fixture(profile, "c: Counter", "on origin", body)
 }
 
@@ -160,13 +160,13 @@ fn config(body: &str) -> Fixture {
 
 /// One observation: the values the atoms of these tests read.
 #[derive(Clone, Copy)]
-struct Observation {
+pub(crate) struct Observation {
     c: i64,
     a: i64,
     b: i64,
 }
 
-fn counters(values: &[i64]) -> Vec<Observation> {
+pub(crate) fn counters(values: &[i64]) -> Vec<Observation> {
     values
         .iter()
         .map(|c| Observation { c: *c, a: 0, b: 0 })
@@ -368,7 +368,7 @@ fn run(
     (outcome, work(&meter), letters.reads)
 }
 
-fn outcome(
+pub(crate) fn outcome(
     fixture: &Fixture,
     trace: TemporalTrace,
     observations: Vec<Observation>,
@@ -376,11 +376,11 @@ fn outcome(
     run(fixture, trace, observations, SCALAR_LIMITS_UNLIMITED).0
 }
 
-fn finite(len: u64) -> TemporalTrace {
+pub(crate) fn finite(len: u64) -> TemporalTrace {
     TemporalTrace::Finite { len }
 }
 
-fn violated(index: u64) -> TemporalOutcome {
+pub(crate) fn violated(index: u64) -> TemporalOutcome {
     TemporalOutcome::Violated {
         at: TemporalPosition::new(index),
     }
@@ -925,7 +925,7 @@ fn a_fairness_set_over_a_supplied_prefix_is_a_missing_premise_and_evaluates_noth
     assert_eq!(prefix("always holds(c.level <= 1)"), violated(0));
 }
 
-fn lasso(prefix: u64, loop_len: u64) -> TemporalTrace {
+pub(crate) fn lasso(prefix: u64, loop_len: u64) -> TemporalTrace {
     TemporalTrace::Lasso { prefix, loop_len }
 }
 

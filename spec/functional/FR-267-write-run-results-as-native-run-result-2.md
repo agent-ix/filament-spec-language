@@ -35,6 +35,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-641
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-645
+    type: references
 ---
 # FR-267: Write and read run results as native-run-result/2
 
@@ -81,7 +85,12 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
   report or command-error wire; it SHALL NOT encode a Reference completion
   as a Boolean claim's truth, add a Population binding to `/2`, or derive
   admission from successful result decoding. Function outcomes use
-  FR-100's Reference form and the existing FR-286 outcome route.
+  FR-650's run value form and the existing FR-286 outcome route.
+- In an FR-651 `items` run, each item refused before evaluation SHALL carry
+  this command-error envelope as its `result`, and each clause-run item its
+  `/2` clause-run document; the `native-run-items/1` document that lists
+  them is FR-651's, and a refusal of the whole request remains one
+  command-error envelope.
 - The library serializer of an FR-109 `ClauseRunReport` SHALL write every
   clause-run result document with `format` `native-run-result/2`.
 - From the change that lands FR-100's clause runner (FR-312's reader plus `run_clause`), the `run` command SHALL return every command-error envelope
@@ -210,12 +219,11 @@ FSpec FR-352 requires of an evaluate result; no row writes a `refusal`
 member at stage `evaluate`. The `basis` of each row is FR-266's Temporal
 row.
 
-FSpec FR-352 currently admits ten of these kinds and gives the `pending`
-row the category `inconclusive`. The `pending-window`, `pending-next-event`,
-`indeterminate`, `activation-incomplete`, `progress-limit-reached` and
-`progress-contradicted` rows, and the categories `pending` and
-`indeterminate`, are FSL's; QSL-1610 reconciles FSpec FR-352 with them.
-Until it lands, an FSpec FR-352 reader refuses those documents.
+FSpec FR-352 registers the same sixteen kinds with the same members,
+categories, bases and outcomes, the categories `pending` and `indeterminate`
+included, so a document this writer produces reads under an FSpec FR-352
+strict reader, and a kind outside the sixteen is unregistered on both sides
+and refused.
 
 | `kind` | Evaluator result (FR-330) | Members beside `kind` | `category`, `truth`, `basis` | `outcome` |
 | --- | --- | --- | --- | --- |
@@ -347,6 +355,20 @@ Until it lands, an FSpec FR-352 reader refuses those documents.
   restores it as absent. The reader SHALL
   refuse an `undefined` row whose reason is no kernel or family undefined
   reason, naming `disposition.outcome.reason`.
+
+### Progress ledger and trace refusal fields
+
+A clause-run result over a `progressed` or `timestamped` trace SHALL carry a
+top-level `ledger` member holding the ledger the report returns, in FR-641's
+`filament.progress-ledger/1` form (FSpec FR-352 "Progress ledger"): the updated
+ledger on acceptance, the supplied ledger unchanged on a refusal or a limit stop,
+and no member when the request supplied none and the run was refused. Every other
+result omits it. The strict reader SHALL restore it without loss and SHALL refuse
+a `ledger` on any other result, naming `ledger`.
+
+A trace refusal (FR-645) SHALL write its `fields` (`reason`, `profile`,
+`expected`, `supplied`, `position`, `request_pointer`, each where assigned) and
+its `message` in the refusal record, and the reader SHALL restore them.
 
 ### Wire member cross-check
 
@@ -494,6 +516,14 @@ condition is false; the reader refuses `null` or a default in its place.
   document or unsupported format before consumer binding; it adds no
   compatibility reader or inferred wire members.
 
+## Outcome axes
+
+Every clause-run result document SHALL carry FR-622's `axes` object, whose
+`activation`, `execution`, `truth` and `settlement` members are the FR-516
+result's four fields of the assessed instance in FSpec FR-521's spelling. The
+document's category is unchanged by them. The category labels and temporal
+disposition kinds the document carries are the ones FSpec FR-352 registers.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -517,6 +547,9 @@ condition is false; the reader refuses `null` or a default in its place.
 | FR-267-AC-17 | A clause-run report over an extracted Markdown clause body is written with a top-level `extraction` member holding exactly FSpec FR-352's `original`, `body`, `binding`, `outcome` and `map` members, plus `original_regions` for a refusal whose locus names a body span, and reads back to an equal record; a report over a unit given as bytes writes no `extraction`; an `extraction` with an unknown top-level member `source`, with `map` missing, with `binding` `null`, with a numeric `body.identity`, and with `map.segments` `[]` each refuse naming `extraction` and the member (FSpec FR-352-AC-13). | Test (TC-109) |
 | FR-267-AC-18 | Each finite-window report writes its row and reads back to an equal verdict: FR-501-AC-4's `Window` run (`eventually[0,5] holds(c.value > 0)` over stamps 0, 2, 5 with `c.value` 0, 2, 0, watermark 5, complete through 5, position 1's valuation absent) settles `TemporalVerdict::Indeterminate` at position 0 with reason `MissingValuation` (position 1, atom `holds(c.value > 0)`) and writes category `indeterminate`, `basis` `unavailable`, no `truth`, no `outcome` and `temporal` `{"kind": "indeterminate", "position": 0, "reason": {"kind": "missing-valuation", "position": 1, "atom": "holds(c.value > 0)"}}`, while the report's exit stays 11 (FR-285-AC-7); the same run at watermark 3 settles `PendingWindow` (position 0, deadline 5) and writes `pending-window` with category `pending` and `basis` `unsettled`; `ActivationIncomplete` writes `activation-incomplete` with its guard location; `ProgressLimitReached` writes `progress-limit-reached` with `limit` `node count` and `setting` `progress.covered_positions`; FR-502-AC-1's watermark contradiction writes `progress-contradicted` with `dimension` `watermark`, `retained` `{"kind": "watermark", "watermark": 100}` and `asserted` `{"kind": "watermark", "watermark": 60}`. Independently setting the `indeterminate` document's category to `undefined`, dropping its `reason`, adding an unknown `reason` member, setting the `pending-window` document's `basis` to `unavailable`, setting the `progress-limit-reached` document's `setting` to another name, and changing a `progress-contradicted` outcome field each refuse with a located wire diagnostic naming the member. | Test (TC-1160) |
 | FR-267-AC-19 | Writing FR-330-AC-12's `forall` violation report and reading it back restores an equal `temporal` verdict and `counterexample` and restores `decisive` as absent; the written `temporal` member holds no `decisive` and the reader refuses a `decisive` member inside it, naming the member. | Test (TC-742) |
+| FR-267-AC-20 | Each of the six rows `pending-window`, `pending-next-event`, `indeterminate`, `activation-incomplete`, `progress-limit-reached` and `progress-contradicted`, and the `pending` row, is written with exactly the members, `category`, `basis` and `outcome` of its FSpec FR-352 row (FSpec FR-352-AC-16): `pending-window` at position 0 with deadline 5, `pending-next-event` at position 3 and `pending` with category `pending` and basis `unsettled`, `indeterminate` with category `indeterminate`, `activation-incomplete` and `progress-limit-reached` with category `incomplete` and no `outcome`, and the watermark `progress-contradicted` with category `refusal`. The reader refuses a `temporal` whose `kind` is outside the sixteen (`pending-forever`), naming `disposition.temporal.kind` (FSpec FR-352-AC-17). | Test (TC-1980) |
+| FR-267-AC-21 | A `timestamped` run's result carries `ledger` in `filament.progress-ledger/1` form and reads back equal; a `finite` run's result with a `ledger` member added is refused naming `ledger`; FR-645-AC-1's refusal writes `reason`, `request_pointer` and `message` and reads them back. | Test (TC-1663) |
+| FR-267-AC-22 | A clause-run result document carries `axes` equal to the FR-516 result's four fields, and two runs differing only in scope closure differ only in `axes.settlement`. | Test (TC-1582) |
 
 ## Dependencies
 

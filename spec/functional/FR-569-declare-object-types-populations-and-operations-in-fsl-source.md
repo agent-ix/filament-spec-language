@@ -3,6 +3,10 @@ id: FR-569
 title: "Declare object types, populations and operations in FSL source"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-specification/FR-610
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-710
+    type: traces_to
   - target: ix://agent-ix/filament-spec-language/US-001
     type: implements
   - target: ix://agent-ix/filament-spec-language/US-012
@@ -68,18 +72,20 @@ operations take the unit's existing `pre`, `post` and `body` declarations
 nodes are the source-declared anchors that FR-390 "Source-declared operation
 calls from the reader" evaluates.
 
-Today a unit names object types and operations only through a model alias
-(`M::Node`, `M::Node::step`); the grammar has no object or operation
-declaration (`fsl-cst/src/grammar.rs`, `source_and_types`), and FSpec's
-shared grammar states "A native declaration cannot declare a domain object"
-(`proposals/filament-v1/shared-grammar.md`). This requirement adds the
-declaration, and ADR-013 QC-30 carries the FSpec changes it needs.
+Without this declaration a unit names object types and operations only
+through a model alias (`M::Node`, `M::Node::step`) and needs a domain package
+document for every model it reasons about. FSpec FR-610 defines the
+declaration in the standard: its grammar (the shared grammar's `object-decl`
+productions), its member-type rule, its identity and, with FSpec FR-322
+"Source-declared object types", FR-464 and FR-465, its checked-package form.
+That adopts ADR-013 QC-30 items (1) to (3); item (4) is the IR reader work.
 
 Out of scope: a source object type declares no relationship, component,
 endpoint, interface feature, state machine or process; a source field
 declares no `subsets` or field redefinition; a source object type does not
 specialize a model-owned type and a model-owned type does not specialize a
-source-declared one. Each of those stays a domain package construct.
+source-declared one. Each of those stays a domain package construct, which an
+author declares in a model unit (FR-710) and selects with `model`.
 
 ## Inputs
 
@@ -284,8 +290,42 @@ The assembler and S3 SHALL refuse, each at the offending name:
 - a field, parameter or result type that does not resolve: the type
   refusals FR-091 gives any declaration.
 
-A field, parameter or result may have any type a record field may have,
-model-owned value types (`M::Total`) and `Reference<M::Order>` included.
+### Member types
+
+The assembler and S3 SHALL admit, for a field, operation parameter and
+operation result of a source object type, every type a source `record` field
+admits, with the same checks and the same refusals (FSpec FR-610 "Member
+types"):
+
+- `Boolean`, `Integer`, `Int[lo, hi]`, `Rational[..]`, `Decimal[..]`,
+  `Float32` and `Float64` (selecting the IEEE profile as a float-bearing
+  record field does, FR-397), and `Text[..]`;
+- `Quantity<u>` and `Quantity<u, C>` over a unit the unit declares or a
+  selected domain package declares;
+- `Clock`, under FR-230's rules for a clock field (a dense time source, resets
+  and constraints), read as a clock of the declaring object type;
+- `Option<T>`, `Reference<T>` over a source or model object type, and
+  `Sequence`, `Set`, `Bag` and `OrderedSet` of any admitted element type, a
+  nested collection and an `Option` of a collection included;
+- a source `enum`, `record`, `tuple`, `union` or `type` alias, and a
+  model-owned value, record, tuple or variant type (`M::Total`).
+
+The checked member type is the type the same form has as a record field: a
+source enum member reads as that enum, a record member as that record (FR-359
+for a child record at an ancestor-typed slot), a union member as that union
+(FR-316), and every value read through `self.f`, `deref(r).f`, frames,
+snapshots (FR-106) and the evaluator is the value the record field would
+hold. A many-valued field is its collection type, as for a record field. In
+the target emission the member's binding on the `model`/`object_type` node
+names the type node the record field's binding would name.
+
+A type that a source record field refuses SHALL be refused for an object
+member with the same code and cause at the type, and no other type is refused
+for an object member: `Population<T>[N]` as a field type, and a one-segment
+name that names a function, predicate, state clause or population, refuse
+exactly as they do in a record field. Admitting the record field rule exactly
+keeps one member-type rule in the language, so a type moved from a `record`
+into an `object` keeps its meaning and its refusals.
 
 ### Lowering and identity
 
@@ -484,7 +524,9 @@ owners and identity rows differ.
 ### Interim behavior until FSpec and IR adopt QC-30
 
 IR's strict reader assumes model ownership in many joins, so no part of the
-target emission is claimed admissible before ADR-013 QC-30 lands. Until FSpec
+target emission is claimed admissible before ADR-013 QC-30 lands. FSpec
+adopts items (1) to (3) in FSpec FR-610, its shared grammar, FR-322
+"Source-declared object types", FR-464 and FR-465. Until FSpec
 adopts QC-30 items (1) to (3) and IR adopts every change of item (4) other
 than the FR-352 witness kind:
 
@@ -521,6 +563,10 @@ lands, as FR-390 states.
 | FR-569-AC-9 | Passes now (source route). A snapshot of S naming population `orders` and objects of type `Order` and `Sub` admits. The same snapshot with an object of `orders` typed `ix://test/orders/Order` refuses `invalid_runtime_input`/`wrong-role-mapping`. An object of type `Shape` in population `shapes` refuses `invalid_runtime_input`/`abstract-instance`. S selects no domain package: a snapshot with no `model` member admits and one with a `model` member refuses `invalid_runtime_input`/`unknown-member` naming `model`. In variant S-M, S with `model M = "test/orders"` selecting D's package: a snapshot with `"population": "orders"`, `"type": "Order"` admits its objects as source `Order` objects, one with `"population": "ix://test/orders/orders"`, `"type": "ix://test/orders/Order"` admits them as model `M::Order` objects, `I` reads only the first, and one placing a `"type": "Order"` object in `ix://test/orders/orders` refuses `invalid_runtime_input`/`wrong-role-mapping`. | Test (TC-1408) |
 | FR-569-AC-10 | Passes now (source route). For each TC-1408 vector V1 to V6 (`I`, `Q`, a `post` on `bump` over a pre and post snapshot, `forall(o in orders : ...)`, `self.size()` dispatched to `Sub.size`, and the frame check of an invocation of `bump` that writes `total` of a second object), S and D give equal outcomes and equal ordered charge logs on the source route. | Test (TC-1408) |
 | FR-569-AC-11 | Passes now (interim). S4 over TC-1408 fixture S, over its variants S-R, S-P and S-M, and over TC-1407 fixture E-S refuses with exactly one refusal, `unsupported_construct`/`not-yet-implemented` naming `SourceObjectEmission` at the span of the unit's first `object` declaration (`object Order` in S and its variants, `object Node` in E-S), and writes no package, no `identities.json` and no handoff directory. The same units check, and the source route evaluates TC-1408 vectors V1 to V6 and TC-1407 vectors S1 to S3 over them. Fixture D and TC-1070's fixture E, which declare no source object type, emit as before | Test (TC-1408, TC-1407) |
+| FR-569-AC-12 | Source route. For each member type, an `object` field of that type, and an operation parameter or result of that type, assembles and checks exactly when a source `record` field of that type does, and `self.f` in a state clause on the object has the type the record field has: a source `enum` (`Tier { Gold, Standard }`), a source `record` (`Point { x: Integer; }`), a `union` with a payload member, a `tuple`, a `type` alias, `Decimal[0, 100; 2, 2; exact]`, `Rational[0, 9; 1, 4]`, `Float64` under the IEEE profile, `Quantity<m>` over a declared `dimension L; unit m : L = 1;`, `Option<Sequence<Integer>[0, 3]>` and `Sequence<Set<Integer>[0, 2]>[0, 2]`; the enum and record cases also hold as an operation parameter and as an operation result. None is refused `unknown_required_feature`/`unsupported-feature`. | Test (TC-1940) |
+| FR-569-AC-13 | Source route. A field typed `Population<Order>[3]`, and a field typed by the name of a source function, are each refused at the type with the code and cause a source record field of the same type gets, and the unit yields no checked package. | Test (TC-1940) |
+| FR-569-AC-14 | Waits on QC-30 (target emission). Over fixture S, S4 emits a package that FSL's I2 reader admits, holding `Order` as a `model`/`object_type` node with `declaration` `["Order"]` and the unit's `SourceOwner`. With `Order`'s owner replaced by a `ModelOwner` naming fixture D's package and IR node of `Order`, the I2 reader refuses `malformed_wire` at the node's `owner`; with its `declaration` removed and its `SourceOwner` kept, it refuses `malformed_wire` at the node's `owner`. A member type of AC-12 emits a binding naming the type node a record field of that type is bound to. | Test (TC-1941) |
+
 
 ## Dependencies
 
@@ -553,6 +599,11 @@ lands, as FR-390 states.
   dispatch), FR-322 (node identity, owners, field members, population
   references), FR-342 (operation anchors), FR-464 and FR-465 (protocol owner
   and role model).
+- FSpec FR-610: the standard's object declaration, member-type rule and
+  identity.
+- [FR-710](FR-710-author-a-domain-package-in-an-fsl-model-unit.md): the model
+  unit that declares the domain-package constructs a source object type does
+  not.
 - [ADR-013](../decisions/ADR-013-canonical-type-package-conversion-ownership.md)
   QC-30: the FSpec changes and the IR changes the target emission needs.
   Until they land, S4 gives the single `SourceObjectEmission` refusal above;

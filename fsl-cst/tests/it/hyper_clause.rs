@@ -148,3 +148,35 @@ fn an_indexed_read_is_the_base_of_a_power_and_a_power_is_not_indexed() {
         text.find('@').expect("the read")
     );
 }
+
+/// FSpec FR-501-AC-2 (parse half; FR-612 owns the S3 refusal): an indexed read
+/// in an ordinary temporal clause's `holds(...)` is recognized by the same
+/// expression grammar as in a hyper body, so S1 reports no syntax error and
+/// the refusal is the checker's named `unsupported_construct`.
+#[trace("FSpec-TC-1003", "FSpec-FR-501-AC-2")]
+#[test]
+fn an_indexed_read_in_an_ordinary_temporal_clause_parses_for_the_checker_refusal() {
+    let text = source("temporal T using inf over (v: M::V) on origin { always holds(v.l @ a) }");
+    let parsed = parse(&text);
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    assert_eq!(texts(&text, &parsed, Production::IndexedRead), ["v.l @ a"]);
+}
+
+/// FSpec FR-501-AC-8: an `align skip` list names at least one operation.
+#[trace("FSpec-TC-1008", "FSpec-FR-501-AC-8")]
+#[test]
+#[ignore = "QSL-2164: an empty align skip list is accepted; refusing it at the closing brace is not implemented yet"]
+fn an_empty_align_skip_list_is_a_syntax_error_at_its_closing_brace() {
+    let text = source(
+        "hyper NI using inf over behaviours (v: V::Vault)\n\
+         forall trace a of V forall trace b of V\n\
+         align skip {}\n\
+         { always holds(v.l @ a = v.l @ b) }",
+    );
+    let parsed = parse(&text);
+    assert!(!parsed.is_admissible());
+    assert_eq!(
+        parsed.diagnostics()[0].byte_span().expect("located").start,
+        text.find("{}").expect("the list") + 1
+    );
+}
