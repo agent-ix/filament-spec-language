@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The record and tuple operations the S6a evaluator and `qsl-jit` share:
+//! The record and tuple operations the S6a evaluator and `fsl-jit` share:
 //! the construction of a composite from its operand values, the faults of a
 //! refused construction, a field read, and the projection of a stored slot
 //! to the value a read gives.

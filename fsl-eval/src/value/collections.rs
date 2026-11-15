@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The collection operations the S6a evaluator and `qsl-jit` share: the
+//! The collection operations the S6a evaluator and `fsl-jit` share: the
 //! per-element charges, `size`, `contains`, `flatten`, the conversion between
 //! collection kinds, the one-binder queries and folds, `seq`, and the exact
 //! running sum.
