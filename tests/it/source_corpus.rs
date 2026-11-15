@@ -181,19 +181,22 @@ fn execute_request(request: &Path, expected: &Expectation) -> Result<Actual, Str
             match fsl_command::command::run(request) {
                 Ok(result) => {
                     let value = result.value.as_value().clone();
+                    let outcome = value.get("outcome");
                     Ok(Actual {
                         exit_code: result.exit_code,
                         category: None,
                         last_stage: None,
-                        code: value.get("code").and_then(string_member).map(str::to_owned),
-                        cause: value
-                            .get("cause")
+                        code: value
+                            .get("code")
+                            .or_else(|| outcome.and_then(|outcome| outcome.get("code")))
                             .and_then(string_member)
                             .map(str::to_owned),
-                        result: value
-                            .get("outcome")
-                            .and_then(|outcome| outcome.get("value"))
-                            .cloned(),
+                        cause: value
+                            .get("cause")
+                            .or_else(|| outcome.and_then(|outcome| outcome.get("cause")))
+                            .and_then(string_member)
+                            .map(str::to_owned),
+                        result: outcome.and_then(|outcome| outcome.get("value")).cloned(),
                     })
                 }
                 Err(error) => {
@@ -201,7 +204,7 @@ fn execute_request(request: &Path, expected: &Expectation) -> Result<Actual, Str
                         format!("{}: cannot encode refusal: {error}", request.display())
                     })?;
                     Ok(actual_error(
-                        error.category().as_str(),
+                        category_name(error.category().as_str()),
                         error.category().exit_code(),
                         &value,
                     ))
@@ -230,7 +233,7 @@ fn execute_request(request: &Path, expected: &Expectation) -> Result<Actual, Str
                         format!("{}: cannot encode refusal: {error}", request.display())
                     })?;
                     Ok(actual_error(
-                        error.category().as_str(),
+                        category_name(error.category().as_str()),
                         error.category().exit_code(),
                         &value,
                     ))
@@ -300,7 +303,7 @@ fn execute_compile(program: &Path, expected: &Expectation) -> Result<Actual, Str
                 format!("{}: cannot encode refusal: {error}", program.display())
             })?;
             Ok(actual_error(
-                error.category().as_str(),
+                category_name(error.category().as_str()),
                 error.category().exit_code(),
                 &value,
             ))
@@ -326,6 +329,14 @@ fn actual_error(category: &str, exit_code: u8, value: &Value) -> Actual {
             .and_then(string_member)
             .map(str::to_owned),
         result: None,
+    }
+}
+
+fn category_name(category: &str) -> &str {
+    if category == "internal-failure" {
+        "fault"
+    } else {
+        category
     }
 }
 
@@ -412,6 +423,7 @@ fn corpus_probability() {
 }
 
 const ACCEPTING_PROGRAM: &str = include_str!("../fixtures/spine-compile.native");
+const RUN_PROGRAM: &str = include_str!("../fixtures/spine-run.native");
 
 fn expectation(verb: &str, exit_code: u8) -> String {
     json!({"verb":verb,"exit_code":exit_code,"category":"success"}).to_string()
@@ -465,6 +477,48 @@ fn corpus_runner_detects_code_and_cause_mismatch() {
     );
     assert!(
         error.contains("cause expected=wrong_cause actual="),
+        "{error}"
+    );
+}
+
+#[test]
+fn corpus_runner_reads_code_from_run_outcome() {
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "run-refusal",
+        RUN_PROGRAM,
+        &json!({
+            "verb":"run",
+            "exit_code":20,
+            "code":"wrong_code",
+            "cause":"wrong_cause"
+        })
+        .to_string(),
+    );
+    let request = json!({
+        "format":"native-run/1",
+        "request":{
+            "models":[],
+            "program":{"source":{
+                "file":"run-refusal.native",
+                "authority":"agent-ix",
+                "identity":"test:corpus:run-refusal",
+                "document":"RunRefusal",
+                "formal_revision":1
+            }},
+            "call":{"function":"nope","arguments":[]}
+        }
+    });
+    std::fs::write(
+        directory.path().join("run-refusal.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+
+    let error = run_directory(directory.path()).unwrap_err();
+    assert!(
+        error.contains("code expected=wrong_code actual=missing_declaration"),
         "{error}"
     );
 }
