@@ -397,6 +397,24 @@ fn a_unit_or_clock_payload_refuses_as_unsupported_at_its_member() {
     assert_eq!(member_of(&found[0]), path("Variant.payloadType"));
 }
 
+/// TC-1860: a `Clock` payload is admitted as a clock payload (FSpec FR-154-AC-25,
+/// FSpec FR-322 "Clock positions and payloads"). When this lands, the `Clock`
+/// half of `a_unit_or_clock_payload_refuses_as_unsupported_at_its_member` is
+/// removed.
+#[trace("TC-1860", "FR-056-AC-25")]
+#[trace("FSpec-TC-1361", "FSpec-FR-154-AC-25")]
+#[trace("FSpec-TC-1361", "FSpec-FR-322-AC-399")]
+#[test]
+#[ignore = "QSL-2251: Clock union case payload admitted as a clock place not implemented yet"]
+fn a_clock_payload_is_admitted_as_a_clock_case() {
+    let mut document = payload_tiers();
+    document["types"][0]["variants"][1]["payloadType"] = json!("ix://filament/native/Clock");
+    let package = admitted(&document);
+    let cases = variants_of(&package, "Tier");
+    assert_eq!(cases[0].case, "Gold");
+    assert_eq!(cases[0].payload_type, Some(ValueTypeRef::Clock));
+}
+
 fn single_type(mutate: impl FnOnce(&mut Value)) -> Value {
     let mut document = tiers(&["Gold", "Standard"]);
     document["types"].as_array_mut().unwrap().truncate(1);

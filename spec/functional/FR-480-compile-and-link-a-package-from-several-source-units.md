@@ -264,6 +264,7 @@ the package means the same whichever order the two files are listed in.
 
 ## Dependencies
 
+- Consumer facts (FSpec FR-661, bound in FR-761): `CF-IR-02` (`fsl_package::read_import_view`). A dependency package of another checked-package document type than the pinned standard defines refuses before it is linked (FR-760).
 - FSpec FR-151 (linked source units, native declaration names, the
   one-body rule across units), FR-322 (`sources`, `SourceOwner`, graph
   order and structural `node_id`), FR-323 (package reference `sources`), FR-142

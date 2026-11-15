@@ -19,6 +19,12 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-329
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-641
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-642
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-645
+    type: references
   - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
 ---
@@ -83,7 +89,8 @@ order. Each sample SHALL conform to the declared record type and supplies the
 value of the clause's subject parameter at that position. This route takes no
 model population, object reference, or `over` object. It is separate from
 `run_clause`: the existing `ClauseRunRequest`, its `Temporal` selection, and
-its model-population admission rules remain unchanged.
+its model-population admission rules remain unchanged for snapshot
+positions.
 
 The route SHALL accept the event-position false-extension profile and a
 closed finite trace. A sample's zero-based index is its temporal position.
@@ -92,7 +99,10 @@ the declared record type, or a clause whose declared subject does not match
 the supplied subject, before evaluating the formula. A missing clause SHALL
 be reported at stage `select`. It SHALL reject a temporal clause with no
 trace subject and SHALL not turn a model object into a trace subject.
-Timestamped and lasso traces are outside this route's contract.
+This route takes a closed finite sequence only. A trace-subject clause over a
+lasso, progressed, timestamped or timed trace is run through `run_clause` with
+FR-641 record-sample positions, which bind the subject parameter per position
+as this route does.
 
 ## Outputs
 
@@ -136,10 +146,14 @@ position (FR-327); `decisive.position` may be later or earlier than it.
 
 - The entry SHALL take a `Timestamped` trace's cover from the trace input.
 - The entry SHALL treat a `Timestamped` input that omits the cover as `Exact`.
-- The entry SHALL accept `TraceInput::Timestamped` from a library caller only.
-- The request reader SHALL refuse a `timestamped` trace, because FR-312's request
-  file has no member that carries a stamp, an order key, a progress assertion or
-  a cover.
+- The entry SHALL accept every `TraceInput` variant from a library caller and
+  from FR-312's request reader alike: FR-641 gives each variant, record samples
+  and the progress ledger a request-file form, so a request file reaches every
+  evaluator this entry reaches.
+- The entry SHALL evaluate a clause under the timed profile once over
+  `TraceInput::Timed` (FR-642), with record-sample or snapshot positions.
+- Every refusal of a trace's shape or profile fit SHALL carry FR-645's
+  `reason`, `profile`, message and clause locus.
 - The entry SHALL compile and report
   compile results exactly as FR-109 states.
 - The entry SHALL resolve the name in the compiled package's temporal

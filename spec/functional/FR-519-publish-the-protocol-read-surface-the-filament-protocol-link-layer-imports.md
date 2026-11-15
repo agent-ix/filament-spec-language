@@ -253,5 +253,6 @@ admitted package; the others take the node, lock or source map they read.
 
 ## Dependencies
 
+- Consumer facts (FSpec FR-661, bound in FR-761): `CF-PR-01` (`protocol_view`), `CF-PR-03` (`channel_endpoints`), `CF-PR-05` (`await_anchor`), `CF-PR-06` (`choice_visibility`) and `CF-PR-07` (`attempts_maximum`) in `fsl_package::protocol_view`.
 - **Upstream:** FR-383, FR-384, FR-218, FR-449, FR-509, FR-511, FR-515, QSL-1270. FR-519-AC-7's tracker obligation is retired as a criterion; the link layer's ticket QSL-1549 carries it.
 - **Downstream:** filament-protocol `src/link/mod.rs` (QSL-1549).

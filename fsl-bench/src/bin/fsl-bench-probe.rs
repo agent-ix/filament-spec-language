@@ -12,18 +12,23 @@
 //! fsl-bench-probe check <chain|independent|self-recursive|text-cluster|deep-wide|deep-wide-chain> <N>   # one check, one process
 //! fsl-bench-probe eval <N>                  # one f0 call on an N-chain
 //! fsl-bench-probe model <types> <depth> <members> # record counts, outcomes
+//! fsl-bench-probe mc <axis> <sizes...>      # one model-check, reach, key or sample run
+//! fsl-bench-probe mc-marginal <axis> <small...> -- <large...>  # marginal bytes per state
 //! ```
 //!
 //! `check` measures one input per process because peak RSS is process-wide
 //! and monotone (`fsl_bench::rss`); run it once per size.
 
+use std::num::NonZeroUsize;
 use std::process::ExitCode;
 use std::time::Instant;
 
 use fsl_bench::check::{self, call_head, completed_with_five, linked_chain};
+use fsl_bench::mc::{self, AxisError, Work};
 use fsl_bench::model::{self, ModelShape};
 use fsl_bench::parse::{self, ParseOutcome};
 use fsl_bench::rss::peak_rss_kib;
+use fsl_eval::simulation::model::ModelSystem;
 use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::AdmissionOutcome;
@@ -34,7 +39,7 @@ const VOLUME_SIZES: [usize; 6] = [100, 500, 1_000, 2_000, 3_000, 4_000];
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: fsl-bench-probe parse | cst | check <chain|independent|self-recursive|text-cluster|deep-wide|deep-wide-chain> <N> | eval <N> | model <types> <depth> <members>"
+        "usage: fsl-bench-probe parse | cst | check <chain|independent|self-recursive|text-cluster|deep-wide|deep-wide-chain> <N> | eval <N> | model <types> <depth> <members> | mc <axis> <sizes...> | mc-marginal <axis> <sizes...> -- <sizes...>"
     );
     ExitCode::from(2)
 }
@@ -244,6 +249,153 @@ fn probe_parse_volume(functions: usize) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Build the world of `axis` at `sizes` and run it once; the run alone is
+/// timed. The `Work` and the seconds the run took.
+/// `#[string_edge]`: this CLI boundary selects a benchmark axis from its word.
+#[string_edge]
+fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
+    let at = |index: usize| {
+        sizes
+            .get(index)
+            .copied()
+            .ok_or_else(|| AxisError(format!("{axis}: missing size {index}")))
+    };
+    let timed = |run: &mut dyn FnMut() -> Result<Work, AxisError>| {
+        let started = Instant::now();
+        run().map(|work| (work, started.elapsed().as_secs_f64()))
+    };
+    let workers = |limit: usize| NonZeroUsize::new(limit).unwrap_or(NonZeroUsize::MIN);
+    match axis {
+        "state_graph" | "state_graph_symmetric" => {
+            let symmetric = axis == "state_graph_symmetric";
+            let world = mc::ring_state_graph(at(0)?, at(1)?, symmetric)?;
+            timed(&mut || mc::run_state_graph(&world, symmetric))
+        }
+        "safety" | "deadlock" => {
+            let world = mc::ring_safety(at(0)?, at(1)?)?;
+            timed(&mut || mc::run_safety(&world, axis == "deadlock").map(|(work, _)| work))
+        }
+        "liveness" => {
+            let world = mc::ring_liveness(at(0)?, at(1)?)?;
+            timed(&mut || mc::run_liveness(&world).map(|(work, _)| work))
+        }
+        "frame_candidates" => {
+            let world = mc::wide(at(0)?, at(1)?)?;
+            timed(&mut || mc::run_frame_candidates(&world))
+        }
+        "observation" => {
+            let world = mc::observation(at(0)?)?;
+            timed(&mut || mc::run_observation(&world))
+        }
+        "reach_1" | "reach_2" | "reach_4" | "reach_all" => {
+            let world = mc::protocol(at(0)?)?;
+            let limit = match axis {
+                "reach_1" => workers(1),
+                "reach_2" => workers(2),
+                "reach_4" => workers(4),
+                _ => std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
+            };
+            timed(&mut || mc::run_reach(&world, limit))
+        }
+        "encode" => {
+            let world = mc::keys(at(0)?, at(1)?)?;
+            let system =
+                ModelSystem::new(world.simulation()).map_err(|e| AxisError(format!("{e:?}")))?;
+            timed(&mut || mc::run_encode(&system))
+        }
+        "sample" => {
+            let epsilon = u32::try_from(at(0)?).map_err(|e| AxisError(e.to_string()))?;
+            let world = mc::service(epsilon)?;
+            timed(&mut || mc::run_sample(&world))
+        }
+        other => Err(AxisError(format!("unknown axis {other}"))),
+    }
+}
+
+/// The sizes after the axis name, up to a `--`, and those after it.
+/// `#[string_edge]`: this CLI boundary parses size words and the separator.
+#[string_edge]
+fn size_lists(arguments: &[String]) -> Result<(Vec<usize>, Vec<usize>), String> {
+    let mut halves = arguments.splitn(2, |word| word == "--");
+    let parse = |words: &[String]| -> Result<Vec<usize>, String> {
+        words
+            .iter()
+            .map(|word| size(Some(word)).ok_or_else(|| format!("not a size: {word:?}")))
+            .collect()
+    };
+    let first = halves.next().map_or(Ok(Vec::new()), parse)?;
+    let second = halves.next().map_or(Ok(Vec::new()), parse)?;
+    Ok((first, second))
+}
+
+/// `mc <axis> <sizes...>`: one run, one process: states/s, edges/s or
+/// samples/s, and peak RSS.
+fn probe_axis(axis: &str, sizes: &[usize]) -> ExitCode {
+    match run_axis(axis, sizes) {
+        Ok((work, seconds)) => {
+            println!(
+                "axis={axis} sizes={sizes:?} {} secs={seconds:.6} peak_rss_kib={}",
+                rates(&work, seconds),
+                rss()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `mc-marginal <axis> <small sizes...> -- <large sizes...>`: the small run
+/// then the large one in one process, so the peak is monotone, and the
+/// bytes the large run added per state it added.
+fn probe_marginal(axis: &str, arguments: &[String]) -> ExitCode {
+    let (small, large) = match size_lists(arguments) {
+        Ok(lists) => lists,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (Ok((first, _)), Some(before)) = (run_axis(axis, &small), peak_rss_kib()) else {
+        eprintln!("marginal: the small run or its peak RSS is unavailable");
+        return ExitCode::FAILURE;
+    };
+    let (Ok((second, _)), Some(after)) = (run_axis(axis, &large), peak_rss_kib()) else {
+        eprintln!("marginal: the large run or its peak RSS is unavailable");
+        return ExitCode::FAILURE;
+    };
+    if second.states <= first.states {
+        eprintln!(
+            "marginal: the large run reaches {} states, not more than the small run's {}",
+            second.states, first.states
+        );
+        return ExitCode::FAILURE;
+    }
+    let added = second.states.saturating_sub(first.states);
+    let bytes = after.saturating_sub(before).saturating_mul(1024);
+    let per_state = bytes
+        .checked_div(added)
+        .map_or_else(|| "undefined".to_owned(), |per| per.to_string());
+    println!("axis={axis} small={small:?} large={large:?} states_added={added} rss_added_bytes={bytes} marginal_bytes_per_state={per_state}");
+    ExitCode::SUCCESS
+}
+
+fn rates(work: &Work, seconds: f64) -> String {
+    let per = |count: u64| {
+        if seconds > 0.0 {
+            count as f64 / seconds
+        } else {
+            0.0
+        }
+    };
+    format!(
+        "states={} edges={} samples={} key_bytes={} states_per_s={:.1} edges_per_s={:.1} samples_per_s={:.1}",
+        work.states, work.edges, work.samples, work.key_bytes, per(work.states), per(work.edges), per(work.samples)
+    )
+}
+
 /// `#[string_edge]`: dispatches the probe's command-line subcommand words.
 #[string_edge]
 fn main() -> ExitCode {
@@ -278,6 +430,21 @@ fn main() -> ExitCode {
                 probe_model(ModelShape { types, depth }, members)
             }
             _ => usage(),
+        },
+        Some("mc") => match arguments.get(1) {
+            Some(axis) => match size_lists(&arguments[2..]) {
+                Ok((sizes, rest)) if rest.is_empty() => probe_axis(axis, &sizes),
+                Ok(_) => usage(),
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            },
+            None => usage(),
+        },
+        Some("mc-marginal") => match arguments.get(1) {
+            Some(axis) => probe_marginal(axis, &arguments[2..]),
+            None => usage(),
         },
         _ => usage(),
     }

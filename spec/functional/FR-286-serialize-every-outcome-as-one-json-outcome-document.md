@@ -82,20 +82,21 @@ the same document (FSpec FR-300-AC-3). The document's members are:
   no `package_id` (ADR-029 OP-1).
 - `result`: the evaluation result of an `execute` outcome, the outcome
   FR-100's `spine-run-result/1` member `outcome` carries for a completed,
-  undefined or incomplete call. It is `null` for every other operation, and
+  undefined or incomplete call. It is `null` for every other operation, except a
+  `parse` outcome whose S1 and S2 complete, which carries FR-663's `parsed`
+  report ([FR-663](FR-663-report-the-parsed-unit-and-the-locus-of-every-refusal.md)), and
   for an `execute` outcome that is refused (its refusal record is a
   diagnostic), cancelled or a fault. Otherwise it is exactly one of:
-  - `{"kind": "completed", "value": V}`, where `V` is FR-100's value
-    rendering: `{"kind": "boolean", "value": true|false}` or
-    `{"kind": "integer", "decimal": "<ASCII decimal>"}` (FR-038's integer
-    spelling), or the existing canonical Reference value
-    `{"kind":"reference","universe":U,"type":T,"object_identity":O}`.
-    For a Reference completion, `U` and `T` are the actual returned shared
+  - `{"kind": "completed", "value": V}`, where `V` is the completed value
+    in FR-650's run value form, the form FR-100's `spine-run-result/1`
+    writes: `{"boolean": true|false}`, `{"integer": "<ASCII decimal>"}`
+    (FR-038's integer spelling), the Reference value
+    `{"reference": {"universe": U, "type": T, "object_identity": O}}`, or
+    FR-650's form of every other kind. For a Reference completion, `U` and `T` are the actual returned shared
     reference's universe and most-specific effective type, each as 64
     lowercase hexadecimal characters; `O` is its exact nonempty UTF-8
     object identity, without normalization, reminting or substitution by an
-    input reference. This reuses the kernel value wire Reference form; it
-    carries neither object state nor a Population binding. A clause
+    input reference. It carries neither object state nor a Population binding. A clause
     evaluation still completes with its `Boolean` value.
   - `{"kind": "undefined", "reason": "<reason>"}`, `reason` spelled as
     FR-100's undefined tables spell it, such as `sum-out-of-domain` or
@@ -277,6 +278,14 @@ The outcome document's bytes.
   undefined reason or exhausted limit as the `result` member, and `result`
   `null` on every other document.
 
+### Analyze item members
+
+An `analyze` document also carries FR-621's `aggregate` member and FR-635's
+`registry` member, and each `analyze` item carries the members FR-621 lists
+(`request_index`, `claim_name`, `request`, `record`, `certificate`,
+`counterexample`, `replay`, `accounting`, `axes`) or, for a simulation item,
+FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -285,9 +294,9 @@ The outcome document's bytes.
 | FR-286-AC-2 | The `check` outcome of FR-100-AC-5's `inv` source serializes with `category` refusal and one diagnostic whose cause, catalog code `ill_typed`, `Locus` and message equal the `StageFailure`'s. | Test (TC-770) |
 | FR-286-AC-3 | An `analyze` outcome of three items serializes with three `items` entries in request order, each holding its terminal record and category. Serializing any outcome twice gives equal bytes. | Test (TC-770) |
 | FR-286-AC-4 | FR-281-AC-7's `analyze` outcome serializes its item with category violation and cause `undefined-evaluation`, and the document holds no `undefined` label; FR-283-AC-5's `monitor` outcome serializes the same way; FR-100-AC-10's `execute` outcome serializes with category undefined and the label `undefined`. | Test (TC-770) |
-| FR-286-AC-5 | The `execute` outcome of FR-100-AC-1's `seven` serializes with `category` success and `result` `{"kind": "completed", "value": {"kind": "integer", "decimal": "7"}}`; FR-100-AC-10's empty `sum` with `category` undefined and `result` `{"kind": "undefined", "reason": "sum-out-of-domain"}`; FR-100-AC-6's `seven` with `call.accounting` `{"work_units": 0}` with `category` incomplete and `result` `{"kind": "incomplete", "limit": {"kind": "work_units", "bound": "0", "counter": "1", "field": "work_units", "setting": "accounting.work_units"}}`. A `check` called with a `Cancel` already cancelled serializes with `category` incomplete, `last_stage` `null`, `items` `[]` and `result` `null`. | Test (TC-770) |
+| FR-286-AC-5 | The `execute` outcome of FR-100-AC-1's `seven` serializes with `category` success and `result` `{"kind": "completed", "value": {"integer": "7"}}`; FR-100-AC-10's empty `sum` with `category` undefined and `result` `{"kind": "undefined", "reason": "sum-out-of-domain"}`; FR-100-AC-6's `seven` with `call.accounting` `{"work_units": 0}` with `category` incomplete and `result` `{"kind": "incomplete", "limit": {"kind": "work_units", "bound": "0", "counter": "1", "field": "work_units", "setting": "accounting.work_units"}}`. A `check` called with a `Cancel` already cancelled serializes with `category` incomplete, `last_stage` `null`, `items` `[]` and `result` `null`. | Test (TC-770) |
 | FR-286-AC-6 | `OutcomeDocument::from_run` over a completed run holds the call's document and `artifacts` an empty array; over `run` refusing `ill_typed` source, `category` refusal, `last_stage` S3 and one `ill_typed` diagnostic; over an unknown function, `category` refusal at S6a with `missing_declaration`; over `run` with a cancelled handle, `category` incomplete, `last_stage` null and one `cancelled` diagnostic with cause `requested`; over an internal fault, internal failure with its catalog code; and a driver's `OutcomeDocument::new(Execute, None, Unsupported)` for an unbuilt engine holds one diagnostic whose code serializes as `unimplemented_capability` with cause `backend-not-supplied` and `backend` naming the engine, with `category` unsupported, `last_stage` `null`, and exits 21. | Test (TC-770) |
-| FR-286-AC-7 | TC-792's present lookup through the public spine run entry serializes through `OutcomeDocument::from_run` as one `filament-outcome/1` document with `operation` `execute`, category success, `artifacts` an empty array `[]` (as FR-286-AC-6 states for every completed run) and `result` `{"kind":"completed","value":{"kind":"reference","universe":U,"type":T,"object_identity":O}}`. All three components equal the actual returned shared Reference. A second source-compiled Reference-valued function returning a different admitted reference from its input serializes the returned reference, not the input. The existing Boolean/Integer completions remain unchanged; no Reference completion is emitted as a `/2` clause truth or a Population payload. The one compiled package artifact of the source the run compiles belongs to the compile outcome, whose package artifact is the `filament.checked-package/v2` bytes (FR-027 Outputs, FR-027-AC-5), and never to this execute document. | Test (TC-792) |
+| FR-286-AC-7 | TC-792's present lookup through the public spine run entry serializes through `OutcomeDocument::from_run` as one `filament-outcome/1` document with `operation` `execute`, category success, `artifacts` an empty array `[]` (as FR-286-AC-6 states for every completed run) and `result` `{"kind":"completed","value":{"reference":{"universe":U,"type":T,"object_identity":O}}}`. All three components equal the actual returned shared Reference. A second source-compiled Reference-valued function returning a different admitted reference from its input serializes the returned reference, not the input. The existing Boolean/Integer completions remain unchanged; no Reference completion is emitted as a `/2` clause truth or a Population payload. The one compiled package artifact of the source the run compiles belongs to the compile outcome, whose package artifact is the `filament.checked-package/v2` bytes (FR-027 Outputs, FR-027-AC-5), and never to this execute document. | Test (TC-792) |
 | FR-286-AC-8 | `OutcomeDocument::from_clause_runs` over one clause run of `always p` over a finite supplied trace that ends pending serializes to a document with operation `monitor`, `category` pending, exactly one item with `result` `pending`, `category` pending and `clause` naming the clause, `cause` null, no terminal record and no `undefined` label, and FR-285 maps the document to exit 0. | Test (TC-770) |
 | FR-286-AC-9 | `OutcomeDocument::from_clause_runs` over FR-501-AC-4's `Indeterminate` run serializes one item with `result` `indeterminate`, category indeterminate and FR-501's reason, and the document exits 11; over that run and a pending run it is category indeterminate; over those two and a `Completed(false)` run (item `refuted`, category violation) it is category violation, exit 10; over a `Completed(true)` run it holds the item `tested`, category success. Every item's category equals `ClauseRunReport::category()` and equals the label and exit FR-285-AC-10 reads. | Test (TC-770) |
 | FR-286-AC-10 | Over FR-283-AC-1's clause run `always p` violated at position 0, `from_clause_run` gives an item with `result` `refuted`, category violation, `clause`, `position` 0, a `counterexample` with a `prefix` of three identities, an empty `loop` (`[]`, the finite spelling of FR-330 and FSpec FR-364), `trace_position` 0, a `decisive` beside the counterexample with `position` 2, no `quantifier` and no `index`, `element` `false` and the empty `value_path`, `cause` null and a `witness` member exactly when the run's `ClauseRunReport::witness` holds a record (FR-266 gives this temporal run the basis `closed-scope` and no witness, so the item carries none). | Test (TC-770) |

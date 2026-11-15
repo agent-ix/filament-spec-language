@@ -1435,6 +1435,7 @@ mod tests {
     /// `function_owner`, an owner-less one decodes owner-less, and an owner
     /// without a `function` refuses at `/replay/function_owner`.
     #[trace("FR-098-AC-32", "TC-444")]
+    #[trace("FSpec-TC-1484", "FSpec-FR-323-AC-36", "FSpec-FR-323-AC-37")]
     #[test]
     fn a_function_target_round_trips_its_owner() {
         let function = QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap();

@@ -3,6 +3,8 @@ id: FR-195
 title: "Check exact-only forms and route exact evidence"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-specification/FR-641
+    type: references
   - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-024
@@ -89,7 +91,12 @@ the elapsed time of a timed subject is the subject's own, and FR-204 decides it.
   truth of a checked state predicate, which a constant does not have.
 - Under the infinite-trace profile, S3 SHALL refuse `unbounded-event`
   (FR-186) for every event that is not one of these three shapes.
-- S3 SHALL admit `expected accumulate R until holds(B) <= c` or `>= c`, with
+- These three shapes, `expected accumulate R until holds(B)` and, over a
+  timed subject, `expected elapsed until holds(B)` are the whole wording of an
+  unbounded exact claim (FSpec FR-641). There is no interval spelling of one:
+  `[eventually[0, *] holds(P)]` is refused `unbounded-event` under the
+  infinite-trace profile, and an interval-less or `[a, *]` operator under any
+  other profile is refused by that profile's operator admission (FR-186).- S3 SHALL admit `expected accumulate R until holds(B) <= c` or `>= c`, with
   `R` a reward of the model, as `ProbForm::ExpectedReward`.
 - The threshold `c` SHALL be a literal of the expectation's type, which is not
   `R`'s type because the expectation of an integer reward is not an integer:
@@ -163,7 +170,7 @@ written `rational(6, 5)` and a negative quantity cannot be written.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-195-AC-1 | §15.6's `Terminates` and `FairTerminates` check as `Reach{AtLeast(99/100), Eventually(p.done)}` under `Every`, the second with fairness `[strong flip]`; their obligation identities differ. `probability >= 0.95 [holds(not m.delivered) until holds(m.delivered)]` over `Link` checks as `Until`. `probability >= 0.9 [eventually eventually holds(p.done)]` is refused `not-state-predicate` located at the inner `eventually`, as are `[holds(p.done) until eventually holds(p.done)]` (at the second `eventually`), `[always not holds(p.done)]` (at `not holds(p.done)`) and `[eventually true]` (at `true`). `[eventually[0, 5] holds(p.done)]` under the infinite-trace profile is refused `unbounded-event`, and so is `[eventually holds(p.done)]` under a bounded profile. | Test (TC-630) |
+| FR-195-AC-1 | §15.6's `Terminates` and `FairTerminates` check as `Reach{AtLeast(99/100), Eventually(p.done)}` under `Every`, the second with fairness `[strong flip]`; their obligation identities differ. `probability >= 0.95 [holds(not m.delivered) until holds(m.delivered)]` over `Link` checks as `Until`. `probability >= 0.9 [eventually eventually holds(p.done)]` is refused `not-state-predicate` located at the inner `eventually`, as are `[holds(p.done) until eventually holds(p.done)]` (at the second `eventually`), `[always not holds(p.done)]` (at `not holds(p.done)`) and `[eventually true]` (at `true`). `[eventually[0, 5] holds(p.done)]` under the infinite-trace profile is refused `unbounded-event`, while `[eventually holds(p.done)]` under a bounded profile is refused `unsupported_construct`/`expression-form` at `eventually` by the profile's operator admission (FR-186, FR-326), not `unbounded-event`. | Test (TC-630, TC-2063) |
 | FR-195-AC-2 | `expected accumulate cost until holds(m.delivered or m.attempts = 2) <= rational(6, 5)` over `Link` with a `cost` reward of 1 on both sends checks as `ExpectedReward` with threshold `6/5`; written `<= 6/5` it is refused, since the profile prohibits `/`. With an integer reward, `>= 3` checks with threshold 3, `<= 0` and `<= rational(-1, 2)` check, and `<= 5 ms` is refused `ill_typed`/`unit-mismatch`. With a quantity reward declared in `ms`, `<= 0.005 s` checks and records `5`; `<= 5 m` is refused `ill_typed`/`unit-mismatch`, and the bare `<= 3` is refused `ill_typed`/`type-mismatch`. A reward the model does not declare is refused `missing-name`. `expected elapsed until …` is checked by FR-195-AC-7. | Test (TC-630) |
 | FR-195-AC-3 | `exact_only` is true for each claim of AC-1 and AC-2 that checks, for §15.5's `MeanTime` at `3 ms` and for `P95` with no confidence parameters, and false for `P95` under `Steady` with its confidence parameters. | Test (TC-630) |
 | FR-195-AC-4 | EN-4's gate given the checked `FairTerminates` refuses `EveryScheduler`; given the `Link` expected-reward claim under a workload it refuses `ExactOnlyForm`; given §15.5's `MeanTime` claim `<= 3 ms` under a workload with no confidence parameters it refuses `ExactOnlyForm` (and not `MissingConfidence`); given a bounded event under a workload with no confidence parameters it refuses `MissingConfidence`; given `P95` under `Steady` with its confidence parameters it passes. Each refusal is returned before a `StatisticalClaim` is built and so before a sample is drawn, and for every claim of AC-1 to AC-3 that checks the gate refuses exactly when `exact_only` is true. | Test (TC-630) |

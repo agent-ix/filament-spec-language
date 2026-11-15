@@ -257,3 +257,55 @@ fn independent_reader_refuses_an_emitted_law_binding_not_selected_by_the_package
         format!("/semantic_graph/nodes/{index}/body/operation/laws/0/definition")
     );
 }
+
+fn compile_without_law(source: &str) -> Result<CompiledPackage, crate::ReplayRefusal> {
+    compile_package(
+        unit(source),
+        [],
+        &DependencyInput::default(),
+        StageLimits::default(),
+        ReplayLimits::default(),
+    )
+}
+
+/// FR-670-AC-5: a header law and a caller-supplied law agree or refuse
+/// `conflicting-definition`; a caller law alone still decides.
+#[trace("TC-1782", "FR-670-AC-5", "FSpec-TC-1280", "FSpec-FR-570-AC-3")]
+#[test]
+#[ignore = "QSL-1989: a header law is not resolved, so it cannot agree or conflict with a caller-supplied law yet"]
+fn a_header_law_agrees_with_or_refuses_a_caller_supplied_law() {
+    let body = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n";
+    let headed =
+        format!("{HEADER}profile d = \"filament.value.integer-division.floor/v1\";\n{body}");
+    compile(&headed, &selection(DefinitionRole::IntegerDivisionFloor));
+    let refusal = compile_package_with_integer_division(
+        unit(&headed),
+        [],
+        &DependencyInput::default(),
+        &selection(DefinitionRole::IntegerDivisionTruncating),
+        StageLimits::default(),
+        ReplayLimits::default(),
+    )
+    .expect_err("the header and the caller name different laws");
+    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidPackage);
+    assert_eq!(refusal.cause(), Some("conflicting-definition"));
+    compile(
+        &format!("{HEADER}{body}"),
+        &selection(DefinitionRole::IntegerDivisionTruncating),
+    );
+}
+
+/// FR-670-AC-6 and FSpec FR-570-AC-5 (identity half): a law header in a unit
+/// with no `div` or `rem` leaves the emitted package unchanged.
+#[trace("TC-1782", "FR-670-AC-6", "FSpec-TC-1280", "FSpec-FR-570-AC-5")]
+#[test]
+#[ignore = "QSL-1989: a header naming the integer-division law is refused wrong-selection-role today"]
+fn a_law_header_without_div_or_rem_leaves_the_package_identity_unchanged() {
+    let body = "function m using v(a: Int[-7, 7], b: Int[1, 3]): Int[-6, 9] pure { a mod b + b }\n";
+    let plain = compile_without_law(&format!("{HEADER}{body}")).expect("no law is demanded");
+    let headed = compile_without_law(&format!(
+        "{HEADER}profile d = \"filament.value.integer-division.floor/v1\";\n{body}"
+    ))
+    .expect("an inert law header is admitted");
+    assert_eq!(headed.bytes(), plain.bytes());
+}

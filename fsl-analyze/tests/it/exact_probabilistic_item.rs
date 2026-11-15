@@ -50,6 +50,7 @@ fn settle(
 }
 
 #[trace("TC-762", "FR-281-AC-1")]
+#[trace("TC-636", "FR-201-AC-1")]
 #[test]
 fn a_reachability_bound_that_holds_settles_proved_with_the_checked_certificate() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -209,6 +210,7 @@ fn a_missed_bound_is_refuted_only_with_replayed_nonreach_evidence() {
 
 /// Altering one terminal value retains the checker's rejection and full locus.
 #[trace("TC-763", "FR-281-AC-4", "FR-203-AC-3", "FR-201-AC-6")]
+#[trace("TC-636", "FR-201-AC-1")]
 #[test]
 fn a_rejected_certificate_never_settles_proved() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -540,4 +542,65 @@ fn a_rejected_check_builds_no_proved_record() {
         None,
     )
     .is_none());
+}
+
+/// FR-203-AC-1 (TC-638): ADR-028 §15.2's `P95` at `5` (the integer
+/// `duration` reward) with no confidence parameters settles `proved` with
+/// `ExactValue{24233/25000}`, certified, with one entry; §15.4's `Unlikely`
+/// settles `refuted` after replay.
+#[trace("TC-638", "FR-203-AC-1")]
+#[test]
+#[ignore = "QSL-2158: FR-203-AC-1's exact P95 settlement through analyze_items not verified yet"]
+fn p95_settles_proved_with_its_exact_value() {
+    let claim = "probabilistic P95 using ev on M over (s: M::Server) under Steady on origin \
+         { quantile 0.95 of (accumulate duration from holds(s.phase = 1) \
+         until holds(s.phase = 2) within 10) <= 5 }\n";
+    let world = World::new(&prob_world::service(claim));
+    let record = settle(&world, "P95", ModelCheckLimits::default());
+    let terminal = record.terminal().expect("a terminal record");
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, entries, .. },
+        certification,
+    } = terminal.value()
+    else {
+        panic!("expected proved, got {:?}", terminal.value());
+    };
+    assert_eq!(*certification, Certification::Certified);
+    assert_eq!(value.value(), &ratio(24233, 25000));
+    assert_eq!(entries.len(), 1);
+
+    let world = World::new(&prob_world::link(CLAIMS));
+    let record = settle(&world, "Unlikely", ModelCheckLimits::default());
+    assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
+}
+
+/// FR-203-AC-5 (TC-641): FR-196-AC-5's `Coin` refutation, a claim read
+/// undefined (`absent-key`) at a state of positive probability, settles
+/// `refuted` with its replayed undefined path, whatever the threshold.
+#[trace("TC-641", "FR-203-AC-5")]
+#[test]
+#[ignore = "QSL-2158: FR-203-AC-5's undefined-evaluation refutation through analyze_items not verified yet"]
+fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
+    for threshold in ["0.5", "0.01"] {
+        let claim = format!(
+            "probabilistic Dropped using ev on M over (c: M::Coin) under Even on origin \
+             {{ probability >= {threshold} [ always[0,3] holds(c.v = 0) ] }}"
+        );
+        let world = World::new(&prob_world::coin(&claim));
+        let record = settle(&world, "Dropped", ModelCheckLimits::default());
+        assert_eq!(
+            record.terminal().unwrap().value(),
+            &TerminalValue::Refuted,
+            "{threshold}"
+        );
+        let counterexample = record
+            .probabilistic_counterexample
+            .as_ref()
+            .expect("the replayed undefined path");
+        let text = format!("{counterexample:?}");
+        assert!(
+            text.contains("AbsentKey") || text.contains("absent-key"),
+            "{text}"
+        );
+    }
 }

@@ -4,6 +4,7 @@
 //! one link step per `cargo test` invocation instead of one per file.
 
 mod abstraction_declaration;
+mod aggregate_atom;
 mod complete_cst;
 mod complete_grammar;
 mod composition_declaration;
@@ -15,11 +16,13 @@ mod guarantee_declaration;
 mod hyper_clause;
 mod limits;
 mod model_source;
+mod model_unit;
 mod nesting_levels;
 mod probabilistic;
 mod protocol_memory_refinement;
 mod reserved_declaration_names;
 mod selection;
 mod source_refusal;
+mod standard_forms;
 mod taskset;
 mod terminal_declaration;

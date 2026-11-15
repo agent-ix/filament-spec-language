@@ -366,3 +366,44 @@ fn reduced_and_unreduced_runs_agree_over_the_corpus() {
     assert_eq!(compared, expected, "every run of every case is compared");
     assert_eq!(verdicts.len(), 2, "the corpus holds proofs and refutations");
 }
+
+/// FR-623-AC-2, AC-5 (TC-1583): through `fsl analyze`, `symmetry`
+/// `"declared"` admits the same request as the explicit class, and a
+/// symmetry-reduced proof is `reduced` and `uncertified`.
+mod analyze_request {
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    use crate::analyze_cli_support::{
+        analyze, clause, counter_request_with, counter_snapshot, label, request_members, Workspace,
+    };
+
+    #[trace("TC-1583", "FR-623-AC-2")]
+    #[trace("TC-1583", "FR-623-AC-5")]
+    #[test]
+    #[ignore = "QSL-2124: reduction selection in analyze items is not implemented yet"]
+    fn declared_symmetry_admits_the_explicit_class_and_proves_reduced() {
+        let ws = Workspace::new("reduction-differential-declared");
+        let body = "symmetric M::counters;\n".to_owned()
+            + &clause("Holds", "", "always holds(c.value <= 3)");
+        let explicit = json!({"symmetry": [{"population": "counters", "classes": [["a", "b"]]}]});
+        let path = counter_request_with(
+            &ws,
+            &body,
+            request_members(Some(json!([
+                {"claim": "Holds", "reductions": {"symmetry": "declared"}},
+                {"claim": "Holds", "reductions": explicit},
+            ]))),
+        );
+        ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0)]));
+        let run = analyze(&path);
+        assert_eq!(
+            run.item(0)["request"]["reductions"],
+            run.item(1)["request"]["reductions"]
+        );
+        let proved = run.item(0);
+        assert_eq!(label(&proved), "proved");
+        assert_eq!(proved["record"]["basis"]["type"], "reduced");
+        assert_eq!(proved["record"]["certification"], "uncertified");
+    }
+}

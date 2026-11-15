@@ -399,6 +399,54 @@ fn c06_reference_holders_are_keyed_and_ieee_elements_are_ineligible() {
     }
 }
 
+/// FSpec FR-149 "IEEE relations" and FR-144: a float element type is admitted,
+/// and `=` over two sets matches members by bit identity. When this lands, the
+/// IEEE half of `c06_reference_holders_are_keyed_and_ieee_elements_are_ineligible`
+/// (and `equality_matrix.rs` `e28`) flips to admission.
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-22")]
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-26")]
+#[trace("FSpec-TC-189", "FSpec-FR-144-AC-6")]
+#[test]
+#[ignore = "QSL-2173: float set elements and set equality by bit identity not implemented yet"]
+fn c06b_float_sets_are_admitted_and_compare_members_by_bit_identity() {
+    use filament_exact::IeeeValue;
+    let env = holder_environment();
+    let floats = collection_type(
+        CollectionKind::Set,
+        ValueType::Float(FloatType::exact(IeeeWidth::Binary64)),
+        0,
+        2,
+    );
+    let set_type = ValueType::collection(floats.clone());
+    assert!(env.try_check_type(&set_type).is_ok());
+    let records = collection_type(CollectionKind::Bag, ValueType::Composite(key("F")), 0, 2);
+    assert!(env.try_check_type(&ValueType::collection(records)).is_ok());
+
+    let bits = |b: u64| Value::Float(IeeeValue::binary64(b));
+    let (plus_zero, minus_zero) = (bits(0), bits(0x8000_0000_0000_0000));
+    let (qnan, qnan2) = (bits(0x7ff8_0000_0000_0000), bits(0x7ff8_0000_0000_0001));
+    let set = |values: Vec<Value>| completed(&floats, values);
+    assert!(equal(
+        &env,
+        &set_type,
+        &set(vec![qnan.clone()]),
+        &set(vec![qnan.clone()])
+    ));
+    assert!(!equal(
+        &env,
+        &set_type,
+        &set(vec![plus_zero.clone()]),
+        &set(vec![minus_zero.clone()])
+    ));
+    assert!(equal(
+        &env,
+        &set_type,
+        &set(vec![plus_zero.clone(), minus_zero.clone()]),
+        &set(vec![minus_zero, plus_zero])
+    ));
+    assert!(!equal(&env, &set_type, &set(vec![qnan]), &set(vec![qnan2])));
+}
+
 #[trace("FSpec-TC-189", "FSpec-FR-144-AC-7")]
 #[trace("FSpec-TC-189", "FSpec-FR-144-AC-8")]
 #[test]

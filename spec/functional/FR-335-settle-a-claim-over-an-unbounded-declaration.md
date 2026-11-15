@@ -89,6 +89,16 @@ stays unproved.
 - S6a SHALL evaluate the function on a concrete set of any size with no
   cardinality refusal, stopping only on the caller's meter (FR-097-AC-7),
   and the result SHALL be evidence for that value only (ADR-014 §8).
+- A `forall` or `exists` whose collection operand is a concrete value of an
+  unbounded collection type SHALL be evaluated at S6a by visiting that
+  value's occurrences in FSpec FR-144 canonical order with FSpec FR-145's
+  charges, because a concrete value is finite whatever its type declares.
+  The result is the quantifier's value on that one value and is never a
+  settlement of a claim over the declared domain: FSpec FR-346 forbids
+  deciding the claim over the unbounded domain by enumeration, and that claim
+  settles only through the negotiation above (`fsl analyze`). The two rules
+  do not conflict, because one evaluates a value and the other settles a
+  claim.
 
 ## Acceptance Criteria
 
@@ -99,6 +109,7 @@ stays unproved.
 | FR-335-AC-3 | A bounded request with `ProofBound{s, Cardinality{maximum: 8}}` writes a second item with its own request index, classified `bounded`, whose obligation identity differs from the unbounded item's and from that of a request with `maximum: 9`; the unbounded item still settles `requires-bound`. | Test (TC-845) |
 | FR-335-AC-4 | A requirement built over the collection domain at `s` and a domain of kind quantity (no source spelling yet types a parameter by a quantity, so the test builds the requirement directly) is written with `finite_bound_available` false, and its `unbounded-extent` disposition (a fixture) gets no routing target: `unsupported`, warned. | Test (TC-845) |
 | FR-335-AC-5 | At S6a, `f` on the concrete set `{0, 1, …, 999}` of 1,000 distinct members of `Int[0, 9999]` returns 1,001 with no cardinality refusal; forming that set on a meter too small for it returns `Incomplete` at `collection.member-walk`, the first charge a set's formation reaches, and calling `f` on a meter with no work left returns `Incomplete` at `function.call`. Evaluation reads no request item, so neither result changes the AC-1 item's disposition. | Test (TC-845) |
+| FR-335-AC-6 | At S6a, `function p using v(s: Set<Int[0, 9999]>): Boolean pure { forall(x in s : x < 500) }` on the concrete set `{0, 1, …, 999}` returns `false` and on `{0, 1, …, 99}` returns `true`, charging one `collection.visit` per occurrence visited and stopping at the first counterexample; `exists(x in s : x = 7)` on the 100-member set returns `true`; a meter too small for the visits returns `Incomplete` with no value. None of these results is written as a claim settlement, and a claim over `p` requested with an empty registry still settles `unsupported` with a warning naming the capability. | Test (TC-1909) |
 
 ## Dependencies
 

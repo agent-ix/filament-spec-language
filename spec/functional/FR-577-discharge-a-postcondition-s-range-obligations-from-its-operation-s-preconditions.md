@@ -243,7 +243,8 @@ the refusal located at the node `D`.
   attempts), FR-569 (effective preconditions of source-declared families).
 - FSpec FR-149 (the expected-type range obligation), FSpec FR-151 (the
   effective precondition `eff(m)`) and FSpec FR-146 ("Accepted proof
-  forms"). FR-146 admits no relational fact and no fact across clauses, and
-  states that a producer admits nothing its rules do not prove. This
-  requirement depends on a matching FSpec FR-146 amendment that admits
-  exactly the two fact forms above.
+  forms"). FSpec FR-146 item 6 (precondition facts) and item 7 (difference
+  facts) admit exactly the two fact forms above, with the same transfer
+  conditions, keying, join rule and exclusions, and FR-146 states that a
+  producer admits nothing its rules do not prove and refuses nothing they do,
+  so this requirement and the standard accept and refuse the same clauses.

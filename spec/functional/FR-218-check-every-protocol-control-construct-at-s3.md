@@ -180,10 +180,15 @@ protocol system only ever runs a protocol whose meaning is fixed.
   invariant, variant or exhaustion behavior.
 - S3 SHALL check a `repeat` with or without an iteration maximum and with or
   without an invariant and variant, and SHALL record the maximum, invariant
-  and variant it has. A termination claim is the only reader of the
-  variant. FSL has no prover for a `repeat`'s invariant or variant in V1, so
-  S3 only checks and records them and does not discharge them (the
-  termination claim's behaviour is ADR-014's).
+  and variant it has. S3 checks the invariant as a Boolean term and the
+  variant as a term whose type has a well-founded order: an integer type,
+  or a tuple whose elements are integer types, ordered lexicographically.
+  S3 SHALL refuse a variant of any other type with `ill_typed`/
+  `type-mismatch` at the variant, retaining `expected` (an integer type or a
+  tuple of integer types) and `actual`. S3 does not discharge the invariant
+  or the variant. The protocol model checker discharges both over the
+  explored protocol subject, as two obligations of the repeat's own
+  (FR-730), and nothing else reads them.
 - `parallel`, `repeat`, `choice` and `sequence` SHALL nest with no ceiling
   of their own; only the caller's resource limits bound a declaration's
   size, and the partition proof of a `choice` charges `s3.work_units`
@@ -482,6 +487,23 @@ capture enclosed within a composite expression remains permitted.
   capture is an immutable value that every role holds: a guard or a `visible`
   entry may read one, and it needs no listing.
 
+  A decision that depends on the protocol input reads it through a protocol
+  capture: `capture amount: M::Money = input.amount;` fixes the value at
+  activation, every role holds it from then on, and a guard over `amount`
+  checks with no `visible` entry. S3 SHALL NOT admit a direct read of `over`
+  in a guard, because `over` denotes the model state at each step: no role
+  observes that state at its decision, so a guard over it would let the owner
+  branch on a fact it cannot know, and the choice could not be projected to
+  the owner's local behaviour (FSpec FR-053). The capture is the same fact made
+  known to every role at one fixed point, so it is the form that projects.
+  The located refusal SHALL name the read itself: its span is the smallest
+  term that reads `over`, a field-read path rooted at the `over` parameter
+  such as `input.ready`, or the bare `over` name when it is read whole. The
+  region every reporting surface (the checker's refusal region, the
+  command-line diagnostic and the language server) shows for it is that
+  span, never the enclosing guard, the decision or the protocol declaration,
+  and a guard that reads `over` twice reports two refusals, one at each read.
+
 - Each `visible` entry and each guard (a `case when`, a `repeat while`) SHALL
   read decision facts of eligible binders, protocol captures and constants
   only. A guard SHALL read a fact only when the fact is an individual `visible`
@@ -637,6 +659,9 @@ one protocol declared in the same unit. It carries no package selector.
 | FR-218-AC-38 | A predicate, a temporal clause that calls it and a protocol that requires that clause and calls the predicate, written in three units of one package, check in every request order of the units. The protocol's requirement is bound to the clause's position among the package's temporal clauses, which is the clause's own position, 1, when another unit declares a clause that sorts before it. Without the clause's unit the same package refuses `missing_declaration`/`missing-name` at the name `Due` in `requires temporal Due;`. | Test (TC-1056) |
 | FR-218-AC-39 | Passes now (S3). In TC-1408 variant S-M, which selects `M` and declares the source object type `Order`, a protocol with `role w on M` and `role Seller on Order` checks: `w` is the role on the whole model `M`, recording `M`'s package identity, and `Seller` a static role on the source-declared `Order`. A protocol `over (view: Order)` checks with model context the source `Order`. Neither role nor `over` resolves to the other kind of declaration. | Test (TC-1408) |
 | FR-218-AC-40 | Over branches `a` and `b`, with `function f using v(x: Boolean): Boolean pure { x }` declared in the unit, `join any [a]`, `join quorum(1) [a, b]` and `join predicate(f) [a]` with no `outstanding` rule each refuse `invalid_package`/`invalid-value` at the join, and the same joins with `outstanding cancel` or `outstanding continue` check; `join all [a, b]` with no `outstanding` rule checks. A `memory tso` `parallel` joined `any` with no `outstanding` rule reports this refusal and FR-219's `unsupported_construct`/`declaration-form` at the join. | Test (TC-663) |
+| FR-218-AC-41 | In a protocol over `(input: M::Actor)`, `role W on M` beside `role R on M::Actor` checks, `W` recording the identity of the package `M` selects; `role r each M from pop max 2 lifetime workflow` refuses `invalid_model_binding`/`malformed-declaration` with a refusal region whose text is exactly `M`, and gives no refusal for `pop`. | Test (TC-2020) |
+| FR-218-AC-42 | With `capture ready: Boolean = input.ready;`, a `choice` by `R` with `visible ()` whose guards are `ready` and `not ready` checks, and its guards read the capture. The same `choice` with guards `input.ready` and `not input.ready` refuses twice with `ill_typed`/`operator-ineligible`, naming the guard slot, and each refusal region's text is exactly `input.ready`; no refusal region covers the guard block, the `choice` or the protocol declaration. | Test (TC-2021) |
+| FR-218-AC-43 | A `repeat` with `invariant { true } variant { n }` checks when `n` has an integer type and when the variant is a tuple of two integer-typed terms; a variant of type `Boolean` and a variant of a record type each refuse `ill_typed`/`type-mismatch` at the variant, retaining `expected` and `actual`. | Test (TC-2022) |
 
 ## Dependencies
 

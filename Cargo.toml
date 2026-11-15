@@ -123,6 +123,9 @@ filament-checked = { workspace = true, features = ["test-support"] }
 # `tests/it/layer_crate_reexports.rs` checks that this crate re-exports none
 # of its items (ADR-011 §7.2).
 fsl-route = { path = "fsl-route" }
+# FR-571-AC-7: a package compiled back from a checked handoff directory is
+# dispatched to the realizability engine. No shipped module calls it.
+fsl-analyze = { path = "fsl-analyze" }
 tempfile = "3.27.0"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }

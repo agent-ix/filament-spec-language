@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record Cfg { a: Boolean; }
+function f using v(m: Map<Cfg, Integer>): Boolean pure { true }

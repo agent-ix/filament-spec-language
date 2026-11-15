@@ -15,6 +15,8 @@ relationships:
     type: references
   - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
 ---
 ## Description
 
@@ -48,7 +50,9 @@ and no successful `CompileOutcome`.
 ## Inputs
 
 A closed format/request JSON envelope. The request contains only models,
-program and, for a `1-draft` program, `libraries`, using the same source selections and complete authored clause bindings
+program and, for a `1-draft` program, `libraries`, the optional `clocks` member
+that configures trace-subject clocks
+([FR-640](FR-640-select-clock-configurations-in-compile-and-run-requests.md)), using the same source selections and complete authored clause bindings
 as native-run/1. It contains no runtime artifacts or execution selection.
 The command uses FR-026's default `request_bytes` and `dependent_bytes` intake
 ceilings, relative-path resolution, source selection checks and existing

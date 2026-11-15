@@ -1072,3 +1072,20 @@ impl Explored {
             .count()
     }
 }
+
+/// The unit text (with `declaration` after the contracts), the domain
+/// package and the one initial snapshot of a single vault `(h, l)`, as files
+/// for a `native-analyze/1` request (FR-631).
+pub(crate) fn request_files(
+    vault: Vault,
+    reset: bool,
+    start: (i64, i64),
+    declaration: &str,
+) -> (String, Vec<u8>, Vec<u8>) {
+    let document = document(vault.busy(), reset);
+    let text = unit_text(None, vault, reset, &format!("{declaration}\n"));
+    let mut snapshots = fsl_semantics::model::observation::DocumentProvision::new();
+    snapshot(&mut snapshots, "s0", &[(KEY, start)], None, None);
+    let bytes = snapshots.into_values().next().expect("one snapshot");
+    (text, document, bytes)
+}

@@ -706,6 +706,7 @@ may repair such a disagreement by inventing another evaluation rule.
 
 ## Dependencies
 
+- Consumer facts (FSpec FR-661, bound in FR-761): `CF-RT-01` (`fsl_analyze::monitor_root::emit_plan_root`) and `CF-RT-02` (`fsl_analyze::monitor_root::admit_progress_view`).
 - [ADR-026](../decisions/ADR-026-dense-time.md) §14 MN-1 to MN-7; ADR-014 B-2.
 - [FR-234](FR-234-check-timed-intervals-and-classify-timed-property-forms.md).
 - FSpec FR-090 (timestamped-event profile), FSpec FR-160 (clock

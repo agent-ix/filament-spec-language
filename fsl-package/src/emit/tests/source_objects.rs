@@ -184,3 +184,217 @@ fn fixture_e_s_checks_and_refuses_at_object_node() {
         (Code::UnsupportedConstruct, Some("not-yet-implemented"))
     );
 }
+
+// FR-569-AC-14 (TC-1941): the target emission of a source object type, read
+// back through FSL's I2 reader, and the owner forms that read refuses.
+
+/// Fixture S checked and linked, ready for S4.
+fn fixture_s_package() -> CheckedPackage {
+    let text = format!("{HEADER}{S}");
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let mut declarations =
+        assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+    let pending = declarations
+        .link_dispatch(Default::default())
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+    CheckedPackage::link(graph)
+}
+
+/// The index of the source-declared `model`/`object_type` node named `name`.
+fn source_object_node(wire: &Value, name: &str) -> usize {
+    nodes(wire)
+        .iter()
+        .position(|node| {
+            node["node_tag"] == "model"
+                && node["semantic_form"] == "object_type"
+                && node["declaration"]["qualified_name"] == json!([name])
+        })
+        .unwrap_or_else(|| panic!("`{name}` is a source-declared object type node"))
+}
+
+/// FSL's I2 read of an edited `wire`, with its lock's features as evidence.
+fn read_edited(wire: &Value) -> Read {
+    let mut slotted = wire.clone();
+    fsl_semantics::check::wire_id::write_operand_rows(&mut slotted);
+    let bytes = quire_canonical::to_vec(&slotted, ceiling().canonical()).expect("canonical");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    read_v2(&bytes, library(), V2ReadLimits::fixture(), &evidence)
+}
+
+#[trace(
+    "FR-569-AC-14",
+    "FR-569-AC-6",
+    "FSpec-FR-610-AC-3",
+    "TC-1941",
+    "FSpec-TC-1441"
+)]
+#[test]
+#[ignore = "QSL-1880: S4 emits source object types and the I2 reader reads them; not implemented yet"]
+fn fixture_s_emits_and_the_i2_reader_reads_it() {
+    let package = fixture_s_package();
+    let emission = emit_checked(&package).expect("S4 emits fixture S");
+    let wire = wire(&emission);
+    let order = &nodes(&wire)[source_object_node(&wire, "Order")];
+    assert_eq!(order["owner"]["kind"], "source");
+    assert_eq!(order["semantic_type"], order["node_id"]);
+    source_object_node(&wire, "Sub");
+    source_object_node(&wire, "Shape");
+    let Read::Verified { .. } = read_back(&emission) else {
+        panic!("the I2 reader admits fixture S's package");
+    };
+}
+
+#[trace("FR-569-AC-14", "FSpec-FR-610-AC-4", "TC-1941", "FSpec-TC-1441")]
+#[test]
+#[ignore = "QSL-1880: the I2 reader refuses a source object node carrying a model owner; not implemented yet"]
+fn a_source_object_node_with_a_model_owner_is_malformed_wire() {
+    let package = fixture_s_package();
+    let emission = emit_checked(&package).expect("S4 emits fixture S");
+    let mut edited = wire(&emission);
+    let at = source_object_node(&edited, "Order");
+    edited["semantic_graph"]["nodes"][at]["owner"] = json!({
+        "kind": "model",
+        "identity": "test/orders",
+        "node": "ix://test/orders/Order",
+    });
+    let Read::Refused(crate::checked_v2::V2ReadRefusal::Envelope { refusal, .. }) =
+        read_edited(&edited)
+    else {
+        panic!("the I2 reader refuses a source object with a model owner");
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::MalformedWire
+    );
+    assert_eq!(
+        refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .map(|p| p.to_string()),
+        Some(format!("/semantic_graph/nodes/{at}/owner"))
+    );
+}
+
+#[trace("FR-569-AC-14", "FSpec-FR-610-AC-4", "TC-1941", "FSpec-TC-1441")]
+#[test]
+#[ignore = "QSL-1880: the I2 reader refuses an object type node with a source owner and no declaration; not implemented yet"]
+fn an_object_type_node_with_a_source_owner_and_no_declaration_is_malformed_wire() {
+    let package = fixture_s_package();
+    let emission = emit_checked(&package).expect("S4 emits fixture S");
+    let mut edited = wire(&emission);
+    let at = source_object_node(&edited, "Order");
+    edited["semantic_graph"]["nodes"][at]
+        .as_object_mut()
+        .expect("a node is an object")
+        .remove("declaration");
+    let Read::Refused(crate::checked_v2::V2ReadRefusal::Envelope { refusal, .. }) =
+        read_edited(&edited)
+    else {
+        panic!("the I2 reader refuses the node");
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::MalformedWire
+    );
+    assert_eq!(
+        refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .map(|p| p.to_string()),
+        Some(format!("/semantic_graph/nodes/{at}/owner"))
+    );
+}
+
+/// Fixture S with a protocol whose `over`, role and attempt name the source
+/// `Order`.
+fn fixture_s_protocol_package() -> CheckedPackage {
+    let text = format!(
+        "{HEADER}profile Pp = \"filament.protocol.finite-global/v1\";\n{S}\
+         protocol Sell using Pp over (view: Order) on origin {{\n\
+           role Seller on Order;\n\
+           run sequence Main {{\n\
+             attempt A by Seller on Order::bump contracts [] as (b: Boolean) {{ true }};\n\
+           }}\n\
+           finish Done as (d: Boolean) {{ true }};\n\
+         }}\n"
+    );
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let mut declarations =
+        assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+    let pending = declarations
+        .link_dispatch(Default::default())
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+    CheckedPackage::link(graph)
+}
+
+#[trace("FSpec-FR-610-AC-7", "FSpec-TC-1443", "FR-569-AC-14", "TC-1941")]
+#[test]
+#[ignore = "QSL-1880: a protocol over a source object joins its owner through the SourceOwner; not implemented yet"]
+fn a_protocol_over_a_source_object_names_its_node_and_joins_its_source_owner() {
+    let package = fixture_s_protocol_package();
+    let emission = emit_checked(&package).expect("S4 emits the protocol over Order");
+    let wire = wire(&emission);
+    let order = source_object_node(&wire, "Order");
+    let clause = nodes(&wire)
+        .iter()
+        .find(|node| node.get("owner_model").is_some())
+        .expect("a protocol clause");
+    assert_eq!(clause["owner_model"], nodes(&wire)[order]["node_id"]);
+    let Read::Verified { .. } = read_back(&emission) else {
+        panic!("the I2 reader admits the protocol over a source object");
+    };
+
+    let mut edited = wire.clone();
+    edited["semantic_graph"]["nodes"][order]["owner"]["authority"] = json!("elsewhere");
+    let Read::Refused(crate::checked_v2::V2ReadRefusal::Envelope { refusal, .. }) =
+        read_edited(&edited)
+    else {
+        panic!("an owner joining no lock source is refused");
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::MissingDeclaration
+    );
+}
+
+#[trace("FSpec-FR-610-AC-8", "FSpec-TC-1443", "FR-569-AC-6", "TC-1408")]
+#[test]
+#[ignore = "QSL-1880: source operation effects rows and clause functions carry the source forms; not implemented yet"]
+fn source_operation_effects_and_clause_functions_carry_the_source_forms() {
+    let package = fixture_s_package();
+    let emission = emit_checked(&package).expect("S4 emits fixture S");
+    let wire = wire(&emission);
+    let order = source_object_node(&wire, "Order");
+    let row = wire["operation_effects"]
+        .as_array()
+        .expect("the package carries operation effects")
+        .iter()
+        .find(|row| row["provenance"]["member"] == "Order::bump")
+        .expect("bump has an effects row");
+    assert_eq!(
+        row["provenance"]["origin"],
+        "source_declaration_operation_frame"
+    );
+    assert_eq!(row["declaring"], nodes(&wire)[order]["node_id"]);
+    assert_eq!(row["document"], nodes(&wire)[order]["owner"]["identity"]);
+    let precondition = nodes(&wire)
+        .iter()
+        .find(|node| {
+            node["declaration"]["qualified_name"] == json!(["Order", "size", "precondition", "Qs"])
+        })
+        .expect("Qs lowers to a source clause function");
+    assert_eq!(precondition["owner"]["kind"], "source");
+}

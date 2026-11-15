@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+tuple Pair(Boolean, Integer);
+function f using v(p: Pair): Integer pure { p[1] }

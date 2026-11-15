@@ -54,9 +54,11 @@ the finite-backend negotiation of an integer division over unbounded operands
 - A unit whose declarations use `div`, `rem`, `mod`, `/` over decimal,
   rational or quantity operands, or the clause forms `invariant`, `pre` and
   `post`.
-- An optional caller-supplied owner-admitted integer division selection for
-  `div` and `rem`, obtained through `admit_integer_division`; its three
-  profiles are `Euclidean`, `Floor` and `Truncating`. `mod` retains its
+- The integer-division law for `div` and `rem`: the law a unit header
+  profile selects (FR-670), or an optional caller-supplied owner-admitted
+  selection obtained through `admit_integer_division`; its three
+  profiles are `Euclidean`, `Floor` and `Truncating`, and a header and a
+  caller-supplied selection that disagree are refused (FR-670). `mod` retains its
   independently defined Euclidean semantics and demands no irrelevant
   `div`/`rem` selection.
 - A check mode, `CheckMode::Linked` (the default) or `CheckMode::Kernel`
@@ -92,7 +94,8 @@ When a source-backed operation's definition binding is foreign to or conflicts
 with the admitted selection, the native admission boundary SHALL return its
 typed mismatch refusal before CG or source-backed execution.
 
-When `div` or `rem` demands a selection that is absent, the facade SHALL return
+When `div` or `rem` demands a selection that is absent, neither selected by a
+unit header profile (FR-670) nor supplied by the caller, the facade SHALL return
 the existing typed `MissingSelection` for the `IntegerDivision` role at the
 operator.
 
@@ -123,6 +126,23 @@ bound and does not authorize a CG-side result-bound workaround.
   `Int[lo, hi]` position is proved; otherwise the checker SHALL refuse
   `undefined_expression`/`unproved-range` at the operator. The nonzero
   obligation of the divisor is decided first.
+- **Type of an integer division node.** The checked node of `a div b`,
+  `a rem b` and `a mod b` SHALL have the type `Int[lo, hi]` of that interval
+  when the interval is finite, and `Integer` only when it is unbounded, so a
+  consumer reads the proved range from the node's type as it does for `+`
+  and `*`. A remainder is bounded by its divisor alone: for a divisor whose
+  range excludes zero and whose largest magnitude is `m`, the Euclidean
+  remainder of `mod` (and of `rem` under the Euclidean law) lies in
+  `[0, m - 1]`, the truncating `rem` in `[-(m - 1), m - 1]` narrowed by the
+  sign of the dividend's range, and the floor `rem` in `[-(m - 1), m - 1]`
+  narrowed by the sign of the divisor's range, even when the dividend is an
+  unbounded `Integer`. A `div` over an unbounded dividend is unbounded. The
+  remainder has this type because the standard defines it so (FSpec
+  FR-147-AC-12), and a node typed `Integer` would refuse every bounded
+  consumer of a remainder that is in fact bounded.
+- **The same obligations for `div`, `rem` and `mod`.** The nonzero
+  obligation and the result interval apply equally to `div`, `rem` and `mod`
+  under every selected law; `mod` is not exempt because it needs no law.
 - **Bounded result domain, two observations.** FSpec FR-044 states that an
   expression its check admitted has its result membership proved, so a bounded
   consumer's out-of-domain refusal of FSpec FR-147 is met only by an expression
@@ -251,6 +271,8 @@ bound and does not authorize a CG-side result-bound workaround.
 | FR-495-AC-14 | `function r using v(a: Rational[0, 1; 1, 2], b: Rational[0, 1; 1, 2]): Rational[0, 1; 1, 2] pure { a + b }` refuses `undefined_expression`/`unproved-range` at the `+` under `CheckMode::Linked`, as its only refusal (the declared domain bounds the reduced numerator to `[0, 1]` and the denominator to `[1, 2]`; the checker adds the two operand domains and gets numerator `[0, 4]` and denominator `[1, 4]`, which the declared domain does not contain; the refusal is the rational-range obligation), and checks under `CheckMode::Kernel`, which records no rational-range obligation, so the evaluator meets the out-of-domain result. | Test (TC-1421) |
 | FR-495-AC-15 | `function q using v(a: Rational[0, 1; 1, 2], b: Rational[0, 1; 1, 2]): Rational[0, 100; 1, 100] pure { a / b }` refuses `undefined_expression`/`unproved-nonzero` at the `/` under `CheckMode::Linked`, as its only refusal (the divisor's range contains zero with no exact nonzero guard), and checks under `CheckMode::Kernel`, which records no nonzero obligation for a rational `/`, so a zero divisor is met by the evaluator as `Undefined::DivisionByZero` ("Zero divisor, two observations"). | Test (TC-1421) |
 | FR-495-AC-16 | With `type S = Int[0, 3];`, `function m using v(q: Sequence<S>[0, 2]): S pure { reduce<S>(acc, x in q: acc) }` (a `reduce` with no identity over a source that may be empty) refuses `undefined_expression`/`unproved-range` at the `reduce` under `CheckMode::Linked`, as its only refusal (the nonempty-reduction obligation, `size(q) >= 1` unproved), and checks under `CheckMode::Kernel`, which records no nonempty-reduction obligation, so the evaluator meets the empty source; the same function with `q: Sequence<S>[1, 2]` proves `size(q) >= 1` and checks under both modes. | Test (TC-1421) |
+| FR-495-AC-17 | Under `CheckMode::Linked`, from source with no law header: `function m0 using v(a: Int[0, 100], b: Int[0, 12]): Int[0, 11] pure { a mod b }` refuses `undefined_expression`/`unproved-nonzero` at the `mod`, as its only refusal; `function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }` checks and the checked `mod` node has type `Int[0, 11]`; `function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }` checks (the remainder is bounded by the divisor alone); `function m3 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 10] pure { a mod b }` refuses `unproved-range` at the `mod`. Under `CheckMode::Kernel`, `m0` checks and calling it with `b = 0` returns `Undefined::DivisionByZero` (`division-by-zero`) located at the `mod`. | Test (TC-1783) |
+| FR-495-AC-18 | Under `CheckMode::Linked` and a law header for each of the three laws (FR-670): `function r1 using v(a: Int[-100, 100], b: Int[1, 12]): Int[-11, 11] pure { a rem b }` checks, its `rem` node typed `Int[0, 11]` under Euclidean and floor and `Int[-11, 11]` under truncating; the same with result `Int[0, 11]` checks under Euclidean and floor and refuses `unproved-range` at the `rem` under truncating; `function q1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 100] pure { a div b }` checks with its `div` node typed `Int[0, 100]`; and `q1` and `r1` with `b: Int[0, 12]` each refuse `undefined_expression`/`unproved-nonzero` at the operator, as their only refusal. | Test (TC-1783) |
 
 
 ## Dependencies

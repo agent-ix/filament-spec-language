@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-643
+    type: references
 ---
 # FR-283: Monitor a supplied trace offline against temporal clauses
 
@@ -94,8 +96,11 @@ pub struct MonitorLimits {
     reads it. It is the shape that monitors a finite-window clause (FR-501)
     and a progressed event-position or fixed-sample clause (FR-504), because
     a trace document carries no stamp, order key, progress assertion, cover
-    or `TraceBinding`. `monitor` carries no FR-502 progress ledger, so a
-    `Progressed` or `Timestamped` trace is evaluated alone.
+    or `TraceBinding`. `Typed` also takes FR-642's `Timed` trace. This
+    one-shot entry carries no FR-502 progress ledger, so a `Progressed` or
+    `Timestamped` trace is evaluated alone here; FR-643's `MonitorSession`
+    carries the ledger between observations and FR-644 streams them, and
+    their reports equal this entry's over each observed prefix.
   - `Samples`: a declared record type and a non-empty finite sequence of its
     record samples in trace-position order, FR-330's trace-subject route
     input. It is the shape that monitors a window-aggregate clause, because

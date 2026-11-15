@@ -7,13 +7,13 @@ use std::fmt;
 
 use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedPackageReadLimits, CheckedPackageV2, CheckedTerm,
-    ClockConfiguration, ProtocolForm, TemporalForm,
+    ClockConfiguration, ExecutionPoint, ProtocolForm, TemporalForm,
 };
 use fsl_semantics::check::Activation;
 use serde::{Deserialize, Serialize};
 
 use super::{Error, SELECTION_FORMAT};
-use crate::emit_checked_v2::{Compiled, Request};
+use crate::emit_checked_v2::{ClockSelection, Compiled, Inputs, Request};
 
 /// The authority of every profile definition FSL selects.
 const PROFILE_AUTHORITY: &str = "agent-ix";
@@ -72,6 +72,12 @@ struct EvidenceRows {
 #[serde(deny_unknown_fields)]
 struct PackageRows {
     contract_version: String,
+    /// The package's manifest name.
+    package_name: String,
+    /// The unit's file under `sources/`.
+    unit: String,
+    /// The accepted state-clause execution points, by authored clause name.
+    execution_points: BTreeMap<String, ExecutionPoint>,
     read_limits: LimitRows,
     evidence: EvidenceRows,
     /// Nodes by form, for the forms the checked unit names.
@@ -275,6 +281,15 @@ fn is_selection_format(format: &str) -> bool {
     format == SELECTION_FORMAT
 }
 
+/// The path of the `sources/<kind><path>` file `file`, for the label kind
+/// `kind` (`source:` or `library:`) the writer gives it.
+#[ix_trace_rs::string_edge]
+fn labelled_path(file: &str, kind: &str) -> Option<std::path::PathBuf> {
+    file.strip_prefix("sources/")
+        .and_then(|label| label.strip_prefix(kind))
+        .map(std::path::PathBuf::from)
+}
+
 impl Selection {
     /// Parse a sidecar.
     pub fn read(bytes: &[u8]) -> Result<Self, SelectionReadError> {
@@ -446,12 +461,76 @@ impl Selection {
             format: text(SELECTION_FORMAT),
             package: PackageRows {
                 contract_version: text(filament_contract_model::CHECKED_PACKAGE_V2),
+                package_name: text(&request.package_name),
+                unit: format!("sources/{}", compiled.checked.source().identity().identity),
+                execution_points: compiled.points.clone(),
                 read_limits: super::READ_LIMITS.into(),
                 evidence: EvidenceRows { models, libraries },
                 node_counts,
             },
             clauses: rows,
             compensations: compensation_rows,
+        })
+    }
+
+    /// The compile inputs the sidecar names: the unit and library sources and
+    /// the domain package documents, each read by `read` from its path inside
+    /// the handoff directory, with the package name, the execution points and
+    /// the clock selection of each binding row. A file label that is not the
+    /// `source:` or `library:` label the writer gives is [`Error::Label`].
+    pub(super) fn inputs(
+        &self,
+        read: impl Fn(&str) -> Result<Vec<u8>, Error>,
+    ) -> Result<Inputs, Error> {
+        let labelled = |file: &str, kind: &str| {
+            labelled_path(file, kind).ok_or_else(|| Error::Label {
+                label: file.to_owned(),
+            })
+        };
+        let rows = &self.package;
+        let libraries = rows
+            .evidence
+            .libraries
+            .iter()
+            .map(|row| {
+                let path = labelled(&row.file, "library:")?;
+                Ok(crate::emit_checked_v2::supplied_library(
+                    row.identity.clone(),
+                    &path,
+                    read(&row.file)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let models = rows
+            .evidence
+            .models
+            .iter()
+            .map(|row| read(&row.file))
+            .collect::<Result<Vec<_>, Error>>()?;
+        let temporal_selections = self
+            .clauses
+            .iter()
+            .map(|row| (&row.name, &row.binding))
+            .chain(
+                self.compensations
+                    .iter()
+                    .map(|row| (&row.name, &row.binding)),
+            )
+            .filter_map(|(name, binding)| {
+                binding.as_ref().map(|binding| ClockSelection {
+                    clause: name.clone(),
+                    clock: binding.clock.clone(),
+                })
+            })
+            .collect();
+        Ok(Inputs {
+            source_path: labelled(&rows.unit, "source:")?,
+            source: read(&rows.unit)?,
+            models,
+            libraries,
+            package_name: rows.package_name.clone(),
+            points: rows.execution_points.clone(),
+            temporal_selections,
         })
     }
 

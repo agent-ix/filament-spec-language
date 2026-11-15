@@ -3,6 +3,10 @@ id: FR-201
 title: "Check a probability certificate"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-740
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-641
+    type: references
   - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-013
@@ -96,7 +100,18 @@ product state form `{product_key}` and the second as `{member}`.
 - From an exact value it SHALL emit an `Exact` certificate; from a dyadic
   interval a `Lower` and an `Upper` certificate; from a long-run result a
   `LongRun` certificate with the gain–bias pairs of FR-199.
-
+- EN-5 SHALL emit an accepted certificate for every exact proof of every
+  class FSpec FR-641 requires: finite-horizon forms, unbounded reachability,
+  until and always, expected rewards and long-run fractions, each under a
+  workload and under every scheduler with or without a fairness set, and the
+  timed forms through digital clocks (FR-204). A class with a closed document
+  profile below is written in that profile; every other class is written in
+  the general `ProbabilityCertificate` form above and checked by the general
+  conditions below. No class settles `proved` labelled `uncertified`.
+- The independent checker binary `fsl-probability-check` SHALL accept, in a
+  process that links no `fsl-analyze` code, every certificate EN-5 emits,
+  of each of the kinds `Exact`, `Lower`, `Upper` and `LongRun`, from the
+  certificate bytes, the byte provision and the subject binding.
 ### Closed reachability document profile
 
 For untimed unbounded `eventually` reachability and the bounded subset below, the
@@ -508,9 +523,10 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   `CheckedPackage` and its `claims`, binds the claim by the item's node, and
   re-enumerates the product through that system with the checker's own graph
   code and no `fsl-analyze` code; it decodes no wire and recompiles nothing,
-  as FR-193's replay over a package S4 does not emit (FR-185). A package with
-  a random parameter, a workload or a reward has no emitted form, so
-  `analyze` (FR-281) runs the checked-subject form for every EN-5 item. Both forms apply every condition of this requirement
+  as FR-193's replay over a checked package does. S4 emits a package with
+  random parameters, workloads, rewards and delays (FR-185, FR-740), so the
+  wire form applies to every EN-5 item, and `analyze` (FR-281) may run either
+  form over the package it holds. Both forms apply every condition of this requirement
   (fairness end components, `LongRun` components, `Lower` ranking, `Upper`,
   `Exact`, quantile tight actions and expected-reward properness), the
   rejection table and the budgets; they differ only in how the subject is
@@ -1172,6 +1188,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-48 | Canonical fairness records reuse the closed shared operation target and independently match the resolved checked set, including inherited declaring identities and whole/each receiver semantics. Authored reorder/duplicate spellings normalize identically; missing, extra, changed-kind/granularity/model/name, duplicate or out-of-order records and malformed/foreign targets cannot establish the claim. Distinct weak/strong constraints are retained. | Test |
 | FR-201-AC-49 | Independent bounded reconstruction checks exact targets, optimization, complete six-part keys, actual monitor context and remaining-horizon ranks without producer linkage. Wrong identity/binding/receiver, goal, monitor, horizon, values/ranks, coverage or canonical transport cannot be accepted, with existing precise rule/locus. Numeric invariance introduces no fair-MEC, policy, seventh key part or new vacuity outcome. | Test |
 | FR-201-AC-50 | Actual Requested/Deadline cancellation and byte/state/edge/work/storage/representation/arithmetic exhaustion during checked fairness/source declaration intake, structural identity traversal/encoding, canonical writing, raw/full-key admission and independent graph/arithmetic/rank checking retain typed causes without accepted truth. Earlier source refusals and unsupported/undefined evaluation remain distinct. External transition/private-reader and ordinary interpreter allocation boundaries are not claimed qualified. | Test |
+| FR-201-AC-51 | `fsl-probability-check`, run as a separate process with no `fsl-analyze` linkage, accepts an EN-5 `Exact` certificate for FR-201-AC-1, `Lower` and `Upper` certificates for a value-bounds proof of a cyclic DTMC eventual claim, a `LongRun` certificate for FR-201-AC-27, an unbounded fair eventual `Exact` certificate for `FairTerminates` over a cyclic MDP, a finite-horizon quantile certificate under every scheduler and a digital-clock certificate for FSpec FR-421-AC-1, each read from its bytes with the byte provision of an emitted package; each with one value altered is rejected with its FR-201 rule and locus. | Test (TC-2065) |
 
 ## Dependencies
 

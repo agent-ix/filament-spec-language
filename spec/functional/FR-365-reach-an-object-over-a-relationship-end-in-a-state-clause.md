@@ -102,13 +102,16 @@ The hook SHALL check, stopping at the first failure, each refusal
 3. **Direction.** The traversal is the one FR-363 allows: along the forward end
    under `source-to-target`, `bidirectional` or `undirected`, along the inverse
    end under `target-to-source`, `bidirectional` or `undirected`.
-4. **Destination multiplicity.** A destination end whose upper bound is
-   `unbounded`, whose multiplicity is `ordered: true`, or that declares no
-   multiplicity refuses `unsupported_construct`/`expression-form`.
-5. **Destination type.** The destination end's type is `E` itself, whether the
-   end is single-valued (`[0,1]` or `[1,1]`) or finite multi-valued (any other
-   finite `[l,u]`, unique or not, so `Set`-shaped or `Bag`-shaped). A
-   destination end of another type refuses, single-valued or multi-valued.
+4. **Destination multiplicity.** Every destination multiplicity is admitted:
+   finite or `unbounded`, ordered or not, unique or not, and an end that
+   declares none. A reachability reads the extent, which every observation
+   holds as a finite set of instances, and it neither counts nor orders
+   neighbours, so no multiplicity changes its meaning. This step refuses
+   nothing; it stays in the order so the lowered node keeps FSpec
+   FR-322-AC-57's order.
+5. **Destination type.** The destination end's type is `E` itself, whatever
+   its multiplicity. A destination end of another type refuses,
+   single-valued or multi-valued.
 
 The order is operands, direction, multiplicity, type: the order FSpec
 FR-322-AC-57 applies to the lowered application (operand conformance to the
@@ -117,10 +120,9 @@ destination end's type), so the lowered node satisfies those checks by
 construction. The operand check runs first, so when a package has several
 defects the refusal reported is the first in that order: a second operand that
 does not conform to the near end's type refuses `operator-ineligible` even when
-the end's direction or multiplicity is also inadmissible, and a multi-valued
-destination end of another type that is also unbounded refuses
-`expression-form`, not `operator-ineligible`. Every refusal's family is
+the end's direction is also inadmissible. Every refusal's family is
 `StateModel`. The result type is `Boolean` whatever the destination end's
+
 multiplicity, and the node is the same shape for a single-valued and a
 multi-valued destination end (FSpec FR-322-AC-57, RN-18 to RN-27). The
 navigation of a set-valued or bag-valued end (FR-363) is unchanged.
@@ -266,7 +268,7 @@ changes the observation or a later run's result.
 | --- | --- | --- |
 | FR-365-AC-1 | `reaches(a, b, name)` over a relationship end whose destination is `[0,1]` or `[1,1]` of the near end's own type, or a finite multi-valued end of that type (unique, `Set`-shaped, and non-unique, `Bag`-shaped), checks as `Boolean` in an invariant, a precondition and a postcondition; a receiver of a subtype of the near end's type, an inverse end under `bidirectional` and under `undirected`, and a subtype operand beside a base operand each check; the field-edge form `reaches(self, self, trail)` still checks and lowers as before. | Test (TC-1046) |
 | FR-365-AC-2 | A name matching a field and a relationship end, or two ends, refuses `ambiguous_declaration`/`ambiguous-name`; a name matching neither refuses `missing_declaration`/`missing-name`. | Test (TC-1046) |
-| FR-365-AC-3 | An operand of a type that does not conform to the near end's type, a forward traversal against `target-to-source`, an inverse traversal against `source-to-target`, a destination end of another type (single-valued or finite multi-valued) and `reaches` in a function body each refuse `ill_typed`/`operator-ineligible`; an unbounded, ordered or multiplicity-less destination end refuses `unsupported_construct`/`expression-form`; operands are checked ahead of direction, direction ahead of multiplicity and multiplicity ahead of destination type, so a defect earlier in that order is the one reported. | Test (TC-1046) |
+| FR-365-AC-3 | An operand of a type that does not conform to the near end's type, a forward traversal against `target-to-source`, an inverse traversal against `source-to-target`, a destination end of another type (single-valued or multi-valued) and `reaches` in a function body each refuse `ill_typed`/`operator-ineligible`; an unbounded, an ordered and a multiplicity-less destination end of type `E` each check as `Boolean` and none refuses `unsupported_construct`; operands are checked ahead of direction and direction ahead of destination type, so a defect earlier in that order is the one reported. | Test (TC-1046, TC-1903) |
 | FR-365-AC-4 | A reachability over `E` whose type is a member type of two populations refuses `ambiguous_declaration`/`ambiguous-name` at the form, naming both populations; with one covering population the requirements record adds that domain once and none when it is the context population. | Test (TC-1046) |
 | FR-365-AC-5 | A checked reachability over a relationship end lowers to one expression node with `semantic_form` `reachability`, `operator` `reaches`, `operation.identity` `filament.op.model.reaches`, member `relationship_end` naming the relationship's model node and the role, no laws, leaves or mode, arguments `[ref(a), ref(b)]` and a `Boolean` `result_type`, with no `deref` node, and IR's v2 reader admits the emitted package. | Test (TC-1047) |
 | FR-365-AC-6 | The lowered node carries no observation, and carries no population or bound unless the walked population has an authored bound, in which case its member holds exactly the one added key `population` naming that population's node (AC-13). The same reachability in two clauses whose conditions differ is one node under two `state_clause` identities, and two clauses of equal kind, parameters, anchor and condition are one `state_clause` node with two `claim` occurrences; one reachability written twice in a condition is one node on two argument paths; two different roles or relationships give two nodes. | Test (TC-1047) |

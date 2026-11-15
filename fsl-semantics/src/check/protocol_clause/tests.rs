@@ -24,6 +24,7 @@ mod attempts;
 mod binders;
 mod coverage;
 mod graph;
+mod rules;
 
 /// S1, S2 and the assembler over `declarations`, against
 /// [`m_actor_model`]'s own `M::Actor::op`: FR-113's checker

@@ -885,6 +885,36 @@ mod tests {
         assert_eq!(repeat, ["s1", "s2"]);
     }
 
+    /// FR-641 (TC-1662, TC-1663): the `temporal` selection decodes every
+    /// trace kind, record-sample positions and the `ledger` file member.
+    #[test]
+    #[ix_trace_rs::trace("TC-1663", "FR-641-AC-4")]
+    #[ignore = "QSL-2133: the run wire reads only `finite` and `lasso` traces of snapshot keys"]
+    fn temporal_wire_selection_reads_every_trace_kind_and_the_ledger() {
+        let binding = r#"{"profile":"filament.temporal.event-position.false-extension/v1","clock":"events","parameters":{"kind":"event_position","sequence_authority":"events"}}"#;
+        let progress = r#"{"watermark":3,"completeness":{"complete":{"through":3}},"scope":"open","execution":"open"}"#;
+        let sample = r#"{"sample":{"level":{"integer":"1"}}}"#;
+        for selection in [
+            format!(r#"{{"temporal":{{"name":"E","trace":{{"finite":[{sample},{sample}]}}}}}}"#),
+            format!(
+                r#"{{"temporal":{{"name":"E","trace":{{"progressed":{{"positions":["s0","s1"],"progress":{progress},"lower_boundary":"authoritative-origin","binding":{binding}}}}},"over":{{"reference":{{"population":"P","key":"c1"}}}},"ledger":"ledger.json"}}}}"#
+            ),
+            format!(
+                r#"{{"temporal":{{"name":"T","trace":{{"timestamped":{{"observations":[{{"position":"s0","stamp":0,"order_key":{{"authority":"a","key":1}}}},{{"position":"s1","stamp":2}}],"progress":{progress},"lower_boundary":"history-cutoff","binding":{binding},"cover":{{"counter":{{"uncertainty":1}}}},"missing":[{{"position":1,"atom":0}}]}}}},"over":{{"reference":{{"population":"P","key":"c1"}}}}}}}}"#
+            ),
+            format!(
+                r#"{{"temporal":{{"name":"Ack","trace":{{"timed":{{"prefix":[{{"position":{sample},"stamp":"0"}}],"loop":[{{"position":{sample},"stamp":"3/2"}}],"period":"5"}}}}}}}}"#
+            ),
+        ] {
+            let wire: Result<ClauseRunSelectionWire, _> = serde_json::from_str(&selection);
+            let wire = wire.unwrap_or_else(|error| panic!("{selection}: {error}"));
+            assert!(
+                wire.into_parts().is_ok(),
+                "{selection} names one trace kind of FR-641"
+            );
+        }
+    }
+
     #[test]
     fn parameter_value_reader_uses_heap_stack_past_128_levels() {
         let mut value = String::from("{\"integer\":\"7\"}");

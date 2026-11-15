@@ -634,3 +634,34 @@ fn emitted_collection_and_population_type_keys_match_fspec_vectors() {
         populations.len()
     );
 }
+
+const UNBOUNDED_QUANTIFIER: &str =
+    "function f using v(s: Set<Int[0, 9999]>): Boolean pure { forall(x in s : x < 500) }";
+
+/// FSpec FR-346-AC-2: a claim whose `forall` ranges over an unbounded
+/// collection type is written as a negotiated item over the unbounded
+/// collection domain at `s`, never decided by visiting occurrences at check
+/// time; with an empty registry it has no candidate.
+#[trace("FSpec-TC-249", "FSpec-FR-346-AC-2")]
+#[test]
+#[ignore = "QSL-2174: a quantifier claim over an unbounded collection is not yet written as a negotiated item"]
+fn a_quantifier_claim_over_an_unbounded_set_is_a_negotiated_item() {
+    let package = package(UNBOUNDED_QUANTIFIER);
+    let graph = package.graph();
+    let items = items_from_requirements(graph.requirements(), &Registry::new(), None);
+    assert!(!items.is_empty(), "the quantifier claim writes an item");
+    for item in &items {
+        assert!(
+            matches!(item.extent(), ExtentClassification::Unbounded { .. }),
+            "{item:#?}"
+        );
+        assert_eq!(
+            item.unbounded(),
+            [(domain_of_parameter(graph), DomainKind::Collection)]
+        );
+        let CandidateOutcome::Candidates(candidates) = item.candidates() else {
+            panic!("a computed candidate set");
+        };
+        assert!(candidates.is_empty());
+    }
+}

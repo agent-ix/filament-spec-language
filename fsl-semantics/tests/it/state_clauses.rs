@@ -5847,3 +5847,149 @@ fn recursion_through_a_deref_read_is_not_a_structural_decrease() {
         vec![(Code::UndefinedExpression, Some("unproved-decrease"))]
     );
 }
+
+// ---- precondition facts for postcondition range obligations -----------------
+//
+// FR-577 and FSpec FR-146 items 6 and 7: a postcondition of an operation outside
+// every redefinition family starts its definedness walk with the facts of its
+// operation's own preconditions, and a non-literal integer ordering records a
+// difference bound used by a binary `-` of the two paths.
+
+/// `withdraw(amount: VersionNumber)` on `ConfigVersion` (or `owner`), with frame
+/// `modifies [ConfigVersion/versionNumber]`, optionally redefining
+/// `ConfigVersion/withdraw`.
+fn withdraw_operation(owner: &str, redefines: bool) -> serde_json::Value {
+    use crate::model_operations::{
+        config_version_identity, operation, operation_parameter, version_number_identity,
+        PACKAGE_IDENTITY,
+    };
+    let mut parameter = operation_parameter("withdraw", "amount", &version_number_identity());
+    parameter["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/{owner}/withdraw/amount"));
+    let mut value = operation(
+        "withdraw",
+        json!([parameter]),
+        None,
+        json!({
+            "modifies": [config_version_identity("versionNumber")],
+            "creates": [],
+            "deletes": [],
+        }),
+    );
+    value["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/{owner}/withdraw"));
+    if redefines {
+        value["redefines"] = json!(config_version_identity("withdraw"));
+    }
+    value
+}
+
+fn withdraw_document() -> Vec<u8> {
+    crate::model_operations::config_version_document_with_operations(vec![
+        attempt_update_modifies_version_number(),
+        withdraw_operation("ConfigVersion", false),
+    ])
+}
+
+/// [`withdraw_document`] with `Sub` (a subtype of `ConfigVersion` in
+/// `config_history`) redeclaring `withdraw` with `redefines ConfigVersion/withdraw`.
+fn redefined_withdraw_document() -> Vec<u8> {
+    let document = crate::model_operations::add_sub_type(
+        withdraw_document(),
+        &["ix://example/config-version/config_history"],
+    );
+    let mut envelope: serde_json::Value = serde_json::from_slice(&document).expect("valid JSON");
+    let sub = envelope["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == "ix://example/config-version/Sub")
+        .expect("Sub");
+    sub["operations"] = json!([withdraw_operation("Sub", true)]);
+    serde_json::to_vec(&envelope).expect("valid JSON")
+}
+
+const CAN_AFFORD: &str = "pre CanAfford using v on Config::ConfigVersion::withdraw \
+    { amount <= self.versionNumber }\n";
+const DEBITED: &str = "post Debited using v on Config::ConfigVersion::withdraw \
+    { self.versionNumber = pre(self.versionNumber) - amount }\n";
+
+#[trace("TC-1416", "FR-577-AC-1")]
+#[trace("TC-1416", "FR-577-AC-2")]
+#[trace("FSpec-TC-1360", "FSpec-FR-146-AC-17")]
+#[test]
+#[ignore = "QSL-2177: precondition facts discharging a postcondition's range obligation not implemented yet"]
+fn a_precondition_fact_discharges_a_postcondition_difference() {
+    let document = withdraw_document();
+    let before = check(&document, &format!("{CAN_AFFORD}{DEBITED}"));
+    assert!(
+        before.is_ok(),
+        "expected the bank unit to check, got {before:?}"
+    );
+    let after = check(&document, &format!("{DEBITED}{CAN_AFFORD}"));
+    assert!(after.is_ok(), "source order is irrelevant, got {after:?}");
+}
+
+#[trace("TC-1416", "FR-577-AC-6")]
+#[trace("TC-1416", "FR-577-AC-7")]
+#[trace("TC-1416", "FR-577-AC-8")]
+#[trace("FSpec-TC-1360", "FSpec-FR-146-AC-18")]
+#[test]
+#[ignore = "QSL-2177: difference facts from a non-literal integer ordering not implemented yet"]
+fn strict_flipped_and_negated_orderings_record_the_difference_bound() {
+    let document = withdraw_document();
+    let strict = "pre CanAfford using v on Config::ConfigVersion::withdraw \
+        { amount < self.versionNumber }\n\
+        post Debited1 using v on Config::ConfigVersion::withdraw \
+        { self.versionNumber = (pre(self.versionNumber) - amount) - 1 }\n";
+    assert!(check(&document, strict).is_ok());
+    for body in [
+        "self.versionNumber >= amount",
+        "not (amount > self.versionNumber)",
+    ] {
+        let unit = format!(
+            "pre CanAfford using v on Config::ConfigVersion::withdraw {{ {body} }}\n{DEBITED}"
+        );
+        let checked = check(&document, &unit);
+        assert!(checked.is_ok(), "{body}: {checked:?}");
+    }
+}
+
+#[trace("TC-1416", "FR-577-AC-3")]
+#[trace("TC-1416", "FR-577-AC-16")]
+#[trace("TC-1416", "FR-577-AC-17")]
+#[trace("TC-1416", "FR-577-AC-19")]
+#[trace("FSpec-TC-1360", "FSpec-FR-146-AC-17")]
+#[trace("FSpec-TC-1360", "FSpec-FR-146-AC-18")]
+#[test]
+fn a_range_obligation_not_provable_from_the_precondition_still_refuses() {
+    let document = withdraw_document();
+    let unproved = vec![(Code::UndefinedExpression, Some("unproved-range"))];
+    assert_eq!(
+        check(&document, DEBITED).expect_err("no precondition"),
+        unproved
+    );
+    for body in [
+        "amount = self.versionNumber",
+        "amount + 0 <= self.versionNumber",
+        "amount <= self.versionNumber or amount <= 5",
+        "amount < 0 and amount <= self.versionNumber",
+    ] {
+        let unit = format!(
+            "pre CanAfford using v on Config::ConfigVersion::withdraw {{ {body} }}\n{DEBITED}"
+        );
+        assert_eq!(check(&document, &unit).expect_err(body), unproved, "{body}");
+    }
+}
+
+#[trace("TC-1416", "FR-577-AC-26")]
+#[trace("FSpec-TC-1360", "FSpec-FR-146-AC-17")]
+#[test]
+#[ignore = "QSL-2177: precondition facts and the redefinition-family exclusion not implemented yet"]
+fn a_redefinition_family_transfers_no_precondition_fact() {
+    let document = redefined_withdraw_document();
+    assert_eq!(
+        check(&document, &format!("{CAN_AFFORD}{DEBITED}")).expect_err("family member"),
+        vec![(Code::UndefinedExpression, Some("unproved-range"))]
+    );
+    // Control: the same unit over the family-free document checks.
+    assert!(check(&withdraw_document(), &format!("{CAN_AFFORD}{DEBITED}")).is_ok());
+}

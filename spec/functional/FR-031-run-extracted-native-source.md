@@ -39,6 +39,13 @@ in which `fsl-replay` is built with its feature `quire-extraction` (for the
   through FR-030 and calls `run_clause`; the command reaches the I3 adapter
   only through that reader.
 
+The command owner, `fsl-command`, builds `fsl-replay` with
+`quire-extraction` in its default build, so the driver's `run` verb reaches
+the extraction mode with no build option. Checking every native fence of a
+document at once is
+[FR-662](FR-662-check-every-native-fence-of-a-markdown-specification.md)'s
+`check_native_fences`.
+
 ## Inputs
 
 In process: the original Markdown `Source`, with its two FR-001 labels and

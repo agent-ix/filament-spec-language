@@ -70,9 +70,12 @@ one mapping row.
   for `n` and check the recorded bounds, refusing
   `ill_typed`/`type-mismatch` naming the row, the population and its
   universe size when a result's bounds do not conform to its use.
-- The checker SHALL refuse `seq` in a clause outside a refinement
-  declaration `unsupported_construct`/`expression-form` at its span. FR-391
-  admits the other population names and forms there.
+- Outside a refinement declaration, FR-391 admits all six forms, `seq`
+  included, in a population position, with the typing and evaluation stated
+  here. `seq` reads no population, so nothing about it depends on being in a
+  refinement row. Every checked population reference and form lowers to
+  FSpec FR-322 terms in every position where it checks (FR-391 "Lowering of
+  population forms"); lowering never refuses one.
 - Each form SHALL bind its variable to `Reference<T>` (for `x in P`) or to
   an integer within the bounds of `lo` and `hi` (for `seq`), and SHALL check
   `c` as `Boolean` and `e` by its own type, refusing `ill_typed`/
@@ -113,7 +116,7 @@ Fixture: ADR-020 §8's `RingIsQueue` with universes `rings = {r}` and `slots
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-139-AC-1 | `RingIsQueue`'s `items` row checks at S3 with `n` symbolic, and at subject admission with `slots = {s0, s1}` `R::slots` is typed `Set<Reference<R::Slot>>[0, 2]` and the `seq` form's declared maximum length 2, conforming to `Sequence<Int[0, 1]>[0, 2]`. `count(s in R::slots where s.ring = self)` checks as an integer and `exists(s in R::slots where s.value = 1)` as `Boolean`. | Test (TC-544) |
-| FR-139-AC-2 | `only(s in R::slots where s.index: s.value)` refuses `ill_typed`/`type-mismatch` at `s.index`. A `seq` in an invariant of `R::Ring` refuses `unsupported_construct`/`expression-form`. | Test (TC-544) |
+| FR-139-AC-2 | `only(s in R::slots where s.index: s.value)` refuses `ill_typed`/`type-mismatch` at `s.index`. A `seq(i in 0 .. 1: i)` in an invariant of `R::Ring` checks as `Sequence<Int[0, 1]>[0, 2]` (FR-391-AC-10). | Test (TC-544) |
 | FR-139-AC-3 | At the state `head = 1`, `size = 2`, `s0.value = 0`, `s1.value = 1`, `items` evaluates to `[1, 0]`; at `head = 0`, `size = 0` it evaluates to `[]`; `count(s in R::slots where s.ring = self)` evaluates to 2 and `all(s in R::slots where s.value = 1)` to `false`. | Test (TC-544) |
 | FR-139-AC-4 | `only(s in R::slots where s.ring = self: s.value)` is undefined at every state of the fixture (two slots satisfy it), and `only(s in R::slots where s.ring = self and s.index = self.head + 2: s.value)` is undefined (no slot satisfies it). | Test (TC-544) |
 | FR-139-AC-5 | A row `count(s in R::slots where s.ring = self)` mapped to an abstract field of type `Int[0, 2]` checks at S3 with `n` symbolic; a request whose subject admits `slots = {s0, s1}` admits it, and one that admits `slots = {s0, s1, s2}` refuses `ill_typed`/`type-mismatch` before exploration, naming the row, `R::slots` and universe size 3. | Test (TC-544) |
