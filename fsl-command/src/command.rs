@@ -984,8 +984,10 @@ fn check_sources<T>(
         let checked = fsl_replay::spine::check_units_with_refinement_internals(
             &admitted,
             package_name(canonical_unit_source(sources).source().identity()),
-            request.refinement_internals.clone(),
-            &check_selections,
+            fsl_replay::spine::SourceInputs {
+                refinement_internals: request.refinement_internals.clone(),
+                temporal_selections: &check_selections,
+            },
             &models,
             &dependencies,
             limits,
@@ -1014,8 +1016,10 @@ fn check_sources<T>(
         let checked = fsl_replay::spine::check_with_refinement_internals(
             &parsed,
             package_name(first_source.identity()),
-            request.refinement_internals.clone(),
-            &check_selections,
+            fsl_replay::spine::SourceInputs {
+                refinement_internals: request.refinement_internals.clone(),
+                temporal_selections: &check_selections,
+            },
             &models,
             &dependencies,
             limits,

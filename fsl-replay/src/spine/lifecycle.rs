@@ -1541,8 +1541,10 @@ pub fn check(
     check_with_refinement_internals(
         parsed,
         package_name,
-        None,
-        &[],
+        SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &[],
+        },
         models,
         dependencies,
         limits,
@@ -1688,13 +1690,24 @@ pub fn check_units(
     )
 }
 
+/// The per-source inputs of a check beside the unit itself: the request's
+/// unchecked refinement-internal-list value (FR-147/FR-099) and the clock
+/// selections S3 reads ([`super::RequestClocks::check_selections`]).
+#[derive(Clone, Debug, Default)]
+pub struct SourceInputs<'a> {
+    /// The unit's unchecked internal-list value; `None` when absent.
+    pub refinement_internals: Option<serde_json::Value>,
+    /// The clock selections S3 reads.
+    pub temporal_selections: &'a [fsl_package::TemporalClockSelection],
+}
+
 /// S3 and S4 over an admitted source-unit list, with the root request's
-/// unchecked refinement-internal-list value carried into the combined unit.
+/// unchecked refinement-internal-list value carried into the combined unit and the
+/// request's clock selections ([`SourceInputs`]).
 pub fn check_units_with_refinement_internals(
     admitted: &AdmittedUnitList,
     package_name: String,
-    refinement_internals: Option<serde_json::Value>,
-    temporal_selections: &[fsl_package::TemporalClockSelection],
+    inputs: SourceInputs<'_>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -1706,8 +1719,8 @@ pub fn check_units_with_refinement_internals(
         models,
         dependencies,
         UnitCheckOptions {
-            refinement_internals: refinement_internals.as_ref(),
-            temporal_selections,
+            refinement_internals: inputs.refinement_internals.as_ref(),
+            temporal_selections: inputs.temporal_selections,
             ..UnitCheckOptions::default()
         },
         limits,
@@ -1869,12 +1882,12 @@ pub(crate) fn check_units_with_options(
 }
 
 /// S3 and S4 with the unit's unchecked internal-list value and each
-/// dependency library's own value carried to its source owner (FR-147/FR-099).
+/// dependency library's own value carried to its source owner (FR-147/FR-099), and the
+/// request's clock selections ([`SourceInputs`]).
 pub fn check_with_refinement_internals(
     parsed: &ParsedUnitSource,
     package_name: String,
-    refinement_internals: Option<serde_json::Value>,
-    temporal_selections: &[fsl_package::TemporalClockSelection],
+    inputs: SourceInputs<'_>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -1884,8 +1897,8 @@ pub fn check_with_refinement_internals(
         parsed,
         package_name,
         &BTreeMap::new(),
-        refinement_internals,
-        temporal_selections,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
         None,
         None,
         models,

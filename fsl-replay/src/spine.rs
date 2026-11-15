@@ -62,7 +62,7 @@ pub use lifecycle::{
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
     CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
     ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
-    ProtocolCheckSite, TypeDeclaration, TypeReport, TypeRequirement,
+    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,

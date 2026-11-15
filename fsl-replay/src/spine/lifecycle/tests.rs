@@ -3448,8 +3448,10 @@ fn an_unimported_library_internal_list_defect_refuses_the_compile_at_its_owner()
     let failure = check_with_refinement_internals(
         &parsed,
         "fixture".to_owned(),
-        None,
-        &[],
+        super::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &[],
+        },
         &models,
         &dependencies,
         limits,
