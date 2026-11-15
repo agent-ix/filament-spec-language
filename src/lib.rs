@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The root surfaces filament-protocol uses:
 //! complete-V1 editor tooling over `fsl-cst`, and the
-//! checked-package v2 emitter and handoff corpus. The language stages live in
-//! the `fsl-*` layer crates (ADR-011 §6.1); this crate re-exports none of them.
+//! editor tooling. The language stages live in the `fsl-*` layer crates
+//! (ADR-011 §6.1); this crate re-exports none of them.
 /// The version of this package as built, which `cargo xtask qualify` reports
 /// as the FSL version (FR-567-AC-5).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(feature = "checked-handoff")]
-pub mod checked_handoff;
 pub mod complete;
-pub mod emit_checked_v2;
 #[cfg(feature = "population-fixtures")]
 pub mod population_fixtures;
 

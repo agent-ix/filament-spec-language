@@ -7,8 +7,8 @@ use filament_contract_model::{
     SelectedExactIdentities, SelectedExactIdentity, SelectedTypeDeclarations,
 };
 use filament_exact::{Presence, ValueType};
-use filament_spec_language::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
-use filament_spec_language::emit_checked_v2::Request;
+use fsl_command::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
+use fsl_command::emit_checked_v2::Request;
 use fsl_package::ReadIdentityRows;
 use ix_trace_rs::trace;
 use serde_json::Value;

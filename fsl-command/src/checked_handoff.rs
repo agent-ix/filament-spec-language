@@ -16,14 +16,14 @@
 
 //! # A downstream consumer
 //!
-//! A crate that enables only the `checked-handoff` feature compiles [`write()`]
-//! and [`Selection::check`] against this public surface alone:
+//! The default `fsl-command` build exposes [`write()`] and
+//! [`Selection::check`] at this public surface:
 //!
 //! ```no_run
-//! use filament_spec_language::checked_handoff::{
+//! use fsl_command::checked_handoff::{
 //!     write, CheckedHandoffRequest, Corpus, Selection,
 //! };
-//! use filament_spec_language::emit_checked_v2::Request;
+//! use fsl_command::emit_checked_v2::Request;
 //! use fsl_package::NativeJoinLimits;
 //!
 //! fn handoff(emit: Request, directory: &std::path::Path) {
@@ -42,7 +42,7 @@
 //! The writer's internals are not part of that surface:
 //!
 //! ```compile_fail
-//! use filament_spec_language::checked_handoff::tree::Files;
+//! use fsl_command::checked_handoff::tree::Files;
 //! ```
 
 mod corpus;
@@ -313,10 +313,43 @@ pub fn write_with(
         });
     }
     let compiled = emit_checked_v2::compile(&request.emit)?;
+    write_compiled(request, directory, environment, compiled, None)
+}
+
+/// Write the command's checked package and its handoff sidecars using the
+/// identity assigned to the source by `native-compile/1`.
+pub(crate) fn write_with_source_identity(
+    request: &CheckedHandoffRequest,
+    directory: &Path,
+    source_identity: fsl_foundation::SourceIdentity,
+    source_file: &str,
+) -> Result<(), Error> {
+    if tree::exists(directory) {
+        return Err(Error::Exists {
+            path: directory.display().to_string(),
+        });
+    }
+    let compiled = emit_checked_v2::compile_with_source_identity(&request.emit, source_identity)?;
+    write_compiled(
+        request,
+        directory,
+        &RealEnvironment,
+        compiled,
+        Some(source_file),
+    )
+}
+
+fn write_compiled(
+    request: &CheckedHandoffRequest,
+    directory: &Path,
+    environment: &dyn Environment,
+    compiled: Compiled,
+    command_source_file: Option<&str>,
+) -> Result<(), Error> {
     let bytes = compiled.emitted.package().bytes().to_vec();
     let evidence = read_evidence(&compiled)?;
     let package = admit(environment.read(&bytes, READ_LIMITS, &evidence))?;
-    let selection = Selection::derive(&compiled, &request.emit, &bytes)?;
+    let selection = Selection::derive(&compiled, &request.emit, &bytes, command_source_file)?;
     environment
         .check(&selection, &package)
         .map_err(|refusal| Error::ReadBackDiffers {
@@ -324,7 +357,7 @@ pub fn write_with(
         })?;
     let mut files = tree::Files::new();
     files.insert("checked-package.json", bytes.clone())?;
-    insert_inputs(&mut files, &compiled)?;
+    insert_inputs(&mut files, &compiled, command_source_file)?;
     files.insert("selection.json", selection.to_bytes()?)?;
     files.insert("inventory.json", inventory_file(&compiled, &bytes)?)?;
     let mut budget = request.native_join.budget();
@@ -438,6 +471,29 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
     Ok(CompiledHandoff { compiled, admitted })
 }
 
+/// Verify a handoff directory by compiling its named inputs and checking the
+/// emitted package against the strict reader and selection sidecar.
+///
+/// The command's inspect/read-back surface uses this entry point; the return
+/// value retains the admitted package and the checked in-process package for
+/// callers that need them.
+pub fn verify(directory: &Path) -> Result<CompiledHandoff, Error> {
+    let package_ceiling = usize::try_from(READ_LIMITS.bytes).unwrap_or(usize::MAX);
+    let selection = Selection::read(&tree::read(directory, "selection.json", package_ceiling)?)?;
+    let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
+    let inputs = selection
+        .inputs(|file| tree::read(directory, file, fsl_foundation::source::MAX_SOURCE_BYTES))?;
+    let compiled = emit_checked_v2::compile_inputs(inputs)?;
+    let evidence = read_evidence(&compiled)?;
+    let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
+    selection
+        .check(&admitted)
+        .map_err(|refusal| Error::ReadBackDiffers {
+            detail: refusal.to_string(),
+        })?;
+    Ok(CompiledHandoff { compiled, admitted })
+}
+
 /// `inventory.json` (FR-517 "The inventory file"): `fsl_inventory` over the
 /// in-process unit, joined to the wire node ids of the emitted `bytes`.
 fn inventory_file(compiled: &Compiled, bytes: &[u8]) -> Result<Vec<u8>, Error> {
@@ -512,11 +568,16 @@ fn equality_file(
 }
 
 /// The exact input bytes under `sources/` and `models/`.
-fn insert_inputs(files: &mut tree::Files, compiled: &Compiled) -> Result<(), Error> {
-    files.insert(
-        &format!("sources/{}", compiled.checked.source().identity().identity),
-        compiled.source.clone(),
-    )?;
+fn insert_inputs(
+    files: &mut tree::Files,
+    compiled: &Compiled,
+    command_source_file: Option<&str>,
+) -> Result<(), Error> {
+    let unit_file = command_source_file.map_or_else(
+        || format!("sources/{}", compiled.checked.source().identity().identity),
+        |file| format!("sources/source:{file}"),
+    );
+    files.insert(&unit_file, compiled.source.clone())?;
     for library in &compiled.libraries {
         files.insert(
             &format!("sources/{}", library.source.identity),

@@ -14,7 +14,7 @@ use filament_contract_model::{
     CheckedPackageReadLimits, CheckedPackageSidecarsRef, CheckedPackageV2,
     CheckedPackageV2ReadResult, CheckedSemanticNodeV2, CheckedTerm,
 };
-use filament_spec_language::emit_checked_v2::{emit, run, Error, Request};
+use fsl_command::emit_checked_v2::{emit, run, Error, Request};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;

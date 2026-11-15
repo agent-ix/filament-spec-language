@@ -365,32 +365,24 @@ fn read_clock_selections(path: &Path) -> Result<Vec<ClockSelection>, Error> {
 #[derive(Debug)]
 pub(crate) struct Compiled {
     /// The unit's source bytes.
-    #[cfg(feature = "checked-handoff")]
     pub(crate) source: Vec<u8>,
     /// The domain package documents, in request order.
-    #[cfg(feature = "checked-handoff")]
     pub(crate) models: Vec<Vec<u8>>,
     /// The supplied libraries with the bytes they were compiled from.
-    #[cfg(feature = "checked-handoff")]
     pub(crate) libraries: Vec<SuppliedLibrary>,
     /// FR-056's package input: the domain package documents by the identity
     /// each declares.
-    #[cfg(feature = "checked-handoff")]
     pub(crate) packages: fsl_semantics::model::intake::PackageInput,
     /// The accepted state-clause execution points the unit was checked with.
-    #[cfg(feature = "checked-handoff")]
     pub(crate) points: StateClauseExecutionPoints,
     /// The checked unit the package was emitted from.
-    #[cfg(feature = "checked-handoff")]
     pub(crate) checked: CheckedUnit,
     /// `fsl_replay::source_inventory::fsl_inventory` over the check outcome
     /// with the formal identity of the source path (FR-517).
-    #[cfg(feature = "checked-handoff")]
     pub(crate) inventory:
         Result<filament_contract_model::source_obligation::SourceInventoryOutcome, String>,
     /// The ceiling on each package emission the handoff writer makes
     /// (`emit.output_bytes`).
-    #[cfg(feature = "checked-handoff")]
     pub(crate) emit: fsl_package::EmitLimits,
     /// The emitted package and the evidence its reader needs.
     pub(crate) emitted: EmittedUnit,
@@ -400,7 +392,6 @@ pub(crate) struct Compiled {
 /// the file name with every character outside the `SourceDocumentId`
 /// alphabet replaced by `_`, prefixed with `u` unless it starts with an ASCII
 /// letter; revision 1.
-#[cfg(feature = "checked-handoff")]
 fn formal_identity(path: &Path) -> Result<filament_contract_model::SourceIdentity, String> {
     let name = path
         .file_name()
@@ -442,6 +433,8 @@ fn refusal(failure: spine::FrontEndFailure) -> Error {
 pub(crate) struct Inputs {
     /// The path the unit is labelled and displayed by.
     pub(crate) source_path: PathBuf,
+    /// Optional command-request identity for an in-process compile handoff.
+    pub(crate) source_identity: Option<SourceIdentity>,
     /// The unit's bytes.
     pub(crate) source: Vec<u8>,
     /// The domain package documents, in request order.
@@ -487,6 +480,7 @@ fn read_inputs(request: &Request) -> Result<Inputs, Error> {
         .unwrap_or_default();
     Ok(Inputs {
         source_path: request.source.clone(),
+        source_identity: None,
         source,
         models,
         libraries,
@@ -502,6 +496,17 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
     compile_inputs(read_inputs(request)?)
 }
 
+/// Compile request inputs while retaining the source identity assigned by a
+/// native-compile request.
+pub(crate) fn compile_with_source_identity(
+    request: &Request,
+    source_identity: SourceIdentity,
+) -> Result<Compiled, Error> {
+    let mut inputs = read_inputs(request)?;
+    inputs.source_identity = Some(source_identity);
+    compile_inputs(inputs)
+}
+
 /// Run the spine over `inputs`.
 ///
 /// This is the spine pipeline `fsl_replay::compile_package` runs
@@ -513,6 +518,7 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
 pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
     let Inputs {
         source_path,
+        source_identity,
         source,
         models,
         libraries,
@@ -521,7 +527,7 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
         temporal_selections,
     } = inputs;
     let dependencies = DependencyInput::new(libraries.clone()).map_err(Error::Dependencies)?;
-    let unit = identity("source", &source_path);
+    let unit = source_identity.unwrap_or_else(|| identity("source", &source_path));
     let path = source_path.display().to_string();
     let package = LibraryName::new(package_name)
         .map_err(|invalid| Error::Producer(Box::new(ReplayRefusal::InvalidPackageName(invalid))))?;
@@ -556,7 +562,6 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
             limits,
             &cancel,
         );
-    #[cfg(feature = "checked-handoff")]
     let inventory = formal_identity(&source_path).and_then(|formal| {
         fsl_replay::source_inventory::fsl_inventory(Some(&parsed), &outcome, &formal)
             .map_err(|refused| refused.to_string())
@@ -568,21 +573,13 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
             .map_err(refusal)?
             .into_value();
     Ok(Compiled {
-        #[cfg(feature = "checked-handoff")]
         source,
-        #[cfg(feature = "checked-handoff")]
         models,
-        #[cfg(feature = "checked-handoff")]
         libraries,
-        #[cfg(feature = "checked-handoff")]
         packages,
-        #[cfg(feature = "checked-handoff")]
         points,
-        #[cfg(feature = "checked-handoff")]
         checked,
-        #[cfg(feature = "checked-handoff")]
         inventory,
-        #[cfg(feature = "checked-handoff")]
         emit: limits.package.emit(),
         emitted,
     })
