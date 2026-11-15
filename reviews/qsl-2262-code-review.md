@@ -28,3 +28,20 @@ Reviewed the frozen QSL-2262 PR #2727 against `origin/main` at `9462d4b41`, incl
 The Makefile resolves both `quire` and `node` while the caller's `PATH` is available, then invokes the resolved Node executable with the Quire launcher and arguments while keeping the child `PATH` empty. This preserves the gate's plugin-discovery isolation. The new test compiles a Rust recorder and verifies the actual Make invocation, empty child `PATH`, launcher path and arguments. The assertions are behavioral and the focused test passed. No changed API, dependency, stub or unowned behavior was found.
 
 Verification: `cargo test --locked -p xtask --lib spec_validation_uses_node_without_exposing_quoin_to_path -- --nocapture` passed (1/1); `cargo fmt --all -- --check`, `cargo clippy --locked -p xtask --lib --tests -- -D warnings`, and `CARGO_HOME=/tmp/qsl-2262-cargo-home cargo deny check` passed. The aggregate gate was not run in this review.
+
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Added the canonical trace attribute to the regression test. |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    after_excerpt: |-
+      #[trace("TC-920", "NFR-002-AC-3")]
+      #[test]
+      fn spec_validation_uses_node_without_exposing_quoin_to_path() {
+```

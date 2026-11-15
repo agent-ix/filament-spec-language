@@ -31,3 +31,21 @@ Audited the repository's computed specification-to-test matrix and the changed Q
 - No applicable AssuranceProfile was found. `spec/spec.md` has no artifact id, so no spec-root relationship was asserted.
 - Plan completion: not assessed
 - Semantic review: skipped
+
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | deferred | This is pre-existing repository-wide trace coverage debt outside PR #2727, which changes only launcher invocation and covers its changed behavior. Address it in separate corpus and trace-remediation work. |
+| FND-002 | deferred | This is pre-existing repository-wide ignored-test coverage debt outside PR #2727, which changes only launcher invocation and covers its changed behavior. Address it in separate corpus and trace-remediation work. |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: deferred
+    reason: "Pre-existing repository-wide trace coverage debt is outside PR #2727, which changes only launcher invocation and covers its changed behavior; address it in separate corpus and trace-remediation work."
+  - fnd: FND-002
+    outcome: deferred
+    reason: "Pre-existing repository-wide ignored-test coverage debt is outside PR #2727, which changes only launcher invocation and covers its changed behavior; address it in separate corpus and trace-remediation work."
+```
