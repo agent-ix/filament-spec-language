@@ -59,3 +59,4 @@ Not mergeable as written: FND-001 to FND-005 put wrong or dangling traceability 
 | FND-006 | fixed | The rates are removed from the body Population. Frontmatter and body populations now match (peak RSS and marginal bytes), and Decision Use marks the rates as context. |
 | FND-007 | fixed | The apparatus-edit text now names the probe binary, mc.rs, world.rs and rss.rs. |
 | FND-008 | fixed | MP-006 sampling and Population now describe both readers and state that the Linux path is unchanged, needs no fresh A/B, and that macOS starts a new series. |
+| FND-009 | fixed | MP-011 now has title `Model-check axes peak RSS and marginal bytes per state` and metric `fsl.bench.probe.mc_peak_rss_and_marginal_bytes`; neither names the rates that remain context only. |

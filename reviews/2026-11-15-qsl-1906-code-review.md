@@ -56,3 +56,4 @@ Mergeable after FND-001 is explained or ticketed. FND-002 to FND-004 are low. Th
 | FND-002 | fixed | en4.rs doc now says ten-thousandths 400, 120 and 48. |
 | FND-003 | fixed | footprint_kib uses char_indices().next_back(). Tests cover a trailing multi-byte char, a lone multi-byte char and empty input. |
 | FND-004 | fixed | size_lists returns Err for a word that does not parse. `mc` rejects a stray `--`. mc-marginal fails when the large run reaches no more states than the small one. |
+| FND-005 | fixed | `target_gate_dummy` is absent from the current tree at 714846902aa4e45034b9359e2d9ed6a5a03ca00a (`git ls-tree HEAD -- target_gate_dummy` returns no entry). |
