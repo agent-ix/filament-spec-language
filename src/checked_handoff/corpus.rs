@@ -1004,6 +1004,9 @@ mod tests {
             "format": SELECTION_FORMAT,
             "package": {
                 "contract_version": "",
+                "package_name": "",
+                "unit": "",
+                "execution_points": {},
                 "read_limits": limits,
                 "evidence": { "models": [], "libraries": [] },
                 "node_counts": {},
