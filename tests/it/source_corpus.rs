@@ -98,26 +98,40 @@ fn run_directory(directory: &Path) -> Result<String, String> {
     }
 
     let mut flips = BTreeMap::<String, usize>::new();
+    let mut failures = Vec::new();
     for stem in programs {
         let program_path = directory.join(format!("{stem}.native"));
         let expectation_path = directory.join(format!("{stem}.expected.json"));
-        let expected: Expectation = serde_json::from_slice(
-            &std::fs::read(&expectation_path)
-                .map_err(|error| format!("{}: {error}", expectation_path.display()))?,
-        )
-        .map_err(|error| {
-            format!(
-                "{}: invalid expectation: {error}",
-                expectation_path.display()
-            )
-        })?;
+        let expected_bytes = match std::fs::read(&expectation_path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                failures.push(format!("{}: {error}", expectation_path.display()));
+                continue;
+            }
+        };
+        let expected: Expectation = match serde_json::from_slice(&expected_bytes) {
+            Ok(expected) => expected,
+            Err(error) => {
+                failures.push(format!(
+                    "{}: invalid expectation: {error}",
+                    expectation_path.display()
+                ));
+                continue;
+            }
+        };
         if let Some(key) = &expected.flips_with {
             *flips.entry(key.clone()).or_default() += 1;
         }
-        let actual = execute(&program_path, &expected)?;
+        let actual = match execute(&program_path, &expected) {
+            Ok(actual) => actual,
+            Err(error) => {
+                failures.push(error);
+                continue;
+            }
+        };
         let mismatch = mismatch(&program_path, &expected, &actual);
         if let Some(mismatch) = mismatch {
-            return Err(mismatch);
+            failures.push(mismatch);
         }
     }
 
@@ -133,7 +147,12 @@ fn run_directory(directory: &Path) -> Result<String, String> {
                 .join(", ")
         )
     };
-    Ok(flip_report)
+    if failures.is_empty() {
+        Ok(flip_report)
+    } else {
+        failures.push(flip_report);
+        Err(failures.join("\n"))
+    }
 }
 
 fn execute(program: &Path, expected: &Expectation) -> Result<Actual, String> {
@@ -312,8 +331,8 @@ fn actual_error(category: &str, exit_code: u8, value: &Value) -> Actual {
 
 fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<String> {
     let differs = expected.exit_code != actual.exit_code
-        || optional_differs(&expected.category, &actual.category)
-        || optional_differs(&expected.last_stage, &actual.last_stage)
+        || exposed_field_differs(&expected.category, &actual.category)
+        || exposed_field_differs(&expected.last_stage, &actual.last_stage)
         || optional_differs(&expected.code, &actual.code)
         || optional_differs(&expected.cause, &actual.cause)
         || expected
@@ -338,6 +357,13 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             expected.flips_with.as_deref().unwrap_or("none"),
         )
     })
+}
+
+fn exposed_field_differs(expected: &Option<String>, actual: &Option<String>) -> bool {
+    expected
+        .as_ref()
+        .zip(actual.as_ref())
+        .is_some_and(|(expected, actual)| expected != actual)
 }
 
 fn optional_differs(expected: &Option<String>, actual: &Option<String>) -> bool {
@@ -477,6 +503,19 @@ fn corpus_runner_reports_flip_keys() {
         run_directory(directory.path()).unwrap(),
         "flips_with: QSL-1965 (2)"
     );
+}
+
+#[test]
+fn corpus_runner_executes_all_programs_before_reporting_mismatches() {
+    let directory = tempfile::tempdir().unwrap();
+    let expected = json!({"verb":"check","exit_code":10,"flips_with":"QSL-1965"}).to_string();
+    write_case(directory.path(), "one", ACCEPTING_PROGRAM, &expected);
+    write_case(directory.path(), "two", ACCEPTING_PROGRAM, &expected);
+
+    let error = run_directory(directory.path()).unwrap_err();
+    assert!(error.contains("one.native"), "{error}");
+    assert!(error.contains("two.native"), "{error}");
+    assert!(error.contains("flips_with: QSL-1965 (2)"), "{error}");
 }
 
 #[test]
