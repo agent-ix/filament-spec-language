@@ -13,6 +13,7 @@ no stored measurements or past results are comparison inputs.
 | CST identity hashing against source bytes | `make bench-cst` | `benches/cst.rs` | `src/parse.rs` |
 | Model layer on an N-type `DomainPackage` built through FR-154 intake | `make bench-model` | `benches/model.rs` | `src/model.rs` |
 | Evaluator cost per call frame | `make bench-evaluator` | `benches/evaluator.rs` | `src/check.rs` |
+| Evaluator kernels against plain Rust | `make bench-evaluator_kernel` | `benches/evaluator_kernel.rs` | `src/kernel.rs` |
 | Checker: Text-reachable recursive cluster | `make bench-text_cluster` | `benches/text_cluster.rs` | `src/text_cluster.rs` |
 | Model check: `mc/state_graph` (plain and symmetric), `mc/safety` (invariant and deadlock), `mc/liveness`, `mc/frame_candidates`, `mc/observation` | `make bench-mc` | `benches/mc.rs` | `src/mc.rs`, `src/world.rs` |
 | Protocol reach `reach/workers` at 1, 2, 4 and all workers | `make bench-reach` | `benches/reach.rs` | `src/mc.rs`, `src/world.rs` |
@@ -20,11 +21,29 @@ no stored measurements or past results are comparison inputs.
 | EN-4 Okamoto sampling `en4/sample` | `make bench-en4` | `benches/en4.rs` | `src/mc.rs`, `src/world.rs` |
 | Counts, refusal boundaries, one-shot large inputs and peak RSS | `make bench-probe` | `src/bin/fsl-bench-probe.rs` | all of the above |
 
-`make bench` runs all ten criterion suites. Each target runs
+`make bench` runs all eleven criterion suites. Each target runs
 `cargo bench --locked -p fsl-bench --bench <axis>`, and criterion options go
 through `BENCH_ARGS`. Run benches with `-p fsl-bench`, never `--workspace`;
 other crates' dev-dependencies can enable `filament-exact/test-support` and make
 the meter log every charge.
+
+The evaluator-kernel target also runs its Rust report tool before and after
+Criterion so it can identify and summarize only estimates from that invocation.
+
+### Evaluator kernels
+
+`make bench-evaluator_kernel` runs the `evaluator/kernel` group. It measures
+`sum(n) = if n > 0 then n + sum(n - 1) else 0`, a three-comparison recursive
+kernel, and a sequence fold, each at sizes 5 and 10. The generator is
+`fsl_bench::kernel::KernelCase`; each interpreter call is paired with its
+plain-Rust reference. After Criterion completes, the target prints the live
+estimates in ns per frame and ns per logical operation, plus the
+interpreter-to-Rust ns-per-operation ratio. Recursive kernels use `size + 1`
+frames and `size` logical operations; the fold uses one frame and one logical
+operation per sequence element. The report reads only estimates written by
+that invocation, so a filtered run does not reuse an earlier estimate. The
+checked package and arguments are exposed by `KernelCase` for reuse by another
+evaluator backend.
 
 Each input is built through the layers' public API. A change behind that API
 needs no benchmark change; an API change requires updating its generator. Each
