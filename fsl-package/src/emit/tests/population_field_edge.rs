@@ -339,7 +339,6 @@ fn a_subtype_operand_links_the_edge_types_node() {
 /// occurrence, in the row 23 package with the `Rush` node as `declaration`.
 #[trace("TC-1054", "FR-380-AC-12")]
 #[test]
-#[ignore = "FSpec STD-663 and IR-1533: IR's reader does not yet admit `population` on a `field` member of `reaches_field`"]
 fn ir_reads_each_field_edge_package_and_selects_its_population() {
     let units = [
         loop_over("chief"),
