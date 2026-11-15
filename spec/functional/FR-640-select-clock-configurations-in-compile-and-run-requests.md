@@ -153,9 +153,10 @@ computed over the package compiled with these rows.
   A replay request has no `clocks` member: the replay recompile SHALL read its
   selections from the proving package's `temporal_bindings` rows, each row's
   `clock_name` and `clock` giving one member, so it compiles with exactly the
-  configuration the proof ran under and cannot be handed a different one. A
-  replay request that carries `clocks` SHALL refuse `invalid-request` at stage
-  `request`, naming `clocks`.
+  configuration the proof ran under and cannot be handed a different one.  The replay
+  request wire has no `clocks` member, so a replay cannot be handed another
+  configuration; a driver that reads a replay request document refuses a
+  `clocks` member there `invalid-request` at stage `request`, naming it.
 - The driver's `--clocks <json-file>` reads the file as UTF-8 JSON whose whole
   content is the `clocks` object. An unreadable file SHALL refuse `io-error`
   naming the path; a file that is not one JSON object SHALL refuse
@@ -175,7 +176,7 @@ computed over the package compiled with these rows.
 | FR-640-AC-5 | Two compile requests differing only in the `"events"` `sequence_authority` give packages with different identities; two differing only in member order give equal bytes. | Test (TC-1660) |
 | FR-640-AC-6 | A `clocks` member named `model-steps` or `model-time` refuses at stage `emit`, `invalid-request`, exit 20, `details.cause` `reserved-clock-name`, `details.clock` the name, whatever the unit declares: a model binding name is never a configurable clock role (FR-610). | Test (TC-1661) |
 | FR-640-AC-7 | Through `command::compile` with the ConfigVersion model and no `clocks` member, a unit with one fixed-sample clause and one timestamped-event clause over `Config::ConfigVersion` on clock `model-steps` exits 0, and their `temporal_bindings` rows hold `{"kind": "fixed_sample", "epoch": {"kind": "integer", "decimal": "0"}, "period": {"kind": "integer", "decimal": "1"}, "unit": "step"}` and `{"kind": "timestamped_event", "timestamp_unit": "step"}`. | Test (TC-2181) |
-| FR-640-AC-8 | A replay request carrying a `clocks` member refuses `invalid-request` at stage `request`, naming `clocks`; the replay recompile of a package compiled with FR-640-AC-1's `clocks` reads its selections from the package's `temporal_bindings` rows, so the recompiled package's identity equals the original's. | Inspection (TC-2182) |
+| FR-640-AC-8 | The `clocks` object rebuilt from the `temporal_bindings` rows of the package FR-640-AC-1 compiles (each row's `clock_name` naming a member whose value is the row's `clock`) compiles the same program to byte-identical package bytes; this is the selection list the replay recompile builds from the proving package, so a replay recompiles under exactly the configuration the proof ran under. `ReplayRequestWire` has no `clocks` member. | Test (TC-2182) |
 | FR-640-AC-9 | A request compiling a program and one library unit whose clause writes clock `plant-ms`, with one `clocks` member `plant-ms`, binds both clauses to that member and refuses no member as `unused-clock-selection`; without the member, the library clause refuses `missing-clock-selection` naming `plant-ms`. | Test (TC-2183) |
 
 ## Dependencies

@@ -56,11 +56,13 @@ fn built(world: &World, claim: &str) -> ProbProduct {
 }
 
 /// FR-254-AC-3 (TC-709): an exact request for the strict-guard timed RPC is
-/// refused by the exact timed-profile route rather than admitted as untimed.
+/// decided by the exact timed route over clock regions, never admitted as
+/// untimed.
 #[trace("TC-709", "FR-254-AC-3")]
 #[trace("TC-639", "FR-204-AC-2")]
 #[test]
-fn exact_request_over_strict_guard_timed_rpc_is_refused() {
+#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
+fn exact_request_over_strict_guard_timed_rpc_is_decided_over_regions() {
     let document =
         crate::timed_world::document(&["x"], &[("send", &["phase"]), ("reply", &["phase"])]);
     let body = format!(
@@ -98,13 +100,12 @@ fn exact_request_over_strict_guard_timed_rpc_is_refused() {
             limits: ExactProbLimits::default(),
         },
         &Cancel::new(),
-    )
-    .expect_err("EN-5 refuses a strict-guard timed exact request");
-    // FR-204-AC-2: the strict guard `x > 3 ms` has no digital reading.
-    assert!(matches!(
-        refusal,
-        ProductRefusal::StrictClockConstraint { .. }
-    ));
+    );
+    // FR-204-AC-2: the strict guard `x > 3 ms` is read through clock regions.
+    assert!(
+        matches!(refusal, Ok(ProbBuild::Built(_))),
+        "the strict-guard request builds a product: {refusal:?}"
+    );
 }
 
 fn refused(world: &World, claim: &str) -> ProductRefusal {

@@ -16,7 +16,7 @@ Scope: FR-762-AC-7.
 
 ## Test Procedure
 
-Parse TC-2148's unit with `fsl_cst::parse`. Test: `fsl-cst/tests/it/complete_cst.rs` `a_recovered_unit_is_never_admitted`.
+Parse TC-2148's unit with `fsl_cst::parse` (test: `fsl-cst/tests/it/complete_cst.rs` `a_recovered_unit_is_never_admitted`), then run the `parse` operation over it and serialize its outcome document (test: `tests/it/parse_operation.rs` `a_recovered_unit_refuses_at_s1_with_both_diagnostics`).
 
 Tag the tests `#[trace("TC-2154", "FR-762-AC-7")]`.
 

@@ -99,7 +99,7 @@ fn assert_refusal(
     "FR-286-AC-3"
 )]
 #[test]
-fn a_driver_serializes_format_success_at_s2_without_text_payload() {
+fn a_driver_serializes_format_success_at_s2() {
     let text = format!("{FIXTURE}\n// café λ\n");
     let source = parsed(&text);
     assert!(source.is_admissible());
@@ -127,8 +127,11 @@ fn a_driver_serializes_format_success_at_s2_without_text_payload() {
     let document = OutcomeDocument::from_format(&result);
     assert_eq!(document.category(), Category::Success);
     assert_eq!(document.category().exit_code(), 0);
-    let json = document_json(&document);
+    let mut json = document_json(&document);
     assert_eq!(json.as_object().unwrap().len(), 8);
+    // `result` carries the formatted text (FR-286-AC-16,
+    // `format_json_result_carries_text`); every other member is as below.
+    json["result"] = Value::Null;
     assert_eq!(json, expected("success", json!([])));
     let borrowed_text = output.clone();
     assert_eq!(result.unwrap().into_value(), borrowed_text);

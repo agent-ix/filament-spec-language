@@ -883,3 +883,40 @@ fn a_bad_record_is_an_event_and_a_bad_request_is_refused() {
     let envelope = refusal(&output);
     assert!(envelope.to_string().contains("Absent"), "{envelope}");
 }
+
+/// FR-640-AC-8 (TC-2182): the `clocks` object rebuilt from a package's
+/// `temporal_bindings` rows compiles the same program to the same bytes; it
+/// is the selection list the replay recompile builds from the package.
+#[test]
+#[trace("TC-2182", "FR-640-AC-8")]
+#[ignore = "QSL-1964: the request `clocks` member is not implemented yet"]
+fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = compile_file(&write(
+        directory.path(),
+        "first.json",
+        &compile_request(clocks()),
+    ));
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let package: Value = serde_json::from_slice(&first.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("temporal binding rows");
+    let mut rebuilt = serde_json::Map::new();
+    for row in rows {
+        let name = row["clock_name"].as_str().expect("a clock name").to_owned();
+        rebuilt.insert(name, row["clock"].clone());
+    }
+    let second = compile_file(&write(
+        directory.path(),
+        "second.json",
+        &compile_request(Value::Object(rebuilt)),
+    ));
+    assert_eq!(second.status.code(), Some(0));
+    assert_eq!(first.stdout, second.stdout);
+}

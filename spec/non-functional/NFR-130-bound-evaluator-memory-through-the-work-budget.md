@@ -19,8 +19,8 @@ than 1 KiB per `work_units` unit charged so far and at no more than 1 KiB per
 live occurrence counted by the `evaluation.live_occurrences` limit, plus the
 size of the admitted inputs. The live-occurrence limit bounds the evaluation's
 memory independently of its work budget, so a caller who raises
-`work_units` keeps a memory bound. The evaluator SHALL have no frame-count,
-depth or byte limit.
+`work_units` keeps a memory bound. The evaluator SHALL have no limit on depth or
+frame count alone, and no byte limit.
 
 **Live occurrences.** Before it binds the evaluated arguments of a checked
 pure-function call (the `function.call` charge point, after that charge is
@@ -45,8 +45,8 @@ also lifts every memory bound, and a 5,000,000-frame recursion then holds
 gigabytes. Live occurrences are a resource measure, not a depth: they count
 the frames and argument values the evaluation actually holds at one moment,
 so they fall when calls return, and two calls holding the same live values
-count the same whatever their nesting. A frame-count or depth limit would
-make a result depend on depth alone, and a byte limit would make it depend on
+count the same whatever their nesting. A limit on depth or frame count alone
+would make a result depend on depth alone, and a byte limit would make it depend on
 the platform's allocator and data layout, so two machines could disagree on
 whether one evaluation completes; the occurrence count is defined on values
 and is the same everywhere. Reaching either limit is incomplete, never a

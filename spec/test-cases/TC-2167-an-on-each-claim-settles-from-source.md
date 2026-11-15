@@ -22,4 +22,4 @@ Tag the tests `#[trace("TC-2167", "FR-186-AC-10")]`.
 
 ## Expected Results
 
-- The item settles `proved`, not `unsupported`.
+- The item settles `proved`, not `unsupported`; the start snapshot holds one `Msg` key, so there is one instance, activated at position 0, and its proof basis equals that of the `on origin` claim `Eventually` (`391/400`).

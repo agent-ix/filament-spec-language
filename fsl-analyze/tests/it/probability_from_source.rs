@@ -160,7 +160,19 @@ fn probabilistic_on_each_settles_per_instance() {
     let claim = "probabilistic E using inf on M under Even \
          on each (k: M::Msg) when (not k.delivered) \
          { probability >= rational(9, 10) [ eventually holds(k.delivered) ] }";
-    let document = run("on-each", claim, json!([{"claim": "E"}]));
+    let claims = format!("{EVENTUALLY}\n{claim}");
+    let document = run(
+        "on-each",
+        &claims,
+        json!([{"claim": "E"}, {"claim": "Eventually"}]),
+    );
     let item = &document["items"][0];
     assert_eq!(label(item), "proved", "{item}");
+    // The start snapshot holds one `Msg`, `m`, undelivered at position 0, so
+    // the one instance activates at position 0 and its exact value is the
+    // `on origin` claim's, `391/400`.
+    assert_eq!(
+        item["record"]["basis"], document["items"][1]["record"]["basis"],
+        "{document}"
+    );
 }

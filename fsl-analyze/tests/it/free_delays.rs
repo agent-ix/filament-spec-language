@@ -21,8 +21,7 @@ use fsl_analyze::exact_probabilistic::{
     decide_fair_reachability, decide_reachability, free_delays_choice, produce_witness,
     witness_scheduler, ActionChoice, EntryChoice, ExactProbLimits, ExtRational, FhResult,
     FreeDelayRow, MonitorVerdict, ProbBuild, ProbProduct, ProbStateId, ProductAction, ProductKind,
-    ProductRefusal, ProductRequest, SchedulerChoice, UnboundedObjective, WitnessError,
-    WitnessScope,
+    ProductRequest, SchedulerChoice, UnboundedObjective, WitnessError, WitnessScope,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::ScheduledIdentity;
@@ -133,27 +132,6 @@ fn build(world: &World, name: &str) -> ProbProduct {
         Ok(ProbBuild::Built(product)) => product,
         other => panic!("{name}: expected a product, got {other:?}"),
     }
-}
-
-fn refusal(world: &World, name: &str) -> ProductRefusal {
-    let claim = world
-        .package
-        .graph()
-        .probabilistic_model()
-        .claim(name)
-        .expect("the claim checks");
-    build_product(
-        ProductRequest {
-            subject: ModelSubject {
-                simulation: world.request(),
-                proof_bounds: Vec::new(),
-            },
-            claim,
-            limits: ExactProbLimits::default(),
-        },
-        &Cancel::new(),
-    )
-    .expect_err("the build is refused")
 }
 
 /// An operation text's operation name.
@@ -292,12 +270,38 @@ fn race_offers_three_free_delays_actions() {
 
 /// FR-204-AC-7 (TC-642 step 4): with `B` guarded by `x >= 2 ms` the maximum
 /// is the tie `1/2`, taken by the row given `[2]` to `B` delay 2, and the
-/// minimum `0`; under every scheduler the claim is unsupported,
-/// `DelayDistribution`, naming `A`.
+/// minimum `0`. Under every scheduler the same claim is decided with `A`'s
+/// distribution applied (`a_later_guard_is_decided_under_every_scheduler`).
 #[trace("TC-642", "FR-204-AC-7")]
 #[test]
 fn a_later_guard_leaves_the_tie_as_the_maximum() {
-    let world = race(
+    let world = later_guard_race();
+    let built = build(&world, "Max");
+    assert_eq!(actions(&row_choices(&world, &built)), 2);
+    let (maximum, max_witness) = decide(&world, &built, Bound::AtMost(ratio(2, 5)));
+    assert_eq!(maximum, ratio(1, 2));
+    assert!(maximum > ratio(2, 5), "`<= 0.4` is refuted on the maximum");
+    assert!(maximum <= ratio(1, 2), "`<= 0.5` is proved");
+    assert_eq!(max_witness, [row(&[("A", 2)], &[("B", 2)])]);
+    let (minimum, _) = decide(&world, &build(&world, "Min"), Bound::AtLeast(ratio(1, 2)));
+    assert_eq!(minimum, ratio(0, 1));
+}
+
+/// FR-204-AC-7 (TC-642 step 4): under every scheduler the claim of
+/// `a_later_guard_leaves_the_tie_as_the_maximum` is decided with `A`'s
+/// distribution applied, never refused `DelayDistribution`.
+#[trace("TC-642", "FR-204-AC-7")]
+#[test]
+#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
+fn a_later_guard_is_decided_under_every_scheduler() {
+    let world = later_guard_race();
+    let built = build(&world, "Every");
+    assert!(!built.states.is_empty());
+}
+
+/// The race of `a_later_guard_leaves_the_tie_as_the_maximum`.
+fn later_guard_race() -> World {
+    race(
         "2 ms: 1",
         2,
         "",
@@ -312,20 +316,7 @@ fn a_later_guard_leaves_the_tie_as_the_maximum() {
                 "eventually[0 ms, 5 ms] holds(c.late)"
             ),
         ),
-    );
-    let built = build(&world, "Max");
-    assert_eq!(actions(&row_choices(&world, &built)), 2);
-    let (maximum, max_witness) = decide(&world, &built, Bound::AtMost(ratio(2, 5)));
-    assert_eq!(maximum, ratio(1, 2));
-    assert!(maximum > ratio(2, 5), "`<= 0.4` is refuted on the maximum");
-    assert!(maximum <= ratio(1, 2), "`<= 0.5` is proved");
-    assert_eq!(max_witness, [row(&[("A", 2)], &[("B", 2)])]);
-    let (minimum, _) = decide(&world, &build(&world, "Min"), Bound::AtLeast(ratio(1, 2)));
-    assert_eq!(minimum, ratio(0, 1));
-    let ProductRefusal::DelayDistribution { operation } = refusal(&world, "Every") else {
-        panic!("a delay distribution under every scheduler");
-    };
-    assert_eq!(short(&world, &operation), "A");
+    )
 }
 
 /// FR-204-AC-8 and AC-9 (TC-642 step 5): two rows, given `[1]` and `[3]`,

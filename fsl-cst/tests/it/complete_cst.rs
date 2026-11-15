@@ -475,3 +475,83 @@ fn a_recovered_unit_is_never_admitted() {
     assert!(!parsed.is_admissible());
     assert_eq!(parsed.diagnostics().len(), 2);
 }
+
+/// Parse `body` after the recovery header under `limits`.
+fn recover_under(body: &str, limits: Limits) -> Result<fsl_cst::ParsedSource, String> {
+    let text = format!("{RECOVERY_HEADER}{body}");
+    fsl_cst::parse(identity(), "recovery.native", text.as_bytes(), limits)
+        .map_err(|diagnostic| diagnostic.to_string())
+}
+
+#[trace("TC-2187", "FR-762-AC-8")]
+#[trace("FSpec-TC-1649", "FSpec-FR-272-AC-30")]
+#[test]
+#[ignore = "QSL-2195: the work-budget cut of the recovery report not implemented yet"]
+fn recovery_stops_at_the_work_budget() {
+    let records_first_error = |work: usize| {
+        recover_under(THREE_RECORDS, Limits::default().with_work_units(work)).is_ok_and(|parsed| {
+            parsed
+                .diagnostics()
+                .first()
+                .is_some_and(|diagnostic| diagnostic.cause == CompleteCause::UnexpectedToken)
+        })
+    };
+    let (mut low, mut high) = (0_usize, Limits::default().work_units);
+    assert!(records_first_error(high));
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if records_first_error(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    let parsed = recover_under(THREE_RECORDS, Limits::default().with_work_units(high))
+        .expect("the first error is recorded");
+    assert!(!parsed.is_admissible());
+    let last = parsed.diagnostics().last().expect("diagnostics");
+    assert_eq!(last.cause.as_str(), "diagnostic-list-cut");
+    assert!(last.message.contains("s1.work_units"), "{}", last.message);
+    assert!(parsed
+        .diagnostics()
+        .iter()
+        .all(|diagnostic| diagnostic.limit().is_none()));
+}
+
+#[trace("TC-2187", "FR-762-AC-9")]
+#[test]
+#[ignore = "QSL-2195: header recovery not implemented yet"]
+fn header_recovery_resumes_at_the_next_declaration() {
+    let body = "profile v = ;\nrecord A { x: Integer y: Integer; }\n";
+    let (text, parsed) = recover(body);
+    let starts: Vec<usize> = parsed
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.byte_span().expect("located").start)
+        .collect();
+    assert_eq!(
+        starts,
+        [byte_at(&text, "= ;") + 2, byte_at(&text, "y: Integer;")]
+    );
+    let start = byte_at(&text, "record A");
+    assert!(parsed
+        .cst()
+        .nodes()
+        .iter()
+        .any(|node| node.production() == Production::Declaration && node.span().start == start));
+}
+
+#[trace("TC-2187", "FR-762-AC-10")]
+#[test]
+#[ignore = "QSL-2195: declaration-level recovery after a syntax error not implemented yet"]
+fn an_error_with_no_resumption_point_is_last() {
+    let (text, parsed) = recover("record A { x: Integer; }\nrecord B { z: ; }\n");
+    let diagnostics = parsed.diagnostics();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let last = diagnostics.last().expect("one diagnostic");
+    assert_eq!(
+        last.byte_span().expect("located").start,
+        text.rfind("; }").expect("in the unit")
+    );
+    assert_ne!(last.cause.as_str(), "diagnostic-list-cut");
+}

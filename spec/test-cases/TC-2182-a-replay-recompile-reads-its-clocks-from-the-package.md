@@ -16,9 +16,11 @@ Scope: FR-640-AC-8.
 
 ## Test Procedure
 
-Inspect the replay request reader and the replay recompile (`fsl-replay/src/execute.rs`): the reader admits no `clocks` member, and the recompile builds its `TemporalClockSelection`s from the proving package's `temporal_bindings` rows.
+Compile FR-640-AC-1's unit with its `clocks`; rebuild a `clocks` object from the package's `temporal_bindings` rows (`clock_name` to `clock`); compile the same program with it. Test: `tests/it/run_wire.rs` `clocks_rebuilt_from_package_rows_compile_the_same_package`.
+
+Tag the tests `#[trace("TC-2182", "FR-640-AC-8")]`.
 
 ## Expected Results
 
-- A replay request with `clocks` is refused `invalid-request` naming `clocks`.
-- The recompile's selections equal the rows' `clock_name` and `clock`, so the recompiled package identity equals the original's.
+- Both compiles exit 0.
+- The two packages' bytes are identical.

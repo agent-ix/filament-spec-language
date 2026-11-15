@@ -4,15 +4,12 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::exact_probabilistic::{
-    build_product, decide_bounded_event, settle_product_refusal, witness_scheduler, ActionChoice,
-    EntryChoice, ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction,
-    ProductKind, ProductRefusal, ProductRequest, SchedulerChoice, WitnessError, WitnessScope,
+    build_product, decide_bounded_event, witness_scheduler, ActionChoice, EntryChoice,
+    ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
+    ProductRefusal, ProductRequest, SchedulerChoice, WitnessError, WitnessScope,
 };
 use fsl_analyze::exact_probabilistic::{DeadlinePhase, MonitorState};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_foundation::{BackendId, RequestIndex};
-use fsl_replay::statistical::SubjectLimits;
-use fsl_replay::{OutcomeItem, TerminalValue, UnavailabilityCause};
 use fsl_semantics::check::Bound;
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -175,97 +172,36 @@ fn deadline_extrema_over_every_scheduler() {
 /// zero-delay cycle, and an `always` event has no digital reading.
 #[trace("TC-639", "FR-204-AC-4")]
 #[test]
-fn zero_delay_cycle_and_form_shape_are_unsupported() {
+#[ignore = "QSL-2156: zero-delay cycles and `always` windows settle verdicts, not yet implemented"]
+fn zero_delay_cycle_and_form_shape_settle_verdicts() {
+    // Without a guard or a reset `send` loops at the initial state with zero
+    // delay; time must diverge, so the cycle's end component is transient.
     let cyclic = every("", false);
-    let cycle_refusal = refusal(&cyclic, "Deadline");
-    let ProductRefusal::ZeroDelayCycle { states } = &cycle_refusal else {
-        panic!("a zero-delay cycle");
-    };
-    // Without a guard or a reset `send` loops at the initial state: x = 0,
-    // elapsed 0, the deadline still pending.
-    assert_eq!(states.len(), 1);
-    assert_eq!(digital_clocks_of(&states[0]), (vec![0], Some(0)));
-    assert!(matches!(
-        states[0].monitor,
-        Some(MonitorState::Deadline {
-            phase: DeadlinePhase::Pending,
-            ..
-        })
-    ));
-    let cycle_ids = states
-        .iter()
-        .map(|state| state.digital_cycle_identity())
-        .collect::<Vec<_>>();
-    let simulation = cyclic.request();
-    let settled = settle_product_refusal(
-        cycle_refusal,
-        SubjectLimits {
-            expansion: simulation.expansion,
-            meter: &simulation.meter,
-        },
-    )
-    .expect("the actual digital refusal settles");
+    let built = product(&cyclic, "Deadline");
     assert_eq!(
-        settled.value(),
-        &TerminalValue::Unsupported(UnavailabilityCause::ZeroDelayCycle {
-            states: cycle_ids.clone(),
-        })
+        exact_initial(&built, Bound::AtLeast(ratio(99, 100))),
+        Some(ratio(1, 1))
     );
-    let terminal = settled.into_terminal(RequestIndex::new(0), BackendId::new("fsl-en-5"));
-    let wire = serde_json::to_value(OutcomeItem::from_terminal(&terminal))
-        .expect("the settled digital cycle writes to FR-331");
-    assert_eq!(wire["cause"]["kind"], "zero-delay-cycle");
-    assert_eq!(wire["cause"]["states"], serde_json::json!(cycle_ids));
-    let identity = wire["cause"]["states"][0]
-        .as_str()
-        .expect("a cycle state identity is a string");
-    assert!(identity.starts_with("filament.probability-digital-cycle-state/v1;"));
 
+    // An `always` window is the complement of an `eventually` window.
     let world = every(GUARD, true);
-    let shape_refusal = refusal(&world, "Always");
-    let ProductRefusal::TimedFormShape { span, claim } = shape_refusal else {
-        panic!("an always event has no digital timed reading");
-    };
-    let simulation = world.request();
-    let settled = settle_product_refusal(
-        ProductRefusal::TimedFormShape {
-            span,
-            claim: claim.clone(),
-        },
-        SubjectLimits {
-            expansion: simulation.expansion,
-            meter: &simulation.meter,
-        },
-    )
-    .expect("the unsupported form settles");
+    let always = product(&world, "Always");
     assert_eq!(
-        settled.value(),
-        &TerminalValue::Unsupported(UnavailabilityCause::TimedFormShape {
-            span,
-            claim: claim.clone()
-        })
+        exact_initial(&always, Bound::AtLeast(ratio(99, 100))),
+        Some(ratio(0, 1))
     );
-    let terminal = settled.into_terminal(RequestIndex::new(1), BackendId::new("fsl-en-5"));
-    let wire = serde_json::to_value(OutcomeItem::from_terminal(&terminal))
-        .expect("the form-shape refusal writes to FR-331");
-    assert_eq!(wire["cause"]["kind"], "timed-form-shape");
-    // An assembled claim is located by its identity, never by its span.
-    assert!(claim.is_some());
-    assert!(wire["cause"].get("where").is_none());
-    assert_eq!(wire["cause"]["locus"]["occurrence"]["role"], "claim");
-    assert!(wire["cause"]["locus"].get("node").is_some());
 }
 
-/// Two same-named claims in `claims`, each refused `timed-form-shape`: each
-/// cause carries its own claim's `{node, occurrence}` locus and no span.
-fn assert_each_shape_cause_names_its_claim(claims: &str) {
+/// Two same-named claims in `claims`: each settles over its own product, and
+/// the two claims keep distinct occurrences, so each verdict is reported
+/// against its own `{node, occurrence}`.
+fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
     let world = retx(GUARD, true, "", claims);
     let checked = world.package.graph().probabilistic_model().claims();
     assert_eq!(checked.len(), 2);
-    let simulation = world.request();
-    let mut loci = Vec::new();
+    let mut occurrences = Vec::new();
     for claim in checked {
-        let refusal = build_product(
+        let built = build_product(
             ProductRequest {
                 subject: ModelSubject {
                     simulation: world.request(),
@@ -275,40 +211,28 @@ fn assert_each_shape_cause_names_its_claim(claims: &str) {
                 limits: ExactProbLimits::default(),
             },
             &Cancel::new(),
-        )
-        .expect_err("the form has no digital timed reading");
-        let ProductRefusal::TimedFormShape { claim: located, .. } = &refusal else {
-            panic!("a timed form shape refusal: {refusal:?}");
-        };
-        assert_eq!(located.as_ref(), claim.occurrence());
-        let settled = settle_product_refusal(
-            refusal,
-            SubjectLimits {
-                expansion: simulation.expansion,
-                meter: &simulation.meter,
-            },
-        )
-        .expect("the unsupported form settles");
-        let terminal = settled.into_terminal(RequestIndex::new(0), BackendId::new("fsl-en-5"));
-        let wire = serde_json::to_value(OutcomeItem::from_terminal(&terminal))
-            .expect("the form-shape refusal writes to FR-331");
-        assert_eq!(wire["cause"]["kind"], "timed-form-shape");
-        assert!(wire["cause"].get("where").is_none(), "no span locus");
-        assert_eq!(wire["cause"]["locus"]["occurrence"]["role"], "claim");
-        assert!(wire["cause"]["locus"].get("node").is_some());
-        assert!(wire["cause"]["locus"].get("declaration").is_none());
-        loci.push(wire["cause"]["locus"].clone());
+        );
+        assert!(
+            matches!(built, Ok(ProbBuild::Built(_))),
+            "the timed form builds a product: {built:?}"
+        );
+        occurrences.push(claim.occurrence().cloned());
     }
-    assert_ne!(loci[0], loci[1], "each cause names its own claim");
+    assert!(occurrences.iter().all(Option::is_some));
+    assert_ne!(
+        occurrences[0], occurrences[1],
+        "each claim keeps its own identity"
+    );
 }
 
 /// FR-498-AC-3 (TC-1288 step 3): two claims with the same name whose
-/// `always` event has no digital reading each settle `timed-form-shape`
-/// carrying their own `{node, occurrence}` locus, not the other's.
+/// `always` event is decided as a complement each settle over their own
+/// product and keep their own identity.
 #[trace("FR-498-AC-3", "TC-1288")]
 #[test]
+#[ignore = "QSL-2156: `always` timed windows over digital clocks not implemented yet"]
 fn timed_form_shape_names_the_selected_claim_among_equal_names() {
-    assert_each_shape_cause_names_its_claim(&format!(
+    assert_each_timed_form_settles_for_its_claim(&format!(
         "{}{}",
         deadline_claim("Same", "under every scheduler", ">= 0.99", "always"),
         deadline_claim("Same", "under every scheduler", ">= 0.5", "always"),
@@ -319,6 +243,7 @@ fn timed_form_shape_names_the_selected_claim_among_equal_names() {
 /// claims.
 #[trace("FR-498-AC-3", "TC-1288")]
 #[test]
+#[ignore = "QSL-2156: elapsed-time quantile forms over digital clocks not implemented yet"]
 fn timed_form_shape_names_the_selected_elapsed_claim_among_equal_names() {
     let elapsed = |threshold: &str| {
         format!(
@@ -327,13 +252,14 @@ fn timed_form_shape_names_the_selected_elapsed_claim_among_equal_names() {
              <= {threshold} ms }}\n"
         )
     };
-    assert_each_shape_cause_names_its_claim(&format!("{}{}", elapsed("1"), elapsed("2")));
+    assert_each_timed_form_settles_for_its_claim(&format!("{}{}", elapsed("1"), elapsed("2")));
 }
 
-/// FR-204-AC-4: digital unbounded products have no monitor, but their actual
-/// zero-delay cycles still settle with complete stable product-key identities.
+/// FR-204-AC-4: unbounded claims over a model with a zero-delay cycle are
+/// decided with time divergence: each builds a product with no monitor.
 #[trace("TC-639", "FR-204-AC-4")]
 #[test]
+#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
 fn unbounded_digital_cycles_settle_with_monitorless_state_identity() {
     let world = retx(
         "",
@@ -346,62 +272,32 @@ fn unbounded_digital_cycles_settle_with_monitorless_state_identity() {
             "{ expected accumulate sends until holds(c.late) <= 5 }\n",
         ),
     );
-
-    for (index, name) in ["Reach", "Cost"].into_iter().enumerate() {
-        let cycle_refusal = refusal(&world, name);
-        let ProductRefusal::ZeroDelayCycle { states } = &cycle_refusal else {
-            panic!("{name} has a digital zero-delay cycle: {cycle_refusal:?}");
-        };
-        assert!(!states.is_empty(), "{name}");
-        assert!(states.iter().all(|state| state.monitor.is_none()), "{name}");
-        let cycle_ids = states
-            .iter()
-            .map(|state| state.digital_cycle_identity())
-            .collect::<Vec<_>>();
-
-        let simulation = world.request();
-        let settled = settle_product_refusal(
-            cycle_refusal,
-            SubjectLimits {
-                expansion: simulation.expansion,
-                meter: &simulation.meter,
-            },
-        )
-        .expect("the actual unbounded digital refusal settles");
-        assert_eq!(
-            settled.value(),
-            &TerminalValue::Unsupported(UnavailabilityCause::ZeroDelayCycle {
-                states: cycle_ids.clone(),
-            })
+    for name in ["Reach", "Cost"] {
+        let built = product(&world, name);
+        assert!(!built.states.is_empty(), "{name}");
+        assert!(
+            built.states.iter().all(|state| state.monitor.is_none()),
+            "{name}"
         );
-        let terminal = settled.into_terminal(RequestIndex::new(index), BackendId::new("fsl-en-5"));
-        let wire = serde_json::to_value(OutcomeItem::from_terminal(&terminal))
-            .expect("the settled digital cycle writes to FR-331");
-        assert_eq!(wire["cause"]["kind"], "zero-delay-cycle");
-        assert_eq!(wire["cause"]["states"], serde_json::json!(cycle_ids));
-        assert!(wire["cause"]["states"][0]
-            .as_str()
-            .expect("a cycle state identity is a string")
-            .starts_with("filament.probability-digital-cycle-state/v1;"));
     }
 }
 
-/// FR-204-AC-2 (TC-639 step 2): a strict guard has no digital reading.
+/// FR-204-AC-2 (TC-639 step 2): a strict guard is decided over clock regions.
 #[trace("TC-639", "FR-204-AC-2")]
 #[test]
-fn a_strict_guard_is_unsupported() {
+#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
+fn a_strict_guard_is_decided_over_regions() {
     let world = every(" and self.x > 1 ms", true);
-    let ProductRefusal::StrictClockConstraint { span } = refusal(&world, "Deadline") else {
-        panic!("a strict clock constraint");
-    };
-    let guard = " and self.x > 1 ms";
-    let unit = timed_world::unit_text(
-        timed_world::PACKAGE,
-        PROFILES,
-        &retx_body(guard, true, "", &every_claims()),
+    let built = product(&world, "Deadline");
+    assert_eq!(built.kind, ProductKind::Mdp);
+    assert_eq!(
+        exact_initial(&built, Bound::AtLeast(ratio(99, 100))),
+        Some(ratio(99, 100))
     );
-    assert_eq!(&unit[span.start..span.end], "self.x > 1 ms");
-    assert_eq!(unit.matches("self.x > 1 ms").count(), 1);
+    assert_eq!(
+        exact_initial(&built, Bound::AtMost(ratio(999, 1000))),
+        Some(ratio(999, 1000))
+    );
 }
 
 fn one_workload(declarations: &str) -> World {
@@ -418,8 +314,9 @@ fn one_workload(declarations: &str) -> World {
 }
 
 /// FR-204-AC-3 (TC-639 step 3): a `discrete` delay under a workload is a DTMC
-/// of exact value `159129/160000`; the same declaration over every scheduler
-/// and an `exponential` one under the workload are unsupported.
+/// of exact value `159129/160000`, and an `exponential` one under the workload
+/// is unsupported for exact evidence. The same `discrete` declaration over
+/// every scheduler is decided (`discrete_delay_applies_over_every_scheduler`).
 #[trace("TC-639", "FR-204-AC-3")]
 #[test]
 fn discrete_delays_under_a_workload_are_a_chain() {
@@ -430,17 +327,6 @@ fn discrete_delays_under_a_workload_are_a_chain() {
         initial_value(&built, Bound::AtLeast(ratio(99, 100))),
         ratio(159_129, 160_000)
     );
-
-    let scheduler = retx(
-        GUARD,
-        true,
-        "delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };\n",
-        &deadline_claim("Deadline", "under every scheduler", ">= 0.99", "eventually"),
-    );
-    let ProductRefusal::DelayDistribution { operation } = refusal(&scheduler, "Deadline") else {
-        panic!("a delay distribution");
-    };
-    assert!(operation.contains("send"), "{operation}");
 
     let exponential = one_workload("delay M::Call::send ~ exponential(1);\n");
     assert!(matches!(
@@ -824,16 +710,14 @@ fn an_until_deadline_has_the_same_extrema() {
 }
 
 /// FR-204 "Admission" (TC-639): a state where no identity races and delay is
-/// bounded is unsupported `NotStochastic`. The `send` is enabled at `x = 1`,
+/// bounded is a time-lock and ends its run. The `send` is enabled at `x = 1`,
 /// but its only delay, 5 ms, lies outside its window.
 #[trace("TC-639", "FR-204")]
 #[test]
-fn a_bounded_state_where_nothing_races_is_not_stochastic() {
+#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
+fn a_bounded_state_where_nothing_races_is_a_time_lock() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
-    assert!(matches!(
-        refusal(&world, "Under"),
-        ProductRefusal::NotStochastic { .. }
-    ));
+    assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
 }
 
 /// FR-204-AC-1 (TC-639 step 1): the clocks span the AC's ranges, `x` from 0
@@ -1036,7 +920,14 @@ fn strict_clock_constraint_is_decided_over_regions() {
     let world = every(" and self.x > 1 ms", true);
     let built = product(&world, "Deadline");
     assert_eq!(built.kind, ProductKind::Mdp);
-    assert!(exact_initial(&built, Bound::AtLeast(ratio(99, 100))).is_some());
+    assert_eq!(
+        exact_initial(&built, Bound::AtLeast(ratio(99, 100))),
+        Some(ratio(99, 100))
+    );
+    assert_eq!(
+        exact_initial(&built, Bound::AtMost(ratio(999, 1000))),
+        Some(ratio(999, 1000))
+    );
 }
 
 /// FR-204-AC-14 (TC-2173): an `always` window is the complement of an
@@ -1055,6 +946,7 @@ fn always_window_is_decided_as_a_complement() {
 
 /// FR-204-AC-15 (TC-2174): a `discrete` delay applies over every scheduler.
 #[trace("TC-2174", "FR-204-AC-15")]
+#[trace("TC-639", "FR-204-AC-3")]
 #[test]
 #[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn discrete_delay_applies_over_every_scheduler() {
@@ -1075,14 +967,11 @@ fn discrete_delay_applies_over_every_scheduler() {
 fn zero_delay_cycle_is_decided_with_time_divergence() {
     let world = every("", false);
     let built = product(&world, "Deadline");
-    let zero = ratio(0, 1);
-    let one = ratio(1, 1);
     for bound in [
         Bound::AtLeast(ratio(99, 100)),
         Bound::AtMost(ratio(999, 1000)),
     ] {
-        let value = exact_initial(&built, bound).expect("an exact value");
-        assert!(value >= zero && value <= one, "{value:?}");
+        assert_eq!(exact_initial(&built, bound), Some(ratio(1, 1)));
     }
 }
 

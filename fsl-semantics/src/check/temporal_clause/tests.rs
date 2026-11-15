@@ -302,29 +302,35 @@ fn a_horizon_past_u64_is_a_work_budget_limit_at_the_overflowing_operator() {
     );
 }
 
-/// FR-326-AC-4: a unit holding a temporal clause with no temporal profile
-/// selection, or two, refuses `unknown_profile`/`unsupported-selection` at
-/// the clause, naming the selections it found.
+/// FR-326-AC-4: a clause whose `using` alias selects a profile with no
+/// temporal facet (the value profile `v`) refuses
+/// `unknown_profile`/`unsupported-selection` at the clause.
 #[trace("TC-836", "FR-326-AC-4")]
 #[test]
 fn the_unit_selects_exactly_one_temporal_profile() {
-    for (profiles, found) in [
-        (&[][..], Vec::new()),
-        (&[EVENT, INFINITE][..], vec![EVENT, INFINITE]),
-    ] {
-        let (text, cause) = refused(profiles, "eventually[0,1] holds(c.level = 3)");
-        let start = text.find("temporal C").expect("the clause");
-        let end = text.rfind('}').expect("the clause's close") + 1;
-        assert_eq!(
-            cause,
-            TemporalCause::ProfileSelection {
-                found,
-                span: Span { start, end }
-            }
-        );
-        assert_eq!(cause.code(), Code::UnknownProfile);
-        assert_eq!(cause.tag(), "unsupported-selection");
-    }
+    let (text, cause) = refused(&[], "eventually[0,1] holds(c.level = 3)");
+    let start = text.find("temporal C").expect("the clause");
+    let end = text.rfind('}').expect("the clause's close") + 1;
+    assert_eq!(
+        cause,
+        TemporalCause::ProfileSelection {
+            found: Vec::new(),
+            span: Span { start, end }
+        }
+    );
+    assert_eq!(cause.code(), Code::UnknownProfile);
+    assert_eq!(cause.tag(), "unsupported-selection");
+}
+
+/// FR-326-AC-4 and AC-7: a unit selecting two temporal profiles under two
+/// aliases is not refused for that; the clause is checked under the profile
+/// its own `using` alias (`t0`, event-position) selects.
+#[trace("TC-836", "FR-326-AC-4")]
+#[trace("TC-2180", "FR-326-AC-7")]
+#[test]
+#[ignore = "QSL-1964: the per-clause temporal profile rule of FR-326 not implemented yet"]
+fn a_unit_may_select_two_temporal_profiles() {
+    checked(&[EVENT, INFINITE], "eventually[0,1] holds(c.level = 3)");
 }
 
 /// FR-326-AC-5: a bounded-profile clause over a type with no unbounded

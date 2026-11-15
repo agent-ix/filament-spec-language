@@ -251,8 +251,7 @@ fn fairness_under_a_workload_is_refused_at_s1() {
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
 }
 
-/// A decimal literal is an `exact-value` only: as an ordinary expression it is
-/// still refused, and a quantity literal is an ordinary expression.
+/// A quantity literal is an ordinary expression.
 #[trace("TC-890")]
 #[test]
 fn a_quantity_literal_is_an_expression_and_a_bare_decimal_is_not() {
@@ -263,11 +262,18 @@ fn a_quantity_literal_is_an_expression_and_a_bare_decimal_is_not() {
         texts(&parsed, &quantity, Production::QuantityLiteral),
         ["5 ms"]
     );
+}
 
+/// A bare decimal literal is an ordinary expression too: the decimal primary
+/// of FR-764.
+#[trace("TC-890")]
+#[trace("TC-2161", "FR-764-AC-1")]
+#[test]
+#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
+fn a_bare_decimal_is_an_expression() {
     let decimal = source("function f using Complete (): Boolean pure { 0.5 }");
     let parsed = parse(&decimal);
-    assert!(!parsed.is_admissible());
-    assert_eq!(parsed.diagnostics()[0].code, CompleteCode::InvalidSyntax);
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
 }
 
 /// TC-708: a `delay` declaration parses each of FSpec's `delay-dist`

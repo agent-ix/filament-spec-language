@@ -22,4 +22,4 @@ Tag the tests `#[trace("TC-2172", "FR-204-AC-13")]`.
 
 ## Expected Results
 
-- An MDP product, no refusal, an exact minimum.
+- An MDP product, no refusal; exact minimum `99/100`, exact maximum `999/1000`.

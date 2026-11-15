@@ -97,7 +97,7 @@ Each item, in request order, carries:
 | `replay` | Present with `counterexample`: `{"target", "reproduced"}`. `target` is the FSpec FR-323 replay target member object exactly as a replay request carries it: `{"state_clause": Q}` for a state or temporal clause, `Q` its declared qualified name (EN-1 counterexamples included), `{"function": ...}` or `{"frame_operation": ...}` for those targets, and FR-071's `{"protocol_refinement": {package_id, node}}` for a protocol refinement; `reproduced` is `true`. A counterexample that replay did not reproduce never reaches the document: its item is `inconclusive` with `replay-parity` or `replay-refused` (FR-281) and carries neither member. |
 | `accounting` | The item's FSpec FR-331 accounting record: the limits applied, the method and seed where they apply, the limits the run reached (`reached`), and `settled_by`. With `exploration` it is the item's budget use. |
 | `exploration` | For an item whose engine explores states: `{"states", "transitions", "automaton_states"}`, the states stored, transitions expanded and claim-automaton states, each an ASCII decimal count. Absent for a closed-form or provider item. |
-| `axes` | The four outcome axes of FR-622, for an item that has an activation scope. |
+| `axes` | The four outcome axes of FR-622, for an item that has an activation scope. Every `monitor` item has one, the activation of the clause it monitors, so every `monitor` item carries `axes` as FR-622 and FR-286 state; a `simulation` item carries FR-634's members instead. |
 
 The settlement of an item is its record's `settled_by` together with, for a
 disposition record, the negotiation disposition and diagnostic the record

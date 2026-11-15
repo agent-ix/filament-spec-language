@@ -22,4 +22,4 @@ Tag the tests `#[trace("TC-2175", "FR-204-AC-16")]`.
 
 ## Expected Results
 
-- A product, no `ZeroDelayCycle`; exact extrema in `[0, 1]`.
+- A product, no `ZeroDelayCycle`; exact minimum and maximum both `1`.

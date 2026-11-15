@@ -2986,21 +2986,29 @@ mod tests {
         )
         .expect("duration gives each position its leaving-step weight");
         assert_eq!(weighted_result.components[0].rho, ratio(4, 7));
+    }
 
+    /// Trace: FR-199-AC-3, FR-199-AC-4. A component whose every step has weight 0
+    /// takes its unweighted fraction: one state where `P` holds gives `1`.
+    #[trace("TC-634", "FR-199-AC-3")]
+    #[trace("TC-2177", "FR-199-AC-4")]
+    #[test]
+    #[ignore = "QSL-2156: zero-weight long-run components settle typed unsupported today"]
+    fn a_zero_weight_component_takes_its_unweighted_fraction() {
+        let duration = filament_exact::Identifier::new("duration").expect("identifier");
         let mut zero_weight = edge(0, 0, one());
         zero_weight
             .rewards
             .push((duration, Value::Integer(Integer::zero())));
         let zero_component = graph(ProductKind::Dtmc, vec![zero_weight]);
-        assert_eq!(
-            decide_long_run_workload(
-                &zero_component,
-                &[true],
-                Some("duration"),
-                &ExactProbLimits::default(),
-            ),
-            Err(UnboundedError::ZeroWeightComponent)
-        );
+        let result = decide_long_run_workload(
+            &zero_component,
+            &[true],
+            Some("duration"),
+            &ExactProbLimits::default(),
+        )
+        .expect("a zero-weight component has its unweighted fraction");
+        assert_eq!(result.components[0].rho, ratio(1, 1));
     }
 
     /// Trace: FR-199-AC-2.

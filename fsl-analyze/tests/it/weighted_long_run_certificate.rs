@@ -233,11 +233,12 @@ fn weighted_draws_and_transients_use_component_fractions_not_pooled_payoffs() {
 }
 #[trace("TC-1402", "FR-201-AC-32", "FR-201-AC-34")]
 #[test]
-fn reachable_zero_weight_components_remain_typed_unsupported() {
+#[ignore = "QSL-2156: zero-weight long-run components settle typed unsupported today"]
+fn reachable_zero_weight_components_take_their_unweighted_fraction() {
     let world = periodic(2, "1: 1, 3: 1", "1", true);
-    let system = ModelSystem::new(world.subject().simulation).unwrap();
     let identity = fsl_replay::probabilistic_claim_identity(world.claim("Fraction")).unwrap();
-    // A fabricated otherwise plausible document cannot turn zero stationary weight into a ratio.
+    // A fabricated document copied from the positive-weight variant is not the
+    // zero-weight component's unweighted certificate, so it is not accepted.
     let positive = periodic(2, "1: 1, 3: 1", "1", false);
     let bytes = produce(&positive, "Fraction");
     let mut document =
@@ -246,32 +247,12 @@ fn reachable_zero_weight_components_remain_typed_unsupported() {
     let bytes =
         write_weighted_long_run_probability_certificate(&document, limits(), &Cancel::new())
             .unwrap();
-    let result = fsl_replay::check_probability_certificate_document(
-        &system,
-        world.package.graph().probabilistic_model().claims(),
-        &identity,
-        &bytes,
-        limits(),
-        &Cancel::new(),
-    );
-    let zero_key = &document
-        .certificate
-        .components
-        .iter()
-        .find(|component| component.value == ratio(1, 1))
-        .unwrap()
-        .bias[0]
-        .state;
-    let outcome = match &result {
-        Ok(ExactProbabilityCertificateCheck::Accepted(_)) => "accepted",
-        Ok(ExactProbabilityCertificateCheck::Rejected(_)) => "rejected",
-        Err(ProbabilityDocumentError::ZeroWeightComponent { .. }) => "zero-weight-component",
-        Err(_) => "other-error",
-    };
-    assert!(
-        matches!(result, Err(ProbabilityDocumentError::ZeroWeightComponent { ref state }) if state == zero_key),
-        "expected actual zero-component key, got {outcome}"
-    );
+    assert!(!matches!(
+        check(&world, "Fraction", &bytes, &Cancel::new(), limits()),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+    // The claim itself settles a verdict, its zero-weight component read by its
+    // unweighted fraction, and its own certificate is accepted.
     let records = analyze_items(
         &Engines::fsl().unwrap(),
         vec![exact_probabilistic_item(
@@ -280,16 +261,17 @@ fn reachable_zero_weight_components_remain_typed_unsupported() {
         )],
         &Cancel::new(),
     );
-    let Settlement::Disposed(disposed) = &records[0].settlement else {
-        panic!("{:?}", records[0]);
-    };
-    assert_eq!(disposed.kind, DispositionKind::Unsupported);
-    assert_eq!(
-        disposed.diagnostic.as_ref().unwrap().code.cause(),
-        "zero-weight-component"
+    assert!(
+        !matches!(records[0].settlement, Settlement::Disposed(_)),
+        "{:?}",
+        records[0]
     );
-    assert!(records[0].terminal().is_none());
-    assert!(records[0].exact_probabilistic.is_none());
+    assert!(records[0].terminal().is_some());
+    let own = produce(&world, "Fraction");
+    assert!(matches!(
+        check(&world, "Fraction", &own, &Cancel::new(), limits()),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
 }
 #[trace("TC-1402", "FR-201-AC-34")]
 #[test]
