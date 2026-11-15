@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify the checked-package handoff writer on the ported IT-001 recipe **R**.
-Scope: FR-517-AC-1 to FR-517-AC-23.
+Scope: FR-517-AC-1 to FR-517-AC-24.
 
 ## Test Procedure
 
@@ -40,8 +40,9 @@ Scope: FR-517-AC-1 to FR-517-AC-23.
 | 21 | 21 | write TC-1070 fixture E, then the `unit.native` of the inventory vector, and read each `equality.json`; write each twice | fixture E: bytes equal the FR-531 encoding of the in-process rows, three lists non-empty; `unit.native`: three empty lists; two writes byte-identical |
 | 22 | 22 | a unit whose equality rows name a node the package does not hold; the written file | `Error::Unnameable`, nothing written; the file holds no source text, digest or unlisted member |
 | 23 | 23 | compile a unit with a selected source record and nested opaque member types; write and read `identities.json`, then compare its source-record rows to the same final emission | the required `/2` source-record rows retain original opaque keys, final node/type references, names and order and join through native IR; the file rewrites byte-identically |
+| 24 | 24 | `compile` over a written directory of **R** and of a unit with execution points; then with `checked-package.json` replaced by another admitted package, with the sidecar `unit` set to `sources/../x`, with `models/0.json` replaced by a symbolic link to a file outside the directory, and with `selection.json` removed | a package that emits the file's bytes and passes `Selection::check`, the sidecar naming package name, unit and points; `ReadBackDiffers`, `Label`, `Label` and `Read`, no package |
 
-Tag the test `#[trace("FR-517-AC-1", ..., "FR-517-AC-23", "TC-1312")]`; row 3 and 4 also carry FR-042-AC-10.
+Tag the test `#[trace("FR-517-AC-1", ..., "FR-517-AC-24", "TC-1312")]`; row 3 and 4 also carry FR-042-AC-10.
 
 ## Expected Results
 

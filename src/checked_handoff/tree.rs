@@ -19,21 +19,79 @@ impl Files {
 
     /// Add `contents` at `path`, which must stay inside the directory.
     pub(super) fn insert(&mut self, path: &str, contents: Vec<u8>) -> Result<(), Error> {
-        let inside = !path.is_empty()
-            && Path::new(path)
-                .components()
-                .all(|component| matches!(component, Component::Normal(_)));
-        if !inside {
-            return Err(Error::Label {
-                label: path.to_owned(),
-            });
-        }
+        inside(path)?;
         self.0.insert(path.to_owned(), contents);
         Ok(())
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = (&String, &Vec<u8>)> {
         self.0.iter()
+    }
+}
+
+/// Refuse a relative `path` that is empty or leaves the directory.
+fn inside(path: &str) -> Result<(), Error> {
+    let inside = !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if inside {
+        Ok(())
+    } else {
+        Err(Error::Label {
+            label: path.to_owned(),
+        })
+    }
+}
+
+/// The bytes of the file at the relative `path` inside `root`, at most
+/// `ceiling` of them: a longer file is refused, not truncated. Every
+/// directory on the way must be a real directory and the file a regular
+/// file, so a symbolic link cannot reach outside `root` and a FIFO or device
+/// cannot block the read; anything else is [`Error::Label`].
+pub(super) fn read(root: &Path, path: &str, ceiling: usize) -> Result<Vec<u8>, Error> {
+    use std::io::Read as _;
+    inside(path)?;
+    let target = root.join(path);
+    let failed = io_read(&target);
+    let label = || Error::Label {
+        label: path.to_owned(),
+    };
+    let mut reached = root.to_path_buf();
+    let mut components = Path::new(path).components().peekable();
+    while let Some(component) = components.next() {
+        reached.push(component);
+        let kind = std::fs::symlink_metadata(&reached)
+            .map_err(&failed)?
+            .file_type();
+        let expected = if components.peek().is_some() {
+            kind.is_dir()
+        } else {
+            kind.is_file()
+        };
+        if !expected {
+            return Err(label());
+        }
+    }
+    let file = std::fs::File::open(&target).map_err(&failed)?;
+    let limit = u64::try_from(ceiling).unwrap_or(u64::MAX);
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(&failed)?;
+    if bytes.len() > ceiling {
+        return Err(failed(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("over the {ceiling}-byte ceiling; it is not truncated"),
+        )));
+    }
+    Ok(bytes)
+}
+
+fn io_read(path: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
+    move |source| Error::Read {
+        path: path.display().to_string(),
+        source,
     }
 }
 

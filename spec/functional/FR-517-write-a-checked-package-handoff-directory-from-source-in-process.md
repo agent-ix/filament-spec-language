@@ -105,7 +105,10 @@ authority, and its expected `TemporalBinding` row (`clock_name` and clock
 configuration); per `compensate` template, in the `compensations` member:
 its `node`, `name` and expected `binding` (`TemporalBinding` row with
 `clock_name` and `clock`; `binding` is absent for a clause or template to which
-the request gives no clock selection); and per package: the contract version, the read limits the
+the request gives no clock selection); and per package: the contract version, the
+package name (`package_name`), the unit's file under `sources/` (`unit`), the
+accepted execution points (`execution_points`, an object from authored state
+clause name to execution point, empty when the request gives none), the read limits the
 writer used (`CheckedPackageReadLimits`), the evidence rows (which `models/`
 files are domain package documents and which `sources/` files are libraries) and
 the counts of nodes by form. Every value is taken from the in-process checked
@@ -127,6 +130,34 @@ writer reads from `WireGraph::of_package_bytes` over the emitted bytes, as for t
 `node` member of `inventory.json`. A unit that holds no
 equality application writes the file with `applications`, `facts` and `source_units`
 empty, so the directory has the same paths for every unit.
+
+### Compiling a handoff back in process
+
+A consumer that holds only a handoff directory needs the in-process checked
+package to dispatch an analysis whose subject is one (FR-571 "The protocol
+subject"). `checked_handoff::compile(&Path) -> Result<CompiledHandoff, Error>`,
+behind the same feature, reads `selection.json`, reads the unit, library and
+domain package files its rows name, and compiles them through the entry `write`
+compiles through, with the sidecar's package name, execution points and the clock
+configuration of each binding row, each source under the path its
+`source:<path>` or `library:<path>` label names. No file is parsed except
+through the sidecar's reader, the compiler and Contract IR's reader.
+
+- The recompiled bytes SHALL equal `checked-package.json`; otherwise the call
+  returns `Error::ReadBackDiffers` and no package.
+- The package is read with `read_checked_package` and the evidence `write`
+  assembles, and compared with the sidecar by `Selection::check`.
+- A sidecar file path that is empty or leaves the directory, that passes
+  through a symbolic link or names anything but a regular file (a symbolic
+  link, a FIFO, a device), or a source label other than `source:` for the unit
+  and `library:` for a library, is `Error::Label`; a file that cannot be read, or is over its ceiling (the
+  reader's byte limit for `selection.json` and `checked-package.json`, the
+  source ceiling for the others), is `Error::Read`; a sidecar that does not parse
+  is `Error::Sidecar`.
+
+`CompiledHandoff` gives the checked package (`checked`), the admitted package
+(`admitted`), the package input of the domain package documents (`packages`)
+and the emission ceiling the compile used (`emit_limits`).
 
 ### The inventory file
 
@@ -201,7 +232,7 @@ each on its own line, so its formal identity is document `unit.native`, revision
 1. `fsl_inventory` over it (measured on the spine) returns four rows: two
 requirement records with role `expression` and ordinals 0 and 1, then two
 pending obligations of capability kind `value-validity` for declaration 0 at
-byte spans 150 to 155 and 161 to 166. `N0` and `N1` stand for the `CheckedNodeId` wire values (a JSON object, written with
+byte spans 153 to 158 and 164 to 169. `N0` and `N1` stand for the `CheckedNodeId` wire values (a JSON object, written with
 the same two-space indentation at the depth of the row's members) of the node
 the two records name in the emitted package, which are not fixed here; both
 records are occurrences of one node. The bytes are exactly these lines, each ending in a line feed,
@@ -235,16 +266,16 @@ with no trailing space:
       "kind": "pending_obligation",
       "declaration": 0,
       "unit": 0,
-      "start": 150,
-      "end": 155,
+      "start": 153,
+      "end": 158,
       "capability_kind": "value-validity"
     },
     {
       "kind": "pending_obligation",
       "declaration": 0,
       "unit": 0,
-      "start": 161,
-      "end": 166,
+      "start": 164,
+      "end": 169,
       "capability_kind": "value-validity"
     }
   ]
@@ -382,6 +413,7 @@ the three directories. The packages hold:
 | FR-517-AC-21 | The handoff directory written for TC-1070 fixture E contains `equality.json`, whose bytes equal the encoding FR-531 states of the rows of the in-process unit, with the three row lists non-empty (the unit holds integer `=` applications) and each row's node members naming nodes of `checked-package.json`; the directory written for the unit of the inventory vector (`unit.native`, which holds no `==` or `!=` application) contains `equality.json` with the three lists empty; two writes of equal requests give byte-identical files. | Test (TC-1312) |
 | FR-517-AC-22 | A writer given a unit whose equality rows name a node the package does not hold returns `Error::Unnameable` and writes nothing, as for `inventory.json`; the written file holds no source text, no digest and no member the encoding of FR-531 does not list. | Test (TC-1312) |
 | FR-517-AC-23 | The writer emits the required `identities/4` source-record, source-union, source-operation and source-object lists from the same final emission as the package: original opaque keys, final structural/type references, original member identities and order round-trip through native joins. The reader requires all four lists and refuses the old format or an omitted list; a `identities/3` document is the old format and is refused; no optional compatibility path or source fallback supplies them. | Test (TC-1312) |
+| FR-517-AC-24 | `compile` over a directory `write` wrote returns a `CompiledHandoff` whose checked package emits the bytes of `checked-package.json` and whose admitted package passes `Selection::check`; the sidecar names the package name, the unit's file and the execution points the request gave. A directory whose `checked-package.json` is edited to other bytes the reader admits returns `Error::ReadBackDiffers`, one whose sidecar `unit` leaves the directory, and one whose `models/0.json` is a symbolic link to a file outside it, return `Error::Label`, and one whose sidecar is removed returns `Error::Read`; none returns a package. | Test (TC-1312) |
 
 ## Dependencies
 
