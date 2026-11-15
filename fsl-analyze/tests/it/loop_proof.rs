@@ -142,7 +142,7 @@ fn an_unchanged_variant_and_a_false_invariant_refute_with_replayed_counterexampl
 #[trace("TC-2022", "FR-730-AC-3")]
 #[ignore = "QSL-2222: loop-invariant and loop-termination items are not implemented yet"]
 #[test]
-fn a_state_limit_leaves_both_loop_items_inconclusive_naming_it() {
+fn a_state_limit_leaves_both_loop_items_incomplete_naming_it() {
     use crate::analyze_cli_support::label;
 
     let body = loop_unit("true", "1", "true");

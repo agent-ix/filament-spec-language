@@ -124,3 +124,15 @@ The round-1 Coverage lists above are superseded by this round's `quire matrix` r
 | FND-020 | low | S1-09. FR-322's prose and FR-322-AC-451 say both V2 schemas and the external catalog list the two scale identities. The lead deferred the schema change to QSL-2256, but no stub holds that part. Fix: add an ignored standard test in `tests/checked_package_v2.rs`, keyed QSL-2256 and traced to `TC-1326`/`FR-322-AC-451`, asserting the `OperationIdentity` entries after `filament.op.quantity.pow`. | FSpec FR-322:5004 |
 | FND-021 | low | S1-03. FR-520's member table still takes the meaning of `program`, `package`, `models`, `libraries`, `refinement_internals`, `required`, `trace` and `simulation` from FSL requirements (FR-026, FR-027, FR-507, FR-634, FR-636). Fix: cite the standard's native run request (FR-323) and state the `simulation` and `trace` members in FR-520. | FSpec FR-520:50-72 |
 | FND-022 | low | S1-03 and S1-07. The stub for the unrouted-verb criteria (FR-624-AC-4 and AC-5, FSpec FR-301-AC-4, FSpec FR-522-AC-1) was removed and now lives only in the driver. These rows stay untagged in both matrices, and TC-1665 has no tagged test. Fix: move AC-4 and AC-5 to the driver's spec, citing them from FR-624, or tag the driver test. Tag the FR-642-AC-5 stub with `TC-1665`. | FR-624:90-91; FSpec FR-301; FSpec FR-522 |
+
+## Round 3 (standard f72345418, language e434c3186)
+
+Verdict: APPROVE. There are no open findings.
+
+| Finding | Disposition |
+| --- | --- |
+| FND-018 | Resolved. The `loop_proof.rs` stubs now run `analyze` in process. They assert `proved` with an `exhaustive` basis, `refuted` with a counterexample that replays, and `incomplete` naming `max_states`, matching the lead ruling (FR-625). FR-730 and FSpec FR-171 now say `incomplete`. Each stub is ignored and keyed QSL-2222. Optional cosmetic fix: rename `a_state_limit_leaves_both_loop_items_inconclusive_naming_it` to say `incomplete`. |
+| FND-019 | Resolved. `certificate_kinds.rs` adds an ignored stub keyed QSL-2158 and traced to TC-2065/FR-203-AC-8 and FR-282-AC-20. |
+| FND-020 | Resolved. `tc_1326_schema_enumerates_quantity_scaling_after_pow` is added, ignored, keyed QSL-2256 and traced to TC-1326/FR-322-AC-451. |
+| FND-021 | Resolved. FR-520's members now cite FR-323, FR-322 and FR-433, and state `trace` and `simulation` in place. |
+| FND-022 | Resolved. FR-624-AC-4 and AC-5, FSpec FR-301-AC-4 and FSpec FR-522-AC-1 are marked as driver tests owed by QSL-1995. The FR-642-AC-5 stub now carries the `TC-1665` tag. |

@@ -163,3 +163,35 @@ fn a_binding_with_no_inventory_fact_fails_the_check() {
     assert_eq!(output.status.code(), Some(1), "{text}");
     assert!(text.contains("CF-PR-99"), "{text}");
 }
+
+/// FR-761-AC-1: the committed binding document names each consumer once,
+/// gives each a module, and binds each fact once to at least one accessor.
+#[test]
+#[trace("TC-2144", "FR-761-AC-1")]
+fn the_committed_bindings_name_each_consumer_and_fact_once() {
+    let bindings = committed_bindings();
+    assert_eq!(bindings["bindings"], "fsl.consumer-facade-bindings/v1");
+    let consumers = bindings["consumers"].as_array().expect("consumers");
+    let mut consumer_names = std::collections::BTreeSet::new();
+    let mut fact_ids = std::collections::BTreeSet::new();
+    for consumer in consumers {
+        let name = consumer["consumer"].as_str().expect("consumer name");
+        assert!(consumer_names.insert(name), "{name} is bound twice");
+        assert!(
+            consumer["module"]
+                .as_str()
+                .is_some_and(|module| !module.is_empty()),
+            "{name} names no module"
+        );
+        for fact in consumer["facts"].as_array().expect("facts") {
+            let id = fact["fact"].as_str().expect("fact id");
+            assert!(fact_ids.insert(id), "{id} is bound twice");
+            assert!(
+                fact["accessors"]
+                    .as_array()
+                    .is_some_and(|accessors| !accessors.is_empty()),
+                "{id} names no accessor"
+            );
+        }
+    }
+}

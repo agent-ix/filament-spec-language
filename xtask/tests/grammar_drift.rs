@@ -346,3 +346,20 @@ fn every_name_the_shared_grammar_uses_is_defined() {
         undefined.join("\n")
     );
 }
+
+/// FR-600-AC-1: every parser production the correspondence table and the
+/// parser-only allow-list name exists in the parser, so a misspelled entry
+/// cannot hide a production from the drift gate.
+#[trace("TC-1500", "FR-600-AC-1")]
+#[test]
+fn every_parser_production_the_tables_name_exists() {
+    let parser = parser_productions();
+    let named = CORRESPONDENCE
+        .iter()
+        .map(|(_, production)| *production)
+        .chain(PARSER_ONLY.iter().map(|(production, _)| *production));
+    let missing = named
+        .filter(|production| !parser.contains(*production))
+        .collect::<Vec<_>>();
+    assert!(missing.is_empty(), "not parser productions: {missing:?}");
+}
