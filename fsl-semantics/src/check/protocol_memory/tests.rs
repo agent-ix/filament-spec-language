@@ -381,7 +381,6 @@ fn operation_with(
         parameters: parameters
             .iter()
             .map(|(parameter, type_name)| OperationParameterRecord {
-                presence: filament_exact::Presence::Required,
                 key: key(&format!("{owner}/{name}/{parameter}")),
                 value_type: ValueTypeRef::Package(key(type_name)),
                 multiplicity: Multiplicity {

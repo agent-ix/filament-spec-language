@@ -5015,7 +5015,6 @@ mod tests {
                     key: operation_key.clone(),
                     owner: DeclarationKey::fixture("model.Order"),
                     parameters: vec![OperationParameterRecord {
-                        presence: filament_exact::Presence::Required,
                         key: parameter_key.clone(),
                         value_type: value_type.clone(),
                         multiplicity,

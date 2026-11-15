@@ -661,7 +661,6 @@ fn operation_signature_type_meaning_matrix() {
                 key: operation_key.clone(),
                 owner: key(p, "Order"),
                 parameters: vec![OperationParameterRecord {
-                    presence: filament_exact::Presence::Required,
                     key: parameter_key.clone(),
                     value_type: value_type.clone(),
                     multiplicity,

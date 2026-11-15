@@ -30,3 +30,17 @@ Ticket: QSL-2249. Spec-review of the new ACs FR-360-AC-12, FR-093-AC-64, FR-093-
 ## Verdict
 
 Not mergeable as is. FND-001 needs either an FSL fix applying presence to parameters per FR-103 (which likely lands AC-166 in FSL) or an explicit amendment of FR-103/FR-360 item 3 with the design decision recorded, and AC-17 rewritten to match. FND-002 is a spec-text fix (narrow FR-360 Description and item 5 to payload-free variant types, fix the item reference). FND-003 is a nit.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | The FR-360 Description scoping sentence reads "Unless a statement below says otherwise, 'variant type' means a payload-free one", but the unqualified "the assembler SHALL type it by the variant type's enum type" sits above it, and the sentence attributes the payload exception to FSpec FR-208's definition; say "in this requirement" instead of "below" and keep FR-208's definition and FR-056's payload admission as separate clauses. | spec/functional/FR-360-type-a-field-by-a-variant-type-through-intake-check-evaluation-and-replay.md:41-56 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Fix commit 9b72ef39e resolves it in code: OperationParameterRecord.presence read at intake (fsl-semantics/src/model/intake.rs:2727-2741) and applied in assemble.rs:2907-2912 (Option wraps the multiplicity's type, matching FR-056 lines 726-729 and FR-056-AC-10); FR-104 sentence and FR-104-AC-17 now restate FR-103's rule; TC-459 step 8 rewritten. |
+| FND-002 | fixed | FR-360 Description now scopes "variant type" to payload-free types, item 5 refuses `case` only over a payload-free variant type and names item 8's union scrutinee, item 8 now cites item 5. Residual wording is FND-004. |
+| FND-003 | fixed | The universal "No restriction on the position" sentence is removed from FR-093-AC-64. |

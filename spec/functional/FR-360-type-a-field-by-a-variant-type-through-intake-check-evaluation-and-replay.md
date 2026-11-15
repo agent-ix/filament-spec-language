@@ -38,8 +38,10 @@ When a field member, an operation parameter or an operation result of an
 admitted domain package has a `typeRef` that names a declaration bound to
 `filament.meaning.model.variant-type/v1`, FSL SHALL admit the member.
 
-When a member is admitted under that rule, the assembler SHALL type it by the
-variant type's enum type.
+When a member is admitted under that rule and the variant type is payload-free,
+the assembler SHALL type it by the variant type's enum type; FR-056 "Variant
+types" makes a variant type with a payload-bearing case a union, which the
+assembler types as that union.
 
 When a unit or a replay document holds a value of a variant type, FSL SHALL
 check, evaluate, compare, replay and encode it as the target design below
@@ -49,10 +51,9 @@ FR-056 "Variant types" admits the variant type itself: one `enum` export, one
 `variant` export per case and, per "Effective identity of a variant type", one
 effective identity for the type and one for each case. FSpec FR-208 defines the
 variant type as a closed set of named cases with no value, ordinal or
-supertype, and with no payload except where FR-056 "Variant types" admits a
-`payloadType`, which makes the type a union rather than an enum. Unless a
-statement below says otherwise, "variant type" means a payload-free one, which
-the assembler types by the variant type's enum type. This requirement states what a member, an expression and a replay
+supertype. Separately, FR-056 "Variant types" admits a case `payloadType`,
+which makes the type a union rather than an enum. Unless a statement in this
+requirement says otherwise, "variant type" means a payload-free one. This requirement states what a member, an expression and a replay
 document do with it. A **variant value** is one case of one variant type. A
 **variant slot** is a field, parameter, result, `Option` payload, collection
 element, tuple position or record field whose declared type is a variant type.

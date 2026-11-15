@@ -156,7 +156,6 @@ fn operation_redefining(
         parameters: parameters
             .into_iter()
             .map(|(id, ty, m)| OperationParameterRecord {
-                presence: filament_exact::Presence::Required,
                 key: DeclarationKey::fixture(id),
                 value_type: ValueTypeRef::Package(DeclarationKey::fixture(ty)),
                 multiplicity: m,

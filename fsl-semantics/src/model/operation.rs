@@ -17,8 +17,9 @@ use super::domain_package::OperationEffect;
 
 /// A declared operation of an object type (FR-103, ADR-012 §15.2
 /// `StateModel`): its name, its parameters and result value types (typed by
-/// a field's own FR-056 rule; a parameter's `presence` wraps its type in
-/// `Option` (FR-103), a result carries no presence flag), and its
+/// a field's own FR-056 rule, with no `Option` wrapping -- the domain
+/// package's own `OperationParameterRecord`/`OperationResult` carry no
+/// independent presence flag the way a field's `presence` does), and its
 /// producer-declared effect frame, carried unchanged from the domain
 /// package: the assembler resolves none of its keys further.
 #[derive(Clone, Debug, Eq, PartialEq)]

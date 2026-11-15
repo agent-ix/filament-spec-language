@@ -31,3 +31,21 @@ Ticket: QSL-2249. Code-review with the rust-review lane over the four new tagged
 ## Verdict
 
 Tests are real and mostly assert every AC clause; FND-001 is a genuinely untested AC clause, the rest are nits. Code-side mergeability is gated by the spec-review findings.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | The parameter-presence fix changes every presence-optional operation parameter's type (T to Option<T>) for all downstream consumers (S4 emission of parameter nodes, IR v2 read-back, fsl-eval invocation binding, fsl-replay argument decoding, CG), yet the only new tests are S3 check tests; no test emits and reads back, or replays, a clause over an optional parameter. CG's own fixture (filament-contract-codegen tests/state_frame_support/native_twin.rs:981-1000, `[0, 1]` optional) will now see Option of a set on its next FSL bump. | fsl-semantics/src/check/assemble.rs:2907-2912 |
+| FND-006 | low | Operation-redefinition conformance compares parameter records' value_type and multiplicity only (fsl-semantics/src/model/conformance.rs:355-395), so a redefining operation can now turn a required parameter T into Option<T> with no refusal. Field redefinition ignores presence too, so this follows the existing field rule, but the gap is newly reachable for parameters. | fsl-semantics/src/model/conformance.rs:355-395 |
+| FND-007 | low | The FR-104-AC-17 `[0, 1]` assertion (`value(p) > 0` refuses type-mismatch) also passed before the fix (a bare bounded set refuses the same way), so it does not show the "Option of a collection" clause; `present(p)` at `[0, 1]` checking would. | fsl-semantics/tests/it/state_clauses.rs:5901-5904 |
+| FND-008 | low | TC-1423 step 2 expects the refusal "at `value(o)`", but `an_unguarded_let_of_an_option_value_refuses_unproved_presence` asserts no location. | fsl-package/src/emit/tests/collection_if.rs:171-199 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | New test an_unguarded_let_of_an_option_value_refuses_unproved_presence asserts exactly [(UndefinedExpression, unproved-presence)] for the unguarded let; FR-093-AC-65 now spells the `unguarded` function and TC-1423 has step 2. |
+| FND-002 | fixed | The missing-arm assertion now compares the full (code, cause) list to exactly [(UndefinedExpression, unproved-exhaustiveness)], and the nullary assertion also checks Code::IllTyped. |
+| FND-003 | fixed | The operand test now asserts the three if arguments reference c, s and t. |
+| FND-004 | fixed | fsl-semantics/src/check/mod.rs:124-125 now reads "hand-built rather than compiled from a checked package". |

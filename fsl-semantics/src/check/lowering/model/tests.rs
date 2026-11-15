@@ -130,7 +130,6 @@ fn query_over(
         parameters: parameters
             .iter()
             .map(|parameter| OperationParameterRecord {
-                presence: filament_exact::Presence::Required,
                 key: key(&format!("{name}/{parameter}")),
                 value_type: ValueTypeRef::Native(NativeValueType::Integer),
                 multiplicity: one(),

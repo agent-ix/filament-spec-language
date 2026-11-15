@@ -185,6 +185,12 @@ fn an_unguarded_let_of_an_option_value_refuses_unproved_presence() {
         .expect("the unit assembles")
         .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the unguarded read refuses");
+    assert_eq!(refusals.len(), 1);
+    assert_eq!(
+        refusals[0].location.path(),
+        &[0],
+        "at `value(o)`, the `let`'s bound value"
+    );
     let found: Vec<_> = refusals
         .iter()
         .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))

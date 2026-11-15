@@ -545,9 +545,6 @@ pub struct OperationParameterRecord {
     pub value_type: ValueTypeRef,
     /// The declared parameter multiplicity.
     pub multiplicity: Multiplicity,
-    /// The declared parameter `presence`: `optional` wraps the parameter's
-    /// type in `Option`, as it does a field's (FR-103, FR-056-AC-10).
-    pub presence: Presence,
 }
 
 /// An operation's declared result: `{value_type, multiplicity}`; absent
