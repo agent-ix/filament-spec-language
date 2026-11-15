@@ -477,7 +477,7 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
 /// The command's inspect/read-back surface uses this entry point; the return
 /// value retains the admitted package and the checked in-process package for
 /// callers that need them.
-pub fn verify(directory: &Path) -> Result<CompiledHandoff, Error> {
+pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
     let package_ceiling = usize::try_from(READ_LIMITS.bytes).unwrap_or(usize::MAX);
     let selection = Selection::read(&tree::read(directory, "selection.json", package_ceiling)?)?;
     let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
@@ -491,7 +491,7 @@ pub fn verify(directory: &Path) -> Result<CompiledHandoff, Error> {
         .map_err(|refusal| Error::ReadBackDiffers {
             detail: refusal.to_string(),
         })?;
-    Ok(CompiledHandoff { compiled, admitted })
+    Ok(admitted)
 }
 
 /// `inventory.json` (FR-517 "The inventory file"): `fsl_inventory` over the
