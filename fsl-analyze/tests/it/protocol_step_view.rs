@@ -6,8 +6,8 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{StepKind, Unsupported};
 use fsl_replay::protocol_analysis::{node_text, AssessedRoot, RealizabilityCounterexample};
 use fsl_replay::{
-    protocol_step_view, AbstractProtocolSystem, ProtocolStepView, ProtocolSteps,
-    RefinementWitness, RefinementWitnessError, StateIndex, StepViewRefusal, UnsteppedConstruct,
+    protocol_step_view, AbstractProtocolSystem, ProtocolStepView, ProtocolSteps, RefinementWitness,
+    RefinementWitnessError, StateIndex, StepViewRefusal, UnsteppedConstruct,
 };
 use ix_trace_rs::trace;
 
@@ -59,6 +59,10 @@ fn the_view_labels_every_step_of_the_fsl_eval_system() {
     assert!(labelled(StepKind::Receive, "Got", "Order"));
     assert!(labelled(StepKind::Send, "PickIt", "Pick"));
     assert!(labelled(StepKind::Receive, "Cn2", "Cancelled"));
+    assert!(view
+        .steps
+        .iter()
+        .any(|step| step.kind == StepKind::Finish && step.node == Some(fixture.named("Done"))));
     for step in &view.steps {
         assert!(step.from.0 < view.states && step.to.0 < view.states);
         let communicates = matches!(step.kind, StepKind::Send | StepKind::Receive);
@@ -105,7 +109,9 @@ fn the_view_carries_final_states_and_assumptions() {
     let system = AbstractProtocolSystem::new(model, &subject).expect("the system builds");
     assert_eq!(
         view.assumptions,
-        system.assumption_fairness().expect("the assumptions resolve")
+        system
+            .assumption_fairness()
+            .expect("the assumptions resolve")
     );
 }
 
@@ -129,8 +135,8 @@ fn unsupported_and_dynamic_protocols_have_no_steps() {
     let pool = Fixture::built(
         "on origin",
         "exactly-once-premise",
-        "",
         "role Pool each M::Cell from cells max 2 lifetime workflow;\n",
+        "",
         &format!("sequence Main {{ {PICK} }}"),
         &[0],
     );
@@ -205,7 +211,10 @@ fn the_refinement_witness_is_the_protocol_family_record() {
         read["deciding_element"],
         serde_json::json!(node_text(&obligation).expect("the node encodes"))
     );
-    assert_eq!(read["trace_position"], serde_json::json!(position.to_string()));
+    assert_eq!(
+        read["trace_position"],
+        serde_json::json!(position.to_string())
+    );
 }
 
 /// TC-1423 step 3: the reader refuses a record it would have to repair.

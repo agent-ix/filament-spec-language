@@ -44,7 +44,8 @@ pub struct ProtocolStep {
     pub to: StateIndex,
     /// Its kind.
     pub kind: StepKind,
-    /// The checked node of the control it steps; `None` for a step of no
+    /// The checked node of the control it steps, or of the clause's
+    /// `finish` member for a `finish` step; `None` for a step of no
     /// control (a memory step, a `spawn`, a `retire`, an `activate`, a
     /// compensation step).
     pub node: Option<CheckedNodeId>,
@@ -203,7 +204,9 @@ pub fn protocol_step_view(
             unstepped.push(UnsteppedConstruct::Construct(construct));
             return Ok(ProtocolStepView::Unsupported(unstepped));
         }
-        Err(refusal) if refusal.code() == fsl_foundation::diagnostic::Code::UnsupportedConstruct => {
+        Err(refusal)
+            if refusal.code() == fsl_foundation::diagnostic::Code::UnsupportedConstruct =>
+        {
             unstepped.push(UnsteppedConstruct::Refused(refusal));
             return Ok(ProtocolStepView::Unsupported(unstepped));
         }
@@ -290,9 +293,11 @@ fn step(
     transition: ProtocolTransition,
 ) -> Result<ProtocolStep, StepViewRefusal> {
     let unnamed = |what: &str| StepViewRefusal::UnnamedNode(what.to_owned());
-    let node = match transition.node() {
-        Some(path) => Some(names.node(path).map_err(|_| unnamed(path))?.clone()),
-        None => None,
+    // A `finish` step names the clause's `finish` member, not a control.
+    let node = match (transition.kind(), transition.node()) {
+        (StepKind::Finish, _) => Some(names.finish().clone()),
+        (_, Some(path)) => Some(names.node(path).map_err(|_| unnamed(path))?.clone()),
+        (_, None) => None,
     };
     let channel = match transition.kind() {
         StepKind::Send => transition.send_record().map(|record| record.channel()),
