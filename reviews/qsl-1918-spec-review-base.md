@@ -176,3 +176,7 @@ Scratch artifact only. The dispatching lead or fix-round coder must copy this la
 ## Disposition pass 1 confirmation
 
 Reviewed at 4e7e95c268dc5686f37255299f70c4a3e5f51052. MP-012 and BENCHMARKING.md are unchanged from the original review. No new specification defect was found; the original PASS stands. The parser implementation findings are recorded in code-review, not treated as defects in the unchanged measurement plan. MP-012 validation exits 0 with the previously reported module warnings.
+
+## Disposition pass 2 confirmation
+
+Reviewed at e086513a3868018c5b1c0532c8b5c9a6eeab77e1. MP-012 and BENCHMARKING.md remain unchanged, and MP-012 validation passes with the previously reported module warnings. No new specification issue was found; the original **PASS** stands. The implementation findings are now resolved in the code-review dispositions.

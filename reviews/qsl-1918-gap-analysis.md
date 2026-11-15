@@ -226,3 +226,7 @@ The slot-wrapped cargo test --locked -p fsl-bench --all-features --bin fsl-bench
 A scratch Rust driver compiled the unchanged current report source against this worktree's built dependencies and executed its real CLI. report -- parser and report -- interpreter exit 0. report -- --exact evaluator/kernel, report -- --ignored and report -- --list each exit 1 with "expected fresh interpreter Criterion estimate for sum/5". The Criterion benchmark executable accepts the corresponding no-match exact and ignored invocations with exit 0. Logs: /private/tmp/qsl-1918-review-round1-report-tests.log, /private/tmp/qsl-1918-review-round1-string-edge.log and /private/tmp/qsl-1918-review-round1-cli-probe.log.
 
 The new source has no whitespace errors. The full fix-round diff check also identified trailing blank lines in the copied original review artifacts; the updated scratch artifacts are normalized for their next custody commit.
+
+## Disposition pass 2 confirmation
+
+Reviewed at e086513a3868018c5b1c0532c8b5c9a6eeab77e1. The original FND-001 remains fixed. The current report has five behavioral tests, and the coder's current round-two test log records all five passing plus 24 library tests. The changed tests exercise actual fresh-pair collection, stale/partial exclusion, malformed estimates, and --exact/--ignored/--list no-measurement invocations. Code-review FND-003/FND-004 are now fixed, with no new gap found. **PASS for the reviewed delta.** The original repository-wide matrix limitations remain unchanged. Plan completion: not assessed.

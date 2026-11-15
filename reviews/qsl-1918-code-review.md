@@ -182,6 +182,8 @@ Scratch artifact only. The dispatching lead or fix-round coder must copy this la
 | FND-001 | fixed | KernelKind::ALL and SIZES are shared by benchmark, report and generator test. |
 | FND-002 | fixed | main and criterion_filter both carry #[string_edge]. |
 | FND-003 | still-open | The parser and interpreter filters now succeed, but no-complete-pair handling is still incorrect for Criterion options. --exact evaluator/kernel and --ignored select no benchmarks in Criterion, yet the report interprets them as selecting all pairs and fails for missing fresh estimates. --list similarly performs no measurements but still triggers the report. The separate option parser also misclassifies values for -c/--colour, --baseline-lenient and --output-format as filters. |
+| FND-003 | fixed | Round 2: report rows require only complete fresh pairs; no-output and partial invocations succeed without interpreting Criterion options. |
+| FND-004 | fixed | Round 2: criterion_filter, its copied option grammar and the direct regex dependency are removed. |
 
 ## New findings (disposition pass 1)
 
@@ -261,3 +263,86 @@ The slot-wrapped cargo test --locked -p fsl-bench --all-features --bin fsl-bench
 A scratch Rust driver compiled the unchanged current report source against this worktree's built dependencies and executed its real CLI. report -- parser and report -- interpreter exit 0. report -- --exact evaluator/kernel, report -- --ignored and report -- --list each exit 1 with "expected fresh interpreter Criterion estimate for sum/5". The Criterion benchmark executable accepts the corresponding no-match exact and ignored invocations with exit 0. Logs: /private/tmp/qsl-1918-review-round1-report-tests.log, /private/tmp/qsl-1918-review-round1-string-edge.log and /private/tmp/qsl-1918-review-round1-cli-probe.log.
 
 The new source has no whitespace errors. The full fix-round diff check also identified trailing blank lines in the copied original review artifacts; the updated scratch artifacts are normalized for their next custody commit.
+
+## Disposition pass 2 verdict
+
+**PASS** — FND-003 and FND-004 are fixed. Original FND-001/FND-002 remain fixed; no new findings.
+
+## Disposition pass 2 scope
+
+```yaml
+{
+  "dispositions": [
+    {
+      "fnd": "FND-003",
+      "outcome": "fixed",
+      "after_excerpt": "            let Some(interpreter) = estimate(&criterion, \"interpreter\", name, size, marker)? else {\n                continue;\n            };\n            let Some(rust) = estimate(&criterion, \"rust\", name, size, marker)? else {\n                continue;\n            };"
+    },
+    {
+      "fnd": "FND-004",
+      "outcome": "fixed",
+      "after_excerpt": "    match command.as_str() {\n        \"start\" => mark_start(target),\n        \"report\" => report(target),\n        _ => Err(io::Error::other(format!(\"unknown command: {command}\")).into()),\n    }"
+    }
+  ],
+  "new_findings": [],
+  "scope": [
+    {
+      "id": "fsl-bench-kernel-report::run",
+      "path": "fsl-bench/src/bin/fsl-bench-kernel-report.rs",
+      "role": "examined",
+      "excerpt": "fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>> {"
+    },
+    {
+      "id": "fsl-bench-kernel-report::collect_rows",
+      "path": "fsl-bench/src/bin/fsl-bench-kernel-report.rs",
+      "role": "examined",
+      "excerpt": "fn collect_rows(target: &Path, marker: u128) -> Result<Vec<ReportRow>, Box<dyn Error>> {"
+    },
+    {
+      "id": "no_measurement_criterion_invocations_report_an_empty_result",
+      "path": "fsl-bench/src/bin/fsl-bench-kernel-report.rs",
+      "role": "examined",
+      "excerpt": "        for arguments in [\n            vec![\"report\", \"--exact\", \"evaluator/kernel\"],\n            vec![\"report\", \"--ignored\"],\n            vec![\"report\", \"--list\"],\n        ] {"
+    },
+    {
+      "id": "partial_filter_results_report_only_complete_fresh_pairs",
+      "path": "fsl-bench/src/bin/fsl-bench-kernel-report.rs",
+      "role": "examined",
+      "excerpt": "        let rows = collect_rows(&target.0, 0).expect(\"partial benchmark population succeeds\");\n        assert_eq!(rows.len(), 1);\n        assert_eq!(rows[0].kernel, \"sum\");\n        assert_eq!(rows[0].size, 5);"
+    },
+    {
+      "id": "malformed_fresh_estimates_remain_errors",
+      "path": "fsl-bench/src/bin/fsl-bench-kernel-report.rs",
+      "role": "examined",
+      "excerpt": "        let error = collect_rows(&target.0, 0).expect_err(\"a malformed fresh estimate is invalid\");\n        assert!(error\n            .to_string()\n            .contains(\"Criterion estimate has no mean point estimate\"));"
+    },
+    {
+      "id": "fsl-bench-manifest",
+      "path": "fsl-bench/Cargo.toml",
+      "role": "examined",
+      "excerpt": "serde_json = \"1.0.151\""
+    },
+    {
+      "id": "MP-012",
+      "path": "spec/assurance/MP-012-evaluator-kernel-wall-time.md",
+      "role": "context_only",
+      "excerpt": "The report prints the\nCriterion estimate divided by the frame and operation counts, plus the ratio\nof interpreter ns per operation to Rust ns per operation."
+    }
+  ],
+  "bindings": []
+}
+```
+
+## Disposition pass 2 verification
+
+Reviewed head: e086513a3868018c5b1c0532c8b5c9a6eeab77e1; prior head: 4e7e95c268dc5686f37255299f70c4a3e5f51052. No repository source or branch edits were made by the reviewer. No aggregate gate ran.
+
+FND-003 is fixed: the reporter no longer predicts selection from command-line flags. It renders only complete fresh backend pairs from the current invocation; absent, partial and stale pairs produce no row. The freshness guard remains intact, and malformed estimates encountered by the reader remain errors. The run entry accepts forwarded Criterion options without interpreting them, so --exact, --ignored and --list no-measurement invocations succeed.
+
+FND-004 is fixed: criterion_filter, the copied option table, regex matching, the regex import and the direct fsl-bench regex dependency are removed. Criterion owns its own selection semantics. Shared KernelKind::ALL/SIZES and the string_edge boundary markers remain intact, so original FND-001/FND-002 stay fixed. The gap finding remains fixed: the report now contains five behavioral tests. No new finding was identified.
+
+Independent reviewer checks: slot-wrapped cargo fmt --all -- --check, git diff --check against the prior reviewed head, and the two Make dry runs for --exact evaluator/kernel and --ignored all passed. MP-012 and all four scratch review artifacts validate with the previously recorded module warnings. MP-012/BENCHMARKING.md have no fix-round delta, and both specification reviews remain PASS.
+
+Execution evidence was inspected in the coder's current /private/tmp/qsl-1918-round2-test.log: 24 library tests and five report tests passed, including normalization for both sizes, stale/incomplete pairs, partial fresh output, malformed estimates and no-measurement invocations. The current /private/tmp/qsl-1918-round2-check.log, -clippy.log and -clippy-nodef.log show completed checks. The current string-edge log reports only the 15 unchanged base occurrences, none in the report. The ticket-local target directory was deleted before this disposition pass; these Rust execution results are credited to the coder, not represented as reviewer reruns. The reviewer independently inspected the changed implementation and every changed test against the open findings.
+
+All review findings are now resolved. This is approval of the reviewed delta, not a claim that the aggregate gate or a live performance comparison ran.
