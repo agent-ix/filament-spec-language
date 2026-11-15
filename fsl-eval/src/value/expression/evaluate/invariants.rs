@@ -2,7 +2,8 @@
 //! FR-090 producer probes and FR-096 received-kernel provenance.
 
 use super::*;
-use filament_checked::node::CheckedLiteral;
+use filament_checked::node::{CheckedLiteral, RecordSlot};
+use filament_exact::IntegerInterval;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_semantics::check::CheckedBody;
@@ -89,13 +90,15 @@ fn collection(elements: Vec<Value>) -> Arc<CollectionValue> {
 fn iteration<'a>(node: CheckedNode<'a>) -> Box<Iteration<CheckedNode<'a>>> {
     Box::new(Iteration {
         node,
-        source: collection(vec![Value::Boolean(true)]),
-        next: 0,
-        awaiting: false,
-        results: vec![],
-        sources: vec![],
-        accumulator: None,
-        count: Integer::zero(),
+        state: IterationState {
+            source: collection(vec![Value::Boolean(true)]),
+            next: 0,
+            awaiting: false,
+            results: vec![],
+            sources: vec![],
+            accumulator: None,
+            count: Integer::zero(),
+        },
         source_owner: Owner::None,
         owner: Owner::None,
     })
@@ -850,7 +853,7 @@ fn query_stop_provenance_rejects_a_missing_selected_position_at_the_real_quantif
         );
         claim_level(&mut machine);
         let mut i = iteration(node);
-        i.next = 1;
+        i.state.next = 1;
         let provenance = Provenance::member(
             ObservationIdentity {
                 authority: "test".to_owned(),
@@ -868,7 +871,7 @@ fn query_stop_provenance_rejects_a_missing_selected_position_at_the_real_quantif
             .trail
             .as_mut()
             .unwrap()
-            .record(&Value::Collection(i.source.clone()), provenance);
+            .record(&Value::Collection(i.state.source.clone()), provenance);
         let result = machine.note_stop(&i);
         if missing_position {
             let Err(Halt::Fault(fault)) = result else {
@@ -884,7 +887,7 @@ fn query_stop_provenance_rejects_a_missing_selected_position_at_the_real_quantif
                     .trail
                     .as_ref()
                     .unwrap()
-                    .provenance(&Value::Collection(i.source.clone()))
+                    .provenance(&Value::Collection(i.state.source.clone()))
                     .unwrap()
                     .position(0),
                 Some(0)
@@ -2297,8 +2300,8 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     });
     probe!("iteration-node-invalid", m, [], {
         let mut i = iteration(literal.root());
-        i.awaiting = true;
-        i.next = 1;
+        i.state.awaiting = true;
+        i.state.next = 1;
         m.push_value(Value::Boolean(true), false);
         m.iterate(i)
     });
@@ -2332,8 +2335,8 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
         let wrong = Value::Integer(Integer::one());
         probe!("query-body-value-invalid", m, [], {
             let mut i = iteration(root.root());
-            i.awaiting = true;
-            i.next = 1;
+            i.state.awaiting = true;
+            i.state.next = 1;
             m.push_value(wrong, false);
             m.iterate(i)
         });
@@ -2346,9 +2349,9 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     });
     probe!("sum-accumulator-value-invalid", m, [], {
         let mut i = iteration(sum.root());
-        i.awaiting = true;
-        i.next = 1;
-        i.accumulator = Some(Value::Boolean(true));
+        i.state.awaiting = true;
+        i.state.next = 1;
+        i.state.accumulator = Some(Value::Boolean(true));
         m.push_value(Value::Integer(Integer::one()), false);
         m.iterate(i)
     });
@@ -2383,15 +2386,15 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     for next in [0, 2] {
         probe!("iteration-source-position-invalid", m, [], {
             let mut i = iteration(query.root());
-            i.awaiting = true;
-            i.next = next;
+            i.state.awaiting = true;
+            i.state.next = next;
             m.push_value(Value::Boolean(true), false);
             m.iterate(i)
         });
         probe!("query-stop-position-invalid", m, [], {
             claim_level(m);
             let mut i = iteration(query.root());
-            i.next = next;
+            i.state.next = next;
             m.note_stop(&i)
         });
     }
@@ -2453,8 +2456,8 @@ fn scalar_query_resume_retains_the_valid_result_and_preserves_earlier_stops() {
             graph.dispatch_tables(),
         );
         let mut pending = iteration(root.root());
-        pending.awaiting = true;
-        pending.next = 1;
+        pending.state.awaiting = true;
+        pending.state.next = 1;
         machine.iterations = 1;
         machine.push_value(result.clone(), false);
         machine
@@ -2480,8 +2483,8 @@ fn scalar_query_resume_retains_the_valid_result_and_preserves_earlier_stops() {
             ChargePoint::CollectionResultRetain,
             |machine| {
                 let mut pending = iteration(root.root());
-                pending.awaiting = true;
-                pending.next = 1;
+                pending.state.awaiting = true;
+                pending.state.next = 1;
                 machine.iterations = 1;
                 machine.push_value(result.clone(), false);
                 machine.iterate(pending)
@@ -2499,11 +2502,11 @@ fn fold_resume_and_finish_retain_the_real_accumulator_and_earlier_stop() {
         resume: bool,
     ) -> Result<(), Halt> {
         let mut pending = iteration(node);
-        pending.next = 1;
-        pending.accumulator = Some(Value::Boolean(!resume));
+        pending.state.next = 1;
+        pending.state.accumulator = Some(Value::Boolean(!resume));
         machine.iterations = 1;
         if resume {
-            pending.awaiting = true;
+            pending.state.awaiting = true;
             machine.push_value(Value::Boolean(true), false);
             machine.iterate(pending)
         } else {
@@ -2571,13 +2574,18 @@ fn record_present_value_branch_has_a_local_count_and_zip_proof() {
         .split("NodeKind::Collection{")
         .next()
         .unwrap();
-    assert!(record.contains(".filter(|slot|matches!(slot,RecordSlot::Present(_)))"));
-    assert!(record.contains(".count()"));
-    assert!(record.contains("self.pop_many(present)?.into_iter()"));
-    assert!(record.contains("slots.iter().zip(declared)"));
-    assert!(
-        record.contains("values.next().ok_or_else(||invariant(\"record-present-value-missing\"))")
-    );
+    // The evaluator pops exactly the present slots' values and hands them to
+    // the shared construction, whose count and zip carry the proof.
+    assert!(record.contains("self.pop_many(present_slots(slots))?"));
+    assert!(record.contains("construct_record(self.world.types(),declaration,slots,values)"));
+    let shared: String = include_str!("../../composite.rs")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(shared.contains(".filter(|slot|matches!(slot,RecordSlot::Present(_)))"));
+    assert!(shared.contains(".count()"));
+    assert!(shared.contains("slots.iter().zip(declared)"));
+    assert!(shared.contains("values.next().ok_or(\"record-present-value-missing\")"));
     let pop_many = source
         .split("fnpop_many")
         .nth(1)
@@ -2655,7 +2663,7 @@ fn a_fold_binds_its_accumulator_and_element_to_the_owner_of_its_source() {
             let mut pending = iteration(fold.root());
             pending.source_owner = Owner::Binder(7);
             pending.owner = Owner::Binder(7);
-            pending.accumulator = Some(Value::Boolean(true));
+            pending.state.accumulator = Some(Value::Boolean(true));
             m.iterate(pending)
         });
         assert_eq!(owner, Owner::Binder(7), "slot {slot}");
@@ -2674,10 +2682,12 @@ fn a_seq_binds_each_integer_to_the_owner_of_its_bounds() {
     let owner = slot_owner_after_step!(2, 0, |m| {
         m.iterate_seq(Box::new(SeqIteration {
             node: seq.root(),
-            next: Integer::zero(),
-            high: Integer::one(),
-            awaiting: false,
-            results: Vec::new(),
+            state: Sequence {
+                next: Integer::zero(),
+                high: Integer::one(),
+                awaiting: false,
+                results: Vec::new(),
+            },
             source_owner: Owner::Binder(7),
             owner: Owner::Binder(7),
         }))
@@ -2708,11 +2718,11 @@ fn a_query_element_after_the_first_keeps_its_source_owner_not_the_merged_results
     });
     let owner = slot_owner_after_step!(2, 0, |m| {
         let mut pending = iteration(query.root());
-        pending.source = collection(vec![Value::Boolean(true), Value::Boolean(true)]);
+        pending.state.source = collection(vec![Value::Boolean(true), Value::Boolean(true)]);
         pending.source_owner = Owner::Binder(7);
         pending.owner = Owner::Binder(7);
-        pending.awaiting = true;
-        pending.next = 1;
+        pending.state.awaiting = true;
+        pending.state.next = 1;
         push_other_binders_result(m, Value::Boolean(false));
         m.iterate(pending)
     });
@@ -2732,12 +2742,12 @@ fn a_fold_element_after_the_first_keeps_its_source_owner_and_the_accumulator_tak
     for (slot, expected) in [(0, Owner::Mixed), (1, Owner::Binder(7))] {
         let owner = slot_owner_after_step!(2, slot, |m| {
             let mut pending = iteration(fold.root());
-            pending.source = collection(vec![Value::Boolean(true), Value::Boolean(true)]);
+            pending.state.source = collection(vec![Value::Boolean(true), Value::Boolean(true)]);
             pending.source_owner = Owner::Binder(7);
             pending.owner = Owner::Binder(7);
-            pending.accumulator = Some(Value::Boolean(true));
-            pending.awaiting = true;
-            pending.next = 1;
+            pending.state.accumulator = Some(Value::Boolean(true));
+            pending.state.awaiting = true;
+            pending.state.next = 1;
             push_other_binders_result(m, Value::Boolean(true));
             m.iterate(pending)
         });
@@ -2758,10 +2768,12 @@ fn a_seq_integer_after_the_first_keeps_its_bounds_owner_not_the_merged_results()
         push_other_binders_result(m, Value::Boolean(true));
         m.iterate_seq(Box::new(SeqIteration {
             node: seq.root(),
-            next: Integer::one(),
-            high: Integer::one().add(&Integer::one()),
-            awaiting: true,
-            results: Vec::new(),
+            state: Sequence {
+                next: Integer::one(),
+                high: Integer::one().add(&Integer::one()),
+                awaiting: true,
+                results: Vec::new(),
+            },
             source_owner: Owner::Binder(7),
             owner: Owner::Binder(7),
         }))

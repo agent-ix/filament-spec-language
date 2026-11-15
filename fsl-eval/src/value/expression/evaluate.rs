@@ -9,7 +9,7 @@
 
 use filament_checked::node::{
     Arithmetic, AuthoredBound, Connective, ConnectiveOrigin, EndSide, IntegerDivisionOperator,
-    NodeKind, OrderedKind, RecordSlot, Visit,
+    NodeKind, OrderedKind, Visit,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
@@ -42,9 +42,8 @@ use filament_exact::{
     IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
 };
 use filament_exact::{
-    compare_keys, form, form_grouped, member_equal, retain_composite, CollectionValue,
-    CompositeValue, FieldValue, ObjectId, ObjectReference, OptionValue, Quantity, UnionValue,
-    Value, ValueType,
+    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
+    FieldValue, ObjectId, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
 };
 use filament_exact::{
     evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
@@ -54,7 +53,7 @@ use filament_exact::{
 use filament_exact::{evaluate_decimal, Decimal, DecimalOperation, DecimalType};
 use filament_exact::{
     BoundViolation, CardinalityBound, Charge, ChargePoint, CollectionKind, Incomplete, Integer,
-    IntegerInterval, LimitKind, Meter, PopulationId,
+    LimitKind, Meter, PopulationId,
 };
 use filament_exact::{DivisionMember, IntegerDomain};
 use filament_exact::{EffectiveId, NodeKey};
@@ -62,8 +61,7 @@ use filament_exact::{FloatType, Rational};
 use filament_exact::{Outcome, Refusal, Undefined};
 use filament_semantic_value::catalog::{render_identity, InternalFault};
 use filament_semantic_value::declaration::{
-    operand_value, CompositeShape, ConstructionCause, ConstructionRefusal, EnvironmentFailure,
-    EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
+    operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
 use filament_semantic_value::location::ExpressionLocation as Location;
@@ -165,34 +163,29 @@ struct LocatedStop {
     location: Option<Location>,
 }
 
-/// Which composite constructor refused.
-#[derive(Clone, Copy)]
-enum ConstructionSite {
-    Tuple,
-    Record,
+use crate::value::collections::{
+    self, charge_element, charge_visit, retain_scalar, Absorbed, Flow, Iteration as IterationState,
+    Sequence, Shape, Spec,
+};
+use crate::value::composite::{self, construct_record, construct_tuple, present_slots, read_field};
+
+/// A shared collection operation's halt as the evaluator's. The cases the
+/// evaluator handles where they arise (a `sum` seed, an `only` population)
+/// are invariant breaks if they reach here.
+fn lift(halt: collections::Halt) -> Halt {
+    match halt {
+        collections::Halt::Stop(stop) => Halt::from(stop),
+        collections::Halt::Fault(identifier) => invariant(identifier),
+        collections::Halt::SumSeedOutOfDomain | collections::Halt::OnlyNotOne { .. } => {
+            invariant("collection-halt-unhandled")
+        }
+    }
 }
 
-/// A refused tuple or record construction as the fault it is: a storage
-/// failure of the admission worklist has its own identifier and is never read
-/// as a rejected construction.
-fn construction_fault(site: ConstructionSite, refusal: &ConstructionRefusal) -> Halt {
-    use ConstructionCause::{StorageCapacity, StorageDenied};
-    invariant(match (site, &refusal.cause) {
-        (ConstructionSite::Tuple, StorageDenied(_)) => {
-            "tuple-construction-admission-allocation-denied"
-        }
-        (ConstructionSite::Tuple, StorageCapacity(_)) => {
-            "tuple-construction-admission-capacity-overflow"
-        }
-        (ConstructionSite::Record, StorageDenied(_)) => {
-            "record-construction-admission-allocation-denied"
-        }
-        (ConstructionSite::Record, StorageCapacity(_)) => {
-            "record-construction-admission-capacity-overflow"
-        }
-        (ConstructionSite::Tuple, _) => "tuple-construction-rejected",
-        (ConstructionSite::Record, _) => "record-construction-rejected",
-    })
+impl From<collections::Halt> for Halt {
+    fn from(halt: collections::Halt) -> Self {
+        lift(halt)
+    }
 }
 
 /// A quantity whose `UnitId` neither the package's unit table nor this
@@ -306,12 +299,11 @@ fn bounded_result_interval(bounded: &BoundedQuantityType) -> Result<QuantityResu
     ))
 }
 
-/// The `size` of a text (its profile length) or a collection (its member
-/// count); any other operand is an invariant fault.
+/// The `size` of a text (its profile length); a collection is sized by
+/// [`collections::size`] and any other operand is an invariant fault.
 fn size_of(operand: Value) -> Result<Integer, Halt> {
     match operand {
         Value::Text(text) => Ok(Integer::from(text.length())),
-        Value::Collection(collection) => Ok(Integer::from(collection.elements().len())),
         Value::Boolean(_)
         | Value::Integer(_)
         | Value::Rational(_)
@@ -326,6 +318,7 @@ fn size_of(operand: Value) -> Result<Integer, Halt> {
         | Value::Option(_)
         | Value::Composite(_)
         | Value::Union(_)
+        | Value::Collection(_)
         | Value::Reference(_) => Err(invariant("collection-value-expected")),
     }
 }
@@ -521,19 +514,9 @@ fn population_of<'a, N: NodeSource<'a>>(source: N) -> Result<String, Halt> {
     }
 }
 
-/// A visit: one `collection.visit` work unit.
-fn charge_visit(meter: &mut Meter) -> Result<(), Stop> {
-    Ok(meter.charge(Charge::new(ChargePoint::CollectionVisit))?)
-}
-
 /// Whether `node` is a named population operand (FR-391).
 fn is_named<'a, N: NodeSource<'a>>(node: N) -> bool {
     matches!(node.kind(), NodeKind::NamedPopulation { .. })
-}
-
-/// One `collection.element` before a literal element.
-fn charge_element(meter: &mut Meter) -> Result<(), Stop> {
-    Ok(meter.charge(Charge::new(ChargePoint::CollectionElement))?)
 }
 
 /// One charge at `point`, one work unit, no size or result units
@@ -579,20 +562,12 @@ fn charge_dispatch_select(meter: &mut Meter, candidates: u64) -> Result<(), Stop
     )?)
 }
 
-/// The declared `Int` domain of a `sum`; `None` for `Integer`.
-fn sum_domain(value_type: &ValueType) -> Option<&IntegerInterval> {
-    match value_type {
-        ValueType::Int(domain) => Some(domain),
-        _ => None,
-    }
-}
-
 /// The empty sum of the numeric family of `N`: its additive zero (FR-145).
 fn sum_zero(value_type: &ValueType) -> Result<Value, Halt> {
+    if let Some(zero) = collections::exact_zero(value_type) {
+        return Ok(zero);
+    }
     Ok(match value_type {
-        ValueType::Integer | ValueType::Int(_) => Value::Integer(Integer::zero()),
-        ValueType::Rational(_) => Value::Rational(Rational::from_integer(Integer::zero())),
-        ValueType::Decimal(_) => Value::Decimal(Decimal::new(Integer::zero(), 0)),
         ValueType::Float(float) => Value::Float(match float.width() {
             IeeeWidth::Binary32 => IeeeValue::binary32(0),
             IeeeWidth::Binary64 => IeeeValue::binary64(0),
@@ -621,24 +596,6 @@ fn sum_admits(value_type: &ValueType, value: &Value) -> bool {
         }
         _ => value_type.admits(value),
     }
-}
-
-/// A scalar retain: `collection.result-retain` with one result unit.
-fn retain_scalar(value: Value, meter: &mut Meter) -> Result<Value, Stop> {
-    meter.charge(Charge::new(ChargePoint::CollectionResultRetain).results(1))?;
-    Ok(value)
-}
-
-/// An accumulator retain: `collection.result-retain` with `occ(result)` value
-/// occurrences and result units.
-fn retain_accumulator(value: Value, meter: &mut Meter) -> Result<Value, Stop> {
-    let occ = value.occ();
-    meter.charge(
-        Charge::new(ChargePoint::CollectionResultRetain)
-            .exact_size(LimitKind::ValueOccurrences, occ.clone())
-            .exact_results(occ),
-    )?;
-    Ok(value)
 }
 
 /// The arguments a call popped, with whether each forwards the absent-key
@@ -739,18 +696,11 @@ enum Anchor {
     Pre,
 }
 
-/// A one-binder query or fold in progress.
+/// A one-binder query or fold in progress: the shared iteration state and
+/// the binder bookkeeping only this evaluator keeps.
 struct Iteration<N> {
     node: N,
-    source: Arc<CollectionValue>,
-    next: usize,
-    awaiting: bool,
-    results: Vec<Value>,
-    /// For a `map` or `filter` on the claim's own level, the source
-    /// position of each of `results`, in order (FR-265's source binding).
-    sources: Vec<usize>,
-    accumulator: Option<Value>,
-    count: Integer,
+    state: IterationState,
     /// The binder the source derives from; element slots take it.
     source_owner: Owner,
     /// The binder the source and every result so far derive from.
@@ -760,12 +710,7 @@ struct Iteration<N> {
 /// A `seq(i in low .. high: e)` in progress (FR-139).
 struct SeqIteration<N> {
     node: N,
-    /// The integer the next element binds.
-    next: Integer,
-    /// The last integer.
-    high: Integer,
-    awaiting: bool,
-    results: Vec<Value>,
+    state: Sequence,
     /// The binder the bounds derive from; the element slot takes it.
     source_owner: Owner,
     /// The binder the bounds and every result so far derive from.
@@ -1755,6 +1700,22 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         summand: Value,
     ) -> Result<Value, Halt> {
         let value_type = node.value_type();
+        // The exact families run the shared step, which the JIT runs too.
+        if collections::is_exact_sum(value_type) {
+            let stepped = collections::sum_exact(value_type, total, summand, self.meter)
+                .ok_or_else(|| invariant("sum-family-invalid"))?;
+            let (value, loss) = stepped.map_err(|halt| match halt {
+                collections::Halt::SumSeedOutOfDomain => Halt::Located(Box::new(LocatedStop {
+                    stop: Stop::Undefined(Undefined::SumOutOfDomain),
+                    location: body.location().cloned(),
+                })),
+                other => lift(other),
+            })?;
+            if let Some(loss) = loss {
+                self.record(node, ValueLoss::Decimal(loss))?;
+            }
+            return Ok(value);
+        }
         let Some(total) = total else {
             if !sum_admits(value_type, &summand) {
                 return Err(Halt::Located(Box::new(LocatedStop {
@@ -1764,48 +1725,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             }
             return Ok(summand);
         };
-        let out_of_domain = || Halt::from(Stop::Undefined(Undefined::SumOutOfDomain));
         match (value_type, total, summand) {
-            (
-                ValueType::Integer | ValueType::Int(_),
-                Value::Integer(total),
-                Value::Integer(summand),
-            ) => {
-                match outcome_into_stop(evaluate_integer_arithmetic(
-                    IntegerArithmetic::Add(&total, &summand),
-                    sum_domain(value_type),
-                    self.meter,
-                )) {
-                    Err(Stop::Refused(Refusal::IntegerOutOfDomain { .. })) => Err(out_of_domain()),
-                    other => Ok(Value::Integer(other?)),
-                }
-            }
-            (ValueType::Rational(domain), Value::Rational(total), Value::Rational(summand)) => {
-                match outcome_into_stop(evaluate_rational_arithmetic(
-                    RationalArithmetic::Add(&total, &summand),
-                    Some(domain),
-                    self.meter,
-                )) {
-                    Err(Stop::Refused(Refusal::RationalOutOfDomain { .. })) => Err(out_of_domain()),
-                    other => Ok(Value::Rational(other?)),
-                }
-            }
-            (ValueType::Decimal(target), Value::Decimal(total), Value::Decimal(summand)) => {
-                match outcome_into_stop(evaluate_decimal(
-                    DecimalOperation::Add(&total, &summand),
-                    target,
-                    self.meter,
-                )) {
-                    Err(Stop::Refused(Refusal::DecimalOutOfDomain { .. })) => Err(out_of_domain()),
-                    other => {
-                        let result = other?;
-                        if let Some(loss) = result.loss() {
-                            self.record(node, ValueLoss::Decimal(loss.clone()))?;
-                        }
-                        Ok(Value::Decimal(result.value().clone()))
-                    }
-                }
-            }
             (ValueType::Float(float), Value::Float(total), Value::Float(summand)) => {
                 if !self.world.has_ieee_profile() {
                     return Err(invariant("ieee-profile-unresolved"));
@@ -2847,31 +2767,20 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 field,
                 optional,
             } => {
-                let Value::Composite(composite) = self.pop()? else {
-                    return Err(invariant("field-composite-value-expected"));
-                };
-                // FR-359 item 2: the slot is found in the value's own
-                // declaration by the field's identity. The value may be a
-                // child of the record the read is typed at, whose own fields
-                // are not a positional prefix of that record's.
-                let index = self
-                    .world
-                    .record_slot(composite.declaration().clone(), field)
-                    .ok_or_else(|| invariant("field-slot-unresolved"))?;
-                let slot = composite
-                    .slots()
-                    .get(index)
-                    .ok_or_else(|| invariant("field-slot-unresolved"))?;
-                let value = Self::project(
-                    self.world.types(),
-                    slot,
+                let record = self.pop()?;
+                let world = self.world;
+                let read = read_field(
+                    world.types(),
+                    record,
+                    field,
+                    |declaration, field| world.record_slot(declaration, field),
                     *optional,
                     node.value_type(),
-                    false,
-                )?;
-                self.note_field(&composite, index, &value);
+                )
+                .map_err(invariant)?;
+                self.note_field(&read.composite, read.index, &read.value);
                 self.note_read(node, *operand, ReadStep::Field(field.name()), None);
-                value
+                read.value
             }
             NodeKind::Attribute {
                 reference: operand,
@@ -3122,45 +3031,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 arguments,
             } => {
                 let arguments = self.pop_many(arguments.len())?;
-                let value = self
-                    .world
-                    .types()
-                    .tuple(declaration.clone(), arguments)
-                    .map_err(|refusal| construction_fault(ConstructionSite::Tuple, &refusal))?;
+                let value = construct_tuple(self.world.types(), declaration, arguments)
+                    .map_err(invariant)?;
                 outcome_into_stop(retain_composite(value, self.meter))?
             }
             NodeKind::Record { declaration, slots } => {
-                let present = slots
-                    .iter()
-                    .filter(|slot| matches!(slot, RecordSlot::Present(_)))
-                    .count();
-                let mut values = self.pop_many(present)?.into_iter();
-                let Some(CompositeShape::Record(declared)) = self
-                    .world
-                    .types()
-                    .composite(declaration.clone())
-                    .map(|declaration| declaration.shape())
-                else {
-                    return Err(invariant("record-declaration-unresolved"));
-                };
-                let mut fields = Vec::with_capacity(slots.len());
-                for (slot, field) in slots.iter().zip(declared) {
-                    let value = match slot {
-                        RecordSlot::Absent => FieldValue::Absent,
-                        RecordSlot::Null => FieldValue::Null,
-                        RecordSlot::Present(_) => FieldValue::Present(
-                            values
-                                .next()
-                                .ok_or_else(|| invariant("record-present-value-missing"))?,
-                        ),
-                    };
-                    fields.push((field.name(), value));
-                }
-                let value = self
-                    .world
-                    .types()
-                    .record(declaration.clone(), fields)
-                    .map_err(|refusal| construction_fault(ConstructionSite::Record, &refusal))?;
+                let values = self.pop_many(present_slots(slots))?;
+                let value = construct_record(self.world.types(), declaration, slots, values)
+                    .map_err(invariant)?;
                 outcome_into_stop(retain_composite(value, self.meter))?
             }
             NodeKind::Collection {
@@ -3174,29 +3052,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             }
             NodeKind::ConvertCollection { target, .. } => {
                 let source = self.pop_collection()?;
-                let source_kind = source.collection_type().kind();
-                let distinct = source_kind == CollectionKind::Bag && target.kind().is_unique();
-                let mut produced: Vec<Value> = Vec::with_capacity(source.elements().len());
-                for element in source.elements() {
-                    let repeated = distinct
-                        && produced.last().is_some_and(|previous| {
-                            compare_keys(previous, element) == Some(Ordering::Equal)
-                        });
-                    if repeated {
-                        continue;
-                    }
-                    charge_visit(self.meter)?;
-                    produced.push(element.clone());
-                }
                 // Only a traced run reads the kept elements again.
-                let kept = self.trail.is_some().then(|| produced.clone());
-                let value = if source_kind == CollectionKind::Sequence
-                    && target.kind() != CollectionKind::Sequence
-                {
-                    outcome_into_stop(form(target, produced, self.meter))?
-                } else {
-                    outcome_into_stop(form_grouped(target, produced, self.meter))?
-                };
+                let (value, kept) =
+                    collections::convert(target, &source, self.trail.is_some(), self.meter)?;
                 if let Some(kept) = kept {
                     self.note_converted(&source, &kept, &value);
                 }
@@ -3304,48 +3162,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.population_objects(node, population)?
             }
             NodeKind::Flatten(_) => {
-                let ValueType::Collection(result_type) = node.value_type() else {
+                if !matches!(node.value_type(), ValueType::Collection(_)) {
                     return Err(invariant("flatten-collection-result-expected"));
-                };
-                let outer = self.pop_collection()?;
-                let mut produced = Vec::new();
-                for inner in outer.elements() {
-                    charge_visit(self.meter)?;
-                    let Value::Collection(inner) = inner else {
-                        return Err(invariant("flatten-inner-collection-expected"));
-                    };
-                    for element in inner.elements() {
-                        charge_visit(self.meter)?;
-                        produced.push(element.clone());
-                    }
                 }
-                outcome_into_stop(form(result_type, produced, self.meter))?
+                let outer = self.pop_collection()?;
+                collections::flatten(node.value_type(), &outer, self.meter).map_err(lift)?
             }
             NodeKind::Size(_) => {
-                let size = size_of(self.pop()?)?;
-                retain_scalar(Value::Integer(size), self.meter)?
+                let operand = self.pop()?;
+                if let Value::Collection(collection) = &operand {
+                    collections::size(collection, self.meter)?
+                } else {
+                    retain_scalar(Value::Integer(size_of(operand)?), self.meter)?
+                }
             }
             NodeKind::Contains(_, _) => {
                 let item = self.pop()?;
                 let collection = self.pop_collection()?;
-                let bag = collection.collection_type().kind() == CollectionKind::Bag;
-                let mut found = false;
-                let mut previous: Option<&Value> = None;
-                for member in collection.elements() {
-                    let repeated = bag
-                        && previous.is_some_and(|previous| {
-                            compare_keys(previous, member) == Some(Ordering::Equal)
-                        });
-                    previous = Some(member);
-                    if repeated {
-                        continue;
-                    }
-                    if outcome_into_stop(member_equal(&item, member, self.meter))? {
-                        found = true;
-                        break;
-                    }
-                }
-                retain_scalar(Value::Boolean(found), self.meter)?
+                collections::contains(&item, &collection, self.meter)?
             }
             NodeKind::Navigate {
                 relationship,
@@ -3839,10 +3673,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self.iterations = self.iterations.saturating_add(1);
         self.iterate_seq(Box::new(SeqIteration {
             node,
-            next: low,
-            high,
-            awaiting: false,
-            results: Vec::new(),
+            state: Sequence::new(low, high),
             source_owner: self.step_owner(),
             owner: self.step_owner(),
         }))
@@ -3856,26 +3687,23 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             return Err(invariant("seq-node-expected"));
         };
         self.absorb_owner(iteration.owner);
-        if iteration.awaiting {
-            iteration.awaiting = false;
-            let element = self.pop()?;
-            iteration.results.push(element);
-        }
-        if iteration.next > iteration.high {
+        let result = if iteration.state.awaiting {
+            Some(self.pop()?)
+        } else {
+            None
+        };
+        let Some(bound) = iteration.state.step(result, self.meter)? else {
             self.iterations = self.iterations.saturating_sub(1);
-            let ValueType::Collection(result_type) = node.value_type() else {
-                return Err(invariant("seq-collection-result-expected"));
-            };
-            let value = outcome_into_stop(form(result_type, iteration.results, self.meter))?;
+            let value = iteration
+                .state
+                .finish(node.value_type(), self.meter)
+                .map_err(lift)?;
             self.push_value(value, false);
             return Ok(());
-        }
-        charge_visit(self.meter)?;
-        *self.slot(*slot)? = Some(Value::Integer(iteration.next.clone()));
+        };
+        *self.slot(*slot)? = Some(Value::Integer(bound));
         iteration.owner = self.step_owner();
         self.set_slot_owner(*slot, iteration.source_owner)?;
-        iteration.next = iteration.next.add(&Integer::one());
-        iteration.awaiting = true;
         self.tasks.push(Task::IterateSeq(iteration));
         self.tasks.push(Task::Eval(node.at(*body)));
         Ok(())
@@ -4228,9 +4056,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         }
     }
 
-    /// `witnessed`: the slot holds a value FR-106 check 6.5 admitted
-    /// outside its declared range, which an optional slot's checked
-    /// construction would refuse. Every other slot is checked as before.
+    /// [`composite::project`] as the evaluator's halt.
     fn project(
         types: &TypeEnvironment,
         slot: &FieldValue,
@@ -4238,40 +4064,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         value_type: &ValueType,
         witnessed: bool,
     ) -> Result<Value, Halt> {
-        match (slot, optional, value_type) {
-            (FieldValue::Present(value), false, _) => Ok(value.clone()),
-            (FieldValue::Present(value), true, ValueType::Option(payload)) if witnessed => Ok(
-                OptionValue::from_admitted((**payload).clone(), Some(value.clone())),
-            ),
-            // FR-359 item 5: the payload is admitted by conformance under the
-            // type environment, so a child of the payload's record keeps its
-            // own identity in the `Option`. `OptionValue::present` is exact.
-            (FieldValue::Present(value), true, ValueType::Option(payload)) => {
-                // The evaluator's stop channel is the kernel `Stop`, which has no
-                // storage variant, so an undecided admission is its own fault
-                // identifier and is never read as "rejected".
-                match types.admits(payload, value) {
-                    Ok(true) => Ok(OptionValue::from_admitted(
-                        (**payload).clone(),
-                        Some(value.clone()),
-                    )),
-                    Ok(false) => Err(invariant("field-option-payload-rejected")),
-                    Err(EnvironmentFailure::Allocation(_)) => Err(invariant(
-                        "field-option-payload-admission-allocation-denied",
-                    )),
-                    Err(EnvironmentFailure::Capacity(_)) => Err(invariant(
-                        "field-option-payload-admission-capacity-overflow",
-                    )),
-                    Err(EnvironmentFailure::Limit(_) | EnvironmentFailure::Refused(_)) => {
-                        Err(invariant("field-option-payload-admission-contract-broken"))
-                    }
-                }
-            }
-            (FieldValue::Absent | FieldValue::Null, true, ValueType::Option(payload)) => {
-                Ok(OptionValue::none((**payload).clone()))
-            }
-            _ => Err(invariant("field-projection-shape-invalid")),
-        }
+        composite::project(types, slot, optional, value_type, witnessed).map_err(invariant)
     }
 
     /// Whether `operand` reads a slot FR-106 check 6.5 witnessed out of
@@ -4339,6 +4132,21 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         outcome_into_stop(order_numbers(operator, operands, self.meter)).map_err(Into::into)
     }
 
+    /// What the shared iteration needs of the query or fold at `node`.
+    fn iteration_spec(node: N) -> Result<Spec<'a>, Halt> {
+        let shape = match node.kind() {
+            NodeKind::Query { visit, .. } => Shape::Query(*visit),
+            NodeKind::Fold { .. } => Shape::Fold,
+            _ => return Err(invariant("iteration-node-invalid")),
+        };
+        let source_is_filter = matches!(
+            node.kind(),
+            NodeKind::Query { source, .. }
+                if matches!(node.at(*source).kind(), NodeKind::Query { visit: Visit::Filter, .. })
+        );
+        Ok(Spec::new(shape, node.value_type(), source_is_filter))
+    }
+
     fn start_iteration(&mut self, node: N) -> Result<(), Halt> {
         self.iterations = self.iterations.saturating_add(1);
         let (identity, reduce) = match node.kind() {
@@ -4353,18 +4161,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             _ => return Err(invariant("iteration-node-invalid")),
         };
         let source = self.pop_collection()?;
-        if let NodeKind::Query {
-            visit: Visit::Only,
-            source: operand,
-            ..
-        } = node.kind()
-        {
-            // FR-139: `only` is `e` for the one object satisfying the
-            // condition, and undefined for none or several, before `e`
-            // reads any object.
-            let found = u64::try_from(source.elements().len()).unwrap_or(u64::MAX);
-            if found != 1 {
+        let spec = Self::iteration_spec(node)?;
+        let state = match IterationState::start(&spec, source, identity, reduce, self.meter) {
+            Ok(state) => state,
+            Err(collections::Halt::OnlyNotOne { found }) => {
                 self.iterations = self.iterations.saturating_sub(1);
+                let NodeKind::Query {
+                    source: operand, ..
+                } = node.kind()
+                else {
+                    return Err(invariant("iteration-node-invalid"));
+                };
                 return Err(Halt::Family(FamilyResult::Undefined(Box::new(
                     StateModelUndefined::OnlyNotOne {
                         population: population_of(node.at(*operand))?,
@@ -4372,119 +4179,64 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     },
                 ))));
             }
-        }
-        let mut iteration = Box::new(Iteration {
+            Err(other) => return Err(lift(other)),
+        };
+        self.iterate(Box::new(Iteration {
             node,
-            source,
-            next: 0,
-            awaiting: false,
-            results: Vec::new(),
-            sources: Vec::new(),
-            accumulator: identity,
-            count: Integer::zero(),
+            state,
             source_owner: self.step_owner(),
             owner: self.step_owner(),
-        });
-        if reduce {
-            let first = iteration
-                .source
-                .elements()
-                .first()
-                .cloned()
-                .ok_or(Stop::Undefined(Undefined::EmptyReduction))?;
-            charge_visit(self.meter)?;
-            iteration.accumulator = Some(first);
-            iteration.next = 1;
-        }
-        self.iterate(iteration)
+        }))
     }
 
     fn iterate(&mut self, mut iteration: Box<Iteration<N>>) -> Result<(), Halt> {
         let node = iteration.node;
-        self.absorb_owner(iteration.owner);
-        if iteration.awaiting {
-            iteration.awaiting = false;
-            let result = self.pop()?;
-            let element = iteration
-                .next
-                .checked_sub(1)
-                .and_then(|index| iteration.source.elements().get(index))
-                .cloned()
-                .ok_or_else(|| invariant("iteration-source-position-invalid"))?;
-            let stop_early = match node.kind() {
-                NodeKind::Query { visit, body, .. } => match (visit, result) {
-                    (Visit::Map, value) => {
-                        iteration.results.push(value);
-                        iteration.sources.push(iteration.next - 1);
-                        false
-                    }
-                    (Visit::Filter, Value::Boolean(kept)) => {
-                        if kept {
-                            iteration.results.push(element);
-                            iteration.sources.push(iteration.next - 1);
-                        }
-                        false
-                    }
-                    (Visit::Forall, Value::Boolean(holds)) => !holds,
-                    (Visit::Exists, Value::Boolean(holds)) => holds,
-                    (Visit::Sum, summand) => {
-                        let total = iteration.accumulator.take();
-                        iteration.accumulator =
-                            Some(self.sum_step(node, node.at(*body), total, summand)?);
-                        false
-                    }
-                    (Visit::Count, Value::Boolean(holds)) => {
-                        if holds {
-                            iteration.count = iteration.count.add(&Integer::one());
-                        }
-                        false
-                    }
-                    (Visit::Only, value) => {
-                        iteration.results.push(value);
-                        false
-                    }
-                    _ => return Err(invariant("query-body-value-invalid")),
-                },
-                NodeKind::Fold { .. } => {
-                    iteration.accumulator = Some(result);
-                    false
+        let spec = match Self::iteration_spec(node) {
+            Ok(spec) => spec,
+            Err(fault) => {
+                // A node that is neither query nor fold is detected where the
+                // step would first touch it: after the pending result is taken
+                // or after the element visit is charged.
+                self.absorb_owner(iteration.owner);
+                if iteration.state.awaiting {
+                    self.pop()?;
+                } else {
+                    collections::charge_visit(self.meter)?;
                 }
-                _ => return Err(invariant("iteration-node-invalid")),
+                return Err(fault);
+            }
+        };
+        self.absorb_owner(iteration.owner);
+        if iteration.state.awaiting {
+            let result = self.pop()?;
+            // Only a `sum` locates a stop at the body.
+            let body = match node.kind() {
+                NodeKind::Query { body, .. } => node.at(*body),
+                _ => node,
             };
-            if stop_early {
-                self.iterations = self.iterations.saturating_sub(1);
-                self.note_stop(&iteration)?;
-                let found = matches!(
-                    node.kind(),
-                    NodeKind::Query {
-                        visit: Visit::Exists,
-                        ..
-                    }
-                );
-                let value = retain_scalar(Value::Boolean(found), self.meter)?;
-                self.push_value(value, false);
-                return Ok(());
+            let absorbed = iteration.state.absorb(&spec, result, |total, summand| {
+                self.sum_step(node, body, total, summand)
+            })?;
+            match absorbed {
+                Absorbed::Continue => {}
+                Absorbed::Exit { found } => {
+                    self.iterations = self.iterations.saturating_sub(1);
+                    self.note_stop(&iteration)?;
+                    let value = retain_scalar(Value::Boolean(found), self.meter)?;
+                    self.push_value(value, false);
+                    return Ok(());
+                }
             }
         }
-        let Some(element) = iteration.source.elements().get(iteration.next).cloned() else {
-            return self.finish(*iteration);
+        let (element, position) = match iteration.state.next(&spec, self.meter).map_err(lift)? {
+            Flow::Exhausted => return self.finish(*iteration),
+            Flow::Visit { element, position } => (element, position),
         };
-        // An `only` over a `where` filter already visited the one object that
-        // passed it (FR-139).
-        if !matches!(
-            node.kind(),
-            NodeKind::Query { visit: Visit::Only, source, .. }
-                if matches!(node.at(*source).kind(), NodeKind::Query { visit: Visit::Filter, .. })
-        ) {
-            charge_visit(self.meter)?;
-        }
-        iteration.next = iteration.next.saturating_add(1);
-        let position = iteration.next.saturating_sub(1);
         let body = match node.kind() {
             NodeKind::Query {
                 slot, body, source, ..
             } => {
-                self.note_element(node.at(*source), &iteration.source, *slot, position);
+                self.note_element(node.at(*source), &iteration.state.source, *slot, position);
                 *self.slot(*slot)? = Some(element);
                 iteration.owner = self.step_owner();
                 self.set_slot_owner(*slot, iteration.source_owner)?;
@@ -4497,8 +4249,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 ..
             } => {
                 let current = iteration
-                    .accumulator
-                    .clone()
+                    .state
+                    .accumulator()
+                    .cloned()
                     .ok_or_else(|| invariant("fold-accumulator-missing"))?;
                 if let Some(trail) = self.trail.as_mut() {
                     trail.element_paths.remove(accumulator);
@@ -4513,7 +4266,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             }
             _ => return Err(invariant("iteration-node-invalid")),
         };
-        iteration.awaiting = true;
         self.tasks.push(Task::Iterate(iteration));
         self.tasks.push(Task::Eval(node.at(*body)));
         Ok(())
@@ -4898,10 +4650,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             return Err(invariant("query-stop-node-expected"));
         };
         let position = iteration
+            .state
             .next
             .checked_sub(1)
             .ok_or_else(|| invariant("query-stop-position-invalid"))?;
         let element = iteration
+            .state
             .source
             .elements()
             .get(position)
@@ -4917,7 +4671,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Halt::Fault(InternalFault::new("S6a", "quantifier-has-an-occurrence"))
             })?;
         let provenance = self
-            .provenance_of(&iteration.source, iteration.node.at(*source))
+            .provenance_of(&iteration.state.source, iteration.node.at(*source))
             .ok_or_else(|| Halt::Fault(InternalFault::new("S6a", "domain-has-an-occurrence")))?;
         let index = provenance
             .position(position)
@@ -4939,74 +4693,39 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     fn finish(&mut self, iteration: Iteration<N>) -> Result<(), Halt> {
         self.iterations = self.iterations.saturating_sub(1);
         let node = iteration.node;
-        let value = match node.kind() {
-            NodeKind::Query { visit, source, .. } => match visit {
-                Visit::Map | Visit::Filter => {
-                    let ValueType::Collection(result_type) = node.value_type() else {
-                        return Err(invariant("query-collection-result-expected"));
-                    };
-                    let produced = self
-                        .on_claim_level()
-                        .then(|| (iteration.sources, iteration.results.clone()));
-                    let value = if *visit == Visit::Map {
-                        outcome_into_stop(form(result_type, iteration.results, self.meter))?
-                    } else {
-                        outcome_into_stop(form_grouped(result_type, iteration.results, self.meter))?
-                    };
-                    if let Some((sources, results)) = produced {
-                        self.note_computed(
-                            &iteration.source,
-                            node.at(*source),
-                            &sources,
-                            &results,
-                            &value,
-                        );
-                    }
-                    value
-                }
-                Visit::Forall => retain_scalar(Value::Boolean(true), self.meter)?,
-                Visit::Exists => retain_scalar(Value::Boolean(false), self.meter)?,
-                Visit::Sum => {
-                    // Every non-empty total was decided as a running total; only
-                    // the empty sum's seed `0` is still undecided (FR-145).
-                    let total = match iteration.accumulator {
-                        None => {
-                            let zero = sum_zero(node.value_type())?;
-                            if !sum_admits(node.value_type(), &zero) {
-                                return Err(Stop::Undefined(Undefined::SumOutOfDomain).into());
-                            }
-                            zero
-                        }
-                        Some(total) => total,
-                    };
-                    retain_scalar(total, self.meter)?
-                }
-                Visit::Only => iteration
-                    .results
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| invariant("only-element-missing"))?,
-                Visit::Count => {
-                    if let ValueType::Int(domain) = node.value_type() {
-                        if !domain.contains(&iteration.count) {
-                            return Err(Stop::Refused(Refusal::IntegerOutOfDomain {
-                                target: Box::new(domain.clone()),
-                            })
-                            .into());
-                        }
-                    }
-                    retain_scalar(Value::Integer(iteration.count), self.meter)?
-                }
-            },
-            NodeKind::Fold { .. } => {
-                let accumulator = iteration
-                    .accumulator
-                    .ok_or_else(|| invariant("fold-accumulator-missing"))?;
-                retain_accumulator(accumulator, self.meter)?
+        let spec = Self::iteration_spec(node)?;
+        let mut state = iteration.state;
+        // The empty sum of a family the shared iteration does not run (a
+        // float or a quantity) takes this evaluator's zero (FR-145).
+        if spec.shape() == Shape::Query(Visit::Sum)
+            && state.accumulator.is_none()
+            && !collections::is_exact_sum(spec.value_type())
+        {
+            let zero = sum_zero(spec.value_type())?;
+            if !sum_admits(spec.value_type(), &zero) {
+                return Err(Stop::Undefined(Undefined::SumOutOfDomain).into());
             }
-            _ => return Err(invariant("iteration-node-invalid")),
-        };
-        self.push_value(value, false);
+            state.accumulator = Some(zero);
+        }
+        let source = Arc::clone(&state.source);
+        let keep = self.on_claim_level();
+        let finished = state.finish(&spec, keep, self.meter).map_err(lift)?;
+        if let (
+            Some((sources, results)),
+            NodeKind::Query {
+                source: operand, ..
+            },
+        ) = (finished.produced, node.kind())
+        {
+            self.note_computed(
+                &source,
+                node.at(*operand),
+                &sources,
+                &results,
+                &finished.value,
+            );
+        }
+        self.push_value(finished.value, false);
         Ok(())
     }
 }
@@ -5028,17 +4747,18 @@ mod union_case;
 
 #[cfg(test)]
 mod tests {
-    use filament_semantic_value::declaration::{Component, StorageRequest, StorageUnit};
+    use crate::value::composite::{construction_fault_identifier, ConstructionSite};
+    use filament_exact::IntegerInterval;
+    use filament_semantic_value::declaration::{
+        Component, ConstructionCause, ConstructionRefusal, StorageRequest, StorageUnit,
+    };
 
     fn fault_identifier(site: ConstructionSite, cause: ConstructionCause) -> &'static str {
         let refusal = ConstructionRefusal {
             component: Component::Value,
             cause,
         };
-        match construction_fault(site, &refusal) {
-            Halt::Fault(fault) => fault.invariant(),
-            _ => "not-a-fault",
-        }
+        construction_fault_identifier(site, &refusal)
     }
 
     /// A storage failure of tuple or record construction keeps its own fault
