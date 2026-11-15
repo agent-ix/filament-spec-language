@@ -11,8 +11,8 @@
 /// `getrusage(RUSAGE_SELF)` through nix's safe API; Darwin reports that value in
 /// bytes, which this function converts to KiB. Compare runs on the same OS.
 ///
-/// `#[string_edge]`: reads the host tool's text report by its field label;
-/// it selects no family semantics.
+/// `#[string_edge]`: reads OS-provided RSS (`/proc/self/status` on Linux,
+/// `getrusage` through nix on macOS); it selects no family semantics.
 #[ix_trace_rs::string_edge]
 pub fn peak_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -31,12 +31,19 @@ pub fn peak_rss_kib() -> Option<u64> {
     {
         use nix::sys::resource::{getrusage, UsageWho};
 
-        u64::try_from(getrusage(UsageWho::RUSAGE_SELF).ok()?.max_rss() / 1024).ok()
+        u64::try_from(getrusage(UsageWho::RUSAGE_SELF).ok()?.max_rss())
+            .ok()
+            .map(bytes_to_kib)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         None
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn bytes_to_kib(bytes: u64) -> u64 {
+    bytes / 1024
 }
 
 #[cfg(test)]
@@ -48,5 +55,14 @@ mod tests {
         if cfg!(any(target_os = "linux", target_os = "macos")) {
             assert!(peak_rss_kib().is_some_and(|kib| kib > 0));
         }
+    }
+
+    #[test]
+    fn darwin_ru_maxrss_bytes_convert_to_kib() {
+        assert_eq!(bytes_to_kib(0), 0);
+        assert_eq!(bytes_to_kib(1023), 0);
+        assert_eq!(bytes_to_kib(1024), 1);
+        assert_eq!(bytes_to_kib(1536), 1);
+        assert_eq!(bytes_to_kib(4096), 4);
     }
 }
