@@ -59,6 +59,7 @@ fn run_directory(directory: &Path) -> Result<String, String> {
         .map_err(|error| format!("{}: cannot read corpus area: {error}", directory.display()))?;
     let mut programs = BTreeSet::new();
     let mut expectations = BTreeSet::new();
+    let mut requests = BTreeSet::new();
     for entry in entries {
         let entry = entry.map_err(|error| {
             format!("{}: cannot read corpus entry: {error}", directory.display())
@@ -74,6 +75,8 @@ fn run_directory(directory: &Path) -> Result<String, String> {
             programs.insert(stem.to_owned());
         } else if let Some(stem) = name.strip_suffix(".expected.json") {
             expectations.insert(stem.to_owned());
+        } else if let Some(stem) = name.strip_suffix(".request.json") {
+            requests.insert(stem.to_owned());
         }
     }
 
@@ -87,6 +90,12 @@ fn run_directory(directory: &Path) -> Result<String, String> {
         return Err(format!(
             "{}: expectation has no program",
             directory.join(format!("{orphan}.expected.json")).display()
+        ));
+    }
+    if let Some(orphan) = requests.difference(&programs).next() {
+        return Err(format!(
+            "{}: request has no paired program",
+            directory.join(format!("{orphan}.request.json")).display()
         ));
     }
     if programs.is_empty() {
@@ -609,6 +618,34 @@ fn corpus_runner_rejects_request_for_a_different_program() {
         error.contains("does not point to paired corpus program"),
         "{error}"
     );
+}
+
+#[test]
+fn corpus_runner_rejects_request_without_a_paired_program() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = json!({
+        "format":"native-run/1",
+        "request":{
+            "models":[],
+            "program":{"source":{
+                "file":"missing.native",
+                "authority":"agent-ix",
+                "identity":"test:corpus:missing",
+                "document":"Missing",
+                "formal_revision":1
+            }},
+            "call":{"function":"seven","arguments":[]}
+        }
+    });
+    std::fs::write(
+        directory.path().join("orphan.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+
+    let error = run_directory(directory.path()).unwrap_err();
+    assert!(error.contains("orphan.request.json"), "{error}");
+    assert!(error.contains("request has no paired program"), "{error}");
 }
 
 #[test]
