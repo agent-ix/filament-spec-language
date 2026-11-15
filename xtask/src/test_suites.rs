@@ -1682,10 +1682,13 @@ fn empty_source_corpus_areas(workspace_root: &Path) -> Result<Vec<String>> {
                 what: "cannot read source corpus area entry",
                 source,
             })?;
-            if entry.file_type().map_err(|source| Error::TestSuitesIo {
-                what: "cannot inspect source corpus entry",
-                source,
-            })?.is_file()
+            if entry
+                .file_type()
+                .map_err(|source| Error::TestSuitesIo {
+                    what: "cannot inspect source corpus entry",
+                    source,
+                })?
+                .is_file()
                 && entry
                     .file_name()
                     .to_str()
@@ -1722,7 +1725,9 @@ mod tests {
     fn absent_source_corpus_areas_are_allowed_during_staged_rollout() {
         let workspace = tempfile::tempdir().unwrap();
 
-        assert!(empty_source_corpus_areas(workspace.path()).unwrap().is_empty());
+        assert!(empty_source_corpus_areas(workspace.path())
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1732,7 +1737,9 @@ mod tests {
         std::fs::create_dir_all(&area).unwrap();
         std::fs::write(area.join("one.native"), "program").unwrap();
 
-        assert!(empty_source_corpus_areas(workspace.path()).unwrap().is_empty());
+        assert!(empty_source_corpus_areas(workspace.path())
+            .unwrap()
+            .is_empty());
     }
     use ix_trace_rs::trace;
 
