@@ -33,7 +33,7 @@ use crate::identity::TracePosition;
 use filament_semantic_value::catalog::Category;
 use fsl_foundation::source::provenance::SourceRegion;
 pub use wire::CauseCodecError;
-pub(crate) use wire::{validate_state_element, DecisiveWire, RecordWire};
+pub(crate) use wire::{validate_state_element, DecisiveWire, ProtocolWitnessWire, RecordWire};
 
 /// The verdict a proved or replayed outcome settles to, taken from the
 /// FSpec outcome-to-verdict map fixed per ADR-013 O-16 category (QC-8). A

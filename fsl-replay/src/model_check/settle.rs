@@ -54,7 +54,8 @@ pub const EXPLICIT_STATE: &str = "explicit-state";
 pub const K_INDUCTION: &str = "k-induction";
 
 /// FSpec FR-360's result label.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ResultLabel {
     /// `proved`.
     Proved,
@@ -89,7 +90,8 @@ impl ResultLabel {
 }
 
 /// The record's execution status.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Execution {
     /// The method completed.
     Completed,
@@ -102,7 +104,8 @@ pub enum Execution {
 }
 
 /// The record's truth.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Truth {
     /// The item holds.
     Satisfied,

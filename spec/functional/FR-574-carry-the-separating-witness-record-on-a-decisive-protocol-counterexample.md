@@ -43,10 +43,22 @@ not choose, derive or default it.
 ## Outputs
 
 One FR-351 record, attached to the counterexample and carried on the
-`analyze` result of the item (FR-573 "Serving"). FSpec FR-352's
-`native-run-result/2` is a clause-run document with no protocol-analysis
-result form, so the record's carriage on it is open on QSL-1898. A
-`closed-scope` result carries no record (filament-protocol FR-302).
+`analyze` result of the item (FR-573 "Serving"). A `closed-scope` result
+carries no record (filament-protocol FR-302).
+
+Every result either kind returns is also written as a FSpec FR-352
+`native-run-result/2` protocol-analysis record
+(`ProtocolAnalysisArtifact::record`, `ProtocolAnalysisRecord::to_bytes`), and
+the strict `native-run-result/2` reader (`read_native_run_result`) reads it
+back to an equal record. The record carries the result's key, its FR-573
+settlement and, on a refutation, this FR-351 record with `trace_position` as
+its canonical decimal string. A request refused before analysis and an engine
+failure return no result and have no record. The `settlement` of an
+`unsupported` result is the FR-331 diagnostic `{code, cause, detail}`: `code`
+`unsupported_projection`, `cause` the FR-575 slug, and `detail` holding `node`,
+the canonical string of the construct's checked node id, and `reason`, the
+named policy of an `unsupported-join` or the `fsl-eval` cause, present exactly
+when the slug carries one.
 
 ## Behavior
 
@@ -104,13 +116,14 @@ protocol element, and an absent `index` on the wire); a state-clause record
 | FR-574-AC-5 | `value_path` has the FR-207 canonical form with an `object` root subject and an empty `steps` array, compares componentwise, and is never absent; its root equals the request's assessed-subject root exactly; changing only display text, path or span leaves it equal. | Test (TC-1414) |
 | FR-574-AC-7 | A request with the assessed-subject root absent, or its observation or object identity absent, is refused `invalid_runtime_input`/`missing-member` naming the absent component; a request differing only in the root yields an equal FR-572 key. | Test (TC-1414) |
 | FR-574-AC-6 | A state-clause separating witness record (FR-265) with its quantifier and index round-trips unchanged through the amended record type and wire. | Test (TC-1414) |
+| FR-574-AC-8 | A projection and a realizability result of each label are each written as a FSpec FR-352 `native-run-result/2` protocol-analysis record that the strict reader reads back to an equal record; a refuted result's record carries its counterexample's FR-351 record unchanged and no other record carries one; a request refused before analysis has no record. | Test (TC-1414) |
 
 ## Dependencies
 
 - ADR-036 PA-24; ADR-031 SW-5, SW-7.
 - [FR-570](FR-570-project-a-global-protocol-onto-one-role.md), [FR-571](FR-571-decide-whether-local-strategies-realize-a-global-protocol.md).
 - [FR-265](FR-265-derive-a-state-clause-separating-witness.md): the state-clause record that must not change.
-- FSpec FR-351, FR-207, FR-352. Open on QSL-1898: an optional upstream improvement (a protocol-node step kind in FR-207) and the carrier of the assessed-subject binding; neither blocks this requirement.
+- FSpec FR-351, FR-207, FR-352 (its "Protocol-analysis result" form carries the record). Open on QSL-1898: an optional upstream improvement (a protocol-node step kind in FR-207) and the carrier of the assessed-subject binding; neither blocks this requirement.
 
 ## References
 

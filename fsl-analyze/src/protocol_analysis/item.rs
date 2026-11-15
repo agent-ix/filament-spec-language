@@ -8,7 +8,8 @@
 use filament_contract_model::CheckedPackageV2;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::{BackendId, Code, RequestIndex};
-use fsl_replay::protocol_analysis::ProtocolAnalysisSettlement;
+use fsl_replay::protocol_analysis::{AnalysisOutcome, ProtocolAnalysisSettlement};
+use fsl_replay::spine::{ProtocolAnalysisRecord, ProtocolRecordError};
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
@@ -39,6 +40,40 @@ impl ProtocolAnalysisArtifact {
             Self::Projection(result) => ProtocolAnalysisSettlement::of(result),
             Self::Realizability(result) => ProtocolAnalysisSettlement::of(result),
         }
+    }
+
+    /// The result's FSpec FR-352 protocol-analysis record: its key, its
+    /// settlement and, for a refutation, its counterexample's FR-351 record
+    /// (ADR-036 PA-24). [`ProtocolAnalysisRecord::to_bytes`] writes it as
+    /// `native-run-result/2`.
+    ///
+    /// # Errors
+    ///
+    /// [`ProtocolRecordError`] when the record breaks a rule of FSpec
+    /// FR-352, which no settled result does.
+    pub fn record(&self) -> Result<ProtocolAnalysisRecord, ProtocolRecordError> {
+        let settlement = self.settlement();
+        let (key, witness) = match self {
+            Self::Projection(result) => (
+                &result.key,
+                match &result.outcome {
+                    AnalysisOutcome::Refuted(counterexample) => {
+                        Some(&counterexample.separating_witness)
+                    }
+                    _ => None,
+                },
+            ),
+            Self::Realizability(result) => (
+                &result.key,
+                match &result.outcome {
+                    AnalysisOutcome::Refuted(counterexample) => {
+                        Some(counterexample.separating_witness())
+                    }
+                    _ => None,
+                },
+            ),
+        };
+        ProtocolAnalysisRecord::new(key.clone(), &settlement, witness)
     }
 }
 

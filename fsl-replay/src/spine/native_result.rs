@@ -23,6 +23,12 @@ use fsl_semantics::model::observation::{
 };
 use fsl_semantics::value::environment_stage::membership_failure_cause;
 
+mod protocol;
+pub use protocol::{
+    ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
+    ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError, ProtocolSettlementEntry,
+    UnsupportedDiagnostic,
+};
 mod temporal;
 pub use temporal::{
     ClosureRead, CounterexampleRead, DimensionRead, EffectiveIdRead, FairnessGranularityRead,
@@ -102,6 +108,11 @@ pub enum NativeRunReadError {
     /// The typed separating record is malformed.
     #[error("invalid member witness: {0}")]
     Witness(#[from] crate::result::CauseCodecError),
+    /// A protocol-analysis record's `analysis.key` does not read; a
+    /// removed member is `invalid_runtime_input`/`missing-member` naming it
+    /// (FSpec FR-352).
+    #[error("invalid member analysis.key: {0}")]
+    AnalysisKey(#[source] crate::protocol_analysis::KeyReadError),
 }
 
 /// FR-535: the caller's two independent bounds on reading one `/2` document.
@@ -216,6 +227,9 @@ pub enum NativeRunResult {
     Clause(Box<ClauseRunRecord>),
     /// Request intake or command handling failed before a report existed.
     CommandError(Box<CommandErrorRecord>),
+    /// A local-projection or realizability analysis returned a result
+    /// (FSpec FR-352 "Protocol-analysis result").
+    ProtocolAnalysis(Box<ProtocolAnalysisRecord>),
 }
 
 /// The typed clause-run document returned by the strict reader.
@@ -1709,6 +1723,19 @@ pub fn read_native_run_result_bounded(
         .unwrap_or("<missing>");
     if format != WireFormat::RunResult.as_str() {
         return Err(NativeRunReadError::UnsupportedFormat(format.to_owned()));
+    }
+    // FSpec FR-352: the two record forms are told apart by which of
+    // `analysis` and `disposition` is present, never by other content.
+    if root.get("analysis").is_some() {
+        if root.get("disposition").is_some() {
+            return Err(NativeRunReadError::Invalid {
+                member: "disposition",
+                reason: "a protocol-analysis record carries no disposition",
+            });
+        }
+        budget.charge(u64::try_from(bytes.len()).unwrap_or(u64::MAX))?;
+        return ProtocolAnalysisRecord::read(bytes)
+            .map(|record| NativeRunResult::ProtocolAnalysis(Box::new(record)));
     }
     let command_shape = root.get("stage").is_some() || root.get("details").is_some();
     if !command_shape

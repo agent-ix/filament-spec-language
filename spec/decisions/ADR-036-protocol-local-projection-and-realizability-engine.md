@@ -239,8 +239,13 @@ Slice 5 serves both kinds. What filament-protocol reads:
   refuses an absent member `invalid_runtime_input`/`missing-member`.
 - **FR-351 record.** The `separating_witness` of a `refuted` result's
   counterexample (FR-574), in the FR-352 record wire with a protocol
-  `deciding_element`, no `quantifier` and no `index`. Its carriage on
-  `native-run-result/2` is open (FR-574 Outputs).
+  `deciding_element`, no `quantifier` and no `index`.
+- **Run-result record.** `ProtocolAnalysisArtifact::record` gives the
+  result's FSpec FR-352 `native-run-result/2` protocol-analysis record (key,
+  FR-360 label and axes, FR-331 settlement entry and, on a refutation, the
+  FR-351 record), `ProtocolAnalysisRecord::to_bytes` writes it, and
+  `read_native_run_result` reads it back (FR-574 Outputs). A refusal before
+  analysis and an engine failure have no record.
 
 ## Alternatives Considered
 

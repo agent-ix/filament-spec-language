@@ -9,8 +9,8 @@ use filament_exact::Cancel;
 use fsl_analyze::analyze::{analyze_items, AnalyzeRecord, Engines};
 use fsl_analyze::protocol_analysis::{
     self, projection_item, realizability_item, realize, realize_tampered, replay_counterexample,
-    replay_strategy, ProjectionRequest, RealizabilityOutcome, RealizabilityRefusal,
-    RealizabilityRequest,
+    replay_strategy, ProjectionRequest, ProtocolAnalysisArtifact, RealizabilityOutcome,
+    RealizabilityRefusal, RealizabilityRequest,
 };
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::protocol::StepKind;
@@ -21,6 +21,7 @@ use fsl_replay::protocol_analysis::{
     ProjectionBoundsDraft, RealizabilityCounterexample, RealizabilityDisagreement,
     RealizabilityWitness, RunBudget, RunLimit, StrategyAction, UnsupportedSlug,
 };
+use fsl_replay::spine::{read_native_run_result, NativeRunResult, ProtocolAnalysisKind};
 use fsl_replay::{
     Certification, DecidingElement, Execution, IncompleteCause, InconclusiveCause as Fr331Cause,
     ModelCheckLimit, ProofBasis, ResultLabel, SeparatingWitnessRecord, SettlementBasis,
@@ -1074,7 +1075,11 @@ fn the_protocol_kinds_are_served_by_the_linked_manifest() {
     "FR-573-AC-4",
     "FR-573-AC-5",
     "FR-573-AC-6",
-    "FR-573-AC-7"
+    "FR-573-AC-7",
+    "FSpec-TC-255",
+    "FSpec-FR-352-AC-14",
+    "TC-1414",
+    "FR-574-AC-8"
 )]
 #[test]
 fn a_driver_run_settles_each_kind_under_each_label() {
@@ -1244,4 +1249,93 @@ fn a_driver_run_settles_each_kind_under_each_label() {
             }
         ));
     }
+    written_records_read_back(&records);
+}
+
+/// FSpec FR-352-AC-14, FR-574-AC-8: each served result is written as a
+/// `native-run-result/2` protocol-analysis record that the strict reader
+/// reads back to an equal record, of the result's kind and with its
+/// settlement; a refutation's record carries its counterexample's FR-351
+/// record unchanged, and no other record carries one.
+fn written_records_read_back(records: &[AnalyzeRecord]) {
+    for (at, served) in records.iter().enumerate() {
+        let artifact = served.protocol_analysis.as_ref().expect("a result");
+        let record = artifact.record().expect("the result has a record");
+        let bytes = record.to_bytes().expect("the record encodes");
+        let NativeRunResult::ProtocolAnalysis(read) =
+            read_native_run_result(&bytes).expect("the strict reader reads it")
+        else {
+            panic!("item {at}: a protocol-analysis record");
+        };
+        assert_eq!(*read, record, "item {at}");
+        assert_eq!(read.to_bytes().expect("re-encodes"), bytes, "item {at}");
+        let settlement = artifact.settlement();
+        assert_eq!(
+            (read.label(), read.basis(), read.execution(), read.truth()),
+            (
+                settlement.label,
+                settlement.basis,
+                settlement.execution,
+                settlement.truth
+            ),
+            "item {at}"
+        );
+        let (kind, witness) = match &**artifact {
+            ProtocolAnalysisArtifact::Projection(result) => (
+                ProtocolAnalysisKind::LocalProjection,
+                match &result.outcome {
+                    AnalysisOutcome::Refuted(found) => Some(found.separating_witness.clone()),
+                    _ => None,
+                },
+            ),
+            ProtocolAnalysisArtifact::Realizability(result) => (
+                ProtocolAnalysisKind::Realizability,
+                match &result.outcome {
+                    AnalysisOutcome::Refuted(found) => Some(found.separating_witness().clone()),
+                    _ => None,
+                },
+            ),
+        };
+        assert_eq!(read.kind(), kind, "item {at}");
+        match witness {
+            Some(witness) => {
+                assert!(read.witness_is(&witness), "item {at}");
+                let DecidingElement::Protocol(text) = &witness.deciding_element else {
+                    panic!("item {at}: a protocol deciding element");
+                };
+                let deciding = read.deciding_node().expect("a deciding node");
+                assert_eq!(&node_text(&deciding).unwrap(), text, "item {at}");
+                assert_eq!(
+                    read.trace_position().map(|at| at.to_string()),
+                    position(&witness),
+                    "item {at}"
+                );
+            }
+            None => assert!(!read.has_witness(), "item {at}"),
+        }
+    }
+}
+
+/// FSpec FR-352-AC-14: a request refused before analysis returns no result,
+/// so it has no protocol-analysis record.
+#[trace("FSpec-TC-255", "FSpec-FR-352-AC-14", "TC-1414", "FR-574-AC-8")]
+#[test]
+fn a_declined_item_writes_no_protocol_analysis_record() {
+    let fixture = worked("exactly-once-premise", PICK, CANCELLED);
+    let mut missing = fixture.request(64);
+    missing.definition_key = None;
+    let records = analyze_items(
+        &Engines::fsl().expect("they register"),
+        vec![realizability_item(
+            RequestIndex::new(0),
+            &fixture.admitted,
+            missing,
+        )],
+        &Cancel::new(),
+    );
+    assert!(matches!(
+        records[0].terminal().map(|record| record.value()),
+        Some(TerminalValue::Declined { .. })
+    ));
+    assert!(records[0].protocol_analysis.is_none());
 }

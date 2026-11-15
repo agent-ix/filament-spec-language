@@ -29,6 +29,7 @@ fn read(value: &Value) -> Result<crate::spine::ClauseRunRecord, String> {
     match read_native_run_result(&serde_json::to_vec(value).expect("JSON")) {
         Ok(NativeRunResult::Clause(record)) => Ok(*record),
         Ok(NativeRunResult::CommandError(_)) => Err("command error".to_owned()),
+        Ok(NativeRunResult::ProtocolAnalysis(_)) => Err("protocol analysis".to_owned()),
         Err(error) => Err(error.to_string()),
     }
 }
