@@ -32,7 +32,7 @@ root items alone:
 
 - `RefinementQueryRequest::new(closure, refinement, concrete, abstract_)`: the
   request of a refinement query (FR-314's request of a refinement item). It
-  takes the `CheckedClosureHandle` that `acfilament_checked_closure` retains, the
+  takes the `CheckedClosureHandle` that `acquire_checked_closure` retains, the
   refinement's `NodeKey` and two subjects.
 - `CheckedClosureHandle::refinement_node_key(name) -> Result<NodeKey,
   RefinementKeyRefusal>`: the node key of the refinement declared as `name`,
@@ -114,7 +114,7 @@ re-export of these adapter additions SHALL name a `fsl_eval` request type.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-492-AC-1 | Over a request built from `fsl_replay` root items alone (the closure from `acfilament_checked_closure`), `CasRefinesCounter`'s `Initial` query is a `QF_LIA` script over one state copy, its `Step` query of a row is over two copies, queries of different rows differ, and a query is deterministic. | Test (TC-1275) |
+| FR-492-AC-1 | Over a request built from `fsl_replay` root items alone (the closure from `acquire_checked_closure`), `CasRefinesCounter`'s `Initial` query is a `QF_LIA` script over one state copy, its `Step` query of a row is over two copies, queries of different rows differ, and a query is deterministic. | Test (TC-1275) |
 | FR-492-AC-2 | **RETIRED (steps are in declaration order, so there is no position mapping).** | Test, retired |
 | FR-492-AC-3 | **RETIRED (steps are in declaration order, so there is no position mapping).** | Test, retired |
 | FR-492-AC-4 | The `fsl_replay` root re-exports no `fsl_eval` item: `arch-lint api-surface --fsl . --fsl-only` reports no finding. | Test (arch-lint-api-surface-fsl) |

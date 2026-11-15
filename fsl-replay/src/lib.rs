@@ -93,7 +93,7 @@ pub use admitted::{
     AdmittedUnionMember, AdmittedUnit,
 };
 pub use application::{
-    acfilament_checked_closure, acfilament_checked_closure_with_integer_division,
+    acquire_checked_closure, acquire_checked_closure_with_integer_division,
     ApplicationBeginRefusal, ApplicationEnvironment, ApplicationRegistry, CallableLookupRefusal,
     CallableSelection, CheckedApplicationProgress, CheckedApplicationSession,
     CheckedClosureCompilation, CheckedClosureHandle, ClosureOwnerRefusal, NestedCallOccurrence,

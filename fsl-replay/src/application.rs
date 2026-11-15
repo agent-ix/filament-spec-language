@@ -784,7 +784,7 @@ pub enum NestedCallSiteRefusal {
 }
 
 /// Acquire and retain the checked closure from the one shared compilation path.
-pub fn acfilament_checked_closure<'a>(
+pub fn acquire_checked_closure<'a>(
     unit: CompileUnit<'_>,
     packages: impl IntoIterator<Item = &'a [u8]>,
     dependencies: &DependencyInput,
@@ -798,7 +798,7 @@ pub fn acfilament_checked_closure<'a>(
 /// Acquire a source-backed checked closure with its owner-admitted division law.
 /// The same selection reaches checking, emission, and the retained executable
 /// body; this does not create a bytes-only execution entry.
-pub fn acfilament_checked_closure_with_integer_division<'a>(
+pub fn acquire_checked_closure_with_integer_division<'a>(
     unit: CompileUnit<'_>,
     packages: impl IntoIterator<Item = &'a [u8]>,
     dependencies: &DependencyInput,
@@ -966,7 +966,7 @@ mod tests {
         SourceIdentity::new("a", name)
     }
     fn acquire(text: &str, dependencies: &DependencyInput) -> CheckedClosureCompilation {
-        acfilament_checked_closure(
+        acquire_checked_closure(
             crate::CompileUnit {
                 source: identity("unit"),
                 package_name: "fixture".to_owned(),
@@ -1145,7 +1145,7 @@ mod tests {
             )
             .into_bytes(),
         };
-        let lib_acquired = acfilament_checked_closure(
+        let lib_acquired = acquire_checked_closure(
             crate::CompileUnit {
                 source: library.source.clone(),
                 package_name: "test/lib".to_owned(),
@@ -1339,7 +1339,7 @@ mod tests {
             ReplayLimits::default(),
         )
         .unwrap_err();
-        let actual = acfilament_checked_closure(
+        let actual = acquire_checked_closure(
             crate::CompileUnit {
                 source: identity("unit"),
                 package_name: "fixture".to_owned(),
@@ -1743,7 +1743,7 @@ mod tests {
                 ReplayLimits::default(),
             )
             .expect_err("existing refusal");
-            let actual = acfilament_checked_closure(
+            let actual = acquire_checked_closure(
                 crate::CompileUnit {
                     source: identity("unit"),
                     package_name: "fixture".to_owned(),
@@ -1780,7 +1780,7 @@ mod tests {
             model M = \"acme/orders\";\n\
             function h using v(p: Population<M::Widget>[3]): Boolean pure { true }\n"
             .to_string();
-        let acquired = acfilament_checked_closure(
+        let acquired = acquire_checked_closure(
             crate::CompileUnit {
                 source: identity("unit"),
                 package_name: "fixture".to_owned(),

@@ -7,7 +7,7 @@ use filament_eval::{
 use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_replay::{
-    acfilament_checked_closure, call_site, ApplicationEnvironment, DependencyInput, Identifier,
+    acquire_checked_closure, call_site, ApplicationEnvironment, DependencyInput, Identifier,
     QualifiedName, ReplayLimits, SourceIdentity, StageLimits,
 };
 
@@ -53,7 +53,7 @@ pub fn run() {
         &name,
     )
     .expect("function site");
-    let compilation = acfilament_checked_closure(
+    let compilation = acquire_checked_closure(
         fsl_replay::CompileUnit {
             source,
             package_name: "consumer.native".to_owned(),

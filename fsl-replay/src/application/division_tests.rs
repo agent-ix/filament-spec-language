@@ -82,7 +82,7 @@ fn division_owner_selection_reaches_public_compile_source_execution_and_strict_r
     ] {
         let law = selection(role);
         let compiled = compile(&source, &law);
-        let acquired = acfilament_checked_closure_with_integer_division(
+        let acquired = acquire_checked_closure_with_integer_division(
             unit(&source),
             [],
             &DependencyInput::default(),

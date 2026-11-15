@@ -3,14 +3,14 @@
 //! refinement's `Initial` and `Step { row }` queries through the `fsl_replay`
 //! root. The queries are called as `fsl_replay::encode_refinement_query`
 //! over a `RefinementQueryRequest` built from `fsl_replay` root items alone
-//! (the retained checked closure from `acfilament_checked_closure`, the node key
+//! (the retained checked closure from `acquire_checked_closure`, the node key
 //! from `refinement_node_key`, the population key from
 //! `RefinementUniverse::for_population`). The fixture supplies only document
 //! values and the assertion oracle.
 
 use fsl_package::EmitLimits;
 use fsl_replay::{
-    acfilament_checked_closure, encode_refinement_query, CheckedClosureHandle, DependencyInput,
+    acquire_checked_closure, encode_refinement_query, CheckedClosureHandle, DependencyInput,
     RefinementKeyRefusal, RefinementQueryKind, RefinementQueryRequest, RefinementQuerySubject,
     RefinementUniverse, ReplayLimits, SourceIdentity, StageLimits,
 };
@@ -25,12 +25,12 @@ use crate::refinement_proofs::row_of;
 const REFINEMENT: &str = "CasRefinesCounter";
 
 /// Run `body` with the retained checked closure of the unit that declares
-/// the refinement text `refinement`, obtained through `acfilament_checked_closure`.
+/// the refinement text `refinement`, obtained through `acquire_checked_closure`.
 fn with_closure<T>(refinement: &str, body: impl FnOnce(&CheckedClosureHandle, &World) -> T) -> T {
     let world = World::new(refinement);
     let documents = packages(Variant::CAS);
     let text = unit_text(&documents, refinement, Variant::CAS);
-    let compiled = acfilament_checked_closure(
+    let compiled = acquire_checked_closure(
         fsl_replay::CompileUnit {
             source: SourceIdentity::new("agent-ix", "refinement"),
             package_name: "fixture".to_owned(),
@@ -194,7 +194,7 @@ fn with_zero_step_request(body: impl FnOnce(&RefinementQueryRequest<'_>)) {
          object Spec::Counter from Impl::Counter {{ value = self.value; }}\n\
          }}\n"
     );
-    let compiled = acfilament_checked_closure(
+    let compiled = acquire_checked_closure(
         fsl_replay::CompileUnit {
             source: SourceIdentity::new("agent-ix", "zero-step-refinement"),
             package_name: "zero-step".to_owned(),
@@ -597,7 +597,7 @@ fn removing_steps_from_a_model_with_operations_is_not_a_zero_row_selection() {
         .collect::<Vec<_>>()
         .join("\n");
     let source = unit_text(&documents, &missing, Variant::CAS);
-    let result = acfilament_checked_closure(
+    let result = acquire_checked_closure(
         fsl_replay::CompileUnit {
             source: SourceIdentity::new("agent-ix", "missing-step-refinement"),
             package_name: "missing-step".to_owned(),

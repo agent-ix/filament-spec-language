@@ -4441,7 +4441,7 @@ fn encoding(error: impl std::fmt::Display) -> EmitRefusal {
 /// The refusals every emission entry point raises before it builds anything:
 /// a source object type has no node to write, which wins over a protocol
 /// refusal that would need results to emit.
-fn refilament_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(), EmitRefusal> {
+fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(), EmitRefusal> {
     if let Some((_, span)) = package.graph().first_source_object() {
         return Err(EmitRefusal::SourceObjectEmission { span });
     }
@@ -4465,7 +4465,7 @@ fn refilament_protocol_results_for_refusals(package: &CheckedPackage) -> Result<
 /// (`emit.output_bytes`); a remembered emission longer than it is refused
 /// with [`EmitRefusal::OutputLimit`] in place of being returned.
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
-    refilament_protocol_results_for_refusals(package)?;
+    require_protocol_results_for_refusals(package)?;
     if let Some(emission) = package.remembered_emission() {
         return remembered_within(emission, limits);
     }
@@ -4668,7 +4668,7 @@ pub fn emit_checked_with_temporal_selections_and_cancel(
     cancel: &Cancel,
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    refilament_protocol_results_for_refusals(package)?;
+    require_protocol_results_for_refusals(package)?;
     let graph = package.graph();
     emit_package_inner(
         package,
@@ -5718,7 +5718,7 @@ pub fn emit_checked_with_cancel(
     cancel: &Cancel,
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    refilament_protocol_results_for_refusals(package)?;
+    require_protocol_results_for_refusals(package)?;
     let emission = emit_checked_uncached(package, cancel, limits)?;
     package.remember_emission(&emission);
     Ok(emission)
@@ -5733,7 +5733,7 @@ pub fn emit_package(
     regions: impl Fn(&Location) -> Option<SourceRegion>,
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    refilament_protocol_results_for_refusals(package)?;
+    require_protocol_results_for_refusals(package)?;
     emit_package_inner(
         package,
         regions,
@@ -5754,7 +5754,7 @@ pub fn emit_package_with_temporal_selections(
     selections: &[TemporalClockSelection],
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    refilament_protocol_results_for_refusals(package)?;
+    require_protocol_results_for_refusals(package)?;
     emit_package_inner(
         package,
         regions,
@@ -5783,7 +5783,7 @@ fn emit_package_with_fault(
     fault: impl Fn(&CheckedNodeId) -> Option<EmitRefusal>,
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    refilament_protocol_results_for_refusals(package)?;
+    require_protocol_results_for_refusals(package)?;
     emit_package_inner(
         package,
         regions,
@@ -5831,7 +5831,7 @@ pub fn emit_checked_with_fault(
     fault: impl Fn(&CheckedNodeId) -> Option<EmitRefusal>,
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    refilament_protocol_results_for_refusals(package)?;
+    require_protocol_results_for_refusals(package)?;
     let graph = package.graph();
     emit_package_with_fault(package, graph.memoized_regions(), fault, limits)
 }
