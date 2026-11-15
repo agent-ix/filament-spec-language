@@ -4,6 +4,7 @@
 
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{StepKind, Unsupported};
+use fsl_foundation::MemoryModelName;
 use fsl_replay::protocol_analysis::{node_text, AssessedRoot, RealizabilityCounterexample};
 use fsl_replay::{
     protocol_step_view, AbstractProtocolSystem, ProtocolStepView, ProtocolSteps, RefinementWitness,
@@ -11,8 +12,10 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-use crate::protocol_projection::{clause, root as assessed_root};
+use crate::fill;
+use crate::protocol_projection::{admitted, clause, root as assessed_root};
 use crate::protocol_realizability::{refuted, worked, Fixture, CANCELLED, PICK};
+use crate::weak_memory::{load, select, store, Case};
 
 const LIMIT: usize = 4096;
 
@@ -23,6 +26,30 @@ fn view(fixture: &Fixture, max_states: usize) -> Result<ProtocolStepView, StepVi
         &fixture.subject(),
         max_states,
     )
+}
+
+/// A litmus protocol whose `left` branch makes `stores` relaxed stores of
+/// `x` and whose `right` branch loads it, with both package forms.
+fn litmus(stores: usize) -> (Case, Box<filament_contract_model::CheckedPackageV2>) {
+    let stores: String = (1..=stores)
+        .map(|at| store(&format!("S{at}"), "x", "StoreOne"))
+        .collect();
+    let run = format!(
+        "parallel Both {{ branch left sequence L {{ {stores} }} \
+         branch right sequence R {{ {} }} }} join all [left, right];",
+        load("Lx", "x", 1)
+    );
+    let case = Case::new(
+        &(crate::litmus::contracts()
+            + &crate::litmus::protocol("SB", &run)
+            + crate::litmus::NO_BOTH_ZERO),
+    );
+    let package = admitted(
+        case.checked(),
+        crate::litmus::PACKAGE,
+        &crate::litmus::document(),
+    );
+    (case, package)
 }
 
 fn steps(fixture: &Fixture) -> ProtocolSteps {
@@ -63,15 +90,42 @@ fn the_view_labels_every_step_of_the_fsl_eval_system() {
         .steps
         .iter()
         .any(|step| step.kind == StepKind::Finish && step.node == Some(fixture.named("Done"))));
+    let subject = fixture.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the model admits");
+    let system = AbstractProtocolSystem::new(model, &subject).expect("the system builds");
     for step in &view.steps {
         assert!(step.from.0 < view.states && step.to.0 < view.states);
         let communicates = matches!(step.kind, StepKind::Send | StepKind::Receive);
         assert_eq!(step.channel.is_some(), communicates, "{step:?}");
+        assert_eq!(
+            step.node.is_some(),
+            step.transition.node().is_some(),
+            "a step of a control names its node: {step:?}"
+        );
+        assert_eq!(
+            step.record,
+            system
+                .binder_record_bytes(&step.transition)
+                .expect("the record encodes"),
+            "the record is the step's own binder record: {step:?}"
+        );
     }
 
-    let subject = fixture.subject();
-    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the model admits");
-    let system = AbstractProtocolSystem::new(model, &subject).expect("the system builds");
+    // A `parallel`'s fork names its control and carries no record.
+    let (case, package) = litmus(1);
+    let forked = match protocol_step_view(&package, &clause(&package), &case.subject(&[]), LIMIT)
+        .expect("the view is built")
+    {
+        ProtocolStepView::Steps(steps) => steps,
+        ProtocolStepView::Unsupported(found) => panic!("expected steps: {found:?}"),
+    };
+    let fork = forked
+        .steps
+        .iter()
+        .find(|step| step.kind == StepKind::Fork)
+        .expect("a fork step");
+    assert_eq!(fork.record, None);
+    assert!(fork.node.is_some());
     let initial = system.initial();
     let expected: Vec<_> = system
         .successors(&initial[0])
@@ -260,4 +314,52 @@ fn the_refinement_witness_reader_refuses_repairs() {
         RefinementWitness::from_bytes(&renamed),
         Err(RefinementWitnessError::Shape(_))
     ));
+}
+
+/// TC-1422 step 5: a reached state with an undetermined finding, a state a
+/// method bound cut, and a step whose control shares its name are refused.
+#[trace("TC-1422", "FR-578-AC-7")]
+#[test]
+fn undetermined_cut_and_unnamed_steps_refuse_the_view() {
+    // The attempt's binder constraint divides by zero at `c.v = 2`.
+    let body = fill::contracts("self.v = 0")
+        + &fill::protocol(
+            "P",
+            "",
+            &format!(
+                "sequence Main {{ {} }}",
+                fill::attempt("X", "bump", "BumpPost", "x", "6 mod (2 - k.v) >= 0")
+            ),
+            "d",
+        );
+    let checked = fill::package_with(fill::PROTOCOL_PROFILE, &body);
+    let mut documents = fill::Documents::new();
+    let initial = vec![documents.start("s0", &[("c", 2)])];
+    let package = admitted(&checked, fill::PACKAGE, &fill::document());
+    let subject = fill::subject(&checked, &documents, initial, "P", "c");
+    let undefined = protocol_step_view(&package, &clause(&package), &subject, LIMIT);
+    assert!(
+        matches!(undefined, Err(StepViewRefusal::Undetermined(StateIndex(0)))),
+        "{undefined:?}"
+    );
+
+    // Five relaxed stores in one thread overflow the default store buffer
+    // of four under `tso`.
+    let (case, package) = litmus(5);
+    let tso = [select("SB::Both", MemoryModelName::Tso)];
+    let cut = protocol_step_view(&package, &clause(&package), &case.subject(&tso), LIMIT);
+    assert!(matches!(cut, Err(StepViewRefusal::Cut(_))), "{cut:?}");
+
+    let twin = worked(
+        "exactly-once-premise",
+        "send Twin via Pick as (p: PickMsg) { true };\n\
+         receive Rp via Pick of Twin as (q: PickMsg) { true };",
+        "send Twin via Cancelled as (c: CancelMsg) { true };\n\
+         receive Rc via Cancelled of Twin as (d: CancelMsg) { true };",
+    );
+    let unnamed = view(&twin, LIMIT);
+    assert!(
+        matches!(&unnamed, Err(StepViewRefusal::UnnamedNode(path)) if path.ends_with("Twin")),
+        "{unnamed:?}"
+    );
 }

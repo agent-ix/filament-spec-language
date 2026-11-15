@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use fsl_eval::model_subject::ProtocolSubject;
-use fsl_eval::simulation::model::{ModelSystem, TerminalClass};
+use fsl_eval::simulation::model::{ModelFinding, ModelSystem, TerminalClass};
 use fsl_eval::simulation::protocol::{
     ProtocolFairnessError, ProtocolRefusal, ProtocolTransition, StepKind, Unsupported,
 };
@@ -28,7 +28,7 @@ use fsl_package::protocol_view::{
 use fsl_semantics::model::observation::AdmissionFailure;
 
 use super::protocol_system::{AbstractProtocolSystem, ProtocolAssumptionFairness};
-use crate::protocol_analysis::arena::{finding_value, ArenaNames, FindingValue};
+use crate::protocol_analysis::arena::ArenaNames;
 use crate::protocol_analysis::ProtocolPremises;
 
 /// A state of a [`ProtocolSteps`] view, by its index in discovery order.
@@ -261,7 +261,7 @@ fn explore(
         if cut.memory || cut.instances {
             return Err(StepViewRefusal::Cut(at));
         }
-        if finding_value(&expansion.findings) == Some(FindingValue::Undecided) {
+        if expansion.findings.iter().any(undetermined) {
             return Err(StepViewRefusal::Undetermined(at));
         }
         match terminal {
@@ -283,6 +283,21 @@ fn explore(
         steps,
         assumptions: system.assumption_fairness()?,
     })
+}
+
+/// Whether `finding` leaves its state's behaviour undetermined: an
+/// undecided evaluation, or a weak-access shape `fsl-eval` reports with no
+/// successor. A violated invariant is decided and leaves the state served.
+fn undetermined(finding: &ModelFinding) -> bool {
+    match finding {
+        ModelFinding::InvariantUndetermined { .. }
+        | ModelFinding::ProtocolExpressionUndetermined { .. }
+        | ModelFinding::ContractUndetermined { .. }
+        | ModelFinding::WeakAccessShape(_) => true,
+        ModelFinding::InvariantViolated { .. }
+        | ModelFinding::WeakAccessDeferred { .. }
+        | ModelFinding::WeakAccessShared { .. } => false,
+    }
 }
 
 fn step(

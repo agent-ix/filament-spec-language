@@ -81,7 +81,9 @@ same writer, with its RFC 8785 bytes and a strict reader.
 - The view shall refuse, rather than truncate, a protocol whose
   exploration reaches more than the state limit, or whose state is cut by
   the memory or live-instance bound. It shall also refuse a protocol whose
-  reached state has an undetermined finding or terminal class.
+  reached state has any undetermined finding (an undetermined invariant,
+  contract or protocol expression, or a weak-access shape) or an
+  undetermined terminal class, whatever other findings the state has.
 - The view shall refuse a step whose control or channel the linked package
   does not hold under exactly one name.
 - The witness reader shall refuse a record outside the protocol family's
@@ -92,12 +94,13 @@ same writer, with its RFC 8785 bytes and a strict reader.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-578-AC-1 | For a protocol of sends, receives and a choice, every step of the view carries its kind, its control's checked node and, exactly for a `send` or `receive`, its channel's checked node and record. The steps out of an initial state equal the `fsl-eval` system's successors of that state, in order, and two views of one subject are equal. | Test (TC-1422) |
+| FR-578-AC-1 | For a protocol of sends, receives and a choice, every step of the view carries its kind; a checked node exactly when its transition names a control (the `finish` member for a `finish` step); a channel node exactly for a `send` or `receive`; and its own binder record, absent for a step with no record binder such as a `parallel` fork. The steps out of an initial state equal the `fsl-eval` system's successors of that state, in order, and two views of one subject are equal. | Test (TC-1422) |
 | FR-578-AC-2 | The view's final states are non-empty for a protocol that finishes, no step leaves a final state, and the view's assumptions equal the protocol system's FR-148 assumption set. | Test (TC-1422) |
 | FR-578-AC-3 | A protocol activated `on each`, a protocol with a replicated role, and a protocol whose step binder `fsl-eval` cannot enumerate each return `Unsupported` naming the clause, the role, or the `fsl-eval` construct, with no steps. | Test (TC-1422) |
 | FR-578-AC-4 | A view whose state limit is one below the protocol's reachable state count is refused `StateLimit` naming the limit, and the same protocol at its reachable state count is a view. | Test (TC-1422) |
 | FR-578-AC-5 | A refinement witness built for a node and trace position is the same record, on the wire, as the realizability FR-351 record for that node and position. Its bytes read back to an equal witness, carry the node's canonical text and the decimal position, and a different position is a different record. | Test (TC-1423) |
 | FR-578-AC-6 | The witness reader refuses non-canonical spacing, a leading-zero trace position, an added `index` member, an absent `trace_position`, and a deciding element that is not a node id's canonical text. | Test (TC-1423) |
+| FR-578-AC-7 | A protocol whose reached state has an undetermined finding is refused `Undetermined` naming the state; a protocol under `tso` whose store buffer the default memory bound cuts is refused `Cut`; and a protocol with two controls of one name is refused `UnnamedNode` naming the step's path. | Test (TC-1422) |
 
 ## Dependencies
 

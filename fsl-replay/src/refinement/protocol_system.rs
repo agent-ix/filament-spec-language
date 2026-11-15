@@ -258,60 +258,8 @@ impl<'a> AbstractProtocolSystem<'a> {
         &self,
         state: &ProtocolCandidate,
     ) -> Result<Option<ExpandedAndClassified>, ExpansionStop> {
-        match (&self.inner, state) {
-            (ProtocolSystemKind::Sc(system), ProtocolCandidate::Sc(state)) => system
-                .successors_and_terminal(state)
-                .map(|(expansion, terminal)| {
-                    Some((
-                        Expansion {
-                            successors: expansion
-                                .successors
-                                .into_iter()
-                                .map(|(transition, state)| {
-                                    (transition, ProtocolCandidate::Sc(state))
-                                })
-                                .collect(),
-                            findings: expansion.findings,
-                        },
-                        terminal,
-                    ))
-                }),
-            (ProtocolSystemKind::Tso(system), ProtocolCandidate::Tso(state)) => system
-                .successors_and_terminal(state)
-                .map(|(expansion, terminal)| {
-                    Some((
-                        Expansion {
-                            successors: expansion
-                                .successors
-                                .into_iter()
-                                .map(|(transition, state)| {
-                                    (transition, ProtocolCandidate::Tso(state))
-                                })
-                                .collect(),
-                            findings: expansion.findings,
-                        },
-                        terminal,
-                    ))
-                }),
-            (ProtocolSystemKind::Ra(system), ProtocolCandidate::Ra(state)) => system
-                .successors_and_terminal(state)
-                .map(|(expansion, terminal)| {
-                    Some((
-                        Expansion {
-                            successors: expansion
-                                .successors
-                                .into_iter()
-                                .map(|(transition, state)| {
-                                    (transition, ProtocolCandidate::Ra(state))
-                                })
-                                .collect(),
-                            findings: expansion.findings,
-                        },
-                        terminal,
-                    ))
-                }),
-            _ => Ok(None),
-        }
+        self.successors_cut_and_terminal(state)
+            .map(|result| result.map(|(expanded, _)| expanded))
     }
 
     /// [`Self::successors_and_terminal`] with what a method bound (the
