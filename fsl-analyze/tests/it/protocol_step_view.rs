@@ -2,12 +2,13 @@
 //! FR-578 (TC-1422, TC-1423): the read-only step view of a linked protocol
 //! and the FR-351 record of a protocol refinement decided outside FSL.
 
+use fsl_analyze::protocol_analysis::protocol_step_view;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{StepKind, Unsupported};
 use fsl_foundation::MemoryModelName;
 use fsl_replay::protocol_analysis::{node_text, AssessedRoot, RealizabilityCounterexample};
 use fsl_replay::{
-    protocol_step_view, AbstractProtocolSystem, ProtocolStepView, ProtocolSteps, RefinementWitness,
+    AbstractProtocolSystem, ProtocolStepView, ProtocolSteps, RefinementWitness,
     RefinementWitnessError, StateIndex, StepViewRefusal, UnsteppedConstruct,
 };
 use ix_trace_rs::trace;

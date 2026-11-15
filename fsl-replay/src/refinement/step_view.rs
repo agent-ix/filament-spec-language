@@ -151,11 +151,18 @@ impl From<ExpansionStop> for StepViewRefusal {
 }
 
 /// FR-578: the step view over the protocol subject `subject`, whose clause's
-/// steps resolve to the linked package's nodes through `names`, after the
-/// dynamic constructs `unstepped` the linked package holds, exploring at
-/// most `max_states` states. The linked-package entry is
-/// [`crate::spine::protocol_step_view`].
-pub(crate) fn view_over(
+/// steps resolve to the linked package's nodes through `names`
+/// ([`crate::spine::arena_names`]), after the dynamic constructs
+/// `unstepped` the linked package holds, exploring at most `max_states`
+/// states. The linked-package entry is `fsl_analyze`'s
+/// `protocol_analysis::protocol_step_view`.
+///
+/// # Errors
+///
+/// [`StepViewRefusal`] when the subject does not admit, an expansion stops,
+/// a state is undetermined or cut, a step's node has no unique name, or the
+/// protocol reaches more than `max_states` states.
+pub fn step_view_over(
     mut unstepped: Vec<UnsteppedConstruct>,
     names: &ArenaNames,
     subject: &ProtocolSubject<'_>,

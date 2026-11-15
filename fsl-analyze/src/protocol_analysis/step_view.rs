@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-578: the linked-package entry of the protocol step view. It reads the
 //! clause's dynamic constructs and step names from the linked package and
-//! hands the protocol subject to the view in `refinement`.
+//! hands the protocol subject to `fsl_replay::step_view_over`, which reads
+//! the one `fsl-eval` protocol system.
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_package::protocol_view::{
     clause_activation, protocol_view, role_is_replicated, ClauseActivation, ViewRefusal,
 };
-
-use crate::protocol_analysis::ProtocolPremises;
-use crate::refinement::{view_over, ProtocolStepView, StepViewRefusal, UnsteppedConstruct};
+use fsl_replay::protocol_analysis::ProtocolPremises;
+use fsl_replay::{step_view_over, ProtocolStepView, StepViewRefusal, UnsteppedConstruct};
 
 /// The constructs of the clause `protocol` that `fsl-eval` steps only up to
 /// a bound: `activation on each`, then each replicated role.
@@ -56,6 +56,6 @@ pub fn protocol_step_view(
     max_states: usize,
 ) -> Result<ProtocolStepView, StepViewRefusal> {
     let unstepped = dynamic_constructs(package, protocol)?;
-    let names = super::arena_names(package, protocol, &ProtocolPremises::default())?;
-    view_over(unstepped, &names, subject, max_states)
+    let names = fsl_replay::spine::arena_names(package, protocol, &ProtocolPremises::default())?;
+    step_view_over(unstepped, &names, subject, max_states)
 }

@@ -49,9 +49,9 @@ pub fn protocol_transition_class(
     step::protocol_class(system, transition)
 }
 pub use protocol_witness::{RefinementWitness, RefinementWitnessError};
-pub(crate) use step_view::view_over;
 pub use step_view::{
-    ProtocolStep, ProtocolStepView, ProtocolSteps, StateIndex, StepViewRefusal, UnsteppedConstruct,
+    step_view_over, ProtocolStep, ProtocolStepView, ProtocolSteps, StateIndex, StepViewRefusal,
+    UnsteppedConstruct,
 };
 pub use subject::{open_protocol_systems, open_systems, RefinementSystems, SubjectRefusal};
 

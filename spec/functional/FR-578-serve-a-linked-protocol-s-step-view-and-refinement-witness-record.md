@@ -45,7 +45,7 @@ here; FR-147 and FR-530 are unchanged.
 
 ## Outputs
 
-`fsl_replay::protocol_step_view` returns `ProtocolStepView::Steps`, holding:
+`fsl_analyze::protocol_analysis::protocol_step_view` returns `fsl_replay::ProtocolStepView::Steps`, holding:
 
 - the number of states, with each state named by its discovery index;
 - the initial states;
