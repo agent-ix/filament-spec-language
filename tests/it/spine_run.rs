@@ -1089,3 +1089,85 @@ fn run_outcome_is_independent_of_working_directory() {
         );
     }
 }
+
+/// NFR-130: a unit whose `d` recurses `n` frames deep, each frame holding
+/// one frame occurrence and one argument occurrence.
+const RECURSION: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     function d using v(n: Int[0, 1000000]): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }\n";
+
+/// Run `d(n)` with the call members `members` added, returning the exit code,
+/// stdout and stderr as JSON (`Value::Null` when empty).
+fn run_recursion(n: i64, members: Value) -> (Option<i32>, Value, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = call("d", json!([{"parameter": "n", "value": n}]));
+    for (member, value) in members.as_object().expect("an object") {
+        request[member] = value.clone();
+    }
+    spine_run_request(directory.path(), RECURSION.as_bytes(), request);
+    let output = run(directory.path());
+    let parse = |bytes: &[u8]| serde_json::from_slice(bytes).unwrap_or(Value::Null);
+    (
+        output.status.code(),
+        parse(&output.stdout),
+        parse(&output.stderr),
+    )
+}
+
+const ZERO: &str = "0";
+
+/// NFR-130-AC-3 (TC-2164): with `work_units` raised far past the call's
+/// work, the default live-occurrence limit stops a million-frame recursion;
+/// raising the limit lets it finish.
+#[trace("TC-2164", "NFR-130-AC-3")]
+#[test]
+#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
+fn native_run_live_occurrence_limit_stops_deep_recursion() {
+    let work = json!({"work_units": 100_000_000_000_u64});
+    let (code, document, stderr) = run_recursion(1_000_000, json!({"accounting": work}));
+    assert_eq!(code, Some(22), "{stderr}");
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "incomplete", "limit": "evaluation.live_occurrences"})
+    );
+    let (code, document, stderr) = run_recursion(
+        1_000_000,
+        json!({"accounting": work, "evaluation": {"live_occurrences": 4_000_000}}),
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "completed", "value": {"kind": "integer", "decimal": ZERO}})
+    );
+}
+
+/// NFR-130-AC-4 (TC-2165): a shallow recursion completes under the defaults,
+/// zero is a real limit, and a malformed `call.evaluation` refuses.
+#[trace("TC-2165", "NFR-130-AC-4")]
+#[test]
+#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
+fn native_run_live_occurrence_limit_defaults_and_refusals() {
+    let (code, document, stderr) = run_recursion(1000, json!({}));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "completed", "value": {"kind": "integer", "decimal": ZERO}})
+    );
+    let (code, document, _) = run_recursion(1000, json!({"evaluation": {"live_occurrences": 0}}));
+    assert_eq!(code, Some(22));
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "incomplete", "limit": "evaluation.live_occurrences"})
+    );
+    for evaluation in [
+        json!({"live_occurrences": -1}),
+        json!({"live_occurrences": 1.5}),
+        json!({"live_occurrences": "x"}),
+        json!({"frames": 1}),
+    ] {
+        let (code, _, failure) = run_recursion(1000, json!({"evaluation": evaluation}));
+        assert_eq!(code, Some(20), "{evaluation}");
+        assert_eq!(failure["code"], "invalid-request", "{evaluation}");
+        assert_eq!(failure["stage"], "request", "{evaluation}");
+    }
+}

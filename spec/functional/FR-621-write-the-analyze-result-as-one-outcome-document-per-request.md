@@ -67,8 +67,14 @@ The document carries FR-286's members (`format`, `operation`, `last_stage`,
 analyze member:
 
 - `aggregate`: FR-281's aggregate over the required items,
-  `{"status": "complete" | "incomplete", "gaps": [{"request_index", "reason"}]}`,
-  `reason` the FR-281 `AggregateGap` spelling. It is `complete` exactly when
+  `{"status": "complete" | "incomplete", "gaps": [{"request_index", "reason", "result"?}]}`.
+  `reason` is one of FR-281's `AggregateGap` spellings for an index the
+  aggregate cannot account for (`duplicate-index`, `missing-index`,
+  `unexpected-index`), or `not-proved` for a required item that settled
+  other than `proved` or `measured`; a `not-proved` gap also carries
+  `result`, the item's record `result` label (or `invalid-request` for a
+  disposition record), so a reader sees why the aggregate is incomplete
+  without opening the item. It is `complete` exactly when
   every required item settled `proved` or `measured`.
 - `registry`: the backends the request negotiated against (FR-635).
 
@@ -86,9 +92,9 @@ Each item, in request order, carries:
 | `request` | The admitted FSpec FR-331 request item that `ClaimItem::request_item_wire` writes, every default made explicit, so the item can be re-requested exactly. A `simulation` item carries its admitted `simulation` settings instead (FR-634). |
 | `category` | The item's ADR-013 O-16 category (FR-285). |
 | `record` | The FSpec FR-331 terminal record, in its wire spelling: the verdict in its `result` member (`proved`, `refuted`, `tested`, `measured`, `inconclusive`, `unsupported`, `declined`, `incomplete`, `failed`); an `invalid-request` disposition record carries no `result` (FSpec FR-331), its cause or proof basis, its `certification` for a proved record, and `settled_by`. A disposition record carries its FR-272 `diagnostic` and no `cause`, as FR-286 states. |
-| `certificate` | For a `proved` record whose engine returned a certificate: `{"identity", "checker", "accepted"}`, the FSpec FR-331 certificate identity, the qualified-core checker that ran (FR-282) and whether it accepted. Absent when the engine returns none. |
+| `certificate` | For a `proved` record whose engine returned a certificate: `{"identity", "checker", "accepted"}`. `identity` is FSpec FR-412's `CertificateIdentity` `{node_id, model, ordinal}` for every certificate kind, EN-1's closure and component certificates included: `node_id` the checked claim's node (a derived item's anchor node), `model` the subject model's identity text and `ordinal` the obligation's FSpec FR-418-AC-9 ordinal, so one structural identity names the obligation whatever engine proved it. `checker` is the qualified-core checker that ran (FR-282) and `accepted` whether it accepted. Absent when the engine returns none. |
 | `counterexample` | The FSpec FR-331 counterexample entry, present exactly for a `refuted` record. |
-| `replay` | Present with `counterexample`: `{"target", "reproduced"}`, the FR-098 replay target the counterexample was replayed against and `true`. A counterexample that replay did not reproduce never reaches the document: its item is `inconclusive` with `replay-parity` or `replay-refused` (FR-281) and carries neither member. |
+| `replay` | Present with `counterexample`: `{"target", "reproduced"}`. `target` is the FSpec FR-323 replay target member object exactly as a replay request carries it: `{"state_clause": Q}` for a state or temporal clause, `Q` its declared qualified name (EN-1 counterexamples included), `{"function": ...}` or `{"frame_operation": ...}` for those targets, and FR-071's `{"protocol_refinement": {package_id, node}}` for a protocol refinement; `reproduced` is `true`. A counterexample that replay did not reproduce never reaches the document: its item is `inconclusive` with `replay-parity` or `replay-refused` (FR-281) and carries neither member. |
 | `accounting` | The item's FSpec FR-331 accounting record: the limits applied, the method and seed where they apply, the limits the run reached (`reached`), and `settled_by`. With `exploration` it is the item's budget use. |
 | `exploration` | For an item whose engine explores states: `{"states", "transitions", "automaton_states"}`, the states stored, transitions expanded and claim-automaton states, each an ASCII decimal count. Absent for a closed-form or provider item. |
 | `axes` | The four outcome axes of FR-622, for an item that has an activation scope. |
@@ -159,6 +165,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-5 | The document the library writes for a request and the document the driver writes in machine mode for the same request are byte-equal. | Test (TC-1581) |
 | FR-621-AC-6 | In text mode the AC-2 request prints `0 Bounded refuted` as its first line and exits 10. | Test (TC-1581) |
 | FR-621-AC-7 | A `finite-replay` item whose clause is still pending at the end of the supplied trace carries `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
+| FR-621-AC-8 | Over the Counter subject, the `proved` EN-1 item of `Bounded` carries `certificate.identity` with exactly the members `node_id`, `model` and `ordinal`, `model` the Counter model's identity text; the `refuted` item of `BelowThree` carries `replay.target` `{"state_clause": Q}` with `Q` ending in `BelowThree`; and, both items required, `aggregate` is `incomplete` with one gap for `BelowThree`'s index, `reason` `not-proved`, `result` `refuted`. | Test (TC-2184) |
 
 ## Dependencies
 

@@ -59,7 +59,7 @@ pub enum ExactOutcome {
     Straddles { lower: Rational, upper: Rational },                            // PrecisionBudget
     Stopped { limit: ExactProbLimit, value: u64, setting: SettingName },       // LimitReached
 }
-pub enum ExactProbRefusal { Admission(AdmissionFailure), NotMarkov(NotMarkov), ZeroWeightComponent, Timed(TimedRefusal) } // TimedRefusal: FR-204
+pub enum ExactProbRefusal { Admission(AdmissionFailure), NotMarkov(NotMarkov), Timed(TimedRefusal) } // TimedRefusal: FR-204, DelayDistribution only
 
 ```
 

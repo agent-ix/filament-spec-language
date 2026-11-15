@@ -202,3 +202,18 @@ fn hyper_only_forms_refuse_in_a_single_trace_clause() {
         );
     }
 }
+
+/// FR-326-AC-7 (TC-2180): a unit may select two temporal profiles; each
+/// clause is checked under the profile its own `using` alias selects.
+#[trace("TC-2180", "FR-326-AC-7")]
+#[test]
+#[ignore = "QSL-1964: the per-clause temporal profile rule of FR-326 not implemented yet"]
+fn clauses_of_one_unit_use_their_own_temporal_profiles() {
+    let profiles = "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n";
+    let body = "temporal Bounded using ev over (c: Config::ConfigVersion) clock \"model-steps\" \
+         on origin { always[0,3] holds(c.versionNumber >= 0) }\n\
+         temporal Forever using inf over (c: Config::ConfigVersion) clock \"model-steps\" \
+         on origin { always holds(c.versionNumber >= 0) }";
+    check_with(profiles, body).unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
+}

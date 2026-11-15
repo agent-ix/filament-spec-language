@@ -376,7 +376,8 @@ measure:
 
 A construct that no family's variant represents refuses the whole unit with
 cause `UnrepresentedConstruct`, naming the construct's CST production and
-span. These constructs are `null` outside a record field value, `none`,
+span, and carrying the construct payload and message of
+[FR-763](FR-763-name-the-construct-in-every-forms-stage-refusal.md). These constructs are `null` outside a record field value, `none`,
 `result`, indexing `e[i]` outside a clock place expression,
 `size<T>(e)` and `reaches(..)`. The selectors `p[i]` and `p[k]` of a clock
 place expression (FR-230 "Selection") are not unrepresented: S2 builds them
@@ -1135,7 +1136,10 @@ literals) is an exact number of that position and builds that position's form.
 
 S2 builds `DecimalValue{coefficient, scale}` for each value-position
 constructor, keeping the coefficient and the scale as written, with the span of
-the constructor. S1 refuses a written scale above `u32::MAX`
+the constructor. A bare decimal literal in a value position (`0.9`) is the
+constructor it spells, and S2 builds its `DecimalValue` with the spelling kind
+`decimal-literal`
+([FR-764](FR-764-read-a-bare-decimal-literal-as-an-exact-decimal-value.md)). S1 refuses a written scale above `u32::MAX`
 (4294967295) as `invalid_syntax`/`invalid-token` (FR-091-AC-58), and S2 builds
 every scale S1 admits. It reduces nothing and raises no power of ten, so
 `decimal(1, 4294967295)` builds. Typing, the literal scale limits
@@ -1173,7 +1177,7 @@ code or code/cause:
 |---|---|
 | `RecoveringCst` | `invalid_syntax` |
 | diagnosed source (diagnostic, no recovery) | the first diagnostic's own code |
-| `NoDispatchEntry`, `UnrepresentedConstruct` | `unsupported_construct` |
+| `NoDispatchEntry`, `UnrepresentedConstruct` | `unsupported_construct`/`not-yet-implemented`, with FR-763's construct payload |
 | unresolved type name | `missing_declaration`/`missing-name` |
 | ambiguous type name | `ambiguous_declaration` |
 | ill-formed scalar bounds | `ill_typed` |

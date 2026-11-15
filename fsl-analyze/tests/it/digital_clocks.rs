@@ -1018,3 +1018,105 @@ fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
         assert_eq!(total, ratio(1, 1), "state {state}");
     }
 }
+
+/// The exact value the finite-horizon solver gives `product`'s initial state
+/// for `bound`, or `None` when the solver gives no exact value.
+fn exact_initial(product: &ProbProduct, bound: Bound) -> Option<Rational> {
+    match decide_bounded_event(product, &bound, &ExactProbLimits::default()) {
+        Ok(FhResult::Exact { values, .. }) => Some(values[product.initial[0].2.index()].clone()),
+        _ => None,
+    }
+}
+
+/// FR-204-AC-13 (TC-2172): a strict guard is decided over the region MDP.
+#[trace("TC-2172", "FR-204-AC-13")]
+#[test]
+#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
+fn strict_clock_constraint_is_decided_over_regions() {
+    let world = every(" and self.x > 1 ms", true);
+    let built = product(&world, "Deadline");
+    assert_eq!(built.kind, ProductKind::Mdp);
+    assert!(exact_initial(&built, Bound::AtLeast(ratio(99, 100))).is_some());
+}
+
+/// FR-204-AC-14 (TC-2173): an `always` window is the complement of an
+/// `eventually` window; `c.late` is false initially, so the minimum is 0.
+#[trace("TC-2173", "FR-204-AC-14")]
+#[test]
+#[ignore = "QSL-2156: the `always` timed window over digital clocks not implemented yet"]
+fn always_window_is_decided_as_a_complement() {
+    let world = every(GUARD, true);
+    let built = product(&world, "Always");
+    assert_eq!(
+        exact_initial(&built, Bound::AtLeast(ratio(99, 100))),
+        Some(ratio(0, 1))
+    );
+}
+
+/// FR-204-AC-15 (TC-2174): a `discrete` delay applies over every scheduler.
+#[trace("TC-2174", "FR-204-AC-15")]
+#[test]
+#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
+fn discrete_delay_applies_over_every_scheduler() {
+    let world = retx(
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };\n",
+        &every_claims(),
+    );
+    assert_eq!(product(&world, "Deadline").kind, ProductKind::Mdp);
+}
+
+/// FR-204-AC-16 (TC-2175): a zero-delay cycle is decided with time
+/// divergence instead of refused.
+#[trace("TC-2175", "FR-204-AC-16")]
+#[test]
+#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
+fn zero_delay_cycle_is_decided_with_time_divergence() {
+    let world = every("", false);
+    let built = product(&world, "Deadline");
+    let zero = ratio(0, 1);
+    let one = ratio(1, 1);
+    for bound in [
+        Bound::AtLeast(ratio(99, 100)),
+        Bound::AtMost(ratio(999, 1000)),
+    ] {
+        let value = exact_initial(&built, bound).expect("an exact value");
+        assert!(value >= zero && value <= one, "{value:?}");
+    }
+}
+
+/// FR-204-AC-17 (TC-2176): a time-locked state is terminal.
+#[trace("TC-2176", "FR-204-AC-17")]
+#[test]
+#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
+fn time_locked_state_is_terminal() {
+    let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
+    assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
+}
+
+/// FR-186-AC-12 (TC-2169): over the timed `Retx` subject `expected elapsed`,
+/// an `elapsed` measure and a time window each check.
+#[trace("TC-2169", "FR-186-AC-12")]
+#[test]
+#[ignore = "QSL-2152: time forms of probabilistic claims not checked yet"]
+fn time_forms_over_a_timed_model_check() {
+    let claims = "probabilistic MeanLate using ev on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) <= 3 ms }\n\
+         probabilistic ElapsedLate using ev on M over (c: M::Call) under every scheduler on origin \
+         { probability >= 0.5 [ elapsed from holds(not c.late) until holds(c.late) within 5 ms >= 1 ms ] }\n\
+         probabilistic StepsLate using ev on M over (c: M::Call) under every scheduler on origin \
+         { probability >= 0.5 [ steps from holds(not c.late) until holds(c.late) within 5 ms >= 1 ] }\n";
+    let world = retx(GUARD, true, "", claims);
+    for name in ["MeanLate", "ElapsedLate", "StepsLate"] {
+        assert!(
+            world
+                .package
+                .graph()
+                .probabilistic_model()
+                .claim(name)
+                .is_some(),
+            "{name} checks"
+        );
+    }
+}

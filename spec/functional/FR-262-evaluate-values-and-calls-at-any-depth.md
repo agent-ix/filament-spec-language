@@ -31,7 +31,10 @@ handle values and value types of any depth, bounded by the execution budget
 under `filament.value.accounting/v1` (ADR-030 D-4.7). FSpec FR-146 defines
 execution fuel as the `work_units` limit, with one `function.call` charge per
 call and no call-depth counter; this requirement carries it through FSL's
-evaluator.
+evaluator. Beside the work budget, the evaluator's live memory is bounded by
+the `evaluation.live_occurrences` limit of NFR-130, which counts the frames in
+progress and the argument values they hold. It is an occurrence count, not a
+depth counter: it falls as calls return.
 
 The FSL-owned shared evaluation-core interface SHALL own resumable application
 state, the scheduler step and execution fuel for interpreted checked expressions

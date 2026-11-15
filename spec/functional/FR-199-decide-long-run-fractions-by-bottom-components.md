@@ -75,8 +75,13 @@ the zero centered mean does not replace the transported ratio by zero.
 - It SHALL combine the component values as an expected terminal reward with
   `ρ_C` at each component: `Σ_C Pr(reach C) · ρ_C` under a workload, and the
   minimum or maximum of it over every scheduler, by FR-198.
-- A component in which every cycle has total weight 0 under `R` SHALL settle
-  `Unsupported(ZeroWeightComponent{component})`.
+- A component in which every cycle has total weight 0 under `R` SHALL take
+  the value of its unweighted fraction `π_C([P])`: the limit of
+  `π_C((R + ε) · [P]) / π_C(R + ε)` as `ε → 0`, the one value that is
+  continuous in the weights (FSpec FR-411). It is constant on the component,
+  as every component value is, and it is certified by the component's
+  unweighted gain–bias pair (FR-201). No component settles `unsupported` for
+  its weights.
 - The result SHALL keep, per component, the gain–bias pair that certifies
   its value (FR-201), and over every scheduler the policy that attains it.
 
@@ -86,7 +91,8 @@ the zero centered mean does not replace the transported ratio by zero.
 |----|----------|--------------|
 | FR-199-AC-1 | `LongRun` under `Steady` has one BSCC `{up, down}` with `π = (1800/1801, 1/1801)` and value `1800/1801`; its gain–bias pair is gain `1800/1801` at both states, bias 0 at `up` and `−2000/1801` at `down`. | Test (TC-634) |
 | FR-199-AC-2 | An `Avail2` variant with two repairs, `repair_fast(ok: Boolean)` with `random Server::repair_fast(ok) ~ { true: 9, false: 1 };` and `repair_slow(ok: Boolean)` with `random Server::repair_slow(ok) ~ { true: 1, false: 1 };`, has over every scheduler the minimum `1000/1001` (always `repair_slow`) and the maximum `1800/1801`; under a workload weighting both repairs 1 its value is `1400/1401`. | Test (TC-634) |
-| FR-199-AC-3 | `long-run fraction holds(v.up) weighted by duration >= 0.999` over a variant of `Avail` with `duration` 1 on `tick` and 3 on `repair` weights each position by the step that leaves it, giving `π_up / (π_up + 3 π_down)`, exact. A variant whose only reachable cycle carries `duration` 0 settles `Unsupported(ZeroWeightComponent)`. | Test (TC-634) |
+| FR-199-AC-3 | `long-run fraction holds(v.up) weighted by duration >= 0.999` over a variant of `Avail` with `duration` 1 on `tick` and 3 on `repair` weights each position by the step that leaves it, giving `π_up / (π_up + 3 π_down)`, exact. A variant whose only reachable cycle carries `duration` 0 gives that component its unweighted fraction, settles a verdict with a checked certificate, and never `Unsupported(ZeroWeightComponent)` (FR-199-AC-4). | Test (TC-634) |
+| FR-199-AC-4 | Over the `Avail` variant of AC-3 whose only reachable cycle carries `duration` 0, `long-run fraction holds(v.up) weighted by duration >= 0.999` has the value of the unweighted `LongRun`, `1800/1801`, settles `proved`, and its certificate passes the independent checker `tools/fsl-probability-check`. | Test (TC-2177) |
 
 ## Dependencies
 

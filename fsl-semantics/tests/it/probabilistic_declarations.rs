@@ -3374,3 +3374,232 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
         )]
     );
 }
+
+/// FR-764-AC-3: a bare decimal literal is checked exactly as the
+/// `decimal(c, s)` it spells.
+#[trace("TC-2162", "FR-764-AC-3")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
+#[test]
+#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
+fn a_bare_decimal_literal_is_typed_as_its_constructor() {
+    let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
+    for literal in ["0.9", "decimal(9, 1)"] {
+        checked(&service(
+            None,
+            &format!("{typed}\nfunction f using v(): D pure {{ {literal} }}"),
+        ));
+        assert_eq!(
+            located(&service(
+                None,
+                &format!("function g using v(n: Integer): Boolean pure {{ n < {literal} }}"),
+            )),
+            [(Code::IllTyped, Some("type-mismatch"), literal.to_owned())],
+            "{literal}"
+        );
+        assert_eq!(
+            located(&service(
+                None,
+                &format!(
+                    "function h using v(): Boolean pure {{ let x = {literal} in x > decimal(1, 1) }}"
+                ),
+            )),
+            [(Code::IllTyped, Some("ambiguous-literal"), literal.to_owned())],
+            "{literal}"
+        );
+    }
+}
+
+/// FR-764-AC-5 and AC-6: a bare decimal threshold is the exact rational it
+/// spells, and its written scale is bounded as a `decimal(c, s)`'s is.
+#[trace("TC-2163", "FR-764-AC-5")]
+#[trace("TC-2163", "FR-764-AC-6")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-3")]
+#[test]
+#[ignore = "QSL-1965 / QSL-2154: the bare decimal threshold not implemented yet"]
+fn a_bare_decimal_threshold_is_the_exact_rational_it_spells() {
+    let target = format!("holds({IDLE} or {})", done());
+    let form = |threshold: &str| {
+        let graph = checked(&exact_claim(
+            "ev",
+            "Steady",
+            "",
+            &format!("expected accumulate duration until {target} <= {threshold}"),
+        ));
+        let ProbForm::ExpectedReward { bound, .. } = &claim_of(&graph).form else {
+            panic!("an expected reward: {:?}", claim_of(&graph).form);
+        };
+        bound.clone()
+    };
+    let bare = form("0.5");
+    assert_eq!(bare, Bound::AtMost(ratio(1, 2)));
+    assert_eq!(bare, form("decimal(5, 1)"));
+    assert_eq!(bare, form("rational(1, 2)"));
+    let long = format!("0.{}", "1".repeat(65536));
+    let found = located(&exact_claim(
+        "ev",
+        "Steady",
+        "",
+        &format!("expected accumulate duration until {target} <= {long}"),
+    ));
+    assert_eq!(
+        found,
+        [(Code::StageLimitExceeded, Some("work-budget-exceeded"), long)]
+    );
+}
+
+/// The service claim `C` with activation `activation`, `{LATENCY}` declared.
+fn activated(activation: &str, body: &str) -> String {
+    service(
+        None,
+        &format!(
+            "{LATENCY}\nprobabilistic C using ev on Service {OVER} under Steady \
+             {activation} {{ {body} }}"
+        ),
+    )
+}
+
+/// FR-186-AC-8 (TC-2166): an `on each` activation checks and is recorded in
+/// the claim and its normal form, with its guard when written.
+#[trace("TC-2166", "FR-186-AC-8")]
+#[test]
+#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
+fn probabilistic_on_each_checks() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    let plain = checked(&activated("on each (m: Service::Server)", &body));
+    let guarded = checked(&activated(
+        "on each (m: Service::Server) when (m.phase = Service::Phase::Idle)",
+        &body,
+    ));
+    let plain = claim_of(&plain);
+    let guarded = claim_of(&guarded);
+    assert!(format!("{plain:?}").contains("Each"), "{plain:?}");
+    assert!(format!("{guarded:?}").contains("Each"), "{guarded:?}");
+    assert_ne!(
+        format!("{:?}", plain.normal_form),
+        format!("{:?}", guarded.normal_form)
+    );
+}
+
+/// FR-186-AC-9 (TC-2166): an `on each` over a type no population admits is
+/// `over-not-object-type` at its name, and a non-Boolean guard is ill typed.
+#[trace("TC-2166", "FR-186-AC-9")]
+#[test]
+#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
+fn probabilistic_on_each_non_object_type_refused() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    assert_eq!(
+        located(&activated("on each (k: Integer)", &body)),
+        [invalid("over-not-object-type", "k")]
+    );
+    assert_eq!(
+        located(&activated("on each (m: Service::Server) when (1)", &body)),
+        [(Code::IllTyped, Some("type-mismatch"), "1".to_owned())]
+    );
+}
+
+/// FR-186-AC-11 (TC-2168): over the untimed service model the time forms are
+/// ill typed at the form, never not-yet-implemented.
+#[trace("TC-2168", "FR-186-AC-11")]
+#[trace("TC-630", "FR-195-AC-7")]
+#[test]
+#[ignore = "QSL-2152: time forms over an untimed model are refused not-yet-implemented today"]
+fn time_forms_over_an_untimed_model_are_ill_typed() {
+    let a = format!("holds({IDLE})");
+    let measure = format!("elapsed from {a} until {a} within 5");
+    for (body, at) in [
+        (
+            format!("{{ expected elapsed until {a} <= 3 ms }}"),
+            IDLE.to_owned(),
+        ),
+        (
+            format!("{{ probability >= 0.5 [ {measure} >= 3 ] }}"),
+            measure.clone(),
+        ),
+        (
+            format!("{{ probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 3 ] }}"),
+            "5 ms".to_owned(),
+        ),
+    ] {
+        assert_eq!(
+            located(&service(None, &claim(&body))),
+            [(Code::IllTyped, Some("type-mismatch"), at)],
+            "{body}"
+        );
+    }
+}
+
+/// FR-186-AC-13 (TC-2170): under the timed profile over the untimed model the
+/// claim is refused with the standard's clock cause at the alias.
+#[trace("TC-2170", "FR-186-AC-13")]
+#[test]
+#[ignore = "QSL-2153: the timed profile over an untimed model refuses with the FSL-only timed-event-profile cause today"]
+fn probabilistic_claim_timed_profile_untimed_model() {
+    let timed = service(
+        None,
+        &format!(
+            "probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ eventually[0,5] holds({IDLE}) ] }}"
+        ),
+    );
+    assert_eq!(
+        located(&timed),
+        [(
+            Code::InvalidTimedModel,
+            Some("model-time-on-untimed-model"),
+            "tm".to_owned()
+        )]
+    );
+    assert!(!causes(&timed)
+        .iter()
+        .any(|cause| matches!(cause, ProbabilisticCause::TimedEventProfile { .. })));
+}
+
+/// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the
+/// position's dimension checks, a length is a unit mismatch, and a
+/// dimensionless position refuses a quantity as a type mismatch.
+#[trace("TC-2171", "FR-186-AC-14")]
+#[test]
+#[ignore = "QSL-2157: quantity-literal positions of probabilistic claims not all read yet"]
+fn quantity_literal_positions_check_and_refuse_by_dimension() {
+    let a = format!("holds({IDLE})");
+    let latency = format!("accumulate latency from {a} until {a} within 10");
+    let with = |confidence: &str, form: &str| {
+        service(
+            None,
+            &format!(
+                "{LATENCY}\nprobabilistic C using ev on Service {OVER} under Steady \
+                 on origin {confidence} {{ {form} }}"
+            ),
+        )
+    };
+    for template in [
+        format!("probability >= 0.5 [ {latency} <= QTY ]"),
+        format!("quantile 0.95 of ({latency}) <= QTY"),
+        format!("expected accumulate latency until {a} <= QTY"),
+    ] {
+        checked(&with("", &template.replace("QTY", "5 ms")));
+        assert_eq!(
+            located(&with("", &template.replace("QTY", "5 m"))),
+            [(Code::IllTyped, Some("unit-mismatch"), "5 m".to_owned())],
+            "{template}"
+        );
+    }
+    for (confidence, form, at) in [
+        (
+            "",
+            format!("probability >= 0.5 [ fraction {a} over [0, 10] <= 5 ms ]"),
+            "5 ms",
+        ),
+        (
+            "",
+            format!("probability >= 0.5 [ steps from {a} until {a} within 5 >= 5 ms ]"),
+            "5 ms",
+        ),
+    ] {
+        assert_eq!(
+            located(&with(confidence, &form)),
+            [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
+            "{form}"
+        );
+    }
+}

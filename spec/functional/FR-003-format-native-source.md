@@ -44,7 +44,7 @@ so `format` refuses it with that code, exit code 20. Native-edition
 `format` retires in M-6a with no replacement (ADR-011 §7.3 M-6a row;
 ADR-011 Rulings 2026-09-22, native-edition `format`).
 
-Formatting changes whitespace and normalizes layout to LF while retaining grouping and original token order. The library returns the complete string and leaves files untouched; writing it to stdout is the driver's (FR-287, Overlap).
+Formatting changes whitespace and normalizes layout to LF while retaining grouping and original token order. The library returns the complete string and leaves files untouched; writing it to stdout is the driver's (FR-287, Overlap). The `format` outcome document carries the same string as its `result` (FR-286), so a JSON caller gets the text a plain-text caller gets.
 
 The format(source) API applies the published default output limit of 1 MiB. The
 typed `FormatLimits.output_bytes` field is the `format.output_bytes` setting in

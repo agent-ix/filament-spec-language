@@ -259,3 +259,30 @@ fn a_driver_serializes_a_constructed_format_invariant_failure() {
     );
     assert_eq!(result.as_ref().unwrap_err().diagnostic(), &original);
 }
+
+/// FR-286-AC-16 (TC-2178): a completed format's document carries the
+/// formatted text as its `result`, and formatting that text gives it back.
+#[trace("TC-2178", "FR-286-AC-16")]
+#[test]
+#[ignore = "QSL-2192: the format outcome's `formatted` result not implemented yet"]
+fn format_json_result_carries_text() {
+    let source = parsed(FIXTURE);
+    let limits = FormatLimits::default();
+    let result = format_with_limits(&source, limits).map(Staged::new);
+    let text = result
+        .as_ref()
+        .expect("the fixture formats")
+        .value()
+        .clone();
+    let document = OutcomeDocument::from_format(&result);
+    assert_eq!(document.category().exit_code(), 0);
+    assert_eq!(
+        document_json(&document)["result"],
+        json!({"kind": "formatted", "text": text})
+    );
+    let again = format_with_limits(&parsed(&text), limits).map(Staged::new);
+    assert_eq!(
+        document_json(&OutcomeDocument::from_format(&again))["result"]["text"],
+        json!(text)
+    );
+}

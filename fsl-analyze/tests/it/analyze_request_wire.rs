@@ -253,3 +253,82 @@ fn analyze_items_carry_the_mapped_axes() {
             "settlement": "decisive-counterexample"})
     );
 }
+
+/// FR-621-AC-8 (TC-2184): a proved EN-1 item names its certificate by FSpec
+/// FR-412's structural identity, a refuted item names its FR-323 replay
+/// target, and an unproved required item is an aggregate gap `not-proved`.
+#[trace("TC-2184", "FR-621-AC-8")]
+#[test]
+#[ignore = "QSL-2121: certificate identity, replay target spelling and not-proved gaps not implemented yet"]
+fn analyze_items_name_certificate_replay_target_and_gaps() {
+    let ws = Workspace::new("wire-identity");
+    let body = format!("{}{}", bounded(), below_three());
+    let path = counter_request(
+        &ws,
+        &body,
+        json!([{"claim": "Bounded", "required": true}, {"claim": "BelowThree", "required": true}]),
+    );
+    let run = analyze(&path);
+    let proved = run.item(0);
+    assert_eq!(label(&proved), "proved", "{proved}");
+    let identity = proved["certificate"]["identity"]
+        .as_object()
+        .expect("a certificate identity object");
+    let mut members: Vec<&str> = identity.keys().map(String::as_str).collect();
+    members.sort_unstable();
+    assert_eq!(members, ["model", "node_id", "ordinal"]);
+    let refuted = run.item(1);
+    assert_eq!(label(&refuted), "refuted", "{refuted}");
+    let target = refuted["replay"]["target"]["state_clause"]
+        .as_str()
+        .expect("a state_clause target");
+    assert!(target.ends_with("BelowThree"), "{target}");
+    let aggregate = &run.document()["aggregate"];
+    assert_eq!(aggregate["status"], "incomplete");
+    assert_eq!(
+        aggregate["gaps"],
+        json!([{"request_index": 1, "reason": "not-proved", "result": "refuted"}])
+    );
+}
+
+/// FR-620-AC-10 (TC-2185): default items follow source order, an
+/// unprovisioned universe refuses, and normalization limits take their
+/// setting names.
+#[trace("TC-2185", "FR-620-AC-10")]
+#[test]
+#[ignore = "QSL-2121: default order, universes and normalization limit names not implemented yet"]
+fn analyze_defaults_universes_and_limit_names() {
+    let ws = Workspace::new("wire-defaults");
+    let body = format!("{}{}", below_three(), bounded());
+    let run = analyze(&counter_request_with(&ws, &body, request_members(None)));
+    let names: Vec<Value> = run.document()["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .take(2)
+        .map(|item| item["claim_name"].clone())
+        .collect();
+    assert_eq!(names, [json!("BelowThree"), json!("Bounded")]);
+
+    let mut universes = request_members(Some(json!([{"claim": "Bounded"}])));
+    universes["subject"] = json!({"universes": [{"authority": "test", "identity": "nowhere"}]});
+    let ws = Workspace::new("wire-universes");
+    assert_eq!(
+        analyze(&counter_request_with(&ws, &bounded(), universes)).exit,
+        20
+    );
+
+    for (normalization, exit) in [
+        (json!({"work_units": 5_000_000}), 0),
+        (json!({"bogus": 1}), 20),
+    ] {
+        let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
+        request["limits"] = json!({"normalization": normalization});
+        let ws = Workspace::new("wire-normalization");
+        assert_eq!(
+            analyze(&counter_request_with(&ws, &bounded(), request)).exit,
+            exit,
+            "{normalization}"
+        );
+    }
+}

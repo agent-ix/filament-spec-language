@@ -1230,3 +1230,19 @@ fn a_library_source_over_the_fixed_dependent_byte_ceiling_is_refused() {
     assert!(value["details"].get("option").is_none(), "{value}");
     assert!(value.get("artifact").is_none(), "{value}");
 }
+
+/// FR-480-AC-19 (TC-2179): a compile request whose `program` is `[]` is a
+/// malformed request: `invalid-request`, exit 20, the message naming the
+/// program, before any unit is read.
+#[test]
+#[trace("TC-2179", "FR-480-AC-19")]
+fn compile_empty_program_is_invalid_request() {
+    let directory = tempfile::tempdir().unwrap();
+    spine_request(directory.path(), b"");
+    let output = compile_changed(directory.path(), |job| {
+        job["request"]["program"] = json!([]);
+    });
+    let failure = refusal(&output, 20, "invalid-request", "empty program");
+    let message = failure["message"].as_str().unwrap_or_default();
+    assert!(message.contains("program"), "{failure}");
+}
