@@ -281,6 +281,15 @@ fn is_selection_format(format: &str) -> bool {
     format == SELECTION_FORMAT
 }
 
+/// The path of the `sources/<kind><path>` file `file`, for the label kind
+/// `kind` (`source:` or `library:`) the writer gives it.
+#[ix_trace_rs::string_edge]
+fn labelled_path(file: &str, kind: &str) -> Option<std::path::PathBuf> {
+    file.strip_prefix("sources/")
+        .and_then(|label| label.strip_prefix(kind))
+        .map(std::path::PathBuf::from)
+}
+
 impl Selection {
     /// Parse a sidecar.
     pub fn read(bytes: &[u8]) -> Result<Self, SelectionReadError> {
@@ -474,12 +483,9 @@ impl Selection {
         read: impl Fn(&str) -> Result<Vec<u8>, Error>,
     ) -> Result<Inputs, Error> {
         let labelled = |file: &str, kind: &str| {
-            file.strip_prefix("sources/")
-                .and_then(|label| label.strip_prefix(kind))
-                .map(std::path::PathBuf::from)
-                .ok_or_else(|| Error::Label {
-                    label: file.to_owned(),
-                })
+            labelled_path(file, kind).ok_or_else(|| Error::Label {
+                label: file.to_owned(),
+            })
         };
         let rows = &self.package;
         let libraries = rows
