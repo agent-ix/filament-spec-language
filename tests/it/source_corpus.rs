@@ -6,15 +6,14 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-const AREAS: &[&str] = &[
-    "values",
-    "collections",
-    "operations",
-    "temporal",
-    "protocol",
-    "refinement",
-    "probability",
-];
+const AREA_CATALOG: &str = include_str!("../corpus/areas.txt");
+
+fn corpus_areas() -> impl Iterator<Item = &'static str> {
+    AREA_CATALOG
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -158,17 +157,22 @@ fn run_directory(directory: &Path) -> Result<String, String> {
 fn execute(program: &Path, expected: &Expectation) -> Result<Actual, String> {
     let request = program.with_extension("request.json");
     if request.exists() {
-        execute_request(&request, expected)
+        execute_request(&request, program, expected)
     } else {
         execute_compile(program, expected)
     }
 }
 
-fn execute_request(request: &Path, expected: &Expectation) -> Result<Actual, String> {
+fn execute_request(
+    request: &Path,
+    paired_program: &Path,
+    expected: &Expectation,
+) -> Result<Actual, String> {
     let request_json: Value = serde_json::from_slice(
         &std::fs::read(request).map_err(|error| format!("{}: {error}", request.display()))?,
     )
     .map_err(|error| format!("{}: invalid request: {error}", request.display()))?;
+    require_paired_program(request, paired_program, &request_json)?;
     match request_json.get("format").and_then(Value::as_str) {
         Some("native-run/1") => {
             if expected.verb != "run" {
@@ -245,6 +249,53 @@ fn execute_request(request: &Path, expected: &Expectation) -> Result<Actual, Str
             request.display()
         )),
     }
+}
+
+fn require_paired_program(
+    request: &Path,
+    paired_program: &Path,
+    document: &Value,
+) -> Result<(), String> {
+    let program = document
+        .get("request")
+        .and_then(|request| request.get("program"))
+        .ok_or_else(|| format!("{}: request has no program selection", request.display()))?;
+    let sources = if let Some(source) = program.get("source") {
+        vec![source]
+    } else if let Some(sources) = program.as_array() {
+        sources.iter().collect()
+    } else {
+        return Err(format!(
+            "{}: request program must select a source object or array",
+            request.display()
+        ));
+    };
+    let paired_program = paired_program.canonicalize().map_err(|error| {
+        format!(
+            "{}: cannot resolve paired program: {error}",
+            paired_program.display()
+        )
+    })?;
+    let request_directory = request
+        .parent()
+        .ok_or_else(|| format!("{}: request has no parent directory", request.display()))?;
+    let mut selected = Vec::new();
+    for source in sources {
+        let Some(file) = source.get("file").and_then(Value::as_str) else {
+            continue;
+        };
+        let selected_path = request_directory.join(file);
+        if selected_path.canonicalize().ok().as_ref() == Some(&paired_program) {
+            return Ok(());
+        }
+        selected.push(file.to_owned());
+    }
+    Err(format!(
+        "{}: request program selection {:?} does not point to paired corpus program {}",
+        request.display(),
+        selected,
+        paired_program.display()
+    ))
 }
 
 /// With no request sidecar, `compile` is the current public API's closest
@@ -524,6 +575,43 @@ fn corpus_runner_reads_code_from_run_outcome() {
 }
 
 #[test]
+fn corpus_runner_rejects_request_for_a_different_program() {
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "paired",
+        ACCEPTING_PROGRAM,
+        &expectation("run", 0),
+    );
+    let request = json!({
+        "format":"native-run/1",
+        "request":{
+            "models":[],
+            "program":{"source":{
+                "file":"different.native",
+                "authority":"agent-ix",
+                "identity":"test:corpus:different",
+                "document":"Different",
+                "formal_revision":1
+            }},
+            "call":{"function":"seven","arguments":[]}
+        }
+    });
+    std::fs::write(
+        directory.path().join("paired.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+
+    let error = run_directory(directory.path()).unwrap_err();
+    assert!(error.contains("different.native"), "{error}");
+    assert!(
+        error.contains("does not point to paired corpus program"),
+        "{error}"
+    );
+}
+
+#[test]
 fn corpus_runner_rejects_program_without_expectation() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("orphan.native"), ACCEPTING_PROGRAM).unwrap();
@@ -574,22 +662,78 @@ fn corpus_runner_executes_all_programs_before_reporting_mismatches() {
 
 #[test]
 fn corpus_runner_uses_public_entry_point() {
-    let source = include_str!("source_corpus.rs");
-    for forbidden in ["use fsl_package", "use fsl_semantics", "use fsl_eval"] {
-        assert!(
-            !source
-                .lines()
-                .any(|line| line.trim_start().starts_with(forbidden)),
-            "found {forbidden}"
-        );
+    use syn::visit::Visit;
+
+    #[derive(Default)]
+    struct Calls {
+        compile: bool,
+        run: bool,
+        forbidden: BTreeSet<String>,
     }
-    assert!(source.contains("fsl_command::command::compile"));
-    assert!(source.contains("fsl_command::command::run"));
+
+    impl<'ast> Visit<'ast> for Calls {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            if let Some(segment) = path.segments.first() {
+                if matches!(
+                    segment.ident.to_string().as_str(),
+                    "fsl_package" | "fsl_semantics" | "fsl_eval"
+                ) {
+                    self.forbidden.insert(segment.ident.to_string());
+                }
+            }
+            syn::visit::visit_path(self, path);
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = call.func.as_ref() {
+                let segments = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>();
+                if segments
+                    == [
+                        "fsl_command".to_owned(),
+                        "command".to_owned(),
+                        "compile".to_owned(),
+                    ]
+                {
+                    self.compile = true;
+                }
+                if segments
+                    == [
+                        "fsl_command".to_owned(),
+                        "command".to_owned(),
+                        "run".to_owned(),
+                    ]
+                {
+                    self.run = true;
+                }
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+
+    let source = include_str!("source_corpus.rs");
+    let syntax = syn::parse_file(source).expect("source_corpus.rs must parse as Rust");
+    let mut calls = Calls::default();
+    calls.visit_file(&syntax);
+    assert!(
+        calls.forbidden.is_empty(),
+        "source corpus code references forbidden crates: {:?}",
+        calls.forbidden
+    );
+    assert!(
+        calls.compile,
+        "runner must call fsl_command::command::compile"
+    );
+    assert!(calls.run, "runner must call fsl_command::command::run");
 }
 
 #[test]
 fn absent_area_is_allowed_but_created_empty_area_is_rejected() {
-    assert!(!AREAS.is_empty());
+    assert!(corpus_areas().next().is_some());
     let directory = tempfile::tempdir().unwrap();
     let error = run_directory(directory.path()).unwrap_err();
     assert!(error.contains("no .native programs"), "{error}");

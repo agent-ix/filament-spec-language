@@ -187,15 +187,14 @@ fn feature_argument(argument: &str) -> FeatureArgument {
 }
 
 const NO_DOC_EXAMPLE: &str = "no executable doc example in the library";
-const SOURCE_CORPUS_AREAS: &[&str] = &[
-    "values",
-    "collections",
-    "operations",
-    "temporal",
-    "protocol",
-    "refinement",
-    "probability",
-];
+const SOURCE_CORPUS_AREAS: &str = include_str!("../../tests/corpus/areas.txt");
+
+fn source_corpus_areas() -> impl Iterator<Item = &'static str> {
+    SOURCE_CORPUS_AREAS
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+}
 
 /// The zero-pass suites every lane's workspace run shares. The default-feature
 /// lane adds [`ROOT_DOCTESTS_EMPTY`] through its `extra` slice; the guard's own
@@ -408,6 +407,14 @@ pub enum Finding {
     DeclaredButAbsent {
         /// The suite.
         suite: SuiteId,
+    },
+    /// A selected root integration suite omitted one of the required corpus-area tests.
+    #[error("{suite}: required CI selection test did not run: {test}")]
+    RequiredTestNotSelected {
+        /// The suite expected to contain the test.
+        suite: SuiteId,
+        /// Fully-qualified test name emitted by libtest.
+        test: String,
     },
     /// A suite the cargo arguments select (a built test executable, or the
     /// doc-tests of a selected package's library) never ran.
@@ -956,6 +963,13 @@ fn parse_running(line: &str) -> Option<u64> {
 }
 
 #[string_edge]
+fn parse_test_name(line: &str) -> Option<&str> {
+    let test = line.strip_prefix("test ")?;
+    let (name, status) = test.rsplit_once(" ... ")?;
+    matches!(status, "ok" | "FAILED" | "ignored" | "bench").then_some(name)
+}
+
+#[string_edge]
 fn parse_summary(line: &str) -> Option<Counts> {
     let rest = line.strip_prefix("test result: ")?;
     let (status, counts) = rest.split_once(". ")?;
@@ -982,6 +996,7 @@ fn parse_summary(line: &str) -> Option<Counts> {
 struct Section {
     id: SuiteId,
     running: Option<u64>,
+    tests: BTreeSet<String>,
     // The final summary-shaped line is authoritative. Earlier output may
     // contain either a valid or malformed imitation of a libtest summary.
     summary: Option<std::result::Result<Counts, String>>,
@@ -994,6 +1009,23 @@ pub struct RunParser<'a> {
     current: Option<Section>,
     suites: Vec<SuiteOutcome>,
     findings: Vec<Finding>,
+}
+
+fn required_source_corpus_test_findings(
+    suite: &SuiteId,
+    selected_tests: &BTreeSet<String>,
+) -> Vec<Finding> {
+    if suite.source != "tests/it/main.rs" || suite.kind != SuiteKind::Tests {
+        return Vec::new();
+    }
+    source_corpus_areas()
+        .map(|area| format!("source_corpus::corpus_{area}"))
+        .filter(|test| !selected_tests.contains(test))
+        .map(|test| Finding::RequiredTestNotSelected {
+            suite: suite.clone(),
+            test,
+        })
+        .collect()
 }
 
 impl<'a> RunParser<'a> {
@@ -1030,6 +1062,7 @@ impl<'a> RunParser<'a> {
                     self.current = Some(Section {
                         id: id.clone(),
                         running: None,
+                        tests: BTreeSet::new(),
                         summary: None,
                     });
                 }
@@ -1045,6 +1078,9 @@ impl<'a> RunParser<'a> {
         if section.running.is_none() {
             section.running = parse_running(line);
         }
+        if let Some(test_name) = parse_test_name(line) {
+            section.tests.insert(test_name.to_owned());
+        }
         if matches!(run_line_kind(line), RunLineKind::Summary) {
             section.summary = Some(parse_summary(line).ok_or_else(|| line.to_owned()));
         }
@@ -1057,8 +1093,11 @@ impl<'a> RunParser<'a> {
         let Section {
             id,
             running,
+            tests,
             summary,
         } = section;
+        self.findings
+            .extend(required_source_corpus_test_findings(&id, &tests));
         let Some(summary) = summary else {
             self.findings.push(Finding::NoSummary { suite: id });
             return;
@@ -1664,7 +1703,7 @@ pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<String> {
 fn empty_source_corpus_areas(workspace_root: &Path) -> Result<Vec<String>> {
     let corpus = workspace_root.join("tests/corpus");
     let mut empty = Vec::new();
-    for area in SOURCE_CORPUS_AREAS {
+    for area in source_corpus_areas() {
         let directory = corpus.join(area);
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
@@ -1699,7 +1738,7 @@ fn empty_source_corpus_areas(workspace_root: &Path) -> Result<Vec<String>> {
             }
         }
         if !has_program {
-            empty.push(format!("tests/corpus/{}", area));
+            empty.push(format!("tests/corpus/{area}"));
         }
     }
     Ok(empty)
@@ -1708,6 +1747,58 @@ fn empty_source_corpus_areas(workspace_root: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn source_corpus_suite() -> SuiteId {
+        SuiteId {
+            source: "tests/it/main.rs".to_owned(),
+            kind: SuiteKind::Tests,
+        }
+    }
+
+    #[test]
+    fn removing_source_corpus_from_the_selected_root_suite_is_a_finding() {
+        let findings =
+            required_source_corpus_test_findings(&source_corpus_suite(), &BTreeSet::new());
+
+        assert_eq!(findings.len(), 7);
+        for area in source_corpus_areas() {
+            assert!(findings.contains(&Finding::RequiredTestNotSelected {
+                suite: source_corpus_suite(),
+                test: format!("source_corpus::corpus_{area}"),
+            }));
+        }
+    }
+
+    #[test]
+    fn selecting_every_source_corpus_area_test_satisfies_the_ci_guard() {
+        let selected = source_corpus_areas()
+            .map(|area| format!("source_corpus::corpus_{area}"))
+            .collect();
+
+        assert!(required_source_corpus_test_findings(&source_corpus_suite(), &selected).is_empty());
+    }
+
+    #[test]
+    fn suite_output_missing_corpus_selection_tests_is_a_finding() {
+        let artifacts = artifacts_from(&[workspace_artifact(
+            Some("target/debug/deps/it-test"),
+            "tests/it/main.rs",
+            "it",
+            false,
+            ".",
+        )]);
+        let mut parser = RunParser::new(&artifacts, Path::new(ROOT));
+        parser.feed("     Running tests/it/main.rs (target/debug/deps/it-test)");
+        parser.feed("running 1 test");
+        parser.feed("test unrelated_test ... ok");
+        parser.feed("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out");
+
+        let (_, findings) = parser.finish();
+        assert!(findings.contains(&Finding::RequiredTestNotSelected {
+            suite: source_corpus_suite(),
+            test: "source_corpus::corpus_values".to_owned(),
+        }));
+    }
 
     #[test]
     fn an_existing_source_corpus_area_without_a_program_is_not_empty_suite_safe() {
