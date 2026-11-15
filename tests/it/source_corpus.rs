@@ -78,12 +78,6 @@ fn run_directory(directory: &Path) -> Result<String, String> {
         }
     }
 
-    if programs.is_empty() {
-        return Err(format!(
-            "{}: corpus area has no .native programs",
-            directory.display()
-        ));
-    }
     if let Some(orphan) = programs.difference(&expectations).next() {
         return Err(format!(
             "{}: program has no expectation file",
@@ -94,6 +88,12 @@ fn run_directory(directory: &Path) -> Result<String, String> {
         return Err(format!(
             "{}: expectation has no program",
             directory.join(format!("{orphan}.expected.json")).display()
+        ));
+    }
+    if programs.is_empty() {
+        return Err(format!(
+            "{}: corpus area has no .native programs",
+            directory.display()
         ));
     }
 
