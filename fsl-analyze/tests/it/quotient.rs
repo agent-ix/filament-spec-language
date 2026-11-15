@@ -607,7 +607,12 @@ fn a_symmetry_refutation_settles_as_the_unreduced_refutation_does() {
 
     let plain = world.settle_clause(0, at_two(), &unreduced);
     assert_eq!(plain.value, TerminalValue::Refuted);
-    assert_eq!(record, plain, "the record names no reduction");
+    // The exploration counts are the quotient's own (asserted smaller
+    // above); every other member names no reduction.
+    assert_ne!(record.exploration, plain.exploration);
+    let mut aligned = plain.clone();
+    aligned.exploration = record.exploration;
+    assert_eq!(record, aligned, "the record names no reduction");
     assert_eq!(Some(counterexample), plain.counterexample.as_ref());
 
     let states = world.positions(counterexample);

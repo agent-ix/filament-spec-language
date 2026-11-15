@@ -7,7 +7,7 @@
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{ActivationAxis, ExecutionAxis, OutcomeAxes, SettlementBasis, TruthAxis};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::analyze_cli_support::{
     analyze, below_three, bounded, counter_request, counter_request_with, request_members,
@@ -77,7 +77,7 @@ fn analyze_outcome_exit_codes_are_total() {
         let document = run.document();
         let category = Category::ALL
             .iter()
-            .find(|category| Value::from(category.as_str()) == document["category"])
+            .find(|category| document["category"] == category.as_str())
             .expect("a registered category");
         assert_eq!(run.exit, i32::from(category.exit_code()), "{document}");
         assert_eq!(run.exit, exit, "{document}");
