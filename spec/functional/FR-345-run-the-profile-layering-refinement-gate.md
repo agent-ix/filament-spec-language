@@ -193,6 +193,13 @@ entry or empty corpus, all passed to FR-344's report.
   function `xtask::refinement::layering_check::check`, which takes the CLI
   executable to run, so a test passes a stub executable directly and no
   environment variable or make variable overrides it.
+- `refinement-layering` SHALL be a member of the Makefile's `CI_CHECKS`
+  list, so `make ci` runs it with every other gate. Its pass condition is
+  the expected no-negotiation report of FR-345-AC-9: the CLI's exit 21 there
+  is the gate passing, not a claim settling `unsupported`, and the
+  target's own exit is 0. Every layer's negotiated witness verdict is
+  FR-345-AC-12's integration run, so the compile, case and edge halves are
+  gated here and the negotiation half in filament-integration.
 
 ## Acceptance Criteria
 
@@ -212,6 +219,7 @@ entry or empty corpus, all passed to FR-344's report.
 | FR-345-AC-12 | Over the real backend registry, with filament-contract-codegen's `negotiate_*` as the negotiation function, `compare` over the generated real corpus gives each of the six layers a `holds` witness result: its witness unit admits and its witness item, requested once per candidate by backend name, settles `supported` under at least one candidate. The temporal witness is the timed model of AC-6 and its request is `operation-contract`/`bounded`. A seeded unsupported witness gives a `regression` naming the layer and each candidate's identity and disposition, and a removed witness entry gives a tool-failure result. | Integration test (filament-integration IT-015 / filament-integration TC-095) |
 | FR-345-AC-13 | The make target's test-only CLI seam rejects a child result unless its exit code is 21 and its report satisfies AC-9; it rejects a report with a missing layer result and child exit codes 0, 1 and 10. | Test (TC-868) |
 | FR-345-AC-14 | Given a repository root holding only `examples/config-version/model.semantic-ir.json`, `xtask::refinement::layering_corpus::generate` writes the whole real corpus, and every unit over that model names the model's package identity and version; after the model file's package version is edited, generating the corpus again gives units that carry the edited version. Neither run reads another file. | Test (TC-868) |
+| FR-345-AC-15 | The Makefile's `CI_CHECKS` list contains `refinement-layering`, and `make refinement-layering` exits 0 over the generated real corpus when the CLI exits 21 with the FR-345-AC-9 report. | Test (TC-2108) |
 
 ## Dependencies
 

@@ -867,3 +867,40 @@ fn a_backend_name_does_not_make_an_entry_trusted() {
     assert_eq!(result.value, PlannerValue::Proved);
     assert_eq!(result.certification, Some(Certification::Uncertified));
 }
+
+// ---- FSpec FR-380-AC-9: previous transfers only step for step ---------------
+
+/// A safety clause that uses strong previous.
+const PREVIOUS_SAFETY: &str =
+    "temporal PrevSafe using t over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always (holds(c.value = 2) implies once[1,1] holds(c.value = 1)) }\n";
+
+/// FSpec FR-380-AC-9: an implementation abstraction is not a step-for-step
+/// refinement (an implementation step inside `inc_cas`, such as a failed
+/// compare-and-set, maps to an abstract stutter), so a guarantee of a clause
+/// that uses `once[1,1]` settles `inconclusive`, `transfer-not-preserving`,
+/// naming `once[1,1]`, while the sibling safety guarantee without it is
+/// proved.
+#[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
+#[test]
+#[ignore = "QSL-2247: the step-for-step transfer rule for previous is not implemented yet"]
+fn previous_does_not_transfer_through_a_refinement_that_is_not_step_for_step() {
+    let source = unit(
+        &format!("{PREVIOUS_SAFETY}{SAFETY}"),
+        RELATION,
+        &format!(
+            "{}{SIBLING}",
+            SIBLING
+                .replace("guarantee H of NonNegative", "guarantee P of PrevSafe")
+                .replace("Sched2", "Sched3")
+        ),
+    );
+    let chain = chain(&source, "P");
+    let result = chain.settled(&positive(&chain));
+    assert_eq!(result.value, PlannerValue::Inconclusive);
+    let wire = result.to_wire().expect("wire");
+    assert_eq!(wire["cause"]["type"], "transfer-not-preserving");
+    assert_eq!(wire["cause"]["reason"], "fragment");
+    assert_eq!(wire["cause"]["operator"], "once[1,1]");
+    sibling_settles_unchanged(&source);
+}

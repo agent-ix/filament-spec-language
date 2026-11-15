@@ -536,3 +536,59 @@ fn the_stutter_step_carries_every_reward_at_zero() {
     assert_eq!(name.as_str(), "cost");
     assert_eq!(integer_of(value), 0);
 }
+
+/// FR-187-AC-5 (TC-2064): a weight-0 operation is never chosen while an
+/// operation of positive weight is enabled, and a workload of weight 0 on
+/// every operation behaves like equal weights. Over `Link` under `Lean`
+/// (`send_b` at 0), the initial state's steps are `send_a`'s alone, with
+/// its draw probabilities `9/10` and `1/10`; over `Service` under `Zero`
+/// every reachable state gives the steps it gives under `Steady`.
+#[trace("TC-2064", "FR-187-AC-5")]
+#[test]
+#[ignore = "QSL-1991: weight-0 workload step probabilities not implemented yet"]
+fn a_weight_zero_operation_is_chosen_only_when_no_positive_one_is_enabled() {
+    let mut link = world::link();
+    link.body
+        .push_str("workload Lean on M { weight Msg::send_a = 1; weight Msg::send_b = 0; }\n");
+    let world = World::new(&link);
+    let system = world.system();
+    let start = initial(&system);
+    let lean = steps(&system, &start, &world, "Lean");
+    assert_eq!(sum(&lean), ratio(1, 1));
+    let send_a = operation_text(&system, "send_a");
+    let mut probabilities: Vec<Rational> = lean
+        .iter()
+        .map(|step| {
+            let TransitionId::Operation(transition) = &step.transition else {
+                panic!("an operation step");
+            };
+            assert_eq!(transition.operation(), send_a.as_str(), "only send_a");
+            step.probability.clone()
+        })
+        .collect();
+    probabilities.sort();
+    assert_eq!(probabilities, [ratio(1, 10), ratio(9, 10)]);
+
+    let world = World::new(&world::service(
+        "workload Zero on M { weight Server::request = 0; weight Server::attempt = 0; \
+         weight Server::reset = 0; }\n",
+    ));
+    let system = world.system();
+    let mut queue = VecDeque::from([initial(&system)]);
+    let mut seen = BTreeSet::new();
+    while let Some(state) = queue.pop_front() {
+        if !seen.insert(format!("{state:?}")) {
+            continue;
+        }
+        let zero = steps(&system, &state, &world, "Zero");
+        let steady = steps(&system, &state, &world, "Steady");
+        let view = |steps: &[WeightedStep]| -> Vec<(String, Rational)> {
+            steps
+                .iter()
+                .map(|step| (format!("{:?}", step.post), step.probability.clone()))
+                .collect()
+        };
+        assert_eq!(view(&zero), view(&steady), "{state:?}");
+        queue.extend(steady.into_iter().map(|step| step.post));
+    }
+}

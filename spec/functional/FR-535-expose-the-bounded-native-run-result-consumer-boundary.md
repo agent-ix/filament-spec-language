@@ -58,5 +58,6 @@ the bytes and its own invocation.
 
 ## Dependencies
 
+- Consumer facts (FSpec FR-661, bound in FR-761): `CF-DR-01` (`read_native_run_result_bounded`), `CF-DR-02` (`write_clause_run_result`) and `CF-DR-03` (`NativeRunResult`) at the `fsl_replay` crate root.
 - [FR-267](FR-267-write-and-read-run-results-as-native-run-result-2.md) owns the `/2` wire contract.
 - [TC-1340](../test-cases/TC-1340-bounded-native-run-result-consumer-boundary.md) defines verification.

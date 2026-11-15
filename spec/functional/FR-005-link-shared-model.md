@@ -45,6 +45,8 @@ general Filament model authority is introduced.
 
 **QSL-1810 disposition:** the `0-draft` linker carrier of the criteria retired below (`link`, `LinkedPackage`, `LinkLimits` and `src/linking*`) is deleted under ADR-011 M-6c, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; import resolution on the spine is owned by FR-099 and FR-111.
 
+The retired carrier was the last `0-draft` front end. FSL admits one edition, `1-draft`: a header naming any other edition string, `0-draft` included, refuses `unknown_edition`/`unsupported-selection` at the edition string literal, as FSpec FR-500 states for the standard, which no longer keeps a historical `0-draft` edition.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

@@ -1,0 +1,21 @@
+---
+id: TC-1908
+title: "Operation contract and type invariants through run"
+type: TC
+relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-702
+    type: verifies
+---
+# TC-1908: Operation contract and type invariants through run
+
+## Description
+
+Verify FR-702-AC-1 to AC-3: the `frame` run evaluates the operation's own `requires` and `ensures`, and the `invariants` selection evaluates the model's type invariants.
+
+## Test Procedure
+
+Run the ConfigVersion `frame` selection over the invocation of FR-702-AC-1 with each domain contract variant; run the `invariants` selection of AC-3. Test: `fsl-replay/src/spine/clause/tests/operation_contract_run.rs`.
+
+## Expected Results
+
+Each false clause gives `violation`, `truth: false`, exit 10, naming the clause; each holding case gives success with `truth: true`.

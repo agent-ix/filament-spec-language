@@ -16,7 +16,7 @@ use fsl_semantics::model::clause_observation::Observation;
 use ix_trace_rs::trace;
 
 #[path = "../support/named_population.rs"]
-mod fixture;
+pub(crate) mod fixture;
 
 use fixture::{checked, key, refused};
 

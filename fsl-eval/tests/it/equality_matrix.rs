@@ -3901,3 +3901,115 @@ fn a_converted_equality_operand_is_converted_once_and_compared() {
         }
     }
 }
+
+/// FSpec FR-149 "Equality conversions": `admits_equality_conversion` admits the
+/// identical type and the closed table only. `String` and `Text[..]` convert in
+/// neither direction, no float width converts to another or to an exact type,
+/// and every float-bearing composite admits only itself; `=` over a `String`
+/// and a `Text` operand is `ill_typed`/`type-mismatch`, never
+/// `operator-ineligible`.
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-10")]
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-22")]
+#[test]
+#[ignore = "QSL-2173: String/Text type-mismatch and the closed equality-conversion property not confirmed yet"]
+fn admits_equality_conversion_is_exactly_the_closed_table() {
+    use filament_semantic_value::declaration::admits_equality_conversion;
+    use filament_semantic_value::quantity::UnitScope;
+
+    let table = UnitTable::default();
+    let scope = UnitScope::new(&table);
+    let string = ValueType::String;
+    let text = ValueType::Text(text_type(TextProfile::Nfc));
+    let single = ValueType::Float(FloatType::exact(IeeeWidth::Binary32));
+    let double = ValueType::Float(FloatType::exact(IeeeWidth::Binary64));
+    let float_record = ValueType::Composite(key("F"));
+    let float_set = ValueType::collection(collection_type(CollectionKind::Set, double.clone(), 2));
+    for identical in [&string, &text, &single, &double, &float_record, &float_set] {
+        assert!(
+            admits_equality_conversion(identical, identical, &scope),
+            "{identical:?}"
+        );
+    }
+    for (source, target) in [
+        (&string, &text),
+        (&text, &string),
+        (&single, &double),
+        (&double, &single),
+        (&double, &ValueType::Integer),
+        (&int_type(0, 3), &double),
+    ] {
+        assert!(
+            !admits_equality_conversion(source, target, &scope),
+            "{source:?} -> {target:?}"
+        );
+    }
+
+    let env = TypeEnvironment::default();
+    let mismatch = Err(IllTyped {
+        cause: IllTypedCause::TypeMismatch,
+    });
+    assert_eq!(check(&env, &string, &text), mismatch);
+    assert_eq!(check(&env, &text, &string), mismatch);
+}
+
+/// FSpec FR-149-AC-9: a float-leaf record and a `Set<Float64>` are admitted as
+/// `=` operands under the equality schedule. When this lands, `e28` is removed.
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-9")]
+#[test]
+#[ignore = "QSL-2173: equality over float-bearing composites and float sets not implemented yet"]
+fn e28b_equality_on_float_bearing_types_is_admitted() {
+    let env = TypeEnvironment::new(
+        [CompositeDeclaration::new(
+            key("F"),
+            "F",
+            CompositeShape::Record(vec![FieldDeclaration::new(
+                "x",
+                ValueType::Float(FloatType::exact(IeeeWidth::Binary32)),
+                Presence::Required,
+            )]),
+        )],
+        [],
+    )
+    .unwrap();
+    let set = ValueType::collection(collection_type(
+        CollectionKind::Set,
+        ValueType::Float(FloatType::exact(IeeeWidth::Binary64)),
+        2,
+    ));
+    assert!(env.try_check_type(&set).is_ok());
+    for value_type in [ValueType::Composite(key("F")), set] {
+        assert!(
+            check(&env, &value_type, &value_type).is_ok(),
+            "{value_type:?}"
+        );
+    }
+}
+
+/// FSpec FR-149's `Map` row: two maps of one map type admit `=`; maps that
+/// differ in bound or key type stay `type-mismatch`.
+#[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-149-AC-28")]
+#[test]
+#[ignore = "QSL-2171: map equality under the FR-149 Map row not implemented yet"]
+fn map_equality_is_admitted_over_one_map_type() {
+    let env = TypeEnvironment::default();
+    let map = |key: ValueType, maximum: Option<u64>| {
+        ValueType::map(
+            filament_exact::MapType::new(key, ValueType::Integer, maximum.map(|max| bound(0, max)))
+                .expect("a scalar key"),
+        )
+    };
+    let bounded = map(int_type(0, 3), Some(4));
+    assert!(check(&env, &bounded, &bounded).is_ok());
+    assert_eq!(
+        check(&env, &bounded, &map(int_type(0, 3), None)).map(|_| ()),
+        Err(IllTyped {
+            cause: IllTypedCause::TypeMismatch
+        })
+    );
+    assert_eq!(
+        check(&env, &bounded, &map(int_type(0, 4), Some(4))).map(|_| ()),
+        Err(IllTyped {
+            cause: IllTypedCause::TypeMismatch
+        })
+    );
+}

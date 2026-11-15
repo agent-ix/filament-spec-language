@@ -1,0 +1,147 @@
+//! FR-218 (TC-2020, TC-2021, TC-2022): a role on a whole model, a choice
+//! guard over the protocol input, and the variant's type, each asserted with
+//! the refusal region every reporting surface shows.
+
+use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use ix_trace_rs::trace;
+
+use super::assemble;
+use crate::check::CheckRefusal;
+
+fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
+    (refusal.cause.code().as_str(), refusal.cause.cause())
+}
+
+/// The S3 refusals of `declarations`, each with its catalog pair and the
+/// source text of its refusal region (`PackageDeclarations::regions`).
+fn located_refusals(declarations: &str) -> Vec<(CheckRefusal, String)> {
+    let (text, assembled) = assemble(declarations);
+    let regions = assembled.regions();
+    let refusals: Vec<CheckRefusal> =
+        match assembled.check_with_protocol_results(CheckMode::Linked, CheckingLimits::default()) {
+            Ok(graph) => graph
+                .protocol_refusals()
+                .iter()
+                .flat_map(|result| result.refusals.iter().cloned())
+                .collect(),
+            Err(refusals) => refusals,
+        };
+    refusals
+        .into_iter()
+        .map(|refusal| {
+            let region = regions
+                .refusal_region(&refusal)
+                .unwrap_or_else(|| panic!("{refusal:?} names a region"));
+            let start = usize::try_from(region.start()).expect("a start");
+            let end = usize::try_from(region.end()).expect("an end");
+            let at = text[start..end].to_owned();
+            (refusal, at)
+        })
+        .collect()
+}
+
+/// A protocol over `M::Actor` with the `captures`, the `roles` and the
+/// `run` control.
+fn protocol(captures: &str, roles: &str, run: &str) -> String {
+    format!(
+        "protocol Flow using pp over (input: M::Actor) on origin {{\n\
+         {captures}\n\
+         {roles}\n\
+         run {run}\n\
+         finish End as (outcome: Boolean) {{ true }};\n\
+         }}"
+    )
+}
+
+const TRIED: &str = "attempt Tried by R on M::Actor::op contracts [] as (tried: Boolean) { true };";
+
+/// FR-218-AC-41: `role W on M` checks beside a role on a model type, and the
+/// replicated form over the alias refuses with the alias as its region.
+#[trace("TC-2020", "FR-218-AC-41")]
+#[ignore = "QSL-2223: role-on-model refusal region at the alias not verified end to end yet"]
+#[test]
+fn a_role_on_a_whole_model_checks_and_its_replicated_form_refuses_at_the_alias() {
+    let roles = "role W on M;\nrole R on M::Actor;";
+    let run = format!("sequence Main {{ {TRIED} }}");
+    super::checks(&protocol("", roles, &run));
+
+    let replicated = protocol("", &format!("{roles}\nrole r each M from pop;"), &run);
+    let found = located_refusals(&replicated);
+    let at_alias: Vec<&String> = found
+        .iter()
+        .filter(|(refusal, _)| {
+            catalog(refusal) == ("invalid_model_binding", Some("malformed-declaration"))
+        })
+        .map(|(_, at)| at)
+        .collect();
+    assert_eq!(at_alias, ["M"], "{found:?}");
+    assert!(
+        found.iter().all(|(_, at)| at != "pop"),
+        "no refusal for the population: {found:?}"
+    );
+}
+
+/// FR-218-AC-42: a guard over a capture of the input checks with no listing;
+/// a guard over `input.ready` refuses at that read, and no region covers the
+/// guard block, the choice or the protocol.
+#[trace("TC-2021", "FR-218-AC-42", "FSpec-TC-1521", "FSpec-FR-053-AC-5")]
+#[ignore = "QSL-1971: the over-read refusal region at the read is not implemented yet"]
+#[test]
+fn a_guard_reads_the_input_through_a_capture_and_a_direct_read_refuses_at_the_read() {
+    let pick = |yes: &str, no: &str| {
+        format!(
+            "sequence Main {{ {TRIED} choice Pick by R visible () {{ \
+             case yes when {{ {yes} }} sequence Yes {{ }} \
+             case no when {{ {no} }} sequence No {{ }} }} }}"
+        )
+    };
+    super::checks(&protocol(
+        "capture ready: Boolean = input.ready;",
+        "role R on M::Actor;",
+        &pick("ready", "not ready"),
+    ));
+
+    let direct = protocol(
+        "",
+        "role R on M::Actor;",
+        &pick("input.ready", "not input.ready"),
+    );
+    let found = located_refusals(&direct);
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (refusal, at) in &found {
+        assert_eq!(
+            catalog(refusal),
+            ("ill_typed", Some("operator-ineligible")),
+            "{refusal:?}"
+        );
+        assert_eq!(at, "input.ready", "the region is the read: {refusal:?}");
+    }
+}
+
+/// FR-218-AC-43: a variant of an integer type checks; a Boolean variant
+/// refuses `ill_typed`/`type-mismatch` at the variant.
+#[trace("TC-2022", "FR-218-AC-43", "FSpec-TC-1520", "FSpec-FR-171-AC-6")]
+#[ignore = "QSL-2222: the well-founded variant type rule is not implemented yet"]
+#[test]
+fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
+    let repeat = |variant: &str| {
+        protocol(
+            "",
+            "role R on M::Actor;",
+            &format!(
+                "sequence Main {{ repeat Loop by R visible () \
+                 invariant {{ true }} variant {{ {variant} }} \
+                 while {{ false }} sequence Body {{ {TRIED} }} }}"
+            ),
+        )
+    };
+    super::checks(&repeat("3"));
+
+    let found = located_refusals(&repeat("true"));
+    let mismatches: Vec<&String> = found
+        .iter()
+        .filter(|(refusal, _)| catalog(refusal) == ("ill_typed", Some("type-mismatch")))
+        .map(|(_, at)| at)
+        .collect();
+    assert_eq!(mismatches, ["true"], "{found:?}");
+}

@@ -1014,3 +1014,52 @@ fn a_reference_bound_to_a_key_no_node_carries_refuses_missing_name() {
         }
     );
 }
+
+/// FR-383-AC-68: a role on a whole model compiles through S4 with no
+/// refusal, in FSpec FR-465's text form (the selected package's identity, an
+/// empty replication Group), and FSL's I2 reader admits it; the replicated
+/// form over the alias refuses at S3 and writes no package.
+#[trace("FR-383-AC-68", "TC-2020", "FSpec-FR-465-AC-13", "FSpec-TC-1525")]
+#[ignore = "QSL-2223: whole-model role compile parity with the strict reader not verified end to end yet"]
+#[test]
+fn a_whole_model_role_compiles_to_the_text_form_and_its_replicated_form_writes_no_package() {
+    let flow = |role: &str| {
+        selecting(&format!(
+            "protocol Flow using p over (input: M::Gadget) on origin {{\n\
+             role R on M::Gadget;\n\
+             {role}\n\
+             run sequence Main {{ }}\n\
+             finish End as (outcome: Boolean) {{ true }};\n\
+             }}\n"
+        ))
+    };
+    let (_, wire, read) = emit_model_unit(&flow("role w on M;"), None);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let clause = node_of(&wire, "protocol", "protocol_clause");
+    let whole = clause_argument(clause, "roles")["members"]
+        .as_array()
+        .expect("the roles are a Group")
+        .iter()
+        .map(|reference| node_by_id(&wire, &reference["target"]))
+        .find(|node| node["declaration"]["qualified_name"] == json!(["Flow", "role", "w"]))
+        .expect("the whole-model role is emitted");
+    assert_eq!(
+        whole["body"]["arguments"][0]["value"]["value"],
+        package_identity(SPINE_MODEL_DOCUMENT),
+        "the model argument is the selected package identity"
+    );
+    assert_eq!(
+        whole["body"]["arguments"][1]["value"],
+        json!({"term": "aggregate", "members": []}),
+        "a whole-model role is static"
+    );
+
+    let found = refusals(&flow("role w each M from cells;"));
+    assert!(
+        found.iter().any(|refusal| {
+            refusal.cause.code().as_str() == "invalid_model_binding"
+                && refusal.cause.cause() == Some("malformed-declaration")
+        }),
+        "{found:?}"
+    );
+}

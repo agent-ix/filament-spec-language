@@ -12,7 +12,7 @@ relationships:
 
 Verify S3's checks of random parameters, workloads and rewards on ADR-024 §7.2's `Service` model and its malformed variants.
 
-Scope: FR-185-AC-1 to FR-185-AC-9.
+Scope: FR-185-AC-1 to FR-185-AC-6, FR-185-AC-8 and FR-185-AC-9 (FR-185-AC-7 is TC-2062's).
 
 ## Test Procedure
 
@@ -24,7 +24,7 @@ Fixtures: the dimension `Time`, the unit `s` (root) and the unit `ms` (target `s
 4. Check each reward variant of FR-185-AC-4, and `reward cost on Server::request = 2`.
 5. Declare a second workload `Steady` on `Service`, and one on `Other` (FR-185-AC-5).
 6. Check the two coprime-weight distributions of FR-185-AC-6, and one with a check cancelled before it starts.
-7. Emit `Service` (FR-185-AC-7).
+7. (Emission of `Service`, FR-185-AC-7, is verified by TC-2062.)
 8. Check `Server::attempt` with `d: Quantity<ms>` and its supports, then with `1 s` and `true` (FR-185-AC-8, with `Time`, `s` and `ms` declared; it reads FSpec's unit `typeRef` and quantity literal form, FR-322-AC-79 and FR-322-AC-80).
 9. Check the reference-typed parameter variant of FR-185-AC-9 with a reference literal naming the key of a `Server` object as the support value, then the variant with the parameter typed `Int[1, 12]` and the integer support value `3`.
 
@@ -38,6 +38,6 @@ Tag the tests `#[trace("TC-620", "FR-185-AC-n")]`.
 - Step 4: the three variants refused naming the reward, with their FR-185-AC-4 causes (including `duplicate-reward`); `cost` checks.
 - Step 5: each second `Steady` refused `conflicting_declaration`/`duplicate-declaration` with both declarations related.
 - Step 6: the 65,536-bit sum admitted; the 65,537-bit sum refused with the limit refusal naming the parameter; the check with a tripped handle ends cancelled with the handle requested and a reported limit that is not the 65,536-bit ceiling.
-- Step 7: S3 checks, S4 refuses `unsupported_construct`/`not-yet-implemented` naming the first random parameter, `random-parameter` and the profile.
+- Step 7: none here.
 - Step 8: with `Time`, `s` and `ms` declared, the quantity supports check; `1 s` and `true` refused `value-outside-type`.
 - Step 9: the reference support value refused `value-outside-type` naming the parameter; the `Int[1, 12]` variant with the integer support value checks.

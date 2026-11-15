@@ -306,10 +306,14 @@ Snapshot, format `filament.state.snapshot/v1`:
   `instances`. `relationship` is the declaration identity of a navigation
   relationship of the selected package
   (`ix://<package>/relationship/<Name>-<verb>-<TargetName>`), `complete` is a
-  boolean, and `instances` is an array of objects with exactly `source` and
-  `target`, each an object reference `{"population": ..., "key": ...}` as in
-  `self`. An instance links a source object to a target object through the
-  relationship; the entry's order and its instances' order carry no meaning,
+  boolean, and `instances` is an array of objects with `source` and `target`,
+  each an object reference `{"population": ..., "key": ...}` as in `self`, and,
+  only for a relationship one of whose ends declares `ordered: true`, a
+  `positions` object whose members are exactly the ordered ends, `source`
+  and/or `target`, each a non-negative decimal integer string (FR-364
+  "Positions of an ordered end"). An instance links a source object to a
+  target object through the relationship; the entry's order and its
+  instances' order carry no meaning (only `positions` order an ordered end),
   and a link between the same two objects listed twice is two instances. An
   entry with `"complete": true` and `"instances": []` states that the
   relationship has no link in this state. A relationship with no entry is

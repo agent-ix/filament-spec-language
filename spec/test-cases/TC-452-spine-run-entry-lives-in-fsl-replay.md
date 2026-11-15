@@ -107,9 +107,8 @@ Tag the tests `#[trace("TC-452", "FR-100-AC-7")]` (steps 1 and 2),
   naming the re-export.
 - Step 4: each `refused` outcome also carries `location`
   `{"origin": {"kind": "body", "function": "f", "index": 0}, "path": [1]}`.
-  - `completed` with `{"kind": "boolean", "value": true}`,
-    `{"kind": "boolean", "value": false}`, and `{"kind": "integer",
-    "decimal": ...}` of `"0"`, `"-17"` and `"1180591620717411303424"`,
+  - `completed` with `{"boolean": true}`,
+    `{"boolean": false}`, and `{"integer": ...}` of `"0"`, `"-17"` and `"1180591620717411303424"`,
     exit 0.
   - `CardinalityOutOfBound`: `code` `cardinality_out_of_bound`, `cause`
     `above-maximum`, `fields` exactly

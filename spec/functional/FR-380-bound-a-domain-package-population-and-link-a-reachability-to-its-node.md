@@ -222,6 +222,10 @@ one per reachability.
 | FR-380-AC-20 | When one package holds `reaches(self, self, trail)` and `reaches(self, self, next)` over `Order/next` with `orders` bounded at `4`, the emitter writes the same `population` id in both applications and emits one population node holding one `Type` occurrence for the bound. | Test (TC-1054) |
 | FR-380-AC-21 | When the package declares the populations `orders` (member type `Order`), `rushes` (member type `Rush`) and `people`, and `invariant RushFav using V on M::Person at current { not reaches(self.favRush, self.favRush, trail) }` under `filament.model.complete/v1` reads `favRush: Reference<Rush>`, the checker admits the clause with a record holding the domains `people` and `orders` and no `rushes` domain, with no `ambiguous-name` refusal. | Test (TC-1054) |
 
+## Grammar
+
+The declaration is the standard grammar's `population-bound` production, `'bound', ident, 'on', population-name, '[', uint, ']'`, with no closing `;` (FSpec FR-502 item 1); the parser's `PopulationBound` production recognizes exactly it.
+
 ## Dependencies
 
 - [FR-104](FR-104-check-state-clauses.md) owns the requirements records and

@@ -64,6 +64,12 @@ TemporalTrace evaluator and replay settle it.
 - `TerminalValue::category` SHALL map `Unsupported(MissingFairnessPremise
   {..})` to unsupported.
 
+### Analyze request
+
+A `finite-replay` item of a `native-analyze/1` request (FR-636) and a
+`monitor` item over a clause with a fairness constraint settle by this
+requirement; FR-627 states the analyze result.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

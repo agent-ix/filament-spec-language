@@ -100,6 +100,15 @@ and neither is a truth value.
 - Under a false-extension profile, a position after the last position of
   the trace SHALL read every atomic predicate as false and every constant
   unchanged (FSpec FR-090).
+- A past interval operator `[a,b]` whose offset reaches before position 0
+  SHALL read the pre-origin extension of FSpec FR-092: every atomic predicate
+  false, every constant unchanged, and Boolean and past operators evaluated
+  there from those values. A pre-origin offset is never skipped, so
+  `once[1,1] not holds(p)` is true at position 0 and `historically[0,2]
+  holds(p)` is false at positions 0 and 1 whatever `p` is. The unbounded and
+  lower-bounded past operators of the infinite-trace profile range over
+  positions 0 through `i - a` only (FSpec FR-161, FR-367). A position the
+  pre-origin extension supplies evaluates no atom.
 - The clause SHALL be evaluated at position 0 for activation `on origin`,
   and at every activating position for activation `on each`. The outcome
   SHALL be `Completed(true)` when every activation evaluates true, and
@@ -211,6 +220,7 @@ and neither is a truth value.
 | FR-327-AC-11 | Over AC-1's trace, `once[0,1] holds(c.value >= 0)` `on each` is `Completed(true)`, and `historically[0,1] holds(c.value >= 1)` `on each` is `Completed(false)` at position 0. | Test (TC-837) |
 | FR-327-AC-12 | Over AC-1's trace, `holds(c.value >= 1) since[0,2] holds(c.value = 1)` `on each` has the outcome of `not (not holds(c.value >= 1) triggered[0,2] not holds(c.value = 1))` `on each`, and `release` equals its dual `not (not p until not q)` on AC-9's operands: the Boolean dual forms agree with `since`, `triggered`, `until` and `release`. | Test (TC-837) |
 | FR-327-AC-13 | Over AC-1's trace, `eventually[0,1] not holds(c.value = 9)` `on origin` is `Completed(true)` and `eventually[0,1] holds(c.value = 9)` `on origin` is `Completed(false)` at position 0: negation is pointwise, not an untimed reading of the whole formula. | Test (TC-837) |
+| FR-327-AC-14 | Over the closed `Counter` trace with `c.value` 1, 1, 1 under event-position false-extension, and over the same three positions as an infinite-trace prefix: `once[1,1] holds(c.value = 1)` `on origin` is false at position 0, `once[1,1] not holds(c.value = 1)` `on origin` is true, `historically[0,2] holds(c.value = 1)` read at position 1 is false, `historically[0,2] true` read at position 1 is true, and no atom is read at a pre-origin position; under infinite-trace the unbounded `historically holds(c.value = 1)` read at position 1 is true and `once[2,*] not holds(c.value = 1)` read at position 1 is false. | Test (TC-1544) |
 
 ## Dependencies
 

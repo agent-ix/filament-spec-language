@@ -81,6 +81,11 @@ each with a path from an initial state to its pre-state.
 - When a run reaches `max_depth` with no `false` or undefined tuple, the engine SHALL
   return `BoundReached{depth: max_depth}` (ADR-023 HV-3).
 
+### Analyze request
+
+A step relation is requested by name in a `native-analyze/1` item (FR-631),
+which owns its request members and result.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

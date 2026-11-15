@@ -1299,3 +1299,137 @@ mod library_import {
         );
     }
 }
+
+/// FSpec FR-149 "IEEE relations": `=` over a record, tuple, option, union or
+/// sequence holding a float leaf is admitted and compares the leaf by
+/// `numericEqual` (`+0 = -0` true, a NaN unequal to itself).
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-9")]
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-25")]
+#[test]
+#[ignore = "QSL-2173: equality over float-leaf records, tuples, options, unions and sequences not implemented yet"]
+fn float_leaf_composites_compare_their_leaves_by_numeric_equality() {
+    use filament_exact::{FloatType, Identifier, IeeeValue, IeeeWidth};
+    use filament_semantic_value::declaration::UnionMemberDeclaration;
+
+    let double = ValueType::Float(FloatType::exact(IeeeWidth::Binary64));
+    let single = ValueType::Float(FloatType::exact(IeeeWidth::Binary32));
+    let env = TypeEnvironment::new(
+        [
+            record(
+                "F",
+                vec![
+                    field("x", double.clone(), Presence::Required),
+                    field("y", ValueType::Integer, Presence::Required),
+                ],
+            ),
+            CompositeDeclaration::new(
+                key("T"),
+                "T",
+                CompositeShape::Tuple(vec![single.clone(), ValueType::Integer]),
+            ),
+            CompositeDeclaration::new(
+                key("U"),
+                "U",
+                CompositeShape::Union(vec![
+                    UnionMemberDeclaration::resolved(
+                        Identifier::new("V").unwrap(),
+                        vec![double.clone()],
+                    ),
+                    UnionMemberDeclaration::resolved(Identifier::new("N").unwrap(), vec![]),
+                ]),
+            ),
+        ],
+        [],
+    )
+    .unwrap();
+    let plus_zero = Value::Float(IeeeValue::binary64(0x0000_0000_0000_0000));
+    let minus_zero = Value::Float(IeeeValue::binary64(0x8000_0000_0000_0000));
+    let qnan = Value::Float(IeeeValue::binary64(0x7ff8_0000_0000_0000));
+    let one = Value::Float(IeeeValue::binary64(0x3ff0_0000_0000_0000));
+    let f = |x: &Value, y: i64| {
+        env.record(
+            key("F"),
+            vec![
+                ("x", FieldValue::Present(x.clone())),
+                ("y", FieldValue::Present(int(y))),
+            ],
+        )
+        .unwrap()
+    };
+    let record_type = composite("F");
+    assert_eq!(
+        equal(&env, &record_type, &f(&plus_zero, 1), &f(&minus_zero, 1)),
+        Ok(Outcome::Completed(true))
+    );
+    assert_eq!(
+        equal(&env, &record_type, &f(&qnan, 1), &f(&qnan, 1)),
+        Ok(Outcome::Completed(false))
+    );
+    assert_eq!(
+        equal(&env, &record_type, &f(&plus_zero, 1), &f(&plus_zero, 2)),
+        Ok(Outcome::Completed(false))
+    );
+
+    let t = |bits: u32| {
+        env.tuple(
+            key("T"),
+            vec![Value::Float(IeeeValue::binary32(bits)), int(1)],
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        equal(&env, &composite("T"), &t(0x8000_0000), &t(0x0000_0000)),
+        Ok(Outcome::Completed(true))
+    );
+
+    let option = ValueType::option(double.clone());
+    let present = |value: &Value| OptionValue::present(double.clone(), value.clone()).unwrap();
+    assert_eq!(
+        equal(&env, &option, &present(&qnan), &present(&qnan)),
+        Ok(Outcome::Completed(false))
+    );
+    assert_eq!(
+        equal(
+            &env,
+            &option,
+            &OptionValue::none(double.clone()),
+            &OptionValue::none(double.clone())
+        ),
+        Ok(Outcome::Completed(true))
+    );
+
+    let sequence = sequence_of(double.clone(), 0, 2);
+    let seq = |values: Vec<Value>| {
+        filament_exact::form_collection(
+            &CollectionType::new(
+                CollectionKind::Sequence,
+                double.clone(),
+                Some(CardinalityBound::new(0, 2).unwrap()),
+            ),
+            values,
+            &mut Meter::new(UNLIMITED),
+        )
+        .unwrap()
+        .completed()
+        .unwrap()
+    };
+    assert_eq!(
+        equal(
+            &env,
+            &sequence,
+            &seq(vec![plus_zero.clone(), one.clone()]),
+            &seq(vec![minus_zero.clone(), one.clone()])
+        ),
+        Ok(Outcome::Completed(true))
+    );
+
+    // The union type is admitted as an `=` operand.
+    assert!(env
+        .check_equality(
+            EqualityOperator::Equal,
+            EqualityOperand::typed(composite("U")),
+            EqualityOperand::typed(composite("U")),
+            &EnumMemberIndex::default(),
+        )
+        .is_ok());
+}

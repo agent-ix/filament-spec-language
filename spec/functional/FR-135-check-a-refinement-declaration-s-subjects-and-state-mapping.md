@@ -176,8 +176,8 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
   n]`, FR-139) as FR-139 types it. A field row whose type holds a
   `Reference<T_C>` nested inside an option, record, union or collection type
   that is not such a population reference SHALL use the feature
-  `nested-reference-row` (below), because lifting inside a nested value is not
-  built (ADR-020 RM-3 states the top-level rule only).
+  `nested-reference-row` (below), which FR-630 checks by lifting each nested
+  reference element by element (ADR-020 RM-3 states the top-level rule).
 - The checker SHALL refuse a refinement whose abstract model declares a
   relationship with `unsupported_construct`/`declaration-form` at the
   abstract alias of the declaration header, once per refinement, naming the
@@ -248,16 +248,14 @@ subject once the feature is built.
   checked as usual and its own refusals are reported beside it.
 - This build's support set SHALL hold `history-row` for the history types its
   history key can encode, which FR-138 checks, and `protocol-abstract-side`
-  and `refinement-internal-list`, which FR-147 checks, and SHALL omit
-  `nested-reference-row`.
-- S3 SHALL refuse a `history` row whose declared type is an enum type or a
-  decimal type, or an option of one, with
-  `unsupported_construct`/`not-yet-implemented` naming `history-row`, at the
-  span of the declared type and once for the row, with `subject` `enum` or
-  `decimal` for the kind of type. The build's history key cannot yet encode such
-  a value. The values are legal history literals (FSpec FR-375-AC-9), so the
-  refusal marks a build limit and not an error in the source. FR-138-AC-9
-  states the case.
+  and `refinement-internal-list`, which FR-147 checks, and `nested-reference-row`,
+  whose rows FR-630 lifts element by element: a `Reference<T_C>` nested inside an
+  option, record, union or collection value maps to the `Reference<T_A>` of the
+  object row that maps `T_A` from `T_C`, at every nesting depth.
+- S3 SHALL check a `history` row whose declared type is an enum type or a
+  decimal type, or an option of one, as it checks an integer row: the history key
+  encodes each such value by its canonical literal (FR-630). FR-138-AC-9 states
+  the case.
 - A feature in the support set is checked by its own requirement.
 
 `unknown_required_feature` is not used: a source refusal, which FR-341
@@ -286,7 +284,7 @@ standing.
 | FR-135-AC-3 | `value = self.busyA` refuses `ill_typed`/`type-mismatch` at the expression's span. In ADR-020 §8's `RingIsQueue`, a field of type `Reference<Q::Queue>` mapped by `self.ring` (of type `Reference<R::Ring>`) checks, and the same field mapped by an expression of type `Reference<R::Slot>` refuses `ill_typed`/`type-mismatch`. | Test (TC-540) |
 | FR-135-AC-4 | With the `value` row removed, `CasRefinesCounter` checks with `value` in `hidden`. Changing the `value` row to `value = self.tmpA` changes the refinement's node identity and the `package_id`. | Test (TC-540) |
 | FR-135-AC-5 | A declaration whose abstract side is a protocol (`CasTwice`, FR-147), in a build whose support set omits `protocol-abstract-side`, refuses `unsupported_construct`/`not-yet-implemented` at the span of `Twice`, naming `protocol-abstract-side`, `CasTwice` and the profile identity, with a payload that has no `subject` member, no other diagnostic about the abstract side and no `CheckedRefinement`. It classifies `unsupported` (FR-341-AC-5). `CasRefinesCounter`, which uses none of the features, checks as FR-135-AC-1 states. The vector refuses a row that uses a feature the build has not built; it does not select a support set. | Test (TC-540) |
-| FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` refuses `unsupported_construct`/`not-yet-implemented` naming `nested-reference-row` at the row's expression; a population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. | Test (TC-540) |
+| FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` checks, each nested reference lifted element by element through the object row that maps `Queue` from `Ring` (FR-630); a population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. | Test (TC-540) |
 | FR-135-AC-7 | `RingIsQueue` with the abstract `Queue` declaring a relationship refuses `unsupported_construct`/`declaration-form` at the abstract alias `Q` of the declaration header, once, whatever the support set holds, and no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-8 | In a unit whose own declarations select no layer, `RingIsQueue`'s rows `s.ring = self` and `(self.head + i) mod 2` check, because they are admitted under the layers the governing infinite-trace profile requires; a Boolean field row naming a protocol declared in the unit refuses `unsupported_construct`/`expression-form` at the `protocol` token, naming the layer that admits it (`filament.protocol.complete/v1`). | Test (TC-540) |
 | FR-135-AC-9 | A refinement given a non-empty resolved internal list refuses `unsupported_construct`/`not-yet-implemented` naming `refinement-internal-list` at the first token of the name after `abstract`, once for the refinement, with no `subject` member, no `CheckedRefinement` and the classification `unsupported` (FR-341-AC-5); a list with a resolution defect reports the defect and not this pair (FR-147-AC-7, AC-11). | Test (TC-540) |

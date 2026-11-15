@@ -612,3 +612,47 @@ fn tc_444_a_stop_inside_a_mutually_recursive_call_is_not_the_outer_observation()
         Settled::NoValue
     );
 }
+
+/// FR-098-AC-34: replay keeps the check mode recorded with the package. The
+/// `Linked` half is asserted here: a possibly-zero `mod` yields no `Linked`
+/// package to replay, and a `Linked` claim recompiles and settles under
+/// `Linked`. The `Kernel` half (a `Kernel` package's claim recompiled under
+/// `Kernel` and reproduced) is asserted through AC-22 to AC-27 once a
+/// package records its mode.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+#[ignore = "QSL-2002: Linked admits a mod whose divisor may be zero, and no package records its check mode yet"]
+fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
+    let header = format!("language \"ix:native\" edition \"1-draft\";\n{PROFILE}");
+    let unguarded =
+        format!("{header}function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
+    let refused = compose(
+        SourceIdentity::new(AUTHORITY, IDENTITY),
+        IDENTITY,
+        unguarded.as_bytes(),
+        &BTreeMap::new(),
+        &crate::spine::DependencyInput::default(),
+        SpineLimits::default(),
+    );
+    assert!(
+        refused.is_err(),
+        "a Linked compile refuses `10 mod x` unproved-nonzero and yields no claim"
+    );
+    let source = format!(
+        "{header}function g using v(x: Int[0, 9], y: Int[1, 9]): Integer pure {{ x mod y }}\n"
+    );
+    let compiled = spine(&source, &BTreeMap::new());
+    let key = record(&compiled, &source, "g", "x mod y", 0);
+    let x = parameter(&compiled, "g", 0);
+    let y = parameter(&compiled, "g", 1);
+    assert_eq!(
+        settled(run(
+            &source,
+            &compiled,
+            "g",
+            &key,
+            &[(x, int(3)), (y, int(2))]
+        )),
+        Settled::Verdicts(boolean(true))
+    );
+}

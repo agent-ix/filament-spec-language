@@ -17,6 +17,8 @@ mod bare_native_members;
 #[cfg(feature = "test-support")]
 mod business_meanings;
 mod check_mode;
+#[cfg(feature = "test-support")]
+mod checker_rulings;
 mod child_composite;
 #[cfg(feature = "test-support")]
 mod clock_places;
@@ -24,6 +26,7 @@ mod complete_value_lock;
 #[cfg(feature = "test-support")]
 mod dimension_equivalence;
 mod dispatch_linking;
+mod division_law_selection;
 #[cfg(feature = "test-support")]
 mod enum_type_admission;
 #[cfg(feature = "test-support")]
@@ -119,6 +122,8 @@ mod tc235_business_meanings;
 #[path = "../support/tc235_k2.rs"]
 mod tc235_k2;
 #[cfg(feature = "test-support")]
+mod temporal_clock_names;
+#[cfg(feature = "test-support")]
 mod temporal_fairness;
 #[cfg(feature = "test-support")]
 mod terminal_declarations;
@@ -128,6 +133,7 @@ mod timed_declarations;
 mod timed_intervals;
 #[cfg(feature = "test-support")]
 mod timed_model;
+mod type_decisions;
 #[cfg(feature = "test-support")]
 mod type_environment_model;
 mod unit_typed_members;

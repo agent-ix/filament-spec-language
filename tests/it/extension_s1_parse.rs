@@ -299,3 +299,48 @@ fn a_leading_keyword_is_an_ordinary_identifier_outside_a_top_level_declaration_s
     };
     assert_eq!(shape(&selected), shape(&unselected));
 }
+
+/// FR-660-AC-1 (TC-1740): a `native-compile/1` request's `extensions`
+/// member supplies the definition catalog the unit selects `ext.retention`
+/// from, and the compile admits the `retention` form.
+#[test]
+#[trace("TC-1740", "FR-660-AC-1")]
+#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
+fn compile_applies_request_extension_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    let definition = serde_json::json!({
+        "grammar_schema": {"productions": [
+            {"keyword": "retention", "clauses": ["subject", "days"]}
+        ]},
+        "typed_node_schema": {"nodes": [
+            {"keyword": "retention", "node_kind": "retention", "clauses": [
+                {"name": "subject", "type": "Text"},
+                {"name": "days", "type": "Int[1, 3650]"}
+            ]}
+        ]}
+    });
+    std::fs::write(
+        directory.path().join("retention.json"),
+        definition.to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{HEADER}profile r = \"ext.retention\";\n{FORM}\n"),
+    )
+    .unwrap();
+    let request = serde_json::json!({"format": "native-compile/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:extension-request", "document": "Ext", "formal_revision": 1}},
+        "extensions": [{"authority": "agent-ix", "identity": "ext.retention",
+            "file": "retention.json"}]
+    }});
+    let path = directory.path().join("compile.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let package = fsl_command::command::compile(&path)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    let package = String::from_utf8(package).unwrap();
+    assert!(package.contains("\"retention\""), "{package}");
+    assert!(package.contains("ext.retention"), "{package}");
+}

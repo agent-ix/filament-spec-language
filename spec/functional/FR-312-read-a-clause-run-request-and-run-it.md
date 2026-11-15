@@ -21,6 +21,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-031
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-641
+    type: references
 ---
 # FR-312: Read a clause-run request and run it through run_clause
 
@@ -61,18 +63,29 @@ place of `call`. `clause` is a closed object:
     parameter map (including `{}` when empty). An invocation document
     carries its own `self` and call context;
   - `{"frame": {"operation": Op, "invocation": K}}`, FR-115's frame
-    selection;
+    selection, which also evaluates the operation's own `requires` and
+    `ensures` (FR-702);
+  - `{"invariants": {"observation": O}}` or `{"invariants": {"observation":
+    O, "invocation": K}}`, FR-702's type-invariants selection over FR-106's
+    `ValueInvariants`;
   - `{"function": {"name": N, "arguments": A, "snapshot": K}}`, FR-109's
-    `Function` selection, with `A` as FR-109 states;
+    `Function` selection, with `A` as FR-109 states and each argument
+    `value` in FR-650's run value form;
+  - `{"context": {...}}`, FR-652's state-machine context selection
+    (FR-106 `Context`);
   - `{"temporal": {"name": N, "trace": T, "over": R}}`, FR-330's
-    `Temporal` selection. `T` is exactly one of `{"finite": [K, ...]}`
-    (`TraceInput::Finite`) and `{"lasso": {"prefix": [K, ...], "loop":
-    [K, ...]}}` (`TraceInput::Lasso`), each `K` an `observations` key, in
-    position order. `R` is FR-330's `{"reference": {"population": P,
+    `Temporal` selection. `T` is exactly one of FR-641's trace kinds:
+    `{"finite": [K, ...]}` (`TraceInput::Finite`), `{"lasso": {"prefix": [K,
+    ...], "loop": [K, ...]}}` (`TraceInput::Lasso`), `model`, `progressed`,
+    `timestamped` and `timed` ([FR-641](FR-641-carry-every-temporal-trace-kind-and-the-progress-ledger-on-the-run-request.md),
+    [FR-642](FR-642-run-a-timed-clause-over-a-recorded-timed-trace.md)), each
+    position `K` an `observations` key or an FR-641 record sample, in
+    position order. The selection may also carry FR-641's `ledger`. `R` is FR-330's `{"reference": {"population": P,
     "key": K}}`, with `P` the population's declaration identity text and
     `K` the object's key. The permitted member sets are exactly
-    `{name, trace, over}`, `{finite}` or `{lasso}` for `trace`, and
-    `{prefix, loop}` for `lasso`;
+    `{name, trace, over, ledger}` (`over` as FR-641 requires it, `ledger`
+    optional), one FR-641 member for `trace`, and `{prefix, loop}` for
+    `lasso`;
 - `observations`: an object mapping each key to the file of a
   `filament.state.snapshot/v1` or `filament.state.invocation/v1` document
   (FR-106);
@@ -98,19 +111,23 @@ package and dependency inputs.
 
 ## Behavior
 
-- The clause request reader SHALL retain the three existing selection
-  shapes and FR-109's Boolean `function` claim semantics. FR-100's shared
-  Value carriers are in-process carriers, not additional JSON argument
-  variants of this reader. A Reference-result function belongs to the
-  existing public Value `run` boundary; this reader SHALL NOT select it as
-  a Boolean claim, invent a Population wire payload, or form a default
-  model context to stand in for admission. The driver's TC-792 typed call
-  requires actual consumer integration with that reviewed Rust boundary.
+- The clause request reader SHALL retain the existing selection shapes and
+  FR-109's Boolean `function` claim semantics. A `function` selection's
+  arguments are read in FR-650's run value form, so every argument kind a
+  value call admits is admitted here, resolved in the selection's snapshot.
+  A Reference-result function belongs to the value `run` boundary; this
+  reader SHALL NOT select it as a Boolean claim or form a default model
+  context to stand in for admission.
+- The reader SHALL accept FR-652's `context` selection as a `selection`.
+  FR-652's `value_invariants` selection and FR-651's population selector
+  produce several items and are carried by an FR-651 `items` request; in a
+  `clause` request they refuse `invalid-request` naming the member.
 - The reader SHALL decode `clause` under FR-100's closed-envelope rules:
   unknown and duplicate members and positional record arrays refuse
   `invalid-request` at stage `request`, naming the member.
-- If a `1-draft` request carries both `call` and `clause`, or neither, then
-  the reader SHALL refuse `invalid-request` at stage `request`.
+- If a `1-draft` request carries more than one of `call`, `clause` and
+  `items` (FR-651), or none, then the reader SHALL refuse `invalid-request`
+  at stage `request`.
 - When `fsl-replay` is built with `quire-extraction` and the request's
   `program` carries `extraction`, the reader SHALL decode `extraction` and
   `clauses`, check the request's mode, build and validate the clause-only
@@ -143,12 +160,10 @@ package and dependency inputs.
   the same document at both positions. Each key SHALL name a
   `filament.state.snapshot/v1` document whose observation role is `current`;
   an invocation document or another role refuses `invalid-request` at
-  stage `request`, naming `trace`. A `trace` variant other than `finite`
-  and `lasso` (a model trace, FR-330's `TraceInput::Model`, and a timestamped
-  trace, FR-330's `TraceInput::Timestamped`, are built in process only: the
-  request file has no member for a stamp, an order key, a progress assertion or
-  a cover) refuses `invalid-request` at stage `request`, naming
-  `trace`. The reader checks no trace length: an empty `finite` array or
+  stage `request`, naming `trace`. Every other trace kind, its record
+  samples and the `ledger` file SHALL be read as FR-641 states; a `trace`
+  member that is not one of FR-641's kinds, or a kind missing a required
+  member, refuses `invalid-request` at stage `request`, naming the member. The reader checks no trace length: an empty `finite` array or
   an empty `loop` reaches FR-330, which refuses it at stage `evaluate`.
 - The reader SHALL read each observation file once, under FR-100's
   `dependent_bytes` limit and relative to the request file's directory.
@@ -174,7 +189,7 @@ package and dependency inputs.
 | FR-312-AC-5 | A current clause request with `self` and `anchor` constructs FR-106 `Current` and checks the supplied anchor against the snapshot; a pre clause request with `parameters` and, for an object receiver, `self` constructs `PreCall`; a current or pre request without `self` constructs the selection with no `self`, and admission refuses it as `wrong-observation` at stage `admit` when the receiver is an object; a pre request without `self` for a state machine's precondition admits, and a state machine's invariant selected by `Current` is refused by FR-106-AC-46 (it is selected by `Context`); an invocation clause request constructs `Invocation` and reads `self` from that document. Omitting `anchor` from a current request or `parameters` from a pre request, or adding a role-forbidden member, refuses `invalid-request` at stage `request`, naming that member, before `run_clause`. Selecting a post snapshot or a document with an unrecognized format or observation role refuses `invalid-request` at stage `request`, naming `observation`. | Test |
 | FR-312-AC-6 | A clause request's `accounting` object accepts all ten counter names and passes their values unchanged to `ClauseRunRequest.accounting`; omitted `accounting` uses the FR-100 defaults. A direct `work_units` member of `clause` refuses `invalid-request` at stage `request`, exit 20, no result document. | Test (TC-891) |
 | FR-312-AC-7 | Through `run`, a request selecting `{"temporal": {"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": ["s0", "s1"]}}, "over": {"reference": {"population": P, "key": "c1"}}}}` over FR-330-AC-2's `Counter` snapshots `s0` (`c.value` 0), `s1` (1) and `s2` (2) returns the `/2` document FR-267-AC-13 states, exit 10; with loop `["s0", "s1", "s2"]` it returns `success`, exit 0, byte-identical to the report of the same `ClauseRunRequest` built in process. A trace key naming an invocation document or a pre snapshot, a `trace` of `{"model": {}}`, a `trace` holding both `finite` and `lasso`, and an unknown member in `temporal` each refuse `invalid-request` at stage `request`, exit 20, no result document, naming `trace` or the member. A `finite` array of zero keys reaches FR-330 and reports stage `evaluate`, `refusal`, `invalid_runtime_input`/`invalid-value`. | Test (TC-1160) |
-| FR-312-AC-8 | Through `run`, a request whose `temporal.trace` is `{"timestamped": {}}` refuses `invalid-request` at stage `request`, exit 20, naming `trace`, and no result document is written. | Test (TC-1160) |
+| FR-312-AC-8 | Through `run`, a request whose `temporal.trace` is `{"timestamped": {}}` refuses `invalid-request` at stage `request`, exit 20, naming the missing `observations` member of `trace.timestamped`, and no result document is written; a complete `timestamped` trace is read as FR-641 states (FR-641-AC-1). | Test (TC-1160) |
 
 The existing AC-1 through AC-5 test-case association remains TC-891;
 method-only Verification cells do not replace the existing trace tags.

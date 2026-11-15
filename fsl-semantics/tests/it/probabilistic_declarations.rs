@@ -3243,3 +3243,131 @@ fn a_claims_subject_is_its_own_units_package() {
     };
     assert_eq!(claim.subject.package.identity, P);
 }
+
+/// TC-2060 (FR-185-AC-10): a workload weight of 0 is admitted and recorded
+/// with no diagnostic, a workload of all zero weights is admitted, and an
+/// omitted operation is still refused `incomplete-workload`.
+#[trace("TC-2060", "FR-185-AC-10")]
+#[test]
+#[ignore = "QSL-1991: workload weight 0 admitted not implemented yet"]
+fn a_workload_admits_weight_zero_and_all_zero_weights() {
+    let reset_zero = "workload Steady on Service { weight Server::request = 1; \
+         weight Server::attempt = 1; weight Server::reset = 0; }";
+    let graph = checked(&service(Some((STEADY, reset_zero)), ""));
+    let steady = graph
+        .probabilistic_model()
+        .workload("Steady")
+        .expect("Steady is recorded");
+    let weights: Vec<(&str, Rational)> = steady
+        .weights()
+        .iter()
+        .map(|(operation, weight)| (operation.name(), weight.clone()))
+        .collect();
+    assert_eq!(
+        weights,
+        [
+            ("request", ratio(1, 1)),
+            ("attempt", ratio(1, 1)),
+            ("reset", ratio(0, 1))
+        ]
+    );
+
+    let all_zero = "workload Steady on Service { weight Server::request = 0; \
+         weight Server::attempt = 0; weight Server::reset = 0; }";
+    checked(&service(Some((STEADY, all_zero)), ""));
+
+    let without_reset =
+        "workload Steady on Service { weight Server::request = 0; weight Server::attempt = 1; }";
+    assert_eq!(
+        located(&service(Some((STEADY, without_reset)), "")),
+        [invalid("incomplete-workload", without_reset)]
+    );
+}
+
+/// TC-2060 (FR-185-AC-3): a negative workload weight, written as an exact
+/// value, is still refused `invalid-weight` naming the workload and the
+/// operation (negative stub for the weight ruling).
+#[trace("TC-2060", "FR-185-AC-3")]
+#[test]
+#[ignore = "QSL-1991: negative weight refusal under the weight 0 ruling not verified yet"]
+fn a_negative_workload_weight_is_refused() {
+    let body = service(Some((STEADY, &steady_with_request("rational(-1, 1)"))), "");
+    assert_eq!(
+        located(&body),
+        [invalid("invalid-weight", "rational(-1, 1)")]
+    );
+    assert!(names_workload_operation(
+        &causes(&body)[0],
+        ("Steady", "Server::request")
+    ));
+}
+
+/// TC-2061 (FR-185-AC-11): S3, not model admission, refuses a reward that is
+/// negative for some argument vector, naming the reward; `d` ranges over its
+/// support `{1, 3, 12}`, so `d - 3` is negative at `d = 1`.
+#[trace("TC-2061", "FR-185-AC-11")]
+#[test]
+#[ignore = "QSL-2252: negative-reward refusal at S3 not implemented yet"]
+fn s3_refuses_a_reward_that_can_be_negative() {
+    let body = service(None, "reward refund on Server::attempt = d - 3;");
+    let refusals = refusals_of(&body);
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal: {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code(), Code::InvalidProbabilisticModel);
+    assert_eq!(refusal.cause.cause(), Some("negative-reward"));
+    let text = format!("{refusal:?}");
+    assert!(text.contains("refund"), "{text}");
+    assert!(text.contains("attempt"), "{text}");
+
+    // Over the support the reward is never negative, so it checks.
+    checked(&service(None, "reward refund on Server::attempt = d - 1;"));
+}
+
+/// TC-2063 (FR-186-AC-7, FR-186-AC-3): under a bounded profile an
+/// interval-less operator and a lower-bounded `[a,*]` interval in a
+/// probabilistic event are refused by the profile's operator admission,
+/// `unsupported_construct`/`expression-form`, never `unbounded-event`;
+/// under the infinite-trace profile `[a,*]` stays `unbounded-event`.
+#[trace("TC-2063", "FR-186-AC-7")]
+#[trace("TC-2063", "FR-186-AC-3")]
+#[trace("TC-2063", "FR-195-AC-1")]
+#[test]
+#[ignore = "QSL-2252: profile operator admission before the probabilistic event check not implemented yet"]
+fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
+    let holds = format!("holds({IDLE})");
+    let refused = |profile: &str, formula: &str| {
+        located(&exact_claim(
+            profile,
+            "Steady",
+            CONFIDENT,
+            &format!("probability >= 0.9 [ {formula} ]"),
+        ))
+    };
+    let expression_form = |at: &str| {
+        (
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            at.to_owned(),
+        )
+    };
+    assert_eq!(
+        refused("ev", &format!("always {holds}")),
+        [expression_form("always")]
+    );
+    assert_eq!(
+        refused("ev", &format!("eventually {holds}")),
+        [expression_form("eventually")]
+    );
+    assert_eq!(
+        refused("ev", &format!("eventually[2,*] {holds}")),
+        [expression_form("[2,*]")]
+    );
+    assert_eq!(
+        refused("inf", &format!("eventually[2,*] {holds}")),
+        [invalid(
+            "unbounded-event",
+            &format!("eventually[2,*] {holds}")
+        )]
+    );
+}

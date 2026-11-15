@@ -72,17 +72,20 @@ occurrence key unless a step names another occurrence.
    its source edited so it does not compile; again with its source's
    byte-provision entry removed.
 
-10. Compile one unit declaring the functions of FR-098-AC-22 to FR-098-AC-25
+10. Compile, under `CheckMode::Kernel` (the mode its package records, so
+    each replay recompiles under `Kernel`), one unit declaring the functions of FR-098-AC-22 to FR-098-AC-25
     (`p`, `q`, `r`, `s`, `b`, `u`, `inc`) and replay each request of
     FR-098-AC-22 to FR-098-AC-26, with the occurrence key each names (an
     application's key read from the compiled package's requirement records
     at the site the AC names, never by ordinal alone).
 
-11. Compile the unit of FR-098-AC-27 and FR-100-AC-20 (`d`, recursive with
-    `decreases(n)`, and `e`, which calls `d`). Call `d` with 0, 1, 2 and 3
-    and `e` with 1 through S6a and read each `Evaluation`'s outcome,
-    `location` and `frame_depth`; then replay `d` at its
-    `10 mod (n - 1)` record's occurrence with `n` = 0, 1, 2 and 3.
+11. Check the unit of FR-100-AC-20 (`d`, recursive with `decreases(n)`, and
+    `e`, which calls `d`) under `CheckMode::Linked` and read its refusals.
+    Then check the same unit under `CheckMode::Kernel`, call `d` with 0, 1, 2
+    and 3 and `e` with 1 through S6a and read each `Evaluation`'s outcome,
+    `location` and `frame_depth`. Then replay the `Kernel` package's `d` at its `10 mod (n - 1)`
+    record's occurrence with `n` = 0, 1, 2 and 3; the recompile runs under
+    the recorded `Kernel` mode (FR-098-AC-27).
 
 12. Over step 7's library, with `both` and `pick` (over a record `R`) added
     and the unit's own `big` (`x < 2`) added, replay `{owner test/units, big}`
@@ -160,9 +163,13 @@ Tag the tests `#[trace("TC-444", ...)]` with the ACs each step backs.
   its right operand's occurrence with `x = 0`, `b` with `t = [3, 0]` and `u`
   with only `x = 0` assigned; `s` at its `then` branch's occurrence with
   `x = 0` settles `NoValue`.
-- Step 11: `d(0)` completes `0` at depth 0; `d(1)` is `Undefined` at the
-  `10 mod (n - 1)` `Location` with `frame_depth` 0, `d(2)` with 1, `d(3)`
-  with 2, and `e(1)` with 1 (FR-100-AC-20). The replay with `n = 1` settles
+- Step 11: under `CheckMode::Linked` the unit refuses
+  `undefined_expression`/`unproved-nonzero` at `10 mod (n - 1)`, its only
+  refusal, and no package is linked; no run-time `Undefined` is asserted for a
+  `Linked` package. Under `CheckMode::Kernel`, `d(0)` completes `0` at depth 0;
+  `d(1)` is `Undefined` (`division-by-zero`) at the `10 mod (n - 1)`
+  `Location` with `frame_depth` 0, `d(2)` with 1, `d(3)` with 2, and `e(1)`
+  with 1 (FR-100-AC-20). The replay with `n = 1` settles
   `reproduced-without-witness` with value `false`; `n = 2` and `n = 3`
   settle `inconclusive` with cause `NoValue`; `n = 0` settles
   `inconclusive` with cause `Verdicts` and value `true` (FR-098-AC-27).

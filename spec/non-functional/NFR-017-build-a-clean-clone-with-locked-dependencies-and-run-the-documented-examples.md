@@ -63,8 +63,10 @@ under one new directory it creates in `TMPDIR`, and:
 
 ### Out of scope
 
-`make ci`'s conformance and qualification targets, which read a sibling
-FSpec checkout, are maintainer gates, not part of an outside user's build.
+The examples step runs only the README examples; `make ci`'s conformance and
+qualification targets are not part of an outside user's build. They read the
+standard's vectors through the pinned Cargo dependency (FR-760), never through
+a sibling checkout, so they too run from a clean clone.
 
 ## Measurement and Evaluation
 

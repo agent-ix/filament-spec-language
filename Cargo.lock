@@ -857,6 +857,7 @@ dependencies = [
  "fsl-route",
  "fsl-semantics",
  "ix-trace-rs",
+ "jsonschema 0.17.1",
  "serde_json",
  "tempfile",
  "thiserror",

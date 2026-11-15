@@ -184,7 +184,7 @@ may differ, a counterexample may then fail to replay, and the item settles
 `refuted` on a replay that did not reproduce it.
 
 The provision check applies to every request, whether or not the package
-emits. A package that S4 refuses to emit (FR-185) has no package reference, so
+emits. A package that S4 refuses to emit has no package reference, so
 an item over it takes the in-process subject instead of the wire: EN-4's
 sampled witness replays over the checked subject (FR-193), and EN-5's
 certificate is checked over it (FR-201 "Checking"). The provision is still the
@@ -539,6 +539,13 @@ holding the `ProvisionRefusal` that names the label, and no record.
   result. A binding admission failure shall still return
   `StageFailure::Refused(AnalyzeRefusal::Binding)` before any item runs.
 
+### Request documents and the full engine registry
+
+`analyze` is reached from a file through FR-620's `native-analyze/1` document
+and writes FR-621's outcome. `Engines::fsl()` SHALL hold every layer-A engine,
+EN-7 under `en-7` included, so that a schedulability item routed through the
+registry reaches EN-7 (FR-620, FR-633).
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -565,6 +572,7 @@ holding the `ProvisionRefusal` that names the label, and no record.
 | FR-281-AC-20 | A request whose `provision` omits the source the package names fails with `StageFailure::Refused(AnalyzeRefusal::Provision)` naming that label, `missing_import`/`missing-selection`, no record and no engine run; the same request with the provision complete returns its records. With AC-2's request whose provision holds, under the right label, the Counter unit with `P`'s bound changed from `< 2` to `< 5`, the item settles `inconclusive` with cause `replay_parity`, and returns no `ItemCounterexample`. A request over `Service` (FR-185-AC-7), a package S4 refuses to emit, whose provision omits its source fails the same way. | Test (TC-763) |
 | FR-281-AC-21 | A `ClaimItem` constructor given a `claim` key whose node is a clause of the package but whose occurrence is not that clause's `claim` occurrence, and one given a node the package does not hold as a checked clause, refuses `ClaimRefusal::UnknownClaim`; the constructor for AC-2's clause key returns an item with that key as its `claim`. | Test (TC-762) |
 | FR-281-AC-22 | Over AC-11's model (an operation `modifies` a field of type `Integer`), an EN-1 item whose `temporal.proof_bounds` hold an `integer-range` `ProofBound` for that field, with `extent` `unbounded` unchanged, is admitted, explores the bounded subject and settles a verdict; the same item with empty `proof_bounds` settles `unsupported` with `unsupported_projection`/`unbounded-extent` and explores no state. | Test (TC-763) |
+| FR-281-AC-23 | `Engines::fsl()` registers `en-7` advertising `schedulability`, and a schedulability item settled `Supported(en-7)` runs on EN-7. | Test (TC-1580) |
 
 ## Dependencies
 

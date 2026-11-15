@@ -1173,3 +1173,115 @@ fn the_finite_window_profile_admits_only_integral_closed_tick_intervals() {
         "count over past[0 ms, 300 ms] min_count 1 >= 1",
     ));
 }
+
+/// The unit of [`source`] with its clause's clock written `clock "{clock}"`.
+fn with_clock(temporal: &[&str], clock: &str, formula: &str) -> String {
+    source(temporal, "Counter", formula)
+        .replace("clock \"model-steps\"", &format!("clock \"{clock}\""))
+}
+
+/// FR-610-AC-1: over the record trace subject a free clock role checks under
+/// every step-counting profile, is recorded as written, and `[0,3]` is three
+/// ticks.
+#[trace("TC-1541", "FR-610-AC-1", "FSpec-TC-1040", "FSpec-FR-090-AC-12")]
+#[test]
+#[ignore = "QSL-2141: clock roles are not yet separated from model binding names"]
+fn a_free_clock_role_over_a_trace_subject_checks_and_counts_by_the_profile() {
+    for (profile, role) in [
+        (INFINITE, "events"),
+        (EVENT, "events"),
+        (TIMESTAMPED, "events"),
+        (FIXED, "sample-clock"),
+    ] {
+        let text = with_clock(&[profile], role, "eventually[0,3] holds(c.level = 3)");
+        let clause = check(&assemble(&text))
+            .unwrap_or_else(|failure| panic!("{profile} {role}: checks, not {failure:?}"));
+        if profile != INFINITE {
+            assert_eq!(clause.horizon(), Some(3), "{profile}");
+        }
+        assert!(
+            text.contains(&format!("clock \"{role}\"")),
+            "the role is written as given"
+        );
+    }
+}
+
+/// FR-610-AC-2, FR-610-AC-3: a role that spells a time unit, or a model
+/// binding name, refuses `ill_typed`/`type-mismatch` at the clock string over
+/// a trace subject; a role that merely starts with a unit's letters checks.
+#[trace(
+    "TC-1541",
+    "FR-610-AC-2",
+    "FR-610-AC-3",
+    "FSpec-TC-1040",
+    "FSpec-FR-090-AC-12"
+)]
+#[test]
+#[ignore = "QSL-2141: a unit-spelled or model-binding clock role over a trace subject is not refused yet"]
+fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
+    let formula = "eventually[0,3] holds(c.level = 3)";
+    for profile in [INFINITE, EVENT, FIXED, TIMESTAMPED] {
+        for role in ["ms", "s", "min", "model-steps", "model-time"] {
+            let text = with_clock(&[profile], role, formula);
+            let cause = match check(&assemble(&text)) {
+                Err(StageFailure::Refused(CheckRefusal {
+                    cause: CheckCause::Temporal(cause),
+                    ..
+                })) => *cause,
+                other => panic!("{profile} {role}: a temporal refusal, not {other:?}"),
+            };
+            assert_eq!(
+                (cause.code(), cause.tag()),
+                (Code::IllTyped, "type-mismatch"),
+                "{profile} {role}"
+            );
+            assert_eq!(
+                cause.span(),
+                first(&text, &format!("\"{role}\"")),
+                "{profile} {role}"
+            );
+        }
+    }
+    let declared = with_clock(&[EVENT], "tick", formula).replace(
+        "temporal C using",
+        "dimension Time;\nunit tick : Time = rational(1, 1);\ntemporal C using",
+    );
+    assert!(
+        matches!(
+            check(&assemble(&declared)),
+            Err(StageFailure::Refused(CheckRefusal {
+                cause: CheckCause::Temporal(_),
+                ..
+            }))
+        ),
+        "a role spelled as a declared time unit refuses"
+    );
+    check(&assemble(&with_clock(&[EVENT], "msg-clock", formula)))
+        .unwrap_or_else(|failure| panic!("msg-clock checks, not {failure:?}"));
+}
+
+/// FR-610-AC-4: a retired `quire.temporal.*` spelling is an unknown profile,
+/// refused `unknown_profile`/`unsupported-selection`, never mapped to the
+/// `filament.temporal.*` profile of the same suffix.
+#[trace("TC-1541", "FR-610-AC-4", "FSpec-TC-1040")]
+#[test]
+#[ignore = "QSL-2141: the retired-spelling refusal is not verified yet"]
+fn a_retired_temporal_profile_spelling_is_an_unknown_profile() {
+    use crate::check::profile::{resolve_profiles, ProfileCause};
+    let selection = |identity: &str| fsl_foundation::selection::ProfileSelection {
+        alias: "inf".to_owned(),
+        identity: identity.to_owned(),
+        span: Span { start: 0, end: 0 },
+        identity_span: Span { start: 0, end: 0 },
+    };
+    let refused = resolve_profiles(&[selection("quire.temporal.infinite-trace/v1")], &|_| None)
+        .expect_err("a retired spelling refuses");
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].cause, ProfileCause::UnsupportedSelection);
+    assert_eq!(refused[0].code(), Code::UnknownProfile);
+    assert_eq!(refused[0].alias, "inf");
+    assert_eq!(
+        resolve_profiles(&[selection(INFINITE)], &|_| None),
+        Ok(Vec::new())
+    );
+}

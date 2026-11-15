@@ -140,6 +140,10 @@ explorer realize them and invents none.
 | FR-509-AC-9 | On a `fifo` channel of capacity 1 under `block` with `delivery [0,3]` and its one place full, the `d = 0` step is enabled, queues nothing and settles past the send while the `d >= 1` steps wait; a `[0,0]` channel of capacity 0 completes its send by the `d = 0` step; under `overflow reject` with capacity 1 and `[2,2]`, the one step records `entries` `accepted` then `rejected` and `pending` `"0"`; on a `fifo` channel of capacity 1 under `block` with `delivery [2,3]` and `carries Boolean`, one exploration of `send P` (payload `true` or `false`) followed by one `receive R of P` whose binder no later step reads reaches, after the receive has emptied the queue, the states pending (1, `true`), (1, `false`) and (2, `true`), whose `send-pending` entries are the only member in which they differ and whose keys are pairwise different; each continuation step binds the send's binder to its own payload. | Test (TC-1304) |
 | FR-509-AC-10 | On a `fifo` channel of capacity 2 under `overflow reject` with `delivery [0,1000]`, let `W0` be the work an unlimited run consumes before it expands the state at the send. Under work limit `W0 + 3` the explorer generates the `d = 0` step (1 unit) and the `d = 1` step (1 unit and 1 entry), never generates the `d = 2` step, consumes exactly 3 units at the send, and settles `incomplete` naming the work limit with the state at the send on the unexplored frontier; it is not a refusal and not a completed result with a count dropped, `hi` capped or a step's entries truncated. Under an unlimited work limit the same state has exactly 1001 `send` steps, `count` 0 to 1000, generated in ascending `count` (FSpec FR-426-AC-21, TC-378 CH-21). | Test (TC-1304) |
 
+## Grammar
+
+The interval is the standard grammar's `delivery-interval` alternative of `delivery-policy`, `'[', uint, ',', uint, ']'` (FSpec FR-502 item 3); the parser's `DeliveryInterval` production recognizes exactly it.
+
 ## Dependencies
 
 - **Contract (FSpec):** FSpec FR-465 "Delivery count interval" and "Delivery

@@ -145,6 +145,15 @@ pub enum StateGraphForm {
 - S3 SHALL check each predicate (`target`, `from`, `to`) as a Boolean state
   clause under the unit's value profile, through the clause checker that
   invariants use (FR-104).
+- A state-graph claim's `using` alias SHALL name a state-bearing header
+  layer, the set FR-508 admits for `check`. If it names a temporal clause
+  profile (any `filament.temporal.*/v1` profile identity) or the protocol
+  profile, then S3 SHALL refuse `unknown_profile`/`wrong-selection-role` at the
+  alias, retaining the alias, the selected identity and the required kind, and
+  produce no checked claim. The predicates are state clauses, a state-graph
+  claim carries no temporal profile (below), and the claim's branching meaning
+  comes from its form, not from a profile; admitting a temporal profile there
+  would suggest a temporal reading the claim does not have.
 - If a predicate reads an operation anchor, a result or a pre-state, then S3
   SHALL refuse `unsupported_construct`/`expression-form` located at the read
   (ADR-022 GM-3). These are the forms that name an operation context.
@@ -182,6 +191,11 @@ pub enum StateGraphForm {
 - The request writer SHALL add none for a subject whose state model declares
   `terminal any` (FR-124).
 
+### Analyze request
+
+A state-graph claim is requested by name in a `native-analyze/1` item
+(FR-628), which owns its request members and result.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -192,6 +206,7 @@ pub enum StateGraphForm {
 | FR-165-AC-4 | S1 parses `possible Anything using v { true }` (no `over`) to a claim with no `over` binding. Over `over (c: Config::ConfigVersion)`, S1 parses with no refusal the bodies `c.versionNumber = 2 and eventually c.versionNumber = 3`, `not eventually c.versionNumber = 2`, `not eventually[0,5] c.versionNumber = 2`, `eventually[1,*] c.versionNumber = 2`, `(c.versionNumber = 1 until c.versionNumber = 2)`, `(c.versionNumber = 1 until c.versionNumber = 2) until c.versionNumber = 3`, `if c.versionNumber = 1 then eventually c.versionNumber = 2 else c.versionNumber = 3`, `let n = c.versionNumber in eventually n = 2`, and `(eventually c.versionNumber = 2)`; `always possible` with `from (always c.versionNumber = 1)`; `unique path` with `to (eventually c.versionNumber = 2)`; and a body led by `fair weak Config::ConfigVersion::attemptUpdate;`. S3 checks the first with `over` recorded as `None` and refuses each other claim `unsupported_construct`/`expression-form`, with no checked claim and no profile refusal, at the first temporal operator in source order or at the constraint. | Test (TC-590) |
 | FR-165-AC-5 | Over a fixture unit whose operation `setVersion` takes parameter `newVersion: Int`, S3 refuses a `possible` claim whose predicate is `c.versionNumber = newVersion` with `missing-name` at `newVersion`, not `expression-form`; the same claim with `pre(c.versionNumber)` still refuses `expression-form`, with no checked claim. A predicate with an unknown name and a recognised operator, `{ eventually c.versionNumber = newName }`, refuses `missing-name` at `newName`, not `expression-form`. | Test (TC-590) |
 | FR-165-AC-6 | Over the same `over (c: Config::ConfigVersion)`, S1 refuses `invalid_syntax`, with no claim, at the named token: `{ if eventually c.versionNumber = 1 then c.versionNumber = 2 else c.versionNumber = 3 }` and `{ let n = eventually c.versionNumber = 1 in n = 2 }` at `eventually`; `{ exists(d in c.versionNumber: eventually d = 2) }`, `{ f(c.versionNumber, eventually c.versionNumber = 1) }` and `{ c.versionNumber = eventually c.versionNumber = 2 }` at `eventually`; `{ c.versionNumber = 1; fair weak Config::ConfigVersion::attemptUpdate }` at the `;` after the predicate; `from (c.versionNumber = 1; fair weak Config::ConfigVersion::attemptUpdate)` at the `;`; `from (fair weak Config::ConfigVersion::attemptUpdate; c.versionNumber = 1)` at `fair`; `unique path ... to (c.versionNumber = 2); fair weak Config::ConfigVersion::attemptUpdate` at `fair`; `{ c.versionNumber = 1 until c.versionNumber = 2 until c.versionNumber = 3 }` at the second `until`. | Test (TC-590) |
+| FR-165-AC-7 | In a unit with `profile v = "filament.value.complete/v1";` and `profile inf = "filament.temporal.infinite-trace/v1";`, `possible Bad using inf over (c: Config::ConfigVersion) { c.versionNumber = 2 }` refuses `unknown_profile`/`wrong-selection-role` at `inf`, retaining alias `inf`, the identity and the required kind state-bearing layer, with no checked claim; the same claim `using v` checks to `Possible`; `always possible` and `unique path` claims `using inf` refuse the same way. | Test (TC-1545) |
 
 ## Dependencies
 
