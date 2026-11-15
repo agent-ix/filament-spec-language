@@ -10,7 +10,7 @@
 
 use super::*;
 use filament_checked::node::{CaseArm, CheckedLiteral};
-use filament_exact::{CollectionType, ScalarLimits};
+use filament_exact::{CollectionType, IntegerInterval, ScalarLimits};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_semantics::check::union_fixture as fixture;
