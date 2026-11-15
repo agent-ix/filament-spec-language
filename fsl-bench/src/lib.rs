@@ -18,6 +18,12 @@
 //!   `read_domain_package`), then normalization and population admission.
 //! - [`recursion`]: N self-recursive functions, N recursive components.
 //! - [`rss`]: the process's peak resident set size, for the probe.
+//! - [`world`]: a parametrised one-type domain package, native unit and
+//!   initial snapshot, checked and linked.
+//! - [`mc`]: the model-check, state-graph, protocol-reach, key-encoding and
+//!   statistical-sampling axes built on [`world`].
+//! - [`counters`] (feature `counters`): the workload counters those axes
+//!   assert.
 //! - [`text_cluster`]: N mutually referencing, Text-reachable records and
 //!   one structural equality, for FR-093's text-leaf walk.
 //!
@@ -36,9 +42,13 @@ pub fn widen(count: usize) -> u64 {
 }
 
 pub mod check;
+#[cfg(feature = "counters")]
+pub mod counters;
 pub mod deep_input;
+pub mod mc;
 pub mod model;
 pub mod parse;
 pub mod recursion;
 pub mod rss;
 pub mod text_cluster;
+pub mod world;

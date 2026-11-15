@@ -654,11 +654,6 @@ fn real_workspace_decisions_keep_every_package_whose_compile_changes() {
         verdict("fsl-source"),
         &Verdict::Run(KeepReason::OwnFeatures)
     );
-    // No optional features of its own, but a dependency's features change.
-    assert_eq!(
-        verdict("fsl-bench"),
-        &Verdict::Run(KeepReason::DependencyResolvesDifferently {
-            dependency: "fsl-replay".to_owned()
-        })
-    );
+    // The benchmark's counters feature is enabled only by the all-features lane.
+    assert_eq!(verdict("fsl-bench"), &Verdict::Run(KeepReason::OwnFeatures));
 }
