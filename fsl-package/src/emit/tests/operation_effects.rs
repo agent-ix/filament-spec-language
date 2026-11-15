@@ -659,7 +659,7 @@ fn wire_without_member(package: &CheckedPackageV2) -> Value {
             temporal_bindings: package.temporal_bindings(),
             temporal_clause_names: package.temporal_clause_names(),
             operation_effects: None,
-            operation_bodies: None,
+            operation_bodies: package.operation_body_rows(),
             schedulability_claims: (!schedulability_claims.is_empty())
                 .then_some(schedulability_claims.as_slice()),
         },

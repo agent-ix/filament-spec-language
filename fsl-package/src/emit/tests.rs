@@ -64,6 +64,7 @@ mod mapping_support;
 mod native_row_budget;
 mod navigation;
 mod one_occurrence;
+mod operation_bodies;
 mod operation_effects;
 mod option_value;
 mod output_limit;
@@ -306,6 +307,16 @@ pub(super) fn wire(emission: &Emission) -> Value {
     fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
         .expect("every operand slot names a row entry");
     wire
+}
+
+/// The `operation_bodies` member read from the emitted package bytes, so a
+/// row the encoder was not given is absent here.
+pub(super) fn body_rows(
+    emission: &Emission,
+) -> Option<Vec<filament_contract_model::OperationBodyRow>> {
+    let wire = raw_wire(emission);
+    let member = wire.get("operation_bodies")?;
+    Some(serde_json::from_value(member.clone()).expect("the member is a list of body rows"))
 }
 
 /// The emitted package's own JSON, operand slots and rows as written.

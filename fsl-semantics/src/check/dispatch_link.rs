@@ -32,9 +32,11 @@ use fsl_foundation::Span;
 
 use super::check::DispatchOperation;
 use super::checked_dispatch::{
-    checked_dispatch_core, rename_names, DispatchBridgeRefusal, DispatchRoot, OperationClauses,
+    body_clause, body_function, checked_dispatch_core, rename_names, DispatchBridgeRefusal,
+    DispatchRoot, OperationClauses,
 };
 use super::ir::{DispatchCandidate, DispatchTable};
+use super::lowering::ModelClause;
 use super::refusal::{DispatchLinkCause, DispatchSubtypeFailure};
 use super::{CheckCause, CheckRefusal, PackageDeclarations};
 use crate::model::accounting::{Meter, ModelNormalizationLimits};
@@ -148,9 +150,6 @@ impl PackageDeclarations {
         limits: ModelNormalizationLimits,
     ) -> Result<PendingLinks, Vec<CheckRefusal>> {
         let called = self.called_members();
-        if called.is_empty() {
-            return Ok(PendingLinks::default());
-        }
         let mut meter = Meter::new(limits);
         let mut pending = PendingLinks::default();
         let mut linked = Vec::new();
@@ -207,12 +206,112 @@ impl PackageDeclarations {
                 refusals.push(dispatch_link(*cause));
             }
         }
+        refusals.extend(self.build_uncalled_bodies());
         refusals.extend(self.body_arity_refusals(first_new));
         if refusals.is_empty() {
             Ok(pending)
         } else {
             Err(refusals)
         }
+    }
+
+    /// FR-094, FR-576: builds the body clause function of every operation with
+    /// a body that linking did not build one for, because no dispatched call
+    /// reaches its family or its family is not dispatch-eligible, so
+    /// `check` types every body whether or not a call reaches it (FR-302).
+    /// The function is the one linking builds for a candidate
+    /// ([`body_function`]), so its node does not depend on a call. An
+    /// operation without a declared result has no result type to check its
+    /// body against: its body refuses `ill_typed`/`type-mismatch`
+    /// (FR-576-AC-10). One function per operation key, whichever aliases
+    /// select its document. A body that cannot be built refuses as a broken
+    /// invariant (FR-302), never silently.
+    fn build_uncalled_bodies(&mut self) -> Vec<CheckRefusal> {
+        let mut built: BTreeSet<DeclarationKey> = self
+            .model_clauses
+            .values()
+            .filter(|clause| clause.kind == DeclaredClauseKind::Body)
+            .map(|clause| clause.declaration.clone())
+            .collect();
+        let mut refusals = Vec::new();
+        let mut functions = Vec::new();
+        for view in self.selected_views.values() {
+            let keys: Vec<(DeclarationKey, &super::OperationBodyDeclaration)> = view
+                .domain_package()
+                .records
+                .iter()
+                .filter_map(|record| match record {
+                    DomainPackageRecord::OperationMember(operation) => self
+                        .operation_body(&operation.key)
+                        .map(|body| (operation.key.clone(), body)),
+                    _ => None,
+                })
+                .filter(|(key, _)| !built.contains(key))
+                .collect();
+            if keys.is_empty() {
+                continue;
+            }
+            let Some(clauses) = self.view_clauses(view) else {
+                refusals.extend(
+                    keys.into_iter()
+                        .map(|(key, _)| dispatch_link(invariant(key))),
+                );
+                continue;
+            };
+            for (key, body) in keys {
+                if !built.insert(key.clone()) {
+                    continue;
+                }
+                let spans = body.spans.clone();
+                if !clauses.result.contains_key(&key) {
+                    // FR-576-AC-10: no declared result to check the body
+                    // against, so the body is a type mismatch, located at it.
+                    let parameters = clauses.parameters.get(&key).map_or(&[][..], Vec::as_slice);
+                    let built_function = body_clause(&key, &clauses, parameters)
+                        .ok()
+                        .and_then(|function| function.with_spans(spans).ok());
+                    match built_function {
+                        Some(function) => functions.push((key, function, None)),
+                        None => refusals.push(dispatch_link(invariant(key))),
+                    }
+                    continue;
+                }
+                match body_function(&key, &clauses)
+                    .ok()
+                    .and_then(|(function, signature)| {
+                        Some((function.with_spans(spans).ok()?, signature))
+                    }) {
+                    Some((function, signature)) => {
+                        functions.push((key, function, Some(signature)));
+                    }
+                    None => refusals.push(dispatch_link(invariant(key))),
+                }
+            }
+        }
+        for (key, function, signature) in functions {
+            let index = self.functions.len();
+            let Some(signature) = signature else {
+                refusals.push(CheckRefusal::ill_typed(
+                    &Location::root(Origin::Body {
+                        function: function.name.clone(),
+                        index,
+                    }),
+                    IllTypedCause::TypeMismatch,
+                ));
+                self.functions.push(function);
+                continue;
+            };
+            self.resolved_signatures.insert(index, signature);
+            self.model_clauses.insert(
+                index,
+                ModelClause {
+                    declaration: key,
+                    kind: DeclaredClauseKind::Body,
+                },
+            );
+            self.functions.push(function);
+        }
+        refusals
     }
 
     /// The member names of the dispatched calls in the unit's state clauses

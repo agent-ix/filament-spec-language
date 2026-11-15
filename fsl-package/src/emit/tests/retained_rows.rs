@@ -530,7 +530,7 @@ fn a_row_naming_a_node_no_rename_touches_is_carried_unchanged() {
 /// ids become declaration-less content keys) to the row carry, so a retained
 /// row that names either by its id in the base package names it by its new id
 /// in the returned package.
-#[trace("TC-1081", "FR-251-AC-42")]
+#[trace("TC-1081", "FR-251-AC-42", "FR-576-AC-1")]
 #[test]
 fn the_writers_renames_reach_the_rows_it_carries() {
     use super::admission_corpus::config_version_unit;
@@ -547,7 +547,8 @@ fn the_writers_renames_reach_the_rows_it_carries() {
         function e0 using v(s: State): State pure { s }\n\
         function e1 using v(s: State, i: Inputs): State pure { s }\n\
         function e2 using v(s: State, p: Scope): State pure { s }\n\
-        function e3 using v(s: State, g: Integer): State pure { s }\n";
+        function e3 using v(s: State, g: Integer): State pure { s }\n\
+        body updateBody using v on Config::ConfigVersion::attemptUpdate() { true }\n";
     let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let unit = super::clock_places::clocked_unit(body).replace(
@@ -637,6 +638,13 @@ fn the_writers_renames_reach_the_rows_it_carries() {
     )
     .expect("the plan root is written");
 
+    let bodies = body_rows(&emission).expect("the base carries operation_bodies");
+    assert!(!bodies.is_empty());
+    assert_eq!(
+        body_rows(&rooted),
+        Some(bodies),
+        "the plan writer carries the operation bodies"
+    );
     let after: Vec<&CheckedNodeId> = rooted.wire_nodes.iter().map(|n| &n.node_id).collect();
     let carried: Vec<&CheckedNodeId> = rooted.omitted().iter().map(|row| &row.node).collect();
     assert_eq!(carried.len(), 5);
