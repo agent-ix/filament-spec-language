@@ -748,13 +748,13 @@ fn weight(
     value: &fsl_forms::ExactValueForm,
     ceiling: u64,
     location: Location,
-    allow_zero: bool,
+    zero_is_valid: bool,
     owner: impl FnOnce() -> WeightOwner,
 ) -> Result<Rational, CheckRefusal> {
     let span = value.span;
     let rational = exact::value(value, ceiling)
         .map_err(|fault| super::exact_refusal(fault, ceiling, span, location))?;
-    if rational.numerator().is_negative() || (!allow_zero && rational.is_zero()) {
+    if rational.numerator().is_negative() || (!zero_is_valid && rational.is_zero()) {
         return Err(refusal(ProbabilisticCause::InvalidWeight {
             owner: owner(),
             span,

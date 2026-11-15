@@ -2895,12 +2895,12 @@ fn a_weight_sum_past_the_ceiling_refuses_promptly() {
 #[trace("TC-620")]
 #[test]
 fn a_second_weight_after_an_invalid_one_is_still_a_duplicate() {
-    let workload = "workload Steady on Service { weight Server::request = 0; \
+    let workload = "workload Steady on Service { weight Server::request = rational(-1, 1); \
          weight Server::attempt = 1; weight Server::reset = 1; weight Server::request = 2; }";
     assert_eq!(
         located(&service(Some((STEADY, workload)), "")),
         [
-            invalid("invalid-weight", "0"),
+            invalid("invalid-weight", "rational(-1, 1)"),
             invalid("duplicate-weight", "weight Server::request = 2;")
         ]
     );
