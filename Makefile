@@ -418,8 +418,8 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 
 
 # The committed performance benchmarks (`fsl-bench/`), one
-# criterion bench per axis, each runnable by name. `make bench` runs all
-# six; `make bench-probe` prints the counts, refusal boundaries and one-shot
+# criterion bench per axis group, each runnable by name. `make bench` runs all
+# ten; `make bench-probe` prints the counts, refusal boundaries and one-shot
 # large-input timings (with peak RSS) the criterion benches do not record.
 # Compare a candidate with current main in one interleaved session; see
 # `fsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
@@ -427,7 +427,7 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 # Not part of `ci:`
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
-BENCH_AXES := parser checker cst model evaluator text_cluster
+BENCH_AXES := parser checker cst model evaluator text_cluster mc reach key en4
 
 .PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
 
@@ -448,3 +448,13 @@ bench-probe:
 	for b in 1 64 256; do $(BENCH_PROBE) check deep-wide $$b || exit 1; done
 	for n in 1 1000; do $(BENCH_PROBE) eval $$n || exit 1; done
 	$(BENCH_PROBE) model 4000 4 100
+	for s in "2 2" "3 3" "4 4" "5 4"; do $(BENCH_PROBE) mc state_graph $$s || exit 1; done
+	for s in "3 3" "4 4" "5 4"; do $(BENCH_PROBE) mc state_graph_symmetric $$s || exit 1; done
+	for a in safety deadlock liveness; do for s in "2 2" "3 3" "4 4"; do $(BENCH_PROBE) mc $$a $$s || exit 1; done; done
+	for s in "2 1" "3 3" "4 5"; do $(BENCH_PROBE) mc frame_candidates $$s || exit 1; done
+	for n in 1 50 400; do $(BENCH_PROBE) mc observation $$n || exit 1; done
+	for a in reach_1 reach_2 reach_4 reach_all; do for b in 2 4 6; do $(BENCH_PROBE) mc $$a $$b || exit 1; done; done
+	for s in "1 1" "50 4" "500 8"; do $(BENCH_PROBE) mc encode $$s || exit 1; done
+	for e in 400 120 48; do $(BENCH_PROBE) mc sample $$e || exit 1; done
+	$(BENCH_PROBE) mc-marginal state_graph 3 3 -- 5 4
+	$(BENCH_PROBE) mc-marginal safety 3 3 -- 4 4
