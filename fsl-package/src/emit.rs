@@ -26,8 +26,8 @@ use filament_contract_model::{
     CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
     CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
     CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
-    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, ProtocolForm,
-    ScalarTypeForm, StateForm, ValueForm,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -2431,6 +2431,43 @@ fn member_value(ids: &StructuralIds, member: &Member) -> Result<serde_json::Valu
             }
         }),
     })
+}
+
+/// FR-576: the `operation_bodies` rows of `graph`, sourced from the checked
+/// body function of each operation. A body node or declaring node the package
+/// does not carry makes the whole member unavailable, as for
+/// [`operation_effects_are_carried`]; the rows are never partial.
+fn operation_body_rows(
+    graph: &CheckedGraph,
+    emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    nodes: &[CheckedSemanticNodeV2],
+) -> Option<Vec<OperationBodyRow>> {
+    let carried: BTreeSet<&CheckedNodeId> = nodes.iter().map(|node| &node.node_id).collect();
+    graph
+        .operation_bodies()?
+        .iter()
+        .map(|row| {
+            let body = match row.body {
+                None => OperationBody::NoBody,
+                Some(index) => {
+                    let identity = graph.function_identity_at(index)?;
+                    OperationBody::Function {
+                        node: emitted_node_ids.get(&identity)?.clone(),
+                    }
+                }
+            };
+            let named = match &body {
+                OperationBody::Function { node } => carried.contains(node),
+                OperationBody::NoBody => true,
+            };
+            (named && carried.contains(&row.declaring)).then(|| OperationBodyRow {
+                document: row.document.as_str().into(),
+                declaring: row.declaring.clone(),
+                operation: row.operation.as_str().into(),
+                body,
+            })
+        })
+        .collect()
 }
 
 /// Whether every node an `operation_effects` row names is a node of the
@@ -5633,7 +5670,7 @@ pub fn emit_timed_models(
                 temporal_clause_names: base.temporal_clause_names(),
                 operation_effects: operation_effects.as_deref(),
                 schedulability_claims: None,
-                operation_bodies: None,
+                operation_bodies: base.operation_body_rows(),
             },
             &capability_report,
             &diagnostics,
@@ -6668,6 +6705,7 @@ fn emit_package_inner(
     let operation_effects = graph
         .operation_effects()
         .filter(|rows| operation_effects_are_carried(rows, &nodes));
+    let operation_body_rows = operation_body_rows(graph, &emitted_node_ids, &nodes);
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: GRAPH_V2.into(),
@@ -6698,7 +6736,7 @@ fn emit_package_inner(
                 temporal_clause_names: (!temporal_clause_names.is_empty())
                     .then_some(temporal_clause_names.as_slice()),
                 operation_effects,
-                operation_bodies: None,
+                operation_bodies: operation_body_rows.as_deref(),
                 schedulability_claims: (!schedulability_claim_rows.is_empty())
                     .then_some(schedulability_claim_rows.as_slice()),
             },

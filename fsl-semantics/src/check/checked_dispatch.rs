@@ -329,6 +329,38 @@ fn require_signature(
     Ok((parameters, result))
 }
 
+/// FR-094, FR-576: the body clause function of `operation` and its resolved
+/// signature, built one way for a dispatch candidate and for an operation
+/// with a body that no dispatched call reaches, so the function, and the node
+/// the emitter builds from it, is equal whether or not a call reaches it.
+pub(crate) fn body_function(
+    operation: &DeclarationKey,
+    clauses: &OperationClauses,
+) -> Result<(FunctionDeclaration, super::check::ResolvedSignature), DispatchBridgeRefusal> {
+    let signature = require_signature(clauses, operation)?;
+    let function = body_clause(operation, clauses, &signature.0)?;
+    Ok((function, signature))
+}
+
+/// The body clause function of `operation` over `parameters`, shared by
+/// [`body_function`] and the FR-576-AC-10 refusal of a body whose operation
+/// declares no result, which has a function to locate but no signature.
+pub(crate) fn body_clause(
+    operation: &DeclarationKey,
+    clauses: &OperationClauses,
+    parameters: &[(String, ValueType)],
+) -> Result<FunctionDeclaration, DispatchBridgeRefusal> {
+    let body = require_expression(&clauses.own_body, operation, MissingClauseField::OwnBody)?;
+    Ok(FunctionDeclaration::clause(
+        operation.node.clone(),
+        opaque_parameters(parameters),
+        opaque_type_form(),
+        None,
+        body,
+        DeclaredClauseKind::Body,
+    ))
+}
+
 /// The FR-151 dispatch-eligible operation [`checked_dispatch_operation`] is
 /// asked to check: its own key, and whether the generalization closure is
 /// known closed. Grouped into one value to keep that function's own
@@ -1065,7 +1097,7 @@ pub(crate) fn checked_dispatch_core(
     let mut precondition_clauses_index: BTreeMap<DeclarationKey, Vec<usize>> = BTreeMap::new();
 
     for candidate in &ordered_candidates {
-        let (parameters, result) = require_signature(clauses, candidate)?;
+        let (parameters, _) = require_signature(clauses, candidate)?;
 
         let terms = effective_terms(candidate, clauses, &redefinitions, &mut memo, &mut steps)?;
         if let Some(terms) = terms {
@@ -1115,11 +1147,9 @@ pub(crate) fn checked_dispatch_core(
         clause_functions.dedup();
         precondition_clauses_index.insert(candidate.clone(), clause_functions);
 
-        let own_body =
-            require_expression(&clauses.own_body, candidate, MissingClauseField::OwnBody)?;
+        let (function, signature) = body_function(candidate, clauses)?;
         let index = functions.len();
-        let declared_parameters = opaque_parameters(&parameters);
-        resolved_signatures.insert(index, (parameters, result));
+        resolved_signatures.insert(index, signature);
         model_clauses.insert(
             index,
             ModelClause {
@@ -1127,14 +1157,7 @@ pub(crate) fn checked_dispatch_core(
                 kind: DeclaredClauseKind::Body,
             },
         );
-        functions.push(FunctionDeclaration::clause(
-            candidate.node.clone(),
-            declared_parameters,
-            opaque_type_form(),
-            None,
-            own_body,
-            DeclaredClauseKind::Body,
-        ));
+        functions.push(function);
         body_index.insert(candidate.clone(), index);
     }
 

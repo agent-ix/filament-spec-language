@@ -459,7 +459,12 @@ fn producer_dispatch_table_reads_with_ordered_candidate_witnesses() {
 #[trace("TC-1283", "FR-494-AC-2", "FR-494-AC-4")]
 #[test]
 fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
+    // Every redefinition in the called family carries its own body: the typed
+    // reader joins a candidate to the row of its receiver's effective
+    // operation owner, and a body-less redefinition's row is `no_body`.
     let declarations = "body sizeA using v on Config::ConfigVersion::size() { 1 }\n\
+         body sizeB using v on Config::Sub::size() { 2 }\n\
+         body sizeC using v on Config::Leaf::size() { 3 }\n\
          body otherSize using v on Config::Other::size() { 9 }\n\
          pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }\n\
          pre otherCall using v on Config::Other::probe { self.size() > 0 }\n";
@@ -498,6 +503,8 @@ fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
         "pre otherCall using v on Config::Other::probe { self.size() > 0 }\n\
          body otherSize using v on Config::Other::size() { 9 }\n\
          pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }\n\
+         body sizeC using v on Config::Leaf::size() { 3 }\n\
+         body sizeB using v on Config::Sub::size() { 2 }\n\
          body sizeA using v on Config::ConfigVersion::size() { 1 }\n";
     let (permuted_bytes, permuted_capture) = emit_with_capture(permuted_declarations);
     let permuted_package = admitted(&permuted_bytes);
@@ -570,4 +577,35 @@ fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
             .as_deref(),
         Some("/checked_term_data/dispatch_tables/0/candidates/0/selected_operation")
     );
+}
+
+/// FR-576-AC-4, AC-7: a model with several bodies reads back through the typed
+/// reader, which joins each dispatch candidate to the `operation_bodies` row
+/// of its receiver's effective operation owner and requires them to agree.
+#[trace("FR-576-AC-7", "TC-1011")]
+#[test]
+fn operation_bodies_of_a_multi_body_model_read_back_through_the_typed_reader() {
+    let (bytes, _) = emit_with_capture(
+        "body sizeA using v on Config::ConfigVersion::size() { 1 }\n\
+         body sizeB using v on Config::Sub::size() { 2 }\n\
+         body otherSize using v on Config::Other::size() { 9 }\n\
+         body sizeC using v on Config::Leaf::size() { 3 }\n\
+         pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }\n\
+         pre otherCall using v on Config::Other::probe { self.size() > 0 }\n",
+    );
+    let package = admitted(&bytes);
+    let rows = package
+        .operation_body_rows()
+        .expect("the package carries operation_bodies");
+    let with_body = rows
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.body,
+                filament_contract_model::OperationBody::Function { .. }
+            )
+        })
+        .count();
+    assert_eq!(with_body, 4, "one body row per authored body: {rows:?}");
+    assert_eq!(rows.len(), 7, "one row per operation: {rows:?}");
 }

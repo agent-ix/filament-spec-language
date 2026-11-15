@@ -1293,6 +1293,25 @@ fn finish(
         })
         .collect::<Vec<_>>()
     });
+    let rekey = Rekey(changes);
+    let operation_bodies = base.operation_body_rows().map(|rows| {
+        let mut rows = rows.to_vec();
+        for row in &mut rows {
+            rekey.id(&mut row.declaring);
+            if let filament_contract_model::OperationBody::Function { node } = &mut row.body {
+                rekey.id(node);
+            }
+        }
+        // The rows are written in key order, which a rename can change.
+        rows.sort_by(|left, right| {
+            left.document
+                .as_bytes()
+                .cmp(right.document.as_bytes())
+                .then_with(|| left.declaring.cmp(&right.declaring))
+                .then_with(|| left.operation.as_bytes().cmp(right.operation.as_bytes()))
+        });
+        rows
+    });
     let package = EmittedPackage::new(base.name(), |name| {
         filament_contract_model::encode_checked_package_v2(
             name,
@@ -1308,7 +1327,7 @@ fn finish(
                 temporal_clause_names: base.temporal_clause_names(),
                 operation_effects: operation_effects.as_deref(),
                 schedulability_claims: None,
-                operation_bodies: None,
+                operation_bodies: operation_bodies.as_deref(),
             },
             &capability_report,
             &diagnostics,
