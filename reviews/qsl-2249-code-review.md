@@ -49,3 +49,12 @@ Tests are real and mostly assert every AC clause; FND-001 is a genuinely unteste
 | FND-002 | fixed | The missing-arm assertion now compares the full (code, cause) list to exactly [(UndefinedExpression, unproved-exhaustiveness)], and the nullary assertion also checks Code::IllTyped. |
 | FND-003 | fixed | The operand test now asserts the three if arguments reference c, s and t. |
 | FND-004 | fixed | fsl-semantics/src/check/mod.rs:124-125 now reads "hand-built rather than compiled from a checked package". |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-005 | deferred | QSL-2264 (child of QSL-2249). The presence retype was reverted in c317bdec9 (net diff vs origin/main has no assemble.rs, intake.rs, domain_package.rs or construction-site changes), so the untested retype does not ship. The IR read-back refusal that forced the revert is verified by reading the pinned IR 58fb1d8: state.rs:653-655 calls slot_type_charged(slot, false, ...), so IllTyped/OperatorIneligible at arguments[0]. |
+| FND-006 | deferred | QSL-2263, folded into QSL-2264: with parameter presence not applied, the redefinition gap is not reachable. |
+| FND-007 | deferred | Moot: the test and FR-104-AC-17 were removed with the revert. QSL-2264 should re-add the [0, 1] case with an assertion that bites (present(p) checks). |
+| FND-008 | fixed | an_unguarded_let_of_an_option_value_refuses_unproved_presence now asserts refusals.len() == 1 and location path [0] (the let's bound value(o)), as TC-1423 step 2 states. |

@@ -44,3 +44,16 @@ Not mergeable as is. FND-001 needs either an FSL fix applying presence to parame
 | FND-001 | fixed | Fix commit 9b72ef39e resolves it in code: OperationParameterRecord.presence read at intake (fsl-semantics/src/model/intake.rs:2727-2741) and applied in assemble.rs:2907-2912 (Option wraps the multiplicity's type, matching FR-056 lines 726-729 and FR-056-AC-10); FR-104 sentence and FR-104-AC-17 now restate FR-103's rule; TC-459 step 8 rewritten. |
 | FND-002 | fixed | FR-360 Description now scopes "variant type" to payload-free types, item 5 refuses `case` only over a payload-free variant type and names item 8's union scrutinee, item 8 now cites item 5. Residual wording is FND-004. |
 | FND-003 | fixed | The universal "No restriction on the position" sentence is removed from FR-093-AC-64. |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | The PR body's disposition 1 still cites "FR-360 item 6, ADR-012 §16.2" for the payload-free `case` refusal; the spec (fixed under FND-002) places it in item 5. | PR #2726 body, disposition 1, bullet 2 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Basis changed in c317bdec9: the code fix was reverted, and with it the FR-104 sentence and FR-104-AC-17 (FR-104 and TC-459 now equal origin/main, no FR-104-AC-17 reference outside reviews/). The PR no longer states the contradicting rule, and disposition 3 now calls AC-166 an FSL code-vs-FR-103 gap, ticketed as QSL-2264. That ticket's IR claim is verified at the pinned IR rev 58fb1d8: filament-contract-model checked_package/v2/state.rs:653-655 derives the operation parameter type with `optional = false` and refuses IllTyped/OperatorIneligible at arguments[0]. |
+| FND-004 | fixed | The FR-360 Description now qualifies the enum-typing SHALL to payload-free variant types and says FR-056 makes a payload-bearing one a union; the scoping sentence reads "in this requirement", and FR-208's definition and FR-056's payload admission are separate sentences. |
