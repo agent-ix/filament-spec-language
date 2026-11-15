@@ -9,8 +9,7 @@
 //! shows them:
 //!
 //! - [`fingerprint`] drives a breadth-first search over a
-//!   [`ModelSystem`](fsl_eval::simulation::model::ModelSystem) through its
-//!   [`TransitionSystem`](fsl_eval::simulation::TransitionSystem) seam:
+//!   [`ModelSystem`] through its [`TransitionSystem`] seam:
 //!   `expansions` is the calls of `successors`, `edges` and
 //!   `generated_candidates` are the successor tuples it returned, `states`
 //!   the distinct canonical keys and `canonical_encodes` the calls of
