@@ -100,6 +100,7 @@ pub(super) fn read(
         limits: SpineLimits::default(),
         observation_limits,
         accounting: super::call_accounting(&clause.accounting),
+        clocks: request.clocks.clone(),
     })
     .map_err(|error| invalid(error.member, error.reason))
 }

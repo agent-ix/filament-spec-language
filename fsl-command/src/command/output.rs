@@ -134,10 +134,24 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::AnalyzeFault => (types::Stage::Output, types::Details::None),
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
-            types::Details::Spine {
-                source: &failure.source,
-                path: &failure.path,
-                span: failure.span,
+            match &failure.refusal {
+                fsl_replay::spine::CompileRefusal::Emit(
+                    fsl_replay::spine::EmitRefusal::ClockSelection(refusal),
+                    _,
+                ) => types::Details::ClockSelection {
+                    cause: refusal.cause.as_str(),
+                    clock: &refusal.clock,
+                    declaration: refusal.declaration.as_ref().map(|at| at.name.as_str()),
+                    profile: refusal.declaration.as_ref().map(|at| at.profile.identity()),
+                    source: &failure.source,
+                    path: &failure.path,
+                    span: failure.span,
+                },
+                _ => types::Details::Spine {
+                    source: &failure.source,
+                    path: &failure.path,
+                    span: failure.span,
+                },
             },
         ),
         RunCause::SpineRun(refusal) => (

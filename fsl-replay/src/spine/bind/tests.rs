@@ -140,6 +140,7 @@ fn arg(parameter: &str, value: i64) -> CallArgument {
 
 fn call(function: &str, arguments: Vec<CallArgument>) -> Call {
     Call {
+        clocks: Default::default(),
         function: function.to_owned(),
         arguments,
         accounting: default_accounting(1_000_000),

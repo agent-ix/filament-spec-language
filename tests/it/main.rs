@@ -45,6 +45,7 @@ mod call_replay_context_items;
 mod call_requirements_items;
 mod checked_clause_kind_unique;
 mod clock_derivation;
+mod clock_selection;
 mod complete_cst;
 mod complete_editor;
 mod composition_planner;

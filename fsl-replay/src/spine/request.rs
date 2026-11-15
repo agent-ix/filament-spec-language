@@ -425,6 +425,8 @@ pub struct ClauseRequestParts {
     pub observation_limits: ObservationLimits,
     /// Evaluation meter limits.
     pub accounting: ScalarLimits,
+    /// FR-640: the request's clock configurations by clock name.
+    pub clocks: super::RequestClocks,
 }
 
 /// A closed clause request member that cannot be reconstructed.
@@ -837,6 +839,7 @@ pub fn read_clause_run_request(
         limits: parts.limits,
         observation_limits: parts.observation_limits,
         accounting: parts.accounting,
+        clocks: parts.clocks,
     })
 }
 

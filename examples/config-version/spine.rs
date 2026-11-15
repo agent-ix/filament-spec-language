@@ -340,7 +340,7 @@ pub fn request(directory: &Path, case: Case) -> io::Result<ClauseRunRequest> {
     };
     let written = written(directory, case)?;
     Ok(ClauseRunRequest {
-        // Every case reads byte-identical `unit_text()`, so the unit's own
+        clocks: Default::default(), // Every case reads byte-identical `unit_text()`, so the unit's own
         // `SourceIdentity` and package name are the same fixed values across
         // cases (TC-469 step 6's "every case shares the same unit and
         // package").

@@ -980,6 +980,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
             &fsl_replay::spine::DependencyInput::default(),
             fsl_replay::spine::SpineLimits::default(),
             &Call {
+                clocks: Default::default(),
                 function: function.to_owned(),
                 arguments,
                 accounting: default_accounting(work_units),

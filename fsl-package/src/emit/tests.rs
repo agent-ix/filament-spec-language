@@ -2008,6 +2008,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::InvalidTemporalClockValue { .. }) => {
                 panic!("the fixture set selects only valid temporal clock values")
             }
+            Err(EmitRefusal::ClockSelection(_)) => {
+                panic!("the emitter never resolves clock names")
+            }
             Err(EmitRefusal::SourceObjectEmission { .. }) => {
                 panic!("the fixture set declares no source object type")
             }

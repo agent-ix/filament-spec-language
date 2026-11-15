@@ -1542,6 +1542,7 @@ pub fn check(
         parsed,
         package_name,
         None,
+        &[],
         models,
         dependencies,
         limits,
@@ -1693,6 +1694,7 @@ pub fn check_units_with_refinement_internals(
     admitted: &AdmittedUnitList,
     package_name: String,
     refinement_internals: Option<serde_json::Value>,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -1705,6 +1707,7 @@ pub fn check_units_with_refinement_internals(
         dependencies,
         UnitCheckOptions {
             refinement_internals: refinement_internals.as_ref(),
+            temporal_selections,
             ..UnitCheckOptions::default()
         },
         limits,
@@ -1871,20 +1874,25 @@ pub fn check_with_refinement_internals(
     parsed: &ParsedUnitSource,
     package_name: String,
     refinement_internals: Option<serde_json::Value>,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
-    check_with_execution_points_and_refinement_internals(
+    check_with_context_and_temporal_selections(
         parsed,
         package_name,
         &BTreeMap::new(),
         refinement_internals,
+        temporal_selections,
+        None,
+        None,
         models,
         dependencies,
         limits,
         cancel,
+        false,
     )
 }
 

@@ -34,6 +34,7 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
 #[test]
 fn a_members_item_bounds_build_a_request_that_replays() {
     let call = Call {
+        clocks: Default::default(),
         function: "q".to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),

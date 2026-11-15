@@ -212,6 +212,10 @@ pub enum EmitRefusal {
     /// (FSpec FR-487).
     #[error("the tick-monitor plan cannot be written: {0}")]
     MonitorPlanInvariant(&'static str),
+    /// FR-640: a clock selection keyed by clock name does not fit the
+    /// program's clock-bearing declarations.
+    #[error("{0}")]
+    ClockSelection(ClockSelectionRefusal),
     /// The strict reader refused the base package the plan root is written
     /// over (FR-251 "Fault boundary", QSL-1822), so no plan root exists for
     /// it. The refusal is the reader's, not a broken producer invariant. For
@@ -436,6 +440,7 @@ impl EmitRefusal {
             | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
+            Self::ClockSelection(_) => Code::InvalidRequest,
             Self::TimedModelNodeSetMismatch
             | Self::UnkeyedProbabilisticClaim { .. }
             | Self::TimedOrder(_) => Code::RuntimeInvariant,
@@ -463,6 +468,7 @@ impl EmitRefusal {
         match self {
             Self::StaleProtocolReference { .. } => Some("missing-name"),
             Self::MonitorBaseRefused(_) => None,
+            Self::ClockSelection(refusal) => Some(refusal.cause.as_str()),
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Some("not-yet-implemented"),
@@ -7426,12 +7432,21 @@ fn temporal_clock_invalid_field(
     clock_name: &str,
     clock: &filament_contract_model::ClockConfiguration,
 ) -> Option<&'static str> {
+    if !fsl_foundation::selection::valid_selection_identity(clock_name) {
+        return Some("clock_name");
+    }
+    clock_configuration_invalid_field(clock)
+}
+
+/// The first member of `clock` that is empty, oversized, noncanonical or
+/// outside its declared range (a non-positive `period`, a non-reduced
+/// rational); `None` for a well-formed configuration.
+pub fn clock_configuration_invalid_field(
+    clock: &filament_contract_model::ClockConfiguration,
+) -> Option<&'static str> {
     use filament_contract_model::ClockConfiguration;
 
     let valid_name = |value: &str| fsl_foundation::selection::valid_selection_identity(value);
-    if !valid_name(clock_name) {
-        return Some("clock_name");
-    }
     match clock {
         ClockConfiguration::EventPosition { sequence_authority } => {
             (!valid_name(sequence_authority)).then_some("sequence_authority")
@@ -8319,11 +8334,16 @@ mod selected_rows;
 #[cfg(test)]
 pub(crate) mod tests;
 
+mod clock_selection;
 pub(crate) mod equality_reader;
 /// ADR-014 §4 (TC-440): FSL's extent classification agrees with
 /// IR's `requires-bound` at the pinned IR revision.
 #[cfg(test)]
 mod extent_agreement;
+pub use clock_selection::{
+    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
+    ClockSelectionDeclaration, ClockSelectionRefusal,
+};
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;

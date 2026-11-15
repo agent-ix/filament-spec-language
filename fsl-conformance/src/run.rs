@@ -443,6 +443,7 @@ fn run_execute(
     ))));
 
     let call = Call {
+        clocks: Default::default(),
         function: input.function.to_owned(),
         arguments: input
             .arguments

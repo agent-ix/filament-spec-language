@@ -90,6 +90,20 @@ pub(super) enum Details<'a> {
         path: &'a str,
         span: Option<LocatedSpan>,
     },
+    /// FR-640: a `clocks` selection that does not fit the program, naming
+    /// the cause, the clock and, where one declaration is at fault, its
+    /// name and profile, with the program locus.
+    ClockSelection {
+        cause: &'static str,
+        clock: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        declaration: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        profile: Option<&'static str>,
+        source: &'a SourceIdentity,
+        path: &'a str,
+        span: Option<LocatedSpan>,
+    },
     /// FR-100: a stage-`call` refusal naming the request's `function`
     /// string (`missing_declaration`, `unsupported_construct`).
     Function {

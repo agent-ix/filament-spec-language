@@ -3312,6 +3312,7 @@ fn a_cancel_tripped_mid_run_is_cancelled_with_its_cause_never_a_fault() {
             &DependencyInput::default(),
             SpineLimits::default(),
             &crate::spine::Call {
+                clocks: Default::default(),
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
                 accounting: default_accounting(DEFAULT_WORK_UNITS),
@@ -3448,6 +3449,7 @@ fn an_unimported_library_internal_list_defect_refuses_the_compile_at_its_owner()
         &parsed,
         "fixture".to_owned(),
         None,
+        &[],
         &models,
         &dependencies,
         limits,

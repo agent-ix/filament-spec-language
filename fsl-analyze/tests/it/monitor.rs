@@ -580,6 +580,7 @@ fn each_record_renders_as_the_item_the_document_holds() {
 /// clause from source.
 fn replayed(world: &World, name: &str, formula: &str, trace: TraceInput) -> ClauseRunReport {
     run_clause(ClauseRunRequest {
+        clocks: Default::default(),
         source: ClauseRunSource::Program {
             identity: fsl_foundation::SourceIdentity::new("agent-ix", "counter"),
             path: "counter.native".to_owned(),

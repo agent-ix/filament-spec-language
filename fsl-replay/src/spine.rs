@@ -34,7 +34,10 @@ use fsl_foundation::diagnostic::{unit_spelling, LimitExceeded, Locus};
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::Setting;
 use fsl_foundation::{Code, SourceIdentity, Span};
-use fsl_package::{EmitRefusal, ImportViewRefusal, LinkRefusal, OmittedNode};
+pub use fsl_package::{
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, EmitRefusal,
+};
+use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ExtensionCause,
@@ -46,7 +49,9 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{UnitIntakeCause, UnitIntakeRefusal};
 use fsl_semantics::model::refusal::MemberPath;
 
+mod clocks;
 mod lifecycle;
+pub use clocks::{InvalidClock, RequestClocks};
 mod subject;
 pub use lifecycle::{
     admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,

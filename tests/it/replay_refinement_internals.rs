@@ -137,6 +137,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
         &admitted,
         ROOT.into(),
         Some(root_internals.clone()),
+        &[],
         &models,
         &dependencies,
         limits,
