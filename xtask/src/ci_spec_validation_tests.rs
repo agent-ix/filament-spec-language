@@ -93,7 +93,7 @@ fn main() {
 }
 "#;
 
-/// Provenance: QSL-2262.
+#[trace("TC-920", "NFR-002-AC-3")]
 #[test]
 fn spec_validation_uses_node_without_exposing_quoin_to_path() {
     let fixture = owned_fixture();
