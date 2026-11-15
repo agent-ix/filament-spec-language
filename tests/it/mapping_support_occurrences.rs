@@ -4,7 +4,7 @@
 use filament_contract_model::{
     CheckedNodeKind, CheckedOccurrenceRole, ClockConfiguration, TemporalForm,
 };
-use filament_spec_language::emit_checked_v2::{emit, ClockSelection, Request};
+use fsl_command::emit_checked_v2::{emit, ClockSelection, Request};
 use fsl_package::checked_views::{mapping_support, temporal_subject, Closure, Support, Unmatched};
 use ix_trace_rs::trace;
 

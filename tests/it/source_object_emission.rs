@@ -3,8 +3,8 @@
 //! object type, so a unit that declares one is refused at emission and writes
 //! nothing; a unit that declares none emits as before.
 
-use filament_spec_language::checked_handoff::{write, Corpus, ErrorCode};
-use filament_spec_language::emit_checked_v2::{self, Error, Request};
+use fsl_command::checked_handoff::{write, Corpus, ErrorCode};
+use fsl_command::emit_checked_v2::{self, Error, Request};
 use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 

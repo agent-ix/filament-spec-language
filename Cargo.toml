@@ -38,10 +38,6 @@ description = "Native finite-state specification syntax and source diagnostics"
 
 [features]
 default = []
-# `checked_handoff`, the writer of the checked-package handoff directory (the
-# package, its selection sidecar and the adverse mutation corpus) a downstream
-# crate reads back through Contract IR's reader. It adds no dependency.
-checked-handoff = []
 # `population_fixtures`, the writer of the `Population<T>[N]` Contract IR v2
 # packages the admission corpus emits (QSL-771). It embeds the spine-model
 # fixtures under `tests/fixtures/`, so the default build leaves it out. It adds

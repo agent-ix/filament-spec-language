@@ -316,6 +316,7 @@ impl Selection {
         compiled: &Compiled,
         request: &Request,
         bytes: &[u8],
+        command_source_file: Option<&str>,
     ) -> Result<Self, Error> {
         let graph = compiled.checked.package().graph();
         let wire = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
@@ -462,7 +463,10 @@ impl Selection {
             package: PackageRows {
                 contract_version: text(filament_contract_model::CHECKED_PACKAGE_V2),
                 package_name: text(&request.package_name),
-                unit: format!("sources/{}", compiled.checked.source().identity().identity),
+                unit: command_source_file.map_or_else(
+                    || format!("sources/{}", compiled.checked.source().identity().identity),
+                    |file| format!("sources/source:{file}"),
+                ),
                 execution_points: compiled.points.clone(),
                 read_limits: super::READ_LIMITS.into(),
                 evidence: EvidenceRows { models, libraries },
@@ -525,6 +529,7 @@ impl Selection {
             .collect();
         Ok(Inputs {
             source_path: labelled(&rows.unit, "source:")?,
+            source_identity: None,
             source: read(&rows.unit)?,
             models,
             libraries,

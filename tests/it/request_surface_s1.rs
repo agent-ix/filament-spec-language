@@ -294,7 +294,6 @@ fn handoff_request(directory: &Path, handoff: Value) -> std::path::PathBuf {
 /// checked-package handoff directory beside the compile.
 #[test]
 #[trace("TC-1748", "FR-665-AC-1")]
-#[ignore = "QSL-2193: the compile request's `handoff` member is not implemented yet"]
 fn a_compile_handoff_member_writes_the_directory() {
     let directory = tempfile::tempdir().unwrap();
     let path = handoff_request(
@@ -322,7 +321,6 @@ fn a_compile_handoff_member_writes_the_directory() {
 /// `invalid-request` naming it and writes no directory.
 #[test]
 #[trace("TC-1748", "FR-665-AC-3")]
-#[ignore = "QSL-2193: the compile request's `handoff` member is not implemented yet"]
 fn a_handoff_member_without_a_native_join_budget_refuses() {
     let directory = tempfile::tempdir().unwrap();
     let path = handoff_request(
@@ -730,7 +728,6 @@ fn context_and_value_invariant_selections_refuse_parameters() {
 /// --handoff` verifies a written handoff and refuses an altered one.
 #[test]
 #[trace("TC-1748", "FR-665-AC-2", "FSpec-TC-1244", "FSpec-FR-301-AC-5")]
-#[ignore = "QSL-2193: the handoff verify command is not implemented yet"]
 fn inspect_handoff_verifies_and_refuses_an_altered_copy() {
     let directory = tempfile::tempdir().unwrap();
     let path = handoff_request(
@@ -740,23 +737,19 @@ fn inspect_handoff_verifies_and_refuses_an_altered_copy() {
     );
     fsl_command::command::compile(&path)
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
-    let verified = driver(
-        directory.path(),
-        &["inspect", "--handoff", "handoff", "--format", "json"],
-    );
-    assert_eq!(verified.status.code(), Some(0), "{verified:?}");
-    assert_eq!(stdout_json(&verified)["operation"], "inspect");
+    let verified = fsl_command::command::inspect_handoff(&directory.path().join("handoff"))
+        .expect("a written handoff verifies");
+    let document: Value = serde_json::from_slice(&verified.to_bytes().unwrap()).unwrap();
+    assert_eq!(document["operation"], "inspect");
+    assert_eq!(document["category"], "success");
 
     let package = directory.path().join("handoff/checked-package.json");
     let mut bytes = std::fs::read(&package).unwrap();
     let last = bytes.len() - 2;
     bytes[last] ^= 1;
     std::fs::write(&package, bytes).unwrap();
-    let refused = driver(
-        directory.path(),
-        &["inspect", "--handoff", "handoff", "--format", "json"],
-    );
-    assert_eq!(refused.status.code(), Some(20), "{refused:?}");
+    fsl_command::command::inspect_handoff(&directory.path().join("handoff"))
+        .expect_err("an altered package is refused");
 }
 
 fn provider_config(directory: &Path, document: &Value) {
