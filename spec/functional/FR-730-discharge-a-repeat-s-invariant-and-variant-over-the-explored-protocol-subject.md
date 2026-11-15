@@ -13,6 +13,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-217
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-625
+    type: references
   - target: ix://agent-ix/filament-spec-language/ADR-014
     type: references
   - target: ix://agent-ix/filament-specification/FR-171
@@ -30,7 +32,7 @@ repeat over the explored protocol subject (FR-215): the **invariant
 obligation**, that `I` holds at every decision of the repeat, and the
 **termination obligation**, that `V` decreases in its well-founded order on
 every back edge of the repeat. Each obligation settles `proved`, `refuted`
-or `inconclusive` by the rules below. A repeat with no loop proof has neither
+or `incomplete` by the rules below. A repeat with no loop proof has neither
 obligation; a repeat with a maximum terminates by that maximum and needs no
 proof.
 
@@ -63,7 +65,7 @@ does not decrease the variant, and the designer replays it.
 
 - For each repeat with a loop proof, one invariant item and one termination
   item, each with its verdict and, when refuted, its counterexample, or, when
-  inconclusive, the limit, method bound or cancellation that stopped
+  incomplete, the limit, method bound or cancellation that stopped
   exploration.
 
 ## Behavior
@@ -108,11 +110,12 @@ does not decrease the variant, and the designer replays it.
   finite path from an initial state to that decision, or to the second
   decision of that back edge, and replays by FR-217. A refutation found
   before a limit is reached is still `refuted`.
-- An obligation SHALL settle `inconclusive` when exploration stops before
+- An obligation SHALL settle `incomplete` when exploration stops before
   expanding every reachable state without finding a violation: a limit of
   `ModelCheckLimits`, a method bound that truncated a successor (for example
   `max_live_instances` or `max_messages`) or cancellation. The result SHALL
-  name what stopped it, as the other protocol items do.
+  name what stopped it, a limit as `LimitReached{limit}`, as FR-625 settles
+  every analyze item that reaches a limit.
 - When `I` or `V` is undefined at a decision (FR-390), the obligation SHALL
   settle `refuted` with the undefinedness as the violation, because the
   author's claim does not hold at that decision.
@@ -125,7 +128,7 @@ does not decrease the variant, and the designer replays it.
   because its variant decreases on every back edge. Neither states more than
   the subject explored: a method bound that truncated nothing is part of the
   subject's identity and is named in the result.
-- An `inconclusive` item states which obligation was not decided and what
+- An `incomplete` item states which obligation was not decided and what
   stopped it, and claims neither that the obligation holds nor that it fails.
 
 ## Acceptance Criteria
@@ -134,7 +137,7 @@ does not decrease the variant, and the designer replays it.
 | --- | --- | --- |
 | FR-730-AC-1 | A protocol whose `repeat Retry` has no maximum, the loop proof `invariant { left >= 0 } variant { left }` and a body that decreases `left` by one from `2` settles both the `loop-invariant` and the `loop-termination` item of `Retry` `proved`, with exploration complete. | Test (TC-2022) |
 | FR-730-AC-2 | The same protocol with a body that leaves `left` unchanged settles `loop-termination` `refuted` with a counterexample ending at the second decision of the first back edge, which replays, and still settles `loop-invariant` `proved`; with the invariant `left > 0` the invariant item settles `refuted` at the decision where `left` is `0`. | Test (TC-2022) |
-| FR-730-AC-3 | The AC-1 protocol checked with a state limit below its reachable state count settles both items `inconclusive`, naming the state limit, and claims neither result. | Test (TC-2022) |
+| FR-730-AC-3 | The AC-1 protocol checked with a state limit below its reachable state count settles both items `incomplete`, naming the state limit, and claims neither result. | Test (TC-2022) |
 | FR-730-AC-4 | A protocol with two repeats with loop proofs and one with a maximum only derives four items, two per proved repeat, and none for the bounded repeat; two requests over the one subject derive the four items once. | Test (TC-2022) |
 
 ## Dependencies

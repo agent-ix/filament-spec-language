@@ -143,3 +143,61 @@ fn a_long_run_certificate_is_accepted() {
         &["long-run"],
     );
 }
+
+/// TC-2065 (FR-203-AC-8, FR-282-AC-20): the exact certificate `analyze`
+/// writes for a claim over a unit with random parameters, a workload and a
+/// reward is carried as bytes out of the run and accepted by the checker in
+/// a separate, later process over the package S4 emits: the request names
+/// the emitted `filament.checked-package/v2` bytes in place of the source,
+/// and the same certificate with one value altered is rejected.
+#[trace("TC-2065", "FR-203-AC-8")]
+#[trace("TC-2065", "FR-282-AC-20")]
+#[test]
+#[ignore = "QSL-2158: checking an analyze certificate later over the emitted package not implemented yet"]
+fn an_analyze_certificate_is_accepted_later_over_the_emitted_package() {
+    let source = likely(
+        "inf",
+        "Even",
+        "probability >= rational(1,2) [ eventually holds(m.delivered) ]",
+    )
+    .replace(
+        "terminal Stop",
+        "reward cost on Msg::send_a = 1;\nterminal Stop",
+    );
+    let request = certified(&source, ExactProbLimits::default());
+
+    // The certificate leaves the run as bytes.
+    let directory = std::env::temp_dir().join(format!("fsl-certificate-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let saved = directory.join("certificate.json");
+    std::fs::write(&saved, request["certificate"].as_str().unwrap()).unwrap();
+
+    // S4 emits the probabilistic unit.
+    let (checked, _) = super::bounded::compile_source_with(&source, domain().as_bytes());
+    let emitted = fsl_replay::spine::package(
+        &checked,
+        fsl_replay::spine::PackageLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap_or_else(|failure| panic!("S4 emits the probabilistic unit: {failure:?}"))
+    .into_value();
+    let package = emitted.package().bytes().to_vec();
+
+    // A later, separate run reads the saved certificate over the package.
+    let mut later = request.clone();
+    later
+        .as_object_mut()
+        .unwrap()
+        .remove("source")
+        .expect("the source member");
+    later["package"] = json!(package);
+    later["certificate"] = json!(std::fs::read_to_string(&saved).unwrap());
+    let (code, output) = run(&later);
+    assert_eq!(code, 0, "{output}");
+
+    let altered = mutate(&later, |doc| {
+        doc["values"][0]["value"] = json!({"numerator": "1", "denominator": "7"});
+    });
+    let (code, output) = run(&altered);
+    assert_ne!(code, 0, "an altered certificate is rejected: {output}");
+}

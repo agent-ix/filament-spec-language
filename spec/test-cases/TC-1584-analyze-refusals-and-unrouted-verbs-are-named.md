@@ -20,6 +20,8 @@ Verify FR-624's refusal table and the unrouted-verb refusal. Scope: FR-624-AC-1 
 4. Invoke `generate`, `prove`, `replay`, `inspect`, `render` and `monitor` in a build that does not route them, in JSON mode.
 5. Repeat step 4 in text mode.
 
+Steps 4 and 5 run in the driver repository, against the `fsl` binary.
+
 ## Expected Results
 
 - Step 1: category `refusal`, empty `items`, diagnostic `invalid-request`, exit 20; text line `fsl analyze: invalid-request:`.

@@ -68,6 +68,11 @@ One `filament-outcome/1` document or text diagnostic, and an exit code.
 
 ### Unrouted verbs
 
+Verb routing and text rendering belong to the driver binary: the command
+adapter (`fsl_command::command`) reads request documents by their `format` and
+takes no verb, so the obligations below are the driver's, verified by driver
+tests.
+
 - For every verb the driver accepts, `analyze`, `monitor`, `generate`,
   `prove`, `replay`, `inspect` and `render` included, when the build does not
   route that verb to its library operation, the driver SHALL write a
@@ -87,8 +92,8 @@ One `filament-outcome/1` document or text diagnostic, and an exit code.
 | FR-624-AC-1 | A malformed `native-analyze/1` document gives a machine-mode document with category `refusal`, empty `items`, one diagnostic `invalid-request`, and exit 20; text mode prints one `fsl analyze: invalid-request:` line and exits 20. | Test (TC-1584) |
 | FR-624-AC-2 | A program the S3 checker refuses gives a document with `last_stage` `check`, the refusal's code, empty `items`, exit 20. | Test (TC-1584) |
 | FR-624-AC-3 | A request whose snapshot names an undeclared population gives the binding refusal's code, empty `items`, exit 20. | Test (TC-1584) |
-| FR-624-AC-4 | For each of `generate`, `prove`, `replay`, `inspect`, `render` and `monitor` invoked in a build that does not route it, the driver writes a document with that `operation`, category `unsupported`, code `unsupported_operation`, cause `operation-not-routed` and payload `verb` naming it, and exits 21; stdout is never empty. | Test (TC-1584) |
-| FR-624-AC-5 | The same unrouted invocations in text mode each print the named message on stderr and exit 21. | Test (TC-1584) |
+| FR-624-AC-4 | For each of `generate`, `prove`, `replay`, `inspect`, `render` and `monitor` invoked in a build that does not route it, the driver binary writes a document with that `operation`, category `unsupported`, code `unsupported_operation`, cause `operation-not-routed` and payload `verb` naming it, and exits 21; stdout is never empty. | Driver test (TC-1584): the `fsl` binary decides verb routing, so the driver code ticket QSL-1995 adds the test in the driver repository; the command adapter takes no verb. |
+| FR-624-AC-5 | For the same unrouted invocations in text mode, the driver binary prints the named message on stderr and exits 21. | Driver test (TC-1584): text rendering exists only in the driver binary, so QSL-1995 adds the test in the driver repository. |
 
 ## Dependencies
 

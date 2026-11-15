@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the variant's type rule at S3 and the discharge of a repeat's invariant and termination obligations by the protocol model checker: proved over a complete exploration, refuted with a replayable counterexample, inconclusive under a limit. Scope: FR-218-AC-43 and FR-730-AC-1 to FR-730-AC-4.
+Verify the variant's type rule at S3 and the discharge of a repeat's invariant and termination obligations by the protocol model checker: proved over a complete exploration, refuted with a replayable counterexample, incomplete under a limit. Scope: FR-218-AC-43 and FR-730-AC-1 to FR-730-AC-4.
 
 ## Test Procedure
 
@@ -21,7 +21,7 @@ Verify the variant's type rule at S3 and the discharge of a repeat's invariant a
 | 3 | `repeat Retry` with no maximum, `invariant { left >= 0 } variant { left }`, body decreasing `left` from `2` | `loop-invariant` and `loop-termination` both `proved`, exploration complete |
 | 4 | row 3 with a body that leaves `left` unchanged | `loop-termination` `refuted`, counterexample ending at the second decision of the first back edge, which replays; `loop-invariant` `proved` |
 | 5 | row 3 with invariant `left > 0` | `loop-invariant` `refuted` at the decision where `left` is `0` |
-| 6 | row 3 with a state limit below the reachable state count | both items `inconclusive`, naming the state limit |
+| 6 | row 3 with a state limit below the reachable state count | both items `incomplete`, naming the state limit |
 | 7 | two repeats with loop proofs and one with a maximum only, under two requests over one subject | four derived items, none for the bounded repeat, derived once |
 
 ## Expected Results

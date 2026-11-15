@@ -86,3 +86,41 @@ Untraced standard ACs by ticket:
 - S1-15: FR-187-AC-1; FR-405-AC-5, AC-10 and AC-11; FR-406-AC-6 and AC-7; FR-407-AC-16; FR-411-AC-17; FR-420-AC-8; FR-640-AC-1 to AC-5; FR-641-AC-1 to AC-3.
 - S1-16: FR-190-AC-8 to AC-10; FR-192-AC-9 and AC-11; FR-193-AC-22; FR-194-AC-9 and AC-10; FR-297-AC-5; FR-650-AC-2 to AC-6; FR-651-AC-2, AC-4 and AC-5; FR-652-AC-2 to AC-4.
 - S1-17: FR-660-AC-1 and AC-5; FR-661-AC-1, AC-2 and AC-4.
+
+## Round 2 (standard 1f2255d23, language 130d27c36)
+
+Verdict: CHANGES REQUESTED. Two medium findings remain open, and both are about stubs.
+
+The round-1 Coverage lists above are superseded by this round's `quire matrix` run. The standard `FR-187-AC-1` in the S1-15 list was a false positive: no such criterion exists.
+
+### Dispositions
+
+| Finding | Disposition |
+| --- | --- |
+| FND-001 | Resolved. FR-322 adds the `timed {unit}` row for trace subjects only, and the timed-model no-row case keeps `model-time`. `schema.json` gains the `timed` alternative. The vectors TN-06 to TN-08, FR-322-AC-450 and the `tc_1164` test are added. |
+| FND-002 | Resolved. FR-621 and FR-520 use FR-181 typed forms, and run documents keep FR-650. FR-621-AC-7 and the `analyze_coverage_cli.rs` stub assert `{"type":"integer","value":"3"}`. |
+| FND-003 | Resolved. `value_invariants` (FR-652) is the only invariants selection. FR-312, FR-702 and FR-664 are aligned. |
+| FND-004 | Resolved. `temporal.item_kind` is used in FR-620, FR-520 and the stubs. |
+| FND-005 | Resolved for the members FR-520 now tabulates. FND-021 is a residual from this fix. |
+| FND-006 | Resolved. `kind` allows FR-290 kinds or `simulation`. |
+| FND-007 | Resolved. The handoff uses the compile's `clocks` member. |
+| FND-008 | Resolved. FR-322 defines the scale rows and FR-322-AC-451. The schema enum is deferred to QSL-2256 by lead ruling; see FND-020. |
+| FND-009 | Resolved. The three correspondence entries are added. |
+| FND-010 | Resolved. The SANY version is removed. |
+| FND-011 | Mostly resolved. The remaining gaps are FND-018, FND-019 and FND-022. |
+| FND-012 | Resolved. The seven `#[ignore]` attributes are removed. |
+| FND-013 | Resolved. FR-375-AC-17 and FR-501 are qualified. |
+| FND-014 | Resolved. FR-640 adds `reserved-clock-name` (FR-640-AC-6). |
+| FND-015 | Resolved. `deadline_ms` is capped at 2^53-1. |
+| FND-016 | Resolved. FR-301 states the behaviour itself. |
+| FND-017 | Resolved. The remaining warnings, at FR-098:222, FR-121:190 and FSpec FR-322:108, are on lines already on main. |
+
+### New and residual findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-018 | medium | S1-14. The FR-730 stubs assert only that the loop items are derived. They do not check the decided settlement: `proved` with exploration complete (AC-1), `refuted` with a counterexample that replays (AC-2), and `inconclusive` naming the state limit (AC-3). Fix: run each item through `analyze` and assert its record, counterexample, replay and cause, keeping the stubs ignored under their code ticket. | fsl-analyze/tests/it/loop_proof.rs:67-99; FR-730:135-137 |
+| FND-019 | medium | S1-15 and S1-16. FR-203-AC-8 and FR-282-AC-20 still have no tagged test. Both require an exact certificate that `analyze` writes to be accepted by the independent checker. Fix: add an ignored stub to `tools/fsl-probability-check/tests/it/certificate_kinds.rs` with traces for `TC-2065`/`FR-203-AC-8` and for FR-282-AC-20's TC, keyed to the probability code ticket. | FR-203:174; FR-282:132 |
+| FND-020 | low | S1-09. FR-322's prose and FR-322-AC-451 say both V2 schemas and the external catalog list the two scale identities. The lead deferred the schema change to QSL-2256, but no stub holds that part. Fix: add an ignored standard test in `tests/checked_package_v2.rs`, keyed QSL-2256 and traced to `TC-1326`/`FR-322-AC-451`, asserting the `OperationIdentity` entries after `filament.op.quantity.pow`. | FSpec FR-322:5004 |
+| FND-021 | low | S1-03. FR-520's member table still takes the meaning of `program`, `package`, `models`, `libraries`, `refinement_internals`, `required`, `trace` and `simulation` from FSL requirements (FR-026, FR-027, FR-507, FR-634, FR-636). Fix: cite the standard's native run request (FR-323) and state the `simulation` and `trace` members in FR-520. | FSpec FR-520:50-72 |
+| FND-022 | low | S1-03 and S1-07. The stub for the unrouted-verb criteria (FR-624-AC-4 and AC-5, FSpec FR-301-AC-4, FSpec FR-522-AC-1) was removed and now lives only in the driver. These rows stay untagged in both matrices, and TC-1665 has no tagged test. Fix: move AC-4 and AC-5 to the driver's spec, citing them from FR-624, or tag the driver test. Tag the FR-642-AC-5 stub with `TC-1665`. | FR-624:90-91; FSpec FR-301; FSpec FR-522 |

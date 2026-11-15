@@ -391,6 +391,7 @@ fn empty_traces_refuse_with_a_reason_message_and_locus() {
     "FSpec-TC-1161",
     "FSpec-FR-541-AC-3"
 )]
+#[trace("TC-1665", "FR-642-AC-5")]
 #[ignore = "QSL-2133: trace-kind-mismatch refusals carry no fields yet"]
 fn a_trace_kind_the_profile_does_not_read_refuses_with_profile_and_kinds() {
     let directory = tempfile::tempdir().unwrap();
