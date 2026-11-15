@@ -4,7 +4,7 @@
 
 use filament_exact::{Presence, ValueType};
 use fsl_replay::{
-    acfilament_checked_closure, DependencyInput, NodeKey, NominalDeclarationForm,
+    acquire_checked_closure, DependencyInput, NodeKey, NominalDeclarationForm,
     NominalDeclarationMember, ReplayLimits, SourceIdentity, StageLimits,
 };
 use ix_trace_rs::trace;
@@ -38,7 +38,7 @@ fn node_id(package: &[u8], tag: &str, name: &str) -> NodeKey {
 #[trace("TC-1263", "FR-485-AC-13")]
 #[test]
 fn public_consumer_reads_complete_ordered_nominal_members_from_one_selection() {
-    let acquisition = acfilament_checked_closure(
+    let acquisition = acquire_checked_closure(
         fsl_replay::CompileUnit {
             source: SourceIdentity::new("a", "unit"),
             package_name: "fixture".to_owned(),

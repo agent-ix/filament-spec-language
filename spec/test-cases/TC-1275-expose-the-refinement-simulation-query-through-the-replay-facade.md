@@ -18,7 +18,7 @@ the `arch-lint-api-surface-fsl` make target.
 
 Test layer: `fsl-replay/tests/it/refinement_query_facade.rs`, calling the
 entries as the root exports them, over a `RefinementQueryRequest` built from root items
-alone (`acfilament_checked_closure`, `refinement_node_key`, `RefinementUniverse::for_population`,
+alone (`acquire_checked_closure`, `refinement_node_key`, `RefinementUniverse::for_population`,
 `RefinementQuerySubject::new`); the fixture supplies document values and the oracle only.
 
 1. Encode `Initial` and the `Step` queries of `peek` and `commitA`.

@@ -17,9 +17,9 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_replay::spine::{self, ParseRequest, SpineLimits};
 use fsl_replay::{
-    acfilament_checked_closure, ApplicationEnvironment, CallableSelection,
-    CheckedClosureCompilation, CheckedClosureHandle, DependencyInput, NodeKey, NominalDeclaration,
-    NominalDeclarationForm, NominalDeclarationMember, ReplayLimits, SourceIdentity, StageLimits,
+    acquire_checked_closure, ApplicationEnvironment, CallableSelection, CheckedClosureCompilation,
+    CheckedClosureHandle, DependencyInput, NodeKey, NominalDeclaration, NominalDeclarationForm,
+    NominalDeclarationMember, ReplayLimits, SourceIdentity, StageLimits,
 };
 use ix_trace_rs::trace;
 use std::sync::{Arc, Mutex};
@@ -233,7 +233,7 @@ fn fixture() -> Fixture {
     let other_node = composite_node("Other");
     drop(checked);
 
-    let acquired = acfilament_checked_closure(
+    let acquired = acquire_checked_closure(
         fsl_replay::CompileUnit {
             source,
             package_name: "fixture".to_owned(),
