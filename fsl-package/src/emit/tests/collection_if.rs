@@ -122,6 +122,13 @@ fn an_if_is_the_element_body_or_the_collection_operand_of_a_quantifier() {
     );
     let (operand, _) = quantifier(&wire, "filament.op.collection.forall");
     assert_if(operand);
+    let operands: Vec<_> = operand["body"]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|argument| target(&wire, argument)["body"]["members"][0]["value"]["value"].clone())
+        .collect();
+    assert_eq!(operands, [json!("c"), json!("s"), json!("t")]);
 }
 
 /// FR-093-AC-65: `if present(o) then (let q = value(o) in q) else 0` over an
@@ -156,5 +163,37 @@ fn a_let_binds_an_option_value_under_its_presence_guard() {
     assert_eq!(
         target(&wire, value)["body"]["operation"]["identity"],
         "filament.op.option.value"
+    );
+}
+
+/// FR-093-AC-65: the unguarded `let q = value(o) in q` refuses
+/// `undefined_expression`/`unproved-presence`, and only that.
+#[trace("FR-093-AC-65", "TC-1423")]
+#[test]
+fn an_unguarded_let_of_an_option_value_refuses_unproved_presence() {
+    let document = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         function unguarded using v(o: Option<Int[0, 9]>): Integer pure \
+         {{ let q = value(o) in q }}\n",
+        package = fixture::PACKAGE,
+    );
+    let refusals = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("the unguarded read refuses");
+    let found: Vec<_> = refusals
+        .iter()
+        .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))
+        .collect();
+    assert_eq!(
+        found,
+        [(
+            fsl_foundation::diagnostic::Code::UndefinedExpression,
+            Some("unproved-presence")
+        )]
     );
 }

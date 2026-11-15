@@ -2174,14 +2174,24 @@ fn a_payload_variant_parameter_is_a_union_scrutinee_and_a_nullary_one_is_not() {
         "the union parameter is cased"
     );
     let missing = describe_refusals("case s { Circle(r): r > 0; }");
-    assert!(
-        missing
-            .iter()
-            .any(|refusal| refusal.cause.cause() == Some("unproved-exhaustiveness")),
-        "an arm set missing `Empty` refuses exhaustiveness: {missing:?}"
+    let found: Vec<_> = missing
+        .iter()
+        .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))
+        .collect();
+    assert_eq!(
+        found,
+        [(
+            fsl_foundation::diagnostic::Code::UndefinedExpression,
+            Some("unproved-exhaustiveness")
+        )],
+        "an arm set missing `Empty` refuses exhaustiveness and nothing else"
     );
     let nullary = describe_refusals("case t { Gold: true; Standard: false; }");
     assert_eq!(nullary.len(), 1, "{nullary:?}");
     assert_eq!(nullary[0].cause, mismatch());
+    assert_eq!(
+        nullary[0].cause.code(),
+        fsl_foundation::diagnostic::Code::IllTyped
+    );
     assert_eq!(nullary[0].location.path(), &[0], "at the scrutinee");
 }

@@ -20,6 +20,7 @@ Scope: FR-093-AC-65.
 
 1. Emit FR-093-AC-65's `guarded` over `o: Option<Int[0, 9]>` and read it back
    through IR's v2 reader.
+2. Check FR-093-AC-65's `unguarded`.
 
 Tag the tests `#[trace("FR-093-AC-65", "TC-1423")]`.
 
@@ -29,3 +30,4 @@ Tag the tests `#[trace("FR-093-AC-65", "TC-1423")]`.
   `filament.op.control.if` node whose condition is a `filament.op.option.present`
   node and whose then-branch is a `filament.op.control.let` node binding a
   `filament.op.option.value` node.
+- Step 2: refuses `undefined_expression`/`unproved-presence` at `value(o)`.

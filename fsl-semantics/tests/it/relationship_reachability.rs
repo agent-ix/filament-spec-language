@@ -224,6 +224,7 @@ fn operation(
         key: key(&format!("{owner}/{name}")),
         owner: key(owner),
         parameters: vec![OperationParameterRecord {
+            presence: filament_exact::Presence::Required,
             key: key(&format!("{owner}/{name}/{parameter}")),
             value_type: ValueTypeRef::Package(key(parameter_type)),
             multiplicity: mult(1, Some(1)),

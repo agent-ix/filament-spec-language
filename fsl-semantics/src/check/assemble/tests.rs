@@ -336,6 +336,7 @@ fn unresolved_model_unit_type_names_the_operation_parameter_path() {
                 key: operation,
                 owner: object,
                 parameters: vec![OperationParameterRecord {
+                    presence: filament_exact::Presence::Required,
                     key: parameter,
                     value_type: ValueTypeRef::Unit("missing".to_owned()),
                     multiplicity: Multiplicity {
@@ -1958,6 +1959,7 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
             key: operation_key.clone(),
             owner: DeclarationKey::fixture("model.Holder"),
             parameters: vec![OperationParameterRecord {
+                presence: filament_exact::Presence::Required,
                 key: parameter_key,
                 value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: mult(1, Some(1), false, true),

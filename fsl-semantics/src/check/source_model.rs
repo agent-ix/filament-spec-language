@@ -616,6 +616,7 @@ fn operation_record(
             scalars,
         ) {
             Ok((value_type, multiplicity)) => parameters.push(OperationParameterRecord {
+                presence: filament_exact::Presence::Required,
                 key: member_key(
                     identity,
                     &format!("{}/{}", object.name.name, operation.name.name),

@@ -2904,6 +2904,12 @@ fn model_operation(
             }
             Err(error) => return Err(error),
         };
+        // FR-103: an `optional` presence wraps the parameter's type in `Option`,
+        // as a field's presence does.
+        let value_type = match parameter.presence {
+            Presence::Optional => ValueType::option(value_type),
+            Presence::Required => value_type,
+        };
         parameters.push((parameter_name.to_owned(), value_type));
     }
     let clock_result = operation

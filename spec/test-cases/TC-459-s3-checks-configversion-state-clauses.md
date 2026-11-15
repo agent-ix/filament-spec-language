@@ -59,10 +59,12 @@ FR-108's unit.
    Config::Flow at current { self.n >= 0 }`.
 8. Against the fixture package with an operation `maybe` whose parameter `p`
    is a `VersionNumber` declared `nullable`, `presence` `optional` and
-   multiplicity `[0, 1]`, check, one unit each, the postconditions
-   `value(p) > 0`, `present(p) implies value(p) > 0`,
-   `if present(p) then value(p) > 0 else true`, `present(p)` and
-   `exists(x in p: x > 0)`.
+   multiplicity `[1, 1]`, check, one unit each, the postconditions
+   `present(p) implies value(p) > 0`,
+   `if present(p) then value(p) > 0 else true`,
+   `present(p) and value(p) > 0`, `present(p)`, `value(p) > 0` and
+   `exists(x in p: x > 0)`. Repeat `value(p) > 0` with multiplicity `[0, 1]`,
+   and `present(p)` with `presence` `required`.
 
 Tag the tests `#[trace("TC-459", "FR-104-AC-n")]`.
 
@@ -97,6 +99,7 @@ Tag the tests `#[trace("TC-459", "FR-104-AC-n")]`.
   `Attribute` of type `Integer`; `P`'s read of `n` is `pre`, `Q`'s reads are
   `post` and `pre`, and `I`'s read is `current`. (Evaluation of such clauses
   per run, with `self` the run, is FSpec TC-235 M16's reference test.)
-- Step 8: the first four each refuse `ill_typed`/`type-mismatch`, because `p`
-  is a bounded collection of `Int[0, 1000]` and not an `Option`; the guard does
-  not change the refusal. The last checks.
+- Step 8: the first four check; `value(p) > 0` refuses
+  `undefined_expression`/`unproved-presence`; `exists(x in p: x > 0)` refuses
+  `ill_typed`/`type-mismatch`, because `p` is an `Option`, not a collection; the
+  repeats each refuse `ill_typed`/`type-mismatch`.

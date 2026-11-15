@@ -48,8 +48,11 @@ states.
 FR-056 "Variant types" admits the variant type itself: one `enum` export, one
 `variant` export per case and, per "Effective identity of a variant type", one
 effective identity for the type and one for each case. FSpec FR-208 defines the
-variant type as a closed set of named cases with no payload, value, ordinal or
-supertype. This requirement states what a member, an expression and a replay
+variant type as a closed set of named cases with no value, ordinal or
+supertype, and with no payload except where FR-056 "Variant types" admits a
+`payloadType`, which makes the type a union rather than an enum. Unless a
+statement below says otherwise, "variant type" means a payload-free one, which
+the assembler types by the variant type's enum type. This requirement states what a member, an expression and a replay
 document do with it. A **variant value** is one case of one variant type. A
 **variant slot** is a field, parameter, result, `Option` payload, collection
 element, tuple position or record field whose declared type is a variant type.
@@ -119,8 +122,10 @@ element, tuple position or record field whose declared type is a variant type.
    a case from a name computed at runtime. Where the language has a quoted
    String literal or a `case` expression, the checker SHALL refuse a
    String literal at a variant slot `ill_typed`/`type-mismatch` at the expression, and a
-   `case` expression whose scrutinee has a variant type `ill_typed`/`type-mismatch`
-   at the scrutinee (ADR-012 §16.2 admits `case` over a declared union only, and
+   `case` expression whose scrutinee has a payload-free variant type
+   `ill_typed`/`type-mismatch` at the scrutinee (a variant type with a
+   payload-bearing case is a union and is the scrutinee item 8 admits;
+   ADR-012 §16.2 admits `case` over a declared union only, and
    §16.5 gives a scrutinee that is not a union this refusal). A quoted
    literal is a String literal (FR-091, "Native scalar literals") and reaches the
    checker, which refuses it at a variant slot. Under FSpec FR-322's
@@ -170,7 +175,7 @@ element, tuple position or record field whose declared type is a variant type.
    removed for a variant type. A variant type with a payload-bearing case is a
    union (FR-056), so an operation parameter of it is a valid scrutinee of a
    `case` in a clause on that operation; a variant type with no payload is an
-   enum and its `case` is refused under item 6. A domain package therefore
+   enum and its `case` is refused under item 5. A domain package therefore
    declares no union whose members all have arity 0.
 9. **Replay observation form.** A variant value in a snapshot, invocation
    parameter or result is exactly `{"variant": {"type": "<declaration

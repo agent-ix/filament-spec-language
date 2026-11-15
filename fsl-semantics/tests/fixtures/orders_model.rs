@@ -86,6 +86,7 @@ pub fn operation(
         owner: key(owner),
         parameters: parameter
             .map(|parameter| OperationParameterRecord {
+ presence: filament_exact::Presence::Required,
                 key: key(&format!("{owner}/{name}/{parameter}")),
                 value_type: ValueTypeRef::Native(NativeValueType::Integer),
                 multiplicity: one(),

@@ -108,6 +108,7 @@ fn abstract_model() -> SelectedModel {
         })
     };
     let amount = OperationParameterRecord {
+        presence: filament_exact::Presence::Required,
         key: abstract_key("Acc/addBy/n"),
         value_type: ValueTypeRef::Native(NativeValueType::Integer),
         multiplicity: Multiplicity {

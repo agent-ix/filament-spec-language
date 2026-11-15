@@ -121,8 +121,8 @@ mod navigation;
 // package emitter's tests, so only `test-support` exposes them.
 #[cfg(any(test, feature = "test-support"))]
 pub mod depth_forms;
-// The sealed unions the evaluator's and replay's union tests run over, while
-// no checked package can hold a union (FR-319).
+// The sealed unions the evaluator's and replay's union tests run over,
+// hand-built rather than compiled from a checked package.
 #[cfg(any(test, feature = "test-support"))]
 pub mod union_fixture;
 // `imports` has no production caller yet (E3 imported-name resolution,
