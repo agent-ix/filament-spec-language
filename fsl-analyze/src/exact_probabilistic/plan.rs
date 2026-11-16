@@ -137,6 +137,9 @@ impl<'c> Plan<'c> {
             ProbForm::ExpectedReward { until, .. } => {
                 (Self::Labels, vec![role(PredicateRole::Until, until)])
             }
+            ProbForm::MeanTime { .. } => {
+                return Err(PlanFault::TimedFormShape { span: claim.span });
+            }
         })
     }
 
@@ -151,6 +154,7 @@ impl<'c> Plan<'c> {
                 from,
                 until,
                 within,
+                ..
             } => (
                 Self::Measure {
                     reward: Some(reward),
@@ -166,6 +170,7 @@ impl<'c> Plan<'c> {
                 from,
                 until,
                 within,
+                ..
             } => (
                 Self::Measure {
                     reward: None,

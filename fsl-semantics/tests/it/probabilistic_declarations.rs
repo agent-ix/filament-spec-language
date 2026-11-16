@@ -143,6 +143,22 @@ fn service_document() -> Vec<u8> {
     service_document_with(&[])
 }
 
+/// The timed fixture needs a model with one object node. Keep only `Server`
+/// and its population so the timed declaration has one clock owner.
+fn timed_service_document() -> Vec<u8> {
+    let mut envelope: Value =
+        serde_json::from_slice(&service_document()).expect("the Service fixture is JSON");
+    envelope["types"]
+        .as_array_mut()
+        .expect("package types")
+        .retain(|ty| ty["kind"]["name"] != "object_type" || ty["identity"] == id("Server"));
+    envelope["populations"]
+        .as_array_mut()
+        .expect("package populations")
+        .retain(|population| population["identity"] == id("servers"));
+    serde_json::to_vec(&envelope).expect("serializes the timed fixture")
+}
+
 /// [`service_document`], with `requires` as `attempt`'s domain-package
 /// `requires` clauses.
 fn service_document_with(requires: &[&str]) -> Vec<u8> {
@@ -277,6 +293,7 @@ fn service_unit_over(
          profile v = \"filament.model.complete/v1\";\n\
          profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile tc = \"filament.temporal.complete/v1\";\n\
          profile tm = \"filament.temporal.timed/v1\";\n\
          model Service = {P:?};\n\
          {selections}\n\
@@ -334,6 +351,12 @@ fn checked(body: &str) -> CheckedGraph {
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"))
 }
 
+fn checked_timed_service(body: &str) -> CheckedGraph {
+    assemble_over(&timed_service_document(), body)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
+}
+
 fn refusals_of(body: &str) -> Vec<CheckRefusal> {
     assemble(body)
         .check(CheckMode::Linked, CheckingLimits::default())
@@ -342,9 +365,13 @@ fn refusals_of(body: &str) -> Vec<CheckRefusal> {
 
 /// Each refusal's code, catalog cause and the source text its region names.
 fn located(body: &str) -> Vec<(Code, Option<&'static str>, String)> {
-    let declarations = assemble(body);
+    located_over(&service_document(), body)
+}
+
+fn located_over(document: &[u8], body: &str) -> Vec<(Code, Option<&'static str>, String)> {
+    let declarations = assemble_over(document, body);
     let regions = declarations.regions();
-    let (text, _) = service_unit(body);
+    let (text, _) = service_unit_over(document, body);
     declarations
         .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the unit refuses")
@@ -1978,13 +2005,13 @@ fn elapsed_timed_checks() {
         )
     };
 
-    let expected = checked(&source(&format!("expected elapsed until {a} <= 3 ms")));
+    let expected = checked_timed_service(&source(&format!("expected elapsed until {a} <= 3 ms")));
     let ProbForm::MeanTime { bound, .. } = &claim_of(&expected).form else {
         panic!("a checked mean-time claim: {:?}", claim_of(&expected).form);
     };
     assert_eq!(bound, &Bound::AtMost(ratio(3, 1)));
 
-    let elapsed = checked(&source(&format!(
+    let elapsed = checked_timed_service(&source(&format!(
         "probability >= 0.5 [ elapsed from {a} until {a} within 5 ms >= 1 ms ]"
     )));
     let ProbForm::Probability {
@@ -2000,7 +2027,7 @@ fn elapsed_timed_checks() {
     };
     assert_eq!(within, &ratio(5, 1));
 
-    let window = checked(&source(&format!(
+    let window = checked_timed_service(&source(&format!(
         "probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 1 ]"
     )));
     let ProbForm::Probability {
@@ -3611,7 +3638,7 @@ fn probabilistic_claim_timed_profile_checks() {
              {{ probability >= 0.99 [ eventually[0 ms, 4 ms] holds({IDLE}) ] }}"
         ),
     );
-    checked(&timed);
+    checked_timed_service(&timed);
 
     let unadmitted = service(
         None,
@@ -3699,19 +3726,22 @@ fn quantity_literal_timed_positions_check_and_refuse_by_dimension() {
         format!("probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 1 ]"),
         format!("probability >= 0.5 [ fraction {a} over [0, 5 ms] >= rational(1, 2) ]"),
     ] {
-        checked(&source(&form));
+        checked_timed_service(&source(&form));
         let wrong = form.replace("5 ms", "5 m");
         assert_eq!(
-            located(&source(&wrong)),
-            [(Code::IllTyped, Some("unit-mismatch"), "5 m".to_owned())],
+            located_over(&timed_service_document(), &source(&wrong)),
+            [(Code::IllTyped, Some("type-mismatch"), "m".to_owned())],
             "{wrong}"
         );
     }
     let event = format!("probability >= 0.5 [ eventually[0 ms, 4 ms] holds({IDLE}) ]");
-    checked(&source(&event));
+    checked_timed_service(&source(&event));
     assert_eq!(
-        located(&source(&event.replace("4 ms", "4 m"))),
-        [(Code::IllTyped, Some("unit-mismatch"), "4 m".to_owned())]
+        located_over(
+            &timed_service_document(),
+            &source(&event.replace("4 ms", "4 m"))
+        ),
+        [(Code::IllTyped, Some("type-mismatch"), "m".to_owned())]
     );
 }
 
