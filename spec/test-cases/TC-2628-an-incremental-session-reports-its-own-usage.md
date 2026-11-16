@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify that a monitor session's clause report carries `usage` as a closed `{cumulative, step}` object over FR-283's usage kinds, that `usage` is excluded from batch equality while every verdict member is compared, and that meter limits are charged per advance.
+Verify that a monitor session's clause report carries `usage` as a closed `{cumulative, step}` object whose members are each one FR-109 `ClauseRunUsage`, that `usage` is excluded from batch equality while every verdict member is compared, and that meter limits are charged per advance.
 
 Scope: FR-643-AC-12.
 
@@ -23,5 +23,5 @@ Tag the tests `#[trace("TC-2628", "FR-643-AC-12")]`.
 
 ## Expected Results
 
-- Step 1: each `usage` has exactly `cumulative` and `step`, each with exactly FR-283's usage kinds; `step` is that call's charge and `cumulative` the running sum of `step`; category, truth, disposition, counterexample or witness, settlement and positions equal `B(k)`.
+- Step 1: each `usage` has exactly `cumulative` and `step`, each one FR-109 `ClauseRunUsage` with its admission work and evaluation meter charges; `step` is that call's charge and `cumulative` the running sum of `step`; category, truth, disposition, counterexample or witness, settlement and positions equal `B(k)`.
 - Step 2: the first call reports as in Step 1; the clause settles `incomplete` with `trigger` `limit` at the second call.
