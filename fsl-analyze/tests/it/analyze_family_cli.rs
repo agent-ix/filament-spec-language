@@ -420,7 +420,7 @@ fn analyze_with_providers_registers_a_process_provider() {
         .as_array()
         .expect("registry")
         .iter()
-        .map(|entry| entry["backend"].clone())
+        .cloned()
         .collect();
     assert!(registry.contains(&json!(PROCESS_PROVIDER)), "{registry:?}");
     assert!(registry.contains(&json!("en-1")), "{registry:?}");
