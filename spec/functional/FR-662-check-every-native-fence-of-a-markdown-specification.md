@@ -71,8 +71,10 @@ Markdown file by line and column.
 
 `check_native_fences(&NativeFenceRequest, CheckLimits, &Cancel)`: the
 original document's `Source` with its FR-001 labels and path, FR-030's
-extraction limits, the S1 to S4 limits `check` takes, and the optional
-extension catalog (FR-660).
+extraction limits, the S1 to S4 limits `check` takes, the optional
+extension catalog (FR-660), and the optional caller-supplied integer-division
+law that applies to every fence
+([FR-765](FR-765-supply-the-integer-division-law-from-a-command-option-or-request-member.md)).
 
 ## Outputs
 

@@ -60,6 +60,40 @@ fn run_body(law: Option<Value>, function: &str) -> Value {
     body
 }
 
+/// The FR-286 outcome document of a refused command.
+fn outcome(error: &command::RunError, operation: Operation) -> Value {
+    serde_json::from_slice(&error.outcome_document(operation).to_bytes().unwrap()).unwrap()
+}
+
+/// The definition identity the law name `law` selects.
+fn law_identity(law: &str) -> String {
+    format!("filament.value.integer-division.{law}/v1")
+}
+
+/// The law each emitted `div` and `rem` application of `package` binds, as
+/// the definition identity it names, in node order.
+fn division_laws(package: &[u8]) -> Vec<String> {
+    let wire: Value = serde_json::from_slice(package).expect("package JSON");
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|node| {
+            matches!(
+                node["body"]["operation"]["identity"].as_str(),
+                Some("filament.op.integer.div" | "filament.op.integer.rem")
+            )
+        })
+        .map(|node| {
+            let definition = &node["body"]["operation"]["laws"][0]["definition"];
+            definition["identity"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| definition.to_string())
+        })
+        .collect()
+}
+
 /// `(code, cause, message)` of a refused command's first diagnostic.
 fn refusal(error: &command::RunError, operation: Operation) -> (String, String, String) {
     let document: Value =
@@ -91,7 +125,7 @@ fn returned(path: &Path) -> String {
 }
 
 #[test]
-#[trace("TC-2188", "FR-765-AC-1")]
+#[trace("TC-2188", "FR-765-AC-1", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn request_member_selects_each_law_for_compile_and_run() {
     for (law, quotient, remainder) in [
@@ -107,9 +141,9 @@ fn request_member_selects_each_law_for_compile_and_run() {
             "native-compile/1",
             compile_body(Some(json!(law))),
         );
-        assert!(!command::compile(&path)
-            .unwrap_or_else(|error| panic!("{law} compiles: {error}"))
-            .is_empty());
+        let bytes =
+            command::compile(&path).unwrap_or_else(|error| panic!("{law} compiles: {error}"));
+        assert_eq!(division_laws(&bytes), vec![law_identity(law); 2], "{law}");
         for (function, expected) in [("q", quotient), ("r", remainder)] {
             let path = request(
                 directory.path(),
@@ -208,11 +242,13 @@ fn no_member_and_no_header_still_refuses_missing_selection() {
         compile_body(None),
     );
     let error = command::compile(&path).expect_err("no law is chosen by default");
-    let (code, cause, _) = refusal(&error, Operation::Package);
-    assert_eq!(
-        (code.as_str(), cause.as_str()),
-        ("missing_declaration", "missing-selection")
-    );
+    let document = outcome(&error, Operation::Package);
+    let diagnostics = document["diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(diagnostics.len(), 2, "one refusal per operator: {document}");
+    for diagnostic in diagnostics {
+        assert_eq!(diagnostic["code"], "missing_declaration", "{document}");
+        assert_eq!(diagnostic["cause"], "missing-selection", "{document}");
+    }
 
     let program = format!("{HEADER}{MOD_ONLY}");
     let path = request(
@@ -290,4 +326,46 @@ fn member_over_a_unit_without_div_or_rem_leaves_the_package_unchanged() {
     );
     let with = command::compile(&with).expect("compiles with an unused law");
     assert_eq!(with, without);
+}
+
+#[test]
+#[trace("TC-2191", "FR-765-AC-8")]
+#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
+fn top_level_law_reaches_every_unit_of_a_multi_unit_program() {
+    let directory = tempfile::tempdir().unwrap();
+    let units = [
+        ("unit-a.native", "test:unit-a", "qa"),
+        ("unit-b.native", "test:unit-b", "qb"),
+    ];
+    let mut program = Vec::new();
+    for (file, identity, function) in units {
+        let text = format!(
+            "{HEADER}function {function} using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure {{ a div b }}\n"
+        );
+        write(directory.path(), file, text.as_bytes());
+        program.push(source(file, identity));
+    }
+    let body = |law: Option<&str>| {
+        let mut body = json!({"models":[], "program": program.clone()});
+        if let Some(law) = law {
+            body["integer_division"] = json!(law);
+        }
+        body
+    };
+    let path = request(
+        directory.path(),
+        None,
+        "native-compile/1",
+        body(Some("floor")),
+    );
+    let bytes = command::compile(&path).expect("every unit compiles under floor");
+    assert_eq!(division_laws(&bytes), vec![law_identity("floor"); 2]);
+
+    let path = request(directory.path(), None, "native-compile/1", body(None));
+    let error = command::compile(&path).expect_err("no unit has a law");
+    let document = outcome(&error, Operation::Package);
+    assert_eq!(
+        document["diagnostics"][0]["cause"], "missing-selection",
+        "{document}"
+    );
 }

@@ -17,12 +17,11 @@ Scope: FR-765-AC-7.
 
 ## Test Procedure
 
-The driver repository owns the binary, so the test is in filament-driver's
-`fsl-cli/tests/cli_contract.rs`, `integer_division_option_and_member_reach_check_and_run`.
+The `fsl` binary parses the option and renders the outcome, so the code ticket QSL-1989 adds the test in the filament-driver repository: `fsl-cli/tests/cli_contract.rs`, `integer_division_option_and_member_reach_check_and_run`.
 
 1. Run `fsl check u.fsl --integer-division floor --format json` over FR-670-AC-1's unit without its header, then without the option, with `ceiling`, with the option twice, and over the unit with a floor header and `--integer-division truncating`.
 2. Run `fsl run` over a request with `"integer_division": "floor"` calling `q(-7, 3)`.
-3. Run `fsl run --integer-division floor <request>` and `fsl compile --integer-division floor <request>`.
+3. Run `fsl run`, `fsl compile`, `fsl analyze`, `fsl prove` and `fsl monitor` with `--integer-division floor` over a request.
 
 The driver numbers its own artifacts, so its test names this case and criterion in its doc comment (`TC-2189`, `FR-765-AC-7` of filament-spec-language) rather than as a bare trace id.
 
