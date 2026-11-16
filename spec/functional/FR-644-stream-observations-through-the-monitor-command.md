@@ -78,7 +78,9 @@ one of
 - `{"progress": G}`: a progress assertion (FR-641's `G`);
 - `{"checkpoint": PATH}`: write the session's checkpoint to `PATH`;
 - `{"end": "closed"|"open"}`: the last record; end of input without it is
-  `{"end": "open"}`.
+  `{"end": "open"}`. It ends the stream, not the trace: the trace's closure
+  comes from its kind and its last progress assertion, so `closed` and `open`
+  give the same summary (FR-643 "Trace end").
 
 In process: `command::monitor(path: &Path, records: impl Iterator<Item =
 Result<Vec<u8>, std::io::Error>>, sink: &mut dyn FnMut(&MonitorEvent), limits:
@@ -106,8 +108,12 @@ entry").
 - `command::monitor` SHALL write nothing to the process streams; it hands each
   event to `sink` before reading the next record, so a driver that writes events
   as they come gives a live monitor.
-- The events SHALL be exactly the status changes FR-643's `step` reports, so the
-  events plus the summary equal a batch run over the same records (FSpec FR-114).
+- The events SHALL be exactly the status changes FR-643's `step` reports (a
+  change of the clause's category or disposition), so the events plus the
+  summary agree with a batch run over the same records in FR-643's "Batch
+  equality" sense (FSpec FR-114): a pending clause's latest event carries the
+  batch disposition over the records so far, and a settled clause's carries
+  the batch disposition over the records that decided it.
 - A malformed record (not one closed object of the forms above, an observation
   key `observations` lacks, a stamp of the wrong form for the kind) SHALL produce
   a `filament.monitor-event/1` with `category` `refusal`, `invalid-request`,
@@ -129,7 +135,7 @@ entry").
 | FR-644-AC-2 | A record with an unknown member between two good records gives one `refusal` event naming that record, and the events and summary for the good records equal those of the stream without it. | Test (TC-1668) |
 | FR-644-AC-3 | A `{"checkpoint": PATH}` record after record 2, then a second `command::monitor` call whose request names that file as `state` and whose stream holds records 3 to 5, gives the events of records 3 to 5 that the uninterrupted stream gives. | Test (TC-1669) |
 | FR-644-AC-4 | A request naming a clause the program lacks returns the command-error envelope, exit 20, and the sink receives nothing; `command::monitor` writes no byte to stdout or stderr. | Test (TC-1669) |
-| FR-644-AC-5 | Through `command::run`, a `native-monitor/1` request whose `records` file holds sample observations for two infinite-trace clauses over a record trace subject, `Reaches` (`eventually holds(r.level = 2)`) and `Never` (`always holds(r.level < 2)`), over levels 0, 1, 2, 1 then `{"end": "open"}` returns a `filament.monitor-run/1` document whose per-clause status after each observation record equals the clause-run result of the native-run/1 request over the `finite` trace of the samples received so far, whose summary equals the run over all four samples, and whose exit code is 10 (`Never` is violated). | Test (TC-1668) |
+| FR-644-AC-5 | Through `command::run`, a `native-monitor/1` request whose `records` file holds sample observations for two infinite-trace clauses over a record trace subject, `Reaches` (`eventually holds(r.level = 2)`) and `Never` (`always holds(r.level < 2)`), over levels 0, 1, 2, 1 then `{"end": "open"}` returns a `filament.monitor-run/1` document in which, for each clause after each observation record `k`: the `category` of the clause's latest event equals the `category` of the clause-run result of the native-run/1 request over the `finite` trace of samples 0 to `k`; that event's `disposition` equals the clause-run disposition over samples 0 to `j`, `j` the record of the latest event (for both clauses, `j` is 2 from record 2 on, where `Reaches` settles `success` and `Never` settles `violation`, so the settled `Never` disposition carries the three-sample counterexample while the run over four samples carries four); the summary's disposition for each clause equals its latest event's; and the exit code is 10 (`Never` is violated). | Test (TC-1668) |
 
 ## Dependencies
 
