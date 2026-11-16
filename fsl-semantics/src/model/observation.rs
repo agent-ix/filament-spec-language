@@ -2084,9 +2084,32 @@ pub fn admit_value_invariant_selection<'a>(
         limits,
         &views,
     )?;
-    let invocation = invocation_read
-        .as_invocation()
-        .ok_or_else(|| fault("expected-invocation-document"))?;
+    let (pre_ref, post_ref) = {
+        let invocation = invocation_read
+            .as_invocation()
+            .ok_or_else(|| fault("expected-invocation-document"))?;
+        (invocation.call.pre.clone(), invocation.post.clone())
+    };
+    let pre_read = read_document(
+        DocumentKind::Snapshot,
+        provisions.snapshots,
+        &pre_ref,
+        limits,
+        &views,
+    )?;
+    let post_read = read_document(
+        DocumentKind::Snapshot,
+        provisions.snapshots,
+        &post_ref,
+        limits,
+        &views,
+    )?;
+    let preloaded = InvocationDocuments {
+        invocation: invocation_read,
+        pre: pre_read,
+        post: post_read,
+    };
+    let invocation = preloaded.invocation()?;
     let (context_view, context_key) = document::find_declaration(&views, &invocation.call.context)
         .ok_or_else(|| refuse(admission_record(Code::WrongSnapshot, "wrong-invocation")))?;
     let context = context_view
@@ -2124,6 +2147,7 @@ pub fn admit_value_invariant_selection<'a>(
         &named,
         provisions,
         invocation_selected,
+        Some(preloaded),
         limits,
         model_limits.ancestor_steps,
     )?;
@@ -2862,6 +2886,7 @@ fn admit_invocation_documents(
     named: &NamedReads,
     provisions: &Provisions<'_>,
     selected: &DocumentRef,
+    preloaded: Option<InvocationDocuments>,
     limits: ObservationLimits,
     ancestor_steps: u64,
 ) -> Result<InvocationAdmission, AdmissionFailure> {
@@ -2869,37 +2894,41 @@ fn admit_invocation_documents(
     // pre and post snapshots, in that order -- before any of checks 2 to 5
     // read any of their content (SR-750 FND-005: this must not interleave
     // with check 4/5, which is what admission did before this fix).
-    let invocation_read = read_document(
-        DocumentKind::Invocation,
-        provisions.invocations,
-        selected,
-        limits,
-        views,
-    )?;
-    let (pre_ref, post_ref) = {
-        let invocation = invocation_read
-            .as_invocation()
-            .ok_or_else(|| fault("expected-invocation-document"))?;
-        (invocation.call.pre.clone(), invocation.post.clone())
-    };
-    let pre_read = read_document(
-        DocumentKind::Snapshot,
-        provisions.snapshots,
-        &pre_ref,
-        limits,
-        views,
-    )?;
-    let post_read = read_document(
-        DocumentKind::Snapshot,
-        provisions.snapshots,
-        &post_ref,
-        limits,
-        views,
-    )?;
-    let documents = InvocationDocuments {
-        invocation: invocation_read,
-        pre: pre_read,
-        post: post_read,
+    let documents = if let Some(documents) = preloaded {
+        documents
+    } else {
+        let invocation_read = read_document(
+            DocumentKind::Invocation,
+            provisions.invocations,
+            selected,
+            limits,
+            views,
+        )?;
+        let (pre_ref, post_ref) = {
+            let invocation = invocation_read
+                .as_invocation()
+                .ok_or_else(|| fault("expected-invocation-document"))?;
+            (invocation.call.pre.clone(), invocation.post.clone())
+        };
+        let pre_read = read_document(
+            DocumentKind::Snapshot,
+            provisions.snapshots,
+            &pre_ref,
+            limits,
+            views,
+        )?;
+        let post_read = read_document(
+            DocumentKind::Snapshot,
+            provisions.snapshots,
+            &post_ref,
+            limits,
+            views,
+        )?;
+        InvocationDocuments {
+            invocation: invocation_read,
+            pre: pre_read,
+            post: post_read,
+        }
     };
     let invocation = documents.invocation()?;
     let pre_snapshot = documents.pre()?;
@@ -3509,6 +3538,7 @@ fn admit_operation(
         named,
         provisions,
         selected,
+        None,
         limits,
         model_limits.ancestor_steps,
     )?;
@@ -3842,6 +3872,7 @@ pub fn admit_frame_invocation<'a, 't>(
         &NamedReads::default(),
         provisions,
         selected,
+        None,
         limits,
         model_limits.ancestor_steps,
     )?;

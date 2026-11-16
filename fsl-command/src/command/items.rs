@@ -103,6 +103,12 @@ pub(super) fn run_bytes(
             let Some(members) = value.as_object() else {
                 return Err(refused("value_invariants", "expected an object"));
             };
+            if members.contains_key("parameters") {
+                return Err(refused(
+                    "parameters",
+                    "not valid for a value_invariants selection",
+                ));
+            }
             let valid_members = members.len() == 1 && members.contains_key("snapshot")
                 || members.len() == 2
                     && members.contains_key("snapshot")
@@ -250,22 +256,43 @@ pub(super) fn run_bytes(
         }
         let single_bytes = serde_json::to_vec(&single).map_err(RunCause::Json)?;
         if kind == "value_invariants" {
+            let snapshot_key = value
+                .get("snapshot")
+                .and_then(Value::as_str)
+                .ok_or_else(|| refused("snapshot", "expected a snapshot key"))?;
+            let file = observations
+                .get(snapshot_key)
+                .and_then(Value::as_str)
+                .ok_or_else(|| refused(snapshot_key, "observation key is not present"))?;
+            let snapshot_bytes = super::read_file(&directory.join(file), limits.dependent_bytes)?;
+            let snapshot_document: Value =
+                serde_json::from_slice(&snapshot_bytes).map_err(RunCause::Json)?;
+            if snapshot_document["format"] == "filament.state.snapshot/v1"
+                && snapshot_document["observation"] != "current"
+            {
+                prepared.push((
+                    index,
+                    object,
+                    ItemExecution::ValueInvariants(Ok((
+                        vec![json!({"result": {
+                            "format": "native-run-result/2",
+                            "disposition": {
+                                "category": "refusal", "stage": "admit",
+                                "truth": null,
+                                "refusal": {"code": "wrong_snapshot",
+                                    "cause": "wrong-observation", "fields": {}}
+                            }
+                        }})],
+                        20,
+                    ))),
+                ));
+                continue;
+            }
             let result =
                 prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides)
                     .and_then(|prepared| match prepared {
                         super::PreparedRun::Clause(request) => {
-                            let snapshot_key = value
-                                .get("snapshot")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| refused("snapshot", "expected a snapshot key"))?;
-                            let file = observations
-                                .get(snapshot_key)
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| {
-                                    refused(snapshot_key, "observation key is not present")
-                                })?;
-                            let bytes =
-                                super::read_file(&directory.join(file), limits.dependent_bytes)?;
+                            let bytes = snapshot_bytes;
                             let reference =
                                 fsl_semantics::model::observation::document_reference(&bytes)
                                     .ok_or_else(|| {
@@ -326,10 +353,16 @@ pub(super) fn run_bytes(
                         count["expanded"] = json!(results.len());
                     }
                     for result in results {
-                        let mut item = json!({"selection": index,
-                            "invariant": result["invariant"],
-                            "path": result["path"],
-                            "result": result["result"]});
+                        let mut item = json!({
+                            "selection": index,
+                            "result": result["result"]
+                        });
+                        if let Some(invariant) = result.get("invariant") {
+                            item["invariant"] = invariant.clone();
+                        }
+                        if let Some(path) = result.get("path") {
+                            item["path"] = path.clone();
+                        }
                         if let Some(object) = &object {
                             item["object"] = object.clone();
                         }
@@ -376,6 +409,7 @@ pub(super) fn run_bytes(
     Ok(Some(RunResult {
         exit_code,
         value: document,
+        outcome: None,
     }))
 }
 

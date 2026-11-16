@@ -739,6 +739,7 @@ struct Intake<'a> {
     remaining: usize,
     maximum: usize,
     dependent_limit: Option<DependentLimit>,
+    prefetched_observations: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Copy)]
@@ -753,6 +754,9 @@ impl Intake<'_> {
     }
 
     fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
+        if let Some(bytes) = self.prefetched_observations.remove(path) {
+            return Ok(bytes);
+        }
         self.bounded_file(path, ceiling, true)
     }
 
@@ -800,6 +804,48 @@ impl Intake<'_> {
             })?;
         Ok(FormalSource::new(source, identity.formal))
     }
+}
+
+/// FR-664: refuse a current-snapshot `parameters` member before reading the
+/// program or model sources. The selected snapshot is cached for the normal
+/// clause reader so it is still consumed once.
+fn reject_current_parameters_before_sources(
+    intake: &mut Intake<'_>,
+    clause: Option<&wire::ClauseRun>,
+) -> Result<()> {
+    let Some(selection) = clause
+        .and_then(|clause| clause.selection.clause.as_ref())
+        .filter(|selection| selection.parameters.is_some())
+    else {
+        return Ok(());
+    };
+    let clause = clause.expect("the selection comes from the clause");
+    let observation_limits =
+        fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
+            .map_err(|error| RunCause::ClauseRequest {
+                member: error.member,
+                reason: error.reason,
+            })?;
+    let file = clause
+        .observations
+        .get(&selection.observation)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: selection.observation.clone(),
+            reason: "observation key is not present".to_owned(),
+        })?;
+    let bytes = intake.observation_file(
+        file,
+        usize::try_from(observation_limits.document_bytes).unwrap_or(usize::MAX),
+    )?;
+    let document: serde_json::Value = serde_json::from_slice(&bytes).map_err(RunCause::Json)?;
+    if document["format"] == "filament.state.snapshot/v1" && document["observation"] == "current" {
+        return Err(RunCause::ClauseRequest {
+            member: "parameters".to_owned(),
+            reason: "forbidden for current snapshot".to_owned(),
+        });
+    }
+    intake.prefetched_observations.insert(file.clone(), bytes);
+    Ok(())
 }
 
 /// Read a native-run/1 job and execute it locally with fresh, bounded stage state.
@@ -917,6 +963,7 @@ pub fn read_clause_run_request(
                     .len(),
             },
         )?;
+        reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         let source = intake.source(&request.program.source)?;
         require_complete_edition(source.source())?;
         clause::read(&mut intake, &request, clause, source)
@@ -1611,6 +1658,7 @@ fn intake(directory: &Path, counts: FileCounts) -> Result<Intake<'_>> {
         remaining: TOTAL_BYTES,
         maximum: TOTAL_BYTES,
         dependent_limit: None,
+        prefetched_observations: std::collections::BTreeMap::new(),
     })
 }
 
@@ -1621,6 +1669,7 @@ fn intake_with_bytes(directory: &Path, counts: FileCounts, maximum: usize) -> Re
         remaining: maximum,
         maximum,
         dependent_limit: Some(DependentLimit::CallerConfigured),
+        prefetched_observations: std::collections::BTreeMap::new(),
     })
 }
 
@@ -1635,6 +1684,7 @@ fn intake_with_fixed_bytes(
         remaining: maximum,
         maximum,
         dependent_limit: Some(DependentLimit::Fixed),
+        prefetched_observations: std::collections::BTreeMap::new(),
     })
 }
 
@@ -1674,6 +1724,7 @@ fn prepare_run_bytes(
         },
         dependent_bytes,
     )?;
+    reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
     // The program source is read exactly once; its declared edition decides
     // the runner before any model or library source is read (FR-100).
     let source = intake.source(&request.program.source)?;

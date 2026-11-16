@@ -211,7 +211,7 @@ fn a_false_type_invariant_is_a_violation_through_run() {
 
 /// FR-652-AC-3: invocation parameters are evaluated and located at the
 /// invocation binding; an invariant violation settles the items document.
-#[trace("TC-1716", "FR-652-AC-3")]
+#[trace("TC-1716", "FR-652-AC-3", "FR-106-AC-48")]
 #[test]
 fn value_invariants_selection_checks_invocation_parameters() {
     let directory = tempfile::tempdir().unwrap();
@@ -233,7 +233,13 @@ fn value_invariants_selection_checks_invocation_parameters() {
     let document = items_document(&output);
     assert_eq!(document["items"].as_array().unwrap().len(), 1, "{document}");
     assert_eq!(document["category"], "refusal", "{document}");
-    assert_eq!(document["items"][0]["result"]["disposition"]["refusal"]["code"], "wrong_snapshot");
-    assert!(document["items"][0].get("invariant").is_none(), "{document}");
+    assert_eq!(
+        document["items"][0]["result"]["disposition"]["refusal"]["code"], "wrong_snapshot",
+        "{document}"
+    );
+    assert!(
+        document["items"][0].get("invariant").is_none(),
+        "{document}"
+    );
     assert!(document["items"][0].get("path").is_none(), "{document}");
 }

@@ -741,21 +741,33 @@ fn snapshot_refusals_carry_a_document_locus() {
 #[test]
 #[trace("TC-1747", "FR-664-AC-2")]
 fn context_and_value_invariant_selections_refuse_parameters() {
-    for selection in [
-        json!({"context": {"name": "Consistent", "invocation": "i1", "side": "pre",
-            "parameters": {}}}),
-        json!({"value_invariants": {"snapshot": "s1", "parameters": {}}}),
-    ] {
-        let directory = tempfile::tempdir().unwrap();
-        let mut request = current_clause_request();
-        request["request"]["clause"]["selection"] = selection;
-        let (exit, value) = run_refusal(directory.path(), &request);
-        assert_eq!(exit, 20, "{value}");
-        assert_eq!(value["code"], "invalid-request", "{value}");
-        assert_eq!(value["stage"], "request", "{value}");
-        assert!(value.to_string().contains("parameters"), "{value}");
-        assert!(!value.to_string().contains("unknown variant"), "{value}");
-    }
+    let directory = tempfile::tempdir().unwrap();
+    let mut context_request = current_clause_request();
+    context_request["request"]["clause"]["selection"] = json!({
+        "context": {"name": "Consistent", "invocation": "i1", "side": "pre",
+            "parameters": {}}
+    });
+    let (exit, value) = run_refusal(directory.path(), &context_request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert!(value.to_string().contains("parameters"), "{value}");
+
+    let mut value_invariants_request = current_clause_request();
+    value_invariants_request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("clause");
+    value_invariants_request["request"]["items"] = json!({
+        "observations": {"s1": "spine-snapshot.json"},
+        "selections": [{"value_invariants": {"snapshot": "s1", "parameters": {}}}]
+    });
+    let (exit, value) = run_refusal(directory.path(), &value_invariants_request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert!(value.to_string().contains("parameters"), "{value}");
+    assert!(!value.to_string().contains("unknown variant"), "{value}");
 }
 
 /// FR-665-AC-2, FSpec FR-301-AC-5 (TC-1748, FSpec-TC-1244): `inspect
