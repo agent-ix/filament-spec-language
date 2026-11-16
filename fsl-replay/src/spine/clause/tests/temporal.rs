@@ -2391,6 +2391,9 @@ fn spine_cover(cover: fsl_eval::temporal::ClockCover) -> crate::spine::Timestamp
         fsl_eval::temporal::ClockCover::Counter { uncertainty } => {
             crate::spine::TimestampedCover::Counter { uncertainty }
         }
+        fsl_eval::temporal::ClockCover::Bounded { uncertainty } => {
+            crate::spine::TimestampedCover::Bounded { uncertainty }
+        }
     }
 }
 

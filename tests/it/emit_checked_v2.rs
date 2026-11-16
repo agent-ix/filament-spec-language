@@ -963,7 +963,7 @@ fn a_clock_selection_by_clause_name_converts_a_duration_window_to_the_clock_unit
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          model M = \"acme/orders\";\n\
          record Sample { v: Int[0, 9]; }\n\
-         temporal Window using t over (e: Sample) clock \"ms\" on origin \
+         temporal Window using t over (e: Sample) clock \"plant-ms\" on origin \
          { always[0,3] (count over past[0 M::s, 300000 M::ms] >= 1) }\n",
     )
     .unwrap();

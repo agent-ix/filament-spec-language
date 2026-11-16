@@ -54,6 +54,19 @@ fn model_trace(fixture: &Fixture, payload: &TemporalCounterexample) -> TraceInpu
     }
 }
 
+/// The selection of the fixture's clause `C` over `trace`.
+fn selection(trace: TraceInput) -> ClauseRunSelection {
+    ClauseRunSelection::Temporal {
+        name: "C".to_owned(),
+        trace,
+        over: OverObject {
+            population: format!("ix://{PACKAGE}/counters"),
+            key: "c".to_owned(),
+        },
+        ledger: None,
+    }
+}
+
 /// The run of the fixture's clause `C` over `trace`.
 fn run(fixture: &Fixture, trace: TraceInput) -> ClauseRunReport {
     run_under(fixture, trace, UNLIMITED)
@@ -72,15 +85,7 @@ fn run_under(fixture: &Fixture, trace: TraceInput, accounting: ScalarLimits) -> 
         dependencies: DependencyInput::default(),
         snapshots: fixture.documents.snapshots.clone(),
         invocations: Default::default(),
-        selection: ClauseRunSelection::Temporal {
-            name: "C".to_owned(),
-            trace,
-            over: OverObject {
-                population: format!("ix://{PACKAGE}/counters"),
-                key: "c".to_owned(),
-            },
-            ledger: None,
-        },
+        selection: selection(trace),
         package_name: "fixture".to_owned(),
         limits: SpineLimits::default(),
         observation_limits: ObservationLimits::default(),
@@ -387,4 +392,61 @@ fn a_model_trace_at_exactly_its_candidate_bound_reports_the_violation() {
             report.disposition
         );
     }
+}
+
+/// FR-641-AC-8, FSpec FR-352-AC-19: the result `command::run` writes for a
+/// `model` trace (`write_clause_run_result_for` with the request's selection)
+/// carries the effective candidate bound as its `limits` member, the default
+/// written out; a bound of 5, which expands every step in full, gives a
+/// document otherwise equal to the default's.
+#[trace("TC-2299", "FR-641-AC-8", "FSpec-TC-1701", "FSpec-FR-352-AC-19")]
+#[test]
+fn a_model_trace_result_writes_its_limits() {
+    let written = |bound: u64| {
+        let (fixture, payload) = stuttering();
+        let TraceInput::Model {
+            initial,
+            universes,
+            prefix,
+            repeat,
+            terminal_stutter,
+            ..
+        } = model_trace(&fixture, &payload)
+        else {
+            unreachable!("model_trace builds a model trace");
+        };
+        let trace = TraceInput::Model {
+            initial,
+            universes,
+            prefix,
+            repeat,
+            terminal_stutter,
+            max_candidates: bound,
+        };
+        let report = run(&fixture, trace.clone());
+        let bytes =
+            fsl_replay::spine::write_clause_run_result_for(&report, Some(&selection(trace)))
+                .expect("the report writes");
+        serde_json::from_slice::<serde_json::Value>(&bytes).expect("JSON")
+    };
+    let default = written(fsl_replay::spine::DEFAULT_MODEL_MAX_CANDIDATES);
+    assert_eq!(
+        default["limits"],
+        serde_json::json!({"expansion.max_candidates": "1000000"}),
+        "{default}"
+    );
+    let five = written(LARGEST_STEP);
+    assert_eq!(
+        five["limits"],
+        serde_json::json!({"expansion.max_candidates": "5"}),
+        "{five}"
+    );
+    let without_limits = |document: &serde_json::Value| {
+        let mut document = document.clone();
+        if let Some(members) = document.as_object_mut() {
+            members.remove("limits");
+        }
+        document
+    };
+    assert_eq!(without_limits(&default), without_limits(&five));
 }

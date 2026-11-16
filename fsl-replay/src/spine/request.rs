@@ -330,6 +330,12 @@ pub enum CoverWire {
         /// The uncertainty, in ticks.
         uncertainty: u64,
     },
+    /// Every point stamp `t` covers `[t-u, t+u]` (FR-501 "Request-file
+    /// spelling").
+    Bounded {
+        /// The uncertainty, in ticks.
+        uncertainty: u64,
+    },
 }
 
 /// FR-641 `M`: an atom valuation absent from an admitted observation.
@@ -1512,6 +1518,9 @@ fn selection(
                                 CoverWire::Counter { uncertainty } => {
                                     TimestampedCover::Counter { uncertainty }
                                 }
+                                CoverWire::Bounded { uncertainty } => {
+                                    TimestampedCover::Bounded { uncertainty }
+                                }
                             }),
                             missing_valuations: parts
                                 .missing
@@ -1646,6 +1655,7 @@ pub fn read_cover(wire: CoverWire) -> TimestampedCover {
     match wire {
         CoverWire::Exact => TimestampedCover::Exact,
         CoverWire::Counter { uncertainty } => TimestampedCover::Counter { uncertainty },
+        CoverWire::Bounded { uncertainty } => TimestampedCover::Bounded { uncertainty },
     }
 }
 

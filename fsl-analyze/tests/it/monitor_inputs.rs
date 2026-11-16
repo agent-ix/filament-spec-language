@@ -53,10 +53,10 @@ fn event_unit() -> String {
     header("filament.temporal.event-position.false-extension/v1")
         + "temporal Small using t over (c: M::Counter) clock \"model-steps\" on origin { always[0,2] holds(c.value < 2) }\n\
            temporal Refuse using t over (c: M::Counter) clock \"model-steps\" on origin { always[0,1] holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n\
-           temporal Gate using t over (r: Reading) clock \"model-steps\" on origin { always[0,2] (count over past[0, 9] min_count 2 >= 1) }\n\
-           temporal Dense using t over (r: Reading) clock \"model-steps\" on origin { always[1,1] (count over past[0, 9] min_count 1 >= 1) }\n\
-           temporal Wide using t over (r: Reading) clock \"model-steps\" on origin { always[0,0] (count where holds(r.level > 9) over past[0, 0] min_count 0 >= 1) }\n\
-           temporal Long using t over (r: Reading) clock \"model-steps\" on origin { always[0,19999] (count where holds(r.level >= 0) over past[0, 0] min_count 0 >= 1) }\n"
+           temporal Gate using t over (r: Reading) clock \"events\" on origin { always[0,2] (count over past[0, 9] min_count 2 >= 1) }\n\
+           temporal Dense using t over (r: Reading) clock \"events\" on origin { always[1,1] (count over past[0, 9] min_count 1 >= 1) }\n\
+           temporal Wide using t over (r: Reading) clock \"events\" on origin { always[0,0] (count where holds(r.level > 9) over past[0, 0] min_count 0 >= 1) }\n\
+           temporal Long using t over (r: Reading) clock \"events\" on origin { always[0,19999] (count where holds(r.level >= 0) over past[0, 0] min_count 0 >= 1) }\n"
 }
 
 /// The finite-window unit: FR-501-AC-4's clause.

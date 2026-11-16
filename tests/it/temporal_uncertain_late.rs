@@ -124,7 +124,6 @@ fn ack_at(ack: u64, cover: Option<Value>) -> Value {
 /// acknowledgement the request is pending at watermark 11 and violated at 12.
 #[trace("TC-1546", "FR-501-AC-27", "FSpec-TC-1044", "FSpec-FR-160-AC-9")]
 #[test]
-#[ignore = "QSL-2146: the bounded clock-uncertainty cover is not implemented yet"]
 fn a_bounded_cover_widens_point_stamps_and_straddles_the_bound() {
     let bounded = || Some(json!({"bounded": {"uncertainty": 2}}));
     assert_eq!(kind(&ack_at(5, bounded())), "holds");

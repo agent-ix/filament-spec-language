@@ -2322,6 +2322,11 @@ struct ClauseRunDocument {
     witness: Option<RecordWire<Box<RawValue>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ledger: Option<serde_json::Value>,
+    /// FR-641-AC-8, FSpec FR-352-AC-19: the effective limits a `model`
+    /// trace ran under, defaults written out, so runs that differ only in a
+    /// limit have different result identities. A sample trace writes none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limits: Option<BTreeMap<&'static str, String>>,
     axes: crate::OutcomeAxes,
 }
 
@@ -2855,6 +2860,7 @@ fn write_document(
         basis: report.basis.as_str(),
         witness,
         ledger,
+        limits: run_limits(selection),
         axes: report.axes(),
     };
     let json = serde_json::to_vec(&document)?;
@@ -2863,4 +2869,22 @@ fn write_document(
         &parsed.root(),
         quire_canonical::Limits::new(u64::MAX),
     )?)
+}
+
+/// FR-641-AC-8: the limits member of a run over `selection`: a `model`
+/// trace's effective `expansion.max_candidates`, and nothing for any other
+/// trace or selection.
+fn run_limits(
+    selection: Option<&super::ClauseRunSelection>,
+) -> Option<BTreeMap<&'static str, String>> {
+    match selection? {
+        super::ClauseRunSelection::Temporal {
+            trace: super::TraceInput::Model { max_candidates, .. },
+            ..
+        } => Some(BTreeMap::from([(
+            "expansion.max_candidates",
+            max_candidates.to_string(),
+        )])),
+        _ => None,
+    }
 }

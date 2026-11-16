@@ -877,6 +877,9 @@ fn identity_of(
         ClockCover::Counter { uncertainty } => {
             MemberEncoder::new().u64(1).u64(uncertainty).finish()
         }
+        ClockCover::Bounded { uncertainty } => {
+            MemberEncoder::new().u64(2).u64(uncertainty).finish()
+        }
     };
     let relation = match &request.relation {
         Relation::Original => MemberEncoder::new().u64(0),
@@ -1632,7 +1635,9 @@ fn run_instance(
     }
     let uncertainty = match request.cover {
         ClockCover::Exact => None,
-        ClockCover::Counter { uncertainty } => Some(uncertainty),
+        ClockCover::Counter { uncertainty } | ClockCover::Bounded { uncertainty } => {
+            Some(uncertainty)
+        }
     };
     match call.admit_work(subject.facts.formula().work(), uncertainty, [*anchor_tick]) {
         Ok(_) => {}

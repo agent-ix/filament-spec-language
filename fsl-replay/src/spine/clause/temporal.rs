@@ -1392,6 +1392,9 @@ fn run_finite_window(
                 TimestampedCover::Counter { uncertainty } => {
                     fsl_eval::temporal::ClockCover::Counter { uncertainty }
                 }
+                TimestampedCover::Bounded { uncertainty } => {
+                    fsl_eval::temporal::ClockCover::Bounded { uncertainty }
+                }
             },
         },
         ordered
@@ -2012,6 +2015,7 @@ fn finite_window_report(
             cover: match premises.cover {
                 ClockCover::Exact => TimestampedCover::Exact,
                 ClockCover::Counter { uncertainty } => TimestampedCover::Counter { uncertainty },
+                ClockCover::Bounded { uncertainty } => TimestampedCover::Bounded { uncertainty },
             },
             unit: premises.unit,
         },
@@ -2172,6 +2176,12 @@ pub enum TimestampedCover {
     /// A counter reading `k` covers `[k, k+1)` widened by `uncertainty` ticks
     /// on each side.
     Counter {
+        /// The widening `u`, in ticks.
+        uncertainty: u64,
+    },
+    /// A point stamp `t` covers the closed interval `[t-u, t+u]` (FR-501
+    /// "Bounded cover and interval stamps").
+    Bounded {
         /// The widening `u`, in ticks.
         uncertainty: u64,
     },

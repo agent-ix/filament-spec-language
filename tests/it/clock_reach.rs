@@ -143,14 +143,13 @@ fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     );
     assert_eq!(exit, 0, "{p90}");
     assert_eq!(p90["disposition"]["temporal"]["kind"], "holds");
-    let catalog = filament_semantic_value::catalog::CatalogCode::new(
-        "unsupported_construct",
-        "expression-form",
-    );
+    // The exit ladder (FR-285), not the refusal-record map `category_of`.
+    let category = fsl_foundation::diagnostic::Code::UnsupportedConstruct.category();
     assert_eq!(
-        fsl_foundation::diagnostic::category_of(&catalog),
-        Some(filament_semantic_value::catalog::Category::Unsupported)
+        category,
+        filament_semantic_value::catalog::Category::Unsupported
     );
+    assert_eq!(category.exit_code(), 21);
 }
 
 /// FR-194-AC-13, its second sentence: the model-subject aggregate refusal
@@ -159,12 +158,11 @@ fn a_quantile_aggregate_reaches_a_verdict_through_run() {
 #[test]
 #[trace("TC-2387", "FR-194-AC-13")]
 fn the_model_subject_aggregate_refusal_is_unsupported() {
-    let catalog = filament_semantic_value::catalog::CatalogCode::new(
-        "unsupported_construct",
-        "expression-form",
-    );
+    // The exit ladder (FR-285), not the refusal-record map `category_of`.
+    let category = fsl_foundation::diagnostic::Code::UnsupportedConstruct.category();
     assert_eq!(
-        fsl_foundation::diagnostic::category_of(&catalog),
-        Some(filament_semantic_value::catalog::Category::Unsupported)
+        category,
+        filament_semantic_value::catalog::Category::Unsupported
     );
+    assert_eq!(category.exit_code(), 21);
 }
