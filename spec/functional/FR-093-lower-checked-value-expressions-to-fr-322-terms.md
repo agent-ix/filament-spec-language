@@ -51,7 +51,10 @@ id of every node.
 The source is the checked tree (`check::ir::Node`), not the parsed
 `Expression`: each checked node carries its checked type, and FR-322 takes
 every `result_type` and literal `type` from the checked type, never by
-inference. Each `Expression` form checks to the `NodeKind` the table below
+inference. The one exception is an integer `div`, `rem` or `mod` application,
+whose `result_type` is the builtin `Integer` node while its checked type is
+FR-495's exact interval (FR-495 "Representation of an integer division
+result"). Each `Expression` form checks to the `NodeKind` the table below
 names.
 
 FSpec references (`ix://agent-ix/filament-specification`, by reference): FR-322 "Operation families, groups and constraints", the closed
@@ -665,6 +668,8 @@ strict `exact` rounding, are FR-478's at evaluation.
 A `Coerce` exists only for a narrowing: an integer whose type an `Int[..]`
 contains is admitted with no node, and a `ConvertScalar` whose operand type
 equals its target builds no node; its parent references the operand's node.
+An integer `div`, `rem` or `mod` application is lowered at `Integer`, so a
+`Coerce` of its node into an `Int[..]` always builds the narrow (FR-495).
 
 **Converted equality operand.** An `Equality` operand written `convert<T>(e)`,
 whose `e` has an exact numeric or quantity type other than `T`, is checked as

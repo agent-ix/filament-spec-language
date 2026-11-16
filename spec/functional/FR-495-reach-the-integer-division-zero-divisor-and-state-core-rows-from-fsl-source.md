@@ -131,8 +131,13 @@ bound and does not authorize a CG-side result-bound workaround.
 - **Type of an integer division node.** The checked node of `a div b`,
   `a rem b` and `a mod b` SHALL have the type `Int[lo, hi]` of that interval
   when the interval is finite, and `Integer` only when it is unbounded, so a
-  consumer reads the proved range from the node's type as it does for `+`
-  and `*`. A remainder is bounded by its divisor alone: for a divisor whose
+  consumer reads the proved range from the node's type. (An integer `+`, `-`
+  or `*` node is typed `Integer`, and its range is read from the operands'
+  static ranges; an integer division node carries its range in its type.)
+  The type is the same in every position the node occupies: no consumer,
+  coercion, argument upcast or call changes it, and an `Integer` position
+  admits the `Int[lo, hi]` node unchanged ("Representation of an integer
+  division result" below). A remainder is bounded by its divisor alone: for a divisor whose
   range excludes zero and whose largest magnitude is `m`, the Euclidean
   remainder of `mod` (and of `rem` under the Euclidean law) lies within
   `[0, m - 1]`, the truncating `rem` within `[-(m - 1), m - 1]` narrowed by
@@ -208,6 +213,35 @@ bound and does not authorize a CG-side result-bound workaround.
     node's type is always the smallest interval, so every work ceiling under
     which a package checks gives it the same node types, and a caller who
     reaches the limit raises `s3.work_units` (FR-255) to finish the walk.
+- **Representation of an integer division result (QSL-2002).** The checked
+  node, the lowered node and the requirement record each carry the result as
+  follows, for `div`, `rem` and `mod` alike:
+  - *Lowered node.* FR-093 lowers the checked node to one `binary`
+    application of `filament.op.integer.div`, `.rem` or `.mod` over
+    `[ref(l), ref(r)]` whose `result_type` is the builtin `Integer` node, the
+    operation catalog's result type. This is the one exception to FR-093's
+    rule that `result_type` is the type node of the checked type; the
+    checked node keeps its interval.
+  - *Bounded position.* Where the checked node is consumed at an `Int[lo, hi]`
+    type (a function result, an argument of an `Int[..]` parameter, any
+    position `check` coerces into `Int[..]`), `check` wraps it in a `Coerce`
+    to that interval, and the `Coerce` lowers to a `filament.op.numeric.narrow`
+    over the lowered application even when the node's interval lies inside
+    the target, because the lowered operand is `Integer`-typed. The range
+    obligation of that `Coerce` is discharged by the node's interval.
+  - *Every other position.* Where the node is consumed at `Integer` (an
+    `Integer` result or parameter, an operand of an ordering, equality or
+    arithmetic operator, a `let` binding), `check` adds no `Coerce` and
+    lowering adds no node: the consumer references the lowered application.
+  - *Requirement record.* The application's `value-validity` record
+    (FR-062) has, as its result bound, the target of the narrow that
+    directly wraps it, with that narrow's `type_argument` type node and the
+    narrow's `expression` occurrence as its conversion context; with no
+    such narrow, the node's interval (its checked type), with the FR-092
+    type node of that interval and no conversion context. The checked
+    graph holds that type node. The record's `ValueType` and type node
+    always name the same type, and the request item (FR-404) and the replay
+    executor (FR-098) read that one bound.
 - **The same obligations for `div`, `rem` and `mod`.** The nonzero
   obligation and the result interval apply equally to `div`, `rem` and `mod`
   under every selected law; `mod` is not exempt because it needs no law.
@@ -346,6 +380,8 @@ bound and does not authorize a CG-side result-bound workaround.
 | FR-495-AC-18 | Under `CheckMode::Linked` and a law header for each of the three laws (FR-670): `function r1 using v(a: Int[-100, 100], b: Int[1, 12]): Int[-11, 11] pure { a rem b }` checks, its `rem` node typed `Int[0, 11]` under Euclidean and floor and `Int[-11, 11]` under truncating; the same with result `Int[0, 11]` checks under Euclidean and floor and refuses `unproved-range` at the `rem` under truncating; `function q1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 100] pure { a div b }` checks with its `div` node typed `Int[0, 100]`; and `q1` and `r1` with `b: Int[0, 12]` each refuse `undefined_expression`/`unproved-nonzero` at the operator, as their only refusal. | Test (TC-1783) |
 | FR-495-AC-19 | Under `CheckMode::Linked`, each remainder below checks into its stated exact interval and refuses `undefined_expression`/`unproved-range` at the operator, as its only refusal, into the interval with its lower endpoint raised by one and into the interval with its upper endpoint lowered by one: `a mod b` with `a: Int[0, 2]`, `b: Int[5, 6]` into `Int[0, 2]` (dividends below every divisor); `a: Int[91, 91]`, `b: Int[2, 12]` into `Int[0, 7]` (`91 = 7 * 13`, `91 mod 12 = 7`); `a: Int[97, 97]`, `b: Int[2, 12]` into `Int[1, 9]` (97 is prime, `97 mod 11 = 9`); `a: Int[-7, -7]`, `b: Int[3, 5]` into `Int[1, 3]`; under a truncating law header `a rem b` with `a: Int[-7, -7]`, `b: Int[3, 5]` into `Int[-3, -1]`; under a floor law header `a rem b` with `a: Int[7, 7]`, `b: Int[-5, -3]` into `Int[-3, -1]`. With `b: Integer`, `if b != 0 then a mod b else 0` over `a: Int[0, 9]` checks into `Int[0, 9]`, and over `a: Int[-1, 9]` refuses `unproved-range` into `Int[0, 1000]` (the remainder of a negative dividend by an unbounded divisor is unbounded). | Test (TC-2210) |
 | FR-495-AC-20 | Under `CheckMode::Linked` and `CheckingLimits::default()`, `function big using v(a: Int[1000000007, 1000000007], b: Int[2, 1000000006]): Int[1, 500000003] pure { a mod b }` checks and the same function into `Int[2, 500000003]` refuses `unproved-range` at the `mod` (1000000007 is prime, so the walk visits every run and the minimum is 1, at `b = 1000000006`). With the work ceiling set to 10000 (`with_work_budget(10000)`), `big` refuses `stage_limit_exceeded` with the `WorkBudget` kind and bound 10000 at the `mod`, as its only refusal, never `unproved-range`, and no checked graph is returned. | Test (TC-2211) |
+| FR-495-AC-21 | Under `CheckMode::Linked` with no law header, over `a: Int[0, 100]`, `b: Int[1, 12]`, `function acc using v(r: Int[0, 20]): Boolean pure { true }` and `function accw using v(r: Integer): Boolean pure { true }`, each function below checks, its checked `mod` node has type `Int[0, 11]`, and its lowered `filament.op.integer.mod` application has the builtin `Integer` node as `result_type`. Bounded positions: `equal` (`: Int[0, 11] { a mod b }`), `wider` (`: Int[0, 20] { a mod b }`) and `arg` (`: Boolean { acc(a mod b) }`) each have exactly one `numeric.narrow` directly over the application, and the `mod` record's result bound is `Int[0, 11]`, `Int[0, 20]` and `Int[0, 20]`, with that narrow's `type_argument` node as type node and that narrow's `expression` occurrence as conversion context. Other positions: `integer` (`: Integer { a mod b }`), `argw` (`: Boolean { accw(a mod b) }`), `cmp` (`: Boolean { a mod b >= 0 }`), `bound` (`: Integer { let r = a mod b in r }`), `derived` (`: Integer { (a mod b) + 1 }`) and `derivedb` (`: Int[1, 12] { (a mod b) + 1 }`) each have no narrow over the application, and the `mod` record's result bound is `Int[0, 11]`, with the checked graph's type node of `Int[0, 11]` as type node and no conversion context; `derived`'s `+` record is `Integer` with no context and `derivedb`'s is `Int[1, 12]` with its narrow's occurrence. For every record the bound's `ValueType` and type node name the same type, and `fsl-route`'s request item for the record carries the record's type node and conversion context. | Test (TC-2270) |
+| FR-495-AC-22 | Over AC-21's unit, for each of its functions that holds a `mod`, a plugin counterexample at the `mod` record's occurrence with `a = 100` and `b = 12` replays through `fsl-replay` (FR-098 "Application claim", FR-404) to `inconclusive` with cause `Verdicts`, proved category `violation` and replayed category `success`, and evaluated value `true`: the observed `100 mod 12` is `4`, inside the record's result bound, which the executor reads from the record. The replay never settles `NoValue`, and the item settles `inconclusive` with cause `replay-parity`, naming the plugin. | Test (TC-2270) |
 
 
 ## Dependencies

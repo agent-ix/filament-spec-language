@@ -223,7 +223,9 @@ chooses the Rust spelling) holds:
   checked expression was read from (FR-096);
 - the application's **result bound**: the target range of the
   `filament.op.numeric.narrow` that wraps it, when a narrow's operand is this
-  application, and otherwise the application's own result type;
+  application, and otherwise the application's own result type, which is
+  its checked node's type (for an integer `div`, `rem` or `mod`, the exact
+  interval FR-495 gives the node, in every position that consumes it);
 - its **direct conversion context**: the canonical `OccurrenceKey` of the
   `expression` occurrence for the narrow that directly wraps it (the
   innermost narrow), when the result bound comes from that narrow; otherwise
@@ -303,7 +305,16 @@ site:
   consumer is `fsl-replay`'s function-claim selection.
 - **Result bound and path condition**, as the site holds them, the result
   bound as its checked `ValueType` and the `WireNodeId` of its FR-092 type
-  node.
+  node. That type node is the type node of the bound's `ValueType`: for a
+  narrowed bound the direct narrow's `type_argument` node, and otherwise the
+  type node of the application's checked type. It is not always the lowered
+  application's `result_type` node: an integer `div`, `rem` or `mod`
+  application lowers at `Integer` while its checked type is an interval
+  (FR-495 "Representation of an integer division result"), and its record
+  names the interval's type node, which the checked graph holds. The
+  `ValueType` and the type node SHALL name the same type, so the request
+  writer, which publishes the type node, and the replay executor, which
+  reads the `ValueType` (FR-098), check one bound.
 - **Direct conversion context.** When a narrow directly wraps the scalar
   application at this site, the record SHALL carry that direct (innermost)
   narrow's canonical `OccurrenceKey` (its `expression` occurrence) as its
