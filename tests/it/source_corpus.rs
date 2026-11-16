@@ -137,8 +137,8 @@ fn run_directory(directory: &Path) -> Result<String, String> {
                 continue;
             }
         };
-        if let Some(key) = &expected.flips_with {
-            *flips.entry(key.clone()).or_default() += 1;
+        if let Some(key) = expected.flips_with.as_deref().filter(|key| *key != "none") {
+            *flips.entry(key.to_owned()).or_default() += 1;
         }
         let actual = match execute(&program_path, &expected) {
             Ok(actual) => actual,
@@ -505,19 +505,351 @@ fn display_option(value: &Option<String>) -> &str {
 fn corpus_values() {
     assert_values_corpus_counts();
     let directory = corpus_root().join("values");
+    assert_values_corpus_inventory(&directory);
     assert_values_programs_compile_at_s4(&directory);
     let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
-    for key in [
-        "G-001", "G-009", "G-022", "G-024", "G-025", "G-026", "G-027", "G-028", "QSL-1965",
-        "QSL-1986", "QSL-1989", "QSL-2002", "QSL-2004", "QSL-2006", "QSL-2007", "QSL-2008",
-        "STD-654",
-    ] {
-        assert!(
-            report.contains(key),
-            "expected pinned flip key {key}: {report}"
-        );
-    }
+    assert_eq!(report, expected_flip_report());
     println!("{report}");
+}
+
+const REQUIRED_VALUE_CASES: &[&str] = &[
+    "alias-cycle-bad",
+    "alias-ok",
+    "bool-and-int-bad",
+    "bool-eq-ok",
+    "bool-ok",
+    "bool-order-bad",
+    "bool-truthy-bad",
+    "case-enum-bad",
+    "conv-narrow-2007",
+    "conv-narrow-noguard",
+    "conv-rat-narrow",
+    "conv-text-num",
+    "dec-eq-convert",
+    "dec-int-mix-bad",
+    "dec-malformed-bad",
+    "dec-mult-ok",
+    "dec-numeral-1965",
+    "dec-ok",
+    "dec-to-int-bad",
+    "div-1989",
+    "div-profile-select",
+    "div-profile-using",
+    "enum-dup-member-bad",
+    "enum-ok",
+    "enum-order-bad",
+    "enum-ordered-ok",
+    "enum-two-bad",
+    "enum-unknown-member-bad",
+    "float-conv-alias-eq",
+    "float-conv-alias-onesided",
+    "float-conv-eq-2004",
+    "float-conv-inline-onesided",
+    "float-conv-int-ok",
+    "float-eq-ok",
+    "float-exact-mix-bad",
+    "float-ok",
+    "float-opt-eq-ac25",
+    "float-record-eq-bad",
+    "float-seq-eq-ac25",
+    "float-set-elem-ac26",
+    "float-to-int-bad",
+    "float-to-rat",
+    "float-union-eq-ac25",
+    "float-width-bad",
+    "fn-ok",
+    "fn-param-named-set-2006",
+    "fn-undeclared-bad",
+    "if-kinds-differ-bad",
+    "if-nonbool-cond-bad",
+    "int-arith",
+    "int-arith-ok",
+    "int-arith-outside",
+    "int-arith-range-bad",
+    "int-eq-mixed-bad",
+    "int-eq-mixed-convert-ok",
+    "int-eq-sum-1986",
+    "int-guard-if-range-ok",
+    "int-literal-huge-bad",
+    "int-literal-ok",
+    "int-lt-mixed-ok",
+    "int-narrow-param-bad",
+    "int-neg-ok",
+    "int-power-bad",
+    "int-reversed-bounds-bad",
+    "int-rounding-mode",
+    "int-sub-ok",
+    "int-unbounded-ok",
+    "int-unbounded-to-int-bad",
+    "int-widen-ok",
+    "let-alias-ok",
+    "let-annot-2008",
+    "let-arith-range",
+    "let-scope-bad",
+    "let-shadow",
+    "map-type-src",
+    "mod-range-2002",
+    "mod-zero-2002",
+    "no-profile-unit",
+    "null-primary-bad",
+    "obj-src-decimal",
+    "obj-src-enum",
+    "obj-src-float",
+    "obj-src-qty",
+    "obj-src-record",
+    "opt-Some-param",
+    "opt-Some-range-bad",
+    "opt-Some-result",
+    "opt-absent-eq",
+    "opt-lowercase-some",
+    "opt-nested",
+    "opt-none",
+    "opt-ok",
+    "opt-order-bad",
+    "opt-present-nonopt-bad",
+    "opt-some",
+    "opt-unguarded-bad",
+    "profile-dup-bad",
+    "profile-ok",
+    "profile-unknown-alias-bad",
+    "qty-affine",
+    "qty-carried",
+    "qty-carried-order",
+    "qty-convert-ok",
+    "qty-decimal-literal",
+    "qty-dim-bad",
+    "qty-int-mix-bad",
+    "qty-mult-ok",
+    "qty-ok",
+    "qty-power-ok",
+    "qty-scalar-mult",
+    "qty-units-bad",
+    "qty-unknown-unit-bad",
+    "r-float",
+    "r-opt",
+    "r-qty",
+    "r-rat",
+    "r-union0",
+    "r-union1",
+    "rat-int-eq-convert",
+    "rat-int-mix-bad",
+    "rat-literal-amb-bad",
+    "rat-literal-ok",
+    "rat-ok",
+    "rat-range-bad",
+    "rec-extra-init-bad",
+    "rec-field-range-bad",
+    "rec-missing-field-bad",
+    "rec-ok",
+    "rec-recursive-bad",
+    "rec-recursive-opt-ok",
+    "rem-1989",
+    "slash-int-nohint-bad",
+    "slash-int-rational-ok",
+    "slash-int-zero-bad",
+    "string-order-bad",
+    "string-text-eq-ac22",
+    "text-bare-bad",
+    "text-concat-bad",
+    "text-contains-bad",
+    "text-literal-bare",
+    "text-literal-long-bad",
+    "text-literal-ok",
+    "text-ok",
+    "text-profile-bad",
+    "text-size-ok",
+    "timestamp-bad",
+    "timestamp-extra-ok",
+    "timestamp-param",
+    "tup-arity-bad",
+    "tup-index",
+    "tup-ok",
+    "tup-recursive-opt-bad",
+    "union-arity-bad",
+    "union-dup-arm-bad",
+    "union-eq-ok",
+    "union-missing-arm-bad",
+    "union-ok",
+    "union-recursive-bad",
+    "union-unknown-arm-bad",
+    "uuid-bad-literal",
+    "uuid-extra-ok",
+    "uuid-literal",
+];
+
+const REQUIRED_VALUE_REQUESTS: &[&str] = &[
+    "alias-ok",
+    "bool-eq-ok",
+    "bool-ok",
+    "dec-eq-convert",
+    "enum-ok",
+    "enum-ordered-ok",
+    "float-conv-int-ok",
+    "float-eq-ok",
+    "float-ok",
+    "float-to-rat",
+    "fn-ok",
+    "int-arith",
+    "int-arith-ok",
+    "int-arith-outside",
+    "int-eq-mixed-convert-ok",
+    "int-guard-if-range-ok",
+    "int-literal-ok",
+    "int-lt-mixed-ok",
+    "int-neg-ok",
+    "int-sub-ok",
+    "int-unbounded-ok",
+    "int-widen-ok",
+    "let-alias-ok",
+    "profile-ok",
+    "qty-convert-ok",
+    "qty-decimal-literal",
+    "qty-mult-ok",
+    "qty-ok",
+    "qty-power-ok",
+    "r-float",
+    "r-opt",
+    "r-qty",
+    "r-rat",
+    "r-union0",
+    "r-union1",
+    "rat-int-eq-convert",
+    "rec-ok",
+    "rec-recursive-opt-ok",
+    "text-literal-ok",
+    "text-ok",
+    "text-size-ok",
+    "timestamp-extra-ok",
+    "timestamp-param",
+    "tup-ok",
+    "union-eq-ok",
+    "union-ok",
+    "uuid-extra-ok",
+    "uuid-literal",
+];
+
+const REQUIRED_FLIPS_BY_CASE: &[(&str, &str)] = &[
+    ("dec-numeral-1965", "QSL-1965"),
+    ("let-annot-2008", "QSL-2008"),
+    ("div-1989", "QSL-1989"),
+    ("rem-1989", "QSL-1989"),
+    ("div-profile-select", "QSL-1989"),
+    ("div-profile-using", "QSL-1989"),
+    ("mod-range-2002", "QSL-2002"),
+    ("conv-narrow-2007", "QSL-2007"),
+    ("conv-narrow-noguard", "QSL-2007"),
+    ("conv-rat-narrow", "QSL-2007"),
+    ("conv-text-num", "G-024"),
+    ("float-conv-eq-2004", "QSL-2004"),
+    ("fn-param-named-set-2006", "QSL-2006"),
+    ("int-eq-sum-1986", "QSL-1986"),
+    ("null-primary-bad", "G-009"),
+    ("opt-Some-result", "G-026"),
+    ("opt-some", "G-026"),
+    ("opt-lowercase-some", "none"),
+    ("tup-index", "G-025"),
+    ("map-type-src", "G-027"),
+    ("obj-src-record", "G-028"),
+    ("obj-src-enum", "G-028"),
+    ("obj-src-decimal", "G-028"),
+    ("obj-src-float", "G-028"),
+    ("obj-src-qty", "G-028"),
+    ("qty-scalar-mult", "G-022"),
+    ("qty-carried", "none"),
+    ("qty-carried-order", "none"),
+    ("qty-affine", "none"),
+    ("string-text-eq-ac22", "STD-654"),
+    ("float-record-eq-bad", "STD-654"),
+    ("float-union-eq-ac25", "STD-654"),
+    ("float-opt-eq-ac25", "STD-654"),
+    ("float-seq-eq-ac25", "STD-654"),
+    ("float-set-elem-ac26", "STD-654"),
+    ("float-conv-alias-eq", "QSL-2004"),
+    ("float-conv-alias-onesided", "QSL-2004"),
+    ("float-conv-inline-onesided", "QSL-2004"),
+    ("no-profile-unit", "G-001"),
+];
+
+const EXPECTED_FLIP_COUNTS: &[(&str, usize)] = &[
+    ("G-001", 1),
+    ("G-009", 1),
+    ("G-022", 1),
+    ("G-024", 1),
+    ("G-025", 1),
+    ("G-026", 2),
+    ("G-027", 1),
+    ("G-028", 5),
+    ("QSL-1965", 1),
+    ("QSL-1986", 1),
+    ("QSL-1989", 4),
+    ("QSL-2002", 1),
+    ("QSL-2004", 4),
+    ("QSL-2006", 1),
+    ("QSL-2007", 3),
+    ("QSL-2008", 1),
+    ("STD-654", 6),
+];
+
+fn assert_values_corpus_inventory(directory: &Path) {
+    let mut cases = BTreeSet::new();
+    let mut requests = BTreeSet::new();
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Some(stem) = name.strip_suffix(".native") {
+            cases.insert(stem.to_owned());
+        } else if let Some(stem) = name.strip_suffix(".request.json") {
+            requests.insert(stem.to_owned());
+        }
+    }
+    assert_eq!(
+        cases,
+        names(REQUIRED_VALUE_CASES),
+        "required corpus cases changed"
+    );
+    assert_eq!(
+        requests,
+        names(REQUIRED_VALUE_REQUESTS),
+        "required run request cases changed"
+    );
+
+    let required_flips: BTreeMap<_, _> = REQUIRED_FLIPS_BY_CASE.iter().copied().collect();
+    let expected_counts: BTreeMap<_, _> = EXPECTED_FLIP_COUNTS.iter().copied().collect();
+    let mut actual_counts = BTreeMap::<&str, usize>::new();
+    for (case, flip) in &required_flips {
+        let path = directory.join(format!("{case}.expected.json"));
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let expected: Expectation = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("{}: invalid expectation: {error}", path.display()));
+        assert_eq!(
+            expected.flips_with.as_deref(),
+            Some(*flip),
+            "{}: pinned flip key changed",
+            path.display()
+        );
+        if *flip != "none" {
+            *actual_counts.entry(flip).or_default() += 1;
+        }
+    }
+    assert_eq!(actual_counts, expected_counts, "pinned flip counts changed");
+}
+
+fn names(values: &[&str]) -> BTreeSet<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn expected_flip_report() -> String {
+    format!(
+        "flips_with: {}",
+        EXPECTED_FLIP_COUNTS
+            .iter()
+            .map(|(key, count)| format!("{key} ({count})"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn assert_values_programs_compile_at_s4(directory: &Path) {

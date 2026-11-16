@@ -1,1 +1,0 @@
-{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"mod-zero-2002.native","authority":"agent-ix","identity":"test:corpus:mod-zero-2002","document":"mod-zero-2002","formal_revision":1}},"call":{"function":"f","arguments":[{"parameter":"a","value":{"integer":"1"}},{"parameter":"b","value":{"integer":"0"}}]}}}

@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":10,"category":"undefined","last_stage":"S6a","flips_with":"QSL-2002"}
+{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"undefined_expression","cause":"unproved-nonzero"}

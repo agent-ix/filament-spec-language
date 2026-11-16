@@ -1,1 +1,1 @@
-{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"missing_declaration","cause":"missing-name"}
+{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"missing_declaration","cause":"missing-name","flips_with":"none"}
