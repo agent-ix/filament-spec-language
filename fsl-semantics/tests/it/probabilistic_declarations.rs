@@ -3815,6 +3815,13 @@ fn a_comparison_operand_types_a_bare_decimal_literal() {
             None,
             &format!("{typed}\nfunction k using v(l: D): Boolean pure {{ l < {literal} }}"),
         ));
+        checked(&service(
+            None,
+            &format!(
+                "{typed}\nrecord Reading {{ level: D; }}\n\
+                 function field_level using v(r: Reading): Boolean pure {{ r.level < {literal} }}"
+            ),
+        ));
         assert_eq!(
             located(&service(
                 None,

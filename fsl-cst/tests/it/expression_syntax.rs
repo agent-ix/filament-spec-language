@@ -150,7 +150,7 @@ fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
 #[test]
 fn an_exponent_number_is_the_unsupported_numeric_form() {
     for spelling in ["1e5", "1.5E-3"] {
-        let text = document(&format!("a < {spelling}"));
+        let text = document(spelling);
         let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
         assert!(!parsed.is_admissible());
         let diagnostic = &parsed.diagnostics()[0];

@@ -1867,7 +1867,9 @@ impl<'c> Mapping<'c> {
                     let Some((whole, fraction)) = spelling.split_once('.') else {
                         return Err(unexpected(node));
                     };
-                    let coefficient = integer(&format!("{whole}{fraction}"), node)?;
+                    let digits = format!("{whole}{fraction}");
+                    let digits = digits.trim_start_matches('0');
+                    let coefficient = integer(if digits.is_empty() { "0" } else { digits }, node)?;
                     let scale = u32::try_from(fraction.len()).map_err(|_| unexpected(node))?;
                     self.leaf(Shape::Decimal(coefficient, scale), &task)
                 }
