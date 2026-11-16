@@ -177,6 +177,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             },
             types::Details::None,
         ),
+        RunCause::ItemsFault => (types::Stage::Output, types::Details::None),
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
             match clock_selection_refusal(&failure.refusal) {

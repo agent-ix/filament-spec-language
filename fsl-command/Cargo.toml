@@ -13,6 +13,7 @@ fsl-foundation = { path = "../fsl-foundation" }
 fsl-cst = { path = "../fsl-cst" }
 fsl-replay = { path = "../fsl-replay" }
 fsl-eval = { path = "../fsl-eval" }
+filament-eval = { workspace = true }
 fsl-semantics = { path = "../fsl-semantics" }
 fsl-analyze = { path = "../fsl-analyze" }
 fsl-route = { path = "../fsl-route" }

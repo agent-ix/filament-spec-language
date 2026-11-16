@@ -62,7 +62,7 @@ pub(super) struct Handoff {
     pub directory: String,
     pub package_name: String,
     #[serde(default)]
-    pub execution_points: Option<String>,
+    pub execution_points: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(default, deserialize_with = "handoff_corpus")]
     pub corpus: HandoffCorpus,
     #[serde(default, deserialize_with = "from_object_opt")]

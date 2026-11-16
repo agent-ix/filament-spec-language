@@ -240,6 +240,25 @@ impl Error {
             Self::Sidecar(_) => ErrorCode::Sidecar,
         }
     }
+
+    /// The wire-safe name used by `filament-outcome/1` inspect refusals.
+    pub fn code_name(&self) -> &'static str {
+        match self.code() {
+            ErrorCode::Exists => "handoff-exists",
+            ErrorCode::Compile => "handoff-compile",
+            ErrorCode::Reader => "handoff-reader",
+            ErrorCode::ReadBackDiffers => "handoff-read-back-differs",
+            ErrorCode::CaseMismatch => "handoff-case-mismatch",
+            ErrorCode::Dependency => "handoff-dependency",
+            ErrorCode::Label => "handoff-label",
+            ErrorCode::Io => "handoff-io",
+            ErrorCode::Encode => "handoff-encode",
+            ErrorCode::Unnameable => "handoff-unnameable",
+            ErrorCode::NativeJoinExhausted => "handoff-native-join-exhausted",
+            ErrorCode::Read => "handoff-read",
+            ErrorCode::Sidecar => "handoff-sidecar",
+        }
+    }
 }
 
 /// The stages a package passes through, and the disk it is written to. The

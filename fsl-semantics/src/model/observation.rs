@@ -2004,23 +2004,13 @@ pub fn admit_value_invariants_snapshot<'a>(
         )));
     }
     check_model_any(&views, &snapshot.model)?;
-    let required = views
-        .iter()
-        .flat_map(|view| &view.view.domain_package().records)
-        .filter_map(|record| match record {
-            crate::model::domain_package::DomainPackageRecord::Population(population) => {
-                Some(population.key.node.clone())
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
     let admitted = document::admit_argument_populations(
         &views,
         types,
         snapshot,
         &read.identity,
         &[],
-        &required,
+        &[],
         model_limits.ancestor_steps,
     )?;
     Ok((
@@ -2119,22 +2109,10 @@ pub fn admit_value_invariant_selection<'a>(
         .cloned()
         .ok_or_else(|| fault("unresolved-invocation-context"))?;
     let context_name = invocation.call.context.clone();
-    // All populations in the invocation's two snapshots are required: this
-    // selection has no clause whose reads could narrow the admitted scope.
-    let all_populations = views
-        .iter()
-        .flat_map(|view| &view.view.domain_package().records)
-        .filter_map(|record| match record {
-            crate::model::domain_package::DomainPackageRecord::Population(population) => {
-                Some(population.key.node.clone())
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
     let named = NamedReads {
         current: Vec::new(),
-        pre: all_populations.clone(),
-        post: all_populations,
+        pre: Vec::new(),
+        post: Vec::new(),
     };
     let admitted = admit_invocation_documents(
         &views,

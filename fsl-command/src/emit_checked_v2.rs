@@ -433,6 +433,9 @@ fn refusal(failure: spine::FrontEndFailure) -> Error {
 pub(crate) struct Inputs {
     /// The path the unit is labelled and displayed by.
     pub(crate) source_path: PathBuf,
+    /// The source's caller-selected identity when replaying a command handoff.
+    /// Standalone emit requests derive the local identity from the path.
+    pub(crate) source_identity: Option<SourceIdentity>,
     /// The unit's bytes.
     pub(crate) source: Vec<u8>,
     /// The domain package documents, in request order.
@@ -478,6 +481,7 @@ fn read_inputs(request: &Request) -> Result<Inputs, Error> {
         .unwrap_or_default();
     Ok(Inputs {
         source_path: request.source.clone(),
+        source_identity: None,
         source,
         models,
         libraries,
@@ -504,6 +508,7 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
 pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
     let Inputs {
         source_path,
+        source_identity,
         source,
         models,
         libraries,
@@ -512,7 +517,7 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
         temporal_selections,
     } = inputs;
     let dependencies = DependencyInput::new(libraries.clone()).map_err(Error::Dependencies)?;
-    let unit = identity("source", &source_path);
+    let unit = source_identity.unwrap_or_else(|| identity("source", &source_path));
     let path = source_path.display().to_string();
     let package = LibraryName::new(package_name)
         .map_err(|invalid| Error::Producer(Box::new(ReplayRefusal::InvalidPackageName(invalid))))?;
@@ -581,6 +586,12 @@ fn clause_clock_selections(
     selections
         .iter()
         .filter_map(|selection| {
+            if !matches!(
+                selection.clock,
+                filament_contract_model::ClockConfiguration::TimestampedEvent { .. }
+            ) {
+                return None;
+            }
             let form = parsed.unit().forms().iter().find(|form| {
                 matches!(form.form(), fsl_forms::DeclarationForm::Temporal(_))
                     && form.declared_name() == Some(selection.clause.as_str())

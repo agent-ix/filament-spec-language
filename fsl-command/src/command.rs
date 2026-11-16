@@ -164,6 +164,7 @@ pub struct CompileOutcome {
     package_bytes: Vec<u8>,
     document: fsl_replay::OutcomeDocument,
     handoff_compiled: Option<crate::emit_checked_v2::Compiled>,
+    handoff_temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
 }
 
 impl CompileOutcome {
@@ -408,6 +409,9 @@ pub enum RunCause {
     /// FR-862: the settled replay has no FR-323 per-item result encoding.
     #[error("cannot serialize replay result: {0}")]
     ReplayOutput(#[source] fsl_replay::CauseCodecError),
+    /// An item run violated an internal runtime invariant.
+    #[error("an items run faulted")]
+    ItemsFault,
 }
 
 /// The two owner projections of the same source-intake refusal.
@@ -507,7 +511,7 @@ impl RunCause {
                 .first()
                 .and_then(|diagnostic| Code::from_code(diagnostic.code()))
                 .unwrap_or(Code::RuntimeInvariant),
-            Self::AnalyzeFault | Self::MonitorFault | Self::MonitorCancelled => {
+            Self::AnalyzeFault | Self::MonitorFault | Self::ItemsFault | Self::MonitorCancelled => {
                 Code::RuntimeInvariant
             }
             Self::ReplayRequest(_) => Code::InvalidRequest,
@@ -537,6 +541,7 @@ impl RunCause {
             Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorFault => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::ItemsFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
@@ -643,7 +648,8 @@ impl RunError {
             | RunCause::MonitorCancelled
             | RunCause::ReplayRequest(_)
             | RunCause::ReplayBytes { .. }
-            | RunCause::ReplayOutput(_) => OutcomeDocument::new(operation, None, self.category())
+            | RunCause::ReplayOutput(_)
+            | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     None,
                     self.cause.code().as_str(),
@@ -897,15 +903,22 @@ pub fn run_with_limits_and_overrides(
 
 /// Inspect a checked-package handoff and return the command's successful
 /// `inspect` outcome. A refusal retains the handoff reader's typed error.
-pub fn inspect_handoff(
-    directory: &Path,
-) -> std::result::Result<fsl_replay::OutcomeDocument, crate::checked_handoff::Error> {
-    crate::checked_handoff::verify(directory)?;
-    Ok(fsl_replay::OutcomeDocument::new(
-        fsl_replay::Operation::Inspect,
-        None,
-        filament_semantic_value::catalog::Category::Success,
-    ))
+pub fn inspect_handoff(directory: &Path) -> fsl_replay::OutcomeDocument {
+    use filament_semantic_value::catalog::Category;
+    use fsl_replay::{Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
+
+    match crate::checked_handoff::verify(directory) {
+        Ok(_) => OutcomeDocument::new(Operation::Inspect, None, Category::Success),
+        Err(error) => OutcomeDocument::new(Operation::Inspect, None, Category::Refusal)
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                None,
+                error.code_name(),
+                Some(OutcomeLocus::Artifact {
+                    pointer: "/".to_owned(),
+                }),
+                error.to_string(),
+            )]),
+    }
 }
 
 /// Read and validate a request and its selected files without executing it.
@@ -999,6 +1012,13 @@ pub fn compile_outcome_with_overrides(
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
+            let destination = directory.join(&handoff.directory);
+            if destination.exists() {
+                return Err(RunCause::ClauseRequest {
+                    member: "handoff.directory".to_owned(),
+                    reason: format!("{} already exists", destination.display()),
+                });
+            }
         }
         let output = match (&request.output, overrides.output) {
             (Some(_), Some(_)) => return Err(RunCause::OutputGivenTwice),
@@ -1036,9 +1056,6 @@ pub fn compile_outcome_with_overrides(
             sources.push(source);
         }
         let mut outcome = complete(&request, &mut intake, &sources)?;
-        if let Some(output) = output {
-            output_file::write_new_file(&output, &outcome.package_bytes)?;
-        }
         if let Some(handoff) = &request.handoff {
             let compiled =
                 outcome
@@ -1054,7 +1071,11 @@ pub fn compile_outcome_with_overrides(
                 handoff,
                 &outcome.package_bytes,
                 compiled,
+                std::mem::take(&mut outcome.handoff_temporal_selections),
             )?;
+        }
+        if let Some(output) = output {
+            output_file::write_new_file(&output, &outcome.package_bytes)?;
         }
         Ok(outcome)
     })
@@ -1096,7 +1117,23 @@ fn validate_handoff_request(handoff: &wire::Handoff, source_count: usize) -> Res
             reason: "is required".to_owned(),
         });
     }
+    decode_handoff_execution_points(handoff)?;
     Ok(())
+}
+
+fn decode_handoff_execution_points(
+    handoff: &wire::Handoff,
+) -> Result<fsl_replay::spine::StateClauseExecutionPoints> {
+    let mut points = fsl_replay::spine::StateClauseExecutionPoints::new();
+    for (name, value) in &handoff.execution_points {
+        let point: filament_contract_model::ExecutionPoint = serde_json::from_value(value.clone())
+            .map_err(|error| RunCause::ClauseRequest {
+                member: format!("handoff.execution_points/{name}"),
+                reason: error.to_string(),
+            })?;
+        points.insert(name.clone(), point);
+    }
+    Ok(points)
 }
 
 /// Write FR-665's checked-package handoff from the exact compilation result.
@@ -1106,6 +1143,7 @@ fn write_compile_handoff(
     handoff: &wire::Handoff,
     package_bytes: &[u8],
     compiled: crate::emit_checked_v2::Compiled,
+    temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
 ) -> Result<()> {
     let Some(native_join) = handoff.native_join.as_ref() else {
         return Err(RunCause::ClauseRequest {
@@ -1134,11 +1172,8 @@ fn write_compile_handoff(
         package_name: handoff.package_name.clone(),
         models,
         libraries,
-        execution_points: handoff
-            .execution_points
-            .as_ref()
-            .map(|path| directory.join(path)),
-        temporal_selections: Vec::new(),
+        execution_points: None,
+        temporal_selections,
         out: None,
     };
     let corpus = match handoff.corpus {
@@ -1249,7 +1284,7 @@ fn complete_sources(
         intake,
         sources,
         unit_list,
-        |checked, selections, packages, _, libraries, models, inventory, failure| {
+        |checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let limits = fsl_replay::spine::SpineLimits::default();
             let result = fsl_replay::spine::package_with_temporal_selections(
@@ -1261,6 +1296,11 @@ fn complete_sources(
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
             let package_bytes = emitted.package().bytes().to_vec();
+            let handoff_temporal_selections = if request.handoff.is_some() {
+                handoff_clock_selections(&checked, selections)
+            } else {
+                Vec::new()
+            };
             let handoff_compiled =
                 request
                     .handoff
@@ -1270,7 +1310,7 @@ fn complete_sources(
                         models,
                         libraries,
                         packages,
-                        points: Default::default(),
+                        points,
                         checked,
                         inventory: inventory
                             .expect("handoff inventory is captured for this request"),
@@ -1281,9 +1321,44 @@ fn complete_sources(
                 package_bytes,
                 document,
                 handoff_compiled,
+                handoff_temporal_selections,
             })
         },
     )
+}
+
+/// Rebuild the emit command's clause-name clock selections from the exact
+/// checked declarations selected by FR-640's clock-name map.
+fn handoff_clock_selections(
+    checked: &fsl_replay::spine::CheckedUnit,
+    selections: &[fsl_package::TemporalClockSelection],
+) -> Vec<crate::emit_checked_v2::ClockSelection> {
+    selections
+        .iter()
+        .filter_map(|selection| {
+            let name = checked
+                .package()
+                .graph()
+                .temporal_clauses()
+                .iter()
+                .find(|node| node.clause().span() == selection.declaration_span)
+                .map(|node| node.clause().name().to_owned())
+                .or_else(|| {
+                    checked
+                        .package()
+                        .graph()
+                        .protocols()
+                        .iter()
+                        .flat_map(|protocol| &protocol.obligations.compensations)
+                        .find(|template| template.span == selection.declaration_span)
+                        .map(|template| template.name.clone())
+                })?;
+            Some(crate::emit_checked_v2::ClockSelection {
+                clause: name,
+                clock: selection.clock.clone(),
+            })
+        })
+        .collect()
 }
 
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
@@ -1297,6 +1372,7 @@ fn check_sources<T>(
     finish: impl FnOnce(
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
+        fsl_replay::spine::StateClauseExecutionPoints,
         fsl_semantics::model::intake::PackageInput,
         Vec<&FormalSource>,
         Vec<fsl_replay::spine::SuppliedLibrary>,
@@ -1347,6 +1423,12 @@ fn check_sources<T>(
             bytes: read.source().text().as_bytes().to_vec(),
         })
         .collect();
+    let execution_points = request
+        .handoff
+        .as_ref()
+        .map(decode_handoff_execution_points)
+        .transpose()?
+        .unwrap_or_default();
     let program_sources = sources.iter().map(FormalSource::source).collect::<Vec<_>>();
     let first_source = program_sources[0];
     let spine_failure = |refusal: fsl_replay::spine::CompileRefusal| {
@@ -1463,9 +1545,13 @@ fn check_sources<T>(
         let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
             .map_err(failure)?
             .into_value();
-        let checked_result = fsl_replay::spine::check_with_refinement_internals(
+        let checked_result = fsl_replay::spine::check_with_execution_points_and_source_inputs(
             &parsed,
-            package_name(first_source.identity()),
+            request.handoff.as_ref().map_or_else(
+                || package_name(first_source.identity()),
+                |handoff| handoff.package_name.clone(),
+            ),
+            &execution_points,
             fsl_replay::spine::SourceInputs {
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
@@ -1496,6 +1582,7 @@ fn check_sources<T>(
     finish(
         checked,
         &package_selections,
+        execution_points,
         packages,
         libraries.iter().map(|(_, source)| source).collect(),
         handoff_libraries,

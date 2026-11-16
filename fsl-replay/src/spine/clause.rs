@@ -306,6 +306,26 @@ pub enum ClauseRunRefusal {
     EmptySource,
 }
 
+/// Why a clause-run batch could not use one shared compilation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ClauseRunBatchRefusal {
+    /// The unit's source is empty.
+    #[error("the unit source is empty")]
+    EmptySource,
+    /// The requests do not share one program, package, dependency, clock or
+    /// limit input.
+    #[error("the clause-run batch selects more than one compilation")]
+    DifferentCompilation,
+}
+
+/// Result of FR-651's batch compile and independent selection runs.
+pub enum ClauseRunBatchOutcome {
+    /// The one shared compile succeeded and every request was evaluated.
+    Reports(Vec<ClauseRunReport>),
+    /// The shared compile refused before any selection ran.
+    CompileRefusal(Box<ClauseRunReport>),
+}
+
 /// FR-109's disposition stage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClauseRunStage {
@@ -1468,6 +1488,304 @@ fn run_clause_reading(
                     valuation,
                 },
             ))
+        }
+    }
+}
+
+struct CompiledClauseProgram {
+    checked: super::CheckedUnit,
+    emitted: super::EmittedUnit,
+    sources: Vec<Source>,
+    temporal_package: Option<Box<filament_contract_model::CheckedPackageV2>>,
+}
+
+/// Compile the common program once, then independently evaluate each
+/// selection against that checked graph. Callers must supply requests that
+/// share source, package, dependency, clock and limit inputs; only provisions,
+/// accounting and selection may differ.
+pub fn run_clause_batch(
+    requests: Vec<ClauseRunRequest>,
+) -> Result<ClauseRunBatchOutcome, ClauseRunBatchRefusal> {
+    let Some(first) = requests.first() else {
+        return Ok(ClauseRunBatchOutcome::Reports(Vec::new()));
+    };
+    if first.source.unit().bytes.is_empty() {
+        return Err(ClauseRunBatchRefusal::EmptySource);
+    }
+    if requests
+        .iter()
+        .skip(1)
+        .any(|request| !same_clause_compilation(first, request))
+    {
+        return Err(ClauseRunBatchRefusal::DifferentCompilation);
+    }
+    let needs_temporal = requests.iter().any(|request| {
+        matches!(
+            request.selection,
+            ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. }
+        )
+    });
+    let compiled = match compile_clause_program(first, needs_temporal) {
+        Ok(compiled) => compiled,
+        Err(report) => return Ok(ClauseRunBatchOutcome::CompileRefusal(report)),
+    };
+    let reports = requests
+        .iter()
+        .map(|request| run_compiled_clause_selection(&compiled, request))
+        .collect();
+    Ok(ClauseRunBatchOutcome::Reports(reports))
+}
+
+fn same_clause_compilation(left: &ClauseRunRequest, right: &ClauseRunRequest) -> bool {
+    let left_unit = left.source.unit();
+    let right_unit = right.source.unit();
+    left_unit.identity == right_unit.identity
+        && left_unit.path == right_unit.path
+        && left_unit.bytes == right_unit.bytes
+        && left_unit.language == right_unit.language
+        && left.package_name == right.package_name
+        && left.packages == right.packages
+        && left.dependencies == right.dependencies
+        && left.limits == right.limits
+        && left.clocks == right.clocks
+}
+
+fn compile_clause_program(
+    request: &ClauseRunRequest,
+    needs_temporal: bool,
+) -> Result<CompiledClauseProgram, Box<ClauseRunReport>> {
+    let report = |disposition: ClauseDisposition| ClauseRunReport {
+        basis: undecided_basis(&disposition),
+        witness: None,
+        disposition,
+        usage: ClauseRunUsage::default(),
+        consequent_source_events: ConsequentSourceEvents::Unavailable,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        ledger: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+    };
+    let unit = request.source.unit();
+    if let Some(language) = unit.language {
+        if NativeLanguage::of(language).is_none() {
+            return Err(Box::new(report(ClauseDisposition::UnknownLanguage {
+                language: language.to_owned(),
+            })));
+        }
+    }
+    let cancel = Cancel::new();
+    let front_end = || -> Result<_, front_end::FrontEndFailure> {
+        let parsed = front_end::parse(
+            &front_end::ParseRequest {
+                source: unit.identity,
+                path: unit.path,
+                bytes: unit.bytes,
+            },
+            request.limits.source,
+            &cancel,
+        )?
+        .into_value();
+        let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
+            .into_value();
+        let check_selections = request.clocks.check_selections(&parsed);
+        let checked = front_end::check_with_refinement_internals(
+            &parsed,
+            request.package_name.clone(),
+            crate::spine::SourceInputs {
+                refinement_internals: None,
+                temporal_selections: &check_selections,
+                clocks: Some(&request.clocks),
+            },
+            &models,
+            &request.dependencies,
+            request.limits,
+            &cancel,
+        )?
+        .into_value();
+        let package_selections = request
+            .clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(front_end::FrontEndFailure::Refused)?;
+        let emitted = front_end::package_with_temporal_selections(
+            &checked,
+            &package_selections,
+            request.limits.package,
+            &cancel,
+        )?
+        .into_value();
+        Ok((models, checked, emitted))
+    };
+    let (models, checked, emitted) = match front_end() {
+        Ok(compiled) => compiled,
+        Err(failure) => {
+            let disposition = match front_end::refusal_or_fault(failure) {
+                Ok(refusal) => ClauseDisposition::Compile(refusal),
+                Err(fault) => ClauseDisposition::EvaluateFault(fault),
+            };
+            return Err(Box::new(report(disposition)));
+        }
+    };
+    let mut sources = Vec::with_capacity(1 + checked.libraries().len());
+    sources.push(checked.source().clone());
+    sources.extend(checked.libraries().iter().cloned());
+    let temporal_package = if needs_temporal {
+        let evidence = match super::bind::admission_evidence(
+            &models,
+            &checked,
+            &emitted,
+            request.limits.imports,
+            request.limits.package.emit(),
+        ) {
+            Ok(evidence) => evidence,
+            Err(_) => {
+                return Err(Box::new(report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "checked-package-admission-evidence-is-retained",
+                    ),
+                ))))
+            }
+        };
+        match filament_contract_model::CheckedPackageV2::read(
+            emitted.package().bytes(),
+            filament_contract_model::CheckedPackageReadLimits::bounded(),
+            &evidence,
+        ) {
+            filament_contract_model::CheckedPackageV2ReadResult::Admitted(package) => Some(package),
+            _ => {
+                return Err(Box::new(report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "emitted-checked-package-strict-read-admits",
+                    ),
+                ))))
+            }
+        }
+    } else {
+        None
+    };
+    Ok(CompiledClauseProgram {
+        checked,
+        emitted,
+        sources,
+        temporal_package,
+    })
+}
+
+fn run_compiled_clause_selection(
+    compiled: &CompiledClauseProgram,
+    request: &ClauseRunRequest,
+) -> ClauseRunReport {
+    let report = |disposition: ClauseDisposition| ClauseRunReport {
+        basis: undecided_basis(&disposition),
+        witness: None,
+        disposition,
+        usage: ClauseRunUsage::default(),
+        consequent_source_events: ConsequentSourceEvents::Unavailable,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        ledger: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+    };
+    let package = compiled.checked.package();
+    let run = CompiledRun {
+        packages: &request.packages,
+        model_limits: request.limits.model,
+        provisions: Provisions {
+            snapshots: &request.snapshots,
+            invocations: &request.invocations,
+        },
+        observation_limits: request.observation_limits,
+        accounting: request.accounting,
+        package,
+        sources: &compiled.sources,
+        progress_capacity: request.limits.progress.covered_positions,
+    };
+    match &request.selection {
+        ClauseRunSelection::Clause(selection) => {
+            let Some(clause) = package.graph().state_clause(&selection.name) else {
+                return run.report(ClauseDisposition::MissingName {
+                    name: selection.name.clone(),
+                });
+            };
+            check_clause(&run, clause, selection)
+        }
+        ClauseRunSelection::Function {
+            name,
+            arguments,
+            snapshot,
+        } => run_function(&run, name, arguments, snapshot).unwrap_or_else(|_| {
+            report(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "FR-050",
+                    "compiled-function-selection-runs",
+                ),
+            ))
+        }),
+        ClauseRunSelection::Frame {
+            operation,
+            invocation,
+        } => run_frame(&run, operation, invocation),
+        ClauseRunSelection::SampledTemporal {
+            name,
+            trace,
+            ledger,
+        } => {
+            let Some(admitted_package) = compiled.temporal_package.as_deref() else {
+                return report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "temporal-selection-retains-strictly-admitted-package",
+                    ),
+                ));
+            };
+            temporal::run_temporal(
+                &run,
+                &TemporalRun {
+                    name,
+                    trace,
+                    over: None,
+                    ledger: ledger.as_ref(),
+                    authentication: Some(temporal::TemporalAuthentication {
+                        clock_rows: compiled.emitted.temporal_binding_rows(),
+                        admitted_package,
+                    }),
+                    cancel: None,
+                },
+            )
+        }
+        ClauseRunSelection::Temporal {
+            name,
+            trace,
+            over,
+            ledger,
+        } => {
+            let Some(admitted_package) = compiled.temporal_package.as_deref() else {
+                return report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "temporal-selection-retains-strictly-admitted-package",
+                    ),
+                ));
+            };
+            temporal::run_temporal(
+                &run,
+                &TemporalRun {
+                    name,
+                    trace,
+                    over: Some(over),
+                    ledger: ledger.as_ref(),
+                    authentication: Some(temporal::TemporalAuthentication {
+                        clock_rows: compiled.emitted.temporal_binding_rows(),
+                        admitted_package,
+                    }),
+                    cancel: None,
+                },
+            )
         }
     }
 }
