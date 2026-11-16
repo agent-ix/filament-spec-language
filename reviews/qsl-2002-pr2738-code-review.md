@@ -154,3 +154,95 @@ Publication: Linear comment `5a7cbba7-99c9-4afa-829b-45d1253a3ed5`. Exact body r
 }
 ```
 
+
+## Dispositions
+
+Round 1 at `cf48c310c7f4f6ff80a09b56f3ee47a8171414a2`, reviewed through read-only inspection of the complete fix commit and its callers/tests. Original findings and their review-pass verdict remain unchanged above.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The real typer now derives both operand ranges through the existing static_range walk; modulo_interval::bounded prioritizes those ranges over ValueType, preserving literals, arithmetic and negation. |
+
+## Disposition round 1 verdict
+
+Round 1 publication: Linear comment `ca818c3d-6686-49d5-8aa2-3a135af4bc76`; exact body read-back, original-finding coverage, nonempty fixed excerpts and real YAML parsing through quire all passed. Original comments and findings remain unchanged. Existing Quire inline-schema/duplicate-archetype warnings remain non-fatal.
+
+**PASS** — every original code-review finding is fixed; no new finding. PR #2738 is review-cleared and mergeable after the lead's required final aggregate gate. GitHub currently reports OPEN/MERGEABLE against main. No source edits, builds, tests or gate were run by this reviewer, as the disposition brief requires.
+
+The fix preserves the excluded QSL-1962 nonzero behavior and the two QSL-1989 rem assertions. It reuses the existing iterative static_integer_range helper, and the quotient-run algorithm and its charge/refusal path are unchanged. The regression's singleton type under a wider consumer confirms that its type assertion is not merely the consumer's declared type. No spec/plan changes require a spec-review pass.
+
+```yaml
+{
+  "head": "cf48c310c7f4f6ff80a09b56f3ee47a8171414a2",
+  "round": 1,
+  "verdict": "PASS",
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "after_excerpt": "                            let left_range = self.static_range(&left);\n                            let right_range = self.static_range(&right);\n                            self.modulo_result_type(\n                                &left.value_type,\n                                &right.value_type,\n                                left_range.as_ref(),\n                                right_range.as_ref(),\n                                &location,\n                            )?",
+      "reason": "The real typer now derives both operand ranges through the existing static_range walk; modulo_interval::bounded prioritizes those ranges over ValueType, preserving literals, arithmetic and negation.",
+      "artifact_id": "FR-495",
+      "original_finding": "Passing only operand ValueTypes discards known ranges of literals, arithmetic and negation: a:Int[-7,-7] mod 3 is typed Integer instead of Int[2,2], and (a+1) mod b for a:Int[0,1], b:Int[5,6] is typed Int[0,5] instead of Int[1,2], refusing valid bounded consumers."
+    }
+  ],
+  "new_findings": [],
+  "scope": [
+    {
+      "id": "FR-495",
+      "path": "spec/functional/FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md",
+      "role": "examined",
+      "excerpt": "The checker SHALL give `a div b`, `a rem b`\n  and `a mod b` the smallest interval that contains the result of the operator\n  for every pair `(x, y)` with `x` in the range of `a`, `y` in the range of `b`\n  and `y` not zero, taking the retained division law for `div` and `rem`\n  (FSpec FR-147) and the Euclidean remainder for `mod`. When both ranges are\n  singletons the result range is the singleton of the exact result."
+    },
+    {
+      "id": "FR-495-AC-17",
+      "path": "spec/functional/FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md",
+      "role": "examined",
+      "excerpt": "`function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }` checks and the checked `mod` node has type `Int[0, 11]`"
+    },
+    {
+      "id": "FR-495-AC-19",
+      "path": "spec/functional/FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md",
+      "role": "examined",
+      "excerpt": "With `b: Integer`, `if b != 0 then a mod b else 0` over `a: Int[0, 9]` checks into `Int[0, 9]`, and over `a: Int[-1, 9]` refuses `unproved-range` into `Int[0, 1000]` (the remainder of a negative dividend by an unbounded divisor is unbounded)."
+    },
+    {
+      "id": "FR-495-AC-20",
+      "path": "spec/functional/FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md",
+      "role": "examined",
+      "excerpt": "With the work ceiling set to 10000 (`with_work_budget(10000)`), `big` refuses `stage_limit_exceeded` with the `WorkBudget` kind and bound 10000 at the `mod`, as its only refusal, never `unproved-range`, and no checked graph is returned."
+    },
+    {
+      "id": "FR-495/remainder-run-walk",
+      "path": "spec/functional/FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md",
+      "role": "examined",
+      "excerpt": "The walk visits the runs from the largest\n    magnitude down and stops as soon as the minimum found is 0 and the maximum\n    found is `U - 1`, the bounds no run can pass; otherwise it visits every\n    run. The interval is the minimum and maximum over the visited runs."
+    },
+    {
+      "id": "FSpec-FR-147-AC-12",
+      "path": "../filament-specification/spec/functional/expressions/FR-147-evaluate-integer-division-domains.md",
+      "role": "examined",
+      "excerpt": "For `a: Int[0, 100]` and `b: Int[1, 12]`, `a mod b` has result type `Int[0, 11]` and is admitted into an `Int[0, 11]` consumer, and is refused `unproved-range` into `Int[0, 10]`; with `a` of the unbounded integer type `a mod b` still has type `Int[0, 11]`."
+    },
+    {
+      "id": "FSpec-FR-147-AC-14",
+      "path": "../filament-specification/spec/functional/expressions/FR-147-evaluate-integer-division-domains.md",
+      "role": "examined",
+      "excerpt": "`a mod b` with `a: Int[0, 2]` and `b: Int[5, 6]` has type `Int[0, 2]`; with `a: Int[91, 91]` and `b: Int[2, 12]` it has type `Int[0, 7]`; with `a: Int[97, 97]` and `b: Int[2, 12]` it has type `Int[1, 9]`; with `a: Int[-7, -7]` and `b: Int[3, 5]` it has type `Int[1, 3]`."
+    },
+    {
+      "id": "TC-2210",
+      "path": "spec/test-cases/TC-2210-a-remainder-node-carries-its-exact-smallest-interval.md",
+      "role": "context_only",
+      "excerpt": "Verify from source that `mod` and `rem` are typed by the exact smallest\ninterval of their remainders, not by the divisor bound `[0, m - 1]`,"
+    },
+    {
+      "id": "TC-2211",
+      "path": "spec/test-cases/TC-2211-the-remainder-walk-is-bounded-by-the-checking-work-ceiling.md",
+      "role": "context_only",
+      "excerpt": "Verify that the exact remainder interval of a large prime dividend over a\nwide divisor range is found under the default checking work ceiling, and\nthat a ceiling below the walk's cost stops checking with the work stage\nlimit instead of widening the type."
+    }
+  ]
+}
+```
+
