@@ -129,8 +129,8 @@ fn supplied_extension_conflicts_and_cycles_refuse() {
     assert!(value.to_string().contains("function"), "{value}");
 
     let directory = tempfile::tempdir().unwrap();
-    retention_definition(directory.path(), "a.json", "alpha");
-    retention_definition(directory.path(), "b.json", "beta");
+    retention_definition(directory.path(), "a.json", "retention");
+    retention_definition(directory.path(), "b.json", "audit_rule");
     std::fs::write(
         directory.path().join("unit.native"),
         format!("{HEADER}profile a = \"ext.a\";\nprofile b = \"ext.b\";\n{FORM}\n"),
