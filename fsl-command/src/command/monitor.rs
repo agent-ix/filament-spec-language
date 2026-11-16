@@ -416,6 +416,7 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
             },
             refinement_internals: None,
             libraries: request.libraries,
+            extensions: Vec::new(),
             clocks: request.clocks,
             output: None,
             handoff: None,
