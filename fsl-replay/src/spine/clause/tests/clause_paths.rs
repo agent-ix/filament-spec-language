@@ -160,7 +160,7 @@ fn sum_out_of_domain_same_cause_call_and_clause() {
     let reason = "sum-out-of-domain";
     let clause_outcome = CallOutcome::Undefined { reason };
     let report = ClauseRunReport {
-        basis: crate::proof_result::SettlementBasis::Unavailable,
+        basis: crate::proof_result::SettlementBasis::ClosedScope,
         witness: None,
         disposition: ClauseDisposition::Evaluate(clause_outcome),
         usage: ClauseRunUsage::default(),
