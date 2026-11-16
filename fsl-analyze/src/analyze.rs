@@ -38,6 +38,7 @@ pub mod document;
 mod exact;
 mod items;
 mod request;
+mod timed_item;
 pub(crate) use request::analyze_bound;
 
 pub use request::{

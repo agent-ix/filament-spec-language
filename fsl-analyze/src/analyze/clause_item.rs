@@ -294,6 +294,7 @@ impl<'a> ClauseSubject<'a> {
                 limits: &self.limits,
                 provision: self.provision,
                 max_candidates: self.run.max_candidates,
+                timed: None,
             },
             ReplayShape {
                 target: RequestTargetWire::state_clause(name.clone()),
@@ -317,6 +318,8 @@ pub(super) struct ReplayInputs<'r, 'a> {
     pub(super) limits: &'r AnalyzeLimits,
     pub(super) provision: &'r super::SourceProvision,
     pub(super) max_candidates: u64,
+    /// FR-237: the timed reading the counterexample was found under.
+    pub(super) timed: Option<fsl_replay::TimedReplay>,
 }
 
 /// How a counterexample names its item (FR-128 Inputs): the replay target,
@@ -397,7 +400,7 @@ pub(super) fn replay_over(
     replay_model_trace(
         wire,
         &ModelTraceSubject {
-            timed: None,
+            timed: inputs.timed.clone(),
             initial: inputs.binding.initial.clone(),
             universes: inputs.binding.universes.clone(),
             expansion: ExpansionLimits {
@@ -411,7 +414,7 @@ pub(super) fn replay_over(
 }
 
 /// The `state_clause` target of a temporal clause: its declared name.
-fn clause_name(node: &TemporalClauseNode) -> Result<QualifiedName, ClauseItemRefusal> {
+pub(super) fn clause_name(node: &TemporalClauseNode) -> Result<QualifiedName, ClauseItemRefusal> {
     let segment =
         Identifier::new(node.clause().name()).map_err(|_| ClauseItemRefusal::UnnamedClause)?;
     QualifiedName::new(vec![segment]).map_err(|_| ClauseItemRefusal::UnnamedClause)

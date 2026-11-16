@@ -392,7 +392,6 @@ impl TemporalLimitsSelection {
     /// Whether a limit no explicit-state EN-1 run reads is set.
     fn sets_other_engine_limits(&self) -> bool {
         [
-            self.max_clocks,
             self.max_task_product_work,
             self.max_store_buffer,
             self.max_messages,
@@ -928,6 +927,7 @@ fn temporal_item(
             &mut item.limits.max_automaton_states,
         );
         set(limits.max_walk_steps, &mut item.limits.max_walk_steps);
+        item.max_clocks = limits.max_clocks;
         set(limits.max_witness_set, &mut item.limits.max_witness_set);
         set(
             limits.max_relation_tuples,

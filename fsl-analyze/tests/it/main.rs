@@ -8,6 +8,7 @@ mod analyze_coverage_cli;
 mod analyze_family_cli;
 mod analyze_liveness_cli;
 mod analyze_request_wire;
+mod analyze_timed_cli;
 mod analyze_wire;
 mod bounded_closure;
 mod bounded_probabilistic_replay;

@@ -190,19 +190,26 @@ fn an_object_free_hyper_clause_is_analyzed() {
 }
 
 /// The timed `Rpc` subject of FR-239 with timeout bound `t` and `claim`.
-fn rpc_unit(t: u32, claim: &str) -> String {
+pub(crate) fn rpc_unit(t: u32, claim: &str) -> String {
+    rpc_unit_with(t, ">= 1", ">=", claim)
+}
+
+/// [`rpc_unit`] with `reply` guarded by `self.x {reply} ms` and `timeout` by
+/// `self.x {timeout} {t} ms`: ADR-026 section 11's strict-guard variant is
+/// `("> 3", ">")`.
+pub(crate) fn rpc_unit_with(t: u32, reply: &str, timeout: &str, claim: &str) -> String {
     use crate::timed_world::{unit_text, DENSE, PACKAGE};
     let body = format!(
         "{DENSE}\
          pre SendIdle using v on M::Call::send {{ self.phase = 0 }}\n\
          post Send using v on M::Call::send {{ \
              self.phase = 1 and self.inflight and not self.late and self.x = 0 ms }}\n\
-         pre Reply using v on M::Call::reply {{ self.inflight and self.x >= 1 ms }}\n\
+         pre Reply using v on M::Call::reply {{ self.inflight and self.x {reply} ms }}\n\
          post Replied using v on M::Call::reply {{ not self.inflight and \
              self.late = (pre(self.phase) = 3) and \
              (pre(self.phase) = 1 implies self.phase = 2) and \
              (pre(self.phase) != 1 implies self.phase = pre(self.phase)) }}\n\
-         pre Timeout using v on M::Call::timeout {{ self.phase = 1 and self.x >= {t} ms }}\n\
+         pre Timeout using v on M::Call::timeout {{ self.phase = 1 and self.x {timeout} {t} ms }}\n\
          post TimedOut using v on M::Call::timeout {{ self.phase = 3 }}\n\
          pre Reset using v on M::Call::reset {{ \
              not self.inflight and (self.phase = 2 or self.phase = 3) }}\n\
@@ -214,7 +221,7 @@ fn rpc_unit(t: u32, claim: &str) -> String {
     unit_text(PACKAGE, crate::zone_search::TIMED, &body)
 }
 
-fn rpc_snapshot() -> Vec<u8> {
+pub(crate) fn rpc_snapshot() -> Vec<u8> {
     let package = crate::timed_world::PACKAGE;
     json!({
         "format": "filament.state.snapshot/v1",
@@ -234,7 +241,6 @@ fn rpc_snapshot() -> Vec<u8> {
 /// timeout 4 and refutes with exact delays at timeout 3.
 #[trace("TC-1592", "FR-632-AC-1")]
 #[test]
-#[ignore = "QSL-2129: timed zone items are not reachable through fsl analyze yet"]
 fn zone_items_prove_with_certificates_and_refute_with_exact_delays() {
     let claim = "temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
                  { always holds(not c.late) }\n";

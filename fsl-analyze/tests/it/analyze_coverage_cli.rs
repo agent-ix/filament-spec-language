@@ -236,7 +236,7 @@ fn copy_swap_and_witness_budget() {
 #[trace("TC-1592", "FR-632-AC-2")]
 #[trace("TC-1592", "FR-632-AC-3")]
 #[test]
-#[ignore = "QSL-2129: timed zone items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2129: FR-632-AC-2 selects digital-clocks for a temporal item but FR-243 routes temporal-satisfaction to EN-6 by kind alone; FR-632-AC-3 sets max_clocks 0 but FR-625 makes limits positive counts (spec question open)"]
 fn digital_clocks_agree_and_the_clock_budget_stops() {
     let claim = "temporal Bound using tt over (c: M::Call) clock \"model-time\" on origin \
                  { always holds(not c.late) }\n";

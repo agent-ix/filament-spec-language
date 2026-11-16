@@ -35,7 +35,7 @@ use crate::model_check::ModelCheckRequest;
 
 /// The witness transcript of a derived deadlock-freedom counterexample: it
 /// carries no values, the payload being the finite prefix (FR-128).
-const DEADLOCK_TRANSCRIPT: &str = "<<<assertion|model_check|deadlock|>>>";
+pub(super) const DEADLOCK_TRANSCRIPT: &str = "<<<assertion|model_check|deadlock|>>>";
 
 /// The replay target a derived item names: it has no declaration of its own,
 /// and the replay reads only the item's node and occurrence key.
@@ -43,7 +43,7 @@ const DERIVED_TARGET: &str = "derived_item";
 
 /// The letters of a derived item: it has no `holds` atom and no activation,
 /// so a read of either is a fault of the engine, never a reading.
-struct NoLetters;
+pub(super) struct NoLetters;
 
 impl NoLetters {
     fn fault() -> AtomStop {
@@ -83,6 +83,11 @@ impl ModelLetters for NoLetters {
     }
 }
 
+/// The replay target of a derived item.
+pub(super) fn derived_target() -> Option<QualifiedName> {
+    QualifiedName::new(vec![Identifier::new(DERIVED_TARGET).ok()?]).ok()
+}
+
 /// The EN-1 item that decides the derived deadlock-freedom item anchored at
 /// `claim` (the `model_root` occurrence of the subject's one selection) over
 /// the binding, with the item's budgets. A derived item is an exhaustive
@@ -114,7 +119,7 @@ pub(super) fn deadlock_item<'a>(
         simulation: simulation(binding),
         proof_bounds: form.proof_bounds.clone(),
     };
-    let target = QualifiedName::new(vec![Identifier::new(DERIVED_TARGET).ok()?]).ok()?;
+    let target = derived_target()?;
     let (binding, form, claim) = (binding.clone(), form.clone(), claim.clone());
     let replay_binding = binding.clone();
     let request = ModelCheckRequest {
@@ -141,6 +146,7 @@ pub(super) fn deadlock_item<'a>(
                     limits: &limits,
                     provision,
                     max_candidates: form.max_candidates,
+                    timed: None,
                 },
                 &replayed,
                 &target,

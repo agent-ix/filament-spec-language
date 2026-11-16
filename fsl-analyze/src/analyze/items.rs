@@ -394,50 +394,55 @@ fn run_zone_item<'a, S: Clone + Eq + 'a>(
         family,
         Mode::Bounded,
         en6::BACKEND_ID,
-        move |cancel| {
-            let TimedItem {
-                request,
-                certificate,
-                certificate_limits,
-                replay,
-            } = item;
-            let obligation = request.obligation.clone();
-            let subject = request.subject;
-            let clause = match &request.item {
-                ZoneCheckItem::Clause { clause, .. } => Some(*clause),
-                _ => None,
-            };
-            match check_timed_model(request, cancel) {
-                Ok(outcome) => {
-                    let record = settle_zone_check(
-                        ZoneItem::Outcome(&outcome),
-                        cancel,
-                        |proof| {
-                            check_zone_certificate(
-                                certificate,
-                                &obligation,
-                                certificate_item,
-                                proof,
-                                certificate_limits,
-                                cancel,
-                            )
-                        },
-                        replay,
-                    );
-                    let over = record
-                        .counterexample
-                        .as_ref()
-                        .and_then(|found| found.over_binding.as_ref())
-                        .zip(clause)
-                        .and_then(|(instance, clause)| {
-                            bound_over(subject.system(), clause, instance)
-                        });
-                    EngineReport::Zone(Box::new(record), over)
-                }
-                Err(refusal) => EngineReport::Refused(zone_refusal(&refusal)),
-            }
-        },
+        move |cancel| settle_zone_item(item, cancel),
     )
+}
+
+/// The EN-6 run of `item` and its settlement (FR-235): the zone search,
+/// FR-245's certificate check and the replay of a counterexample.
+pub(super) fn settle_zone_item<S: Clone + Eq>(
+    item: TimedItem<'_, S>,
+    cancel: &Cancel,
+) -> EngineReport {
+    let TimedItem {
+        request,
+        certificate,
+        certificate_limits,
+        replay,
+    } = item;
+    let obligation = request.obligation.clone();
+    let subject = request.subject;
+    let clause = match &request.item {
+        ZoneCheckItem::Clause { clause, .. } => Some(*clause),
+        _ => None,
+    };
+    match check_timed_model(request, cancel) {
+        Ok(outcome) => {
+            let record = settle_zone_check(
+                ZoneItem::Outcome(&outcome),
+                cancel,
+                |proof| {
+                    check_zone_certificate(
+                        certificate,
+                        &obligation,
+                        certificate_item,
+                        proof,
+                        certificate_limits,
+                        cancel,
+                    )
+                },
+                replay,
+            );
+            let over = record
+                .counterexample
+                .as_ref()
+                .and_then(|found| found.over_binding.as_ref())
+                .zip(clause)
+                .and_then(|(instance, clause)| bound_over(subject.system(), clause, instance));
+            EngineReport::Zone(Box::new(record), over)
+        }
+        Err(refusal) => EngineReport::Refused(zone_refusal(&refusal)),
+    }
 }
 
 /// Why a derived item adapter built no item: the engine run is not the
