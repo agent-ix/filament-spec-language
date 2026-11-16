@@ -90,6 +90,98 @@ fn check_operation_takes_the_supplied_law() {
     assert_ne!(refusals[0].location, refusals[1].location);
 }
 
+#[test]
+#[trace("TC-2196", "FR-767-AC-8")]
+fn multi_unit_checker_takes_one_caller_selection() {
+    let cancel = Cancel::new();
+    let limits = SpineLimits::default();
+    let dependencies = DependencyInput::default();
+    let units = ["first", "second"]
+        .into_iter()
+        .map(|name| {
+            let identity = SourceIdentity::new("agent-ix", name);
+            let text = UNIT
+                .replace("function q ", &format!("function q_{name} "))
+                .replace("function r ", &format!("function r_{name} "));
+            spine::parse(
+                &ParseRequest {
+                    source: &identity,
+                    path: "unit.fsl",
+                    bytes: text.as_bytes(),
+                },
+                limits.source,
+                &cancel,
+            )
+            .unwrap()
+            .into_value()
+        })
+        .collect();
+    let admitted = spine::admit_parsed_unit_list(units, &dependencies).unwrap();
+    let models = spine::select_units(
+        &admitted,
+        &Default::default(),
+        limits.model,
+        limits.source,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let law = fsl_replay::admit_integer_division(
+        &[fsl_replay::DefinitionRole::IntegerDivisionFloor.reference()],
+        None,
+    )
+    .unwrap();
+    let checked = spine::check_units_with_integer_division(
+        &admitted,
+        "division-check".to_owned(),
+        &models,
+        &dependencies,
+        &law,
+        limits,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let mut laws = Vec::new();
+    for unit in checked {
+        let emitted = spine::package(&unit, limits.package, &cancel)
+            .unwrap()
+            .into_value();
+        let wire: serde_json::Value = serde_json::from_slice(emitted.package().bytes()).unwrap();
+        for node in wire["semantic_graph"]["nodes"].as_array().unwrap() {
+            if matches!(
+                node["body"]["operation"]["identity"].as_str(),
+                Some("filament.op.integer.div" | "filament.op.integer.rem")
+            ) {
+                laws.push(
+                    node["body"]["operation"]["laws"][0]["definition"]["identity"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    assert_eq!(laws, vec!["filament.value.integer-division.floor/v1"; 4]);
+    let refusal = spine::check_units(
+        &admitted,
+        "division-check".to_owned(),
+        &models,
+        &dependencies,
+        limits,
+        &cancel,
+    )
+    .unwrap_err();
+    let refusal = spine::refusal_or_fault(refusal).unwrap();
+    let spine::CompileRefusal::Check { refusals, .. } = *refusal else {
+        panic!("expected every unit's missing-selection refusals");
+    };
+    assert_eq!(refusals.len(), 4);
+    assert!(refusals
+        .iter()
+        .all(|refusal| refusal.cause.cause() == Some("missing-selection")));
+}
+
 #[cfg(feature = "quire-extraction")]
 #[test]
 #[trace("TC-2197", "FR-767-AC-11")]
