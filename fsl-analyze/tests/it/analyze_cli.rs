@@ -19,7 +19,6 @@ const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
 /// FR-624-AC-1: a malformed document is a named refusal.
 #[trace("TC-1584", "FR-624-AC-1")]
 #[test]
-#[ignore = "QSL-1976: analyze refusals are not written as named outcome documents yet"]
 fn a_malformed_request_is_a_named_refusal() {
     let ws = Workspace::new("cli-malformed");
     let path = ws.write(
@@ -35,10 +34,11 @@ fn a_malformed_request_is_a_named_refusal() {
     assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
 }
 
-/// FR-624-AC-2: a checker refusal of the program refuses the request at `check`.
+/// FR-624-AC-2: a checker refusal of the program refuses the request at the
+/// checker stage, which FR-286 spells `S3`; FR-624-AC-2 still says `check`, a
+/// wording conflict tracked as QSL-2288.
 #[trace("TC-1584", "FR-624-AC-2")]
 #[test]
-#[ignore = "QSL-1976: analyze compile refusals are not written as outcome documents yet"]
 fn a_refused_program_refuses_at_its_stage() {
     let ws = Workspace::new("cli-check-refusal");
     let path = counter_request(
@@ -48,7 +48,9 @@ fn a_refused_program_refuses_at_its_stage() {
     );
     let run = analyze(&path);
     assert_eq!(run.exit, 20);
-    assert_eq!(run.document()["last_stage"], "check");
+    // FR-286 spells the checker stage `S3` in `last_stage` (FR-286-AC-6).
+    assert_eq!(run.document()["last_stage"], "S3");
+    assert_eq!(run.document()["diagnostics"][0]["code"], "ill_typed");
     assert_eq!(run.document()["items"], json!([]));
 }
 
@@ -59,7 +61,6 @@ fn a_refused_program_refuses_at_its_stage() {
 #[trace("TC-1584", "FR-624-AC-1")]
 #[trace("TC-1082", "FSpec-FR-522-AC-2")]
 #[test]
-#[ignore = "QSL-1976: the command adapter does not route native-analyze/1 requests yet"]
 fn analyze_is_routed_and_never_refused_as_not_routed() {
     let ws = Workspace::new("cli-routed");
     let run = analyze(&counter_request(
