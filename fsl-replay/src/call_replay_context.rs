@@ -216,6 +216,7 @@ mod tests {
     fn run(source: &str, limits: CallerLimits) -> RunWithReplayContext {
         let call = Call {
             clocks: Default::default(),
+            wire_arguments: Vec::new(),
             function: "q".to_owned(),
             arguments: vec![crate::CallArgument {
                 parameter: "x".to_owned(),
@@ -363,6 +364,7 @@ mod tests {
         );
         let call = Call {
             clocks: Default::default(),
+            wire_arguments: Vec::new(),
             function: "r".to_owned(),
             arguments: vec![crate::CallArgument {
                 parameter: "x".to_owned(),

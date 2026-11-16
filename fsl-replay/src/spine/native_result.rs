@@ -2408,6 +2408,8 @@ impl Disposition {
                     super::RunRefusal::Compile(compile) => compile.cause(),
                     super::RunRefusal::Fault(_) => None,
                     super::RunRefusal::SourceNotSupplied { .. } => Some("missing-member"),
+                    super::RunRefusal::Argument { defect, .. } => Some(defect.cause),
+                    super::RunRefusal::UnsupportedParameter { .. } => Some("unsupported-feature"),
                     super::RunRefusal::MissingDeclaration { .. }
                     | super::RunRefusal::UnsupportedResult { .. }
                     | super::RunRefusal::UnknownParameter { .. }
@@ -2440,7 +2442,14 @@ impl Disposition {
                     | super::RunRefusal::UnboundParameter { parameter } => {
                         record = record.fields(BTreeMap::from([("parameter", parameter.clone())]));
                     }
-                    super::RunRefusal::WrongValueKind { position } => {
+                    super::RunRefusal::Argument { position, defect } => {
+                        record = record.fields(BTreeMap::from([
+                            ("position", position.to_string()),
+                            ("path", defect.path.clone()),
+                        ]));
+                    }
+                    super::RunRefusal::WrongValueKind { position }
+                    | super::RunRefusal::UnsupportedParameter { position } => {
                         record =
                             record.fields(BTreeMap::from([("position", position.to_string())]));
                     }
@@ -2542,7 +2551,7 @@ impl Disposition {
                         },
                     });
                 }
-                CallOutcome::Completed(CallValue::Reference(_)) => {
+                CallOutcome::Completed(CallValue::Reference(_) | CallValue::Written(_)) => {
                     result.category = Category::InternalFailure.as_str();
                     result.internal_fault = Some(InternalFaultWire {
                         stage: "native-result",

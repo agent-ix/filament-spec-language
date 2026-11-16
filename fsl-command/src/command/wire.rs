@@ -254,15 +254,14 @@ fn counter<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, 
     u64::deserialize(decoder).map(Some)
 }
 
-/// One `{parameter, value}` argument of a [`Call`] (FR-100): `value` is a
-/// JSON integer in the signed 64-bit range, read as `i64` so an out-of-range
-/// or non-integer JSON value refuses at decode (`invalid-request`), never
-/// reaching `fsl_replay::spine::run`.
+/// One `{parameter, value}` argument of a [`Call`] (FR-100, FR-650): `value` is
+/// a JSON integer in the signed 64-bit range or a JSON object; the command
+/// refuses any other JSON value `invalid-request` before the run.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Argument {
     pub parameter: String,
-    pub value: i64,
+    pub value: serde_json::Value,
 }
 
 #[derive(Deserialize)]

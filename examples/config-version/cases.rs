@@ -78,7 +78,7 @@ macro_rules! cases {
     ($($name:ident => $spec:expr),+ $(,)?) => {
         /// Explicit authored scenarios; expected results live in the integration test.
         #[derive(Clone, Copy, Debug)]
-        pub enum Case { $($name),+ }
+        pub enum Case { $(#[doc = "One case of the catalog."] $name),+ }
 
         /// Every declared case, in deterministic generation order.
         pub const CASES: &[Case] = &[$(Case::$name),+];

@@ -37,6 +37,7 @@ fn accounting() -> ScalarLimits {
 fn run(source: &str, cancel: &Cancel) -> Result<fsl_replay::RunWithRequirements, Box<RunRefusal>> {
     let call = Call {
         clocks: Default::default(),
+        wire_arguments: Vec::new(),
         function: "inc".to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),

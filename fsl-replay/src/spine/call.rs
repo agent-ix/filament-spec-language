@@ -41,6 +41,7 @@ use fsl_semantics::model::refusal::OfferedSelection;
 use fsl_semantics::value::environment_stage::membership_failure_code;
 
 use super::lifecycle as front_end;
+use super::run_value::{ArgumentDefect, Forms, ReadStop};
 use super::{
     AdmittedModels, CheckedUnit, CompileRefusal, DependencyInput, EmittedUnit, SpineLimits,
 };
@@ -77,6 +78,17 @@ pub struct CallArgument {
     pub value: Value,
 }
 
+/// One `{parameter, value}` argument as the request wrote it: FR-650's run
+/// value form, read against the parameter's declared type once the program
+/// is checked.
+#[derive(Clone, Debug)]
+pub struct WireArgument {
+    /// The parameter's declared name.
+    pub parameter: String,
+    /// A JSON integer in the signed 64-bit range, or a JSON object.
+    pub value: serde_json::Value,
+}
+
 /// The `call` member of a 1-draft native-run/1 request (FR-100 Inputs):
 /// which function to call, its arguments, and the S6a accounting limits the
 /// call runs under.
@@ -87,6 +99,9 @@ pub struct Call {
     pub function: String,
     /// The call's arguments, one per parameter, in any order.
     pub arguments: Vec<CallArgument>,
+    /// The call's arguments as a request wrote them (FR-650); they bind with
+    /// [`Self::arguments`], one per parameter.
+    pub wire_arguments: Vec<WireArgument>,
     /// The S6a `filament.value.accounting/v1` limits the call charges under.
     pub accounting: ScalarLimits,
     /// FR-277: the caller's supplied-value helper ceilings. An omitted
@@ -114,6 +129,7 @@ impl Call {
         Self {
             function,
             arguments,
+            wire_arguments: Vec::new(),
             accounting,
             supplied,
             backend: filament_eval::ExecutionBackendChoice::default(),
@@ -122,9 +138,9 @@ impl Call {
     }
 }
 
-/// A value [`run`] completed. [`run`] refuses `unsupported_construct` before
-/// any call for a function whose declared result is not Boolean, integer or
-/// Reference.
+/// A value [`run`] completed. [`run`] refuses `unknown_required_feature`
+/// before any call for a function whose declared result has no run value form
+/// (FR-650).
 #[derive(Clone, Debug)]
 pub enum CallValue {
     /// `{"kind": "boolean", "value": ...}`.
@@ -134,6 +150,24 @@ pub enum CallValue {
     Integer(Integer),
     /// An admitted model reference, retaining its exact identity triple.
     Reference(filament_exact::ObjectReference),
+    /// Any other kind, in FR-650's run value form.
+    Written(serde_json::Value),
+}
+
+impl CallValue {
+    /// The value in FR-650's run value form.
+    pub fn form(&self) -> serde_json::Value {
+        match self {
+            Self::Boolean(value) => serde_json::json!({"boolean": value}),
+            Self::Integer(value) => serde_json::json!({"integer": value.to_string()}),
+            Self::Reference(reference) => serde_json::json!({"reference": {
+                "universe": reference.universe().root_type().to_string(),
+                "type": crate::spine::effective_spelling(reference.object_type()),
+                "object_identity": reference.object().as_str(),
+            }}),
+            Self::Written(form) => form.clone(),
+        }
+    }
 }
 
 /// A refusal's [`Locus::Region`], resolved to the path of the source it
@@ -275,9 +309,9 @@ pub enum RunRefusal {
         /// The request's `function` string.
         function: String,
     },
-    /// The named function's declared result is neither `Boolean` nor an
-    /// integer type (`unsupported_construct`).
-    #[error("the function {function} does not declare a Boolean or integer result")]
+    /// The named function's declared result type has no run value form
+    /// (`unknown_required_feature`, FR-650).
+    #[error("the result of the function {function} has no run value form")]
     UnsupportedResult {
         /// The request's `function` string.
         function: String,
@@ -301,6 +335,22 @@ pub enum RunRefusal {
     UnboundParameter {
         /// The unbound parameter's declared name.
         parameter: String,
+    },
+    /// An argument is not a value of its parameter's declared type, with the
+    /// cause and the JSON pointer FR-650 names.
+    #[error("the argument at position {position} is refused: {} at {:?}", .defect.cause, .defect.path)]
+    Argument {
+        /// The parameter's zero-based declared position.
+        position: usize,
+        /// The defect.
+        defect: ArgumentDefect,
+    },
+    /// A parameter's declared type has no run value form
+    /// (`unknown_required_feature`, FR-650).
+    #[error("the parameter at position {position} has no run value form")]
+    UnsupportedParameter {
+        /// The parameter's zero-based declared position.
+        position: usize,
     },
     /// An argument's value is not of its parameter's declared type, found
     /// either before the call or by S6a admission (`invalid_runtime_input`).
@@ -396,6 +446,8 @@ impl RunRefusal {
             | Self::UnknownParameter { .. }
             | Self::DuplicateArgument { .. }
             | Self::UnboundParameter { .. }
+            | Self::Argument { .. }
+            | Self::UnsupportedParameter { .. }
             | Self::WrongValueKind { .. }
             | Self::Admission { .. }
             | Self::Storage { .. }
@@ -431,6 +483,8 @@ impl RunRefusal {
             | Self::UnknownParameter { .. }
             | Self::DuplicateArgument { .. }
             | Self::UnboundParameter { .. }
+            | Self::Argument { .. }
+            | Self::UnsupportedParameter { .. }
             | Self::WrongValueKind { .. }
             | Self::Admission { .. }
             | Self::Storage { .. }
@@ -450,7 +504,10 @@ impl RunRefusal {
         match self {
             Self::Compile(refusal) => refusal.code(),
             Self::MissingDeclaration { .. } => Code::MissingDeclaration,
-            Self::UnsupportedResult { .. } => Code::UnsupportedConstruct,
+            Self::UnsupportedResult { .. } | Self::UnsupportedParameter { .. } => {
+                Code::UnknownRequiredFeature
+            }
+            Self::Argument { defect, .. } => defect.code,
             Self::UnknownParameter { .. }
             | Self::DuplicateArgument { .. }
             | Self::UnboundParameter { .. }
@@ -594,7 +651,12 @@ pub(crate) fn run_reading<T>(
             .into_value();
     let package = checked.package();
     let selected = select(package, &call.function)?;
-    let arguments = bind_arguments(selected.parameters, &call.arguments)?;
+    let forms = Forms::new(
+        package.graph().scope().types(),
+        package.graph().scope().enums(),
+    );
+    let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
+    let arguments = bind_arguments(selected.parameters, &supplied)?;
     admit_model_arguments(
         models.models(),
         package.graph().scope().types(),
@@ -632,7 +694,29 @@ pub(crate) fn run_reading<T>(
     let mut sources = Vec::with_capacity(1 + checked.libraries().len());
     sources.push(checked.source().clone());
     sources.extend(checked.libraries().iter().cloned());
-    let outcome = convert_outcome(evaluation, package.graph(), &sources)?;
+    let outcome = match &evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(value))
+            if !matches!(
+                value,
+                Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
+            ) =>
+        {
+            match forms.write(value) {
+                Ok(form) => CallOutcome::Completed(CallValue::Written(form)),
+                Err(super::run_value::WriteStop::NoForm) => {
+                    return Err(Box::new(RunRefusal::UnsupportedResult {
+                        function: call.function.clone(),
+                    }))
+                }
+                Err(super::run_value::WriteStop::Fault(invariant)) => {
+                    return Err(Box::new(RunRefusal::Fault(InternalFault::new(
+                        "call", invariant,
+                    ))))
+                }
+            }
+        }
+        _ => convert_outcome(evaluation, package.graph(), &sources)?,
+    };
     let read = read(&checked, &emitted, &models)?;
     Ok((outcome, read))
 }
@@ -666,10 +750,10 @@ pub(crate) fn select<'a>(
         return Err(missing());
     }
     let callable = package.graph().callable(first).ok_or_else(missing)?;
-    if !matches!(
-        callable.result,
-        ValueType::Boolean | ValueType::Integer | ValueType::Int(_) | ValueType::Reference(_)
-    ) {
+    let graph_scope = package.graph().scope();
+    let result_has_form = matches!(callable.result, ValueType::Reference(_))
+        || Forms::new(graph_scope.types(), graph_scope.enums()).has_form(callable.result);
+    if !result_has_form {
         return Err(Box::new(RunRefusal::UnsupportedResult {
             function: function.to_owned(),
         }));
@@ -689,6 +773,94 @@ pub(crate) fn is_identifier(segment: &str) -> bool {
         _ => return false,
     }
     bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// Read each request-written argument (FR-650) as the value of its
+/// parameter's declared type, after the binding-name checks of FR-100 and in
+/// declared parameter order, stopping at the first defect. Returns every
+/// argument as a typed one.
+pub(crate) fn admit_wire_arguments(
+    forms: &Forms<'_>,
+    parameters: &[(String, ValueType)],
+    call: &Call,
+) -> Result<Vec<CallArgument>, Box<RunRefusal>> {
+    if call.wire_arguments.is_empty() {
+        return Ok(call.arguments.clone());
+    }
+    let mut bound = vec![false; parameters.len()];
+    let names = call
+        .arguments
+        .iter()
+        .map(|argument| &argument.parameter)
+        .chain(
+            call.wire_arguments
+                .iter()
+                .map(|argument| &argument.parameter),
+        );
+    for name in names {
+        let position = parameters
+            .iter()
+            .position(|(parameter, _)| parameter == name)
+            .ok_or_else(|| {
+                Box::new(RunRefusal::UnknownParameter {
+                    parameter: name.clone(),
+                })
+            })?;
+        if std::mem::replace(&mut bound[position], true) {
+            return Err(Box::new(RunRefusal::DuplicateArgument {
+                parameter: name.clone(),
+            }));
+        }
+    }
+    if let Some((_, (name, _))) = bound.iter().zip(parameters).find(|(bound, _)| !**bound) {
+        return Err(Box::new(RunRefusal::UnboundParameter {
+            parameter: name.clone(),
+        }));
+    }
+    let mut supplied = call.arguments.clone();
+    for (position, (name, value_type)) in parameters.iter().enumerate() {
+        let Some(wire) = call
+            .wire_arguments
+            .iter()
+            .find(|argument| argument.parameter == *name)
+        else {
+            continue;
+        };
+        // A parameter with no run value form refuses whatever the value is.
+        if !forms.has_form(value_type) {
+            return Err(Box::new(match value_type {
+                ValueType::Reference(_) | ValueType::Population(_) => {
+                    RunRefusal::WrongValueKind { position }
+                }
+                _ => RunRefusal::UnsupportedParameter { position },
+            }));
+        }
+        let read = match &wire.value {
+            serde_json::Value::Number(number) => match number.as_i64() {
+                Some(number) => forms.bare_integer(number, value_type),
+                None => Err(ReadStop::Defect(ArgumentDefect {
+                    code: Code::InvalidRuntimeInput,
+                    cause: "wrong-value-kind",
+                    path: String::new(),
+                })),
+            },
+            form => forms.read(form, value_type),
+        };
+        let value = read.map_err(|stop| {
+            Box::new(match stop {
+                ReadStop::Defect(defect) => RunRefusal::Argument { position, defect },
+                ReadStop::Unsupported => RunRefusal::UnsupportedParameter { position },
+                ReadStop::Fault(invariant) => {
+                    RunRefusal::Fault(InternalFault::new("call", invariant))
+                }
+            })
+        })?;
+        supplied.push(CallArgument {
+            parameter: name.clone(),
+            value,
+        });
+    }
+    Ok(supplied)
 }
 
 /// Join each argument to the parameter of the same declared name (refusing
@@ -784,17 +956,44 @@ pub(crate) fn argument_value(
             Value::Population(value) => Ok(Value::Population(value)),
             _ => Err(wrong()),
         },
-        ValueType::Rational(_)
-        | ValueType::Decimal(_)
-        | ValueType::Float(_)
-        | ValueType::Quantity(_)
+        // A value of these types arrives admitted against its declared type
+        // (FR-650) or is checked by S6a admission; only its kind is read here.
+        ValueType::Rational(_) => match value {
+            Value::Rational(value) => Ok(Value::Rational(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Decimal(_) => match value {
+            Value::Decimal(value) => Ok(Value::Decimal(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Float(_) => match value {
+            Value::Float(value) => Ok(Value::Float(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Text(_) => match value {
+            Value::Text(value) => Ok(Value::Text(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Enum(_) => match value {
+            Value::Enum(value) => Ok(Value::Enum(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Option(_) => match value {
+            Value::Option(value) => Ok(Value::Option(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Composite(_) => match value {
+            Value::Composite(value) => Ok(Value::Composite(value)),
+            Value::Union(value) => Ok(Value::Union(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Collection(_) => match value {
+            Value::Collection(value) => Ok(Value::Collection(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Quantity(_)
         | ValueType::BoundedQuantity(_)
         | ValueType::CarriedQuantity(_)
-        | ValueType::Text(_)
-        | ValueType::Enum(_)
-        | ValueType::Option(_)
-        | ValueType::Composite(_)
-        | ValueType::Collection(_)
         | ValueType::Map(_) => Err(wrong()),
     }
 }

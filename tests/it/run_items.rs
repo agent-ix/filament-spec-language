@@ -322,7 +322,7 @@ fn same_of(directory: &Path, value: Value) -> Value {
 /// unchanged as an argument.
 #[test]
 #[trace("TC-1704", "FR-650-AC-5")]
-#[ignore = "QSL-2182: Reference results in the identity-reference form passed back as arguments not implemented yet"]
+#[ignore = "QSL-2182: blocked on FR-650 spelling of the universe and type as 64 hex digits, and call.snapshot reference arguments"]
 fn reference_result_passes_back_as_an_argument() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());

@@ -148,12 +148,11 @@ fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
         );
         assert_eq!(input.call.function, "lt");
         assert_eq!(input.call.accounting.work_units, work_units);
-        assert_eq!(input.call.arguments.len(), 2);
-        assert_eq!(input.call.arguments[0].parameter, "a");
-        let filament_exact::Value::Integer(value) = &input.call.arguments[0].value else {
-            panic!("the request's integer argument retains its typed value");
-        };
-        assert_eq!(value, &filament_exact::Integer::from(2_i64));
+        // FR-650: the request's arguments are read against the parameters'
+        // declared types once the program is checked.
+        assert_eq!(input.call.wire_arguments.len(), 2);
+        assert_eq!(input.call.wire_arguments[0].parameter, "a");
+        assert_eq!(input.call.wire_arguments[0].value, json!(2));
         for file in ["program.native", "library.native", "model.json", "run.json"] {
             std::fs::remove_file(directory.path().join(file)).unwrap();
         }
@@ -179,10 +178,7 @@ fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
                 machine["result"]["value"],
                 native.value.as_value()["outcome"]["value"]
             );
-            assert_eq!(
-                machine["result"]["value"],
-                json!({"kind":"boolean","value":true})
-            );
+            assert_eq!(machine["result"]["value"], json!({"boolean":true}));
         } else {
             assert_eq!(machine["result"]["kind"], "incomplete");
             assert_eq!(machine["result"]["limit"]["counter"], "1");
@@ -461,4 +457,127 @@ fn a_function_run_document_carries_no_axes() {
     let document = native.value.as_value();
     assert_eq!(document["format"], "spine-run-result/1", "{document}");
     assert!(document.get("axes").is_none(), "{document}");
+}
+
+/// The lifecycle document of a run request `member`, `fsl_replay::spine::run`
+/// over it as the driver calls it.
+fn run_document(function: &str, arguments: Value) -> OutcomeDocument {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), PROGRAM).unwrap();
+    let path = write_request(
+        directory.path(),
+        "run.json",
+        json!({"format":"native-run/1", "request":{
+        "models":[], "program":{"source":source()},
+        "call":{"function":function, "arguments":arguments}}}),
+    );
+    let PreparedRun::Function(prepared) =
+        command::prepare_run(&path, RunLimits::default()).unwrap()
+    else {
+        panic!("a function selection remains a function");
+    };
+    let input = prepared.into_input();
+    let result = spine::run(
+        input.source.identity().clone(),
+        input.package_name,
+        input.source.path(),
+        input.source.text().as_bytes(),
+        &input.packages,
+        &input.dependencies,
+        SpineLimits::default(),
+        &input.call,
+        &Default::default(),
+        &Cancel::new(),
+    );
+    OutcomeDocument::from_run(&result)
+}
+
+/// FR-286-AC-1, FR-286-AC-5, FR-286-AC-6, TC-770: every lifecycle outcome
+/// document carries `category` and `last_stage`: a successful run, a
+/// violation, a refusal and an unsupported result, each with its category
+/// and the stage it reached (`null` where FR-286 defines none).
+#[test]
+#[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
+fn command_outcome_documents_include_category_and_last_stage() {
+    // A successful run reached S6a.
+    let success = document(&run_document(
+        "lt",
+        json!([{"parameter":"a","value":2},{"parameter":"b","value":5}]),
+    ));
+    assert_members(&success, "success", json!("S6a"));
+
+    // A violation: ConfigVersion's `ParentOrder` over the violating snapshot.
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Violating,
+    )
+    .unwrap();
+    let request = crate::config_version_spine::spine::request(
+        directory.path(),
+        crate::config_version_spine::Case::Violating,
+    )
+    .unwrap();
+    let report = spine::run_clause(request).unwrap();
+    let violation = document(
+        &OutcomeDocument::from_clause_runs(
+            Some(fsl_replay::OutcomeStage::S6a),
+            [("ParentOrder", &report)],
+        )
+        .unwrap(),
+    );
+    assert_members(&violation, "violation", json!("S6a"));
+
+    // A refusal: an unknown function stops at the call stage; an ill-typed
+    // source at the check stage.
+    let refusal = document(&run_document("nope", json!([])));
+    assert_members(&refusal, "refusal", json!("S6a"));
+    let directory = tempfile::tempdir().unwrap();
+    let path = compile_request(
+        directory.path(),
+        format!("{HEADER}function f using v(): Int[0, 9] pure {{ true }}\n").as_bytes(),
+    );
+    let error = command::compile_outcome(&path)
+        .err()
+        .expect("the stage refuses");
+    assert_members(
+        &document(&error.outcome_document(Operation::Package)),
+        "refusal",
+        json!("S3"),
+    );
+
+    // An unsupported result: a source the package stage cannot project.
+    let directory = tempfile::tempdir().unwrap();
+    let path = compile_request(
+        directory.path(),
+        format!("{HEADER}type Digit = Int[0, 9];\n").as_bytes(),
+    );
+    let error = command::compile_outcome(&path)
+        .err()
+        .expect("the stage refuses");
+    assert_members(
+        &document(&error.outcome_document(Operation::Package)),
+        "unsupported",
+        json!("S4"),
+    );
+}
+
+fn assert_members(document: &Value, category: &str, last_stage: Value) {
+    let members = document.as_object().unwrap();
+    assert!(members.contains_key("category"), "{document}");
+    assert!(members.contains_key("last_stage"), "{document}");
+    assert_eq!(document["category"], category, "{document}");
+    assert_eq!(document["last_stage"], last_stage, "{document}");
+}
+
+/// Negative: a result without either member fails the check above.
+#[test]
+#[should_panic(expected = "filament-outcome/1")]
+#[trace("TC-770", "FR-286-AC-1")]
+fn a_result_without_category_and_last_stage_fails_the_lifecycle_check() {
+    assert_members(
+        &json!({"format": "filament-outcome/1", "operation": "execute"}),
+        "success",
+        json!("S6a"),
+    );
 }

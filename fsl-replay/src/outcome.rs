@@ -52,8 +52,8 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CallValue,
-    CheckedUnit, ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
+    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
+    ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
     ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
@@ -1597,30 +1597,16 @@ impl OutcomeDiagnostic {
     }
 }
 
-/// A completed call's value, in FR-100's rendering.
+/// A completed call's value, in FR-650's run value form.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ResultValue {
-    /// A `Boolean` value.
-    Boolean {
-        /// The value.
-        value: bool,
-    },
-    /// An integer value, in FR-038's ASCII decimal spelling.
-    Integer {
-        /// The decimal digits.
-        decimal: String,
-    },
-    /// An exact model reference identity triple.
-    Reference {
-        /// The object universe identity.
-        universe: String,
-        /// The most-specific object type identity.
-        #[serde(rename = "type")]
-        object_type: String,
-        /// The authored object identity.
-        object_identity: String,
-    },
+#[serde(transparent)]
+pub struct ResultValue(serde_json::Value);
+
+impl ResultValue {
+    /// The value's JSON form.
+    pub fn form(&self) -> &serde_json::Value {
+        &self.0
+    }
 }
 
 /// The evaluation result of an `execute` outcome (FR-286's `result`).
@@ -2001,17 +1987,7 @@ impl OutcomeDocument {
             }
             CallOutcome::Completed(value) => {
                 document.result = Some(ExecuteResult::Completed {
-                    value: match value {
-                        CallValue::Boolean(value) => ResultValue::Boolean { value: *value },
-                        CallValue::Integer(value) => ResultValue::Integer {
-                            decimal: value.to_string(),
-                        },
-                        CallValue::Reference(reference) => ResultValue::Reference {
-                            universe: reference.universe().root_type().to_string(),
-                            object_type: crate::spine::effective_spelling(reference.object_type()),
-                            object_identity: reference.object().as_str().to_owned(),
-                        },
-                    },
+                    value: ResultValue(value.form()),
                 });
             }
             CallOutcome::Undefined { reason } => {
@@ -2104,8 +2080,27 @@ impl OutcomeDocument {
                     )],
                 )
             }
+            RunRefusal::Argument { defect, .. } => {
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        Some(defect.cause),
+                        refusal.code().as_str(),
+                        None,
+                        refusal.to_string(),
+                    )],
+                )
+            }
+            RunRefusal::UnsupportedResult { .. } | RunRefusal::UnsupportedParameter { .. } => {
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        Some("unsupported-feature"),
+                        refusal.code().as_str(),
+                        None,
+                        refusal.to_string(),
+                    )],
+                )
+            }
             RunRefusal::MissingDeclaration { .. }
-            | RunRefusal::UnsupportedResult { .. }
             | RunRefusal::UnknownParameter { .. }
             | RunRefusal::DuplicateArgument { .. }
             | RunRefusal::UnboundParameter { .. }
@@ -3233,6 +3228,7 @@ mod tests {
                 .0;
             let call = Call {
                 clocks: Default::default(),
+                wire_arguments: Vec::new(),
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
                 accounting,
@@ -3262,7 +3258,7 @@ mod tests {
         );
         assert_eq!(
             run_under("accounting.work_units=1000000"),
-            json!({"kind": "completed", "value": {"kind": "integer", "decimal": "7"}})
+            json!({"kind": "completed", "value": {"integer": "7"}})
         );
     }
 
@@ -3274,6 +3270,7 @@ mod tests {
     fn execute_result_and_cancelled_check_documents() {
         let call = Call {
             clocks: Default::default(),
+            wire_arguments: Vec::new(),
             function: "seven".to_owned(),
             arguments: Vec::new(),
             accounting: default_accounting(1_000_000),
@@ -3303,7 +3300,7 @@ mod tests {
                 "items": [],
                 "diagnostics": [],
                 "artifacts": [],
-                "result": {"kind": "completed", "value": {"kind": "integer", "decimal": "7"}},
+                "result": {"kind": "completed", "value": {"integer": "7"}},
             })
         );
 
@@ -3559,6 +3556,7 @@ mod tests {
             SpineLimits::default(),
             &Call {
                 clocks: Default::default(),
+                wire_arguments: Vec::new(),
                 function: function.to_owned(),
                 arguments: Vec::new(),
                 accounting: default_accounting(1_000_000),
@@ -3588,7 +3586,7 @@ mod tests {
                 "items": [],
                 "diagnostics": [],
                 "artifacts": [],
-                "result": {"kind": "completed", "value": {"kind": "integer", "decimal": "7"}},
+                "result": {"kind": "completed", "value": {"integer": "7"}},
             })
         );
         assert_eq!(
