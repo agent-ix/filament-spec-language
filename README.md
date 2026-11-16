@@ -118,7 +118,8 @@ and `P` are profiles and `M` is a model, declared at the top of the unit as in
 the first example.
 
 **Values and functions.** Bounded integers, exact rationals, records, unions
-and pure functions. There is no floating point.
+and pure functions. `Float32` and `Float64` support `exact`, `nearest-even`,
+`nearest-away`, `toward-zero`, `toward-positive` and `toward-negative` rounding modes.
 
 ```
 type Digit = Int[0, 9];
