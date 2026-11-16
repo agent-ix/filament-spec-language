@@ -33,3 +33,14 @@ The evidence is the quire grammar lint from `PATH= quire validate --scope . 'spe
 ## Verdict
 
 PASS WITH TWO LOWS. The amended FR-643 bullets keep their subject and modal. The Settling profile sub-bullets are definitions under one SHALL, which is acceptable.
+
+## Dispositions
+
+Round 1, verified at fda2d6ef58dd0ac3c456fcdc3bdb2deb2d286c85. The quire grammar lint reports no warning on any changed file.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-643 now reads "**Settling at finish.** The session SHALL settle, at `finish`, every clause that has not settled before it." |
+| FND-002 | fixed | FR-283 "Finite traces" now reads "If a `Document` trace carries a `closed` or `open` member, then `monitor` SHALL refuse it `invalid_runtime_input`/`unknown-member` naming that member". |
+
+Round 1 verdict: APPROVE.

@@ -38,3 +38,16 @@ The weak ones rest on a tautological fixture or name no expected value.
 ## Verdict
 
 PASS WITH TWO MEDIUMS. The integrity review's FND-001 also affects FR-643-AC-6 and FR-644-AC-5. Those ACs are strong, but they assert a `Reaches` verdict that FR-328 forbids, so they cannot pass on a correct evaluator.
+
+## Dispositions
+
+Round 1, verified at fda2d6ef58dd0ac3c456fcdc3bdb2deb2d286c85.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `Recent` is now `... min_count 0 <= 1` in FR-643-AC-5, FR-643-AC-9 and FR-820-AC-2. AC-9 and FR-820-AC-2 add the failing case "over levels 2, 0, 2 `Recent` settles `violation` at step 3". |
+| FND-002 | fixed | FR-283-AC-17 now states `violation` at position 0 with `truth` `false` for `Bounded` and `pending` with no `truth` for `Reaches`. It names the members tried (`limits.max_window_values` 1, empty `temporal_selections`) and the `"closed": true` and `"open": true` refusals. |
+| FND-003 | fixed | FR-820-AC-2 and FR-643-AC-9 now require "exactly `min(k, 4)`" retained values. |
+| FND-004 | fixed | FR-643-AC-5 now reads "In a separate `Finite` session with `retained_positions` 2". |
+
+Round 1 verdict: APPROVE. The integrity review's FND-011 and FND-012 cover FR-643-AC-10's timed expectations.
