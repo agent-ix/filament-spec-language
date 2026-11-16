@@ -3444,7 +3444,6 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
 #[trace("TC-2162", "FR-764-AC-3")]
 #[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
 #[test]
-#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
 fn a_bare_decimal_literal_is_typed_as_its_constructor() {
     let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
     for literal in ["0.9", "decimal(9, 1)"] {
@@ -3809,7 +3808,6 @@ fn quantity_literal_non_quantity_position_refused() {
 #[trace("TC-2186", "FR-764-AC-7")]
 #[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
 #[test]
-#[ignore = "QSL-1965: comparison-operand typing of decimal literals not implemented yet"]
 fn a_comparison_operand_types_a_bare_decimal_literal() {
     let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
     for literal in ["0.9", "decimal(9, 1)"] {

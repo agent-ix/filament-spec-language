@@ -1862,6 +1862,15 @@ impl<'c> Mapping<'c> {
                     let value = integer(&text(token, node)?, node)?;
                     self.leaf(Shape::Integer(value), &task)
                 }
+                TokenKind::Grammar if token.spelling().contains(&b'.') => {
+                    let spelling = text(token, node)?;
+                    let Some((whole, fraction)) = spelling.split_once('.') else {
+                        return Err(unexpected(node));
+                    };
+                    let coefficient = integer(&format!("{whole}{fraction}"), node)?;
+                    let scale = u32::try_from(fraction.len()).map_err(|_| unexpected(node))?;
+                    self.leaf(Shape::Decimal(coefficient, scale), &task)
+                }
                 TokenKind::Text => {
                     // The lexer admitted the token, so its JSON decoding
                     // cannot fail; a refusal here is an unexpected shape.

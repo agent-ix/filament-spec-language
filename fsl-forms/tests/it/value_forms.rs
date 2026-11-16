@@ -1792,7 +1792,6 @@ fn a_selector_after_a_call_is_refused_at_its_own_span() {
 /// `decimal(c, s)` it spells, unreduced.
 #[trace("TC-2161", "FR-764-AC-2")]
 #[test]
-#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
 fn a_bare_decimal_literal_builds_the_decimal_value_it_spells() {
     for (source, coefficient, scale) in [("0.9", 9_i64, 1_u32), ("5.0", 50, 1), ("0.90", 90, 2)] {
         assert_eq!(

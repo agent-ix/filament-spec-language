@@ -113,7 +113,6 @@ fn a_bounded_malformed_corpus_returns_a_parse_or_a_diagnostic() {
 #[trace("TC-2161", "FR-764-AC-1")]
 #[trace("FSpec-TC-1648", "FSpec-FR-662-AC-1")]
 #[test]
-#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
 fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
     for (expression, literal) in [("a < 0.9", "0.9"), ("a <= 5.0", "5.0"), ("0.5", "0.5")] {
         let text = document(expression);
@@ -134,7 +133,7 @@ fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
             "{expression}: a primary spans exactly `{literal}`"
         );
     }
-    for unchanged in ["decimal(5, 1) = decimal(5, 1)", "a = 5"] {
+    for unchanged in ["0.5 M::ms", "decimal(5, 1) = decimal(5, 1)", "5", "a.b"] {
         let parsed = parse(document(unchanged).as_bytes()).expect("S1 reads the unit");
         assert!(
             parsed.is_admissible(),
@@ -149,7 +148,6 @@ fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
 #[trace("TC-2161", "FR-764-AC-4")]
 #[trace("FSpec-TC-1648", "FSpec-FR-662-AC-4")]
 #[test]
-#[ignore = "QSL-1965: the unsupported numeric-form diagnostic not implemented yet"]
 fn an_exponent_number_is_the_unsupported_numeric_form() {
     for spelling in ["1e5", "1.5E-3"] {
         let text = document(&format!("a < {spelling}"));
