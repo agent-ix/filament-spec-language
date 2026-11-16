@@ -410,7 +410,7 @@ impl<'a> Forms<'a> {
             return world
                 .objects
                 .objects()
-                .find(universe, &key.to_owned())
+                .find(universe, key)
                 .map(|found| Value::Reference(found.clone()))
                 .ok_or_else(|| {
                     defect(

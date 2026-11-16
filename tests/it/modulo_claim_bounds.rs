@@ -352,6 +352,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
+            snapshot: None,
             function: function.to_owned(),
             arguments: vec![
                 CallArgument {
