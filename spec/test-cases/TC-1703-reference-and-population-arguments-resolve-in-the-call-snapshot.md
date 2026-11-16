@@ -22,4 +22,4 @@ Tag the tests `#[trace("TC-1703", "FR-650-AC-4")]`; they live in `tests/it/run_v
 
 ## Expected Results
 
-As FR-650-AC-4 states: `{"boolean": false}` for root/child in either reference form; `dangling_reference` at position 1; `missing-member` naming `snapshot`; the held population completes and the unheld one refuses `wrong-role-mapping`.
+As FR-650-AC-4 states: `{"boolean": false}` for root/child in either reference form; `dangling_reference` at position 1; `missing-member` with `details.path` `/call/snapshot`; the held population completes and the unheld one refuses `wrong-role-mapping`.

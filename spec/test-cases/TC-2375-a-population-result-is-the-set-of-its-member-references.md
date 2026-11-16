@@ -16,7 +16,7 @@ Scope: FR-650-AC-14.
 
 ## Test Procedure
 
-Call `all` with `{"population": P}` over the healthy current snapshot. Test: `tests/it/run_value_spellings.rs` `a_population_result_is_a_set_of_references`.
+Call `members` with `{"population": P}` over the healthy current snapshot. Test: `tests/it/run_value_spellings.rs` `a_population_result_is_a_set_of_references`.
 
 Tag the tests `#[trace("TC-2375", "FR-650-AC-14")]`.
 

@@ -13,6 +13,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-027
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-531
     type: references
   - target: ix://agent-ix/filament-specification/FR-322
@@ -96,14 +98,14 @@ member is the same as the source route gives.
 
 ### Building the analysis input
 
-- FSL SHALL build the in-process checked package from the admitted package
-  value: its package identity, its formula graph, its source map, its
-  declaration names, its clause names, its profile and clock rows, its
-  dependency selections and its model selections, with the supplied domain
-  packages bound to those selections. The built value is the one the source
-  route's S4 hands analysis for the same program, so every engine, the
-  default-item rule, the subject binding and the replay of a counterexample
-  read the same facts on both routes.
+- FSL SHALL build the analysis input from the admitted package value as
+  FR-940 states: a `BarePackage` (FR-531) over the read `CheckedPackageV2`,
+  with the supplied domain packages bound to its model selections, read by the
+  engines through the sealed `AnalysisView`. It is never a `CheckedPackage`:
+  FR-087 R-10 keeps checked typestate to S3 and S4. The source route's
+  `CheckedPackage` implements the same view and reads each fact from its own
+  S4 emission, so every engine, the default-item rule, the subject binding and
+  the replay of a counterexample read one value per fact on both routes.
 - An item's `claim` SHALL resolve by name against the package: a temporal
   clause through its `temporal_clause_names` row, and any other claim through
   the `declaration.qualified_name` of its `claim` node (FSpec FR-322). The

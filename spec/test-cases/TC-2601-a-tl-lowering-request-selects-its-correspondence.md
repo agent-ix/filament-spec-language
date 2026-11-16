@@ -19,7 +19,7 @@ FR-931-AC-1, FR-931-AC-2.
 1. Run `Low` with `{"clause": "Low"}` and with `"correspondence": "mltl.closed-trace/v1"`.
 2. Run `Low` with `mltl.online-prefix/v1` and with `mltl.origin-complete-history/v1`.
 3. Run the past-only clause with no `correspondence`.
-4. Run `Low` under `filament.temporal.timed/v1`.
+4. Run the timed form of `Low`: over the ConfigVersion model timed by `time Config dense unit ms`, under `filament.temporal.timed/v1` with no `clock` member, body `always [0 ms, 3 ms] holds(c.versionNumber <= 2)`.
 
 Test: `tests/it/request_surface_s1_16.rs` `a_tl_lowering_request_selects_its_correspondence`.
 
