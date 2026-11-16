@@ -68,8 +68,10 @@ A `native-analyze/1` request document. FSpec FR-520 "Document members"
 defines its request members and its analysis-item members, their
 multiplicities and spellings: the program or package selection, `models`,
 `libraries`, `refinement_internals`, `documents`, `memory`, `subject`,
-`items`, `limits` and `deadline_ms` (0 to 2^53 - 1 milliseconds, absent
-meaning `DeadlineSupply::Unbounded`); and per item `claim`, `kind` (an FSpec
+`items`, `limits`, `deadline_ms` (0 to 2^53 - 1 milliseconds, absent
+meaning `DeadlineSupply::Unbounded`) and `integer_division`, the program's
+integer-division law name, also admitted on each `libraries` entry
+([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md)); and per item `claim`, `kind` (an FSpec
 FR-290 kind or `simulation`, FR-634), `backend`, `required`, the FSpec FR-331
 members with `temporal.item_kind`, `trace` and `simulation`. This requirement
 states how FSL reads them.

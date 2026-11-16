@@ -920,3 +920,48 @@ fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
     assert_eq!(second.status.code(), Some(0));
     assert_eq!(first.stdout, second.stdout);
 }
+
+/// FR-767-AC-10 (TC-2196): a `native-monitor/1` request's `integer_division`
+/// member supplies the law its program's `div` needs.
+#[test]
+#[trace("TC-2196", "FR-767-AC-10")]
+#[ignore = "QSL-1989: the native-monitor/1 integer_division member is not implemented yet"]
+fn a_monitor_request_supplies_the_integer_division_law() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut records = observations(&[0, 1, 2]);
+    records.push(json!({"end": "open"}));
+    let lines: Vec<String> = records.iter().map(Value::to_string).collect();
+    std::fs::write(directory.path().join("half.jsonl"), lines.join("\n")).unwrap();
+    let run = |law: Option<&str>| {
+        let mut request = monitor_request(json!([{"name": "Half"}]), json!({"kind": "finite"}));
+        request["request"]["records"] = json!("half.jsonl");
+        if let Some(law) = law {
+            request["request"]["integer_division"] = json!(law);
+        }
+        let path = directory.path().join("half.json");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        std::fs::write(
+            directory.path().join("unit.native"),
+            format!(
+                "{}function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
+                 temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n",
+                unit()
+            ),
+        )
+        .unwrap();
+        run_file(&path)
+    };
+
+    let output = run(Some("floor"));
+    let monitored = result(&output);
+    assert_eq!(monitored["format"], "filament.monitor-run/1", "{monitored}");
+
+    let output = run(None);
+    assert_eq!(output.status.code(), Some(20));
+    let refused = refusal(&output);
+    assert_eq!(
+        find(&refused, "cause").and_then(Value::as_str),
+        Some("missing-selection"),
+        "{refused}"
+    );
+}

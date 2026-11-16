@@ -301,6 +301,9 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   definition catalog that every unit of the request selects extensions from
   ([FR-660](FR-660-supply-extension-definitions-through-the-request-extensions-member.md));
   a `native-compile/1` request carries the same member.
+- `integer_division`: optional, the integer-division law name `euclidean`, `floor` or `truncating` for the program units, also admitted on each `libraries` object for that library, and refused beside `package`
+  ([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md));
+  a `native-compile/1` request carries the same member.
 - `call`: a closed object naming the call.
   - `function`: the called function's name, a string of one or more
     segments separated by `.`, the separator source paths use. Each segment

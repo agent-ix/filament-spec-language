@@ -332,3 +332,50 @@ fn analyze_defaults_universes_and_limit_names() {
         );
     }
 }
+
+/// FR-767-AC-9 (TC-2196): a `native-analyze/1` request's `integer_division`
+/// member supplies the law its program's `div` needs.
+#[trace("TC-2196", "FR-767-AC-9", "FSpec-TC-1654", "FSpec-FR-520-AC-5")]
+#[test]
+#[ignore = "QSL-1989: the native-analyze/1 integer_division member is not implemented yet"]
+fn an_analyze_request_supplies_the_integer_division_law() {
+    let body = format!(
+        "function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n{}",
+        bounded()
+    );
+    let with_law = |law: Option<Value>| {
+        let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
+        if let Some(law) = law {
+            request["integer_division"] = law;
+        }
+        request
+    };
+
+    let ws = Workspace::new("division-law-floor");
+    let run = analyze(&counter_request_with(
+        &ws,
+        &body,
+        with_law(Some(json!("floor"))),
+    ));
+    assert_ne!(run.exit, 20, "{}", run.document());
+    assert!(run.item(0)["request"].is_object(), "{}", run.document());
+
+    let ws = Workspace::new("division-law-absent");
+    let run = analyze(&counter_request_with(&ws, &body, with_law(None)));
+    assert_eq!(run.exit, 20);
+    let document = run.document();
+    assert_eq!(document["items"], json!([]), "{document}");
+    assert_eq!(document["diagnostics"][0]["code"], "missing_declaration");
+    assert_eq!(document["diagnostics"][0]["cause"], "missing-selection");
+
+    let ws = Workspace::new("division-law-unknown");
+    let run = analyze(&counter_request_with(
+        &ws,
+        &body,
+        with_law(Some(json!("ceiling"))),
+    ));
+    assert_eq!(run.exit, 20);
+    let document = run.document();
+    assert_eq!(document["diagnostics"][0]["code"], "unknown_profile");
+    assert_eq!(document["diagnostics"][0]["cause"], "unsupported-selection");
+}

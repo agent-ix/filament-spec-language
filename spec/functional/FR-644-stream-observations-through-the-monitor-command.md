@@ -47,6 +47,9 @@ The request file, a closed JSON envelope `{"format": "native-monitor/1",
 
 - `models`, `program`, `libraries` and `clocks`: as in a `1-draft` native-run/1
   request (FR-100, FR-640); the command compiles the program once;
+- `integer_division`: optional, the integer-division law name for the program,
+  also admitted on each `libraries` entry, as in a native-run/1 request
+  ([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md));
 - `clauses`: a non-empty array of `{"name": N, "over": R}`, `over` as FR-641
   states for snapshot positions and absent for samples;
 - `trace`: `{"kind": "finite"|"progressed"|"timestamped"|"timed", "lower_boundary":

@@ -87,7 +87,7 @@ request with no `libraries` supplies none, and one with no
 `refinement_internals` supplies the empty list. Each library source counts toward
 FR-026's `dependent_bytes` limit. A `1-draft` request
 with a library of an empty identity, or with a library object that has any
-member besides `identity`, `source` and `refinement_internals` (a `version`, for one), refuses with `invalid-request`. A `1-draft` compile validates the
+member besides `identity`, `source`, `refinement_internals` and `integer_division` (a `version`, for one), refuses with `invalid-request`. A `1-draft` request may carry `integer_division`, the integer-division law name, at its top level for the program units and on each library object for that library ([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md)). A `1-draft` compile validates the
 program selection's `document` and `formal_revision` but does not record them:
 the `filament.checked-package/v2` wire has no member for them, so two requests that
 differ only in those fields write identical bytes. A spine refusal uses the same
