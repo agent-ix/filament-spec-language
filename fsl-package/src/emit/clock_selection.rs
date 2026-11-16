@@ -20,6 +20,12 @@ pub enum ClockSelectionCause {
     /// A member is named `model-steps` or `model-time`, which bind a model
     /// subject's steps or time and are never a configurable clock role.
     ReservedClockName,
+    /// A `timed` member's `unit` names no unit the program unit declares
+    /// (FR-933).
+    UnknownClockUnit,
+    /// A `timed` member's `unit` is a unit of another dimension than `Time`
+    /// (FR-933).
+    ClockUnitDimension,
 }
 
 impl ClockSelectionCause {
@@ -30,6 +36,8 @@ impl ClockSelectionCause {
             Self::UnusedClockSelection => "unused-clock-selection",
             Self::ClockKindMismatch => "clock-kind-mismatch",
             Self::ReservedClockName => "reserved-clock-name",
+            Self::UnknownClockUnit => "unknown-clock-unit",
+            Self::ClockUnitDimension => "clock-unit-dimension",
         }
     }
 }
@@ -56,6 +64,8 @@ pub struct ClockSelectionRefusal {
     pub declaration: Option<ClockSelectionDeclaration>,
     /// The kind of the supplied configuration, for a mismatch.
     pub supplied: Option<&'static str>,
+    /// The configured unit, for an unknown or non-time unit.
+    pub unit: Option<String>,
 }
 
 impl std::fmt::Display for ClockSelectionRefusal {
@@ -85,6 +95,18 @@ impl std::fmt::Display for ClockSelectionRefusal {
                      {profile}, which needs {expected}"
                 )
             }
+            ClockSelectionCause::UnknownClockUnit => write!(
+                f,
+                "clock \"{clock}\" used by {name} under {profile} names the unit \"{}\", \
+                 which the program unit does not declare",
+                self.unit.as_deref().unwrap_or("")
+            ),
+            ClockSelectionCause::ClockUnitDimension => write!(
+                f,
+                "clock \"{clock}\" used by {name} under {profile} names the unit \"{}\", \
+                 which is not a unit of the dimension Time",
+                self.unit.as_deref().unwrap_or("")
+            ),
             ClockSelectionCause::ReservedClockName => write!(
                 f,
                 "clock \"{clock}\" is a model binding name; a trace-subject clock role \
@@ -101,6 +123,7 @@ pub fn clock_kind(clock: &ClockConfiguration) -> &'static str {
         ClockConfiguration::EventPosition { .. } => "event_position",
         ClockConfiguration::FixedSample { .. } => "fixed_sample",
         ClockConfiguration::TimestampedEvent { .. } => "timestamped_event",
+        ClockConfiguration::Timed { .. } => "timed",
     }
 }
 

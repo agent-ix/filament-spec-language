@@ -26,6 +26,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-931 lowering document, its `tl_lowering` record.
+    pub(super) fn lowering_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// Inspect the encoded observations without changing the admitted shape.
     pub fn as_value(&self) -> &Value {
         &self.0
@@ -139,7 +144,11 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::AnalyzeUniverse(_)
         | RunCause::AnalyzeNotYetImplemented { .. }
         | RunCause::AnalyzeRefused(_)
-        | RunCause::MonitorRefused(_) => (types::Stage::Request, types::Details::None),
+        | RunCause::MonitorRefused(_)
+        | RunCause::TlCorrespondence { .. }
+        | RunCause::TlClause { .. }
+        | RunCause::TlNotYetImplemented { .. } => (types::Stage::Request, types::Details::None),
+        RunCause::TlFault(_) => (types::Stage::Output, types::Details::None),
         RunCause::AnalyzeFault | RunCause::MonitorFault | RunCause::MonitorCancelled => {
             (types::Stage::Output, types::Details::None)
         }
@@ -305,6 +314,9 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 }
                 _ => None,
             },
+            RunCause::TlCorrespondence { .. } => Some("unsupported-selection"),
+            RunCause::TlClause { .. } => Some("missing-name"),
+            RunCause::TlNotYetImplemented { .. } => Some("not-yet-implemented"),
             _ => None,
         },
         message: error.to_string(),
@@ -492,7 +504,7 @@ fn clock_selection_refusal(
         fsl_replay::spine::CompileRefusal::Emit(
             fsl_replay::spine::EmitRefusal::ClockSelection(refusal),
             _,
-        ) => Some(refusal),
+        ) => Some(refusal.as_ref()),
         fsl_replay::spine::CompileRefusal::Dependency { refusal, .. } => {
             clock_selection_refusal(refusal)
         }

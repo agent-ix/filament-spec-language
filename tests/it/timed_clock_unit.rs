@@ -66,7 +66,6 @@ fn refusal(output: &Output) -> Value {
 
 #[test]
 #[trace("TC-2606", "FR-933-AC-2", "FR-933-AC-3")]
-#[ignore = "QSL-2136: a role-clock timed clause's bounds are not yet read in the timed configuration's unit"]
 fn a_timed_configuration_fixes_the_binding_unit() {
     let bare = compile(&unit("[0, 200]", ""), "ms");
     let named = compile(&unit("[0 ms, 200 ms]", ""), "ms");

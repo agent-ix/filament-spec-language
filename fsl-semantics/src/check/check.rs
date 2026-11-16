@@ -728,6 +728,30 @@ impl PackageDeclarations {
         self
     }
 
+    /// These declarations with the clock configuration of each clock role
+    /// `clocks` names, keyed by clock name as a request's `clocks` member is
+    /// (FR-640): every `temporal` clause that writes that role reads it. An
+    /// in-process caller passes the configurations the request path takes, so
+    /// a role-clock timed clause has the same binding unit either way (FR-933).
+    #[must_use]
+    pub fn with_clock_configurations(
+        self,
+        clocks: &BTreeMap<String, filament_contract_model::ClockConfiguration>,
+    ) -> Self {
+        let units = self
+            .temporal_clauses
+            .iter()
+            .filter_map(|clause| {
+                let clock = clocks.get(&clause.form.clock.as_ref()?.text)?;
+                Some(super::temporal_clause::ClockUnitSelection {
+                    declaration_span: clause.span,
+                    clock: clock.clone(),
+                })
+            })
+            .collect();
+        self.with_clock_units(units)
+    }
+
     /// These declarations, to be checked as a build that has built only
     /// `support` (FR-135).
     #[cfg(any(test, feature = "test-support"))]
