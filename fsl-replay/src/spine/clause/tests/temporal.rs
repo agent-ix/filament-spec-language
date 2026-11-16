@@ -616,17 +616,6 @@ fn request(
     assert!(text.contains(header), "{text}");
     let mut text = text.replacen(header, &format!("{header}{}", unit.profile()), 1);
     text.push_str(unit.clauses());
-    if text.contains("count<Zero>") {
-        // Declared clauses retain Linked checking. Only this helper's count
-        // body is kernel checked, so its refusal still arises during S6a.
-        for argument in ["c.value mod 2", "q.value mod 2", "c.value", "q.value"] {
-            text = text.replace(
-                &format!("count<Zero>(m in ints(sequence[{argument}]): m > 0)"),
-                &format!("refusingCount({argument})"),
-            );
-        }
-        text.push_str("function refusingCount using v(n: Integer): Zero pure { count<Zero>(m in ints(sequence[n]): m > 0) }\n");
-    }
     let documents: Vec<(DocumentRef, Vec<u8>)> = values
         .iter()
         .enumerate()

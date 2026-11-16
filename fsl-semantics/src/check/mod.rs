@@ -3712,6 +3712,7 @@ impl PackageDeclarations {
                     &operation_precondition_facts,
                 );
                 let declarations = state_clause::ClauseDeclarations {
+                    mode,
                     unit: self.source_owners.get(&format!("state_clause:{index}")),
                     scope: &scope,
                     signatures: &signatures,
@@ -3833,6 +3834,7 @@ impl PackageDeclarations {
         for clause in &self.operation_clauses {
             let location = clause.location();
             let declarations = state_clause::ClauseDeclarations {
+                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -3888,6 +3890,7 @@ impl PackageDeclarations {
         for invariant in &self.type_invariants {
             let location = invariant.location();
             let declarations = state_clause::ClauseDeclarations {
+                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -3967,6 +3970,7 @@ impl PackageDeclarations {
                 continue;
             }
             let declarations = state_clause::ClauseDeclarations {
+                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -4040,6 +4044,7 @@ impl PackageDeclarations {
         let mut timed_models = {
             let location = Location::root(Origin::Expression);
             let declarations = state_clause::ClauseDeclarations {
+                mode,
                 unit: None,
                 scope: &scope,
                 signatures: &signatures,
@@ -4135,6 +4140,7 @@ impl PackageDeclarations {
             ($index:expr, $refinement:expr, $views:expr, $defer_abstract:expr) => {{
                 let location = Location::root(Origin::Expression);
                 let declarations = state_clause::ClauseDeclarations {
+                    mode,
                     unit: None,
                     scope: &scope,
                     signatures: &signatures,

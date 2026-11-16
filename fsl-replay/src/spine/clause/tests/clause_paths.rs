@@ -443,7 +443,6 @@ fn a_count_refused_at_compile_is_a_declined_run_item_with_its_cause() {
 /// refusal record projects that record's code and cause onto its run item.
 #[trace("TC-2195", "FR-766-AC-7")]
 #[test]
-#[ignore = "QSL-2003: a clause-run item over a kernel refusal record does not carry its cause yet"]
 fn a_kernel_refusal_record_names_its_cause_on_the_run_item() {
     use filament_semantic_value::catalog::CatalogCode;
     let report = ClauseRunReport {
