@@ -17,6 +17,7 @@
 //! and carry no AC-2 tag.
 
 use filament_exact::{Cancel, CancelCause, ObjectReference, ScalarLimits};
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::automaton::{SafetyState, SafetyTranslation, StateContext};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
@@ -36,8 +37,8 @@ use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, package, package_with_clauses, reference, subject, value, Documents, Letters,
-    CONTRACT, UNLIMITED, ZERO,
+    document, package_with_clauses, reference, subject, value, Documents, Letters, CONTRACT,
+    UNLIMITED, ZERO,
 };
 use crate::fill::tcb_01_event_position_selection;
 
@@ -51,11 +52,16 @@ pub(crate) struct World {
     documents: Documents,
     initial: Vec<DocumentRef>,
     keys: Vec<&'static str>,
+    check_mode: CheckMode,
 }
 
 pub(crate) fn world(body: &str, start: &[(&'static str, i64)]) -> World {
+    world_with_mode(body, start, CheckMode::Linked)
+}
+
+fn world_with_mode(body: &str, start: &[(&'static str, i64)], check_mode: CheckMode) -> World {
     let document = document(false);
-    let package = package(&document, body);
+    let package = crate::counter::package_with_mode(&document, body, check_mode);
     let mut documents = Documents::new(document);
     let initial = vec![documents.start("s0", start)];
     World {
@@ -64,6 +70,7 @@ pub(crate) fn world(body: &str, start: &[(&'static str, i64)]) -> World {
         documents,
         initial,
         keys: start.iter().map(|(key, _)| *key).collect(),
+        check_mode,
     }
 }
 
@@ -79,8 +86,12 @@ pub(crate) struct Invariant {
 impl World {
     pub(crate) fn invariant(&self, formula: &str, atom: fn(i64) -> Option<bool>) -> Invariant {
         let declared = [("C", "", formula)];
-        let (package, mut clauses) =
-            package_with_clauses(&self.documents.document, &self.body, &declared);
+        let (package, mut clauses) = crate::counter::package_with_clauses_mode(
+            &self.documents.document,
+            &self.body,
+            &declared,
+            self.check_mode,
+        );
         self.declared(package, clauses.remove(0), atom)
     }
 
@@ -449,7 +460,13 @@ fn a_deadlock_is_bad_for_the_deadlock_item_alone() {
 #[trace("TC-525", "FR-338-AC-3")]
 #[test]
 fn an_undetermined_contract_or_a_failing_atom_is_a_bad_state() {
-    let world = world(GUARDED, &[("c", 0)]);
+    let function =
+        "function odd_value using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }\n";
+    let guarded = format!(
+        "{function}{}",
+        GUARDED.replace("6 mod (2 - self.value) >= 0", "odd_value(self.value)")
+    );
+    let world = world_with_mode(&guarded, &[("c", 0)], CheckMode::Kernel);
     let reachable = world.reachable();
     assert_eq!(reachable.iter().map(|(_, values)| values[0]).max(), Some(2));
     let truth = world.invariant("always holds(true)", |_| Some(true));
@@ -468,14 +485,15 @@ fn an_undetermined_contract_or_a_failing_atom_is_a_bad_state() {
         )
     );
 
-    let world = self::world(CONTRACT, &[("c", 0)]);
+    let body = format!("{function}{CONTRACT}");
+    let world = world_with_mode(&body, &[("c", 0)], CheckMode::Kernel);
     let reachable = world.reachable();
     for (formula, atom) in [
         (
             "always holds(c.value != 2)",
             (|v| Some(v != 2)) as fn(i64) -> Option<bool>,
         ),
-        ("always holds(6 mod (2 - c.value) >= 0)", |v| {
+        ("always holds(odd_value(c.value))", |v| {
             (v != 2).then(|| 6 % (2 - v) >= 0)
         }),
     ] {
