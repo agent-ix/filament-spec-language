@@ -162,18 +162,30 @@ fn operator_declarations(body: &str, parameters: &str, result: &str) -> PackageD
     .expect("the assembler retains the selection")
 }
 
+/// Evaluator fixtures use Kernel mode so a possibly-zero divisor reaches the
+/// runtime. Linked-mode refusal is exercised in `division_law_run`.
 fn integer_operator(operator: &str, profile: Option<DivisionProfile>) -> CheckedPackage {
-    let mut declarations = operator_declarations(
-        &format!("a {operator} b"),
+    integer_operator_with_mode(
+        operator,
+        profile,
         "a: Integer, b: Integer",
-        "Integer",
-    );
+        CheckMode::Kernel,
+    )
+}
+
+fn integer_operator_with_mode(
+    operator: &str,
+    profile: Option<DivisionProfile>,
+    parameters: &str,
+    mode: CheckMode,
+) -> CheckedPackage {
+    let mut declarations = operator_declarations(&format!("a {operator} b"), parameters, "Integer");
     if let Some(profile) = profile {
         declarations.integer_division = Some(admitted_integer_division(profile));
     }
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(mode, CheckingLimits::default())
             .expect("the operator checks"),
     )
 }
@@ -321,7 +333,7 @@ fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
         ));
         assert!(refusal.location.path().is_empty());
     }
-    integer_operator("mod", None);
+    integer_operator_with_mode("mod", None, "a: Integer, b: Int[1, 9]", CheckMode::Linked);
 }
 
 /// Trace: FR-091-AC-39, TC-394
@@ -399,7 +411,7 @@ fn lowered_division_nodes_keep_the_selected_law_in_their_identity() {
             operator_declarations("a div b", "a: Integer, b: Integer", "Integer");
         declarations.integer_division = Some(admitted_integer_division(profile));
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(CheckMode::Kernel, CheckingLimits::default())
             .expect("div checks");
         let (operation, _) = application(&graph, "filament.op.integer.div");
         let laws = operation.laws();
@@ -411,7 +423,7 @@ fn lowered_division_nodes_keep_the_selected_law_in_their_identity() {
     let mut rem = operator_declarations("a rem b", "a: Integer, b: Integer", "Integer");
     rem.integer_division = Some(admitted_integer_division(DivisionProfile::Floor));
     let rem = rem
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(CheckMode::Kernel, CheckingLimits::default())
         .expect("rem checks");
     let (operation, _) = application(&rem, "filament.op.integer.rem");
     assert_eq!(
@@ -420,7 +432,7 @@ fn lowered_division_nodes_keep_the_selected_law_in_their_identity() {
     );
 
     let modulo = operator_declarations("a mod b", "a: Integer, b: Integer", "Integer")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(CheckMode::Kernel, CheckingLimits::default())
         .expect("mod checks without division law");
     let (operation, _) = application(&modulo, "filament.op.integer.mod");
     assert!(operation.laws().is_empty());
