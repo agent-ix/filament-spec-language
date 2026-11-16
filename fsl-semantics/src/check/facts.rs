@@ -1369,6 +1369,42 @@ impl<'a> Definedness<'a> {
                 }
             }
             NodeKind::Query {
+                visit: Visit::Count,
+                source,
+                ..
+            } => {
+                if self.mode == CheckMode::Kernel {
+                    return Ok(());
+                }
+                let ValueType::Int(domain) = node.value_type() else {
+                    return Ok(());
+                };
+                let bound = match node.at(*source).value_type() {
+                    ValueType::Collection(collection) => cardinality(collection),
+                    _ => Interval::unbounded(),
+                };
+                let size = self
+                    .stable_path(node.at(*source), facts)
+                    .and_then(|path| facts.intervals.get(&Subject::Size(path)))
+                    .map_or(bound, Interval::of_proved);
+                let proved = Interval {
+                    lower: End::Finite(Integer::zero()),
+                    upper: size.upper,
+                };
+                let required = Interval::of_domain(domain);
+                if proved.within(&required) {
+                    Ok(())
+                } else {
+                    Err(Self::refuse(
+                        node,
+                        Obligation::Range {
+                            required: Box::new(required.proved()),
+                            proved: Box::new(proved.proved()),
+                        },
+                    ))
+                }
+            }
+            NodeKind::Query {
                 visit: Visit::Sum,
                 source,
                 body,

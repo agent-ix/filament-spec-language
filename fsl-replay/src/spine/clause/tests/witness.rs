@@ -79,17 +79,21 @@ const CLAUSES: &[(&str, &str)] = &[
         "MappedAll",
         "forall(n in map(m in ints(sequence[0, self.versionNumber]): m + 1): n < 500)",
     ),
-    (
-        "RefusedDomain",
-        "forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): \
-         n < 500)",
-    ),
     ("FloatOrder", "fl(ONE) < fl(TWO)"),
     ("FloatNot", "not (fl(ONE) < fl(TWO))"),
     ("FloatLet", "let k = 500 in fl(ONE) < fl(TWO)"),
-    ("FloatOrOperand", "self.versionNumber = 0 or fl(ONE) < fl(TWO)"),
-    ("FloatAndOperand", "self.versionNumber > 0 and fl(ONE) < fl(TWO)"),
-    ("FloatImpliesOperand", "self.versionNumber > 0 implies fl(ONE) < fl(TWO)"),
+    (
+        "FloatOrOperand",
+        "self.versionNumber = 0 or fl(ONE) < fl(TWO)",
+    ),
+    (
+        "FloatAndOperand",
+        "self.versionNumber > 0 and fl(ONE) < fl(TWO)",
+    ),
+    (
+        "FloatImpliesOperand",
+        "self.versionNumber > 0 implies fl(ONE) < fl(TWO)",
+    ),
     (
         "NoneSelected",
         "forall(n in filter(m in ints(sequence[0, self.versionNumber]): m > 900): n < 0)",
@@ -1734,6 +1738,26 @@ fn tc_743_the_separation_check_names_its_failing_step() {
     }
 
     // A domain refused on `high`: `count<Zero>` of one element.
+    let text = witness_unit_text() + "invariant RefusedDomain using v on Config::ConfigVersion at current { \
+        forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): n < 500) }\n";
+    let domain_document = config_version_domain_document();
+    let packages =
+        fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
+    let (package, source) =
+        super::kernel_package(source(), "witness.native", text.as_bytes(), &packages);
+    let emitted = fsl_package::emit_checked(&package, EmitLimits::default())
+        .unwrap()
+        .package()
+        .clone();
+    let unit = Unit {
+        bytes: text.into_bytes(),
+        domain_document,
+        compiled: ComposedUnit {
+            package: std::sync::Arc::new(package),
+            source,
+            emitted,
+        },
+    };
     let refused = SeparatingWitnessRecord {
         quantifier: Some(occurrence(&unit, "RefusedDomain", &[], Operator::Quantify)),
         ..record.clone()

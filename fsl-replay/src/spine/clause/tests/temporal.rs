@@ -702,6 +702,15 @@ fn report(request: ClauseRunRequest) -> ClauseRunReport {
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
+    if request
+        .source
+        .unit()
+        .bytes
+        .windows(b"count<Zero>".len())
+        .any(|part| part == b"count<Zero>")
+    {
+        return super::kernel_report(request, &temporal_selections);
+    }
     crate::spine::run_clause_with_temporal_selections(request, &temporal_selections)
         .expect("a well-formed request always reports")
 }

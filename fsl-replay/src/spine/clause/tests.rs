@@ -94,6 +94,108 @@ fn compose(
     Ok(original)
 }
 
+/// Build a kernel-checked fixture whose deliberate count refusal must reach
+/// S6a. Source-based spine compilation always checks in linked mode.
+fn kernel_package(
+    identity: fsl_foundation::SourceIdentity,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> (fsl_package::CheckedPackage, fsl_foundation::Source) {
+    let parsed = fsl_cst::parse(identity, path, bytes, fsl_cst::Limits::default()).unwrap();
+    let built = fsl_forms::build_unit(&parsed).unwrap();
+    let models = fsl_semantics::model::intake::admit_unit(
+        &built.selections().models,
+        packages,
+        Default::default(),
+    )
+    .unwrap()
+    .with_parsed_operation_clauses(|text| {
+        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+    })
+    .unwrap();
+    let graph = fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        built,
+        models,
+        Vec::new(),
+    )
+    .unwrap()
+    .check(
+        filament_semantic_value::checking::CheckMode::Kernel,
+        Default::default(),
+    )
+    .unwrap();
+    (
+        fsl_package::CheckedPackage::link(graph),
+        parsed.source().clone(),
+    )
+}
+
+/// Exercise the ordinary package evaluator with a kernel fixture, preserving
+/// observation admission, temporal authentication and the original count atom.
+fn kernel_report(
+    request: ClauseRunRequest,
+    selections: &[fsl_package::TemporalClockSelection],
+) -> super::ClauseRunReport {
+    let input = request.source.unit();
+    let (package, source) = kernel_package(
+        input.identity.clone(),
+        input.path,
+        input.bytes,
+        &request.packages,
+    );
+    let sources = [source];
+    let run = super::CompiledRun {
+        packages: &request.packages,
+        model_limits: request.limits.model,
+        provisions: Provisions {
+            snapshots: &request.snapshots,
+            invocations: &request.invocations,
+        },
+        observation_limits: request.observation_limits,
+        accounting: request.accounting,
+        package: &package,
+        sources: &sources,
+        progress_capacity: request.limits.progress.covered_positions,
+    };
+    match &request.selection {
+        ClauseRunSelection::Clause(selection) => {
+            let clause = package.graph().state_clause(&selection.name).unwrap();
+            super::check_clause(&run, clause, selection)
+        }
+        ClauseRunSelection::Temporal {
+            name,
+            trace,
+            over,
+            ledger,
+        } => {
+            let cancel = filament_exact::Cancel::new();
+            let authentication = super::package_authentication::authenticate_emission(
+                &package,
+                selections,
+                &request.packages,
+                &request.limits,
+                &cancel,
+            )
+            .unwrap();
+            super::temporal::run_temporal(
+                &run,
+                &super::temporal::TemporalRun {
+                    name,
+                    trace,
+                    over,
+                    ledger: ledger.as_ref(),
+                    authentication: Some(authentication.temporal()),
+                    cancel: None,
+                },
+            )
+        }
+        other => panic!("kernel fixture has a clause selection: {other:?}"),
+    }
+}
+
 #[trace("FR-003-AC-9")]
 #[test]
 fn private_clause_source_generators_keep_format_identity() {

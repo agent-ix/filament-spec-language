@@ -1345,6 +1345,10 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             cause: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
         }),
+        ClauseDisposition::Evaluate(CallOutcome::Refused(refusal)) => {
+            let (CallRefusal::Record { code, .. } | CallRefusal::Family { code, .. }) = refusal;
+            Some(catalog(code.code(), code.cause()))
+        }
         _ => classify_clause_run(report)
             .classification
             .causes
