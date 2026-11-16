@@ -383,6 +383,8 @@ pub struct CheckedProbabilisticClaim {
     /// The fairness set of a claim `under every scheduler`; empty under a
     /// workload (ADR-024 PM-7).
     pub fairness: Vec<FairnessConstraint>,
+    /// The activation, including the trigger binder and its checked guard.
+    pub activation: ClaimActivation,
     /// The form.
     pub form: ProbForm,
     /// The confidence parameters, when the claim states them.
@@ -399,6 +401,26 @@ pub struct CheckedProbabilisticClaim {
     /// The `claim` occurrence of the claim's `claim`/`probabilistic_claim`
     /// node, set when a package is assembled (FR-498 "Outputs").
     pub(crate) occurrence: Option<OccurrenceKey>,
+}
+
+/// How a probabilistic claim is instantiated (FR-186).
+#[derive(Debug)]
+pub enum ClaimActivation {
+    /// `on origin`: one claim instance at the first position.
+    Origin,
+    /// `on each`: one instance for every value of the admitted population.
+    Each {
+        /// The activation binder's name.
+        binder: String,
+        /// The object type whose population supplies instances.
+        value_type: ValueType,
+        /// The checked activation guard, when written.
+        guard: Option<CheckedBody>,
+        /// The guard's evaluation slot count.
+        guard_slots: usize,
+        /// The guard's stable normal-form encoding.
+        guard_normal_form: Option<Vec<u8>>,
+    },
 }
 
 impl CheckedProbabilisticClaim {
@@ -473,6 +495,12 @@ impl CheckedProbabilisticClaim {
 /// position in this list.
 pub(super) fn claim_expressions(form: &ProbabilisticForm) -> Vec<&ExpressionForm> {
     let mut expressions = Vec::new();
+    if let ActivationForm::Each {
+        when: Some(guard), ..
+    } = &form.activation
+    {
+        expressions.push(guard);
+    }
     match &form.body {
         ProbabilisticBody::Probability { event, .. } => match event {
             EventForm::Temporal(formula) => {
@@ -718,14 +746,19 @@ impl Pass<'_, '_> {
     ) -> Option<CheckedProbabilisticClaim> {
         let subject = keep(refusals, self.subject(form));
         let profile = keep(refusals, self.profile(form));
-        if let ActivationForm::Each { parameter, .. } = &form.activation {
-            refusals.push(refusal(ProbabilisticCause::NotYetImplemented {
-                claim: form.name.name.clone(),
-                construct: "an `on each` activation",
-                span: parameter.name.span,
+        let subject = subject?;
+        if profile.as_ref().is_some_and(|profile| {
+            TemporalProfile::from_identity(profile.identity()) == Some(TemporalProfile::Timed)
+        }) && self
+            .input
+            .time_source(&subject.alias, &subject.package.identity)
+            .is_none()
+        {
+            refusals.push(temporal_refusal(TemporalCause::ModelTimeOnUntimedModel {
+                model: subject.alias.clone(),
+                span: form.profile.span,
             }));
         }
-        let subject = subject?;
         let scheduler = keep(refusals, self.scheduler(form, &subject));
         let over = keep(refusals, self.over(form))?;
         let claim = ClaimCx {
@@ -736,6 +769,10 @@ impl Pass<'_, '_> {
             expressions: claim_expressions(form),
             exact_values: claim_exact_values(form),
         };
+        let activation = keep(
+            refusals,
+            self.activation(&claim, &form.activation, cx, nodes),
+        );
         let confidence = keep(refusals, self.confidence(&claim));
         let body = self.form(&claim, profile.as_ref(), cx, nodes, refusals);
         let (scheduler, fairness) = scheduler?;
@@ -751,6 +788,7 @@ impl Pass<'_, '_> {
                 &profile,
                 &scheduler,
                 &fairness,
+                activation.as_ref()?,
                 &form_checked,
                 confidence.as_ref(),
             ),
@@ -762,6 +800,7 @@ impl Pass<'_, '_> {
             profile,
             scheduler,
             fairness,
+            activation: activation?,
             form: form_checked,
             confidence,
             over,
@@ -769,6 +808,111 @@ impl Pass<'_, '_> {
             declared: index,
             content: form.content.clone(),
             occurrence: None,
+        })
+    }
+
+    /// Resolve and type an `on each` trigger and its optional Boolean guard.
+    fn activation(
+        &mut self,
+        claim: &ClaimCx<'_>,
+        form: &ActivationForm,
+        cx: &mut CheckContext<'_, Scope>,
+        nodes: &mut u64,
+    ) -> Result<ClaimActivation, CheckRefusal> {
+        let ActivationForm::Each { parameter, when } = form else {
+            return Ok(ClaimActivation::Origin);
+        };
+        let value_type = super::super::type_form::resolve_form(
+            &self.input.scope.for_declaration(claim.claim()),
+            &parameter.value_type,
+        )
+        .map_err(|error| {
+            temporal_refusal(TemporalCause::ParameterType {
+                parameter: parameter.name.name.clone(),
+                fault: error.fault,
+                span: error.span,
+            })
+        })?;
+        let ValueType::Reference(object) = &value_type else {
+            return Err(refusal(ProbabilisticCause::OverNotObjectType {
+                claim: claim.claim().to_owned(),
+                parameter: parameter.name.name.clone(),
+                span: parameter.name.span,
+            }));
+        };
+        let admitted = self.input.models.iter().any(|model| {
+            model.alias() == Some(claim.subject.alias.as_str())
+                && model.selection() == &claim.subject.package
+                && model
+                    .named_populations()
+                    .any(|population| population.members.contains(object))
+        });
+        if !admitted {
+            return Err(refusal(ProbabilisticCause::OverNotObjectType {
+                claim: claim.claim().to_owned(),
+                parameter: parameter.name.name.clone(),
+                span: parameter.name.span,
+            }));
+        }
+        let Some(guard) = when else {
+            return Ok(ClaimActivation::Each {
+                binder: parameter.name.name.clone(),
+                value_type,
+                guard: None,
+                guard_slots: 0,
+                guard_normal_form: None,
+            });
+        };
+        let location = claim.location(guard)?;
+        let mut bound: Vec<(String, ValueType)> = claim
+            .over
+            .map(|over| (over.name.clone(), over.value_type.clone()))
+            .into_iter()
+            .collect();
+        bound.push((parameter.name.name.clone(), value_type.clone()));
+        let input = self.input;
+        let mut typer = Typer::new(
+            input.scope,
+            input.signatures,
+            input.limits,
+            nodes,
+            ClauseKind::Invariant,
+        )
+        .with_cancel(Some(input.cancel))
+        .with_context(cx.reborrow(input.scope));
+        bind_parameters(&mut typer, &bound, &location)?;
+        typer.enter_state_clause(StateContext {
+            parent_projections: BTreeMap::new(),
+            kind: StateClauseKind::Invariant,
+            operation: None,
+            self_slot: NO_SLOT,
+            result_slot: None,
+        });
+        let body = typer.infer(&guard.expression, Some(&ValueType::Boolean), &location)?;
+        if body.root().value_type() != &ValueType::Boolean {
+            return Err(CheckRefusal {
+                location,
+                cause: CheckCause::NonBooleanRoot,
+            });
+        }
+        let slots = typer.slots();
+        let observations = Observations::of(body.root(), Observation::Current, bound.len());
+        Definedness::new(
+            bound.len(),
+            input.dispatch_tables,
+            &input.scope.dispatch_operations,
+        )
+        .with_observations(&observations)
+        .check(body.root())?;
+        Ok(ClaimActivation::Each {
+            binder: parameter.name.name.clone(),
+            value_type,
+            guard_normal_form: Some(encode_predicate(
+                &guard.expression,
+                Some(parameter.name.name.as_str()),
+            )),
+            guard: Some(body),
+            guard_slots: slots,
         })
     }
 
@@ -1155,9 +1299,9 @@ impl Pass<'_, '_> {
                         .input
                         .time_source(&claim.subject.alias, &claim.subject.package.identity)
                     else {
-                        refusals.push(refusal(ProbabilisticCause::TimedEventProfile {
-                            claim: claim.claim().to_owned(),
-                            span: claim.form.span,
+                        refusals.push(temporal_refusal(TemporalCause::ModelTimeOnUntimedModel {
+                            model: claim.subject.alias.clone(),
+                            span: claim.form.profile.span,
                         }));
                         return None;
                     };
@@ -1825,6 +1969,7 @@ impl Pass<'_, '_> {
         profile: &DefinitionRef,
         scheduler: &ProbScheduler,
         fairness: &[FairnessConstraint],
+        activation: &ClaimActivation,
         form: &ProbForm,
         confidence: Option<&Confidence>,
     ) -> Result<ClaimNormalForm, CheckRefusal> {
@@ -1853,6 +1998,22 @@ impl Pass<'_, '_> {
             None => node_bytes(b"no-over", &[]),
             Some(over) => node_bytes(b"over", &[self.type_bytes(&over.value_type)?]),
         };
+        let activation = match activation {
+            ClaimActivation::Origin => node_bytes(b"origin", &[]),
+            ClaimActivation::Each {
+                value_type,
+                guard_normal_form,
+                ..
+            } => node_bytes(
+                b"each",
+                &[
+                    self.type_bytes(value_type)?,
+                    guard_normal_form
+                        .clone()
+                        .unwrap_or_else(|| node_bytes(b"no-guard", &[])),
+                ],
+            ),
+        };
         let confidence = confidence.map_or_else(
             || node_bytes(b"no-confidence", &[]),
             |confidence| {
@@ -1874,6 +2035,7 @@ impl Pass<'_, '_> {
                 scheduler,
                 node_bytes(b"fairness", &fairness),
                 over,
+                activation,
                 self.form_bytes(&claim.subject.alias, form),
                 confidence,
             ],

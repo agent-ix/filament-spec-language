@@ -238,6 +238,11 @@ fn service_document_with_parameter_type(
         variant_type("Outcome", &["Ok", "Fail"]),
         bounded_integer("Attempts", "0", "2"),
         bounded_integer("Millis", "1", "12"),
+        definition(
+            "Orphan",
+            "object_type",
+            json!({"supertypes": [], "fields": [], "operations": [], "relationships": []}),
+        ),
         server,
         client,
     ]);
@@ -3443,7 +3448,6 @@ fn activated(activation: &str, body: &str) -> String {
 /// the claim and its normal form, with its guard when written.
 #[trace("TC-2166", "FR-186-AC-8")]
 #[test]
-#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
 fn probabilistic_on_each_checks() {
     let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
     let plain = checked(&activated("on each (m: Service::Server)", &body));
@@ -3465,7 +3469,6 @@ fn probabilistic_on_each_checks() {
 /// `over-not-object-type` at its name, and a non-Boolean guard is ill typed.
 #[trace("TC-2166", "FR-186-AC-9")]
 #[test]
-#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
 fn probabilistic_on_each_non_object_type_refused() {
     let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
     assert_eq!(
@@ -3475,6 +3478,18 @@ fn probabilistic_on_each_non_object_type_refused() {
     assert_eq!(
         located(&activated("on each (m: Service::Server) when (1)", &body)),
         [(Code::IllTyped, Some("type-mismatch"), "1".to_owned())]
+    );
+}
+
+/// FR-186 Activation: `on each` rejects an object type outside every subject
+/// population at the activation binder.
+#[trace("TC-2166", "FR-186-AC-9")]
+#[test]
+fn probabilistic_on_each_non_population_refused() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    assert_eq!(
+        located(&activated("on each (m: Service::Orphan)", &body)),
+        [invalid("over-not-object-type", "m")]
     );
 }
 
@@ -3515,7 +3530,6 @@ fn time_forms_over_an_untimed_model_are_ill_typed() {
 #[trace("TC-2170", "FR-186-AC-13")]
 #[trace("TC-621", "FR-186-AC-3")]
 #[test]
-#[ignore = "QSL-2153: the timed profile over an untimed model refuses with the FSL-only timed-event-profile cause today"]
 fn probabilistic_claim_timed_profile_untimed_model() {
     let timed = service(
         None,
@@ -3532,9 +3546,6 @@ fn probabilistic_claim_timed_profile_untimed_model() {
             "tm".to_owned()
         )]
     );
-    assert!(!causes(&timed)
-        .iter()
-        .any(|cause| matches!(cause, ProbabilisticCause::TimedEventProfile { .. })));
 }
 
 /// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the

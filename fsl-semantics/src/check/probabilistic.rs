@@ -35,8 +35,8 @@ mod model;
 
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
-    ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef, OverBinding, ProbForm,
-    ProbScheduler, ReachTarget,
+    ClaimActivation, ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef,
+    OverBinding, ProbForm, ProbScheduler, ReachTarget,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
@@ -398,15 +398,6 @@ pub enum ProbabilisticCause {
         /// The alias's span.
         span: Span,
     },
-    /// A claim under the timed profile, which has no probabilistic event
-    /// reading (FR-234). `invalid_probabilistic_model`/`timed-event-profile`
-    /// (FSL-proposed).
-    TimedEventProfile {
-        /// The claim.
-        claim: String,
-        /// The alias's span.
-        span: Span,
-    },
     /// An event with an operator that has no closed interval, or whose
     /// profile is not bounded: a probabilistic event needs a finite window
     /// (ADR-024 PF-8). `invalid_probabilistic_model`/`unbounded-event`
@@ -555,7 +546,6 @@ impl ProbabilisticCause {
             | Self::TraceSubject { span, .. }
             | Self::UnresolvedProfile { span, .. }
             | Self::NotTemporalProfile { span, .. }
-            | Self::TimedEventProfile { span, .. }
             | Self::UnboundedEvent { span, .. }
             | Self::UnresolvedWorkload { span, .. }
             | Self::ForeignWorkload { span, .. }
@@ -602,7 +592,6 @@ impl ProbabilisticCause {
             | Self::RewardType { .. }
             | Self::TraceSubject { .. }
             | Self::NotTemporalProfile { .. }
-            | Self::TimedEventProfile { .. }
             | Self::UnboundedEvent { .. }
             | Self::ForeignWorkload { .. }
             | Self::FractionBound { .. }
@@ -657,7 +646,6 @@ impl ProbabilisticCause {
             Self::AmbiguousOperation { .. } | Self::AmbiguousReward { .. } => "ambiguous-name",
             Self::TraceSubject { .. } => "trace-subject",
             Self::NotTemporalProfile { .. } => "not-temporal-profile",
-            Self::TimedEventProfile { .. } => "timed-event-profile",
             Self::UnboundedEvent { .. } => "unbounded-event",
             Self::ForeignWorkload { .. } => "foreign-workload",
             Self::UnitMismatch { .. } => "unit-mismatch",
