@@ -550,17 +550,44 @@ fn an_oversized_temporal_count_refuses_naming_the_member() {
     }
 }
 
-/// FR-621-AC-7 (TC-1581), first half: a `finite-replay` item whose clause is
-/// still pending at the end of the supplied trace carries
-/// `disposition.temporal` kind `pending`, category `pending`, basis
-/// `unsettled` and `axes.settlement` `unsettled`, and exits 0.
+/// FR-621-AC-7 (TC-1581), first half: a temporal clause still pending at the
+/// end of its supplied trace is evaluated by the FR-641 clause run, whose
+/// document carries `disposition.temporal` kind `pending`, category
+/// `pending`, basis `unsettled` and `axes.settlement` `unsettled`, and exits
+/// 0. A `finite-replay` analyze item naming the same temporal clause settles
+/// `inapplicable-kind` with `family` `temporal-trace` (FR-507, FR-627-AC-4).
 #[trace("TC-1581", "FR-621-AC-7")]
 #[test]
-#[ignore = "QSL-2272: analyze has no finite-replay engine, so an item with a supplied trace settles unsupported"]
-fn a_pending_finite_replay_item_reports_its_pending_disposition() {
+#[ignore = "QSL-2272: the pending clause run and the inapplicable finite-replay item are not both reported yet"]
+fn a_pending_clause_run_reports_its_pending_disposition() {
+    let ws = Workspace::new("wire-pending-run");
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile i = \"filament.temporal.infinite-trace/v1\";\n\
+         record Reading { level: Int[0, 9]; }\n\
+         temporal Reaches using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 2) }\n";
+    ws.write("unit.native", unit.as_bytes());
+    let sample = |level: i64| json!({"sample": {"level": {"integer": level.to_string()}}});
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:pending-run", "document": "PendingRun", "formal_revision": 1}},
+        "clause": {"selection": {"temporal": {"name": "Reaches",
+            "trace": {"finite": [sample(0), sample(1)]}}}, "observations": {}}}});
+    let path = ws.write("run.json", request.to_string().as_bytes());
+    let result = fsl_command::command::run(&path).expect("the clause runs");
+    assert_eq!(result.exit_code, 0);
+    let document: Value =
+        serde_json::from_str(&result.value.to_string()).expect("a result document");
+    assert_eq!(document["disposition"]["category"], "pending", "{document}");
+    assert_eq!(
+        document["disposition"]["temporal"]["kind"], "pending",
+        "{document}"
+    );
+    assert_eq!(document["basis"], "unsettled", "{document}");
+    assert_eq!(document["axes"]["settlement"], "unsettled", "{document}");
+
     let reaches =
         crate::analyze_cli_support::clause("Reaches", "", "eventually holds(c.value = 3)");
-    let ws = Workspace::new("wire-finite-replay");
     let trace = json!({"format": "filament.protocol-trace/v1", "identity":
         {"authority": "test", "identity": "recorded"}, "steps": []});
     ws.write("recorded.json", trace.to_string().as_bytes());
@@ -573,15 +600,16 @@ fn a_pending_finite_replay_item_reports_its_pending_disposition() {
         .expect("documents")
         .push(json!({"file": "recorded.json"}));
     let run = analyze(&counter_request_with(&ws, &reaches, request));
-    assert_eq!(run.exit, 0);
+    assert_eq!(run.exit, 20);
     let item = run.item(0);
-    assert_eq!(item["category"], "pending", "{item}");
     assert_eq!(
-        item["record"]["disposition"]["temporal"]["kind"], "pending",
+        item["record"]["diagnostic"]["cause"], "inapplicable-kind",
         "{item}"
     );
-    assert_eq!(item["record"]["basis"], "unsettled", "{item}");
-    assert_eq!(item["axes"]["settlement"], "unsettled", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["family"], "temporal-trace",
+        "{item}"
+    );
 }
 
 /// FR-620 "Subject, compilation and default items" (FSpec FR-520

@@ -248,7 +248,10 @@ ranks below 10.
   position stamped `D` participates, one stamped `D + 1` does not. A watermark
   the supplier states as half-open SHALL be consumed only through an FSpec FR-289
   mapping that proves inclusive coverage, and the evaluator SHALL NOT read a
-  half-open end equal to `D` as coverage of `D` (FSpec FR-094).
+  half-open end equal to `D` as coverage of `D` (FSpec FR-094). A half-open
+  end `E` reads as the inclusive watermark `E - 1`; an end of 0 covers no
+  tick, has no inclusive reading and is refused before evaluation (FR-641
+  "Behavior").
 - An activation is **open** when it is not established. The `deadline` of a
   `Pending` result is `t0 + Hf + m`.
 

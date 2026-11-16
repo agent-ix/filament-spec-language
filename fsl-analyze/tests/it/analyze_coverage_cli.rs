@@ -140,16 +140,20 @@ fn weak_and_strong_fairness_separate() {
     );
     let unfair = clause("Unfair", "", "eventually holds(c.value = 3)");
     let ws = Workspace::new("cov-fairness");
-    let run = analyze(&counter_request(
+    // FR-627-AC-1's staying Counter: without fairness the `setTo(0)`
+    // self-loop at 0 is a behaviour that never reaches 3.
+    let run = analyze(&crate::analyze_cli_support::staying_counter_request(
         &ws,
         &format!("{weak}{strong}{unfair}"),
         json!([{"claim": "Weak"}, {"claim": "Strong"}, {"claim": "Unfair"}]),
     ));
+    assert_eq!(label(&run.item(0)), "proved");
     assert_eq!(label(&run.item(1)), "proved");
     let refuted = run.item(2);
     assert_eq!(label(&refuted), "refuted");
     assert_eq!(refuted["replay"]["reproduced"], true);
-    assert!(refuted["counterexample"]["cycle"].is_array(), "{refuted}");
+    // FSpec FR-364's `TemporalCounterexample` names the lasso's cycle `loop`.
+    assert!(refuted["counterexample"]["loop"].is_array(), "{refuted}");
 }
 
 /// FR-628-AC-2, AC-3: always-possible refutes, and seeded witnesses repeat.

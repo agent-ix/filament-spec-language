@@ -282,11 +282,13 @@ fn config_version_authority(package: &str) -> String {
 }
 
 /// FR-640 "Behavior": a hyper clause over one model's behaviours derives its
-/// event-position configuration from the model, as a single-trace clause
-/// over that model's type does: the sequence authority is the type's
-/// declaration identity text, and no `clocks` member serves it.
-#[trace("FR-640-AC-7", "FR-640-AC-3")]
+/// event-position configuration from the model, per quantified trace, as a
+/// single-trace clause over that model's type does: the sequence authority
+/// is the type's declaration identity text, no `clocks` member serves it,
+/// and each trace has its own row with an equal configuration.
+#[trace("TC-2243", "FR-640-AC-12", "FSpec-TC-1680", "FSpec-FR-322-AC-453")]
 #[test]
+#[ignore = "QSL-2277: one temporal binding row per quantified trace of a hyper clause is not implemented yet"]
 fn a_hyper_clause_over_one_model_derives_the_single_trace_authority() {
     let directory = tempfile::tempdir().unwrap();
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
@@ -306,25 +308,28 @@ fn a_hyper_clause_over_one_model_derives_the_single_trace_authority() {
     let rows = find(&package, "temporal_bindings")
         .and_then(Value::as_array)
         .expect("temporal binding rows");
-    let [row] = rows.as_slice() else {
-        panic!("one binding row: {rows:?}");
+    let [first, second] = rows.as_slice() else {
+        panic!("one binding row per quantified trace: {rows:?}");
     };
-    assert_eq!(row["clock_name"], "model-steps");
-    assert_eq!(
-        row["clock"],
-        json!({"kind": "event_position",
-            "sequence_authority": config_version_authority("example/config-version")})
-    );
+    for (row, trace) in [(first, "a"), (second, "b")] {
+        assert_eq!(row["trace"], trace, "{row}");
+        assert_eq!(row["clock_name"], "model-steps");
+        assert_eq!(
+            row["clock"],
+            json!({"kind": "event_position",
+                "sequence_authority": config_version_authority("example/config-version")})
+        );
+    }
 }
 
-/// FR-640, FR-763: a hyper clause whose two quantified traces are of two
-/// models derives two event-position configurations, which its one binding
-/// row cannot carry yet: it refuses `unsupported_construct`/
-/// `not-yet-implemented` naming the clause. Under fixed-sample both traces
-/// derive the same configuration, and the clause compiles.
-#[trace("FR-640-AC-7")]
+/// FR-640-AC-12: a hyper clause whose two quantified traces are of two
+/// models derives two event-position configurations, one row per trace,
+/// each with its own model's sequence authority. Under fixed-sample both
+/// traces derive the same configuration, and the clause compiles too.
+#[trace("TC-2243", "FR-640-AC-12", "FSpec-TC-1680", "FSpec-FR-322-AC-453")]
 #[test]
-fn a_hyper_clause_over_two_models_refuses_two_event_position_clocks() {
+#[ignore = "QSL-2277: a hyper clause over two models under event-position compiles with one clock row per trace, not implemented yet"]
+fn a_hyper_clause_over_two_models_binds_one_clock_per_trace() {
     let directory = tempfile::tempdir().unwrap();
     let unit = |identity: &str| {
         format!(
@@ -338,21 +343,36 @@ fn a_hyper_clause_over_two_models_refuses_two_event_position_clocks() {
         )
     };
     let models = ["example/device-saving", "example/device-normal"];
-    let refused = compile_over_models(
+    let compiled = compile_over_models(
         directory.path(),
         &unit("filament.temporal.event-position.false-extension/v1"),
         &models,
     );
-    assert_eq!(refused.status.code(), Some(21), "unsupported (FR-285)");
-    let failure: Value = serde_json::from_slice(&refused.stderr).expect("a refusal");
-    assert_eq!(failure["code"], "unsupported_construct", "{failure}");
-    assert_eq!(failure["cause"], "not-yet-implemented", "{failure}");
-    assert!(
-        failure["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("(declaration Saves)")),
-        "{failure}"
+    assert_eq!(
+        compiled.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
     );
+    let package: Value = serde_json::from_slice(&compiled.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("temporal binding rows");
+    let [saving, normal] = rows.as_slice() else {
+        panic!("one binding row per quantified trace: {rows:?}");
+    };
+    for (row, trace, model) in [
+        (saving, "s", "example/device-saving"),
+        (normal, "n", "example/device-normal"),
+    ] {
+        assert_eq!(row["trace"], trace, "{row}");
+        assert_eq!(row["clock_name"], "model-steps");
+        assert_eq!(
+            row["clock"],
+            json!({"kind": "event_position",
+                "sequence_authority": config_version_authority(model)})
+        );
+    }
     let sampled = compile_over_models(
         directory.path(),
         &unit("filament.temporal.fixed-sample.false-extension/v1"),

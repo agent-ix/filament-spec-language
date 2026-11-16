@@ -1089,3 +1089,26 @@ pub(crate) fn request_files(
     let bytes = snapshots.into_values().next().expect("one snapshot");
     (text, document, bytes)
 }
+
+/// [`request_files`] over two models: the vault under `V` and again under
+/// `N` (`test/vault-other`), with the unit text, the two domain packages and
+/// the one initial snapshot holding vault `(h, l)` in each.
+pub(crate) fn two_model_request_files(
+    start: (i64, i64),
+    declaration: &str,
+) -> (String, Vec<u8>, Vec<u8>, Vec<u8>) {
+    let vault = Vault::Secure;
+    let document = document(vault.busy(), false);
+    let other = other_document(&document);
+    let text = unit_text(Some(&other), vault, false, &format!("{declaration}\n"));
+    let mut snapshots = fsl_semantics::model::observation::DocumentProvision::new();
+    snapshot(
+        &mut snapshots,
+        "s0",
+        &[(KEY, start)],
+        None,
+        Some(&[(KEY, start)]),
+    );
+    let bytes = snapshots.into_values().next().expect("one snapshot");
+    (text, document, other, bytes)
+}
