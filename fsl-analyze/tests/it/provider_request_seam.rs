@@ -79,9 +79,6 @@ fn recording_provider(seen: Arc<Mutex<Seen>>) -> fsl_analyze::analyze::Engine {
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-        // FR-964 moves the limits to `ProviderOptions`; the coder drops this
-        // argument when `Engine::external` loses it.
-        fsl_analyze::provider::ProviderLimits::default(),
         Box::new(Recording(seen)),
     )
     .expect("the descriptor is unbounded")

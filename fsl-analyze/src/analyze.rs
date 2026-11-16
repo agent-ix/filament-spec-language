@@ -86,7 +86,7 @@ pub use items::{
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 
-use crate::provider::{ExternalProvider, NotUnbounded, ProviderLimits, ProviderReport};
+use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
 use crate::{contract_check, model_check, statistical, value_check, zone_check};
 
@@ -151,9 +151,6 @@ pub struct Engine {
     /// The external provider an [`Engine::external`] engine decides items
     /// with; absent for the in-process engines.
     provider: Option<std::sync::Arc<dyn ExternalProvider>>,
-    /// The FSpec FR-462 limits the caller set for an [`Engine::external`]
-    /// engine, which `analyze` writes into each request it sends it.
-    provider_limits: ProviderLimits,
 }
 
 impl Engine {
@@ -164,7 +161,6 @@ impl Engine {
             descriptor,
             tool: BackendTool::linked(),
             provider: None,
-            provider_limits: ProviderLimits::default(),
         }
     }
 
@@ -177,13 +173,12 @@ impl Engine {
     ///
     /// [`NotUnbounded`] when `descriptor` does not advertise `value-validity`
     /// in the `unbounded` mode; no engine is made and `provider` is never
-    /// called. `tool` is the provider's FSpec FR-331 tool record, and
-    /// `limits` the FSpec FR-462 limits the caller resolved for it (FR-287
-    /// `--provider-limit`), which every request `analyze` sends it carries.
+    /// called. `tool` is the provider's FSpec FR-331 tool record. The
+    /// engine holds no limit: a run's FSpec FR-462 limits are the run's
+    /// [`ProviderOptions`] (FR-964), which every request carries.
     pub fn external(
         descriptor: BackendDescriptor,
         tool: BackendTool,
-        limits: ProviderLimits,
         provider: Box<dyn ExternalProvider>,
     ) -> Result<Self, NotUnbounded> {
         let unbounded = descriptor
@@ -198,18 +193,12 @@ impl Engine {
             descriptor,
             provider: Some(provider.into()),
             tool,
-            provider_limits: limits,
         })
     }
 
     /// The external provider this engine decides items with, if any.
     pub(crate) fn provider(&self) -> Option<&dyn ExternalProvider> {
         self.provider.as_deref()
-    }
-
-    /// The FSpec FR-462 limits of this engine's provider requests.
-    pub(crate) fn provider_limits(&self) -> ProviderLimits {
-        self.provider_limits
     }
 
     /// The descriptor this engine was registered with: for an external
@@ -372,6 +361,9 @@ impl DuplicateEngine {
 #[derive(Clone, Debug, Default)]
 pub struct Engines {
     engines: Vec<Engine>,
+    /// The run's provider options (FR-964), which every provider request
+    /// this run sends carries.
+    options: ProviderOptions,
 }
 
 /// FR-120's caller-supplied subject members other than the checked package.
@@ -739,6 +731,7 @@ impl Engines {
     /// manifest.
     pub fn fsl() -> Result<Self, RegistrationRefusal> {
         Ok(Self {
+            options: ProviderOptions::default(),
             engines: vec![
                 Engine::model_check()?,
                 Engine::statistical()?,
@@ -749,6 +742,21 @@ impl Engines {
                 Engine::protocol_analysis()?,
             ],
         })
+    }
+
+    /// These engines under the run's provider `options` (FR-964): the
+    /// FSpec FR-462 limits every provider request of the run carries. A
+    /// provider-routing entry sets them once for the run; no engine holds
+    /// one of its own.
+    #[must_use]
+    pub fn under(mut self, options: ProviderOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The run's provider options.
+    pub fn options(&self) -> &ProviderOptions {
+        &self.options
     }
 
     /// The exact provider descriptors owned by these linked engines.

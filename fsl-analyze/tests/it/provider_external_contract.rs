@@ -157,7 +157,6 @@ fn engines(
             Engine::external(
                 descriptor,
                 fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-                fsl_analyze::provider::ProviderLimits::default(),
                 Box::new(RecordingProvider {
                     verdict,
                     calls: calls.clone(),

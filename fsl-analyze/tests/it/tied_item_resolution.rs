@@ -51,6 +51,7 @@ fn analyze_recording(
         request,
         &negotiate,
         providers,
+        &fsl_analyze::provider::ProviderOptions::default(),
         &filament_exact::Cancel::new(),
     ) {
         Ok(result) => serde_json::from_str(&result.value.to_string()).expect("one JSON document"),
@@ -72,7 +73,7 @@ fn analyze_recording(
 #[trace("TC-2702", "FR-962-AC-1")]
 #[trace("TC-2702", "FR-962-AC-2")]
 #[test]
-#[ignore = "QSL-2192: FSL does not narrow an unnamed tied item by FR-489's claim-form rule yet"]
+#[ignore = "QSL-2192: analyze resolves no claim named for an `invariant` state clause (`AtMostThree` settles unknown-claim), so the tie rule is never reached"]
 fn an_unnamed_tied_item_reaches_negotiation_with_one_candidate() {
     let ws = Workspace::new("tied-item-one-candidate");
     let request = counter_request(&ws, AT_MOST_THREE, json!([{"claim": "AtMostThree"}]));
@@ -97,7 +98,7 @@ fn an_unnamed_tied_item_reaches_negotiation_with_one_candidate() {
 /// so the unnamed item settles `ambiguous-backend` naming all three.
 #[trace("TC-2702", "FR-962-AC-3")]
 #[test]
-#[ignore = "QSL-2192: no third operation-contract provider registers and FR-489's rule is not applied yet"]
+#[ignore = "QSL-2192: FR-635-AC-4 and FR-281-AC-17 refuse a provider not advertising (value-validity, unbounded); FR-962-AC-3 needs an operation-contract provider to register"]
 fn an_undecided_tie_settles_ambiguous_backend() {
     use fsl_semantics::check::Capability;
     let descriptor = fsl_route::descriptor_from_manifest(
@@ -130,7 +131,6 @@ fn an_undecided_tie_settles_ambiguous_backend() {
     let provider = fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-contract", "1").expect("a tool"),
-        fsl_analyze::provider::ProviderLimits::default(),
         Box::new(Never),
     )
     .expect("an operation-contract process provider registers (FR-635)");

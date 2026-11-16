@@ -942,6 +942,23 @@ fn resolve_one(
     } else {
         candidates
     };
+    // FR-962: an unnamed item the linked tie decides reaches the negotiator
+    // with the one provider FR-489's claim-form rule selects.
+    let model_subject = !selection
+        .temporal
+        .as_ref()
+        .and_then(|temporal| temporal.subject.as_ref())
+        .unwrap_or(subject)
+        .initial_states
+        .is_empty();
+    let candidates = crate::tie_rule::resolve_tie(
+        package,
+        &claim,
+        kind,
+        named.as_ref(),
+        model_subject,
+        candidates,
+    );
     let temporal = selection.temporal.clone().unwrap_or_default();
     let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
     if let Some(claim) = state_graph {

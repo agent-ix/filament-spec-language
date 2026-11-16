@@ -113,10 +113,24 @@ pub(crate) fn analyze_with_providers(
     request: &Path,
     providers: Vec<fsl_analyze::analyze::Engine>,
 ) -> Run {
+    analyze_with_providers_under(
+        request,
+        providers,
+        &fsl_analyze::provider::ProviderOptions::default(),
+    )
+}
+
+/// [`analyze_with_providers`] under the run's provider `options` (FR-964).
+pub(crate) fn analyze_with_providers_under(
+    request: &Path,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &fsl_analyze::provider::ProviderOptions,
+) -> Run {
     match fsl_command::command::analyze_with_providers(
         request,
         &Fr290,
         providers,
+        options,
         &filament_exact::Cancel::new(),
     ) {
         Ok(result) => Run {

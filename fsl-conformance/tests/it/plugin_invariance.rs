@@ -80,7 +80,6 @@ fn engines_with_plugin() -> Engines {
             Engine::external(
                 plugin(),
                 fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-                fsl_analyze::provider::ProviderLimits::default(),
                 Box::new(Standin),
             )
             .expect("an unbounded value arm"),
