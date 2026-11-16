@@ -492,6 +492,7 @@ fn measure_of(measure: &BoundedMeasure) -> Option<Measure<'_>> {
             from,
             until,
             within,
+            ..
         } => Some(Measure {
             reward: Some(reward),
             from,
@@ -515,6 +516,7 @@ fn measure_of(measure: &BoundedMeasure) -> Option<Measure<'_>> {
             from,
             until,
             within,
+            ..
         } => Some(Measure {
             reward: None,
             from,
@@ -619,7 +621,7 @@ fn reduce(
             },
         ),
         // `require_statistical` refused every exact-only form.
-        ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. } => {
+        ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. } | ProbForm::MeanTime { .. } => {
             return Err(StatisticalRefusal::ExactOnlyForm)
         }
     };

@@ -208,6 +208,8 @@ pub struct FractionMeasure {
     pub predicate: CheckedPredicate,
     /// The window's upper end: the fraction is over `[0, window]`.
     pub window: u64,
+    /// Time upper bound for a timed subject's quantity-valued window.
+    pub timed_window: Option<Rational>,
     /// The reward each position is weighted by, when written.
     pub weight: Option<Identifier>,
 }
@@ -225,6 +227,8 @@ pub enum BoundedMeasure {
         until: CheckedPredicate,
         /// `h`.
         within: u64,
+        /// Time upper bound for a timed subject's quantity-valued horizon.
+        timed_within: Option<Rational>,
     },
     /// `steps from holds(A) until holds(B) within h`.
     Steps {
@@ -234,6 +238,8 @@ pub enum BoundedMeasure {
         until: CheckedPredicate,
         /// `h`.
         within: u64,
+        /// Time upper bound for a timed subject's quantity-valued horizon.
+        timed_within: Option<Rational>,
     },
     /// `elapsed from holds(A) until holds(B) within h` on a timed subject.
     Elapsed {
@@ -307,14 +313,20 @@ pub enum ProbForm {
         target: ReachTarget,
     },
     /// `expected accumulate R until holds(B) op c`, which only exact
-    /// evidence decides. An `expected elapsed` claim is not typed: no
-    /// subject is timed yet.
+    /// evidence decides.
     ExpectedReward {
         /// The bound `c` on the expected reward, in the reward's own unit.
         bound: Bound,
         /// The reward `R`.
         reward: Identifier,
         /// `B`.
+        until: CheckedPredicate,
+    },
+    /// `expected elapsed until holds(B) op c`, on a timed subject.
+    MeanTime {
+        /// The bound in the model's declared time unit.
+        bound: Bound,
+        /// The target predicate.
         until: CheckedPredicate,
     },
 }
@@ -383,6 +395,8 @@ pub struct CheckedProbabilisticClaim {
     /// The fairness set of a claim `under every scheduler`; empty under a
     /// workload (ADR-024 PM-7).
     pub fairness: Vec<FairnessConstraint>,
+    /// The activation, including the trigger binder and its checked guard.
+    pub activation: ClaimActivation,
     /// The form.
     pub form: ProbForm,
     /// The confidence parameters, when the claim states them.
@@ -399,6 +413,26 @@ pub struct CheckedProbabilisticClaim {
     /// The `claim` occurrence of the claim's `claim`/`probabilistic_claim`
     /// node, set when a package is assembled (FR-498 "Outputs").
     pub(crate) occurrence: Option<OccurrenceKey>,
+}
+
+/// How a probabilistic claim is instantiated (FR-186).
+#[derive(Debug)]
+pub enum ClaimActivation {
+    /// `on origin`: one claim instance at the first position.
+    Origin,
+    /// `on each`: one instance for every value of the admitted population.
+    Each {
+        /// The activation binder's name.
+        binder: String,
+        /// The object type whose population supplies instances.
+        value_type: Box<ValueType>,
+        /// The checked activation guard, when written.
+        guard: Option<Box<CheckedBody>>,
+        /// The guard's evaluation slot count.
+        guard_slots: usize,
+        /// The guard's stable normal-form encoding.
+        guard_normal_form: Option<Vec<u8>>,
+    },
 }
 
 impl CheckedProbabilisticClaim {
@@ -463,7 +497,7 @@ impl CheckedProbabilisticClaim {
     pub fn exact_only_form(&self) -> bool {
         matches!(
             self.form,
-            ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. }
+            ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. } | ProbForm::MeanTime { .. }
         )
     }
 }
@@ -473,6 +507,12 @@ impl CheckedProbabilisticClaim {
 /// position in this list.
 pub(super) fn claim_expressions(form: &ProbabilisticForm) -> Vec<&ExpressionForm> {
     let mut expressions = Vec::new();
+    if let ActivationForm::Each {
+        when: Some(guard), ..
+    } = &form.activation
+    {
+        expressions.push(guard);
+    }
     match &form.body {
         ProbabilisticBody::Probability { event, .. } => match event {
             EventForm::Temporal(formula) => {
@@ -565,6 +605,7 @@ struct ClaimCx<'c> {
     form: &'c ProbabilisticForm,
     subject: &'c ModelSubjectRef,
     over: Option<&'c OverBinding>,
+    activation: Option<&'c ClaimActivation>,
     expressions: Vec<&'c ExpressionForm>,
     exact_values: Vec<&'c ExactValueForm>,
 }
@@ -718,24 +759,35 @@ impl Pass<'_, '_> {
     ) -> Option<CheckedProbabilisticClaim> {
         let subject = keep(refusals, self.subject(form));
         let profile = keep(refusals, self.profile(form));
-        if let ActivationForm::Each { parameter, .. } = &form.activation {
-            refusals.push(refusal(ProbabilisticCause::NotYetImplemented {
-                claim: form.name.name.clone(),
-                construct: "an `on each` activation",
-                span: parameter.name.span,
+        let subject = subject?;
+        if profile.as_ref().is_some_and(|profile| {
+            TemporalProfile::from_identity(profile.identity()) == Some(TemporalProfile::Timed)
+        }) && self
+            .input
+            .time_source(&subject.alias, &subject.package.identity)
+            .is_none()
+        {
+            refusals.push(temporal_refusal(TemporalCause::ModelTimeOnUntimedModel {
+                model: subject.alias.clone(),
+                span: form.profile.span,
             }));
         }
-        let subject = subject?;
         let scheduler = keep(refusals, self.scheduler(form, &subject));
         let over = keep(refusals, self.over(form))?;
-        let claim = ClaimCx {
+        let mut claim = ClaimCx {
             index,
             form,
             subject: &subject,
             over: over.as_ref(),
+            activation: None,
             expressions: claim_expressions(form),
             exact_values: claim_exact_values(form),
         };
+        let activation = keep(
+            refusals,
+            self.activation(&claim, &form.activation, cx, nodes),
+        );
+        claim.activation = activation.as_ref();
         let confidence = keep(refusals, self.confidence(&claim));
         let body = self.form(&claim, profile.as_ref(), cx, nodes, refusals);
         let (scheduler, fairness) = scheduler?;
@@ -750,7 +802,7 @@ impl Pass<'_, '_> {
                 &claim,
                 &profile,
                 &scheduler,
-                &fairness,
+                (&fairness, activation.as_ref()?),
                 &form_checked,
                 confidence.as_ref(),
             ),
@@ -762,6 +814,7 @@ impl Pass<'_, '_> {
             profile,
             scheduler,
             fairness,
+            activation: activation?,
             form: form_checked,
             confidence,
             over,
@@ -769,6 +822,111 @@ impl Pass<'_, '_> {
             declared: index,
             content: form.content.clone(),
             occurrence: None,
+        })
+    }
+
+    /// Resolve and type an `on each` trigger and its optional Boolean guard.
+    fn activation(
+        &mut self,
+        claim: &ClaimCx<'_>,
+        form: &ActivationForm,
+        cx: &mut CheckContext<'_, Scope>,
+        nodes: &mut u64,
+    ) -> Result<ClaimActivation, CheckRefusal> {
+        let ActivationForm::Each { parameter, when } = form else {
+            return Ok(ClaimActivation::Origin);
+        };
+        let value_type = super::super::type_form::resolve_form(
+            &self.input.scope.for_declaration(claim.claim()),
+            &parameter.value_type,
+        )
+        .map_err(|error| {
+            temporal_refusal(TemporalCause::ParameterType {
+                parameter: parameter.name.name.clone(),
+                fault: error.fault,
+                span: error.span,
+            })
+        })?;
+        let ValueType::Reference(object) = &value_type else {
+            return Err(refusal(ProbabilisticCause::OverNotObjectType {
+                claim: claim.claim().to_owned(),
+                parameter: parameter.name.name.clone(),
+                span: parameter.name.span,
+            }));
+        };
+        let admitted = self.input.models.iter().any(|model| {
+            model.alias() == Some(claim.subject.alias.as_str())
+                && model.selection() == &claim.subject.package
+                && model
+                    .named_populations()
+                    .any(|population| population.members.contains(object))
+        });
+        if !admitted {
+            return Err(refusal(ProbabilisticCause::OverNotObjectType {
+                claim: claim.claim().to_owned(),
+                parameter: parameter.name.name.clone(),
+                span: parameter.name.span,
+            }));
+        }
+        let Some(guard) = when else {
+            return Ok(ClaimActivation::Each {
+                binder: parameter.name.name.clone(),
+                value_type: Box::new(value_type),
+                guard: None,
+                guard_slots: 0,
+                guard_normal_form: None,
+            });
+        };
+        let location = claim.location(guard)?;
+        let mut bound: Vec<(String, ValueType)> = claim
+            .over
+            .map(|over| (over.name.clone(), over.value_type.clone()))
+            .into_iter()
+            .collect();
+        bound.push((parameter.name.name.clone(), value_type.clone()));
+        let input = self.input;
+        let mut typer = Typer::new(
+            input.scope,
+            input.signatures,
+            input.limits,
+            nodes,
+            ClauseKind::Invariant,
+        )
+        .with_cancel(Some(input.cancel))
+        .with_context(cx.reborrow(input.scope));
+        bind_parameters(&mut typer, &bound, &location)?;
+        typer.enter_state_clause(StateContext {
+            parent_projections: BTreeMap::new(),
+            kind: StateClauseKind::Invariant,
+            operation: None,
+            self_slot: NO_SLOT,
+            result_slot: None,
+        });
+        let body = typer.infer(&guard.expression, Some(&ValueType::Boolean), &location)?;
+        if body.root().value_type() != &ValueType::Boolean {
+            return Err(CheckRefusal::ill_typed(
+                &location,
+                IllTypedCause::TypeMismatch,
+            ));
+        }
+        let slots = typer.slots();
+        let observations = Observations::of(body.root(), Observation::Current, bound.len());
+        Definedness::new(
+            bound.len(),
+            input.dispatch_tables,
+            &input.scope.dispatch_operations,
+        )
+        .with_observations(&observations)
+        .check(body.root())?;
+        Ok(ClaimActivation::Each {
+            binder: parameter.name.name.clone(),
+            value_type: Box::new(value_type),
+            guard_normal_form: Some(encode_predicate(
+                &guard.expression,
+                Some(parameter.name.name.as_str()),
+            )),
+            guard: Some(Box::new(body)),
+            guard_slots: slots,
         })
     }
 
@@ -1045,14 +1203,40 @@ impl Pass<'_, '_> {
                 threshold,
             } => match quantity {
                 ExpectedQuantity::Elapsed => {
-                    // No subject is timed yet (the timed facet is not
-                    // selectable), so no `elapsed` quantity exists to sum.
-                    refusals.push(refusal(ProbabilisticCause::NotYetImplemented {
-                        claim: claim.claim().to_owned(),
-                        construct: "an `expected elapsed` claim",
-                        span: root_span(target, claim.form.span),
-                    }));
-                    None
+                    let source = self
+                        .input
+                        .time_source(&claim.subject.alias, &claim.subject.package.identity)
+                        .ok_or_else(|| {
+                            refusal(ProbabilisticCause::TimeTypeMismatch {
+                                claim: claim.claim().to_owned(),
+                                span: root_span(threshold, claim.form.span),
+                            })
+                        });
+                    let source = keep(refusals, source);
+                    let unit = source.and_then(|source| {
+                        match self.input.time_units.target(&source.unit) {
+                            Ok(Some(target)) => Some(UnitId::declared(target.unit())),
+                            Ok(None) => {
+                                refusals.push(broken("expected-elapsed-has-time-unit"));
+                                None
+                            }
+                            Err(_) => {
+                                refusals.push(broken("expected-elapsed-time-unit-is-valid"));
+                                None
+                            }
+                        }
+                    });
+                    let unit = unit?;
+                    let until = keep(refusals, self.predicate(claim, target, cx, nodes));
+                    let bound = keep(
+                        refusals,
+                        self.threshold(claim, threshold, Measured::Elapsed(unit), cx, nodes),
+                    )
+                    .map(|value| Bound::new(*op, value));
+                    Some(ProbForm::MeanTime {
+                        bound: bound?,
+                        until: until?,
+                    })
                 }
                 ExpectedQuantity::Accumulate(name) => {
                     let measured = keep(refusals, self.reward_named(claim, &name.name, name.span));
@@ -1155,10 +1339,8 @@ impl Pass<'_, '_> {
                         .input
                         .time_source(&claim.subject.alias, &claim.subject.package.identity)
                     else {
-                        refusals.push(refusal(ProbabilisticCause::TimedEventProfile {
-                            claim: claim.claim().to_owned(),
-                            span: claim.form.span,
-                        }));
+                        // `resolve_claim` already located the timed profile's
+                        // missing model-time source at the profile alias.
                         return None;
                     };
                     let target = match self.input.time_units.target(&source.unit) {
@@ -1424,51 +1606,37 @@ impl Pass<'_, '_> {
                 span: _,
             } => {
                 let (name, value) = self.reward_named(claim, &reward.name, reward.span)?;
-                let (from, until, within) = self.window(claim, window, cx, nodes)?;
+                let (from, until, within, timed_within) = self.window(claim, window, cx, nodes)?;
                 Ok((
                     BoundedMeasure::Accumulate {
                         reward: name,
                         from,
                         until,
                         within,
+                        timed_within,
                     },
                     Measured::Reward(value),
                 ))
             }
             MeasureForm::Steps { window, span: _ } => {
-                let (from, until, within) = self.window(claim, window, cx, nodes)?;
+                let (from, until, within, timed_within) = self.window(claim, window, cx, nodes)?;
                 Ok((
                     BoundedMeasure::Steps {
                         from,
                         until,
                         within,
+                        timed_within,
                     },
                     Measured::Steps,
                 ))
             }
             MeasureForm::Elapsed { window, span } => {
-                let timed = self
-                    .input
-                    .profiles
-                    .iter()
-                    .find(|selection| selection.alias == claim.form.profile.alias)
-                    .is_some_and(|selection| {
-                        TemporalProfile::from_identity(&selection.identity)
-                            == Some(TemporalProfile::Timed)
-                    });
-                if !timed {
-                    return Err(refusal(ProbabilisticCause::NotYetImplemented {
-                        claim: claim.claim().to_owned(),
-                        construct: "an `elapsed` measure",
-                        span: *span,
-                    }));
-                }
                 let source = self
                     .input
                     .time_source(&claim.subject.alias, &claim.subject.package.identity)
                     .ok_or_else(|| {
-                        temporal_refusal(TemporalCause::ModelTimeOnUntimedModel {
-                            model: claim.subject.alias.clone(),
+                        refusal(ProbabilisticCause::TimeTypeMismatch {
+                            claim: claim.claim().to_owned(),
                             span: *span,
                         })
                     })?;
@@ -1501,12 +1669,10 @@ impl Pass<'_, '_> {
                             })?
                     }
                     HorizonForm::Steps(steps) => {
-                        return Err(temporal_refusal(
-                            TemporalCause::TimedProfileWithoutModelTime {
-                                clock: "elapsed requires a time quantity".to_owned(),
-                                span: steps.span,
-                            },
-                        ));
+                        return Err(refusal(ProbabilisticCause::TimeTypeMismatch {
+                            claim: claim.claim().to_owned(),
+                            span: steps.span,
+                        }));
                     }
                 };
                 let from = self.predicate(claim, &window.from, cx, nodes)?;
@@ -1535,11 +1701,12 @@ impl Pass<'_, '_> {
         window: &MeasureWindowForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<(CheckedPredicate, CheckedPredicate, u64), CheckRefusal> {
+    ) -> Result<(CheckedPredicate, CheckedPredicate, u64, Option<Rational>), CheckRefusal> {
         let from = self.predicate(claim, &window.from, cx, nodes);
         let until = self.predicate(claim, &window.until, cx, nodes);
         let within = self.steps(claim, &window.within);
-        Ok((from?, until?, within?))
+        let (within, timed_within) = within?;
+        Ok((from?, until?, within, timed_within))
     }
 
     /// `fraction holds(P) over [0, h] [weighted by R]`.
@@ -1553,24 +1720,58 @@ impl Pass<'_, '_> {
         let predicate = self.predicate(claim, &fraction.predicate, cx, nodes);
         let window = self.steps(claim, &fraction.horizon);
         let weight = self.weight(claim, fraction.weighting.as_ref());
+        let (window, timed_window) = window?;
         Ok(FractionMeasure {
             predicate: predicate?,
-            window: window?,
+            window,
+            timed_window,
             weight: weight?,
         })
     }
 
-    /// A window's upper end, a natural number of steps. A time quantity is
-    /// a timed window (FR-393), which no S3 check reads yet.
-    fn steps(&self, claim: &ClaimCx<'_>, horizon: &HorizonForm) -> Result<u64, CheckRefusal> {
+    /// A window's upper end: a step count or a time duration on a timed model.
+    fn steps(
+        &self,
+        claim: &ClaimCx<'_>,
+        horizon: &HorizonForm,
+    ) -> Result<(u64, Option<Rational>), CheckRefusal> {
         match horizon {
-            HorizonForm::Steps(steps) => Ok(steps.value),
+            HorizonForm::Steps(steps) => Ok((steps.value, None)),
             HorizonForm::Quantity(quantity) => {
-                Err(refusal(ProbabilisticCause::NotYetImplemented {
-                    claim: claim.claim().to_owned(),
-                    construct: "a timed window",
-                    span: quantity.span,
-                }))
+                let source = self
+                    .input
+                    .time_source(&claim.subject.alias, &claim.subject.package.identity)
+                    .ok_or_else(|| {
+                        refusal(ProbabilisticCause::TimeTypeMismatch {
+                            claim: claim.claim().to_owned(),
+                            span: quantity.span,
+                        })
+                    })?;
+                let target = self
+                    .input
+                    .time_units
+                    .target(&source.unit)
+                    .map_err(|cause| {
+                        temporal_refusal(TemporalCause::TimeQuantity {
+                            cause: Box::new(cause),
+                            span: quantity.unit.span,
+                        })
+                    })?
+                    .ok_or_else(|| broken("timed-window-source-has-time-unit"))?;
+                let magnitude =
+                    super::exact_value(&quantity.magnitude, self.input.limits.rational_bits())
+                        .map_err(|_| broken("timed-window-magnitude-is-within-rational-limit"))?;
+                let duration = self
+                    .input
+                    .time_units
+                    .convert(&magnitude, &quantity.unit.name, &target)
+                    .map_err(|cause| {
+                        temporal_refusal(TemporalCause::TimeQuantity {
+                            cause: Box::new(cause),
+                            span: quantity.unit.span,
+                        })
+                    })?;
+                Ok((0, Some(duration)))
             }
         }
     }
@@ -1641,6 +1842,13 @@ impl Pass<'_, '_> {
             .map(|over| (over.name.clone(), over.value_type.clone()))
             .into_iter()
             .collect();
+        let mut bound = bound;
+        if let Some(ClaimActivation::Each {
+            binder, value_type, ..
+        }) = claim.activation
+        {
+            bound.push((binder.clone(), (**value_type).clone()));
+        }
         let input = self.input;
         let mut typer = Typer::new(
             input.scope,
@@ -1824,7 +2032,7 @@ impl Pass<'_, '_> {
         claim: &ClaimCx<'_>,
         profile: &DefinitionRef,
         scheduler: &ProbScheduler,
-        fairness: &[FairnessConstraint],
+        (fairness, activation): (&[FairnessConstraint], &ClaimActivation),
         form: &ProbForm,
         confidence: Option<&Confidence>,
     ) -> Result<ClaimNormalForm, CheckRefusal> {
@@ -1853,6 +2061,22 @@ impl Pass<'_, '_> {
             None => node_bytes(b"no-over", &[]),
             Some(over) => node_bytes(b"over", &[self.type_bytes(&over.value_type)?]),
         };
+        let activation = match activation {
+            ClaimActivation::Origin => node_bytes(b"origin", &[]),
+            ClaimActivation::Each {
+                value_type,
+                guard_normal_form,
+                ..
+            } => node_bytes(
+                b"each",
+                &[
+                    self.type_bytes(value_type)?,
+                    guard_normal_form
+                        .clone()
+                        .unwrap_or_else(|| node_bytes(b"no-guard", &[])),
+                ],
+            ),
+        };
         let confidence = confidence.map_or_else(
             || node_bytes(b"no-confidence", &[]),
             |confidence| {
@@ -1874,6 +2098,7 @@ impl Pass<'_, '_> {
                 scheduler,
                 node_bytes(b"fairness", &fairness),
                 over,
+                activation,
                 self.form_bytes(&claim.subject.alias, form),
                 confidence,
             ],
@@ -1990,11 +2215,15 @@ impl Pass<'_, '_> {
     }
 
     fn fraction_bytes(&self, subject: &str, fraction: &FractionMeasure) -> Vec<u8> {
+        let window = fraction.timed_window.as_ref().map_or_else(
+            || node_bytes(b"steps", &[fraction.window.to_be_bytes().to_vec()]),
+            |time| node_bytes(b"time", &[rational_bytes(time)]),
+        );
         node_bytes(
             b"fraction",
             &[
                 fraction.predicate.normal_form.clone(),
-                fraction.window.to_be_bytes().to_vec(),
+                window,
                 self.weight_bytes(subject, fraction.weight.as_ref()),
             ],
         )
@@ -2007,25 +2236,33 @@ impl Pass<'_, '_> {
                 from,
                 until,
                 within,
+                timed_within,
             } => node_bytes(
                 b"accumulate",
                 &[
                     self.reward_bytes(subject, reward),
                     from.normal_form.clone(),
                     until.normal_form.clone(),
-                    within.to_be_bytes().to_vec(),
+                    timed_within.as_ref().map_or_else(
+                        || node_bytes(b"steps", &[within.to_be_bytes().to_vec()]),
+                        |time| node_bytes(b"time", &[rational_bytes(time)]),
+                    ),
                 ],
             ),
             BoundedMeasure::Steps {
                 from,
                 until,
                 within,
+                timed_within,
             } => node_bytes(
                 b"steps",
                 &[
                     from.normal_form.clone(),
                     until.normal_form.clone(),
-                    within.to_be_bytes().to_vec(),
+                    timed_within.as_ref().map_or_else(
+                        || node_bytes(b"steps", &[within.to_be_bytes().to_vec()]),
+                        |time| node_bytes(b"time", &[rational_bytes(time)]),
+                    ),
                 ],
             ),
             BoundedMeasure::Elapsed {
@@ -2117,6 +2354,9 @@ impl Pass<'_, '_> {
                     until.normal_form.clone(),
                 ],
             ),
+            ProbForm::MeanTime { bound, until } => {
+                node_bytes(b"mean-time", &[bound.bytes(), until.normal_form.clone()])
+            }
         }
     }
 }

@@ -143,6 +143,22 @@ fn service_document() -> Vec<u8> {
     service_document_with(&[])
 }
 
+/// The timed fixture needs a model with one object node. Keep only `Server`
+/// and its population so the timed declaration has one clock owner.
+fn timed_service_document() -> Vec<u8> {
+    let mut envelope: Value =
+        serde_json::from_slice(&service_document()).expect("the Service fixture is JSON");
+    envelope["types"]
+        .as_array_mut()
+        .expect("package types")
+        .retain(|ty| ty["kind"]["name"] != "object_type" || ty["identity"] == id("Server"));
+    envelope["populations"]
+        .as_array_mut()
+        .expect("package populations")
+        .retain(|population| population["identity"] == id("servers"));
+    serde_json::to_vec(&envelope).expect("serializes the timed fixture")
+}
+
 /// [`service_document`], with `requires` as `attempt`'s domain-package
 /// `requires` clauses.
 fn service_document_with(requires: &[&str]) -> Vec<u8> {
@@ -238,6 +254,11 @@ fn service_document_with_parameter_type(
         variant_type("Outcome", &["Ok", "Fail"]),
         bounded_integer("Attempts", "0", "2"),
         bounded_integer("Millis", "1", "12"),
+        definition(
+            "Orphan",
+            "object_type",
+            json!({"supertypes": [], "fields": [], "operations": [], "relationships": []}),
+        ),
         server,
         client,
     ]);
@@ -272,6 +293,7 @@ fn service_unit_over(
          profile v = \"filament.model.complete/v1\";\n\
          profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile tc = \"filament.temporal.complete/v1\";\n\
          profile tm = \"filament.temporal.timed/v1\";\n\
          model Service = {P:?};\n\
          {selections}\n\
@@ -329,6 +351,12 @@ fn checked(body: &str) -> CheckedGraph {
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"))
 }
 
+fn checked_timed_service(body: &str) -> CheckedGraph {
+    assemble_over(&timed_service_document(), body)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
+}
+
 fn refusals_of(body: &str) -> Vec<CheckRefusal> {
     assemble(body)
         .check(CheckMode::Linked, CheckingLimits::default())
@@ -337,9 +365,13 @@ fn refusals_of(body: &str) -> Vec<CheckRefusal> {
 
 /// Each refusal's code, catalog cause and the source text its region names.
 fn located(body: &str) -> Vec<(Code, Option<&'static str>, String)> {
-    let declarations = assemble(body);
+    located_over(&service_document(), body)
+}
+
+fn located_over(document: &[u8], body: &str) -> Vec<(Code, Option<&'static str>, String)> {
+    let declarations = assemble_over(document, body);
     let regions = declarations.regions();
-    let (text, _) = service_unit(body);
+    let (text, _) = service_unit_over(document, body);
     declarations
         .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the unit refuses")
@@ -1917,48 +1949,99 @@ fn a_predicate_is_a_boolean_clause_over_the_over_parameter() {
     assert_eq!(found[0].1, Some("missing-name"));
 }
 
-/// The forms FR-195 owns and a timed window over this untimed model are ill
-/// typed at the construct, and an `on each` activation checks: no claim is
-/// refused `not-yet-implemented`.
-#[trace("TC-621")]
+/// FR-195-AC-7: expected elapsed over an untimed model is ill typed at its
+/// time quantity.
+#[trace("TC-2168", "FR-186-AC-11")]
 #[test]
-#[ignore = "QSL-2152 / QSL-2151: time forms and `on each` refuse not-yet-implemented today"]
-fn what_s3_does_not_check_yet_refuses_not_yet_implemented() {
-    let phase_a = format!("holds({IDLE})");
-    for (body, _construct, at) in [
-        (
-            format!("{{ expected elapsed until {phase_a} <= 3 }}"),
-            "an `expected elapsed` claim",
-            IDLE,
-        ),
-        (
-            format!(
-                "{{ probability >= 0.5 [ elapsed from {phase_a} until {phase_a} within 5 >= 3 ] }}"
-            ),
-            "an `elapsed` measure",
-            "elapsed from holds(s.phase = Service::Phase::Idle) until holds(s.phase = Service::Phase::Idle) within 5",
-        ),
-        (
-            format!(
-                "{{ probability >= 0.5 [ steps from {phase_a} until {phase_a} within 5 ms >= 3 ] }}"
-            ),
-            "a timed window",
-            "5 ms",
-        ),
-    ] {
-        let source = claim(&body);
-        let found = located(&service(None, &source));
-        assert_eq!(
-            found,
-            [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
-            "{body}"
-        );
-    }
-    let each = format!(
-        "probabilistic C using ev on Service {OVER} under Steady \
-         on each (m: Service::Server) {{ probability >= 0.9 [ {phase_a} ] }}"
+fn expected_elapsed_untimed_is_ill_typed() {
+    let body = format!("{{ expected elapsed until holds({IDLE}) <= 3 ms }}");
+    assert_eq!(
+        located(&service(None, &claim(&body))),
+        [(Code::IllTyped, Some("type-mismatch"), "3 ms".to_owned())]
     );
-    checked(&service(None, &each));
+}
+
+/// FR-186-AC-11: an elapsed measure over an untimed model is ill typed at
+/// the measure.
+#[trace("TC-2168", "FR-186-AC-11")]
+#[test]
+fn elapsed_untimed_is_ill_typed() {
+    let a = format!("holds({IDLE})");
+    let measure = format!("elapsed from {a} until {a} within 5");
+    let body = format!("{{ probability >= 0.5 [ {measure} >= 3 ] }}");
+    assert_eq!(
+        located(&service(None, &claim(&body))),
+        [(Code::IllTyped, Some("type-mismatch"), measure)]
+    );
+}
+
+/// FR-186-AC-11: a time quantity in a measure window over an untimed model is
+/// ill typed at the quantity.
+#[trace("TC-2168", "FR-186-AC-11")]
+#[test]
+fn timed_window_untimed_is_ill_typed() {
+    let a = format!("holds({IDLE})");
+    let body = format!("{{ probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 3 ] }}");
+    assert_eq!(
+        located(&service(None, &claim(&body))),
+        [(Code::IllTyped, Some("type-mismatch"), "5 ms".to_owned())]
+    );
+}
+
+/// FR-186-AC-12: expected elapsed, elapsed measures and timed measure windows
+/// check against a dense timed subject and retain their time-unit bounds.
+#[trace("TC-2169", "FR-186-AC-12")]
+#[test]
+fn elapsed_timed_checks() {
+    let a = format!("holds({IDLE})");
+    let timed = "time Service dense unit ms;";
+    let source = |form: &str| {
+        service(
+            None,
+            &format!(
+                "{timed}\nprobabilistic C using tm on Service {OVER} under Steady \
+                 on origin {{ {form} }}"
+            ),
+        )
+    };
+
+    let expected = checked_timed_service(&source(&format!("expected elapsed until {a} <= 3 ms")));
+    let ProbForm::MeanTime { bound, .. } = &claim_of(&expected).form else {
+        panic!("a checked mean-time claim: {:?}", claim_of(&expected).form);
+    };
+    assert_eq!(bound, &Bound::AtMost(ratio(3, 1)));
+
+    let elapsed = checked_timed_service(&source(&format!(
+        "probability >= 0.5 [ elapsed from {a} until {a} within 5 ms >= 1 ms ]"
+    )));
+    let ProbForm::Probability {
+        event:
+            Event::Compare {
+                measure: BoundedMeasure::Elapsed { within, .. },
+                ..
+            },
+        ..
+    } = &claim_of(&elapsed).form
+    else {
+        panic!("an elapsed measure: {:?}", claim_of(&elapsed).form);
+    };
+    assert_eq!(within, &ratio(5, 1));
+
+    let window = checked_timed_service(&source(&format!(
+        "probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 1 ]"
+    )));
+    let ProbForm::Probability {
+        event:
+            Event::Compare {
+                measure: BoundedMeasure::Steps { timed_within, .. },
+                ..
+            },
+        ..
+    } = &claim_of(&window).form
+    else {
+        panic!("a time-valued steps window: {:?}", claim_of(&window).form);
+    };
+    assert_eq!(timed_within, &Some(ratio(5, 1)));
 }
 
 /// A claim `C` `using` the profile `profile`, `on origin`, over `Service`'s
@@ -3443,7 +3526,6 @@ fn activated(activation: &str, body: &str) -> String {
 /// the claim and its normal form, with its guard when written.
 #[trace("TC-2166", "FR-186-AC-8")]
 #[test]
-#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
 fn probabilistic_on_each_checks() {
     let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
     let plain = checked(&activated("on each (m: Service::Server)", &body));
@@ -3465,7 +3547,6 @@ fn probabilistic_on_each_checks() {
 /// `over-not-object-type` at its name, and a non-Boolean guard is ill typed.
 #[trace("TC-2166", "FR-186-AC-9")]
 #[test]
-#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
 fn probabilistic_on_each_non_object_type_refused() {
     let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
     assert_eq!(
@@ -3478,20 +3559,31 @@ fn probabilistic_on_each_non_object_type_refused() {
     );
 }
 
+/// FR-186 Activation: `on each` rejects an object type outside every subject
+/// population at the activation binder.
+#[trace("TC-2166", "FR-186-AC-9")]
+#[test]
+fn probabilistic_on_each_non_population_refused() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    assert_eq!(
+        located(&activated("on each (m: Service::Orphan)", &body)),
+        [invalid("over-not-object-type", "m")]
+    );
+}
+
 /// FR-186-AC-11 (TC-2168): over the untimed service model the time forms are
 /// ill typed at the form, never not-yet-implemented.
 #[trace("TC-2168", "FR-186-AC-11")]
 #[trace("TC-630", "FR-195-AC-2")]
 #[trace("TC-630", "FR-195-AC-7")]
 #[test]
-#[ignore = "QSL-2152: time forms over an untimed model are refused not-yet-implemented today"]
 fn time_forms_over_an_untimed_model_are_ill_typed() {
     let a = format!("holds({IDLE})");
     let measure = format!("elapsed from {a} until {a} within 5");
     for (body, at) in [
         (
             format!("{{ expected elapsed until {a} <= 3 ms }}"),
-            IDLE.to_owned(),
+            "3 ms".to_owned(),
         ),
         (
             format!("{{ probability >= 0.5 [ {measure} >= 3 ] }}"),
@@ -3515,7 +3607,6 @@ fn time_forms_over_an_untimed_model_are_ill_typed() {
 #[trace("TC-2170", "FR-186-AC-13")]
 #[trace("TC-621", "FR-186-AC-3")]
 #[test]
-#[ignore = "QSL-2153: the timed profile over an untimed model refuses with the FSL-only timed-event-profile cause today"]
 fn probabilistic_claim_timed_profile_untimed_model() {
     let timed = service(
         None,
@@ -3532,9 +3623,38 @@ fn probabilistic_claim_timed_profile_untimed_model() {
             "tm".to_owned()
         )]
     );
-    assert!(!causes(&timed)
-        .iter()
-        .any(|cause| matches!(cause, ProbabilisticCause::TimedEventProfile { .. })));
+}
+
+/// FR-407-AC-11: the timed profile admits a probabilistic claim on a timed
+/// subject, while a non-temporal profile keeps its standard diagnostic locus.
+#[trace("TC-2169", "FR-186-AC-12")]
+#[test]
+fn probabilistic_claim_timed_profile_checks() {
+    let timed = service(
+        None,
+        &format!(
+            "time Service dense unit ms;\n\
+             probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ eventually[0 ms, 4 ms] holds({IDLE}) ] }}"
+        ),
+    );
+    checked_timed_service(&timed);
+
+    let unadmitted = service(
+        None,
+        &format!(
+            "probabilistic C using v on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ holds({IDLE}) ] }}"
+        ),
+    );
+    assert_eq!(
+        located(&unadmitted),
+        [(
+            Code::InvalidProbabilisticModel,
+            Some("not-temporal-profile"),
+            "v".to_owned()
+        )]
+    );
 }
 
 /// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the
@@ -3542,7 +3662,6 @@ fn probabilistic_claim_timed_profile_untimed_model() {
 /// dimensionless position refuses a quantity as a type mismatch.
 #[trace("TC-2171", "FR-186-AC-14")]
 #[test]
-#[ignore = "QSL-2157: quantity-literal positions of probabilistic claims not all read yet"]
 fn quantity_literal_positions_check_and_refuse_by_dimension() {
     let a = format!("holds({IDLE})");
     let latency = format!("accumulate latency from {a} until {a} within 10");
@@ -3581,6 +3700,64 @@ fn quantity_literal_positions_check_and_refuse_by_dimension() {
     ] {
         assert_eq!(
             located(&with(confidence, &form)),
+            [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
+            "{form}"
+        );
+    }
+}
+
+/// FR-186-AC-14: time-valued measure horizons and timed event intervals read
+/// quantity literals, convert time units and reject length at the literal.
+#[trace("TC-2171", "FR-186-AC-14")]
+#[test]
+fn quantity_literal_timed_positions_check_and_refuse_by_dimension() {
+    let a = format!("holds({IDLE})");
+    let timed = "time Service dense unit ms;";
+    let source = |form: &str| {
+        service(
+            None,
+            &format!(
+                "{timed}\nprobabilistic C using tm on Service {OVER} under Steady \
+                 on origin {{ {form} }}"
+            ),
+        )
+    };
+    for form in [
+        format!("probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 1 ]"),
+        format!("probability >= 0.5 [ fraction {a} over [0, 5 ms] >= rational(1, 2) ]"),
+    ] {
+        checked_timed_service(&source(&form));
+        let wrong = form.replace("5 ms", "5 m");
+        assert_eq!(
+            located_over(&timed_service_document(), &source(&wrong)),
+            [(Code::IllTyped, Some("type-mismatch"), "m".to_owned())],
+            "{wrong}"
+        );
+    }
+    let event = format!("probability >= 0.5 [ eventually[0 ms, 4 ms] holds({IDLE}) ]");
+    checked_timed_service(&source(&event));
+    assert_eq!(
+        located_over(
+            &timed_service_document(),
+            &source(&event.replace("4 ms", "4 m"))
+        ),
+        [(Code::IllTyped, Some("type-mismatch"), "m".to_owned())]
+    );
+}
+
+/// FR-186-AC-14: quantity literals in dimensionless measure thresholds are
+/// type errors rather than an unimplemented probabilistic cause.
+#[trace("TC-2171", "FR-186-AC-14")]
+#[test]
+fn quantity_literal_non_quantity_position_refused() {
+    let a = format!("holds({IDLE})");
+    for form in [
+        format!("probability >= 0.5 [ fraction {a} over [0, 10] <= 5 ms ]"),
+        format!("probability >= 0.5 [ steps from {a} until {a} within 5 >= 5 ms ]"),
+    ] {
+        let at = "5 ms";
+        assert_eq!(
+            located(&service(None, &claim(&format!("{{ {form} }}")))),
             [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
             "{form}"
         );
