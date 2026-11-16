@@ -49,6 +49,7 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     temporal Nine using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 9) }\n\
     temporal Sampled using f over (r: Reading) clock \"samples\" on origin { eventually[0,3] holds(r.level = 9) }\n\
     temporal Past using e over (r: Reading) clock \"events\" on each (q: Reading) { once[0,2] holds(r.level = 9) }\n\
+    temporal Window using w over (r: Reading) clock \"plant-ms\" on each (q: Reading) { eventually[0,4] holds(r.level = 2) }\n\
     temporal Fast using e over (r: Run) clock \"events\" on origin { capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }\n";
 
 struct World {
@@ -2190,4 +2191,169 @@ fn a_restored_mark_undoes_one_call() {
             assert_eq!(state.retained(), uninterrupted.retained(), "{name}");
         }
     }
+}
+
+/// The batch report of `name` over `trace`, read unauthenticated as a carried
+/// state reads it.
+fn batch_over(world: &World, name: &str, trace: &TraceInput) -> ClauseRunReport {
+    run_package_temporal(&PackageTemporalRequest {
+        package: world.unit.package(),
+        packages: &world.packages,
+        model_limits: ModelNormalizationLimits::default(),
+        snapshots: &DocumentProvision::new(),
+        observation_limits: ObservationLimits::default(),
+        accounting: UNLIMITED,
+        name,
+        trace,
+        over: None,
+        ledger: None,
+        sources: &world.sources,
+        authentication: None,
+        cancel: &Cancel::new(),
+    })
+}
+
+/// FR-820 "Summarized positions" (TC-2320): a `Timestamped` and a
+/// `Progressed` state carry the finite-window evaluation between steps. Each
+/// report equals FR-330's over the prefix, no sample is held by value, and a
+/// step's evaluation work stays bounded as the trace grows: it reads only the
+/// positions an open activation can still read, not the whole trace again.
+/// FR-504's open-scope reading (`decided`) is carried the same way.
+#[test]
+#[trace("TC-2320", "FR-820-AC-1", "FR-820-AC-2")]
+fn a_carried_window_reads_only_the_open_activations() {
+    let world = world();
+    let cancel = Cancel::new();
+    let count: u64 = 120;
+    let level = |index: u64| i64::try_from(index % 7).expect("a level");
+
+    // Timestamped: two observations share every fifth stamp and arrive out
+    // of canonical order; progress covers each stamp after its observations.
+    let mut state = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Window"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Timestamped,
+            Some(stamped_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    let mut observations: Vec<TimestampedObservation> = Vec::new();
+    let mut visits = Vec::new();
+    for index in 0..count {
+        let stamp = index - index / 5;
+        let observed = text(level(index));
+        let mut position = admitted(&world, "Window", &observed, stamp);
+        position.stamp = stamp;
+        state.advance(position, &cancel).expect("advances");
+        observations.push(TimestampedObservation {
+            document: spine::sample_position(&observed),
+            stamp,
+            order_key: None,
+        });
+        if index % 5 == 4 {
+            continue;
+        }
+        let advance = state
+            .assert_progress(&progress(stamp), &cancel)
+            .expect("progress");
+        let trace = TraceInput::Timestamped {
+            observations: observations.clone(),
+            progress: progress(stamp),
+            window: Box::new(TimestampedWindow {
+                binding: Some(stamped_binding()),
+                authoritative_origin: true,
+                cover: None,
+                missing_valuations: Vec::new(),
+            }),
+        };
+        let batch = batch_over(&world, "Window", &trace);
+        assert_eq!(
+            members(&advance.report),
+            members(&batch),
+            "Window after position {index}"
+        );
+        assert_eq!(state.retained(), 0, "Window after position {index}");
+        visits.push((
+            advance.report.usage.temporal_visits,
+            batch.usage.temporal_visits,
+        ));
+    }
+    let bound = visits[..10].iter().map(|(carried, _)| *carried).max();
+    let late = visits[visits.len() - 10..]
+        .iter()
+        .map(|(carried, _)| *carried)
+        .max();
+    assert!(late <= bound.map(|bound| bound * 2), "{visits:?}");
+    let (carried, batch) = visits[visits.len() - 1];
+    assert!(carried * 10 < batch, "{visits:?}");
+
+    // Progressed, event-position `on each`: the report and the open-scope
+    // `decided` reading.
+    let mut state = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Past"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Progressed,
+            Some(events_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    let mut documents = Vec::new();
+    let mut visits = Vec::new();
+    for index in 0..count {
+        let observed = text(if index % 11 == 3 { 9 } else { level(index) });
+        state
+            .advance(admitted(&world, "Past", &observed, index), &cancel)
+            .expect("advances");
+        documents.push(spine::sample_position(&observed));
+        let advance = state
+            .assert_progress(&progress(index), &cancel)
+            .expect("progress");
+        let trace = TraceInput::Progressed {
+            trace: documents.clone(),
+            progress: progress(index),
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: events_binding(),
+        };
+        let batch = batch_over(&world, "Past", &trace);
+        assert_eq!(
+            members(&advance.report),
+            members(&batch),
+            "Past after position {index}"
+        );
+        assert_eq!(state.retained(), 0, "Past after position {index}");
+        visits.push((
+            advance.report.usage.temporal_visits,
+            batch.usage.temporal_visits,
+        ));
+    }
+    let bound = visits[..10].iter().map(|(carried, _)| *carried).max();
+    let late = visits[visits.len() - 10..]
+        .iter()
+        .map(|(carried, _)| *carried)
+        .max();
+    assert!(late <= bound.map(|bound| bound * 2), "{visits:?}");
+
+    // Finite, event-position: `decided` is FR-504's open-scope reading,
+    // carried, with bounded work per step.
+    let mut state = finite_state(&world, "Past");
+    let mut decided = Vec::new();
+    for index in 0..count {
+        let observed = text(if index % 11 == 3 { 9 } else { level(index) });
+        let advance = state
+            .advance(admitted(&world, "Past", &observed, index), &cancel)
+            .expect("advances");
+        if let Some(report) = advance.decided {
+            decided.push(report.usage.temporal_visits);
+        }
+    }
+    assert_eq!(decided.len(), usize::try_from(count).expect("a count"));
+    let bound = decided[..10].iter().max().copied();
+    let late = decided[decided.len() - 10..].iter().max().copied();
+    assert!(late <= bound.map(|bound| bound * 2), "{decided:?}");
 }

@@ -390,6 +390,141 @@ fn evaluate_window_over(
     }
 }
 
+/// FR-820: [`evaluate_positions_finite_window`] carried across a trace that
+/// grows. The state reads only the positions an open activation can still
+/// read ([`WindowState`]), so each step's work is bounded by them, and its
+/// report equals the batch report over the prefix.
+#[derive(Clone, Debug, Default)]
+pub struct CarriedWindow {
+    state: Option<super::finite_window::WindowState>,
+    /// The first undefined reading of each earlier evaluation: a summarized
+    /// activation is not read again, so the reading an `Undefined` verdict
+    /// names may come from an earlier step.
+    undefined: Option<FirstUndefined>,
+}
+
+impl CarriedWindow {
+    /// The number of positions the carried evaluation holds (identities and
+    /// stamps, no value).
+    pub fn held(&self) -> usize {
+        self.state
+            .as_ref()
+            .map_or(0, super::finite_window::WindowState::retained)
+    }
+
+    /// [`evaluate_positions_finite_window`] over `trace`, the batch-admitted
+    /// trace of the prefix, reading only what the carried state has not
+    /// summarized. The observations of `trace` past those admitted earlier
+    /// are admitted; its silent samples are read as FR-504 reads them. A run
+    /// a condition stopped leaves the state as it was, so the next step reads
+    /// the stop again as the batch run does.
+    pub fn evaluate(
+        &mut self,
+        package: &CheckedPackage,
+        clause: &TemporalClauseNode,
+        positions: ObservedPositions<'_>,
+        trace: &TimestampedTrace,
+        valuations: WindowValuations<'_>,
+        meter: &mut Meter,
+    ) -> ObservedWindowRun {
+        let facts = match positions {
+            ObservedPositions::Tape(_) => {
+                crate::temporal::facts::ClauseFacts::of_checked_letters(clause.clause())
+            }
+            ObservedPositions::Objects { .. } | ObservedPositions::Samples(_) => {
+                crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
+            }
+        };
+        let mut state = match self.state.clone() {
+            Some(state) => state,
+            None => match super::finite_window::WindowState::open(
+                &facts,
+                trace.clause_identity().to_owned(),
+                trace.clock().clone(),
+            ) {
+                Ok(state) => state,
+                Err(refusal) => {
+                    return ObservedWindowRun {
+                        result: Err(refusal),
+                        stopped: None,
+                        undefined: None,
+                    }
+                }
+            },
+        };
+        let observed = trace.observed().min(trace.len());
+        for position in trace.positions().get(state.len()..observed).unwrap_or(&[]) {
+            state.admit(position.clone());
+        }
+        let admitted = state.clone();
+        let silent = trace.positions().get(observed..).unwrap_or(&[]);
+        let mut letters = ObservedLetters {
+            package,
+            clause,
+            positions,
+            empty: ObjectEnvironment::default(),
+            trace: TemporalTrace::Finite {
+                len: u64::try_from(trace.len()).unwrap_or(u64::MAX),
+            },
+            stopped: None,
+            undefined: None,
+            absent: valuations.absent,
+            classes: valuations.classes,
+            silent_from: valuations.silent_from,
+        };
+        let result = state.evaluate(
+            &facts,
+            silent,
+            *trace.progress(),
+            *trace.asserted(),
+            &mut letters,
+            meter,
+        );
+        let stopped = match (letters.stopped, &result) {
+            (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
+            (stopped, _) => stopped,
+        };
+        let earlier = self.undefined.clone();
+        let undefined = match (&result, letters.undefined, earlier) {
+            (
+                Ok(WindowEvaluation {
+                    verdict: super::finite_window::WindowVerdict::Undefined(named),
+                    ..
+                }),
+                fresh,
+                earlier,
+            ) => [fresh, earlier]
+                .into_iter()
+                .flatten()
+                .find(|first| first.position == named.at),
+            (_, fresh, _) => fresh,
+        };
+        if result.is_err() {
+            // The state is unchanged but for the positions admitted, which the
+            // next step evaluates with the ones it adds.
+            self.state = Some(state);
+        } else if stopped.is_some() {
+            self.state = Some(admitted);
+        } else {
+            if let Some(first) = &undefined {
+                let earliest = self
+                    .undefined
+                    .as_ref()
+                    .is_none_or(|carried| first.position < carried.position);
+                if earliest {
+                    self.undefined = Some(first.clone());
+                }
+            }
+            self.state = Some(state);
+        }
+        ObservedWindowRun {
+            result,
+            stopped,
+            undefined,
+        }
+    }
+}
+
 /// The fault codes of a `holds` condition: a failed call and a non-Boolean
 /// completion. A refusal is a refused condition, not a fault.
 const HOLDS_CODES: [&str; 2] = ["holds-condition-call-failed", "holds-condition-boolean"];

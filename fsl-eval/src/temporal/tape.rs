@@ -167,6 +167,24 @@ impl LetterTape {
     pub fn held(&self) -> u64 {
         self.held
     }
+
+    /// Put the positions from `from` in `order`, the tail's indices relative
+    /// to `from` in their new order: a timestamped trace's positions take
+    /// their canonical order once progress covers them (FR-501).
+    pub fn reorder_tail(&mut self, from: usize, order: &[usize]) {
+        let Some(tail) = self.entries.get(from..) else {
+            return;
+        };
+        if order.len() != tail.len() {
+            return;
+        }
+        let reordered: Vec<TapeEntry> = order
+            .iter()
+            .filter_map(|index| tail.get(*index).cloned())
+            .collect();
+        self.entries.truncate(from);
+        self.entries.extend(reordered);
+    }
 }
 
 /// FR-820: read the record sample `sample` into its letter for an evaluation

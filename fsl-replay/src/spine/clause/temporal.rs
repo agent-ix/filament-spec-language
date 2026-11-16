@@ -491,6 +491,10 @@ pub(crate) struct TapeInput<'a> {
     /// open-scope reading of a closed-trace clause reads the aggregate letters
     /// the closed route read, so it needs no window of values.
     pub(crate) open_aggregates: bool,
+    /// FR-820: the carried finite-window evaluation the run continues, in
+    /// place of evaluating every position of a `Progressed` or `Timestamped`
+    /// trace again.
+    pub(crate) window: Option<&'a std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,
 }
 
 /// The emitted package a clock-bearing trace is authenticated against.
@@ -1310,6 +1314,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             &window_trace,
             (&[], silent_from),
             observing,
+            tape.and_then(|tape| tape.window),
             &mut meter,
         );
         // A violation carries its counterexample (FR-330 Outputs) over record
@@ -1381,7 +1386,14 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             progress: *progress,
             window,
         };
-        let window = run_finite_window(run, node, &view, observing, &mut meter);
+        let window = run_finite_window(
+            run,
+            node,
+            &view,
+            observing,
+            tape.and_then(|tape| tape.window),
+            &mut meter,
+        );
         // A violation carries its counterexample (FR-330 Outputs) over record
         // samples as over snapshots: the samples are its steps.
         let (disposition, counterexample) =
@@ -1527,6 +1539,7 @@ fn run_finite_window(
     node: &fsl_semantics::check::TemporalClauseNode,
     input: &Timestamped<'_>,
     observing: ObservedPositions<'_>,
+    carried: Option<&std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,
     meter: &mut Meter,
 ) -> WindowRun {
     use fsl_eval::temporal::{
@@ -1616,7 +1629,15 @@ fn run_finite_window(
             .collect()
     };
     let absent = same_atom(canonical(&input.window.missing_valuations));
-    run_window(run, node, &trace, (&absent, None), observing, meter)
+    run_window(
+        run,
+        node,
+        &trace,
+        (&absent, None),
+        observing,
+        carried,
+        meter,
+    )
 }
 
 /// FR-501, FR-504: evaluate `clause` over the admitted `trace` and report its
@@ -1629,6 +1650,7 @@ fn run_window(
     trace: &fsl_eval::temporal::TimestampedTrace,
     (absent, silent_from): (&[(u64, u64)], Option<u64>),
     observing: ObservedPositions<'_>,
+    carried: Option<&std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,
     meter: &mut Meter,
 ) -> WindowRun {
     let classes = atom_classes(run, node);
@@ -1649,16 +1671,24 @@ fn run_window(
                 meter,
             )
         }
-        positions @ (ObservedPositions::Samples(_) | ObservedPositions::Tape(_)) => {
-            fsl_eval::temporal::evaluate_positions_finite_window(
+        positions @ (ObservedPositions::Samples(_) | ObservedPositions::Tape(_)) => match carried {
+            Some(carried) => carried.borrow_mut().evaluate(
                 run.package,
                 node,
                 positions,
                 trace,
                 valuations,
                 meter,
-            )
-        }
+            ),
+            None => fsl_eval::temporal::evaluate_positions_finite_window(
+                run.package,
+                node,
+                positions,
+                trace,
+                valuations,
+                meter,
+            ),
+        },
     };
     let undefined = observed.undefined;
     match (observed.stopped, observed.result) {

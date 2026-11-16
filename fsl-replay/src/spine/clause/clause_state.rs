@@ -12,19 +12,24 @@
 //! reading did not reduce to a letter. Each position's identity is kept for
 //! the counterexample the clause may still report.
 //!
-//! A trace the letters do not carry (snapshot positions, whose decisive
-//! record reads the snapshot, and a timestamped trace, which the batch run
-//! reorders into canonical order) holds every position by value, counted in
-//! [`ClauseState::retained`], so a monitor's `retained_positions` still
-//! bounds it.
+//! A `Progressed` or `Timestamped` trace's finite-window evaluation (FR-501),
+//! and FR-504's open-scope reading behind `decided`, are carried between
+//! steps (`CarriedWindow`): each evaluation reads only the positions an open
+//! activation can still read. A `Timestamped` trace's letters take their
+//! canonical order once progress covers them.
+//!
+//! Snapshot positions, whose decisive record reads the snapshot, are held by
+//! value, counted in [`ClauseState::retained`], so a monitor's
+//! `retained_positions` still bounds them.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Meter, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::temporal::{
-    push_sample, read_sample_letter, read_sample_stop, ClauseStream, FirstUndefined,
+    push_sample, read_sample_letter, read_sample_stop, CarriedWindow, ClauseStream, FirstUndefined,
     InsufficientData, LetterTape, ObservedRun, StreamStop, TapeEntry, TapeLetter, TapeReading,
     TemporalOutcome,
 };
@@ -198,6 +203,26 @@ struct Seen {
     order_key: Option<TimestampedOrderKey>,
 }
 
+/// FR-501 "Canonical order" of two positions, as the batch run orders a
+/// `Timestamped` trace: ascending stamp, then order authority and key (a
+/// keyed position before an unkeyed one), then identity.
+fn canonical_order(left: &Seen, right: &Seen) -> std::cmp::Ordering {
+    let key = |seen: &Seen| {
+        seen.order_key
+            .as_ref()
+            .map(|order| (order.authority.clone(), order.key))
+    };
+    left.stamp
+        .cmp(&right.stamp)
+        .then_with(|| match (key(left), key(right)) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        })
+        .then_with(|| left.reference.cmp(&right.reference))
+}
+
 /// FR-820's carried state of one clause over one trace.
 #[derive(Clone)]
 pub struct ClauseState<'a> {
@@ -237,6 +262,12 @@ pub struct ClauseState<'a> {
     /// The canonical text of each record sample held by value, by
     /// position, for a state that cites its samples by index.
     texts: BTreeMap<u64, String>,
+    /// FR-820: the carried finite-window evaluation of the report's run over
+    /// a `Progressed` or `Timestamped` trace.
+    window: RefCell<CarriedWindow>,
+    /// FR-820: the carried finite-window evaluation of FR-504's open-scope
+    /// reading, which `decided` reports.
+    open_window: RefCell<CarriedWindow>,
     /// The snapshot document the latest advance added, which a restore
     /// removes again.
     fresh_snapshot: Option<DocumentRef>,
@@ -266,6 +297,11 @@ pub struct ClauseMark {
     undefined_atom: Option<usize>,
     first_undefined: Option<FirstUndefined>,
     texts: BTreeMap<u64, String>,
+    /// A `Timestamped` state's positions since the last evaluation, which an
+    /// evaluation puts in canonical order.
+    tail: Option<(usize, Vec<Seen>, Vec<TapeEntry>)>,
+    window: CarriedWindow,
+    open_window: CarriedWindow,
 }
 
 /// The `pending` report of a clause no evaluation has read yet.
@@ -369,7 +405,7 @@ impl<'a> ClauseState<'a> {
             .iter()
             .any(|node| matches!(node, FormulaNode::Aggregate { .. }));
         let reading = match (sampled, request.kind, clause.clause().profile()) {
-            (false, ..) | (true, ClauseTraceKind::Timestamped, _) => Reading::Values,
+            (false, ..) => Reading::Values,
             (true, ClauseTraceKind::Finite, TemporalProfile::EventPositionFalseExtension) => {
                 Reading::Subject
             }
@@ -420,6 +456,8 @@ impl<'a> ClauseState<'a> {
             first_undefined: None,
             texts: BTreeMap::new(),
             fresh_snapshot: None,
+            window: RefCell::new(CarriedWindow::default()),
+            open_window: RefCell::new(CarriedWindow::default()),
         })
     }
 
@@ -445,12 +483,35 @@ impl<'a> ClauseState<'a> {
             undefined_atom: self.undefined_atom,
             first_undefined: self.first_undefined.clone(),
             texts: self.texts.clone(),
+            tail: (self.open.kind == ClauseTraceKind::Timestamped
+                && self.reading == Reading::Observed)
+                .then(|| {
+                    let from = self
+                        .evaluated
+                        .map_or(0, |(seen, _)| seen)
+                        .min(self.seen.len());
+                    (
+                        from,
+                        self.seen.get(from..).unwrap_or(&[]).to_vec(),
+                        self.tape.entries().get(from..).unwrap_or(&[]).to_vec(),
+                    )
+                }),
+            window: self.window.borrow().clone(),
+            open_window: self.open_window.borrow().clone(),
         }
     }
 
     /// FR-820 "No partial state": put back the state `mark` was taken of,
     /// undoing the one call made since.
     pub fn restore(&mut self, mark: ClauseMark) {
+        if let Some((from, seen, entries)) = mark.tail {
+            self.seen.truncate(from);
+            self.seen.extend(seen);
+            self.tape.truncate(from);
+            for entry in entries {
+                self.tape.push(entry);
+            }
+        }
         self.seen.truncate(mark.seen);
         self.tape.truncate(mark.tape);
         if self.snapshots.len() > mark.snapshots {
@@ -473,6 +534,8 @@ impl<'a> ClauseState<'a> {
         self.undefined_atom = mark.undefined_atom;
         self.first_undefined = mark.first_undefined;
         self.texts = mark.texts;
+        self.window.replace(mark.window);
+        self.open_window.replace(mark.open_window);
     }
 
     /// The ledger each later run starts from: a monitor carries one ledger
@@ -549,6 +612,14 @@ impl<'a> ClauseState<'a> {
         }
     }
 
+    /// Whether a streamed state also reads each sample into its letter: FR-504's
+    /// open-scope reading of a fixed-sample clause (`decided`) is carried over
+    /// the letters, as the trace-subject reading's is.
+    fn lettered(&self) -> bool {
+        self.reading == Reading::Streamed
+            && self.node.clause().profile() == TemporalProfile::FixedSampleFalseExtension
+    }
+
     /// The identity the state keeps for the position `index` the caller names
     /// `reference`: its index, keeping the sample's text while it is held, for
     /// an indexed state.
@@ -582,7 +653,7 @@ impl<'a> ClauseState<'a> {
             match push_sample(self.package, self.node, carried, &sample, &mut meter) {
                 Ok(read) => {
                     if !read.is_empty() && stop.is_none() {
-                        stop = Some((index, sample));
+                        stop = Some((index, sample.clone()));
                         if self.indexed() {
                             stop_text = Some(position.reference.identity.clone());
                         }
@@ -593,6 +664,15 @@ impl<'a> ClauseState<'a> {
                     exhausted = Some(incomplete);
                 }
             }
+        }
+        if self.lettered() {
+            let mut letter_meter = Meter::new(self.open.limits.accounting);
+            self.tape.push(read_sample_letter(
+                self.package,
+                self.node,
+                &sample,
+                &mut letter_meter,
+            ));
         }
         let reference = if self.indexed() {
             index_reference(index)
@@ -611,11 +691,14 @@ impl<'a> ClauseState<'a> {
             &mut meter,
         );
         let report = Arc::new(report);
+        let open_window = self.open_window.borrow().clone();
         let decided = cancelled(cancel).and_then(|()| self.decided(&report, None, cancel));
         let decided = match decided {
             Ok(decided) => decided,
             Err(refusal) => {
                 self.seen.pop();
+                self.tape.truncate(self.seen.len());
+                self.open_window.replace(open_window);
                 return Err(refusal);
             }
         };
@@ -831,7 +914,14 @@ impl<'a> ClauseState<'a> {
     ) -> Result<Advance, ClauseRefusal> {
         cancelled(cancel)?;
         let mut meter = Meter::new(self.open.limits.accounting).with_cancel(cancel.clone());
-        let advance = self.evaluate(Some(*progress), &mut meter, cancel)?;
+        let mark = self.mark();
+        let advance = match self.evaluate(Some(*progress), &mut meter, cancel) {
+            Ok(advance) => advance,
+            Err(refusal) => {
+                self.restore(mark);
+                return Err(refusal);
+            }
+        };
         self.progress = Some(*progress);
         Ok(advance)
     }
@@ -918,8 +1008,9 @@ impl<'a> ClauseState<'a> {
         };
         let shorter;
         let tape = match self.reading {
-            Reading::Values | Reading::Streamed => None,
-            Reading::Subject | Reading::Observed => {
+            Reading::Values => None,
+            Reading::Streamed if !(open && self.lettered()) => None,
+            Reading::Subject | Reading::Observed | Reading::Streamed => {
                 let tape = if seen < self.tape.len() {
                     let mut prefix = LetterTape::new();
                     for entry in &self.tape.entries()[..seen] {
@@ -935,6 +1026,11 @@ impl<'a> ClauseState<'a> {
                     values: &self.values,
                     captures: &self.captures,
                     open_aggregates: open,
+                    window: Some(if open {
+                        &self.open_window
+                    } else {
+                        &self.window
+                    }),
                 })
             }
         };
@@ -955,6 +1051,7 @@ impl<'a> ClauseState<'a> {
                 decided: None,
             });
         }
+        self.order_covered();
         let seen = self.seen.len();
         let report = match self.reading {
             Reading::Subject => self.subject_stream_report(meter),
@@ -972,6 +1069,39 @@ impl<'a> ClauseState<'a> {
         self.report = Arc::clone(&report);
         self.evaluated = Some((seen, assertion));
         Ok(Advance { report, decided })
+    }
+
+    /// FR-501 "Canonical order": a `Timestamped` trace's positions since the
+    /// last evaluation, which the progress now covers, take their canonical
+    /// order on the tape and in the positions seen, so the carried evaluation
+    /// reads them at the positions the batch run gives them. Every earlier
+    /// position is stamped below them (FR-643 "Order").
+    fn order_covered(&mut self) {
+        if self.open.kind != ClauseTraceKind::Timestamped || self.reading != Reading::Observed {
+            return;
+        }
+        let from = self
+            .evaluated
+            .map_or(0, |(seen, _)| seen)
+            .min(self.seen.len());
+        let Some(tail) = self.seen.get(from..) else {
+            return;
+        };
+        let mut order: Vec<usize> = (0..tail.len()).collect();
+        order.sort_by(|left, right| match (tail.get(*left), tail.get(*right)) {
+            (Some(left), Some(right)) => canonical_order(left, right),
+            _ => std::cmp::Ordering::Equal,
+        });
+        if order.iter().enumerate().all(|(at, index)| at == *index) {
+            return;
+        }
+        let reordered: Vec<Seen> = order
+            .iter()
+            .filter_map(|index| tail.get(*index).cloned())
+            .collect();
+        self.seen.truncate(from);
+        self.seen.extend(reordered);
+        self.tape.reorder_tail(from, &order);
     }
 
     /// The definite verdict of the clause's profile over the positions seen.
@@ -1071,7 +1201,7 @@ impl<'a> ClauseState<'a> {
         match self.reading {
             Reading::Values => u64::try_from(self.seen.len()).unwrap_or(u64::MAX),
             Reading::Observed => self.tape.held(),
-            Reading::Streamed => u64::from(self.stop.is_some()),
+            Reading::Streamed => u64::from(self.stop.is_some()).saturating_add(self.tape.held()),
             Reading::Subject => u64::try_from(self.values.len()).unwrap_or(u64::MAX),
         }
     }
@@ -1230,7 +1360,7 @@ impl<'a> ClauseState<'a> {
                     .snapshots
                     .insert(reference.clone(), document.into_bytes());
             }
-            if matches!(state.reading, Reading::Subject | Reading::Observed) {
+            if matches!(state.reading, Reading::Subject | Reading::Observed) || state.lettered() {
                 let entry = match &position["letter"] {
                     Json::Null => TapeEntry::Held(admit(seen, &reference)?),
                     letter => TapeEntry::Read(letter_of(letter).ok_or_else(mismatch)?),

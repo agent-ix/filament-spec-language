@@ -222,6 +222,16 @@ impl TimestampedTrace {
     pub fn clock(&self) -> &WindowClock {
         &self.clock
     }
+
+    /// The progress the request asserted, which the report names.
+    pub fn asserted(&self) -> &WindowProgress {
+        &self.asserted
+    }
+
+    /// The identity of the clause the trace is read for.
+    pub fn clause_identity(&self) -> &str {
+        &self.clause_identity
+    }
 }
 
 /// FR-501 "Canonical order": ascending stamp, then ascending order-authority
