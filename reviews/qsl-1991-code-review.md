@@ -45,3 +45,26 @@ The cross-crate runtime contract is still unmet. `ModelSystem::weighted_steps` s
 
 - `quoin matrix --repo /home/peter/dev/worktrees/qsl-1991-workload-weights --json` — completed; scoped criterion results are recorded in the separate gap-analysis artifact.
 - Aggregate Rust gates — not run in this review pass per lead coordination; focused results are those supplied in the dispatch brief.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `weighted_steps` now drops zero-weight operations when any enabled operation has positive weight and assigns unit weights when the enabled set is all zero. |
+| FND-002 | fixed | Both the module-level description and public `Workload` documentation now say non-negative weights. |
+
+After excerpts:
+
+```rust
+let has_positive_weight = operations.values().any(|(weight, _)| !weight.is_zero());
+let total = operations.values().fold(Rational::from_integer(Integer::zero()), |total, (weight, _)| {
+    if has_positive_weight { total.add(weight) } else { total.add(&Rational::from_integer(Integer::one())) }
+});
+if has_positive_weight && weight.is_zero() { continue; }
+let effective_weight = if has_positive_weight { weight.clone() } else { Rational::from_integer(Integer::one()) };
+```
+
+```rust
+//! and one non-negative weight per operation of it. Each refusal is the
+/// A checked workload: one non-negative weight per operation of its model
+```

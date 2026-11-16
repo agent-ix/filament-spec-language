@@ -40,3 +40,24 @@ Ticket: QSL-1991. Planless, scoped gap analysis of the workload-weight change an
 - `fsl-eval/src/simulation/model/probabilistic.rs:884-908`
 - `fsl-eval/src/simulation/model/probabilistic/tests.rs:541-555`
 - FR-185-AC-3, FR-185-AC-10, and FR-187-AC-5
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-187-AC-5 now has an active test covering zero-weight omission, the reset-only fallback, and all-zero equivalence; the evaluator implements those cases. |
+
+After excerpt:
+
+```rust
+#[trace("TC-2064", "FR-187-AC-5")]
+#[trace("FSpec-TC-1561", "FSpec-FR-406-AC-7")]
+#[test]
+fn zero_weight_workloads_follow_enabled_operation_weights() {
+```
+
+```rust
+let has_positive_weight = operations.values().any(|(weight, _)| !weight.is_zero());
+if has_positive_weight && weight.is_zero() { continue; }
+let effective_weight = if has_positive_weight { weight.clone() } else { Rational::from_integer(Integer::one()) };
+```
