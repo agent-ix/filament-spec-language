@@ -265,7 +265,7 @@ Snapshot, format `filament.state.snapshot/v1`:
   "identity": {"authority": "agent-ix", "identity": "ix://example/config-version/current/healthy-parent"},
   "observation": "current",
   "anchor": {"kind": "handler", "name": "validate"},
-  "model": {"identity": "example/config-version", "version": "1"},
+  "model": {"identity": "example/config-version"},
   "populations": [{
     "population": "ix://example/config-version/config_history",
     "complete": true,
@@ -300,7 +300,9 @@ Snapshot, format `filament.state.snapshot/v1`:
   `invalid_runtime_input`/`wrong-role-mapping`. Admission SHALL require
   `model` exactly when the checked package selects a domain package, and SHALL
   refuse a `model` member in a snapshot of a package that selects none
-  `invalid_runtime_input`/`unknown-member` naming `model`. A source-declared
+  `invalid_runtime_input`/`unknown-member` naming `model`. The `model` member
+  is the closed object `{"identity": I}`; a `version`, `digest` or other
+  member refuses as FR-868 states. A source-declared
   object's model component is the unit's source owner (authority, identity).
 - `relationships` is optional on a snapshot. Each entry has exactly `relationship`, `complete` and
   `instances`. `relationship` is the declaration identity of a navigation
@@ -714,7 +716,7 @@ Invocation, format `filament.state.invocation/v1`:
 {
   "format": "filament.state.invocation/v1",
   "identity": {"authority": "agent-ix", "identity": "ix://example/config-version/invocation/changed-version"},
-  "model": {"identity": "example/config-version", "version": "1"},
+  "model": {"identity": "example/config-version"},
   "context": "ix://example/config-version/ConfigVersion",
   "operation": "attemptUpdate",
   "self": {"population": "ix://example/config-version/config_history", "key": "child"},
