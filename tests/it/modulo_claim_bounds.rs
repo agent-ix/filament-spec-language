@@ -42,7 +42,9 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     function qlet using v(a: Int[-100, 100], b: Int[1, 12]): Int[-100, 100] pure { let r = a div b in r }\n\
     function control using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 20] pure { let r = if a > 0 then a mod b else 0 in r }\n\
     function inc using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }\n\
-    function big using v(n: Integer): Integer pure { n + 1 }\n";
+    function big using v(n: Integer): Integer pure { n + 1 }\n\
+    function ifw using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { if a > 0 then a mod b else 0 }\n\
+    function letif using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { let r = if a > 0 then a mod b else 0 in r }\n";
 
 fn interval(lower: i64, upper: i64) -> ValueType {
     ValueType::Int(IntegerInterval::new(lower.into(), upper.into()).expect("valid interval"))
@@ -167,6 +169,8 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             true,
         ),
         (18, "control", interval(0, 11), interval(0, 11), false, true),
+        (21, "ifw", interval(0, 11), interval(0, 11), false, false),
+        (22, "letif", interval(0, 11), interval(0, 11), false, false),
     ] {
         let body = graph.function_state(index).expect("function checked").body;
         let mut pending = vec![body];
@@ -174,6 +178,22 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         let mut addition_key = None;
         let mut narrows = 0;
         while let Some(node) = pending.pop() {
+            if matches!(node.kind(), NodeKind::If { .. }) && function != "ifb" {
+                let lowered = graph
+                    .semantic_graph()
+                    .node(graph.node_key(node).expect("control keyed").clone())
+                    .expect("control lowered");
+                assert!(
+                    matches!(
+                        graph.checked_type_node(lowered.semantic_type().expect("control type")),
+                        Some(CheckedTypeNode::Scalar {
+                            shape: ScalarShape::Integer,
+                            ..
+                        })
+                    ),
+                    "{function} control uses lowered leaf hull"
+                );
+            }
             if matches!(node.kind(), NodeKind::Arithmetic(..)) {
                 addition_key = graph.node_key(node).cloned();
             }
@@ -338,7 +358,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         );
         assert_eq!(
             record.path_condition().len(),
-            usize::from(function == "ifb" || function == "control"),
+            usize::from(matches!(function, "ifb" | "control" | "ifw" | "letif")),
             "{function} guards"
         );
         assert_eq!(
