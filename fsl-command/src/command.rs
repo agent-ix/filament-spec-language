@@ -974,6 +974,7 @@ pub fn compile_outcome_with_overrides(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     with_request(path, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
+        validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
         }
@@ -1733,28 +1734,7 @@ fn extension_catalog(
     use fsl_foundation::selection::DefinitionRef;
     use fsl_semantics::library::bundle::{CapabilityId, ExtensionDefinitionSource};
 
-    let mut identities = std::collections::BTreeMap::new();
-    for (index, extension) in extensions.iter().enumerate() {
-        for (member, value) in [
-            ("authority", extension.authority.as_str()),
-            ("identity", extension.identity.as_str()),
-            ("file", extension.file.as_str()),
-        ] {
-            if value.trim().is_empty() {
-                return Err(RunCause::ClauseRequest {
-                    member: format!("extensions[{index}].{member}"),
-                    reason: "must be a non-blank string".to_owned(),
-                });
-            }
-        }
-        let key = (extension.authority.as_str(), extension.identity.as_str());
-        if let Some(previous) = identities.insert(key, index) {
-            return Err(RunCause::ExtensionCatalog(format!(
-                "conflicting-definition: extensions[{previous}] and extensions[{index}] both name {}:{}",
-                extension.authority, extension.identity
-            )));
-        }
-    }
+    validate_extension_entries(extensions)?;
 
     let mut definitions = Vec::with_capacity(extensions.len());
     for extension in extensions {
@@ -1787,6 +1767,42 @@ fn extension_catalog(
     }
     fsl_semantics::library::bundle::DefinitionCatalog::read_extensions(definitions)
         .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
+}
+
+/// Validate extension labels and logical identity uniqueness before intake
+/// reads any program, model, library or extension document.
+fn validate_extension_entries(extensions: &[wire::Extension]) -> Result<()> {
+    let mut identities = std::collections::BTreeMap::new();
+    for (index, extension) in extensions.iter().enumerate() {
+        for (member, value) in [
+            ("authority", extension.authority.as_str()),
+            ("identity", extension.identity.as_str()),
+            ("file", extension.file.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("extensions[{index}].{member}"),
+                    reason: "must be a non-blank string".to_owned(),
+                });
+            }
+        }
+        let key = (extension.authority.as_str(), extension.identity.as_str());
+        if let Some(previous) = identities.insert(key, index) {
+            return Err(RunCause::ExtensionCatalog(format!(
+                "conflicting-definition: extensions[{previous}] and extensions[{index}] both name {}:{}",
+                extension.authority, extension.identity
+            )));
+        }
+        for dependency in &extension.depends_on {
+            if dependency.authority.trim().is_empty() || dependency.identity.trim().is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("extensions[{index}].depends_on"),
+                    reason: "authority and identity must be non-blank strings".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A request selection a complete-V1 (`1-draft`) program does not take.
@@ -1957,6 +1973,7 @@ fn prepare_run_bytes(
     overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    validate_extension_entries(&request.extensions)?;
     if request.items.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),

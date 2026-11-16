@@ -45,7 +45,7 @@ pub(super) struct CompileRequest {
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
     /// FR-660: request supplied extension definitions.
-    #[serde(default, deserialize_with = "deserialize_objects")]
+    #[serde(default, deserialize_with = "extensions")]
     pub extensions: Vec<Extension>,
     /// FR-640: the clock configurations by clock name; empty when absent.
     #[serde(default, deserialize_with = "clocks")]
@@ -195,6 +195,19 @@ pub(super) struct DefinitionReference {
     pub identity: String,
 }
 
+fn extensions<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Vec<Extension>, D::Error> {
+    let value = serde_json::Value::deserialize(decoder)?;
+    let serde_json::Value::Array(entries) = value else {
+        return Err(serde::de::Error::custom(
+            "extensions must be an array of definition entries",
+        ));
+    };
+    entries
+        .into_iter()
+        .map(|entry| Extension::deserialize(entry).map_err(serde::de::Error::custom))
+        .collect()
+}
+
 fn present_json_value<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> Result<Option<serde_json::Value>, D::Error> {
@@ -225,7 +238,7 @@ pub(super) struct Request {
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
     /// FR-660: request supplied extension definitions.
-    #[serde(default, deserialize_with = "deserialize_objects")]
+    #[serde(default, deserialize_with = "extensions")]
     pub extensions: Vec<Extension>,
     /// FR-640: the clock configurations by clock name; empty when absent.
     #[serde(default, deserialize_with = "clocks")]
