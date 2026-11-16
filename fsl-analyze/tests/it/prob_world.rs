@@ -263,6 +263,23 @@ impl World {
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"))
     }
 
+    /// [`Self::new_with_mode`]'s S3 check result, for a declared clause
+    /// that must refuse in every mode.
+    pub(crate) fn try_new_with_mode(
+        model: &Model,
+        mode: CheckMode,
+    ) -> Result<Self, Vec<CheckRefusal>> {
+        Self::try_build_with_mode(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            true,
+            mode,
+        )
+    }
+
     /// `model`'s S3 check result, exposed for acceptance tests of pre-sampling
     /// refusals.
     pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<CheckRefusal>> {
