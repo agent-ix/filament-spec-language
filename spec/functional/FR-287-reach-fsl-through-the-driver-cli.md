@@ -21,6 +21,8 @@ relationships:
     type: references
   - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
+  - target: "ix://agent-ix/filament-specification/FR-462"
+    type: depends_on
 ---
 # FR-287: Reach FSL through the driver's thin CLI frontend
 
@@ -117,6 +119,43 @@ FR-298) and takes FR-285's exit code.
   parameter, by FR-635's rule for every provider-routing entry ("One rule
   for every provider-routing entry"), so FSL's `command` and `analyze` take
   no provider configuration of their own.
+- `--provider-limit <name>=<value>` on the same provider-routing verbs
+  (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall set one of the
+  caller limits that FSpec FR-462 and FR-305 say bound each process-plugin
+  run. FR-561 keeps these budgets out of the provider-configuration
+  document, so one document serves runs of any size. The option may be
+  given more than once, each time for a different name. FR-462 gives a
+  wire member name only to the deadline (`deadline_ms`, the FR-331 request
+  member) and gives no defaults, so this contract fixes the names and the
+  defaults below. A limit the user does not give takes its default.
+
+  | Name | FR-462 limit | Unit | Default |
+  | --- | --- | --- | --- |
+  | `max_frame_bytes` | maximum frame length, in either direction | bytes | 67108864 (64 MiB) |
+  | `max_total_bytes` | maximum total frame bytes per plugin run, both directions | bytes | 1073741824 (1 GiB) |
+  | `deadline_ms` | the provider deadline, sent as FR-331 `request.deadline_ms` | milliseconds | 600000 (10 minutes) |
+  | `grace_ms` | grace period after `cancel` before the host ends the process | milliseconds | 5000 |
+  | `max_stderr_bytes` | standard-error bytes captured from the plugin | bytes | 1048576 (1 MiB) |
+  | `max_memory_bytes` | process memory limit, where the platform provides one | bytes | 4294967296 (4 GiB) |
+  | `max_cpu_ms` | process CPU-time limit, where the platform provides one | milliseconds | 600000 (10 minutes) |
+
+  A value is a positive decimal integer of at most 9007199254740991, the
+  FR-331 count range, with no sign, no leading zero and no unit suffix.
+  The defaults keep a checked package and its dependencies within one
+  request frame with room for base64url growth, and bound a stuck plugin
+  to minutes rather than hours. On a platform that provides no memory or
+  CPU-time limit, `max_memory_bytes` and `max_cpu_ms` are still validated
+  and are then not applied, as FR-305 states. The limits bind process
+  plugins only; linked providers ignore them, and the option is accepted
+  with or without `--provider-config`. The driver shall read every
+  `--provider-limit` before any stage runs and before any plugin starts,
+  and pass the resolved limits with the started providers, so FSL's
+  entries take none of them. An argument with no `=`, an unknown name, a
+  name given twice, or a value that is empty, zero, signed, has a leading
+  zero, a non-digit or a unit suffix, or is above the range refuses
+  `invalid-request` naming `--provider-limit` and the offending argument,
+  exit 20 with empty stdout, and starts no plugin. A verb that routes no
+  items refuses the option as unknown (FSpec FR-301), exit 20.
 
 ## Acceptance Criteria
 
@@ -133,6 +172,7 @@ FR-298) and takes FR-285's exit code.
 | FR-287-AC-9 | In machine mode, `quire compile` and `quire run` write exactly their producer-owned FR-286 `filament-outcome/1` document to stdout, for success and refusal alike, with no CLI-added or removed member; no native package bytes, native-run-result document or refusal envelope replace it on a process stream. A compile's document is built only after package construction finishes or refuses. Resolving the same valid request as a relative and an absolute operand from two working directories gives equal outcome bytes and exit code. | Test (TC-1262) |
 | FR-287-AC-10 | An external Rust consumer with no dependency on `filament-spec-language` calls `fsl_command::command::compile_outcome` over AC-2's compile request and `prepare_run` over its bounded run request. The compile bytes equal the existing `compile` entry's bytes and the document equals FR-286's projection of the actual package result. Executing the prepared run through the existing spine yields the same result and incomplete category as the existing command entry; preparation retains authored labels, package name, packages, libraries, call arguments and accounting. The FSL root defines and re-exports neither `command` nor `formal_source`, and no core crate depends on `fsl-command`. | Test |
 | FR-287-AC-11 | Missing request files and malformed request JSON produce the command owner's outcome document with the original catalog code and category and `last_stage` null; source, check and emit refusals retain their owning typed cause, category, reached stage and available region. A source identity refusal retains its exact typed label with no fabricated locus. The command's existing native library result and refusal behavior remain unchanged. | Test |
+| FR-287-AC-12 | `quire prove --provider-config providers.json` with no `--provider-limit` sends the fixture plugin a request whose `deadline_ms` is 600000 and enforces a 67108864-byte frame limit; with `--provider-limit deadline_ms=250 --provider-limit max_frame_bytes=1048576` the request carries `deadline_ms` 250 and a 1048577-byte result frame settles the item `failed` with `{"type": "tool-failure", "defect": "frame-length", "limit": 1048576, "value": 1048577}`. `--provider-limit max_frames=4`, `deadline_ms`, `deadline_ms=0`, `deadline_ms=10s`, `deadline_ms=010`, `max_total_bytes=9007199254740992` and `deadline_ms=5` given twice each refuse `invalid-request` naming `--provider-limit` and the argument, exit 20 with empty stdout, and start no plugin; `quire parse --provider-limit deadline_ms=5` refuses the option as unknown, exit 20. | Test (TC-2626) |
 
 ## Dependencies
 
@@ -141,6 +181,9 @@ FR-298) and takes FR-285's exit code.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md): the library operations.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md), [FR-286](FR-286-serialize-every-outcome-as-one-json-outcome-document.md): exit code and outcome document.
 - [FR-027](FR-027-export-compiled-native-package.md), [FR-100](FR-100-run-a-named-function-through-the-spine.md): FSL `command`.
+- FSpec FR-462, FR-305 and FR-561: the process-plugin run limits that
+  `--provider-limit` sets, and the configuration document that leaves them
+  to the caller.
 - FSpec FR-301: the CLI lifecycle, argument refusal, and version output, as the
   FSpec half in References aligns it.
 
@@ -159,7 +202,9 @@ stream convention when the driver's verbs land; native library artifacts
 remain in-process command products, except the files the command writes to
 disk on request: FR-665's handoff directory and FR-810's package file. `run` and `compile` accept the `request_bytes` and
 `dependent_bytes` options, and `parse`, `check` and `compile` accept `--limit`
-for the settings of the stages they run (FR-869). For `parse` and `format` it
+for the settings of the stages they run (FR-869). The provider-routing verbs
+accept `--provider-limit` for the process-plugin run limits.
+FR-287-AC-12 states its criteria and TC-2626 tests them. For `parse` and `format` it
 owns the command and label operands, their OS encoding (a non-UTF-8 command
 or label refuses, exit 20), the operand count, writing the outcome document
 or formatted source to stdout, and a write failure (exit 30).
