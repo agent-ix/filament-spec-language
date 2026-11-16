@@ -189,7 +189,7 @@ fn fixture_with_recovery_view(bound: u64, recovery_view: bool) -> Fixture {
             .replace(
                 "effect Applied of Main::Tried as (applied: Boolean) { true };",
                 "effect Applied of Main::Tried as (applied: Boolean) { true };\n\
-                 event Trigger by Service as (trigger: Boolean) { true };",
+                 event Signal by Service as (signal: Boolean) { true };",
             );
         let partial = source
             .find("  compensate Partial for")
