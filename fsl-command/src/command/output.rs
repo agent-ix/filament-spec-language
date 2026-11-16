@@ -16,6 +16,11 @@ use serde_json::Value;
 pub struct NativeResult(Value);
 
 impl NativeResult {
+    /// The FR-661 build inventory emitted by `version`.
+    pub(super) fn version_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// The FR-621 `analyze` document, written by `fsl-analyze`.
     pub(super) fn analyze_document(document: Value) -> Self {
         Self(document)

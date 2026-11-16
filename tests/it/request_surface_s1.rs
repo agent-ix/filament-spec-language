@@ -460,7 +460,6 @@ fn driver_version(arguments: &[&str]) -> Output {
     "FSpec-FR-560-AC-3"
 )]
 #[trace("FSpec-TC-1244", "FSpec-FR-301-AC-5")]
-#[ignore = "QSL-2194: `version` does not emit the build inventory yet"]
 fn version_emits_the_build_inventory_and_kind_selects_one_list() {
     let lists = ["editions", "profiles", "families", "features", "consumers"];
     let output = driver_version(&["--format", "json"]);
@@ -576,7 +575,6 @@ fn an_extension_document_is_charged_against_dependent_bytes() {
 /// profiles, and none is spelled `quire.*`.
 #[test]
 #[trace("TC-1742", "FR-661-AC-2", "FSpec-TC-1240", "FSpec-FR-560-AC-2")]
-#[ignore = "QSL-2194: `version` does not emit the build inventory yet"]
 fn every_listed_profile_is_accepted_by_a_header() {
     let directory = tempfile::tempdir().unwrap();
     let inventory = stdout_json(&driver(
@@ -610,6 +608,51 @@ fn every_listed_profile_is_accepted_by_a_header() {
             assert_ne!(value["code"], "unknown_profile", "{identity}: {value}");
         }
     }
+}
+
+/// FR-661-AC-3: a registry provider appears in `consumers` without changing
+/// the compiler-owned lists.
+#[test]
+#[trace("TC-1742", "FR-661-AC-3")]
+fn version_includes_provider_backed_registry_consumers() {
+    use fsl_foundation::bound::DomainKind;
+    use fsl_foundation::BackendId;
+    use fsl_route::{Candidate, ManifestMembers, Mode, ProviderOrigin, Registry};
+
+    let base = Registry::new();
+    let before = fsl_replay::build_inventory(&base);
+    let mut with_provider = Registry::new();
+    let descriptor = fsl_route::descriptor_from_manifest(
+        Candidate::new(BackendId::new("inventory-provider")),
+        ProviderOrigin::Linked,
+        [(Some("value-validity"), Some("unbounded"))],
+        ManifestMembers {
+            domains: Some(&[DomainKind::Integer.to_wire()]),
+            ..ManifestMembers::default()
+        },
+    )
+    .expect("the provider descriptor is valid");
+    with_provider
+        .register(descriptor)
+        .expect("the provider registers");
+
+    let after = fsl_replay::build_inventory(&with_provider);
+    assert_eq!(before.editions, after.editions);
+    assert_eq!(before.profiles, after.profiles);
+    assert_eq!(before.families, after.families);
+    assert_eq!(before.features, after.features);
+    assert_eq!(after.consumers.len(), 1);
+    assert_eq!(after.consumers[0].identity, "inventory-provider");
+    assert_eq!(after.consumers[0].origin, "linked");
+    assert_eq!(after.consumers[0].advertises.len(), 1);
+    assert_eq!(after.consumers[0].advertises[0].kind, "value-validity");
+    assert_eq!(after.consumers[0].advertises[0].mode, "unbounded");
+    assert_eq!(
+        before.to_bytes().expect("inventory writes"),
+        fsl_replay::build_inventory(&base)
+            .to_bytes()
+            .expect("inventory writes")
+    );
 }
 
 const SPINE_FIXTURE: &str = "tests/fixtures/spine-compile.native";

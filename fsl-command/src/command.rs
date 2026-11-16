@@ -1043,7 +1043,11 @@ fn run_configured(
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
-            items::run_bytes(directory, bytes, limits, overrides, &settle)
+            if let Some(result) = version_argv(bytes)? {
+                Ok(Some(result))
+            } else {
+                items::run_bytes(directory, bytes, limits, overrides, &settle)
+            }
         }
     })?;
     if let Some(result) = special {
@@ -1051,6 +1055,92 @@ fn run_configured(
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause }))
+}
+
+/// FR-661: handle the driver's in-process `version` invocation used by the
+/// command harness. The binary driver owns argv parsing at its process
+/// boundary; this entry accepts the exact JSON adapter shape used by FSL's
+/// tests and returns the same inventory document.
+fn version_argv(bytes: &[u8]) -> Result<Option<RunResult>> {
+    let value: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let Some(arguments) = value.get("argv") else {
+        return Ok(None);
+    };
+    let arguments: Vec<&str> = arguments
+        .as_array()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "argv".to_owned(),
+            reason: "expected an array of strings".to_owned(),
+        })?
+        .iter()
+        .map(|argument| {
+            argument.as_str().ok_or_else(|| RunCause::ClauseRequest {
+                member: "argv".to_owned(),
+                reason: "expected an array of strings".to_owned(),
+            })
+        })
+        .collect::<Result<_>>()?;
+    if arguments.first().copied() != Some("version") {
+        return Ok(None);
+    }
+
+    let lists = ["editions", "profiles", "families", "features", "consumers"];
+    let mut format = None;
+    let mut kind = None;
+    let mut index = 1;
+    while index < arguments.len() {
+        match arguments[index] {
+            "--format" if format.is_none() && index + 1 < arguments.len() => {
+                format = Some(arguments[index + 1]);
+                index += 2;
+            }
+            "--kind" if kind.is_none() && index + 1 < arguments.len() => {
+                kind = Some(arguments[index + 1]);
+                index += 2;
+            }
+            member => {
+                return Err(RunCause::ClauseRequest {
+                    member: member.to_owned(),
+                    reason:
+                        "version accepts --format json and --kind followed by one inventory list"
+                            .to_owned(),
+                });
+            }
+        }
+    }
+    if format.is_some_and(|format| format != "json") {
+        return Err(RunCause::ClauseRequest {
+            member: "format".to_owned(),
+            reason: "version supports only json".to_owned(),
+        });
+    }
+    if let Some(kind) = kind {
+        if !lists.contains(&kind) {
+            return Err(RunCause::ClauseRequest {
+                member: kind.to_owned(),
+                reason: format!(
+                    "unknown inventory list; expected one of {}",
+                    lists.join(", ")
+                ),
+            });
+        }
+    }
+
+    let inventory = fsl_replay::build_inventory(&fsl_route::Registry::new());
+    let mut document = serde_json::to_value(inventory).map_err(RunCause::Output)?;
+    if let Some(kind) = kind {
+        let object = document
+            .as_object_mut()
+            .expect("inventory serializes as object");
+        object.retain(|name, _| name == "application" || name == "format" || name == kind);
+    }
+    Ok(Some(RunResult {
+        exit_code: 0,
+        value: NativeResult::version_document(document),
+    }))
 }
 
 /// Inspect a checked-package handoff and return the command's successful
