@@ -552,6 +552,80 @@ impl RunRefusal {
     pub fn category(&self) -> Category {
         self.code().category()
     }
+
+    /// FR-286 "Diagnostic details" and FR-100's refusal table: the one closed
+    /// object that locates this refusal inside the request and the call, or
+    /// `None` for a refusal whose row has none. The command-error envelope and
+    /// the outcome diagnostic carry this same object.
+    #[must_use]
+    pub fn details(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        use serde_json::{json, Value};
+        let object = |value: Value| match value {
+            Value::Object(members) => Some(members),
+            _ => None,
+        };
+        match self {
+            Self::MissingDeclaration { function } | Self::UnsupportedResult { function } => {
+                object(json!({"function": function}))
+            }
+            Self::UnknownParameter { parameter }
+            | Self::DuplicateArgument { parameter }
+            | Self::UnboundParameter { parameter } => object(json!({"parameter": parameter})),
+            Self::Argument { position, defect } => {
+                object(json!({"position": position, "path": defect.path}))
+            }
+            Self::UnsupportedParameter { position }
+            | Self::WrongValueKind { position }
+            | Self::DanglingReference { position }
+            | Self::Storage { position, .. } => object(json!({"position": position})),
+            Self::Admission { position, refusal } => match &refusal.cause {
+                ModelRefusalCause::ForeignUniverse { actual, expected } => object(json!({
+                    "position": position,
+                    "required": super::node_key_form(expected.root_type()),
+                    "supplied": super::node_key_form(actual),
+                })),
+                ModelRefusalCause::ForeignModelSelection { actual, expected } => {
+                    let expected = json!({"identity": expected.identity});
+                    match actual {
+                        OfferedSelection::Document(identity) => object(json!({
+                            "position": position,
+                            "model_identity": identity,
+                            "expected": expected,
+                        })),
+                        OfferedSelection::Population(population) => object(json!({
+                            "position": position,
+                            "population": {"package": population.package, "node": population.node},
+                            "expected": expected,
+                        })),
+                    }
+                }
+                ModelRefusalCause::ForeignType { member, type_name } => object(json!({
+                    "position": position,
+                    "member": member,
+                    "type": {"package": type_name.package, "node": type_name.node},
+                })),
+                _ => object(json!({"position": position})),
+            },
+            Self::Supplied(stop) => stop
+                .context
+                .parameter
+                .and_then(|position| object(json!({"position": position}))),
+            Self::UnsupportedHelper(stop) => stop
+                .context
+                .parameter
+                .and_then(|position| object(json!({"position": position}))),
+            Self::Fault(fault) => object(json!({
+                "stage": fault.stage(),
+                "invariant": fault.invariant(),
+            })),
+            Self::Compile(_)
+            | Self::SourceNotSupplied { .. }
+            | Self::ObjectEnvironment(_)
+            | Self::Cancelled(_)
+            | Self::Unsupported(_)
+            | Self::PrepareLimit(_) => None,
+        }
+    }
 }
 
 /// Compile `bytes` through the spine and call `call`'s named function with
@@ -681,12 +755,8 @@ pub(crate) fn run_reading<T>(
     };
     let bound_world;
     let objects = if call.snapshot.is_some() {
-        bound_world = bind_snapshot_populations(
-            objects,
-            models.models(),
-            selected.parameters,
-            call,
-        )?;
+        bound_world =
+            bind_snapshot_populations(objects, models.models(), selected.parameters, call)?;
         &bound_world
     } else {
         objects
@@ -1154,10 +1224,13 @@ pub(crate) fn argument_value(
             Value::Collection(value) => Ok(Value::Collection(value)),
             _ => Err(wrong()),
         },
-        ValueType::Quantity(_)
-        | ValueType::BoundedQuantity(_)
-        | ValueType::CarriedQuantity(_)
-        | ValueType::Map(_) => Err(wrong()),
+        ValueType::Quantity(_) | ValueType::BoundedQuantity(_) | ValueType::CarriedQuantity(_) => {
+            match value {
+                Value::Quantity(value) => Ok(Value::Quantity(value)),
+                _ => Err(wrong()),
+            }
+        }
+        ValueType::Map(_) => Err(wrong()),
     }
 }
 

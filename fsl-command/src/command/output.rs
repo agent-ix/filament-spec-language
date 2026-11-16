@@ -169,120 +169,19 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 .stage()
                 .map_or(types::Stage::Request, types::Stage::SpineRun),
             match refusal.as_ref() {
-                fsl_replay::spine::RunRefusal::MissingDeclaration { function }
-                | fsl_replay::spine::RunRefusal::UnsupportedResult { function } => {
-                    types::Details::Function { function }
-                }
-                fsl_replay::spine::RunRefusal::UnknownParameter { parameter }
-                | fsl_replay::spine::RunRefusal::DuplicateArgument { parameter }
-                | fsl_replay::spine::RunRefusal::UnboundParameter { parameter } => {
-                    types::Details::Parameter { parameter }
-                }
-                fsl_replay::spine::RunRefusal::Argument { position, defect } => {
-                    types::Details::Argument {
-                        position: *position,
-                        path: &defect.path,
-                    }
-                }
-                fsl_replay::spine::RunRefusal::UnsupportedParameter { position } => {
-                    types::Details::Position {
-                        position: *position,
-                    }
-                }
-                fsl_replay::spine::RunRefusal::WrongValueKind { position } => {
-                    types::Details::Position {
-                        position: *position,
-                    }
-                }
-                fsl_replay::spine::RunRefusal::Admission { position, refusal } => {
-                    match &refusal.cause {
-                        fsl_semantics::model::normalize::ModelRefusalCause::ForeignUniverse {
-                            actual,
-                            expected,
-                        } => types::Details::AdmissionForeignUniverse {
-                            position: *position,
-                            required: fsl_replay::spine::node_key_form(expected.root_type()),
-                            supplied: fsl_replay::spine::node_key_form(actual),
-                        },
-                        fsl_semantics::model::normalize::ModelRefusalCause::ForeignModelSelection {
-                            actual,
-                            expected,
-                        } => {
-                            let expected = types::AdmissionModelSelection {
-                                identity: expected.identity.clone(),
-                            };
-                            match actual {
-                                fsl_semantics::model::refusal::OfferedSelection::Document(
-                                    model_identity,
-                                ) => types::Details::AdmissionForeignModelDocument {
-                                    position: *position,
-                                    model_identity: model_identity.clone(),
-                                    expected,
-                                },
-                                fsl_semantics::model::refusal::OfferedSelection::Population(
-                                    population,
-                                ) => types::Details::AdmissionForeignModelPopulation {
-                                    position: *position,
-                                    population: types::AdmissionDeclarationKey {
-                                        package: population.package.clone(),
-                                        node: population.node.clone(),
-                                    },
-                                    expected,
-                                },
-                            }
-                        }
-                        fsl_semantics::model::normalize::ModelRefusalCause::ForeignType {
-                            member,
-                            type_name,
-                        } => types::Details::AdmissionForeignType {
-                            position: *position,
-                            member: member.clone(),
-                            type_name: types::AdmissionDeclarationKey {
-                                package: type_name.package.clone(),
-                                node: type_name.node.clone(),
-                            },
-                        },
-                        _ => types::Details::Position {
-                            position: *position,
-                        },
-                    }
-                }
-                fsl_replay::spine::RunRefusal::DanglingReference { position }
-                | fsl_replay::spine::RunRefusal::Storage { position, .. } => {
-                    types::Details::Position {
-                        position: *position,
-                    }
-                }
-                // The phase-marked pre-call stop names the argument it reached
-                // by position; its full record is the replay result's, and the
-                // command wire projection of it is a separate follow-on.
-                fsl_replay::spine::RunRefusal::Supplied(stop) => stop
-                    .context
-                    .parameter
-                    .map_or(types::Details::None, |position| types::Details::Position {
-                        position,
-                    }),
-                fsl_replay::spine::RunRefusal::UnsupportedHelper(stop) => stop
-                    .context
-                    .parameter
-                    .map_or(types::Details::None, |position| types::Details::Position {
-                        position,
-                    }),
+                // FR-049-AC-2: the object and the attribute the call's entry
+                // refused; no member of FR-286's closed `details` vocabulary.
                 fsl_replay::spine::RunRefusal::ObjectEnvironment(record) => {
                     types::Details::ObjectEnvironment {
                         object: record.fields.get("object").map(String::as_str),
                         field: record.fields.get("field").map(String::as_str),
                     }
                 }
-                fsl_replay::spine::RunRefusal::Compile(_)
-                | fsl_replay::spine::RunRefusal::SourceNotSupplied { .. }
-                | fsl_replay::spine::RunRefusal::Unsupported(_)
-                | fsl_replay::spine::RunRefusal::PrepareLimit(_)
-                | fsl_replay::spine::RunRefusal::Cancelled(_) => types::Details::None,
-                fsl_replay::spine::RunRefusal::Fault(fault) => types::Details::Invariant {
-                    stage: fault.stage(),
-                    invariant: fault.invariant(),
-                },
+                // FR-286 "Diagnostic details": the one closed object the
+                // outcome diagnostic carries too.
+                other => other
+                    .details()
+                    .map_or(types::Details::None, types::Details::Object),
             },
         ),
     };
@@ -300,6 +199,21 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     Some("unsupported-feature")
                 }
                 fsl_replay::spine::RunRefusal::Fault(_) => Some("established-invariant-broken"),
+                fsl_replay::spine::RunRefusal::Admission { refusal, .. } => match &refusal.cause {
+                    fsl_semantics::model::normalize::ModelRefusalCause::ForeignUniverse {
+                        ..
+                    } => Some("foreign-universe"),
+                    fsl_semantics::model::normalize::ModelRefusalCause::ForeignModelSelection {
+                        ..
+                    } => Some("foreign-model-selection"),
+                    fsl_semantics::model::normalize::ModelRefusalCause::ForeignType { .. } => {
+                        Some("foreign-type")
+                    }
+                    _ => None,
+                },
+                fsl_replay::spine::RunRefusal::DanglingReference { .. } => {
+                    Some("absent-target-in-complete-population")
+                }
                 fsl_replay::spine::RunRefusal::Storage { failure, .. } => {
                     fsl_semantics::value::environment_stage::membership_failure_cause(failure)
                 }

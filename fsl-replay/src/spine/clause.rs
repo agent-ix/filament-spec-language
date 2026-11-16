@@ -81,6 +81,8 @@ pub enum ClauseArgumentValue {
         /// The object's declared key.
         key: String,
     },
+    /// Any other FR-650 run value form, read against the parameter's type.
+    Form(serde_json::Value),
 }
 
 /// One `{parameter, value}` argument of a `Function` selection.
@@ -2017,6 +2019,39 @@ fn run_function(
                     ))));
                 };
                 Value::Reference(reference.clone())
+            }
+            (ClauseArgumentValue::Form(form), value_type) => {
+                let universe_of = |declared: &filament_exact::EffectiveId| {
+                    population_universe_for(
+                        package.graph().model_inputs(),
+                        packages,
+                        model_limits,
+                        declared.clone(),
+                    )
+                    .ok()
+                };
+                let world = super::run_value::World {
+                    objects: &environment,
+                    universe_of: &universe_of,
+                };
+                let forms = super::run_value::Forms::new(
+                    package.graph().scope().types(),
+                    package.graph().scope().enums(),
+                )
+                .in_world("", Some(&world));
+                match forms.read(form, value_type) {
+                    Ok(value) => value,
+                    Err(super::run_value::ReadStop::Defect(defect)) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                            RunRefusal::Argument { position, defect },
+                        ))))
+                    }
+                    Err(_) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                            RunRefusal::UnsupportedParameter { position },
+                        ))))
+                    }
+                }
             }
             _ => {
                 return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(

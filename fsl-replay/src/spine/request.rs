@@ -1379,6 +1379,7 @@ fn selection(
             let arguments = arguments
                 .into_iter()
                 .map(|(parameter, value)| {
+                    let raw = value.get().to_owned();
                     let document = quire_canonical::read(value.get().as_bytes(), u64::MAX)
                         .map_err(|error| invalid("arguments.value", error.to_string()))?;
                     let value = document.root();
@@ -1388,18 +1389,12 @@ fn selection(
                     };
                     let value = if let Some(integer) = parsed_integer {
                         ClauseArgumentValue::Integer(integer)
-                    } else if let Some(reference) = value.get("reference") {
-                        let Node::Object(object) = reference.node() else {
-                            return Err(invalid("arguments.value", "expected object reference"));
-                        };
-                        if object.len() != 2
-                            || !matches!(value.node(), Node::Object(members) if members.len() == 1)
-                        {
-                            return Err(invalid(
-                                "arguments.value",
-                                "expected one object reference",
-                            ));
-                        }
+                    } else if let Some(reference) = value.get("reference").filter(|reference| {
+                        matches!(reference.node(), Node::Object(object) if object.len() == 2
+                            && reference.get("population").is_some()
+                            && reference.get("key").is_some())
+                            && matches!(value.node(), Node::Object(members) if members.len() == 1)
+                    }) {
                         let population = match reference.get("population").map(|v| v.node()) {
                             Some(Node::String(value)) => value,
                             _ => {
@@ -1417,10 +1412,17 @@ fn selection(
                             population: population.to_owned(),
                             key: key.to_owned(),
                         }
+                    } else if matches!(value.node(), Node::Object(_)) {
+                        // FR-650: any other run value form, read against the
+                        // parameter's declared type at the call.
+                        ClauseArgumentValue::Form(
+                            serde_json::from_str(&raw)
+                                .map_err(|error| invalid("arguments.value", error.to_string()))?,
+                        )
                     } else {
                         return Err(invalid(
                             "arguments.value",
-                            "expected integer or object reference",
+                            "expected integer or a run value",
                         ));
                     };
                     Ok(ClauseArgument { parameter, value })

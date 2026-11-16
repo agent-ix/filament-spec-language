@@ -10,16 +10,16 @@
 
 use std::collections::BTreeSet;
 
+use super::identity_form;
 use filament_exact::{
     CollectionKind, CollectionType, Decimal, EffectiveId, EnumMember, FieldValue, IeeeValue,
-    IeeeWidth, Integer, Meter, NodeKey, ObjectId, ObjectReference, OptionValue, Presence,
-    Quantity, Rational, TextPayload, UniverseId, UnitId, Value, ValueType,
+    IeeeWidth, Integer, Meter, NodeKey, ObjectId, ObjectReference, OptionValue, Presence, Quantity,
+    Rational, TextPayload, UnitId, UniverseId, Value, ValueType,
 };
-use fsl_semantics::model::object_environment::ObjectEnvironment;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
-use super::identity_form;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::EnumBinding;
+use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde_json::{json, Map, Value as Json};
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
@@ -88,11 +88,7 @@ impl<'a> Forms<'a> {
 
     /// These forms for a unit whose own declarations live in `own_package`,
     /// over the call's object world.
-    pub(crate) fn in_world(
-        mut self,
-        own_package: &'a str,
-        world: Option<&'a World<'a>>,
-    ) -> Self {
+    pub(crate) fn in_world(mut self, own_package: &'a str, world: Option<&'a World<'a>>) -> Self {
         self.own_package = own_package;
         self.world = world;
         self
@@ -124,7 +120,9 @@ impl<'a> Forms<'a> {
             | ValueType::Timestamp
             | ValueType::Enum(_) => true,
             ValueType::Option(payload) => self.has_form_visiting(payload, false, seen),
-            ValueType::Collection(collection) => self.has_form_visiting(collection.element(), false, seen),
+            ValueType::Collection(collection) => {
+                self.has_form_visiting(collection.element(), false, seen)
+            }
             ValueType::Composite(key) => {
                 if !seen.insert(key.clone()) {
                     return true;
@@ -430,8 +428,14 @@ impl<'a> Forms<'a> {
         let object_type = identity_form::read_effective(&payload["type"], path);
         path.pop();
         let identity = string_member(payload, "object_identity", path)?;
-        let object = ObjectId::new(identity)
-            .map_err(|_| defect_below(Code::InvalidRuntimeInput, "invalid-value", path, &["object_identity"]))?;
+        let object = ObjectId::new(identity).map_err(|_| {
+            defect_below(
+                Code::InvalidRuntimeInput,
+                "invalid-value",
+                path,
+                &["object_identity"],
+            )
+        })?;
         Ok(Value::Reference(ObjectReference::new(
             universe?,
             object_type?,
@@ -577,7 +581,10 @@ impl<'a> Forms<'a> {
             ));
         }
         let rank = u32::try_from(position).map_err(|_| ReadStop::Fault("enum-rank"))?;
-        Ok(Value::Enum(EnumMember::new(variants[position].clone(), rank)))
+        Ok(Value::Enum(EnumMember::new(
+            variants[position].clone(),
+            rank,
+        )))
     }
 
     /// The declared name and the variants, in rank order, of the enum `shape`:
@@ -1197,7 +1204,12 @@ pub(crate) fn defect(code: Code, cause: &'static str, path: &Path) -> ReadStop {
     })
 }
 
-pub(crate) fn defect_below(code: Code, cause: &'static str, path: &Path, below: &[&str]) -> ReadStop {
+pub(crate) fn defect_below(
+    code: Code,
+    cause: &'static str,
+    path: &Path,
+    below: &[&str],
+) -> ReadStop {
     ReadStop::Defect(ArgumentDefect {
         code,
         cause,
@@ -1437,9 +1449,18 @@ mod tests {
             filament_exact::MapType::new(ValueType::String, ValueType::Boolean, None)
                 .expect("a leaf key"),
         ));
-        assert!(!forms.has_form(&map));
-        assert!(!forms.has_form(&ValueType::Population(None)));
-        assert!(!forms.has_form(&ValueType::option(map.clone())));
+        // A population is a form only at the top: a collection, an option or a
+        // map over one has none (a checked package can carry such a type
+        // though source cannot).
+        assert!(forms.has_form(&ValueType::Population(Some(1))));
+        let over_population = ValueType::option(ValueType::Population(Some(1)));
+        assert!(!forms.has_form(&over_population));
+        let sequence = ValueType::Collection(std::sync::Arc::new(CollectionType::new(
+            CollectionKind::Sequence,
+            ValueType::Population(Some(1)),
+            None,
+        )));
+        assert!(!forms.has_form(&sequence));
         assert!(forms.has_form(&ValueType::option(ValueType::Boolean)));
         let form = serde_json::json!({"boolean": true});
         assert!(matches!(
@@ -1475,5 +1496,4 @@ mod tests {
             ]})
         );
     }
-
 }

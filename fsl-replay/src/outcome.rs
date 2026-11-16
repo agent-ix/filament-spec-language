@@ -1494,6 +1494,9 @@ pub struct OutcomeDiagnostic {
         serialize_with = "serialize_source_label"
     )]
     label: Option<SourceLabel>,
+    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
+    /// the refusal inside the request and the call.
+    details: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 fn serialize_source_label<S>(label: &Option<SourceLabel>, serializer: S) -> Result<S::Ok, S::Error>
@@ -1518,7 +1521,19 @@ impl OutcomeDiagnostic {
             locus,
             message: message.into(),
             label: None,
+            details: None,
         }
+    }
+
+    /// This diagnostic with `details` (FR-286 "Diagnostic details"): the closed
+    /// object that locates the refusal, never empty.
+    #[must_use]
+    pub fn with_details(
+        mut self,
+        details: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Self {
+        self.details = details.filter(|members| !members.is_empty());
+        self
     }
 
     /// Project a source diagnostic without bytes or an admitted source.
@@ -1693,6 +1708,13 @@ impl Serialize for OutcomeDocument {
 pub struct OutcomeWriteError(#[from] serde_json::Error);
 
 impl OutcomeDocument {
+    /// This document with `last_stage` (FR-286): the greatest stage it entered.
+    #[must_use]
+    pub fn with_last_stage(mut self, last_stage: Option<OutcomeStage>) -> Self {
+        self.last_stage = last_stage;
+        self
+    }
+
     /// A document of `operation` that last reached `last_stage` with the
     /// outcome's `category`, and no items, diagnostics or artifacts.
     pub fn new(operation: Operation, last_stage: Option<OutcomeStage>, category: Category) -> Self {
@@ -2017,6 +2039,17 @@ impl OutcomeDocument {
     /// Project an existing run refusal without taking ownership or executing it.
     /// The caller names the operation whose pipeline produced the refusal.
     pub fn from_run_refusal(operation: Operation, refusal: &RunRefusal) -> Self {
+        let mut document = Self::run_refusal_document(operation, refusal);
+        if let Some(details) = refusal.details() {
+            document.diagnostics = std::mem::take(&mut document.diagnostics)
+                .into_iter()
+                .map(|diagnostic| diagnostic.with_details(Some(details.clone())))
+                .collect();
+        }
+        document
+    }
+
+    fn run_refusal_document(operation: Operation, refusal: &RunRefusal) -> Self {
         match refusal {
             RunRefusal::Compile(compile) => {
                 Self::new(operation, Some(compile.stage().into()), refusal.category())

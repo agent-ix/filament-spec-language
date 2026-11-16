@@ -62,7 +62,7 @@ use fsl_replay::{
 };
 use fsl_replay::{
     DeclineCode, IncompleteCause, ModelCheckRecord, Operation, OutcomeDiagnostic, OutcomeDocument,
-    OutcomeItem, ProofRefusalCause, TerminalRecord, TerminalValue,
+    OutcomeItem, OutcomeStage, ProofRefusalCause, TerminalRecord, TerminalValue,
 };
 use fsl_route::routing::Disposition;
 use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, RegistrationRefusal};
@@ -548,18 +548,18 @@ impl AnalyzeRefusal {
         match self {
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
+                    .with_last_stage(Some(OutcomeStage::S4))
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
-                OutcomeDocument::new(Operation::Analyze, None, category).with_diagnostics(vec![
-                    OutcomeDiagnostic::new(
+                OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
                         Some(catalog.cause()),
                         catalog.code(),
                         None,
                         refusal.to_string(),
-                    ),
-                ])
+                    )])
             }
         }
     }
@@ -620,7 +620,58 @@ pub fn analyze_document(
         .iter()
         .map(|record| analyze_item(record, counterexamples))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(OutcomeDocument::settled(Operation::Analyze, None, items))
+    // FR-286: a cancelled request names no stage.
+    let cancelled = records.iter().any(|record| {
+        matches!(
+            record.value(),
+            TerminalValue::Incomplete(IncompleteCause::Cancelled { .. })
+        )
+    });
+    let stage = records
+        .iter()
+        .map(|record| item_stage(record, counterexamples))
+        .max_by_key(|stage| stage_rank(*stage))
+        .unwrap_or(OutcomeStage::S4);
+    Ok(OutcomeDocument::settled(
+        Operation::Analyze,
+        (!cancelled).then_some(stage),
+        items,
+    ))
+}
+
+fn stage_rank(stage: OutcomeStage) -> u8 {
+    match stage {
+        OutcomeStage::S4 => 4,
+        OutcomeStage::S6b => 6,
+        OutcomeStage::S6c => 7,
+        OutcomeStage::S7 => 8,
+        _ => 9,
+    }
+}
+
+/// FR-621 "Last stage": the stage that settled `record`; the document takes
+/// the greatest of `S4` and its items'.
+fn item_stage(record: &TerminalRecord, counterexamples: &[ItemCounterexample]) -> OutcomeStage {
+    // A counterexample reaches the document only once its replay reproduced
+    // it; the state-graph one is built as a typed witness and not replayed.
+    if let Some(found) = counterexamples
+        .iter()
+        .find(|found| found.request_index == record.request_index())
+    {
+        return if matches!(found.counterexample, Counterexample::StateGraph(_)) {
+            OutcomeStage::S7
+        } else {
+            OutcomeStage::S8
+        };
+    }
+    if record.disposition_detail().is_some() {
+        return if record.backend().is_some() {
+            OutcomeStage::S6b
+        } else {
+            OutcomeStage::S4
+        };
+    }
+    OutcomeStage::S6c
 }
 
 /// The FR-286 item of `record`, with its counterexample from

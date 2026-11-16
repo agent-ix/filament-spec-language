@@ -13,7 +13,6 @@ use serde_json::{json, Map, Value as Json};
 
 use super::run_value::{defect, defect_below, wrong_kind, wrong_kind_at, Path, ReadStop};
 
-
 /// The universe as `{"package", "path", "ordinal"}`: the node id of the
 /// declaration of the universe's least root type (FSpec FR-181's
 /// `<node id>`).
