@@ -59,13 +59,14 @@ mod subject;
 pub use lifecycle::{
     admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,
     check_with_execution_points, check_with_execution_points_and_refinement_internals,
-    check_with_integer_division, check_with_profile_catalog, check_with_refinement_internals,
-    check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
-    package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
-    preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
-    CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
-    ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
-    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
+    check_with_integer_division, check_with_profile_catalog, check_with_profile_catalog_and_inputs,
+    check_with_refinement_internals, check_with_temporal_selections_and_execution_points,
+    core_vocabulary, extension_forms, package, package_with_temporal_selections, parse,
+    parse_selecting_extensions, parse_with_extensions, preflight_unit_list, refusal_or_fault,
+    select, select_units, AdmittedModels, AdmittedUnitList, CheckedUnit, EmittedUnit,
+    FrontEndFailure, ObligationState, PackageLimits, ParseRequest, ParsedUnitSource,
+    PendingObligation, ProfileCatalogInput, ProfileCheckFailure, ProtocolCheckSite, SourceInputs,
+    TypeDeclaration, TypeReport, TypeRequirement,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
@@ -198,8 +199,8 @@ pub use bind::{
 mod call;
 pub(crate) use call::run_reading;
 pub use call::{
-    default_accounting, run, Call, CallArgument, CallIncomplete, CallLocus, CallOutcome,
-    CallRefusal, CallValue, RunRefusal, DEFAULT_WORK_UNITS,
+    default_accounting, run, run_with_profile_catalog, Call, CallArgument, CallIncomplete,
+    CallLocus, CallOutcome, CallRefusal, CallValue, RunRefusal, DEFAULT_WORK_UNITS,
 };
 
 pub(crate) mod clause;

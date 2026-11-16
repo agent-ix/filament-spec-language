@@ -194,6 +194,7 @@ pub fn run_with_requirements(
         objects,
         &fsl_eval::execution::SuppliedBackends::default(),
         &fsl_eval::execution::PrepareLimits::default(),
+        None,
         cancel,
         |checked, _, _| {
             let graph = checked.package().graph();

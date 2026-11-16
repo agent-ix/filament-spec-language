@@ -208,6 +208,7 @@ struct FunctionRunData {
     libraries: Vec<FormalSource>,
     packages: fsl_semantics::model::intake::PackageInput,
     dependencies: fsl_replay::spine::DependencyInput,
+    extension_catalog: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     call: fsl_replay::spine::Call,
 }
 
@@ -1501,7 +1502,11 @@ fn check_sources<T>(
     let libraries = library_sources(request, intake)?;
     // FR-660: read definitions after the program and library sources, under
     // the same aggregate dependent-file ceiling.
-    let _extension_catalog = extension_catalog(&request.extensions, intake)?;
+    let extension_catalog = if request.extensions.is_empty() {
+        None
+    } else {
+        Some(extension_catalog(&request.extensions, intake)?)
+    };
     if request.handoff.is_some() && unit_list {
         return Err(RunCause::ClauseRequest {
             member: "handoff".to_owned(),
@@ -1581,9 +1586,19 @@ fn check_sources<T>(
     let parsed = parse_requests
         .iter()
         .map(|parse_request| {
-            fsl_replay::spine::parse(parse_request, limits.source, &cancel)
-                .map(|stage| stage.into_value())
-                .map_err(failure)
+            let parsed = match extension_catalog.as_ref() {
+                Some(catalog) => fsl_replay::spine::parse_selecting_extensions(
+                    parse_request,
+                    fsl_replay::spine::ProfileCatalogInput {
+                        catalog,
+                        limits: fsl_semantics::library::bundle::PackageLimits::default(),
+                    },
+                    limits.source,
+                    &cancel,
+                ),
+                None => fsl_replay::spine::parse(parse_request, limits.source, &cancel),
+            };
+            parsed.map(|stage| stage.into_value()).map_err(failure)
         })
         .collect::<Result<Vec<_>>>()?;
     let check_selections: Vec<_> = parsed
@@ -2021,7 +2036,11 @@ fn prepare_complete_run(
         .map(|library| Ok((library, intake.source(&library.source)?)))
         .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
     // FR-660: the same request-owned catalog is available to run compilation.
-    let _extension_catalog = extension_catalog(&request.extensions, intake)?;
+    let extension_catalog = if request.extensions.is_empty() {
+        None
+    } else {
+        Some(extension_catalog(&request.extensions, intake)?)
+    };
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {
             fsl_replay::spine::SuppliedLibrary {
@@ -2059,6 +2078,7 @@ fn prepare_complete_run(
             libraries: libraries.into_iter().map(|(_, source)| source).collect(),
             packages,
             dependencies,
+            extension_catalog,
             call: spine_call,
         }),
     }))
@@ -2080,19 +2100,37 @@ fn execute_prepared(prepared: PreparedRun) -> Result<RunResult> {
     };
     let prepared = *prepared.data;
     let source = &prepared.source;
-    let outcome = fsl_replay::spine::run(
-        source.source().identity().clone(),
-        package_name(source.source().identity()),
-        source.source().path(),
-        source.source().text().as_bytes(),
-        &prepared.packages,
-        &prepared.dependencies,
-        fsl_replay::spine::SpineLimits::default(),
-        &prepared.call,
-        &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-        &filament_exact::Cancel::new(),
-    )
-    .map_err(|refusal| match *refusal {
+    let run = |catalog: Option<&fsl_semantics::library::bundle::DefinitionCatalog>| match catalog {
+        Some(catalog) => fsl_replay::spine::run_with_profile_catalog(
+            source.source().identity().clone(),
+            package_name(source.source().identity()),
+            source.source().path(),
+            source.source().text().as_bytes(),
+            &prepared.packages,
+            &prepared.dependencies,
+            fsl_replay::spine::SpineLimits::default(),
+            &prepared.call,
+            &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            fsl_replay::spine::ProfileCatalogInput {
+                catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            },
+            &filament_exact::Cancel::new(),
+        ),
+        None => fsl_replay::spine::run(
+            source.source().identity().clone(),
+            package_name(source.source().identity()),
+            source.source().path(),
+            source.source().text().as_bytes(),
+            &prepared.packages,
+            &prepared.dependencies,
+            fsl_replay::spine::SpineLimits::default(),
+            &prepared.call,
+            &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            &filament_exact::Cancel::new(),
+        ),
+    };
+    let outcome = run(prepared.extension_catalog.as_ref()).map_err(|refusal| match *refusal {
         fsl_replay::spine::RunRefusal::Compile(compile_refusal) => {
             spine_run_failure(source, prepared.libraries.iter(), *compile_refusal)
         }
