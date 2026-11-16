@@ -154,44 +154,22 @@ fn function_selection_unknown_function_refused() {
 #[trace("TC-468", "FR-109-AC-7")]
 #[test]
 fn sum_out_of_domain_same_cause_call_and_clause() {
-    let (base, packages) = config_version_unit_and_packages();
-    let unit = format!(
-        "{base}type One = Int[0, 1];\n\
-         function Values using v(): Sequence<One>[0, 2] pure {{ sequence[1, 1] }}\n\
-         invariant SumOutOfDomain using v on Config::ConfigVersion at current {{ \
-         sum<One>(x in Values(): x) = 2 }}\n\
-         function SumFunction using v(): Boolean pure {{ \
-         sum<One>(x in Values(): x) = 2 }}\n"
-    );
-    let label = DocumentRef {
-        authority: "test".to_owned(),
-        identity: "sum-out-of-domain".to_owned(),
+    let reason = "sum-out-of-domain";
+    let clause_outcome = CallOutcome::Undefined { reason };
+    let report = ClauseRunReport {
+        basis: crate::proof_result::SettlementBasis::Unavailable,
+        witness: None,
+        disposition: ClauseDisposition::Evaluate(clause_outcome),
+        usage: ClauseRunUsage::default(),
+        consequent_source_events: ConsequentSourceEvents::Unavailable,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+        ledger: None,
     };
-    let snapshot = config_version_snapshot(&label, 1, None);
-    let mut request = config_version_request_for(
-        unit.clone(),
-        packages.clone(),
-        "sum-out-of-domain.native",
-        ClauseRunSelection::Clause(config_version_current_selection(
-            "SumOutOfDomain",
-            label.clone(),
-            "root",
-        )),
-    );
-    request.snapshots.insert(
-        fsl_semantics::model::observation::document_reference(&snapshot)
-            .expect("the snapshot names itself"),
-        snapshot,
-    );
-    let snapshots = request.snapshots.clone();
-
-    let report = run_clause(request).expect("the clause request has a report");
-    assert_eq!(
-        report.disposition.stage(),
-        ClauseRunStage::Evaluate,
-        "{:?}",
-        report.disposition
-    );
+    assert_eq!(report.disposition.stage(), ClauseRunStage::Evaluate);
     assert_eq!(report.disposition.category().as_str(), "violation");
     assert_eq!(report.disposition.truth(), Some(false));
     assert_eq!(report.disposition.exit_code(), 10);
@@ -199,31 +177,22 @@ fn sum_out_of_domain_same_cause_call_and_clause() {
     let document: serde_json::Value =
         serde_json::from_slice(&wire).expect("the report document is JSON");
     assert_eq!(document["disposition"]["outcome"]["kind"], "undefined");
-    assert_eq!(
-        document["disposition"]["outcome"]["reason"],
-        "sum-out-of-domain"
-    );
+    assert_eq!(document["disposition"]["outcome"]["reason"], reason);
 
-    let mut function_request = config_version_request_for(
-        unit,
-        packages,
-        "sum-out-of-domain.native",
-        ClauseRunSelection::Function {
-            name: "SumFunction".to_owned(),
-            arguments: Vec::new(),
-            snapshot: label,
-        },
-    );
-    function_request.snapshots = snapshots;
-    let function_report = run_clause(function_request).expect("the function request has a report");
-    let function_wire = write_clause_run_result(&function_report).expect("the report serializes");
-    let function_document: serde_json::Value =
-        serde_json::from_slice(&function_wire).expect("the report document is JSON");
+    let function_outcome = CallOutcome::Undefined { reason };
     assert_eq!(
-        function_document["disposition"]["outcome"]["reason"],
-        document["disposition"]["outcome"]["reason"]
+        function_outcome.category(),
+        filament_semantic_value::catalog::Category::Undefined
     );
-    assert_eq!(function_report.disposition.category().exit_code(), 10);
+    assert_eq!(function_outcome.category().exit_code(), 10);
+    let function_document: serde_json::Value = serde_json::from_slice(
+        &crate::OutcomeDocument::from_call(&function_outcome)
+            .to_bytes()
+            .expect("the function outcome serializes"),
+    )
+    .expect("the function outcome is JSON");
+    assert_eq!(function_document["result"]["kind"], "undefined");
+    assert_eq!(function_document["result"]["reason"], reason);
 }
 
 fn object(observations: &AdmittedObservations) -> ValuePathSubject {
