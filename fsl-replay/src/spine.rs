@@ -54,10 +54,18 @@ mod lifecycle;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 pub use fsl_package::TemporalClockSelection;
+#[cfg(feature = "quire-extraction")]
+mod native_fences;
+#[cfg(feature = "quire-extraction")]
+pub use native_fences::{
+    check_native_fences, CheckLimits, FenceCheckCause, NativeFenceDiagnostic, NativeFenceReport,
+    NativeFenceRequest, NativeFenceResult,
+};
 mod subject;
 pub use lifecycle::{
-    admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,
-    check_with_execution_points, check_with_execution_points_and_refinement_internals,
+    admit_parsed_unit_list, check, check_units, check_units_with_integer_division,
+    check_units_with_refinement_internals, check_with_execution_points,
+    check_with_execution_points_and_refinement_internals, check_with_integer_division,
     check_with_profile_catalog, check_with_refinement_internals,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
@@ -316,7 +324,7 @@ pub enum CompileRefusal {
     },
     /// E3 (FR-110): a header profile selection does not resolve against the
     /// closed `DefinitionRole` set.
-    #[error("header profile `{}` does not resolve: {}/{}", .refusals[0].alias, .refusals[0].code().as_str(), .refusals[0].cause())]
+    #[error("{}", .refusals[0].message())]
     Profile {
         /// Every refusing profile in source order, never empty.
         refusals: Vec<ProfileRefusal>,
@@ -843,6 +851,7 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
         return "no error recorded".to_owned();
     };
     let message = match &first.cause {
+        AssemblyCause::Profile(refusal) => refusal.message(),
         AssemblyCause::EmptyUnitList => "the package has no source units".to_owned(),
         AssemblyCause::UnresolvedTypeName { name } => format!("no declaration is named `{name}`"),
         AssemblyCause::UnresolvedUnitName { name, packages } => {
@@ -1998,6 +2007,8 @@ pub struct SuppliedLibrary {
 /// library per library identity, each source with its own owner.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DependencyInput {
+    /// Caller selections keyed by the exact source owner they apply to.
+    integer_division: BTreeMap<SourceIdentity, (crate::AdmittedIntegerDivision, String)>,
     libraries: BTreeMap<LibraryName, Arc<SuppliedLibrary>>,
     /// Every source unit of each supplied library, in canonical owner order.
     /// Single-source entries also appear here so library compilation has one
@@ -2126,6 +2137,17 @@ impl DependencyInputRefusal {
 }
 
 impl DependencyInput {
+    /// Attach an admitted caller law to one exact source owner (FR-767).
+    /// Other program units and imported libraries keep their own selections.
+    pub fn with_integer_division(
+        mut self,
+        source: SourceIdentity,
+        selection: crate::AdmittedIntegerDivision,
+        origin: String,
+    ) -> Self {
+        self.integer_division.insert(source, (selection, origin));
+        self
+    }
     /// The dependency input holding `libraries`, refusing, in supply order,
     /// an empty identity, a second library under one identity,
     /// and a library whose source repeats another library's owner.
@@ -2163,6 +2185,7 @@ impl DependencyInput {
             held.insert(identity, library);
         }
         Ok(Self {
+            integer_division: BTreeMap::new(),
             libraries: held,
             library_units,
             refinement_internals: BTreeMap::new(),

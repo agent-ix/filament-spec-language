@@ -27,8 +27,17 @@ use fsl_semantics::value::HeaderLayer;
 
 /// The current build's header-selectable layer identities for CST tooling.
 pub fn header_profile_catalog() -> ProfileCatalog {
-    ProfileCatalog::new(HeaderLayer::ALL.map(HeaderLayer::identity))
-        .expect("the six distinct layer identities fit the profile catalog")
+    ProfileCatalog::new(
+        HeaderLayer::ALL
+            .map(HeaderLayer::identity)
+            .into_iter()
+            .chain([
+                fsl_semantics::value::DefinitionRole::IntegerDivisionEuclidean.identity(),
+                fsl_semantics::value::DefinitionRole::IntegerDivisionFloor.identity(),
+                fsl_semantics::value::DefinitionRole::IntegerDivisionTruncating.identity(),
+            ]),
+    )
+    .expect("the closed header identities fit the profile catalog")
 }
 
 /// Parse while validating every selected profile against an exact definition

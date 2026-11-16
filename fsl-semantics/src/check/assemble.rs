@@ -305,6 +305,8 @@ pub enum SourceObjectFault {
 /// refuses in these cases").
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AssemblyCause {
+    /// A header's integer-division law conflicts with another selected law.
+    Profile(super::ProfileRefusal),
     /// The aggregate assembler was given no admitted source units.
     EmptyUnitList,
     /// A source object declaration the assembler refuses (FR-569).
@@ -642,6 +644,7 @@ impl AssemblyCause {
     /// This cause's catalog code (FR-091 "Catalog codes").
     pub fn code(&self) -> Code {
         match self {
+            Self::Profile(refusal) => refusal.code(),
             Self::EmptyUnitList => Code::InvalidPackage,
             Self::SourceObject(fault) => match fault {
                 SourceObjectFault::UnsupportedType => Code::UnknownRequiredFeature,
@@ -748,6 +751,7 @@ impl AssemblyCause {
     /// ADR-013 O-17).
     pub fn catalog_code(&self) -> CatalogCode {
         let cause = match self {
+            Self::Profile(refusal) => refusal.cause(),
             Self::EmptyUnitList => "established-invariant-broken",
             Self::SourceObject(fault) => match fault {
                 SourceObjectFault::UnsupportedType => "unsupported-feature",
@@ -4759,6 +4763,20 @@ impl PackageDeclarations {
                     .find(|profile| profile.alias == using.alias)
                 {
                     Some(profile) => {
+                        if super::integer_division_role(&profile.identity).is_some() {
+                            errors.push(AssemblyError {
+                                span: using.span,
+                                cause: AssemblyCause::Profile(super::ProfileRefusal {
+                                    alias: using.alias.clone(),
+                                    identity_span: using.span,
+                                    selected: profile.identity.clone(),
+                                    required_role: crate::value::DefinitionRole::Root,
+                                    root: crate::value::DefinitionRole::Root.reference(),
+                                    cause: super::ProfileCause::WrongSelectionRole,
+                                    supplied_by: None,
+                                }),
+                            });
+                        }
                         function_selections.insert(index, profile.clone());
                         // FR-110 "Layer selection".
                         if let Some(layer) = HeaderLayer::from_identity(&profile.identity) {
@@ -5454,6 +5472,13 @@ impl PackageDeclarations {
         }
 
         let mut package = PackageDeclarations::new(source, package_name, limits.identity);
+        package.integer_division = super::resolve_integer_division(&selections.profiles, None)
+            .map_err(|refusal| AssemblyRefusal {
+                errors: vec![AssemblyError {
+                    span: refusal.identity_span,
+                    cause: AssemblyCause::Profile(refusal),
+                }],
+            })?;
         package.decimal_literal_limits = limits.decimal_literal;
         package.sources = sources;
         package.source_owners = source_owners;

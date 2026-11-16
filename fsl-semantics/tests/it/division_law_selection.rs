@@ -78,7 +78,6 @@ const DIV_REM: &str = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 
 
 #[trace("TC-1780", "FR-670-AC-1", "FSpec-TC-1280", "FSpec-FR-570-AC-1")]
 #[test]
-#[ignore = "QSL-1989: a header profile naming the integer-division law is not resolved yet"]
 fn a_law_header_admits_div_and_rem_under_that_law() {
     for (law, profile) in [
         ("euclidean", DivisionProfile::Euclidean),
@@ -120,7 +119,6 @@ fn div_and_rem_with_no_law_refuse_missing_selection() {
 
 #[trace("TC-1781", "FR-670-AC-3", "FSpec-TC-1280", "FSpec-FR-570-AC-3")]
 #[test]
-#[ignore = "QSL-1989: two law headers naming different laws are not refused yet"]
 fn two_different_law_headers_refuse_conflicting_definition() {
     let headers = format!(
         "{VALUE}{}{}",
@@ -159,7 +157,6 @@ fn two_different_law_headers_refuse_conflicting_definition() {
 
 #[trace("TC-1781", "FR-670-AC-4", "FSpec-TC-1280", "FSpec-FR-570-AC-4")]
 #[test]
-#[ignore = "QSL-1989: a law alias in a using position is not refused wrong-selection-role yet"]
 fn a_law_alias_in_using_refuses_wrong_selection_role() {
     let headers = format!("{VALUE}{}", law_header("d", "floor"));
     let outcome = assemble(

@@ -117,6 +117,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             },
         ),
         RunCause::ClauseRequest { .. }
+        | RunCause::IntegerDivision { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. } => (types::Stage::Request, types::Details::None),

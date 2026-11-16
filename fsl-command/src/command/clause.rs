@@ -66,6 +66,12 @@ pub(super) fn read(
             bytes: read.source().text().as_bytes().to_vec(),
         }))
         .map_err(|error| invalid("libraries", error.to_string()))?;
+    let dependencies = super::with_integer_divisions(
+        dependencies,
+        request.integer_division.as_deref(),
+        &[source.source()],
+        &libraries,
+    )?;
     let observation_limits =
         fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
             .map_err(|error| invalid(error.member, error.reason))?;

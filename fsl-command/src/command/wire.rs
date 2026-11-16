@@ -33,6 +33,8 @@ pub(super) struct Envelope<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CompileRequest {
+    #[serde(default, deserialize_with = "present_string")]
+    pub integer_division: Option<String>,
     #[serde(deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
     #[serde(deserialize_with = "compile_program")]
@@ -119,6 +121,8 @@ fn compile_program<'de, D: serde::Deserializer<'de>>(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Library {
+    #[serde(default, deserialize_with = "present_string")]
+    pub integer_division: Option<String>,
     pub identity: String,
     /// FR-147/FR-099: this library's unchecked internal-list value.
     #[serde(default, deserialize_with = "present_json_value")]
@@ -133,9 +137,23 @@ fn present_json_value<'de, D: serde::Deserializer<'de>>(
     serde_json::Value::deserialize(decoder).map(Some)
 }
 
+fn present_string<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(decoder).map(Some).map_err(|error| {
+        serde::de::Error::custom(format!(
+            "integer_division must be a non-null string: {error}"
+        ))
+    })
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub package: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_string")]
+    pub integer_division: Option<String>,
     #[serde(deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
     #[serde(deserialize_with = "from_object")]
