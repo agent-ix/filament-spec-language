@@ -34,6 +34,6 @@ FR-712-AC-1 to FR-712-AC-4 through FSL's engine.
 - Step 3: `refuted` with a cycle through `reset`; `proved` without `reset`.
 - Step 4: `unsupported` `unsupported-requested-capability`, exit 21; `incomplete` `LimitReached{max_states}`, exit 22.
 - Step 5: each `state_graph_forms` lists `possible`, `always-possible` and `unique-path`.
-- Step 6: the same verdicts on `en-1`, basis `digitized-explicit-state`, integer delays that replay.
+- Step 6: the same verdicts on `en-1`, basis `exhaustive`, integer delays that replay.
 
 Test: `fsl-analyze/tests/it/timed_state_graph.rs`.

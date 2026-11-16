@@ -47,7 +47,7 @@ reachable. A timed state-graph item is therefore decided with its clocks,
 by one of the two routes FR-632 gives every timed item. Without
 `options.method`, or with `zones`, EN-6 decides it on its zone graph. With
 `digital-clocks`, EN-1 decides it over the integer-clock reading of the closed
-subject (FR-243), with basis `digitized-explicit-state`; digitization keeps
+subject (FR-243), with basis `exhaustive`; digitization keeps
 the clocks, and over a closed subject it gives the zone verdict, so the route
 is a cross-check of the zone result. `method` is a provider option EN-1
 publishes as `digital-clocks` and EN-6 as `zones`, so one item reaches one
@@ -81,7 +81,7 @@ and `exploration`.
   zones where `Q` holds; `unique path` by counting realizable discrete-step
   sequences on the zone graph. On `digital-clocks`, EN-1 SHALL decide each
   instance by FSpec FR-712 over the digitized timed state graph, with basis
-  `digitized-explicit-state` and integer delays that replay.
+  `exhaustive` and integer delays that replay.
 - **Witness and counterexample.** A `possible` proof carries, for each
   initial state, a witness path; an `always possible` refutation carries a
   path to a reachable state where `Q` holds and from which no `P` state is
@@ -119,7 +119,7 @@ invariants `x <= 3 ms` while in flight and `x <= 4 ms` while `phase` is 1.
 | FR-852-AC-3 | `unique path OneReply using v over (c: M::Call) from (c.phase = 0) to (c.phase = 2);` settles `refuted` with a cycle through `reset`, and over the subject with `reset` removed settles `proved`. | Test (TC-2412) |
 | FR-852-AC-4 | AC-1's `Replied` item with `backend` `en-1` and no `options.method` settles `unsupported` with `unsupported_projection`/`unsupported-requested-capability`, exit 21; with `temporal.limits.max_states` 1 it settles `incomplete` `LimitReached{max_states}`, exit 22. | Test (TC-2412) |
 | FR-852-AC-5 | `Engines::fsl()`'s `en-6` registration lists `possible`, `always-possible` and `unique-path` in `state_graph_forms`. | Test (TC-2412) |
-| FR-852-AC-6 | AC-1's `Replied` and `Late` items with `options.method` `digital-clocks` settle the same verdicts on backend `en-1`, the proof with basis `digitized-explicit-state` and witness delays that are integers and replay; `Engines::fsl()`'s `en-1` registration lists the three state-graph forms. | Test (TC-2412) |
+| FR-852-AC-6 | AC-1's `Replied` and `Late` items with `options.method` `digital-clocks` settle the same verdicts on backend `en-1`, the proof with basis `exhaustive` and witness delays that are integers and replay; `Engines::fsl()`'s `en-1` registration lists the three state-graph forms. | Test (TC-2412) |
 
 ## Dependencies
 
