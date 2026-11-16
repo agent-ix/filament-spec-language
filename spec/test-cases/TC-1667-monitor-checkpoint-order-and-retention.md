@@ -14,10 +14,10 @@ Verify FR-643-AC-4 and AC-5: a checkpoint resumes to the same later reports, a m
 
 ## Test Procedure
 
-Checkpoint TC-1666's session after step 2 and resume it; resume under another package and clause list; feed a stamp at the retained watermark, then a correct one; open with `retained_positions` 2 over an infinite-trace and a bounded clause.
+Checkpoint TC-1666's session after step 2 and resume it; resume under another package and clause list; feed a stamp at the retained watermark, then a correct one; assert progress with scope `closed` and feed one more observation; open a `Finite` session with `retained_positions` 2 over `Recent` (`count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1`, a window of four positions), `Reaches` and `Never`, and feed levels 0, 1, 0.
 
 ## Expected Results
 
 - The resumed session reports steps 3 to 5 as the original; mismatches refuse `monitor-state-mismatch`.
-- The regressing stamp refuses `Watermark` and the next observation is accepted.
-- The infinite-trace clause reports `incomplete` naming `monitor.retained_positions`; the bounded clause settles.
+- The regressing stamp refuses `Watermark` and the next observation is accepted; the observation after the closed scope refuses `Closure` and leaves the session unchanged.
+- `Recent` settles `incomplete` naming `monitor.retained_positions` at the third observation; `Reaches` and `Never`, which retain no value, stay `Pending`.

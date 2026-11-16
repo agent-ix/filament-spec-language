@@ -18,6 +18,7 @@ Open a session over FR-330's `Bounded`, `Reaches` and `always holds(c.value <= 1
 
 ## Expected Results
 
-- Every step's reports equal the prefix batch reports; `finish(Closed)` equals the closed batch run.
+- A pending clause's report equals the prefix batch report; `Bounded` settles `violation` at step 2 and `always holds(c.value <= 1)` at step 3, each then reporting the batch report over its deciding prefix, with the longer prefixes' batch reports of the same category and truth; `Reaches` stays pending; `finish()` returns the batch report over five snapshots for `Reaches`.
+- A pending clause whose report changes is named as changed with status still pending; a clause becomes settled only at its deciding step.
 - The violation settled at `c.value` 2 is reported unchanged afterwards.
 - The `Timestamped` session ends with FR-501-AC-4's outcome and the batch run's ledger.
