@@ -825,9 +825,10 @@ fn normalize_decimals(form: &mut Json) {
             let is_decimal = object.get("kind") == Some(&json!("decimal"));
             if is_decimal {
                 let parts = match (object.get("coefficient"), object.get("scale")) {
-                    (Some(Json::String(coefficient)), Some(Json::String(scale))) => {
-                        scale.parse::<u32>().ok().map(|scale| (coefficient.clone(), scale))
-                    }
+                    (Some(Json::String(coefficient)), Some(Json::String(scale))) => scale
+                        .parse::<u32>()
+                        .ok()
+                        .map(|scale| (coefficient.clone(), scale)),
                     _ => None,
                 };
                 if let Some((mut coefficient, mut scale)) = parts {
@@ -1158,11 +1159,8 @@ mod tests {
             filament_exact::RoundingMode::Exact,
         )
         .expect("a decimal type");
-        let collection = CollectionType::new(
-            CollectionKind::Set,
-            ValueType::Decimal(decimal),
-            None,
-        );
+        let collection =
+            CollectionType::new(CollectionKind::Set, ValueType::Decimal(decimal), None);
         let ten = Value::Decimal(Decimal::new(Integer::from(10_i64), 0));
         let one = Value::Decimal(Decimal::new(Integer::from(100_i64), 2));
         let set = filament_exact::from_admitted(collection, vec![ten, one]);

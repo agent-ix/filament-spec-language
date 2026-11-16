@@ -60,11 +60,18 @@ impl std::fmt::Display for MonitorEvent {
 #[derive(Clone, Debug)]
 pub struct MonitorSummary {
     value: Value,
+    outcome: fsl_replay::OutcomeDocument,
     /// The exit code of the run.
     pub exit_code: u8,
 }
 
 impl MonitorSummary {
+    /// The FR-286 `monitor` outcome document of the run (category and last
+    /// stage).
+    pub fn outcome(&self) -> &fsl_replay::OutcomeDocument {
+        &self.outcome
+    }
+
     /// The summary as its JSON object.
     pub fn as_value(&self) -> &Value {
         &self.value
@@ -620,6 +627,13 @@ fn stream(
         }
         None => Value::Null,
     };
+    let lifecycle = outcome.document().unwrap_or_else(|_| {
+        fsl_replay::OutcomeDocument::new(
+            fsl_replay::Operation::Monitor,
+            None,
+            filament_semantic_value::catalog::Category::InternalFailure,
+        )
+    });
     let value = json!({
         "format": SUMMARY_FORMAT,
         "clauses": clauses,
@@ -629,6 +643,7 @@ fn stream(
     });
     Ok(MonitorSummary {
         value,
+        outcome: lifecycle,
         exit_code: severity_exit(codes.into_iter()),
     })
 }
@@ -709,7 +724,7 @@ pub(super) fn run_bytes(
             "events": events,
             "summary": summary.value,
         })),
-        outcome: None,
+        outcome: Some(summary.outcome),
     })
 }
 

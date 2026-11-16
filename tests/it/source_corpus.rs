@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Drive checked-in source programs through the public command entry points.
 
+use filament_exact::Cancel;
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
 use serde::Deserialize;
@@ -194,25 +195,33 @@ fn execute_request(
     .map_err(|error| format!("{}: invalid request: {error}", request.display()))?;
     require_paired_program(request, paired_program, &request_json)?;
     match request_json.get("format").and_then(Value::as_str) {
-        Some("native-run/1") => {
-            if expected.verb != "run" {
+        Some(format @ ("native-run/1" | "native-monitor/1" | "native-analyze/1")) => {
+            let (verb, operation) = match format {
+                "native-run/1" => ("run", Operation::Execute),
+                "native-monitor/1" => ("monitor", Operation::Monitor),
+                _ => ("analyze", Operation::Analyze),
+            };
+            if expected.verb != verb {
                 return Err(format!(
-                    "{}: expected verb {:?} does not match native-run/1 request",
+                    "{}: expected verb {:?} does not match {format} request",
                     request.display(),
                     expected.verb
                 ));
             }
-            match fsl_command::command::run(request) {
+            let ran = if format == "native-analyze/1" {
+                fsl_command::command::analyze(request, &OneCandidate, &Cancel::new())
+            } else {
+                fsl_command::command::run(request)
+            };
+            match ran {
                 Ok(result) => {
                     let value = result.value.as_value().clone();
                     let outcome = value.get("outcome");
                     let (category, last_stage) = match &result.outcome {
-                        Some(document) => {
-                            let (category, last_stage) = lifecycle(document)?;
-                            (Some(category), Some(last_stage))
-                        }
-                        None => (None, None),
+                        Some(document) => lifecycle(document)?,
+                        None => lifecycle_members(&value)?,
                     };
+                    let (category, last_stage) = (Some(category), Some(last_stage));
                     Ok(Actual {
                         exit_code: result.exit_code,
                         category,
@@ -234,11 +243,11 @@ fn execute_request(
                     let value = error.value().map_err(|error| {
                         format!("{}: cannot encode refusal: {error}", request.display())
                     })?;
-                    Ok(actual_error(
-                        &error.outcome_document(Operation::Execute),
+                    actual_error(
+                        &error.outcome_document(operation),
                         error.category().exit_code(),
                         &value,
-                    )?)
+                    )
                 }
             }
         }
@@ -425,6 +434,11 @@ fn lifecycle(document: &OutcomeDocument) -> Result<(String, Option<String>), Str
         .map_err(|error| format!("cannot encode the lifecycle outcome: {error}"))?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid lifecycle outcome: {error}"))?;
+    lifecycle_members(&value)
+}
+
+/// The `category` and `last_stage` members of a `filament-outcome/1` document.
+fn lifecycle_members(value: &Value) -> Result<(String, Option<String>), String> {
     let object = value
         .as_object()
         .ok_or_else(|| "the lifecycle outcome is not an object".to_owned())?;
@@ -930,4 +944,160 @@ fn corpus_runner_detects_missing_lifecycle_fields() {
 
 fn mismatch_of(expected: &Expectation, actual: &Actual) -> Option<String> {
     mismatch(Path::new("case.native"), expected, actual)
+}
+
+/// FSpec FR-290's negotiation for the analyze corpus cases: one candidate is
+/// `supported`, none `unsupported`.
+struct OneCandidate;
+
+impl fsl_analyze::analyze::document::Negotiate for OneCandidate {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        use fsl_analyze::analyze::{Diagnostic, Payload};
+        use fsl_route::routing::Disposition;
+        match candidates {
+            fsl_route::CandidateOutcome::Candidates(set) if set.candidates().len() == 1 => {
+                (Disposition::Supported(set.candidates()[0].clone()), None)
+            }
+            _ => (
+                Disposition::Unsupported,
+                Some(Diagnostic {
+                    code: fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                    payload: Payload::Kind(item.kind),
+                }),
+            ),
+        }
+    }
+}
+
+const LIFECYCLE_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
+    profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+    profile f = \"filament.temporal.fixed-sample.false-extension/v1\";\n\
+    profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+    profile i = \"filament.temporal.infinite-trace/v1\";\n\
+    dimension Time;\n\
+    unit s : Time = rational(1, 1);\n\
+    unit ms : Time = rational(1, 1000) * s;\n\
+    record Reading { level: Int[0, 9]; }\n\
+    temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
+    temporal S using f over (r: Reading) clock \"sample\" on origin { eventually[0,3] holds(r.level = 2) }\n\
+    temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
+    temporal Reaches using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 2) }\n\
+    temporal Never using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 2) }\n";
+
+fn lifecycle_program(stem: &str) -> Value {
+    json!({"source": {"file": format!("{stem}.native"), "authority": "agent-ix",
+        "identity": format!("test:corpus:{stem}"), "document": "Lifecycle", "formal_revision": 1}})
+}
+
+fn level(level: i64) -> Value {
+    json!({"sample": {"level": {"integer": level.to_string()}}})
+}
+
+fn lifecycle_clocks() -> Value {
+    json!({
+        "events": {"kind": "event_position", "sequence_authority": "events"},
+        "sample": {"kind": "fixed_sample",
+            "epoch": {"kind": "integer", "decimal": "0"},
+            "period": {"kind": "integer", "decimal": "1"}, "unit": "s"},
+        "plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"},
+    })
+}
+
+/// FR-286-AC-1, FR-286-AC-5, TC-770: a clause run, a monitor run and an
+/// analyze run each carry `category` and `last_stage`, and the runner
+/// compares both for each.
+#[test]
+#[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
+fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
+    // A clause run over a temporal clause still pending at the end of the
+    // trace: pending at S6a.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "clause",
+        LIFECYCLE_UNIT,
+        &json!({"verb":"run","exit_code":0,"category":"pending","last_stage":"S6a"}).to_string(),
+    );
+    let request = json!({"format":"native-run/1","request":{
+        "models":[], "program": lifecycle_program("clause"), "clocks": lifecycle_clocks(),
+        "clause":{"selection":{"temporal":{"name":"Reaches",
+            "trace":{"finite":[level(0), level(2)]}}},"observations":{}}}});
+    std::fs::write(
+        directory.path().join("clause.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // A monitor run whose `Never` clause is violated: violation at S6a.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "monitor",
+        LIFECYCLE_UNIT,
+        &json!({"verb":"monitor","exit_code":10,"category":"violation","last_stage":"S6a"})
+            .to_string(),
+    );
+    let mut records: Vec<String> = [0, 1, 2, 1]
+        .iter()
+        .map(|value| json!({"observation": level(*value)}).to_string())
+        .collect();
+    records.push(json!({"end": true}).to_string());
+    std::fs::write(directory.path().join("records.jsonl"), records.join("\n")).unwrap();
+    let request = json!({"format":"native-monitor/1","request":{
+        "models":[], "program": lifecycle_program("monitor"), "clocks": lifecycle_clocks(),
+        "clauses":[{"name":"Reaches"},{"name":"Never"}],
+        "trace":{"kind":"finite"}, "records":"records.jsonl"}});
+    std::fs::write(
+        directory.path().join("monitor.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // An analyze run whose claim holds. FR-621 writes `last_stage` null.
+    let directory = tempfile::tempdir().unwrap();
+    let unit = format!(
+        "{}temporal Q using t0 over (c: M::Counter) clock \"model-steps\" on origin {{ always holds(c.value <= 3) }}\n",
+        std::str::from_utf8(include_bytes!("../../fsl-conformance/cases/counter-step.native"))
+            .unwrap()
+    );
+    write_case(
+        directory.path(),
+        "analyze",
+        &unit,
+        &json!({"verb":"analyze","exit_code":0,"category":"success","last_stage":null}).to_string(),
+    );
+    std::fs::write(
+        directory.path().join("package.json"),
+        include_bytes!("../../fsl-conformance/cases/counter-step-package.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("v0.json"),
+        include_bytes!("../../fsl-conformance/cases/counter-step-v0.json"),
+    )
+    .unwrap();
+    let request = json!({"format":"native-analyze/1","request":{
+        "program": {"source": {"file": "analyze.native", "authority": "test",
+            "identity": "counter-step", "document": "CounterStep", "formal_revision": 1}},
+        "models": [{"format": "semantic-ir/2.0.0", "source": {"file": "package.json",
+            "authority": "test", "identity": "counter-step-package", "document": "Package",
+            "formal_revision": 1}}],
+        "documents": [{"file": "v0.json"}],
+        "items": [{"claim": "Q"}]}});
+    std::fs::write(
+        directory.path().join("analyze.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
 }

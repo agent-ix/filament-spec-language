@@ -325,6 +325,23 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
     }
 }
 
+/// The FR-286 `monitor` document of clause runs, which reach S6a. A run no
+/// item can carry (an evaluator fault fails the whole request, FR-283)
+/// settles internal-failure with no stage (FR-286 `last_stage`).
+pub(super) fn monitor_outcome<'a>(
+    runs: impl IntoIterator<Item = (&'a str, &'a fsl_replay::spine::ClauseRunReport)>,
+) -> fsl_replay::OutcomeDocument {
+    use filament_semantic_value::catalog::Category;
+    fsl_replay::OutcomeDocument::from_clause_runs(Some(fsl_replay::OutcomeStage::S6a), runs)
+        .unwrap_or_else(|_| {
+            fsl_replay::OutcomeDocument::new(
+                fsl_replay::Operation::Monitor,
+                None,
+                Category::InternalFailure,
+            )
+        })
+}
+
 /// FR-267: expose the library's canonical clause report to the CLI adapter.
 pub(super) fn clause_report(
     report: &fsl_replay::spine::ClauseRunReport,
@@ -332,12 +349,13 @@ pub(super) fn clause_report(
 ) -> super::Result<RunResult> {
     let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
         .map_err(RunCause::ClauseOutput)?;
+    let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
     let value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
     Ok(RunResult {
         // FR-285: a finite-window `pending` exits 0 and `indeterminate` 11.
         exit_code: report.disposition.exit_code(),
         value: NativeResult(value),
-        outcome: None,
+        outcome: Some(outcome),
     })
 }
 

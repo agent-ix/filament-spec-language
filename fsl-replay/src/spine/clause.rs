@@ -147,6 +147,25 @@ pub enum ClauseRunSelection {
 }
 
 impl ClauseRunSelection {
+    /// The name an FR-286 `monitor` item carries for this selection: the
+    /// clause, function or temporal clause name, or the frame's operation
+    /// as `M::T::op`.
+    #[must_use]
+    pub fn clause_name(&self) -> String {
+        match self {
+            Self::Clause(selection) => selection.name.clone(),
+            Self::Function { name, .. }
+            | Self::Temporal { name, .. }
+            | Self::SampledTemporal { name, .. } => name.clone(),
+            Self::Frame { operation, .. } => format!(
+                "{}::{}::{}",
+                operation.model.as_str(),
+                operation.object.as_str(),
+                operation.operation.as_str()
+            ),
+        }
+    }
+
     /// FR-645: the member path, from `clause`, of the part of the request's
     /// trace that the trace refusal `reason` is about; `None` for a selection
     /// that holds no trace.
