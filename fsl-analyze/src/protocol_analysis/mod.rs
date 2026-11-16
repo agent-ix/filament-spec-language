@@ -8,6 +8,7 @@
 //! provider manifest ([`manifest`]) and its `analyze` item adapters, which
 //! settle each result by the FR-573 map (PA-4, PA-20).
 
+mod finite_replay;
 mod item;
 pub mod manifest;
 mod profile;
@@ -16,6 +17,7 @@ mod realize;
 mod step_view;
 mod subject;
 
+pub(crate) use finite_replay::{finite_replay_item, FiniteReplayReport, SuppliedTrace};
 pub(crate) use item::settle;
 pub use item::{projection_item, realizability_item, ProtocolAnalysisArtifact};
 pub use profile::{unsupported_construct, Profile};

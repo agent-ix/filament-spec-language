@@ -147,6 +147,24 @@ fn read<'d>(
             ));
         }
     }
+    // FR-636: a `trace` naming no provisioned document refuses the request.
+    for (position, trace) in request
+        .items
+        .iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(position, item)| item.trace.as_ref().map(|trace| (position, trace)))
+    {
+        if documents.get(&trace.reference()).is_none() {
+            return Err(invalid(
+                "items",
+                format!(
+                    "items[{position}].trace {{{}, {}}} names no provisioned document",
+                    trace.authority, trace.identity
+                ),
+            ));
+        }
+    }
     let mut limits = AnalyzeLimits::unbounded();
     let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
     for (setting, bound) in request.limits.accounting.entries() {

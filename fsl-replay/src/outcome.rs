@@ -1106,7 +1106,12 @@ impl OutcomeItem {
             | TerminalValue::Failed
             | TerminalValue::ToolFailed(_) => None,
         };
-        let diagnostic = match (record.disposition_detail(), record.diagnostic()) {
+        let diagnostic = match (
+            record
+                .disposition_detail()
+                .or_else(|| record.diagnostic_detail()),
+            record.diagnostic(),
+        ) {
             (Some(detail), Some(code)) => Some(ItemDiagnostic {
                 code: code.code(),
                 cause: code.cause(),

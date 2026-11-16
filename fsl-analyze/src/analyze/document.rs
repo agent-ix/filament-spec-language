@@ -50,7 +50,8 @@ pub struct DocumentSelection {
 }
 
 impl DocumentSelection {
-    fn reference(&self) -> DocumentRef {
+    /// The document reference this selection names.
+    pub fn reference(&self) -> DocumentRef {
         DocumentRef {
             authority: self.authority.clone(),
             identity: self.identity.clone(),
@@ -538,7 +539,8 @@ impl ItemSelection {
             || self.correspondence.is_some()
             || self.premises.is_some()
             || self.assessed_root.is_some()
-            || self.trace.is_some()
+            || (self.trace.is_some()
+                && self.kind.as_deref() != Some(Capability::FiniteReplay.to_wire()))
             || self.simulation.is_some()
             || self
                 .options
@@ -885,6 +887,7 @@ fn resolve_one(
         options: ItemOptions {
             required: selection.required.unwrap_or(true),
             max_cases: selection.check.map(|check| check.limits.max_cases),
+            trace: selection.trace.as_ref().map(DocumentSelection::reference),
         },
         form,
     };
@@ -995,6 +998,7 @@ fn resolve_derived(
     claim.item.options = ItemOptions {
         required: selection.required.unwrap_or(true),
         max_cases: None,
+        trace: None,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
     form.pending_reductions.clone_from(&selection.reductions);
@@ -1271,6 +1275,7 @@ fn derived_items(
                     options: ItemOptions {
                         required: true,
                         max_cases: None,
+                        trace: None,
                     },
                     form: Some(ItemForm::Temporal(TemporalItem {
                         item_kind: item.item_kind().unwrap_or(ItemKind::Formula),

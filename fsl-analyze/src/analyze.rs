@@ -79,6 +79,7 @@ pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRA
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub(crate) use items::admission;
 pub use items::{
     derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
@@ -876,6 +877,8 @@ pub(crate) enum EngineReport {
     Exact(Box<exact::ExactReport>),
     /// The protocol analysis engine's report, settled by FR-573's map.
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
+    /// The protocol analysis engine's replay of a supplied finite trace.
+    FiniteReplay(crate::protocol_analysis::FiniteReplayReport),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
@@ -1693,6 +1696,30 @@ fn settle(
         }
         EngineReport::Statistical(statistical) => {
             record(terminal(statistical.into_terminal(index, backend)), None)
+        }
+        EngineReport::FiniteReplay(report) => {
+            let settled_record = match report {
+                crate::protocol_analysis::FiniteReplayReport::Replayed(steps) => {
+                    TerminalRecord::proved_by_replay(index, backend, steps)
+                }
+                crate::protocol_analysis::FiniteReplayReport::Declined(position) => {
+                    let declined = TerminalRecord::declined_with(
+                        index,
+                        backend,
+                        ProofRefusalCause::InvalidInput,
+                        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                    );
+                    match position {
+                        Some(position) => declined.with_diagnostic_detail(
+                            std::iter::once(("position".to_owned(), serde_json::json!(position)))
+                                .collect(),
+                        ),
+                        None => declined,
+                    }
+                }
+            };
+            record(terminal(settled_record), None)
         }
         EngineReport::ProtocolAnalysis(report) => {
             let (settled_record, artifact) =

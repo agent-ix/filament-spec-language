@@ -86,6 +86,8 @@ pub struct ItemOptions {
     pub required: bool,
     /// Optional finite assignment/case budget of the native check arms.
     pub max_cases: Option<std::num::NonZeroU64>,
+    /// The provisioned document a `finite-replay` item replays.
+    pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
 }
 
 /// One claim occurrence and its kind-specific, subject-free settings.
@@ -623,6 +625,34 @@ fn work<'a>(
                     reported: None,
                 });
                 super::value_item(item.request_index, package, &item.claim, selection)
+            }
+        }
+        None if item.kind == Capability::FiniteReplay => {
+            let protocol = package.graph().protocols().iter().find(|protocol| {
+                package
+                    .graph()
+                    .protocol_node_keys(&protocol.name)
+                    .and_then(|keys| keys.clause.as_ref())
+                    == Some(item.claim.node())
+            });
+            match protocol {
+                Some(protocol) => {
+                    let trace = item
+                        .options
+                        .trace
+                        .as_ref()
+                        .and_then(|reference| binding.snapshots.get(reference))
+                        .and_then(|bytes| crate::protocol_analysis::SuppliedTrace::read(bytes));
+                    crate::protocol_analysis::finite_replay_item(
+                        item.request_index,
+                        package,
+                        binding.clone(),
+                        *limits,
+                        protocol,
+                        trace,
+                    )
+                }
+                None => absent(),
             }
         }
         None if item.kind == Capability::OperationContract => {
