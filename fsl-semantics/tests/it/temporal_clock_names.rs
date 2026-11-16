@@ -294,7 +294,11 @@ fn sole_binding(graph: &CheckedGraph) -> String {
 #[trace("TC-2622", "FR-942-AC-1", "FSpec-TC-1840", "FSpec-FR-765-AC-1")]
 #[test]
 fn an_unwritten_clock_under_a_step_profile_binds_model_steps_over_a_timed_model() {
-    let steps = profile_t("filament.temporal.event-position.false-extension/v1");
+    // The model's `time` declaration needs the complete temporal layer.
+    let steps = format!(
+        "{}profile tc = \"filament.temporal.complete/v1\";\n",
+        profile_t("filament.temporal.event-position.false-extension/v1")
+    );
     let unwritten = check_with(
         &steps,
         &unclocked(TIMED_MODEL, "eventually[0,3] holds(c.versionNumber = 2)"),
