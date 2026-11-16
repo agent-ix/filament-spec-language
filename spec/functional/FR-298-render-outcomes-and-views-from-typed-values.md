@@ -53,6 +53,9 @@ Text forms:
 - A `proved` record renders its certification, `certified`, `uncertified`
   or `trusted`, beside the verdict.
 - Bulk content renders as a bounded descriptor (FR-073).
+- A whole outcome document renders as FR-865 states: a header line naming
+  its operation, category, exit code and last stage, then its diagnostics,
+  items and result. It is the driver's default output.
 
 DOT is available for the state-graph and trace views.
 
