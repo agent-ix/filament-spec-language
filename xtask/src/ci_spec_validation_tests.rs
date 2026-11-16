@@ -41,7 +41,7 @@ fn owned_fixture() -> tempfile::TempDir {
 }
 
 fn make(root: &Path) -> Command {
-    make_with_file(root, &workspace().join("Makefile"))
+    make_with_file(root, &workspace().join("Makefile")).env("CARGO_TARGET_DIR", root.join("target"))
 }
 
 fn make_with_file(root: &Path, file: &Path) -> Command {
@@ -225,7 +225,15 @@ fn native_quire_without_npm_launcher_fails_with_a_clear_diagnostic() {
     std::fs::copy(node, tools.join("node")).unwrap();
     std::fs::copy(npm, tools.join("npm")).unwrap();
     write_native_quire(&native_bin);
-    let path = prepend_path(&[&tools, &native_bin, &rustc_directory()]);
+    let rustc_dir = rustc_directory();
+    let path = std::env::join_paths([
+        tools.as_path(),
+        native_bin.as_path(),
+        rustc_dir.as_path(),
+        Path::new("/usr/bin"),
+        Path::new("/bin"),
+    ])
+    .unwrap();
     let calls = root.join("node calls");
     let output = run(make(root)
         .arg("check-spec-validation")
