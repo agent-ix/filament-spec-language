@@ -25,7 +25,7 @@ use fsl_foundation::SourceIdentity;
 use fsl_semantics::library::extension::HeldExtensions;
 use fsl_semantics::value::HeaderLayer;
 
-/// The current build's header-selectable layer identities for CST tooling.
+/// The current build's header-selectable layer and division-law identities.
 pub fn header_profile_catalog() -> ProfileCatalog {
     ProfileCatalog::new(
         HeaderLayer::ALL

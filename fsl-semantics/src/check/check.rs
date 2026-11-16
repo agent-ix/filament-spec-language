@@ -59,6 +59,7 @@ use std::sync::Arc;
 mod declared_type_tests;
 mod native_literal;
 mod typing;
+mod integer_division_range;
 use typing::TypedOperand;
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};
@@ -2238,6 +2239,7 @@ pub(crate) struct Typer<'a> {
     context: Option<crate::family::CheckContext<'a, Scope>>,
     limits: CheckingLimits,
     nodes: &'a mut u64,
+    integer_division_work: u64,
     /// The caller's cancellation handle, polled at every node charge
     /// (FR-276).
     cancel: Option<&'a Cancel>,
@@ -2769,6 +2771,7 @@ impl<'a> Typer<'a> {
             context: None,
             limits,
             nodes,
+            integer_division_work: 0,
             cancel: None,
             locals: Vec::new(),
             local_names: HashMap::new(),

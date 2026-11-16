@@ -306,7 +306,7 @@ pub enum SourceObjectFault {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AssemblyCause {
     /// A header's integer-division law conflicts with another selected law.
-    Profile(super::ProfileRefusal),
+    Profile(Box<super::ProfileRefusal>),
     /// The aggregate assembler was given no admitted source units.
     EmptyUnitList,
     /// A source object declaration the assembler refuses (FR-569).
@@ -4552,7 +4552,7 @@ impl PackageDeclarations {
                         if super::integer_division_role(&profile.identity).is_some() {
                             errors.push(AssemblyError {
                                 span: using.span,
-                                cause: AssemblyCause::Profile(super::ProfileRefusal {
+                                cause: AssemblyCause::Profile(Box::new(super::ProfileRefusal {
                                     alias: using.alias.clone(),
                                     identity_span: using.span,
                                     selected: profile.identity.clone(),
@@ -4560,7 +4560,7 @@ impl PackageDeclarations {
                                     root: crate::value::DefinitionRole::Root.reference(),
                                     cause: super::ProfileCause::WrongSelectionRole,
                                     supplied_by: None,
-                                }),
+                                })),
                             });
                         }
                         function_selections.insert(index, profile.clone());

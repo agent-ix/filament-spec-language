@@ -3739,7 +3739,7 @@ impl<'a> Resolution<'a> {
             .map_err(|refusal| {
                 Box::new(CompileRefusal::Profile {
                     region: region(source.source().reference(), refusal.identity_span),
-                    refusals: vec![refusal],
+                    refusals: vec![*refusal],
                 })
             })?;
         }

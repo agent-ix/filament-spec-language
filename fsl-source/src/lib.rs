@@ -433,22 +433,25 @@ pub fn extract_native_fences(
     let fences = quire_rs::semantic::scan::fences_in(&lines, 1, lines.len().saturating_add(1));
     let mut headings = Vec::new();
     for (index, line) in lines.iter().enumerate() {
-            let number = index.saturating_add(1);
-            if fences.iter().any(|fence| {
-                number >= fence.open_line && fence.close_line.is_none_or(|end| number <= end)
-            }) {
-                continue;
-            }
-            if let Some(id) = line.trim_end_matches('\r').strip_prefix("### ") {
-                headings.push((number, Some(id.trim().to_owned())));
-            } else if line.starts_with("# ") || line.starts_with("## ") {
-                headings.push((number, None));
-            }
+        let number = index.saturating_add(1);
+        if fences.iter().any(|fence| {
+            number >= fence.open_line && fence.close_line.is_none_or(|end| number <= end)
+        }) {
+            continue;
+        }
+        if let Some(id) = line.trim_end_matches('\r').strip_prefix("### ") {
+            headings.push((number, Some(id.trim().to_owned())));
+        } else if line.starts_with("# ") || line.starts_with("## ") {
+            headings.push((number, None));
+        }
     }
     let mut result = Vec::new();
     for fence in fences.iter().filter(|fence| fence.language == "ix:native") {
-        let clause = headings.iter().take_while(|(line, _)| *line < fence.open_line)
-            .last().and_then(|(_, clause)| clause.clone());
+        let clause = headings
+            .iter()
+            .take_while(|(line, _)| *line < fence.open_line)
+            .last()
+            .and_then(|(_, clause)| clause.clone());
         let id = clause
             .clone()
             .unwrap_or_else(|| format!("unowned-{}", fence.open_line));

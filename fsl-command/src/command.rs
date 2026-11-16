@@ -479,7 +479,7 @@ impl RunError {
                         OutcomeDiagnostic::new(
                             refusal.cause.cause(),
                             refusal.cause.code().as_str(),
-                                None,
+                            None,
                             refusal.to_string(),
                         )
                     })

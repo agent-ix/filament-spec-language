@@ -138,7 +138,7 @@ pub struct ProfileRefusal {
     pub selected: String,
     /// The role a header profile must select.
     pub required_role: DefinitionRole,
-    /// The `root` row the selection was compared with.
+    /// The conflicting definition, or the root role used for a role refusal.
     pub root: DefinitionReference,
     /// Why it refused.
     pub cause: ProfileCause,
@@ -193,19 +193,20 @@ pub fn integer_division_role(identity: &str) -> Option<DefinitionRole> {
 }
 
 /// Compose a unit's header laws with an optional admitted caller law (FR-670).
+#[ix_trace_rs::string_edge]
 pub fn resolve_integer_division(
     profiles: &[ProfileSelection],
     supplied: Option<(
         filament_checked::integer_division::AdmittedIntegerDivision,
         &str,
     )>,
-) -> Result<Option<filament_checked::integer_division::AdmittedIntegerDivision>, ProfileRefusal> {
+) -> Result<Option<filament_checked::integer_division::AdmittedIntegerDivision>, Box<ProfileRefusal>> {
     let mut selected = supplied.map(|(law, _)| law);
     for profile in profiles {
         let Some(role) = integer_division_role(&profile.identity) else {
             continue;
         };
-        let refusal = |cause, other| ProfileRefusal {
+        let refusal = |cause, other| Box::new(ProfileRefusal {
             alias: profile.alias.clone(),
             identity_span: profile.identity_span,
             selected: profile.identity.clone(),
@@ -213,7 +214,7 @@ pub fn resolve_integer_division(
             root: other,
             cause,
             supplied_by: supplied.map(|(_, origin)| origin.to_owned()),
-        };
+        });
         if let Some(law) = selected {
             if law.profile().definition_identity() != role.identity() {
                 return Err(refusal(

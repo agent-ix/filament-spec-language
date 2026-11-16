@@ -15,7 +15,7 @@ const FLOOR_HEADER: &str = "profile d = \"filament.value.integer-division.floor/
 const BODY: &str = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n\
                     function r using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a rem b }\n";
 const MOD_ONLY: &str =
-    "function m using v(a: Int[-7, 7], b: Int[1, 3]): Int[0, 2] pure { (a mod b) + 0 }\n";
+    "function m using v(a: Int[-7, 7], b: Int[1, 3]): Integer pure { (a mod b) + 0 }\n";
 const LIBRARY: &str =
     "function ld using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n";
 const IMPORTING: &str = "import \"test/lib\" as l;\n\
