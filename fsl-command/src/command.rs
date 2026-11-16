@@ -1924,6 +1924,9 @@ fn prepare_complete_run(
     let Some(call) = &request.call else {
         return Err(RunCause::CompleteRunSelection(CompleteRunSelection::NoCall));
     };
+    // QSL-2183's request contract admits this separately from accounting.
+    // The execution result is pending the upstream typed outcome contract.
+    let _live_occurrences = call.evaluation.live_occurrences;
     let documents = request
         .models
         .iter()

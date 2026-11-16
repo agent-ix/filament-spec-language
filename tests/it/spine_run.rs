@@ -1178,11 +1178,11 @@ fn native_run_live_occurrence_limit_defaults_and_refusals() {
 #[trace("TC-2165", "NFR-130-AC-4")]
 #[test]
 fn native_run_live_occurrence_limit_rejects_malformed_request_settings() {
-    for evaluation in [
-        json!({"live_occurrences": -1}),
-        json!({"live_occurrences": 1.5}),
-        json!({"live_occurrences": "x"}),
-        json!({"frames": 1}),
+    for (evaluation, member) in [
+        (json!({"live_occurrences": -1}), "live_occurrences"),
+        (json!({"live_occurrences": 1.5}), "live_occurrences"),
+        (json!({"live_occurrences": "x"}), "live_occurrences"),
+        (json!({"frames": 1}), "frames"),
     ] {
         let (code, _, failure) = run_recursion(1, json!({"evaluation": evaluation}));
         assert_eq!(code, Some(20), "{evaluation}");
