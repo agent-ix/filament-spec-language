@@ -111,9 +111,30 @@ computed over the package compiled with these rows.
   one step after the last; the unit `step` names that count. A `model-time`
   binding under a profile other than timed is FR-233's refusal, not this
   table's.
-- A hyper clause over a model's behaviours is a clock-bearing declaration
-  under the same rule: its binding comes from the model and the command
-  derives its configuration by the table above.
+- A hyper clause over models' behaviours is a clock-bearing declaration
+  under the same rule, applied per quantified trace: each trace's binding
+  comes from the model its quantifier's alias selects, and the command
+  derives that trace's configuration by the table above, `M` being that
+  model's declaration identity text. Under event-position two traces of two
+  models therefore read two sequence authorities, one per model, because each
+  trace's positions are its own model's steps.
+- The emitter SHALL write one `temporal_bindings` row per quantified trace of
+  each hyper clause occurrence, keyed by the trace variable in the row's
+  `trace` member, in quantifier order (FSpec FR-322 "Hyper clause rows"),
+  whether or not the traces' configurations differ, so a reader never infers
+  one trace's clock from another's.
+- The model check and the run of a hyper clause SHALL number each trace's
+  positions under that trace's own configuration, and read a bounded
+  operator's window on a trace in that trace's positions.
+- The replay recompile SHALL serve each trace of a hyper clause from its own
+  row, so a hyper verdict replays under exactly the per-trace configurations
+  it was checked under, and a package whose wrapper lacks a trace's row is
+  refused by the package reader before any recompile.
+- The per-trace rows enter the package identity, and through it the
+  obligation identity and the result identity of every hyper item (FR-182):
+  two compiles that differ only in one trace's derived configuration give
+  different identities, and the trace order of the rows is the quantifier
+  order, so equal sources give equal bytes.
 - A request that compiles library units with the program (FR-099) SHALL serve
   every unit from the one `clocks` member: a clock name is a role of the
   request, and a library unit's clause on clock `plant-ms` reads the same
@@ -217,6 +238,9 @@ computed over the package compiled with these rows.
 | FR-640-AC-9 | A request compiling a program and one library unit whose clause writes clock `plant-ms`, with one `clocks` member `plant-ms`, binds both clauses to that member and refuses no member as `unused-clock-selection`; without the member, the library clause refuses `missing-clock-selection` naming `plant-ms`. | Test (TC-2183) |
 | FR-640-AC-10 | Through `command::compile`, a program that imports library `test/plant`, whose timestamped-event clause `Late` is on clock `lib-ms` and which no program declaration uses, compiled with `clocks` `{"lib-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}}`, exits 0 and its package lock holds `dependency_clock_selections` `[{"clock_name": "lib-ms", "clock": {"kind": "timestamped_event", "timestamp_unit": "ms"}}]`; with `timestamp_unit` `s` the package bytes differ; a program whose library declares no clause has no such member. | Test (TC-2212) |
 | FR-640-AC-11 | The package of AC-10, replayed through `fsl_replay::replay` for its function `entry` with `test/plant` as its one `dependencies` entry and no clock in the request, recompiles and settles `reproduced-without-witness` with the value the in-process call gives. The same request with the member removed from the package refuses `ReplayRefusal::Recompile` with `missing-clock-selection` naming `lib-ms` and `test/plant` at `/package/lock/dependency_clock_selections`, and so does a variant whose program's own clause is also on `lib-ms`, with the member removed and the program's `lib-ms` row kept; with an added entry `spare` it refuses `unused-clock-selection` at that entry; with the `lib-ms` entry a `fixed_sample` configuration it refuses `clock-kind-mismatch` at `/package/lock/dependency_clock_selections/0/clock/kind`. None yields a result. | Test (TC-2213) |
+| FR-640-AC-12 | Through `command::compile` with two ConfigVersion models selected as `S` (`example/device-saving`) and `N` (`example/device-normal`) and no `clocks` member, the event-position hyper clause `Saves` over `forall trace s of S forall trace n of N` exits 0, and its body wrapper has two `temporal_bindings` rows, `trace` `s` then `n`, with `event_position` configurations whose `sequence_authority` is the `ConfigVersion` declaration identity text of `example/device-saving` and of `example/device-normal` respectively; the hyper clause `Same` over two traces `a`, `b` of one model has two rows with equal configurations. Analyzing `Saves` over the two models settles a verdict, never `not-yet-implemented`, and its counterexample, when refuted, replays through `fsl_replay::replay` with the two rows' configurations; a package with the `n` row removed is refused by the package reader. | Test (TC-2243) |
+| FR-640-AC-13 | A `clocks` override handed to the command's compile entry or run entry (the object the driver reads from `--clocks`), with the request carrying no `clocks` member, gives the package bytes and the run report the same request gives with that object as its `clocks` member; an override whose member has an unknown `kind`, or that repeats a clock name, refuses `invalid-request` at stage `request`, exit 20, naming the member, as the same `clocks` member does. | Test (TC-2244) |
+| FR-640-AC-14 | A request that carries `clocks` and is also handed an override refuses `invalid-request` at stage `request`, exit 20, on the compile entry and on the run entry, with a message naming `clocks` and `--clocks`, before any program is compiled; the same request without the override, and the override without the member, each proceed. | Test (TC-2245) |
 
 ## Dependencies
 

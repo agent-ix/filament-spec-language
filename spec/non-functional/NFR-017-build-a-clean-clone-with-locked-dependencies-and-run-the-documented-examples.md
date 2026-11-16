@@ -61,6 +61,40 @@ under one new directory it creates in `TMPDIR`, and:
    step with its cause, to stdout;
 7. removes the directory it created in `TMPDIR`, whether it passes or fails.
 
+### Documented FSL fences
+
+The README and the pages under `docs/` show FSL source to readers, and a
+reader copies it. Every such excerpt is checked by the integration test
+`doc_snippets`, which runs in `make ci` and in the clean clone's test step,
+so a documented excerpt either does what it claims or says why not.
+
+- An **FSL fence** is a fenced code block in `README.md` or a `docs/**/*.md`
+  file whose info string's first word is `ix:native` or `fsl`. FSL source in
+  those files SHALL be written in an FSL fence; a fence with no info string
+  holds no FSL. A fence nested inside a longer fence (a Markdown example) is
+  an FSL fence too.
+- Each FSL fence's info string SHALL carry `stage=parse`, `stage=check` or
+  `stage=compile`, the stage it reaches, and MAY carry one of
+  `reject=<code>/<cause>` or `pending=<ticket>`, never both.
+- A fence whose text has no `language` line is an excerpt. The test runs it
+  after the header `language "ix:native" edition "1-draft";`, and the stage
+  is the one the excerpt reaches with that header alone.
+- A fence with no `reject` or `pending` SHALL pass its declared stage. A
+  `reject=<code>/<cause>` fence SHALL refuse at or before its declared stage
+  with exactly that code and cause; it documents a refusal on purpose.
+- A `pending=<ticket>` fence is an excerpt that does not yet reach its
+  declared stage because of a known gap. The line right after its closing
+  fence marker is the Markdown comment `<!-- expect: <code>/<cause> -->`, the
+  refusal it gives today. The test SHALL fail when it refuses with another
+  code or cause, and when it passes its stage, so the fix that closes the
+  gap removes the `pending` tag and the comment in the same change. A
+  failing excerpt is declared, never deleted from the page or skipped.
+- The test reads the Markdown with the standard library, calls no external
+  tool, and identifies a fence by its file and opening line, never by a hash
+  or digest of its text. It SHALL fail when an FSL fence declares no stage,
+  and when its fence count differs from a second, simpler count of
+  opening fence lines with an FSL info string.
+
 ### Out of scope
 
 The examples step runs only the README examples; `make ci`'s conformance and
@@ -84,6 +118,9 @@ a sibling checkout, so they too run from a clean clone.
 | NFR-017-AC-2 | In the gate's step 5, `config_version_fixtures` writes the case directories `healthy-parent`, `violating-parent`, `dangling-parent`, `incomplete-population` and `cycle`; `requests.sh` writes `run.json` and `compile.json` in `healthy-parent`; `emit_checked_v2` exits 0 and writes package bytes that FSL's I2 reader reads back with the switch model; and the walkthrough test passes with the README's exit codes 0, 10, 20, 22 and 10. | Test (TC-1398) |
 | NFR-017-AC-3 | With `REPO` a scratch repository: a commit whose `Cargo.lock` lacks a dependency `Cargo.toml` declares fails at step 3 with Cargo's `--locked` refusal; a commit whose `Cargo.toml` adds a path dependency outside the repository fails, naming it; a commit that removes `examples/config-version/requests.sh` fails at step 5; and a run whose `TMPDIR` has a `.cargo/config.toml` in an ancestor of the clone refuses at step 1. Each report names the failing step. | Test (TC-1397) |
 | NFR-017-AC-4 | Run with `TMPDIR` set to a new empty directory, after a passing run and after each AC-3 failing run that directory is empty again. | Test (TC-1397) |
+| NFR-017-AC-5 | `doc_snippets` finds every FSL fence of `README.md` and `docs/**/*.md`, its count equal to a second line scan's count of opening fence lines whose info string starts with `ix:native` or `fsl`, and every fence with no `reject` or `pending` passes its declared stage; a fence with no `stage=` fails the test, naming its file and line. | Test (TC-2242) |
+| NFR-017-AC-6 | A fence holding a deliberate syntax error tagged `stage=parse reject=invalid_syntax/unexpected-token` passes; the same fence without `reject` fails, and with `reject=unknown_profile/unsupported-selection` fails. | Test (TC-2242) |
+| NFR-017-AC-7 | A `pending=<ticket>` fence whose `<!-- expect: ... -->` comment names its current refusal passes; the same fence when it passes its stage fails the test, and so does one whose comment names a different code, or that has no comment. | Test (TC-2242) |
 
 ## Verification
 

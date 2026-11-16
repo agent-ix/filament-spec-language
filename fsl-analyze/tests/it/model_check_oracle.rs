@@ -61,7 +61,10 @@ fn budgets_settle_incomplete_with_what_was_explored() {
     ));
     assert_eq!(label(&run.item(0)), "incomplete");
     assert_eq!(run.item(0)["exploration"]["states"], "2");
-    assert_eq!(label(&run.item(1)), "incomplete");
-    assert_eq!(run.item(1)["record"]["cause"]["limit"], "max_depth");
+    // A horizon is not a resource limit: FR-127's V-5 row settles the cut
+    // `inconclusive` `bound-reached` at the requested depth.
+    assert_eq!(label(&run.item(1)), "inconclusive");
+    assert_eq!(run.item(1)["record"]["cause"]["kind"], "bound-reached");
+    assert_eq!(run.item(1)["record"]["cause"]["depth"], 1);
     assert_eq!(run.exit, 22);
 }

@@ -66,7 +66,7 @@ fn unused() -> Value {
 
 /// FR-640: an override gives the package the member would give.
 #[test]
-#[trace("TC-1660", "FR-640")]
+#[trace("TC-2244", "FR-640-AC-13")]
 fn compile_entries_take_the_override_as_the_member() {
     let directory = tempfile::tempdir().unwrap();
     let member = write(
@@ -104,7 +104,7 @@ fn compile_entries_take_the_override_as_the_member() {
 
 /// FR-640: the run entries read the override as the member.
 #[test]
-#[trace("TC-1660", "FR-640")]
+#[trace("TC-2244", "FR-640-AC-13")]
 fn run_entries_take_the_override_as_the_member() {
     let directory = tempfile::tempdir().unwrap();
     let member = write(
@@ -149,7 +149,7 @@ fn run_entries_take_the_override_as_the_member() {
 /// FR-640: both the member and the override refuse `invalid-request` at
 /// stage `request`, naming the conflict, on every entry.
 #[test]
-#[trace("TC-1661", "FR-640")]
+#[trace("TC-2245", "FR-640-AC-14")]
 fn a_member_and_an_override_together_refuse() {
     let directory = tempfile::tempdir().unwrap();
     let compile = write(
@@ -194,7 +194,7 @@ fn a_member_and_an_override_together_refuse() {
 /// FR-640: an override with an unknown kind or a repeated name refuses as the
 /// member would, at stage `request`.
 #[test]
-#[trace("TC-1661", "FR-640")]
+#[trace("TC-2244", "FR-640-AC-13")]
 fn a_malformed_override_refuses_as_a_malformed_member_does() {
     let directory = tempfile::tempdir().unwrap();
     let bare = write(

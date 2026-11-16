@@ -176,6 +176,25 @@ pub(crate) fn counter_request(ws: &Workspace, body: &str, items: Value) -> PathB
     counter_request_with(ws, body, request_members(Some(items)))
 }
 
+/// FR-627's staying Counter: `setTo(n: Int[0, 3])` is enabled only at
+/// `value = 0` with `n = 0`, a self-loop. A behaviour may take it forever
+/// while `inc` stays enabled, so only fairness on `inc` forces `value = 3`.
+pub(crate) const STAY: &str =
+    "pre Stay using v on M::Counter::setTo { self.value = 0 and n = 0 }\n\
+     post Keeps using v on M::Counter::setTo { self.value = n }\n";
+
+/// [`request_over`] for the staying Counter (the contract, [`STAY`] and
+/// `body`) from counter `a` at 0, with `items`.
+pub(crate) fn staying_counter_request(ws: &Workspace, body: &str, items: Value) -> PathBuf {
+    request_over(
+        ws,
+        &unit_text(&format!("{CONTRACT}{STAY}{body}")),
+        &crate::counter::document_with_ranged_parameter(),
+        &[counter_snapshot(&[("a", 0)])],
+        json!({"items": items}),
+    )
+}
+
 /// The clause `name` over the Counter subject with `fairness` and `formula`.
 pub(crate) fn clause(name: &str, fairness: &str, formula: &str) -> String {
     clause_text(name, fairness, formula)

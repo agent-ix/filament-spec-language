@@ -81,7 +81,7 @@ Every position of one trace has the same form.
 |--------|-------|--------------|
 | `finite` | `[P, ...]` | `Finite` (a closed trace under a false-extension profile, a prefix under infinite-trace) |
 | `lasso` | `{"prefix": [P, ...], "loop": [P, ...]}` | `Lasso` |
-| `model` | `{"initial": K, "universes": U, "prefix": [S, ...], "loop": [S, ...]}`, `U` and each step `S` in FSpec FR-364's model-arm encoding | `Model` |
+| `model` | `{"initial": K, "universes": U, "prefix": [S, ...], "loop": [S, ...], "max_candidates": N}`, `U` and each step `S` in FSpec FR-364's model-arm encoding, `max_candidates` optional | `Model` |
 | `progressed` | `{"positions": [P, ...], "progress": G, "lower_boundary": B, "binding": T}` | `Progressed` (FR-504) |
 | `timestamped` | `{"observations": [O, ...], "progress": G, "lower_boundary": B, "binding": T, "cover": C, "missing": [M, ...]}`, `cover` and `missing` optional | `Timestamped` (FR-501) |
 | `timed` | FR-642's `{"prefix": [Q, ...], "loop": [Q, ...], "period": X, "through": X}` | `Timed` (FR-642) |
@@ -91,7 +91,8 @@ where
 - `G`, the progress assertion: `{"watermark": W, "completeness": D, "scope":
   "closed"|"open", "execution": "closed"|"open"}`; `W` a non-negative integer
   (inclusive) or `{"half_open": E}` (an exclusive end, read as FR-501 reads a
-  half-open watermark); `D` is `{"complete": {"through": N}}` or `"incomplete"`;
+  half-open watermark: the inclusive watermark `E - 1`), `E` a positive
+  integer; `D` is `{"complete": {"through": N}}` or `"incomplete"`;
 - `B`: `"authoritative-origin"` or `"history-cutoff"`;
 - `T`, the trace binding (FR-522): `{"profile": I, "clock": NAME, "parameters":
   CLOCK}`, `CLOCK` in FR-640's clock configuration form;
@@ -135,6 +136,32 @@ refused. The member's bytes are what a later request's `ledger` file holds.
 - A trace that mixes snapshot keys and samples, a sample trace with `over`, and
   a snapshot trace without `over` SHALL refuse `invalid-request` at stage
   `request`, naming `trace` or `over`.
+- When a progress assertion's watermark is `{"half_open": 0}`, the reader
+  SHALL refuse the request `invalid-request` at stage `request`, exit 20,
+  naming the member `trace.progress.watermark.half_open`, before any
+  position is admitted. An exclusive end of 0 covers no tick, so it has no
+  inclusive reading (FR-501 reads `E` as `E - 1`), and the inclusive form
+  cannot state "nothing covered" either: progress always covers at least
+  tick 0. Reading it as watermark 0 would claim coverage of tick 0 that the
+  supplier did not assert, and wrapping it would claim every tick. A
+  half-open end of 1 or more is read as its inclusive `E - 1`.
+- A `model` trace's `max_candidates` is the per-expansion candidate bound
+  (FR-255 `expansion.max_candidates`, FR-120 `ExpansionLimits`) under which
+  the run reconstructs each step's successor candidates (FR-329, FR-330): a
+  positive integer from 1 to 2^53 - 1, and 1,000,000 when absent. The
+  request is the caller FR-255 names for this setting, so a request file can
+  raise or lower the bound exactly as an in-process caller does, and the
+  bound enters the run's result identity with the other limits. A
+  `max_candidates` of 0, of a wrong JSON type, or on a trace member other
+  than `model` SHALL refuse `invalid-request` at stage `request`, exit 20,
+  naming the member.
+- When reconstructing a step reaches that bound, the run SHALL report
+  `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value:
+  N, setting: expansion.max_candidates}` (FR-127's spelling of the stop, the
+  run report's outcome `{"kind": "incomplete", "limit": "max_candidates"}`),
+  no truth value and no counterexample, and SHALL NOT read the step as
+  absent or the trace as refused: the bound stopped the work, and raising
+  it decides the trace.
 - The reader SHALL check no length, stamp order or profile fit. Those are
   admission and evaluation rules, reported as FR-330 and FR-645 state, so a
   request file and an in-process caller get the same report for the same trace.
@@ -157,6 +184,8 @@ refused. The member's bytes are what a later request's `ledger` file holds.
 | FR-641-AC-3 | A run whose result `ledger` member is written to a file and passed as the next request's `ledger`, with the next trace asserting watermark 60 after a retained 100 under the same binding, reports stage `evaluate`, `refusal`, `contradicted_dimension` `Watermark`, and returns the supplied ledger unchanged; the same second request with watermark 120 is accepted and returns a ledger whose entry holds 120. | Test (TC-1663) |
 | FR-641-AC-4 | A `model` trace and a `lasso` of samples each reach FR-330 and report its outcome; a trace mixing a key and a sample, a sample trace with `over`, a `timestamped` observation missing `stamp`, and a ledger file with two entries for one binding each refuse `invalid-request` at stage `request`, exit 20, naming the member. | Test (TC-1663) |
 | FR-641-AC-5 | Reading a ledger file and writing it back from a run that changes nothing reproduces its bytes. | Test (TC-1663) |
+| FR-641-AC-6 | Through `command::run`, a `timestamped` trace of `T` whose progress watermark is `{"half_open": 0}` refuses `invalid-request` at stage `request`, exit 20, naming `trace.progress.watermark.half_open`, with no result document; the same request with `{"half_open": 6}` reports the outcome of the request with watermark 5. | Test (TC-2241) |
+| FR-641-AC-7 | Through `command::run`, FR-330-AC-16's `Model` trace written as a `model` member with no `max_candidates` reports FR-330-AC-16's outcome under the bound 1,000,000; with `max_candidates` 1 over a step whose reconstruction expands more than one candidate it reports `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}` and no truth; `max_candidates` 0, and `max_candidates` on a `lasso` member, refuse `invalid-request` at stage `request`, exit 20, naming the member; two runs differing only in `max_candidates` give different result identities. | Test (TC-2246) |
 
 ## Dependencies
 

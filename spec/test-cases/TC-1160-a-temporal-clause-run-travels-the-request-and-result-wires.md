@@ -75,8 +75,10 @@ step asserts.
   `{"lower": "0", "upper": "1"}`.
 - Step 3: each report reads back to an equal typed verdict or trace
   refusal (an `incomplete` report to its row only) with its table
-  row's members, `outcome` and `basis`, the two trace refusals to
-  `EmptyLoop` and `EmptyTrace`; no document has a `refusal` member; each
+  row's members, `outcome` and `basis`; the empty-loop and empty `Finite`
+  reports are FR-645 refusal records (`empty-lasso-loop`,
+  `empty-finite-trace`) with no `temporal` member, each reading back to an
+  equal refusal; no temporal-row document has a `refusal` member; each
   edited document refuses with a located diagnostic naming the member.
 - Step 4: the refused condition at position 1 with
   `integer_out_of_domain`/`outside-domain`; `Completed(false)` at position 0

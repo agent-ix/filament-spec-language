@@ -66,9 +66,13 @@ TemporalTrace evaluator and replay settle it.
 
 ### Analyze request
 
-A `finite-replay` item of a `native-analyze/1` request (FR-636) and a
-`monitor` item over a clause with a fairness constraint settle by this
-requirement; FR-627 states the analyze result.
+A temporal clause with a fairness constraint evaluated over a supplied trace
+through a clause-run request (FR-641) or the monitor (FR-251) settles by this
+requirement, and so does a `finite-replay` item of a `native-analyze/1`
+request over a protocol clause with a fairness constraint (FR-636). A
+`finite-replay` item naming a temporal clause never reaches the evaluator:
+the kind applies to the `protocol` family only, and the item settles
+`inapplicable-kind` (FR-507); FR-627 states the analyze result.
 
 ## Acceptance Criteria
 

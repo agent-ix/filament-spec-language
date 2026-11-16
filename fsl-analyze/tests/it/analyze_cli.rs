@@ -114,10 +114,20 @@ fn invariant_items_prove_and_refute() {
     let run = analyze(&counter_request(
         &ws,
         body,
-        json!([{"claim": "AtMostThree"}, {"claim": "AtMostTwo"}]),
+        json!([{"claim": "AtMostThree"}, {"claim": "AtMostTwo"},
+            {"claim": "AtMostThree", "kind": "temporal-satisfaction"}]),
     ));
+    // An invariant keeps its `state-model` family's one kind and runs on EN-1.
+    assert_eq!(run.item(0)["request"]["kind"], "operation-contract");
     assert_eq!(label(&run.item(0)), "proved");
     assert_eq!(label(&run.item(1)), "refuted");
+    let refused = run.item(2);
+    assert_eq!(refused["record"]["diagnostic"]["cause"], "inapplicable-kind");
+    assert_eq!(
+        refused["record"]["diagnostic"]["detail"]["family"],
+        "state-model",
+        "{refused}"
+    );
 }
 
 /// FR-626-AC-1, AC-2: deadlock freedom respects intended terminal states.
@@ -164,13 +174,31 @@ fn weak_fairness_decides_liveness() {
     );
     let unfair = clause("Unfair", "", "eventually holds(c.value = 3)");
     let ws = Workspace::new("cli-liveness");
-    let run = analyze(&counter_request(
+    // Over the inc-only Counter the one behaviour reaches 3 and stutters only
+    // at its terminal state (FR-125-AC-2), so `Unfair` holds there; the
+    // staying Counter adds the `setTo(0)` self-loop at 0 that only fairness
+    // on `inc` excludes.
+    let run = analyze(&crate::analyze_cli_support::staying_counter_request(
         &ws,
         &format!("{fair}{unfair}"),
         json!([{"claim": "Fair"}, {"claim": "Unfair"}]),
     ));
     assert_eq!(label(&run.item(0)), "proved");
-    assert_eq!(label(&run.item(1)), "refuted");
+    assert_eq!(run.item(0)["record"]["certification"], "certified");
+    let refuted = run.item(1);
+    assert_eq!(label(&refuted), "refuted");
+    let cycle = refuted["counterexample"]["loop"]
+        .as_array()
+        .expect("a lasso loop");
+    assert!(
+        cycle.iter().all(|step| !step.to_string().contains(
+            r#""name":"value","value":{"type":"integer","value":"3"}"#
+        )),
+        "the loop stays below 3: {refuted}"
+    );
+    let ws = Workspace::new("cli-liveness-inc-only");
+    let run = analyze(&counter_request(&ws, &unfair, json!([{"claim": "Unfair"}])));
+    assert_eq!(label(&run.item(0)), "proved");
 }
 
 /// FR-627-AC-4: fairness over a supplied trace is a missing premise.
@@ -198,10 +226,20 @@ fn strong_fairness_over_a_supplied_trace_is_refused() {
     let run = analyze(&crate::analyze_cli_support::counter_request_with(
         &ws, &strong, request,
     ));
-    assert_eq!(run.exit, 21);
+    // `finite-replay` applies to protocol claims only (FR-507): a temporal
+    // clause is evaluated over a supplied trace by the clause run, where
+    // FR-132 settles the missing premise.
+    assert_eq!(run.exit, 20);
     let item = run.item(0);
-    assert_eq!(label(&item), "unsupported");
-    assert_eq!(item["record"]["cause"]["type"], "missing-fairness-premise");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "inapplicable-kind",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["family"],
+        "temporal-trace",
+        "{item}"
+    );
 }
 
 /// FR-628-AC-1: a possible claim proves with a witness and refutes.
