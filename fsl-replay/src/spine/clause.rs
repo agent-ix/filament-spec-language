@@ -1755,6 +1755,7 @@ fn run_compiled_clause_selection(
                         admitted_package,
                     }),
                     cancel: None,
+                    valuation: false,
                 },
             )
         }
@@ -1784,6 +1785,7 @@ fn run_compiled_clause_selection(
                         admitted_package,
                     }),
                     cancel: None,
+                    valuation: false,
                 },
             )
         }
