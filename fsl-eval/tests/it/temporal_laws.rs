@@ -61,7 +61,6 @@ fn a_closed_past_interval_reads_the_pre_origin_extension() {
 /// operators range over positions 0 through `i - a` only.
 #[trace("TC-1544", "FR-327-AC-14", "FSpec-TC-1041", "FSpec-FR-092-AC-9")]
 #[test]
-#[ignore = "QSL-2148: the origin-bounded reading of unbounded past operators is not verified yet"]
 fn an_unbounded_past_operator_ranges_over_the_positions_that_exist() {
     assert_eq!(
         lasso_ones("eventually[1,1] historically holds(c.level = 1)"),
