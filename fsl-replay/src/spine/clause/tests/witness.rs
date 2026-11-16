@@ -2972,8 +2972,11 @@ fn tc_743_the_separation_check_names_its_failing_step() {
     }
 
     // A domain refused on `high`: `count<Zero>` of one element.
-    let text = witness_unit_text() + "invariant RefusedDomain using v on Config::ConfigVersion at current { \
-        forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): n < 500) }\n";
+    let text = witness_unit_text()
+        + "function refusingCount using v(n: Integer): Zero pure { \
+        count<Zero>(m in ints(sequence[n]): m > 0) }\n\
+        invariant RefusedDomain using v on Config::ConfigVersion at current { \
+        forall(n in ints(sequence[0, refusingCount(self.versionNumber)]): n < 500) }\n";
     let domain_document = config_version_domain_document();
     let packages =
         fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
