@@ -78,6 +78,7 @@ mod producer_unit_identity;
 mod quantity_negation_v2;
 mod quantity_power_v2;
 mod record_sample_counterexample;
+mod replay_request_file;
 mod string_edge_marker;
 mod value_parity_profile_selections;
 // The handoff writer is behind its feature; the all-features lane runs this.
@@ -131,6 +132,7 @@ mod spine_retained_criteria;
 mod spine_run;
 mod standard_pin;
 mod synthesis_verify_check;
+mod temporal_capture_run;
 mod temporal_negotiation;
 #[cfg(feature = "checked-handoff")]
 mod temporal_package_route;
