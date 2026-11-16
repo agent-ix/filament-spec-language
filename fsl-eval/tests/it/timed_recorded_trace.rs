@@ -38,8 +38,14 @@ fn unit(clock: &str, body: &str) -> String {
 }
 
 /// The unit through S1, S2, the assembler and the temporal check, with no
-/// model and no time source: the clock role is a trace-subject role.
-fn check(text: &str) -> Vec<Result<CheckedTemporalClause, String>> {
+/// model and no time source: the clock role is a trace-subject role, and
+/// `timed_unit` is the `unit` of its `{"kind": "timed"}` configuration
+/// (FR-933), `None` for no configuration.
+///
+/// QSL-2136 adds the in-process configuration input to the S3 check and
+/// passes `timed_unit` through it; until then the check takes none.
+fn check(text: &str, timed_unit: Option<&str>) -> Vec<Result<CheckedTemporalClause, String>> {
+    let _configured = timed_unit;
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
@@ -131,7 +137,7 @@ fn ms(value: u64) -> Rational {
 #[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
 fn a_timed_clause_over_a_record_trace_subject_is_checked_and_evaluated_pointwise() {
     let text = unit("plant", ACK);
-    let mut checked = check(&text);
+    let mut checked = check(&text, Some("ms"));
     let clause = match checked.pop() {
         Some(Ok(clause)) if checked.is_empty() => clause,
         other => panic!("one admitted clause, not {other:?}"),
@@ -178,7 +184,7 @@ fn a_timed_clause_over_a_record_trace_subject_is_checked_and_evaluated_pointwise
 #[trace("TC-1664", "FR-642-AC-1")]
 #[ignore = "QSL-2136: model-time over a record trace subject is not refused as model-time-on-trace-subject yet"]
 fn model_time_over_a_record_trace_subject_names_the_missing_time_source() {
-    let mut checked = check(&unit("model-time", ACK));
+    let mut checked = check(&unit("model-time", ACK), Some("ms"));
     let refusal = match checked.pop() {
         Some(Err(refusal)) if checked.is_empty() => refusal,
         other => panic!("one refused clause, not {other:?}"),
@@ -201,7 +207,7 @@ fn timed_intervals_compare_rational_stamps_exactly() {
         "unit ms :",
         "unit us : Time = rational(1, 1000000) * s;\nunit ms :",
     );
-    let mut checked = check(&text);
+    let mut checked = check(&text, Some("ms"));
     let clause = match checked.pop() {
         Some(Ok(clause)) if checked.is_empty() => clause,
         other => panic!("one admitted clause, not {other:?}"),
@@ -243,7 +249,7 @@ fn timed_intervals_compare_rational_stamps_exactly() {
 #[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
 fn a_later_stamp_completes_a_timed_window_without_through() {
     let text = unit("plant", ACK);
-    let mut checked = check(&text);
+    let mut checked = check(&text, Some("ms"));
     let clause = match checked.pop() {
         Some(Ok(clause)) if checked.is_empty() => clause,
         other => panic!("one admitted clause, not {other:?}"),
@@ -281,19 +287,23 @@ fn a_later_stamp_completes_a_timed_window_without_through() {
     );
 }
 
-/// FR-933-AC-1 (TC-2605): with no `timed` configuration, a role-clock clause
-/// reads its bounds in the coarsest unit they name, and a clause whose bounds
-/// name no unit reads them, and the stamps, as plain numbers.
+/// FR-933-AC-1 (TC-2605): checked in process with the `timed` configuration
+/// `{"kind": "timed", "unit": "ms"}` for `plant`, every bound is read in `ms`,
+/// unit-free bounds as magnitudes in it; with no configuration the check
+/// refuses `missing-clock-selection` and infers no unit.
 #[test]
 #[trace("TC-2605", "FR-933-AC-1")]
 #[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
 fn a_role_clock_clause_reads_its_bounds_in_its_binding_unit() {
-    let outcome = |body: &str, stamps: Vec<Rational>| {
-        let text = unit("plant", body).replace(
+    let text = |body: &str| {
+        unit("plant", body).replace(
             "unit ms :",
             "unit us : Time = rational(1, 1000000) * s;\nunit ms :",
-        );
-        let mut checked = check(&text);
+        )
+    };
+    let outcome = |body: &str, stamps: Vec<Rational>| {
+        let text = text(body);
+        let mut checked = check(&text, Some("ms"));
         let clause = match checked.pop() {
             Some(Ok(clause)) if checked.is_empty() => clause,
             other => panic!("{body}: one admitted clause, not {other:?}"),
@@ -313,24 +323,26 @@ fn a_role_clock_clause_reads_its_bounds_in_its_binding_unit() {
         )
         .expect("the trace is readable")
     };
-    // `[0 ms, 200 ms]`: binding unit `ms`, so a stamp 150 answers and 250 does not.
-    let ms_clause = "eventually[0 ms, 200 ms] holds(r.ack)";
-    assert_eq!(
-        outcome(ms_clause, vec![ms(0), ms(150)]),
-        TemporalOutcome::Holds
-    );
-    assert!(matches!(
-        outcome(ms_clause, vec![ms(0), ms(250)]),
-        TemporalOutcome::Violated { .. }
-    ));
-    // `[0, 200]`: no named unit; bounds and stamps are the same numbers.
+    let named = "eventually[0 ms, 200 ms] holds(r.ack)";
     let bare = "eventually[0, 200] holds(r.ack)";
-    assert_eq!(outcome(bare, vec![ms(0), ms(150)]), TemporalOutcome::Holds);
-    assert!(matches!(
-        outcome(bare, vec![ms(0), ms(250)]),
-        TemporalOutcome::Violated { .. }
-    ));
-    // `[0 us, 200 ms]`: the coarsest named unit is `ms`, never `us`.
-    let mixed = "eventually[0 us, 200 ms] holds(r.ack)";
-    assert_eq!(outcome(mixed, vec![ms(0), ms(150)]), TemporalOutcome::Holds);
+    for body in [named, bare] {
+        // Bounds `0` and `200` in `ms`: a stamp 150 answers and 250 does not.
+        assert_eq!(outcome(body, vec![ms(0), ms(150)]), TemporalOutcome::Holds);
+        assert!(matches!(
+            outcome(body, vec![ms(0), ms(250)]),
+            TemporalOutcome::Violated { .. }
+        ));
+    }
+    // No configuration: refused, never a unit taken from the bounds.
+    for body in [named, bare, "eventually[0 ms, 500 us] holds(r.ack)"] {
+        let mut checked = check(&text(body), None);
+        let refusal = match checked.pop() {
+            Some(Err(refusal)) if checked.is_empty() => refusal,
+            other => panic!("{body}: one refused clause, not {other:?}"),
+        };
+        assert!(
+            refusal.contains("MissingClockSelection") && refusal.contains("plant"),
+            "{body}: missing-clock-selection naming plant, got {refusal}"
+        );
+    }
 }

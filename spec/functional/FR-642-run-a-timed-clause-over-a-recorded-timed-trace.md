@@ -82,10 +82,11 @@ FR-109's `ClauseRunReport` with FSpec FR-541's verdict: `success`, `violation`
   record has no model time source.
 - Over a model subject, the FR-233 rules are unchanged.
 - The clause's intervals SHALL be read in the binding's unit: the model's time
-  unit, or, over a record trace subject, the binding unit FR-933 states (the
-  `timed` configuration's `unit`, or with no configuration the coarsest unit
-  the clause's bounds name); unit-bearing bounds convert exactly to it and
-  unit-free bounds are magnitudes in it.
+  unit, or, over a record trace subject, the `unit` of the role's `timed`
+  configuration (FR-933), which the in-process check takes exactly as the
+  request path does; with no configuration the check refuses
+  `missing-clock-selection` and infers no unit. Unit-bearing bounds convert
+  exactly to that unit and unit-free bounds are magnitudes in it.
 
 ### Running
 
@@ -125,7 +126,7 @@ FR-109's `ClauseRunReport` with FSpec FR-541's verdict: `success`, `violation`
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-642-AC-1 | A unit with `record Reading { req: Boolean; ack: Boolean; }` and `temporal Ack using timed over (r: Reading) clock "plant" on origin { always (holds(r.req) implies eventually[0, 200] holds(r.ack)) }` with `clocks` `{"plant": {"kind": "timed", "unit": "ms"}}` compiles; the same unit with `clock "model-time"` refuses `invalid_timed_model`/`model-time-on-trace-subject` at the clock argument. | Test (TC-1664) |
+| FR-642-AC-1 | A unit with `record Reading { req: Boolean; ack: Boolean; }` and `temporal Ack using timed over (r: Reading) clock "plant" on origin { always (holds(r.req) implies eventually[0, 200] holds(r.ack)) }` with `clocks` `{"plant": {"kind": "timed", "unit": "ms"}}` compiles, and checks in process with the same `timed` configuration for `plant` (and with none refuses `missing-clock-selection`, FR-933); the same unit with `clock "model-time"` refuses `invalid_timed_model`/`model-time-on-trace-subject` at the clock argument. | Test (TC-1664) |
 | FR-642-AC-2 | `Ack` over a finite `timed` trace of samples `req` at 0, `ack` at 150 reports `pending`; with `ack` at 250 and `through` 250 it reports `violation` at position 0 (the origin activation); with `ack` at 150, a second `req` at 300 and `through` 600 it reports `violation` at position 0 with the request at stamp 300 as the unanswered one; with `ack` at 150 and `through` 150 it still reports `pending`, because the unbounded `always` reads positions the recording does not hold yet. | Test (TC-1664) |
 | FR-642-AC-3 | `Ack` over a timed lasso with prefix `req` at 0, loop `ack` at 100 then `req` at 120, `period` 200, reports `success`; with `period` 400 (the next `ack` 380 after the loop `req`) it reports `violation`. | Test (TC-1664) |
 | FR-642-AC-4 | `eventually[0, 1/2] holds(p)` over stamps `"0"`, `"1/3"` with `p` true only at the second position reports `success` and the interval is compared exactly, not in floating point. | Test (TC-1664) |
