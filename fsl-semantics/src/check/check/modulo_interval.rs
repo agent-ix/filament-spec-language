@@ -131,13 +131,16 @@ fn nonzero_magnitudes(lower: &Integer, upper: &Integer) -> (Integer, Integer) {
 
 /// The exact Euclidean remainder interval for a finite dividend range and a
 /// finite positive divisor-magnitude range.
-fn exact_interval(
+pub(super) fn exact_interval<F>(
     lower: &Integer,
     upper: &Integer,
     divisor_lower: &Integer,
     divisor_upper: &Integer,
-    charge: &mut impl FnMut() -> Result<(), crate::check::CheckRefusal>,
-) -> Result<(Integer, Integer), ModuloRangeError> {
+    charge: &mut F,
+) -> Result<(Integer, Integer), ModuloRangeError>
+where
+    F: FnMut() -> Result<(), crate::check::CheckRefusal> + ?Sized,
+{
     let width = upper.sub(lower).add(&Integer::one());
     if &width >= divisor_upper {
         charge().map_err(ModuloRangeError::Refused)?;
@@ -152,13 +155,13 @@ fn exact_interval(
     let mut result_lower: Option<Integer> = None;
     let mut result_upper: Option<Integer> = None;
     loop {
+        charge().map_err(ModuloRangeError::Refused)?;
         let lower_quotient = floor_quotient(lower, &current)?;
         let upper_quotient = floor_quotient(upper, &current)?;
         let lower_run = quotient_run_lower(lower, &lower_quotient)?;
         let upper_run = quotient_run_lower(upper, &upper_quotient)?;
         let run_lower = max_integer(divisor_lower, &max_integer(&lower_run, &upper_run));
 
-        charge().map_err(ModuloRangeError::Refused)?;
         let (run_result_lower, run_result_upper) = if lower_quotient == upper_quotient {
             let lower_at_start = lower.sub(&lower_quotient.mul(&run_lower));
             let lower_at_end = lower.sub(&lower_quotient.mul(&current));

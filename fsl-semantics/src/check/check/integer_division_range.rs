@@ -37,66 +37,26 @@ fn negated((lo, hi): IntegerRange) -> IntegerRange {
     (hi.neg(), lo.neg())
 }
 
-/// Lowest positive divisor in the current constant floor-quotient run.
-fn run_start(n: &Integer, q: &Integer, at: &ExpressionLocation) -> Result<Integer, CheckRefusal> {
-    if n.is_negative() {
-        quotient(
-            &n.neg().sub(&Integer::one()),
-            &q.neg(),
-            DivisionProfile::Truncating,
-            at,
-        )
-        .map(|value| value.add(&Integer::one()))
-    } else {
-        quotient(n, &q.add(&Integer::one()), DivisionProfile::Truncating, at)
-            .map(|value| value.add(&Integer::one()))
-    }
-}
-
 fn euclidean(
     (a, b): &IntegerRange,
     (lower, upper): &IntegerRange,
     charge: Charge<'_>,
     at: &ExpressionLocation,
 ) -> Result<IntegerRange, CheckRefusal> {
-    let zero = Integer::zero();
-    let one = Integer::one();
-    if b.sub(a).add(&one) >= *upper {
-        charge()?;
-        return Ok((zero, upper.sub(&one)));
-    }
-    if !a.is_negative() && b < lower {
-        charge()?;
-        return Ok((a.clone(), b.clone()));
-    }
-    let mut end = upper.clone();
-    let mut result = None;
-    while end >= *lower {
-        charge()?;
-        let qa = quotient(a, &end, DivisionProfile::Floor, at)?;
-        let qb = quotient(b, &end, DivisionProfile::Floor, at)?;
-        let start = run_start(a, &qa, at)?
-            .max(run_start(b, &qb, at)?)
-            .max(lower.clone());
-        let found = if qa == qb {
-            let first = a.sub(&qa.mul(&start));
-            let last = a.sub(&qa.mul(&end));
-            (
-                first.min(last),
-                b.sub(&qa.mul(&start)).max(b.sub(&qa.mul(&end))),
-            )
-        } else {
-            (zero.clone(), end.sub(&one))
-        };
-        let found = result.map_or(found.clone(), |previous| hull(previous, found));
-        let complete = found.0.is_zero() && found.1 == upper.sub(&one);
-        result = Some(found);
-        if complete {
-            break;
-        }
-        end = start.sub(&one);
-    }
-    result.ok_or_else(|| refuse(at, CheckCause::UnrepresentableBound))
+    super::modulo_interval::exact_interval(a, b, lower, upper, charge).map_err(
+        |error| match error {
+            super::modulo_interval::ModuloRangeError::Refused(refusal) => refusal,
+            super::modulo_interval::ModuloRangeError::Invariant(_) => refuse(
+                at,
+                CheckCause::InternalFault(Box::new(crate::check::refusal::KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "check.integer-division",
+                        "range-invariant",
+                    ),
+                ))),
+            ),
+        },
+    )
 }
 
 /// Exact finite `div`/`rem` result interval, or no finite interval.
