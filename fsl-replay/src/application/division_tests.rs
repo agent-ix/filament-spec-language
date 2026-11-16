@@ -335,7 +335,7 @@ fn a_header_law_agrees_with_or_refuses_a_caller_supplied_law() {
 }
 
 /// FR-670-AC-6 and FSpec FR-570-AC-5 (identity half): a law header in a unit
-/// with no `div` or `rem` leaves the emitted package unchanged.
+/// with no `div` or `rem` leaves the checked semantic identity unchanged.
 #[trace("TC-1782", "FR-670-AC-6", "FSpec-TC-1280", "FSpec-FR-570-AC-5")]
 #[test]
 fn a_law_header_without_div_or_rem_leaves_the_package_identity_unchanged() {
@@ -345,5 +345,39 @@ fn a_law_header_without_div_or_rem_leaves_the_package_identity_unchanged() {
         "{HEADER}profile d = \"filament.value.integer-division.floor/v1\";\n{body}"
     ))
     .expect("an inert law header is admitted");
-    assert_eq!(headed.bytes(), plain.bytes());
+    let read = |package: &CompiledPackage| {
+        let mut evidence = CheckedPackageEvidence::new();
+        evidence.support_feature("filament.value.complete/v1");
+        match CheckedPackageV2::read(
+            package.bytes(),
+            CheckedPackageReadLimits::bounded(),
+            &evidence,
+        ) {
+            CheckedPackageV2ReadResult::Admitted(read) => read,
+            other => panic!("actual emitted package admits independently: {other:?}"),
+        }
+    };
+    let plain = read(&plain);
+    let headed = read(&headed);
+    assert_eq!(headed.name(), plain.name());
+    assert_eq!(headed.graph(), plain.graph());
+    assert_eq!(headed.lock(), plain.lock());
+    for package in [&plain, &headed] {
+        assert!(package
+            .lock()
+            .definition_selections
+            .iter()
+            .all(|definition| {
+                ![
+                    DefinitionRole::IntegerDivisionEuclidean,
+                    DefinitionRole::IntegerDivisionFloor,
+                    DefinitionRole::IntegerDivisionTruncating,
+                ]
+                .iter()
+                .any(|role| definition.identity.as_ref() == role.reference().identity)
+            }));
+    }
+    // Occurrence spans record the actual input, which changed when the inert
+    // header was inserted; they are outside semantic identity.
+    assert_ne!(headed.source_map(), plain.source_map());
 }
