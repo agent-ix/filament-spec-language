@@ -155,7 +155,7 @@ fn read<'d>(
         .enumerate()
         .filter_map(|(position, item)| item.trace.as_ref().map(|trace| (position, trace)))
     {
-        if documents.get(&trace.reference()).is_none() {
+        if !documents.contains_key(&trace.reference()) {
             return Err(invalid(
                 "items",
                 format!(

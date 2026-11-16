@@ -142,9 +142,12 @@ fn parallel_join_overflow_and_message_budget() {
 }
 
 /// FR-636 "Supplied trace refusals": a step whose recorded post-state is not
-/// the one the replay reaches, a `send` step without its `send_record` and a
-/// document with an extra member each decline `invalid-input` and a
-/// document naming no provisioned trace refuses the request.
+/// the one the replay reaches declines `invalid-value` at that step. A `send`
+/// step without its `send_record` declines `missing-member`, a non-`send` step
+/// with one `unknown-member`, before any step replays (FSpec FR-433-AC-8), so
+/// a stale step ahead of the defect is not what is reported. A document with
+/// an extra member declines `invalid-input`, and a document naming no
+/// provisioned trace refuses the request.
 #[trace("TC-1596", "FR-636-AC-3")]
 #[test]
 fn a_stale_or_malformed_supplied_trace_is_declined_and_an_unprovisioned_one_refused() {
@@ -168,8 +171,46 @@ fn a_stale_or_malformed_supplied_trace_is_declined_and_an_unprovisioned_one_refu
     let run = replay_item("bare", &trace_document("bare", &bare));
     let item = run.item(0);
     assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "missing-member",
+        "{item}"
+    );
     assert_eq!(
         item["record"]["diagnostic"]["detail"]["position"], 0,
+        "{item}"
+    );
+
+    // A stale step 0 ahead of a bare `send` at step 1: the wire defect is
+    // found before replay reaches step 0.
+    let mut late = vec![steps[1].clone(), steps[0].clone()];
+    late[1]
+        .as_object_mut()
+        .expect("a step")
+        .remove("send_record");
+    let run = replay_item("late", &trace_document("late", &late));
+    let item = run.item(0);
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "missing-member",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["position"], 1,
+        "{item}"
+    );
+
+    let mut stray = steps.clone();
+    stray[2]["send_record"] = steps[0]["send_record"].clone();
+    let run = replay_item("stray", &trace_document("stray", &stray));
+    let item = run.item(0);
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "unknown-member",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["position"], 2,
         "{item}"
     );
 

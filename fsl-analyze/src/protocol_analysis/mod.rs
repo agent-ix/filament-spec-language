@@ -17,7 +17,9 @@ mod realize;
 mod step_view;
 mod subject;
 
-pub(crate) use finite_replay::{finite_replay_item, FiniteReplayReport, SuppliedTrace};
+pub(crate) use finite_replay::{
+    finite_replay_item, FiniteReplayReport, SuppliedTrace, TraceDefect,
+};
 pub(crate) use item::settle;
 pub use item::{projection_item, realizability_item, ProtocolAnalysisArtifact};
 pub use profile::{unsupported_construct, Profile};

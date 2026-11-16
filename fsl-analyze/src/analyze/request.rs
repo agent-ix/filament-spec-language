@@ -642,7 +642,10 @@ fn work<'a>(
                         .trace
                         .as_ref()
                         .and_then(|reference| binding.snapshots.get(reference))
-                        .and_then(|bytes| crate::protocol_analysis::SuppliedTrace::read(bytes));
+                        .map_or(
+                            Err(crate::protocol_analysis::TraceDefect::Malformed),
+                            |bytes| crate::protocol_analysis::SuppliedTrace::read(bytes),
+                        );
                     crate::protocol_analysis::finite_replay_item(
                         item.request_index,
                         package,

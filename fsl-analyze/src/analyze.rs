@@ -1702,13 +1702,13 @@ fn settle(
                 crate::protocol_analysis::FiniteReplayReport::Replayed(steps) => {
                     TerminalRecord::proved_by_replay(index, backend, steps)
                 }
-                crate::protocol_analysis::FiniteReplayReport::Declined(position) => {
+                crate::protocol_analysis::FiniteReplayReport::Declined { cause, position } => {
                     let declined = TerminalRecord::declined_with(
                         index,
                         backend,
                         ProofRefusalCause::InvalidInput,
                         DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                        CatalogCode::new("invalid_runtime_input", cause),
                     );
                     match position {
                         Some(position) => declined.with_diagnostic_detail(

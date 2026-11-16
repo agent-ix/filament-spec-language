@@ -66,12 +66,57 @@ struct PostState {
 /// The format word of a supplied protocol trace.
 const FORMAT: &str = "filament.protocol-trace/v1";
 
+/// Why a supplied trace document is declined before any step replays
+/// (FSpec FR-433 "Wire").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TraceDefect {
+    /// The document is not a trace in FR-433's spelling: another format, or
+    /// a missing, extra or mistyped document member.
+    Malformed,
+    /// The `send` step at this position carries no `send_record`.
+    MissingSendRecord(usize),
+    /// The non-`send` step at this position carries a `send_record`.
+    ExtraSendRecord(usize),
+}
+
+impl TraceDefect {
+    /// The `invalid_runtime_input` cause word of the decline.
+    pub(crate) fn cause(self) -> &'static str {
+        match self {
+            Self::Malformed => "invalid-value",
+            Self::MissingSendRecord(_) => "missing-member",
+            Self::ExtraSendRecord(_) => "unknown-member",
+        }
+    }
+
+    /// The position of the step the defect is at, if it is at one.
+    pub(crate) fn position(self) -> Option<usize> {
+        match self {
+            Self::Malformed => None,
+            Self::MissingSendRecord(position) | Self::ExtraSendRecord(position) => Some(position),
+        }
+    }
+}
+
 impl SuppliedTrace {
-    /// The trace `bytes` hold, or `None` for a document with a missing,
-    /// extra or mistyped member or another format (FSpec FR-433 "Wire").
-    pub(crate) fn read(bytes: &[u8]) -> Option<Self> {
-        let trace: Self = serde_json::from_slice(bytes).ok()?;
-        (trace.format == FORMAT).then_some(trace)
+    /// The trace `bytes` hold. The whole document is read before any step
+    /// replays: another format, a missing, extra or mistyped member, and a
+    /// `send` step without a `send_record` or another step with one are
+    /// each a wire-shape defect (FSpec FR-433 "Wire", FR-433-AC-8).
+    pub(crate) fn read(bytes: &[u8]) -> Result<Self, TraceDefect> {
+        let trace: Self = serde_json::from_slice(bytes).map_err(|_| TraceDefect::Malformed)?;
+        if trace.format != FORMAT {
+            return Err(TraceDefect::Malformed);
+        }
+        for (position, step) in trace.steps.iter().enumerate() {
+            let send = step.transition.get("step").and_then(Value::as_str) == Some("send");
+            match (send, step.send_record.is_some()) {
+                (true, false) => return Err(TraceDefect::MissingSendRecord(position)),
+                (false, true) => return Err(TraceDefect::ExtraSendRecord(position)),
+                _ => {}
+            }
+        }
+        Ok(trace)
     }
 }
 
@@ -172,7 +217,7 @@ impl<'a> ReplaySubject<'a, '_> {
     /// `on` names, else the subject's one selected model.
     fn roles(&self) -> Vec<RoleBinding> {
         let selections = self.package.graph().model_selections();
-        let sole = match &selections[..] {
+        let sole = match selections {
             [only] => Some(only.identity.clone()),
             _ => None,
         };
@@ -290,9 +335,15 @@ impl<'a> ReplaySubject<'a, '_> {
 pub(crate) enum FiniteReplayReport {
     /// Every step replayed: the number of steps.
     Replayed(u64),
-    /// The trace is declined `invalid-input`, naming the step that does not
-    /// replay when the trace has one.
-    Declined(Option<usize>),
+    /// The trace is declined `invalid-input` with the `invalid_runtime_input`
+    /// cause word `cause`, naming the step at `position` when the decline is
+    /// at one.
+    Declined {
+        /// The `invalid_runtime_input` cause word.
+        cause: &'static str,
+        /// The position of the step the decline names.
+        position: Option<usize>,
+    },
 }
 
 fn fault() -> EngineReport {
@@ -303,15 +354,15 @@ fn fault() -> EngineReport {
 }
 
 /// The `finite-replay` item at `index` that replays `trace` over the
-/// protocol `protocol` of `package` (FR-636). A trace that is absent or not
-/// in FSpec FR-433's spelling is declined without a position.
+/// protocol `protocol` of `package` (FR-636). A trace document with a wire
+/// defect is declined before any step replays (FSpec FR-433-AC-8).
 pub(crate) fn finite_replay_item<'a>(
     index: RequestIndex,
     package: &'a CheckedPackage,
     binding: SubjectBinding<'a>,
     limits: AnalyzeLimits,
     protocol: &'a CheckedProtocol,
-    trace: Option<SuppliedTrace>,
+    trace: Result<SuppliedTrace, TraceDefect>,
 ) -> AnalyzeItem<'a> {
     AnalyzeItem::new(
         index,
@@ -320,8 +371,14 @@ pub(crate) fn finite_replay_item<'a>(
         Mode::Bounded,
         BACKEND_ID,
         move |_| {
-            let Some(trace) = trace else {
-                return EngineReport::FiniteReplay(FiniteReplayReport::Declined(None));
+            let trace = match trace {
+                Ok(trace) => trace,
+                Err(defect) => {
+                    return EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+                        cause: defect.cause(),
+                        position: defect.position(),
+                    })
+                }
             };
             let subject = ReplaySubject {
                 package,
@@ -334,10 +391,16 @@ pub(crate) fn finite_replay_item<'a>(
                     FiniteReplayReport::Replayed(u64::try_from(steps).unwrap_or(u64::MAX)),
                 ),
                 Ok(ReplayVerdict::StaleStep(position)) => {
-                    EngineReport::FiniteReplay(FiniteReplayReport::Declined(Some(position)))
+                    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+                        cause: "invalid-value",
+                        position: Some(position),
+                    })
                 }
                 Ok(ReplayVerdict::NoInitialState) => {
-                    EngineReport::FiniteReplay(FiniteReplayReport::Declined(None))
+                    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+                        cause: "invalid-value",
+                        position: None,
+                    })
                 }
                 Err(ReplayFault::Admission(failure)) => {
                     EngineReport::Refused(crate::analyze::admission(&failure))
