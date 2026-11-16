@@ -31,6 +31,14 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-144
     type: references
+  - target: ix://agent-ix/filament-specification/FR-201
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-154
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-261
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-088
+    type: references
 ---
 # FR-650: Carry every argument and result kind of a run in the native value grammar
 
@@ -91,7 +99,8 @@ For a declared type, the run value form is:
 | `String` | FR-106's String object `{"kind": "string", "text": T}` |
 | `Text[min, max; profile]` | FR-106's Text object `{"kind": "text", "text": T}` |
 | `UUID`, `Timestamp`, `Bytes`, `JsonObject` | FR-106's native payload objects |
-| `Quantity<u>` | FR-106's Quantity object |
+| `Quantity<u>`, `Quantity<u, C>`, `Quantity<u>[min, max]` | FR-106's Quantity object, as "Quantity" below states |
+| `Map<K, V>`, `Map<K, V>[min, max]` | `{"map": [{"key": K, "value": V}, ...]}`, as "Map" below states |
 | `Option<T>` | `{"absent": {}}` or `{"present": V}` |
 | `Sequence<T>`, `Set<T>`, `Bag<T>`, `OrderedSet<T>` | `{"sequence": [V, ...]}`, `{"set": [...]}`, `{"bag": [...]}`, `{"ordered-set": [...]}`, admitted under FSpec FR-144's "Supplied collection values" as FR-106 states |
 | a record type | FR-106's record form `{"record": {"type": I, "fields": {...}}}` |
@@ -106,8 +115,9 @@ For a declared type, the run value form is:
 payload type. `I` names the declaration: the declared name as the unit writes
 it for a declaration of the unit's own source (FR-569), and the `ix://`
 declaration identity for a model declaration, by FR-106's naming rule for
-populations and object types; the writer writes the same spelling admission
-accepts, so a written value reads back unchanged.
+populations and object types, spelled as "Identity spellings" below states;
+the writer writes the same spelling admission accepts, so a written value
+reads back unchanged.
 
 The forms this requirement adds to FR-106's grammar are these:
 
@@ -125,10 +135,10 @@ The forms this requirement adds to FR-106's grammar are these:
   `unknown-member`, and a wrong count `invalid-value`.
 - **Identity reference.** The payload `{"universe": U, "type": T,
   "object_identity": O}` names an object by its FSpec FR-204 identity
-  triple: `U` the UniverseId and `T` the most-specific EffectiveId, each 64
-  lowercase hexadecimal characters, and `O` the exact nonempty UTF-8 object
-  identity. It is the form a completed Reference result is written in, so a
-  result can be passed back as an argument. The payload `{"population": P,
+  triple: `U` the UniverseId, `T` the most-specific EffectiveId and `O` the
+  exact nonempty UTF-8 object identity, spelled as "Identity spellings"
+  below states. It is the form a completed Reference result is written in,
+  so a result can be passed back as an argument. The payload `{"population": P,
   "key": K}` names an object by its population and key in the call's
   snapshot, as FR-106 and FR-109 do.
 - **Population argument.** `{"population": P}` names a population of the
@@ -136,6 +146,102 @@ The forms this requirement adds to FR-106's grammar are these:
   parameter's declared maximum, and FR-089 records its identity in the call's
   object context. A population has no FSpec FR-181 form, so this form names
   a binding and carries no members.
+- **Map.** A `Map<K, V>` or `Map<K, V>[min, max]` value is
+  `{"map": [{"key": K, "value": V}, ...]}`, one entry object per map entry,
+  each with exactly `key` and `value`, `K` a value of the run value form for
+  the key type and `V` one for the value type. It is the native spelling of
+  FSpec FR-181's `map` form. Admission checks the entry count against the
+  declared bound before reading any entry, as FR-106 checks a collection's
+  length (`cardinality_out_of_bound`/`below-minimum` or `above-maximum`);
+  reads every entry in array order; refuses an entry that is not an object
+  `wrong-value-kind` and a missing `key` or `value` `missing-member`, at
+  `/map/<index>`, and another member `unknown-member` at
+  `/map/<index>/<member>`; and refuses an entry whose key
+  is the same key as an earlier entry's under FSpec FR-144's key equality
+  `duplicate-member` at `/map/<index>/key`. The writer writes the entries
+  ascending by the RFC 8785 bytes of each key's run value form, with a
+  Decimal key normalized, as FR-106 orders a set, so a map has one written
+  form whatever entry order was supplied.
+- **Quantity.** A `Quantity<u>` value, and a value of a carried quantity
+  `Quantity<u, C>`, is FR-106's Quantity object `{"kind": "quantity",
+  "unit": N, "magnitude": M}`. A `Quantity<u>[min, max]` (BoundedQuantity)
+  value has the same form; a magnitude outside the declared inclusive
+  bounds, compared exactly in the declared unit, is a value of the right kind
+  outside the declared domain, `invalid-value` at `/magnitude`. `M` is read as
+  FR-106 reads it (a Rational or a Decimal object, retained as the exact
+  normalized rational) and is written as the FSpec FR-205 normalized Rational
+  object, never a Decimal, so the written form is FSpec FR-181's one
+  canonical quantity encoding. `N` is the unit name of "Identity spellings".
+
+### Identity spellings
+
+Each identity the run value form writes is a spelling of a structural
+identity of FSpec FR-201, never a digest, a hash or a hex rendering of one:
+a structural identity has no fixed-width text, and FSpec FR-201 forbids
+deriving one from a hash. Each is derived from the compiled package's own
+identity values, so the writer and admission use one function pair per
+identity, and a written identity reads back to the identity it was written
+from.
+
+- **Universe.** `U` is the UniverseId's NodeId written as the JSON object
+  `{"package": S, "path": [...], "ordinal": N}`: `package` the package
+  string, `path` the array of path segments (a string, or an operand node's
+  own node id object nested in its place), and `ordinal` a JSON integer in
+  `0..=9007199254740991`. This is FSpec FR-181's `<node id>` for the
+  reference's `universe`, the node of the declaration of the universe's least
+  root type.
+- **Most-specific type.** `T` is the EffectiveId written as the JSON object
+  `{"owner_effective_type": E, "original": {"package": S, "node": S}}`, `E`
+  `null` or another EffectiveId object, in FSpec FR-201's member structure.
+  FSpec FR-181's `object_type` is the node id of the declaration that
+  `original` names.
+- **Object identity.** `O` is the identity's UTF-8 text as a JSON string;
+  FSpec FR-181's `identity` is the lowercase hexadecimal of the same bytes.
+- **Declaration names.** `I` is the declared name as the unit writes it for
+  a record, tuple, enumeration or union the unit's own source declares
+  (FR-569), with `::` between the segments of a qualified name; and, for one
+  a selected model declares, its domain package declaration identity
+  `ix://<package>/<artifact id>` exactly as the model document writes it
+  (FSpec FR-154), such as `ix://acme/orders/Order`. A variant's `case` is
+  the case's member name, never its `variant/<Name>-<value>` identity, and
+  a record's `fields` keys are its field member names. Admission resolves a
+  name with no `ix://` scheme only among the source declarations and an
+  `ix://` name only among the model declarations (FR-106); a name that
+  resolves to no declaration, or to another declaration than the slot's, is
+  `wrong-value-kind` at `/record/type`, `/tuple/type` or `/variant/type`.
+- **Unit names.** `N` is, for a unit the unit's own source declares, its
+  declared name as the unit writes it (`ms`), and, for a unit a selected
+  model declares, its domain package identity `ix://<package>/unit/<name>`
+  (FSpec FR-154, such as `ix://acme/rpc/unit/ms`). A compound unit is FR-088's
+  compound spelling `u1^e1*u2^e2`, in the UnitId's factor order with every
+  exponent written, each factor a unit name by the rule above. The compiled
+  package's unit registry SHALL expose one public pair, the unit name of a
+  UnitId and the UnitId of a unit name, that both the run form's writer and
+  its admission use; admission compares the UnitId the name reads to the
+  slot's UnitId, and a name that reads to no unit or to another unit is
+  FR-106's `wrong-value-kind` naming `unit`.
+
+A string in place of an identity object (such as 64 hexadecimal
+characters) is `wrong-value-kind` at the member; a missing or extra member
+of an identity object is `missing-member` or `unknown-member`; a well-formed
+universe that is not the universe of the parameter's declared object type is
+FR-100's `foreign_reference`/`foreign-universe`.
+
+### Depth and null
+
+- The run value form has no depth limit. Admission reads an argument
+  value at any nesting depth through the shared reader (FR-261), bounded
+  only by the request's byte limit and the values-per-document setting, and
+  the writer writes a completed value at any depth in full, without a
+  recursion limit, truncation or a depth refusal. A result whose run value
+  form nests more than 100 JSON levels is written and reads back unchanged.
+- `null` is not a value of the run value form. A record field whose value is
+  JSON `null` refuses `invalid_runtime_input`/`wrong-value-kind` at
+  `/record/fields/<name>`, as does `null` at any other value position
+  inside an argument; an optional field with no value is
+  `{"absent": {}}`. The writer never writes `null` for a value: an absent
+  optional field is `{"absent": {}}`, which is FSpec FR-181's `null` field
+  entry and `option` `null` value.
 
 ### Arguments
 
@@ -188,10 +294,8 @@ argument's `value` (the empty pointer for the value itself):
 A model-correspondence failure of a Reference or Population argument keeps
 FR-100's `Admission` refusal rows. Every argument kind is carried by the run
 value form, so a mistyped argument is invalid input, category refusal, exit
-20. A parameter whose declared type has no FSpec FR-181 form (a collection
-whose element type contains a population, FSpec FR-144) SHALL refuse
-`unknown_required_feature`/`unsupported-feature` at stage `call`, category
-unsupported, exit 21, with `details` `{"position": P}`.
+20. A parameter whose declared type has no form refuses as "Types with no form"
+states.
 
 ### Results
 
@@ -206,6 +310,9 @@ function's declared result type:
   element's run value form, with every Decimal inside an element normalized,
   as FR-106 orders an admitted set; a Sequence and an OrderedSet in their own
   order;
+- a Map with its entries ascending by the RFC 8785 bytes of each key's run
+  value form, and a Quantity with its unit name and its normalized Rational
+  magnitude;
 - a record with one `fields` entry for every exposed effective field, an
   absent optional field as `{"absent": {}}`;
 - a Reference in the identity-reference form, with the returned reference's
@@ -216,11 +323,35 @@ function's declared result type:
   references.
 
 The result types the run can write are every type the run can admit as an
-argument, plus the population-typed result. A function whose declared result
-type has no FSpec FR-181 form SHALL refuse
-`unknown_required_feature`/`unsupported-feature` at stage `call`, exit 21,
-before any call, with `details` `{"function": "<the function string>"}`. No
-other result type refuses.
+argument, plus the population-typed result. A function whose declared result type has no form refuses as "Types with no
+form" states; no other result type refuses.
+
+### Types with no form
+
+Every type FSL source can declare for a function has a run value form. The
+one kind of type FSpec FR-181 gives no form is a type that holds a
+population inside a collection, an option, a map or a record or tuple field
+(such as `Sequence<Population<M::Thing>[1]>`), and it reaches a run in one
+way only:
+
+- **From FSL source** it cannot be spelled: S3 refuses its declaration
+  wherever it appears, `ill_typed`/`operator-ineligible` (FSpec FR-144, a
+  population is not a value and is no element type), category refusal,
+  exit 20, at stage `check`. A population is a parameter or result type of
+  FSL source only at the top level, where it has the population form.
+- **In a selected checked package** (the request's `package` member, FR-100,
+  such as a package another producer wrote from IR), a function may declare
+  such a type, because FSpec FR-144 admits the type and refuses only its
+  value. The run SHALL refuse it `unknown_required_feature`/
+  `unsupported-feature` at stage `call`, category unsupported, exit 21,
+  before any call (FSpec FR-144): with `details` `{"position": P}` for a
+  parameter and `{"function": "<the function string>"}` for a result.
+
+The run stage SHALL read each parameter and result type through one
+exhaustive mapping from the checked `ValueType` to its run value form, and
+this refusal is the mapping's only arm without a form; it is never a fallback
+for a type the table gives a form, so a Quantity, a Map, a Reference or a
+top-level population never refuses with it.
 
 ### Examples
 
@@ -280,9 +411,17 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 | FR-650-AC-3 | Over the identity fixture, each refuses at stage `call`, exit 20, no result document, with `details.position` 0 and the `details.path` given: `id_str` with `{"kind": "text", "text": "a"}`, `invalid_runtime_input`/`wrong-value-kind`, `""`; `id_rec` with `fields` lacking `y`, `missing-member`, `/record/fields`; `id_rec` with an extra field `z`, `unknown-member`, `/record/fields/z`; `id_enum` with case `Blue`, `invalid-value`, `/variant/case`; `id_rat` with denominator `"0"`, `invalid-value`, `""`; `id_set` with `[{"integer": "1"}, {"integer": "1"}]`, `duplicate-member`, `/set/1`; `id_seq` with four elements, `cardinality_out_of_bound`/`above-maximum`, `""`; `id_tup` with one component, `invalid-value`, `/tuple/components`; `id_bool` with `2`, `invalid_runtime_input`/`invalid-value`, `""`. | Test (TC-1702) |
 | FR-650-AC-4 | Over FR-109-AC-4's `sameIdentity` unit as a native-run/1 `call` whose `snapshot` is the distinct-identities current snapshot: `a` `{"reference": {"population": P, "key": "root"}}` and `b` the same with key `child` completes `{"boolean": false}`, exit 0; `a` given instead as the identity-reference form of `root` completes the same; `b` with key `ghost` refuses `dangling_reference`/`absent-target-in-complete-population` at stage `call` with `details.position` 1, exit 20; the first request with `snapshot` removed refuses `invalid_runtime_input`/`missing-member` at stage `call`, `details.position` 0, `details.path` naming `snapshot`, exit 20. A function over a Population parameter called with `{"population": P}` binds that population with the parameter's declared maximum and completes; with a population the snapshot does not hold it refuses `invalid_runtime_input`/`wrong-role-mapping` at stage `call`. | Test (TC-1703) |
 | FR-650-AC-5 | TC-792's present lookup, run from a native-run/1 file request whose `call.snapshot` holds the looked-up object, completes with `{"reference": {"universe": U, "type": T, "object_identity": O}}` equal to the returned reference's three components, exit 0; passing that completed value unchanged as the argument of a function `function same using v(r: Reference<T>): Reference<T> pure { r }` in the same request shape completes with the identical value. | Test (TC-1704) |
-| FR-650-AC-6 | A function whose declared result type has no FSpec FR-181 form refuses `unknown_required_feature`/`unsupported-feature` at stage `call`, exit 21, with a non-null `cause` and `details` `{"function": "<the function string>"}`, before any call; a function with that type as a parameter refuses the same code and cause with `details` `{"position": P}`. No identity-fixture function refuses `unsupported_construct`. | Test (TC-1705) |
+| FR-650-AC-6 | From source, a unit declaring `function gives using v(): Sequence<Population<Config::ConfigVersion>[1]>[0, 1] pure { [] }`, or `function takes using v(a: Sequence<Population<Config::ConfigVersion>[1]>[0, 1]): Boolean pure { true }`, over the ConfigVersion model refuses at S3 `ill_typed`/`operator-ineligible`, category refusal, exit 20, and reaches no call. A native-run/1 request whose `package` member selects the fixture package `tests/fixtures/population-collection.checked-package.json` (the compiled ConfigVersion package with the result type of its function `gives`, and the parameter type of its function `takes`, rewritten to that collection type, as an IR producer can write them) refuses `unknown_required_feature`/`unsupported-feature` at stage `call`, exit 21, before any call, with `details` `{"function": "gives"}` for `gives` and `{"position": 0}` for `takes`. A function whose parameter or result type is `Quantity<s>`, `Map<String, Int[0, 9]>[0, 2]`, `Reference<Config::ConfigVersion>` or a top-level population does not refuse `unknown_required_feature`. | Test (TC-1705) |
+| FR-650-AC-16 | The run stage reads every parameter and result type through one exhaustive match over `ValueType` with no wildcard arm, each arm yielding the type's run value form or, only for a type holding a population below the top level, the `unknown_required_feature`/`unsupported-feature` refusal at stage `call`, exit 21, with `details` `{"position": P}` for a parameter and `{"function": "<the function string>"}` for a result, before any call. | Inspection (TC-2380) |
 | FR-650-AC-7 | FR-312's `function` selection admits the run value form: FR-109-AC-4's `sameIdentity` with `a` given as the identity-reference form of `child` and `b` as `{"reference": {"population": P, "key": "child"}}` reports `success`, `truth: true`, exit 0; a Boolean claim `function short using v(t: Text[0, 8; nfc]): Boolean pure { size(t) < 3 }` selected with `t` `{"kind": "text", "text": "ab"}` over the same snapshot reports `success`. | Test (TC-1706) |
 | FR-650-AC-8 | The `execute` outcome (FR-286) of FR-100-AC-1's `seven` carries `result` `{"kind": "completed", "value": {"integer": "7"}}`, and of `id_rec` with the table's record argument `result` `{"kind": "completed", "value": V}` with `V` that record; each `value` equals the `spine-run-result/1` document's for the same request. | Test (TC-1707) |
+| FR-650-AC-9 | Over FR-650-AC-5's `same` and the healthy current snapshot, the completed value of `{"reference": {"population": P, "key": "child"}}` is an identity reference whose `universe` is an object with exactly `package`, `path` and `ordinal` (a JSON integer) naming the declaration node of `ConfigVersion`, whose `type` is an object with exactly `owner_effective_type` (`null`) and `original`, `original` having exactly `package` and `node`, and whose `object_identity` is `"child"`; passed back unchanged it completes with the identical value. The same argument with `universe` replaced by a string of 64 lowercase hexadecimal characters refuses `invalid_runtime_input`/`wrong-value-kind` with `details.path` `/reference/universe`, and with an extra member `x` in `type` refuses `unknown-member` at `/reference/type/x`, each at stage `call`, exit 20. | Test (TC-2370) |
+| FR-650-AC-10 | Over a unit declaring `dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;`, `function id_q using v(a: Quantity<ms>): Quantity<ms> pure { a }` called with `{"kind": "quantity", "unit": "ms", "magnitude": {"kind": "decimal", "coefficient": "150", "scale": "2"}}` completes `{"kind": "quantity", "unit": "ms", "magnitude": {"kind": "rational", "numerator": "3", "denominator": "2"}}`, exit 0, and called with `unit` `"s"` refuses `invalid_runtime_input`/`wrong-value-kind` at `/unit`; `function id_bq using v(a: Quantity<ms>[0 ms, 10 ms]): Quantity<ms>[0 ms, 10 ms] pure { a }` completes for magnitude `10` and refuses `invalid_runtime_input`/`invalid-value` at `/magnitude` for magnitude `11`. | Test (TC-2371) |
+| FR-650-AC-11 | `function id_map using v(a: Map<String, Int[0, 9]>[0, 2]): Map<String, Int[0, 9]>[0, 2] pure { a }` called with the entries for keys `b` then `a` completes with the entries for `a` then `b`, exit 0. It refuses, at stage `call`, exit 20: the key `a` given twice, `invalid_runtime_input`/`duplicate-member` at `/map/1/key`; three entries, `cardinality_out_of_bound`/`above-maximum` at `""`; an entry without `value`, `missing-member` at `/map/0`; an entry with a member `extra`, `unknown-member` at `/map/0/extra`. | Test (TC-2372) |
+| FR-650-AC-12 | Over the ConfigVersion model extended with a variant type `ix://example/config-version/Tier` (cases `Gold`, `Silver`) and a record value type `ix://example/config-version/Stamp` (one required `Integer` field `n`), `id_tier` (`Config::Tier` to itself) called with `{"variant": {"type": "ix://example/config-version/Tier", "case": "Gold"}}`, and `id_stamp` (`Config::Stamp` to itself) with `{"record": {"type": "ix://example/config-version/Stamp", "fields": {"n": {"integer": "3"}}}}`, each completes with its argument unchanged, exit 0. `id_tier` with `type` `"Tier"` refuses `invalid_runtime_input`/`wrong-value-kind` at `/variant/type`, and with `case` `"variant/Tier-Gold"` refuses `invalid-value` at `/variant/case`. | Test (TC-2373) |
+| FR-650-AC-13 | A function that returns its argument of a type nesting `Sequence<...>[0, 1]` 60 levels deep around `Int[0, 1]`, called with the one value that nests one element at every level, completes with the same value, more than 100 JSON levels deep, exit 0, and no depth refusal. `id_rec` called with `{"record": {"type": "P", "fields": {"x": {"integer": "1"}, "y": null}}}` refuses `invalid_runtime_input`/`wrong-value-kind` at `/record/fields/y`, stage `call`, exit 20. | Test (TC-2374) |
+| FR-650-AC-14 | Over the healthy current snapshot, `function all using v(p: Population<Config::ConfigVersion>[4]): Population<Config::ConfigVersion>[4] pure { p }` called with `{"population": P}` completes `{"set": [R1, R2]}`, `R1` and `R2` the identity references of `root` and `child` ascending by the RFC 8785 bytes of each, exit 0. | Test (TC-2375) |
+| FR-650-AC-15 | `sameIdentity` called with `a` an identity reference whose `universe` is `{"package": "other/package", "path": ["ConfigVersion"], "ordinal": 0}` refuses `foreign_reference`/`foreign-universe` at stage `call` with `details.position` 0, exit 20. An FR-651 `items` request whose `call` selection of `sameIdentity` names the observation key of the healthy current snapshot as `snapshot`, with `a` and `b` both the reference to `child`, completes `{"boolean": true}`. | Test (TC-2376) |
 
 ## Dependencies
 
@@ -292,8 +431,11 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 - FR-360: the variant form.
 - FR-084 and FR-089: population binding and identity.
 - FR-038: the integer spelling.
+- FR-088: the compound unit spelling; FR-261: reading JSON at any depth.
 - FSpec FR-181: the typed canonical forms the run value form maps onto;
   FSpec FR-144 for supplied collections; FSpec FR-550 for the standard
   envelope's values.
+- FSpec FR-201: the structural identities the identity spellings write;
+  FSpec FR-154: the domain package declaration identities.
 - ADR-034 CS-1 and CS-2: FR-106's native spelling and its correspondence to
   FSpec FR-181.

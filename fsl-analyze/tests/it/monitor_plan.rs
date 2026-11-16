@@ -910,3 +910,110 @@ fn a_swapped_imported_callee_body_changes_the_plan_id() {
         "a swapped imported body changes the PlanId"
     );
 }
+
+/// The checked package of [`unit_source`]'s untimed form with the clause `C`
+/// under `profile` and `clock "model-steps"`.
+fn position_counted(profile: &str, formula: &str) -> CheckedPackage {
+    let domain = Domain::config_version();
+    let packages =
+        fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
+    let source = SourceIdentity::new("agent-ix", "monitor-plan-positions");
+    let unit = unit_source(formula, "", false, "on origin")
+        .replace("filament.temporal.timed/v1", profile)
+        .replace("clock \"model-time\"", "clock \"model-steps\"");
+    let parsed = fsl_cst::parse(
+        source,
+        "monitor.native",
+        unit.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 parses");
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds");
+    let models = admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("model admission")
+    .with_parsed_operation_clauses(|text| {
+        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+    })
+    .expect("operation clauses parse");
+    let graph = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "package".to_owned(),
+        built,
+        models,
+        Vec::new(),
+    )
+    .expect("S3 assembly")
+    .check(
+        CheckMode::Linked,
+        filament_semantic_value::checking::CheckingLimits::default(),
+    )
+    .unwrap_or_else(|refusals| panic!("S3: {refusals:?}"));
+    CheckedPackage::link(graph)
+}
+
+/// A position counter of unit `step`: uncertainty 0, rate 1, gap 1.
+fn step_target() -> MonitorTarget {
+    MonitorTarget {
+        counter: "steps".to_owned(),
+        unit: "step".to_owned(),
+        width_bits: 20,
+        uncertainty: ratio(0, 1),
+        max_event_rate: Some(ratio(1, 1)),
+        max_reading_gap: 1,
+        max_activations: 8,
+    }
+}
+
+fn plan_of(package: &CheckedPackage) -> fsl_replay::TimedMonitorPlan {
+    let clause = package.graph().temporal_clauses()[0].clause();
+    produce(
+        package,
+        fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
+        clause,
+        &step_target(),
+        &TimingObligationSettings::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("a non-timed clause is planned: {refusal:?}"))
+    .0
+}
+
+const STEP_DEADLINE: &str =
+    "always (holds(c.versionNumber = 2) implies eventually[0, 3] holds(c.versionNumber = 3))";
+
+/// FR-251-AC-52: an event-position `model-steps` clause is planned with a
+/// position counter.
+#[trace("TC-2385", "FR-251-AC-52")]
+#[test]
+#[ignore = "QSL-2137: the monitor plan refuses a non-timed clause NotTimedClause"]
+fn a_non_timed_clause_is_planned_with_a_position_counter() {
+    let plan = plan_of(&position_counted(
+        "filament.temporal.event-position.false-extension/v1",
+        STEP_DEADLINE,
+    ));
+    assert_eq!(plan.intervals().len(), 1);
+    assert_eq!(plan.intervals()[0].1.lower(), &ratio(0, 1));
+    assert_eq!(plan.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(plan.buffers(), &[(plan.intervals()[0].0, 5)]);
+}
+
+/// FR-251-AC-53: fixed-sample and infinite-trace `model-steps` clauses are
+/// planned too.
+#[trace("TC-2386", "FR-251-AC-53")]
+#[test]
+#[ignore = "QSL-2137: the monitor plan refuses a non-timed clause NotTimedClause"]
+fn fixed_sample_and_infinite_trace_clauses_are_planned() {
+    let fixed = plan_of(&position_counted(
+        "filament.temporal.fixed-sample.false-extension/v1",
+        STEP_DEADLINE,
+    ));
+    assert_eq!(fixed.intervals()[0].1.upper(), &ratio(3, 1));
+    assert_eq!(fixed.buffers(), &[(fixed.intervals()[0].0, 5)]);
+    let _ = plan_of(&position_counted(
+        "filament.temporal.infinite-trace/v1",
+        "always (holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3))",
+    ));
+}
