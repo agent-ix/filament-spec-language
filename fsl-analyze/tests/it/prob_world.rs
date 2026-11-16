@@ -249,6 +249,20 @@ impl World {
         )
     }
 
+    /// [`Self::new`] checked in `mode`, for runtime undefinedness fixtures.
+    pub(crate) fn new_with_mode(model: &Model, mode: CheckMode) -> Self {
+        Self::try_build_with_mode(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            true,
+            mode,
+        )
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"))
+    }
+
     /// `model`'s S3 check result, exposed for acceptance tests of pre-sampling
     /// refusals.
     pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<CheckRefusal>> {
@@ -329,6 +343,26 @@ impl World {
         symmetric: bool,
         value_profile: bool,
     ) -> Result<Self, Vec<CheckRefusal>> {
+        Self::try_build_with_mode(
+            model,
+            keys,
+            live,
+            initials,
+            symmetric,
+            value_profile,
+            CheckMode::Linked,
+        )
+    }
+
+    fn try_build_with_mode(
+        model: &Model,
+        keys: &[&str],
+        live: &[&str],
+        initials: &[&Json],
+        symmetric: bool,
+        value_profile: bool,
+        mode: CheckMode,
+    ) -> Result<Self, Vec<CheckRefusal>> {
         let document = model.document(symmetric);
         let packages = package_input([document.as_slice()]).unwrap();
         let unit = format!(
@@ -371,7 +405,7 @@ impl World {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())?;
+        .check(mode, CheckingLimits::default())?;
 
         let header = json!({"identity": model.package});
         let mut snapshots = BTreeMap::new();

@@ -370,7 +370,10 @@ pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
 }
 
 pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8>) {
-    package_with_source_mode(declarations, CheckMode::Linked)
+    // Value-validity cases exercise undefinedness in the complete-V1
+    // evaluator. Kernel leaves the Nonzero obligation for that runtime path;
+    // Linked refusal is covered by the checker acceptance tests.
+    package_with_source_mode(declarations, CheckMode::Kernel)
 }
 
 fn package_of_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {

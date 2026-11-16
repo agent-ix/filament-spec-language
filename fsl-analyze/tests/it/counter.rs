@@ -244,8 +244,13 @@ fn declarations_from_text(document: &[u8], text: String) -> PackageDeclarations 
 
 /// The checked package of `body` over `document`.
 pub(crate) fn package(document: &[u8], body: &str) -> CheckedPackage {
+    package_with_mode(document, body, CheckMode::Linked)
+}
+
+/// [`package`] checked under `mode`.
+pub(crate) fn package_with_mode(document: &[u8], body: &str, mode: CheckMode) -> CheckedPackage {
     let graph = declarations(document, body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -332,13 +337,23 @@ pub(crate) fn package_with_clauses(
     body: &str,
     declared: &[(&str, &str, &str)],
 ) -> (CheckedPackage, Vec<CheckedTemporalClause>) {
+    package_with_clauses_mode(document, body, declared, CheckMode::Linked)
+}
+
+/// [`package_with_clauses`] checked under `mode`.
+pub(crate) fn package_with_clauses_mode(
+    document: &[u8],
+    body: &str,
+    declared: &[(&str, &str, &str)],
+    mode: CheckMode,
+) -> (CheckedPackage, Vec<CheckedTemporalClause>) {
     let body = declared
         .iter()
         .fold(body.to_owned(), |text, (name, fairness, formula)| {
             text + &clause_text(name, fairness, formula)
         });
     let graph = declarations(document, &body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     let clauses = graph
         .temporal_clauses()

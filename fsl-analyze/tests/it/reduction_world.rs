@@ -217,16 +217,47 @@ impl World {
         starts: &[Vec<(&str, Json)>],
         keys: &[&str],
     ) -> Self {
+        let mode = if clauses
+            .iter()
+            .any(|clause| clause.formula.contains("6 mod (2 - x.v)"))
+        {
+            CheckMode::Kernel
+        } else {
+            CheckMode::Linked
+        };
+        Self::new_with_mode(shape, body, clauses, starts, keys, mode)
+    }
+
+    /// [`Self::new`] checked under `mode`, for runtime undefinedness fixtures.
+    pub(crate) fn new_with_mode(
+        shape: Shape,
+        body: &str,
+        clauses: &[Clause<'_>],
+        starts: &[Vec<(&str, Json)>],
+        keys: &[&str],
+        mode: CheckMode,
+    ) -> Self {
         let document = document(shape);
         let packages = package_input([document.as_slice()]).unwrap();
+        let has_undefined_mod = clauses
+            .iter()
+            .any(|clause| clause.formula.contains("6 mod (2 - x.v)"));
+        let function = if has_undefined_mod && !body.contains("function odd_value") {
+            "function odd_value using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }\n"
+        } else {
+            ""
+        };
         let declared = clauses
             .iter()
             .enumerate()
             .fold(String::new(), |text, (index, clause)| {
+                let formula = clause
+                    .formula
+                    .replace("6 mod (2 - x.v) >= 0", "odd_value(x.v)");
                 text + &format!(
                     "temporal C{index} using {} over (x: M::Counter) clock \"model-steps\" \
                      on origin {{ {} }}\n",
-                    clause.profile, clause.formula
+                    clause.profile, formula
                 )
             });
         // A unit selects one temporal profile.
@@ -246,7 +277,7 @@ impl World {
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n{profile}\
              model M = \"{PACKAGE}\";\n\
-             function Noop using v(): Boolean pure {{ true }}\n{body}{declared}"
+             function Noop using v(): Boolean pure {{ true }}\n{body}{function}{declared}"
         );
         let parsed = fsl_cst::parse(
             SourceIdentity::new("agent-ix", "reduction"),
@@ -275,7 +306,7 @@ impl World {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
         let checked: Vec<CheckedTemporalClause> = graph
             .temporal_clauses()
