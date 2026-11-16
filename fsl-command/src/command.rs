@@ -1059,7 +1059,7 @@ pub fn check_outcome(
         }
     }
 
-    check_sources(
+    match check_sources(
         &request,
         &mut intake,
         &[source],
@@ -1070,8 +1070,15 @@ pub fn check_outcome(
             let staged = fsl_foundation::diagnostic::Staged::new(checked);
             Ok(fsl_replay::OutcomeDocument::from_check(&Ok(staged)))
         },
-    )
-    .map_err(|cause| Box::new(RunError { cause }))
+    ) {
+        Ok(document) => Ok(document),
+        Err(RunCause::Spine(failure)) => {
+            let refusal: fsl_replay::spine::FrontEndFailure =
+                fsl_foundation::diagnostic::StageFailure::Refused(Box::new(failure.refusal));
+            Ok(fsl_replay::OutcomeDocument::from_check(&Err(refusal)))
+        }
+        Err(cause) => Err(Box::new(RunError { cause })),
+    }
 }
 
 fn check_source_file(path: &Path, role: &str) -> wire::SourceFile {

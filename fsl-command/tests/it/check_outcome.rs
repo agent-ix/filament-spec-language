@@ -13,7 +13,9 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     invariant NoCycle using v on Config::ConfigVersion at current {\n\
         not reaches(self, self, parent)\n\
     }\n";
-const LIBRARY: &str = "function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
+const LIBRARY: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
+    function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
 
 fn write_source(directory: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
     let path = directory.join(name);
