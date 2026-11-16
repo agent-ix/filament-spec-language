@@ -31,6 +31,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-775
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-967
+    type: depends_on
 ---
 # FR-961: Settle a run call's requirement items through run_with_providers
 
@@ -111,8 +113,12 @@ The entry SHALL work in this order:
    is the run's outcome.
 4. When the call carries `requirements`, for each item of the call, in
    FR-395's package order: write its named backend and options (FR-960),
-   compute its candidates by FR-075 and FR-962, and negotiate it with
-   `negotiate`. Items are settled whatever the call's outcome, since the
+   check its options against the named backend's manifest (FR-967): an item
+   whose named backend the registry does not hold settles `unknown-backend`
+   and is not checked further, and one naming an option that backend does not
+   publish settles `invalid-request` `invalid_capability`/`unknown-option` and
+   is not negotiated; then compute its candidates by FR-075 and FR-962, and
+   negotiate it with `negotiate`. Items are settled whatever the call's outcome, since the
    items of a refused, undefined or incomplete call are those of a completed
    one (FR-395). No provider is called while items are built and negotiated.
 5. Settle each negotiated item as FR-281 states: an item `Supported` on a
