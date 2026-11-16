@@ -45,8 +45,8 @@ use fsl_eval::model_subject::{
     ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
 };
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
-    TerminalClass,
+    ClauseLetters, DecisiveObservation, ExpansionLimits, ModelSimState, ModelSimulationRequest,
+    ModelSystem, PopulationUniverse, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
     check_protocol_bounds, live_instance_bound, protocol_constraints, CarriedComponent,
@@ -1438,6 +1438,19 @@ fn replay_prefix<S: SubjectSystem>(
     payload: &TemporalCounterexample<S::TransitionId>,
     rules: &StepRules<S::TransitionId>,
 ) -> Result<Option<Replayed<S>>, ReplayRefusal> {
+    Ok(replay_prefix_stopped(system, payload, rules)?.ok())
+}
+
+/// [`replay_prefix`], naming the stop an expansion returned.
+#[allow(
+    clippy::type_complexity,
+    reason = "a replay or the stop of an expansion, or a refusal"
+)]
+fn replay_prefix_stopped<S: SubjectSystem>(
+    system: &S,
+    payload: &TemporalCounterexample<S::TransitionId>,
+    rules: &StepRules<S::TransitionId>,
+) -> Result<Result<Replayed<S>, ExpansionStop>, ReplayRefusal> {
     if let Some(step) = payload.prefix.iter().position(|step| step.delay.is_some()) {
         return Err(refused(ModelTraceRefusal::UntimedDelay {
             step: Some(step),
@@ -1464,7 +1477,7 @@ fn replay_prefix<S: SubjectSystem>(
         let current = positions.last().ok_or_else(|| fault("a-position-exists"))?;
         let expansion = match expand(system, &current.state)? {
             Ok(expansion) => expansion,
-            Err(_) => return Ok(None),
+            Err(stop) => return Ok(Err(stop)),
         };
         let mut enabled = false;
         let mut reached = None;
@@ -1506,7 +1519,7 @@ fn replay_prefix<S: SubjectSystem>(
         positions.push(next);
         steps.push(replayed);
     }
-    Ok(Some((positions, steps)))
+    Ok(Ok((positions, steps)))
 }
 
 /// FR-128: the lasso's loop must end at its entry state; a
@@ -1743,6 +1756,108 @@ fn check_formula<S: SubjectSystem>(
     })
 }
 
+/// FR-330 `TraceInput::Model`: the evaluation of a clause over a model-arm
+/// behaviour supplied as a request, not as a counterexample to settle.
+#[derive(Debug)]
+pub struct ModelTraceRun {
+    /// What the FR-329 (or FR-328, for a finite prefix) evaluator returned.
+    pub outcome: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
+    /// The decisive atom of a violation, found on the same evaluator.
+    pub decisive: Option<fsl_eval::temporal::DecisiveSearch>,
+    /// The state the decisive atom is evaluated over, when the run found one.
+    pub observation: Option<DecisiveObservation>,
+    /// The number of replayed positions, loop states included.
+    pub positions: usize,
+    /// The evaluation meter the run charged.
+    pub meter: Meter,
+}
+
+/// How [`evaluate_model_trace`] ended.
+#[derive(Debug)]
+pub enum ModelTraceEnd {
+    /// The behaviour was re-executed and the clause evaluated.
+    Evaluated(Box<ModelTraceRun>),
+    /// An expansion stopped before the behaviour was replayed: the run
+    /// completes no value (FR-203, FR-126).
+    Stopped(ExpansionStop),
+}
+
+/// FR-330 "Admit": re-execute the behaviour `payload` names from its initial
+/// state over `system`, close and fairness-check its loop, and evaluate
+/// `clause` over the reconstructed states with FR-125's letters, on the one
+/// evaluator a replayed counterexample uses. [`ModelTraceEnd::Stopped`] names
+/// the stop when an expansion stops.
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] as [`replay_model_trace`] refuses a model counterexample's
+/// initial state, steps, loop closure and fairness.
+pub fn evaluate_model_trace(
+    system: &ModelSystem<'_>,
+    payload: &TemporalCounterexample,
+    clause: &CheckedTemporalClause,
+    letters: &ClauseLetters<'_, '_>,
+    limits: ScalarLimits,
+) -> Result<ModelTraceEnd, ReplayRefusal> {
+    let positions = match replay_prefix_stopped(system, payload, &MODEL_STEPS)? {
+        Ok((positions, _)) => positions,
+        Err(stop) => return Ok(ModelTraceEnd::Stopped(stop)),
+    };
+    let trace = match payload.lasso {
+        Some(lasso) => {
+            if lasso.terminal_stutter {
+                // `close_loop` reads a stopped expansion as a non-terminal
+                // state; the stop is the run's own outcome.
+                if let Some(last) = positions.last() {
+                    if let Err(stop) = expand(system, &last.state)? {
+                        return Ok(ModelTraceEnd::Stopped(stop));
+                    }
+                }
+            }
+            close_loop(system, &positions, lasso)?;
+            let states = match loop_states_stopped(system, payload, &positions, lasso)? {
+                Ok(states) => states,
+                Err(stop) => return Ok(ModelTraceEnd::Stopped(stop)),
+            };
+            if let Some(constraint) = unfair_constraint(system, &states, lasso, clause.fairness())?
+            {
+                return Err(ReplayRefusal::UnfairLasso { constraint });
+            }
+            trace_of(lasso, positions.len())
+        }
+        None => TemporalTrace::Finite {
+            len: position_of(positions.len()),
+        },
+    };
+    let mut replayed = replayed_letters(system, payload, &positions, letters)?;
+    let mut meter = Meter::new(limits);
+    let (outcome, decisive) = fsl_eval::temporal::evaluate_with_enabledness_decisive(
+        clause,
+        trace,
+        &mut replayed,
+        &mut meter,
+    );
+    let observation = match (&decisive, payload.over_binding.as_ref()) {
+        (Some(Ok(Some(atom))), Some(instance)) => {
+            let state = usize::try_from(atom.position.index())
+                .ok()
+                .and_then(|index| positions.get(index))
+                .ok_or_else(|| fault("the-decisive-position-is-replayed"))?;
+            letters
+                .decisive_observation(instance, &system.atom_state(&state.state))
+                .map_err(|_| fault("the-decisive-state-is-observed"))?
+        }
+        _ => None,
+    };
+    Ok(ModelTraceEnd::Evaluated(Box::new(ModelTraceRun {
+        outcome,
+        decisive,
+        observation,
+        positions: positions.len(),
+        meter,
+    })))
+}
+
 /// The letters of a counterexample's replayed positions, for the instance
 /// its `over` binding names.
 fn replayed_letters<'a, S: SubjectSystem>(
@@ -1881,9 +1996,23 @@ pub(super) fn loop_states_of<S: SubjectSystem>(
     positions: &[Position<S::State>],
     lasso: Lasso,
 ) -> Result<Option<LoopStates<S::TransitionId>>, ReplayRefusal> {
+    Ok(loop_states_stopped(system, payload, positions, lasso)?.ok())
+}
+
+/// [`loop_states_of`], naming the stop an expansion returned.
+#[allow(
+    clippy::type_complexity,
+    reason = "the loop states or the stop of an expansion, or a refusal"
+)]
+pub(super) fn loop_states_stopped<S: SubjectSystem>(
+    system: &S,
+    payload: &TemporalCounterexample<S::TransitionId>,
+    positions: &[Position<S::State>],
+    lasso: Lasso,
+) -> Result<Result<LoopStates<S::TransitionId>, ExpansionStop>, ReplayRefusal> {
     let mut states = Vec::new();
     if lasso.terminal_stutter {
-        return Ok(Some(states));
+        return Ok(Ok(states));
     }
     for (index, (position, step)) in positions
         .iter()
@@ -1891,8 +2020,9 @@ pub(super) fn loop_states_of<S: SubjectSystem>(
         .enumerate()
         .skip(lasso.entry)
     {
-        let Ok(expansion) = expand(system, &position.state)? else {
-            return Ok(None);
+        let expansion = match expand(system, &position.state)? {
+            Ok(expansion) => expansion,
+            Err(stop) => return Ok(Err(stop)),
         };
         states.push(LoopState {
             position: index - lasso.entry,
@@ -1904,7 +2034,7 @@ pub(super) fn loop_states_of<S: SubjectSystem>(
             taken: step.transition.clone(),
         });
     }
-    Ok(Some(states))
+    Ok(Ok(states))
 }
 
 /// ADR-018 FA-3: the first constraint of the clause's fairness set that the

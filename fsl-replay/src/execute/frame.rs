@@ -309,6 +309,7 @@ pub fn replay_frame(
         | ClauseDisposition::NotAPredicate { .. }
         | ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
+        | ClauseDisposition::TraceRefused(_)
         | ClauseDisposition::ProgressContradiction(_)
         | ClauseDisposition::ArgumentRefusal(_) => {
             return Err(ReplayRefusal::Fault(InternalFault::new(

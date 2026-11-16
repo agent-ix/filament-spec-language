@@ -81,6 +81,17 @@ pub struct ClauseLetters<'s, 'a> {
     observations: Cell<u64>,
 }
 
+/// A model state observed for the decisive atom of a violation.
+#[derive(Clone, Debug)]
+pub struct DecisiveObservation {
+    /// The object the clause's `over` parameter reads as.
+    pub over: ObjectReference,
+    /// The objects of the state's observation.
+    pub environment: fsl_semantics::model::object_environment::ObjectEnvironment,
+    /// The identity of the state's synthesized observation.
+    pub identity: fsl_semantics::model::observation::DocumentRef,
+}
+
 /// One state as the letters read it: its synthesized observation and its
 /// objects.
 pub(super) struct Observed {
@@ -182,6 +193,30 @@ impl ClauseLetters<'_, '_> {
     /// model refuses a reference under the key.
     pub fn instance_reference(&self, instance: &ModelInstance) -> Option<ObjectReference> {
         self.key_reference(instance).ok()
+    }
+
+    /// FR-330 "The decisive atom" over a model state: the observation the
+    /// letters read at `state`, the environment the atom is evaluated over,
+    /// with the reference the `over` parameter reads as under `instance`'s
+    /// key in it. `None` when the state holds no conforming object under
+    /// the key, so no atom of it reads `false`.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomStop::Unobservable`] when `state` is no state of the system.
+    pub fn decisive_observation(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+    ) -> Result<Option<DecisiveObservation>, AtomStop> {
+        let observed = self.observe(state)?;
+        Ok(self
+            .bound(&observed.rows, instance)
+            .map(|over| DecisiveObservation {
+                over,
+                environment: observed.observation.environment.clone(),
+                identity: observed.observation.identity.clone(),
+            }))
     }
 
     /// How many states these letters have observed: a state read again, by

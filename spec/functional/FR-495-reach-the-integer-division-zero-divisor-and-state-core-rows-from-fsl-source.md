@@ -131,8 +131,13 @@ bound and does not authorize a CG-side result-bound workaround.
 - **Type of an integer division node.** The checked node of `a div b`,
   `a rem b` and `a mod b` SHALL have the type `Int[lo, hi]` of that interval
   when the interval is finite, and `Integer` only when it is unbounded, so a
-  consumer reads the proved range from the node's type as it does for `+`
-  and `*`. A remainder is bounded by its divisor alone: for a divisor whose
+  consumer reads the proved range from the node's type. (An integer `+`, `-`
+  or `*` node is typed `Integer`, and its range is read from the operands'
+  static ranges; an integer division node carries its range in its type.)
+  The type is the same in every position the node occupies: no consumer,
+  coercion, argument upcast or call changes it, and an `Integer` position
+  admits the `Int[lo, hi]` node unchanged ("Representation of an integer
+  division result" below). A remainder is bounded by its divisor alone: for a divisor whose
   range excludes zero and whose largest magnitude is `m`, the Euclidean
   remainder of `mod` (and of `rem` under the Euclidean law) lies within
   `[0, m - 1]`, the truncating `rem` within `[-(m - 1), m - 1]` narrowed by
@@ -208,6 +213,80 @@ bound and does not authorize a CG-side result-bound workaround.
     node's type is always the smallest interval, so every work ceiling under
     which a package checks gives it the same node types, and a caller who
     reaches the limit raises `s3.work_units` (FR-255) to finish the walk.
+- **Representation of an integer division result (QSL-2002).** The checked
+  node, the lowered node and the requirement record each carry the result as
+  follows, for `div`, `rem` and `mod` alike:
+  - *Lowered node.* FR-093's lowering SHALL lower the checked node to one
+    `binary` application of `filament.op.integer.div`, `.rem` or `.mod` over
+    `[ref(l), ref(r)]` whose `result_type` is the builtin `Integer` node, the
+    operation catalog's result type, and SHALL leave the checked node's
+    type at its interval. This is the one exception to FR-093's rule that
+    `result_type` is the type node of the checked type. The *lowered type*
+    of such an application is therefore `Integer`; the lowered type of a
+    read of a `let` binder is the lowered type of the binder's bound value;
+    the lowered type of an integer-typed control node (an `if`, `let` or
+    `case` whose checked type is `Integer` or an `Int[..]` interval) is the
+    hull of the lowered types of the leaves it yields (each branch of an
+    `if`, the body of a `let`, each arm body of a `case`), where `Integer`
+    absorbs every interval; the lowered type of every other node, every
+    control node of another type included, is its checked type.
+  - *Control nodes.* FR-093's lowering SHALL give an integer-typed control
+    node the `result_type` of its lowered type, so `if c then a mod b else 0` in an
+    unbounded position lowers to a `filament.op.control.if` whose
+    `result_type` is the builtin `Integer` node, as its `mod` leaf's is,
+    while its checked type stays the interval hull of its branches. The
+    lowered graph then never holds a control node typed narrower than a
+    value it can yield, so FSpec FR-322's typing of a control application
+    over its branches holds with no exception for this case, and a consumer
+    of the control node sees the same `Integer` it would see consuming the
+    leaf directly. In a bounded position `check` coerces each leaf (below),
+    each leaf then lowers to its narrow, and the hull is the target
+    interval again.
+  - *Binder bound to a control node.* For `let x = if c then a mod b else 0
+    in x` read into `Int[lo, hi]`, the read of `x` has the lowered type of
+    the `if`, `Integer`, so FR-093's lowering SHALL wrap that read in exactly
+    one `filament.op.numeric.narrow` to the target, with the range
+    obligation of the `Coerce` below discharged against the read's checked
+    interval. As for a direct binder read, that narrow is no claim (FR-062),
+    and the `mod` application's record has no direct narrow.
+  - *Bounded position.* A bounded position is one that `check` coerces into
+    an `Int[lo, hi]` type: a function result, an argument of an `Int[..]`
+    parameter, or any other `Coerce` site. `check` passes an expected type
+    through an `if` to each branch, through a `let` to its body and through
+    a `case` to each arm body, so the coerced node is the leaf the expected
+    type reaches: the application itself for `a mod b` or
+    `if c then a mod b else 0`, and the binder read `r` for
+    `let r = a mod b in r`. `check` SHALL wrap that leaf in a `Coerce` to
+    the target interval, and FR-093's lowering SHALL lower that `Coerce` to
+    exactly one `filament.op.numeric.narrow` over the leaf's lowered node
+    whenever the leaf's lowered type is `Integer`, even when the leaf's
+    checked interval lies inside the target. A narrow over a binder read is
+    no claim (FR-062), so the application's record then has no direct
+    narrow.
+  - *Range obligation of that `Coerce`.* Under `CheckMode::Linked`, `check`
+    SHALL discharge the `Coerce`'s range obligation when the leaf's checked
+    interval lies within the target, and otherwise SHALL refuse
+    `undefined_expression`/`unproved-range` at the leaf (at the operator for
+    a `Coerce` directly over the application). Under `CheckMode::Kernel`
+    `check` SHALL record no range obligation for it (the Kernel bullet
+    below), SHALL still build the `Coerce` and its narrow, and S6a meets an
+    out-of-domain value as FSpec FR-147 states.
+  - *Every other position.* Every position `check` does not coerce into
+    `Int[..]` (an `Integer` result or parameter, an operand of an ordering,
+    equality or arithmetic operator, a `let` binding's value, and a binder
+    read consumed at `Integer`) is an unbounded position. There `check`
+    SHALL add no `Coerce` and FR-093's lowering SHALL add no node: the
+    consumer references the lowered application, or the binder read.
+  - *Requirement record.* `check` SHALL record the application's
+    `value-validity` record (FR-062) with, as its result bound, the target
+    of the narrow that directly wraps the application, with that narrow's
+    `type_argument` type node and the narrow's `expression` occurrence as
+    its conversion context; with no such narrow, the application's interval
+    (its checked type), with the FR-092 type node of that interval and no
+    conversion context. The checked graph SHALL hold that type node. The
+    record's `ValueType` and type node SHALL name the same type, and the
+    request writer (FR-404) and the replay executor (FR-098) SHALL read
+    that one bound.
 - **The same obligations for `div`, `rem` and `mod`.** The nonzero
   obligation and the result interval apply equally to `div`, `rem` and `mod`
   under every selected law; `mod` is not exempt because it needs no law.
@@ -346,6 +425,9 @@ bound and does not authorize a CG-side result-bound workaround.
 | FR-495-AC-18 | Under `CheckMode::Linked` and a law header for each of the three laws (FR-670): `function r1 using v(a: Int[-100, 100], b: Int[1, 12]): Int[-11, 11] pure { a rem b }` checks, its `rem` node typed `Int[0, 11]` under Euclidean and floor and `Int[-11, 11]` under truncating; the same with result `Int[0, 11]` checks under Euclidean and floor and refuses `unproved-range` at the `rem` under truncating; `function q1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 100] pure { a div b }` checks with its `div` node typed `Int[0, 100]`; and `q1` and `r1` with `b: Int[0, 12]` each refuse `undefined_expression`/`unproved-nonzero` at the operator, as their only refusal. | Test (TC-1783) |
 | FR-495-AC-19 | Under `CheckMode::Linked`, each remainder below checks into its stated exact interval and refuses `undefined_expression`/`unproved-range` at the operator, as its only refusal, into the interval with its lower endpoint raised by one and into the interval with its upper endpoint lowered by one: `a mod b` with `a: Int[0, 2]`, `b: Int[5, 6]` into `Int[0, 2]` (dividends below every divisor); `a: Int[91, 91]`, `b: Int[2, 12]` into `Int[0, 7]` (`91 = 7 * 13`, `91 mod 12 = 7`); `a: Int[97, 97]`, `b: Int[2, 12]` into `Int[1, 9]` (97 is prime, `97 mod 11 = 9`); `a: Int[-7, -7]`, `b: Int[3, 5]` into `Int[1, 3]`; under a truncating law header `a rem b` with `a: Int[-7, -7]`, `b: Int[3, 5]` into `Int[-3, -1]`; under a floor law header `a rem b` with `a: Int[7, 7]`, `b: Int[-5, -3]` into `Int[-3, -1]`. With `b: Integer`, `if b != 0 then a mod b else 0` over `a: Int[0, 9]` checks into `Int[0, 9]`, and over `a: Int[-1, 9]` refuses `unproved-range` into `Int[0, 1000]` (the remainder of a negative dividend by an unbounded divisor is unbounded). | Test (TC-2210) |
 | FR-495-AC-20 | Under `CheckMode::Linked` and `CheckingLimits::default()`, `function big using v(a: Int[1000000007, 1000000007], b: Int[2, 1000000006]): Int[1, 500000003] pure { a mod b }` checks and the same function into `Int[2, 500000003]` refuses `unproved-range` at the `mod` (1000000007 is prime, so the walk visits every run and the minimum is 1, at `b = 1000000006`). With the work ceiling set to 10000 (`with_work_budget(10000)`), `big` refuses `stage_limit_exceeded` with the `WorkBudget` kind and bound 10000 at the `mod`, as its only refusal, never `unproved-range`, and no checked graph is returned. | Test (TC-2211) |
+| FR-495-AC-21 | Under `CheckMode::Linked`, each function below checks; its checked division node has the stated type and its lowered `filament.op.integer.mod`, `.div` or `.rem` application has the builtin `Integer` node as `result_type`. **`mod` unit** (no law header), over `a: Int[0, 100]`, `b: Int[1, 12]` unless stated, with `function acc using v(r: Int[0, 20]): Boolean pure { true }` and `function accw using v(r: Integer): Boolean pure { true }`; each `mod` node has type `Int[0, 11]` unless stated. Narrow directly over the application: `equal` (`: Int[0, 11] { a mod b }`), `wider` (`: Int[0, 20] { a mod b }`), `arg` (`: Boolean { acc(a mod b) }`) and `ifb` (`function ifb using v(a: Int[0, 9], c: Integer): Int[0, 9] pure { if c != 0 then a mod c else 0 }`, FR-495-AC-19's guarded case, its `mod` node `Int[0, 9]`) each have exactly one `numeric.narrow` directly over the application, and the `mod` record's result bound is `Int[0, 11]`, `Int[0, 20]`, `Int[0, 20]` and `Int[0, 9]`, with that narrow's `type_argument` node as type node and that narrow's `expression` occurrence as conversion context; `ifb`'s record has the guard `c != 0` true. Narrow over a binder read: `letb` (`: Int[0, 20] { let r = a mod b in r }`) has no narrow over the application and exactly one `numeric.narrow` over the read of `r`, which holds no record; the `mod` record's bound is `Int[0, 11]` with the checked graph's `Int[0, 11]` type node and no conversion context. No narrow: `integer` (`: Integer { a mod b }`), `argw` (`: Boolean { accw(a mod b) }`), `cmp` (`: Boolean { a mod b >= 0 }`), `bound` (`: Integer { let r = a mod b in r }`), `derived` (`: Integer { (a mod b) + 1 }`) and `derivedb` (`: Int[1, 12] { (a mod b) + 1 }`) each have no narrow over the application or over a read of it, and the `mod` record's bound is `Int[0, 11]` with the graph's `Int[0, 11]` type node and no conversion context; `derived`'s `+` record is `Integer` with no context and `derivedb`'s is `Int[1, 12]` with its narrow's occurrence. **`div` and `rem` unit**, under the Euclidean law header (`filament.value.integer-division.euclidean/v1`, FR-670), over `a: Int[-100, 100]`, `b: Int[1, 12]`: `qb` (`: Int[-100, 100] { a div b }`) and `rb` (`: Int[-11, 11] { a rem b }`) each have exactly one narrow directly over the application, the `div` node typed `Int[-100, 100]` and the `rem` node `Int[0, 11]`, and records bound `Int[-100, 100]` and `Int[-11, 11]` with the narrow's type node and occurrence; `qi` (`: Integer { a div b }`) and `ri` (`: Integer { a rem b }`) have no narrow, the same node types, and records bound `Int[-100, 100]` and `Int[0, 11]` with the graph's type node of that interval and no context. In both units every record's bound `ValueType` and type node name the same type (FR-062-AC-16), and `fsl-route`'s request item for each record carries the record's type node and conversion context. | Test (TC-2270) |
+| FR-495-AC-22 | Over each unit of AC-21, for each function that holds an integer division, the call `run_with_replay_context` runs that function under `CallerLimits::default()` with `a = 100` and `b = 12` (`ifb`: `a = 9`, `c = 4`), and `PluginReplayContext::request` for the division record's member with the same assignment and the plugin `acme` builds a request whose `occurrence_key` is the member's and whose result bound node and conversion context are the record's. `replay` of it under the `CallerLimits`' `replay` limits settles `inconclusive` with cause `Verdicts`, proved category `violation` and replayed category `success`, and evaluated value `true` (FR-098 "Application claim: the observation", FR-404-AC-2): the observed value (`100 mod 12` is `4`, `9 mod 4` is `1`, `100 div 12` is `8`, `100 rem 12` is `4`) lies inside the record's result bound, which the executor reads from the record. No replay settles `NoValue`. The item settles `inconclusive` with cause `replay-parity`, naming `acme`. | Test (TC-2270) |
+| FR-495-AC-23 | Under `CheckMode::Linked` with no law header, `function ifi using v(a: Integer, b: Int[1, 12], c: Boolean): Integer pure { if c then a mod b else 0 }` lowers its `if` to a `filament.op.control.if` whose `result_type` is the builtin `Integer` node, the `result_type` of its `mod` application, while the checked `if` node has type `Int[0, 11]`; `function ifb using v(a: Integer, b: Int[1, 12], c: Boolean): Int[0, 11] pure { if c then a mod b else 0 }` lowers its `if` with `result_type` the `Int[0, 11]` node and one narrow directly over the `mod` application; `function letif using v(a: Integer, b: Int[1, 12], c: Boolean): Int[0, 11] pure { let x = if c then a mod b else 0 in x }` lowers exactly one narrow, over the read of `x`, to `Int[0, 11]`, its range obligation discharged, and the `mod` record has no direct narrow and its interval `Int[0, 11]` as its bound; the same body with result `Int[0, 5]` refuses `undefined_expression`/`unproved-range` at the read of `x`. | Test (TC-2298) |
 
 
 ## Dependencies

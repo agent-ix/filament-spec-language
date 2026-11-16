@@ -294,8 +294,9 @@ pub fn write(directory: &Path, case: Case) -> io::Result<()> {
             "kind": "frame",
             "operation": operation.to_string(),
         }),
-        // FR-312's request wire has no temporal selection yet.
-        ClauseRunSelection::Temporal { .. } => {
+        // The `clause-run/1` corpus form names state clauses, functions and
+        // frames; a temporal selection has no such form.
+        ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. } => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "a temporal selection has no clause-run/1 wire form",

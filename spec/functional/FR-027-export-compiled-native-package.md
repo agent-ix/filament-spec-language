@@ -53,7 +53,7 @@ A closed format/request JSON envelope. The request contains only models,
 program and, for a `1-draft` program, `libraries`, the optional `clocks` member
 that configures trace-subject clocks
 ([FR-640](FR-640-select-clock-configurations-in-compile-and-run-requests.md)), using the same source selections and complete authored clause bindings
-as native-run/1. It contains no runtime artifacts or execution selection.
+as native-run/1, the optional `handoff` member (FR-665) and the optional `output` member that writes the package to a file ([FR-810](FR-810-write-the-checked-package-to-a-file-from-a-compile-request.md)). It contains no runtime artifacts or execution selection.
 The command uses FR-026's default `request_bytes` and `dependent_bytes` intake
 ceilings, relative-path resolution, source selection checks and existing
 model/compiler stage defaults. `compile` has no caller-configurable limit

@@ -1396,10 +1396,18 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             TemporalVerdict::ProgressLimitReached(reached) => {
                 Some(limit(reached.limit, reached.value, reached.setting))
             }
+            TemporalVerdict::ExpansionLimitReached(reached) => Some(limit(
+                reached.limit.as_str(),
+                reached.value,
+                reached.limit.setting(),
+            )),
         },
         ClauseDisposition::TemporalRefusal(refusal) => {
             let code = refusal.catalog_code();
             Some(catalog(code.code(), code.cause()))
+        }
+        ClauseDisposition::TraceRefused(_) => {
+            Some(catalog("invalid_runtime_input", "invalid-value"))
         }
         ClauseDisposition::ProgressContradiction(refusal) => {
             let code = &refusal.record.catalog;

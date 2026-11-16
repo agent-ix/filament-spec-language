@@ -483,7 +483,8 @@ pub(super) fn item_counterexample(
         | TemporalVerdict::Incomplete(_)
         | TemporalVerdict::ActivationIncomplete { .. }
         | TemporalVerdict::WindowLimitReached { .. }
-        | TemporalVerdict::ProgressLimitReached(_) => return Ok(None),
+        | TemporalVerdict::ProgressLimitReached(_)
+        | TemporalVerdict::ExpansionLimitReached(_) => return Ok(None),
     };
     let wire = checked_counterexample(counterexample, at, reason)?;
     Ok(Some(serde_json::to_value(wire)?))
@@ -594,6 +595,15 @@ pub(super) fn verdict_wire(
                 setting: reached.setting,
             },
             None,
+        ),
+        // FR-267 registers no kind of its own for a model run's stop: it is
+        // the `incomplete` row, its outcome naming the limit (the candidate
+        // bound `max_candidates`, or the `accounting.*` counter).
+        TemporalVerdict::ExpansionLimitReached(reached) => (
+            TemporalWire::Incomplete,
+            Some(Outcome::Incomplete {
+                limit: reached.limit.as_str(),
+            }),
         ),
     })
 }

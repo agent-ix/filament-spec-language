@@ -29,7 +29,7 @@ Each row compiles a unit with the stated profile and runs `run_clause` over
 | # | Clause (`on origin`) | Trace and progress | Expected |
 | --- | --- | --- | --- |
 | 1 | Fx `eventually[0,3] holds(p)` | 1 position, p F; Open; W 0; C(0) | `Pending {deadline 3}` |
-| 2 | same | W 3; C(3); no new observation | `Completed(false)`, basis `decisive-counterexample`; with scope Closed basis `closed-scope` |
+| 2 | same | W 3; C(3); no new observation | `Completed(false)`, finite-window report basis `decisive-counterexample`; with scope Closed that basis `closed-scope`; the top-level FR-266 basis `closed-scope` in both |
 | 3 | Ev same | Open; W 3; C(3) | `Pending {deadline NextEvent}`, premises list W 3 |
 | 4 | Ev same | Closed; C(0) | `Completed(false)` (FR-327 false extension) |
 | 5 | Fx `eventually[0,3] holds(p)` | 4 positions, p T at index 3; Open; W 3; C(3) | `Completed(true)` |

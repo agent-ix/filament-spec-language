@@ -61,7 +61,6 @@ fn write(directory: &Path, name: &str, request: &Value) -> PathBuf {
 
 #[test]
 #[trace("TC-2241", "FR-641-AC-6")]
-#[ignore = "QSL-2133: a half-open watermark of 0 refused at the request stage is not implemented yet"]
 fn a_half_open_watermark_of_zero_refuses_at_the_request_stage() {
     let directory = tempfile::tempdir().unwrap();
     let refused = run_file(&write(
@@ -123,7 +122,6 @@ fn write_with_reaches(directory: &Path, name: &str, request: &Value) -> PathBuf 
 /// FR-330-AC-16 subject.
 #[test]
 #[trace("TC-2246", "FR-641-AC-7")]
-#[ignore = "QSL-2133: the model trace's max_candidates member is not read yet"]
 fn a_model_trace_carries_its_candidate_bound() {
     let directory = tempfile::tempdir().unwrap();
     let model = |bound: u64| {

@@ -70,7 +70,14 @@ origin.
 
 FR-501's outcomes and result report (`Completed`, `Pending`, `Indeterminate`,
 basis, decision support, premises, result identity), with `Pending.deadline`
-defined below.
+defined below. The result report is the clause run's finite-window report,
+`ClauseRunReport::finite_window` (FR-330), and its `basis` is the basis this
+requirement names: for an open-scope verdict settled through silent samples
+it is `decisive-counterexample` or `decisive-witness`, because the verdict
+holds for every continuation. The clause run report's top-level `basis`
+stays FR-266's Temporal row, which describes the run as decided over the
+supplied trace; the two members answer different questions and neither
+replaces the other.
 
 ## Behavior
 
@@ -136,7 +143,7 @@ defined below.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-504-AC-1 | Fixed-sample clause `eventually[0,3] holds(p)` `on origin` over one position with `p` false: scope `Open`, `W` 0, `Complete { through: 0 }` is `Pending { where: 0, deadline: 3 }`; `W` 3, `Complete { through: 3 }` is `Completed(false)` with no new observation, basis `decisive-counterexample`; scope `Closed` gives basis `closed-scope`. | Test (TC-1299) |
+| FR-504-AC-1 | Fixed-sample clause `eventually[0,3] holds(p)` `on origin` over one position with `p` false: scope `Open`, `W` 0, `Complete { through: 0 }` is `Pending { where: 0, deadline: 3 }`; `W` 3, `Complete { through: 3 }` is `Completed(false)` with no new observation, and the report's finite-window report (`ClauseRunReport::finite_window`, FR-501's result report) has basis `decisive-counterexample`; scope `Closed` gives that report basis `closed-scope`. In both cases the report's own top-level `basis` is FR-266's `closed-scope`. | Test (TC-1299) |
 | FR-504-AC-2 | The same clause and trace under event-position, scope `Open`, `W` 3, `Complete { through: 3 }` is `Pending { deadline: NextEvent }`, and the premises list `W` 3; with scope `Closed` and `Complete { through: 0 }` it is `Completed(false)` by FR-327's false extension. | Test (TC-1299) |
 | FR-504-AC-3 | Fixed-sample, four positions with `p` true only at index 3, `eventually[0,3] holds(p)`, scope `Open`, `W` 3, `Complete { through: 3 }` is `Completed(true)`; with `p` true only at a fifth position (index 4) and `W` 4 it is `Completed(false)`. | Test (TC-1299) |
 | FR-504-AC-4 | Fixed-sample, one position `p` true, scope `Closed`, `W` 5, `Incomplete`: `always[0,3] holds(p)` is `Indeterminate { IncompleteInput }` and not `Completed(true)`; the same with `Complete { through: 5 }` is `Completed(false)` (the silent samples read `p` false). | Test (TC-1299) |

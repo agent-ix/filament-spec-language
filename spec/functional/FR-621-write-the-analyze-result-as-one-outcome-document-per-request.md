@@ -91,10 +91,10 @@ Each item, in request order, carries:
 | `claim_name` | The declared name the document used, or for a default item the claim's declared name; a derived item's anchor name. |
 | `request` | The admitted FSpec FR-331 request item that `ClaimItem::request_item_wire` writes, every default made explicit, so the item can be re-requested exactly. A `simulation` item carries its admitted `simulation` settings instead (FR-634). |
 | `category` | The item's ADR-013 O-16 category (FR-285). |
-| `record` | The FSpec FR-331 terminal record, in its wire spelling: the verdict in its `result` member (`proved`, `refuted`, `tested`, `measured`, `inconclusive`, `unsupported`, `declined`, `incomplete`, `failed`); an `invalid-request` disposition record carries no `result` (FSpec FR-331), its cause or proof basis, its `certification` for a proved record, and `settled_by`. A disposition record carries its FR-272 `diagnostic` and no `cause`, as FR-286 states. |
+| `record` | The FSpec FR-331 terminal record, in its wire spelling: the verdict in its `result` member (`proved`, `refuted`, `tested`, `measured`, `inconclusive`, `unsupported`, `declined`, `incomplete`, `failed`); an `invalid-request` disposition record carries no `result` (FSpec FR-331), its cause or proof basis, its `certification` for a proved record, `settled_by`, and `backend` exactly when `settled_by` is `result`. A disposition record carries its FR-272 `diagnostic` and no `cause`, as FR-286 states. |
 | `certificate` | For a `proved` record whose engine returned a certificate: `{"identity", "checker", "accepted"}`. `identity` is FSpec FR-412's `CertificateIdentity` `{node_id, model, ordinal}` for every certificate kind, EN-1's closure and component certificates included: `node_id` the checked claim's node (a derived item's anchor node), `model` the subject model's identity text and `ordinal` the obligation's FSpec FR-418-AC-9 ordinal, so one structural identity names the obligation whatever engine proved it. `checker` is the qualified-core checker that ran (FR-282) and `accepted` whether it accepted. Absent when the engine returns none. |
 | `counterexample` | The FSpec FR-331 counterexample entry, present exactly for a `refuted` record. |
-| `replay` | Present with `counterexample`: `{"target", "reproduced"}`. `target` is the FSpec FR-323 replay target member object exactly as a replay request carries it: `{"state_clause": Q}` for a state or temporal clause, `Q` its declared qualified name (EN-1 counterexamples included), `{"function": ...}` or `{"frame_operation": ...}` for those targets, and FR-071's `{"protocol_refinement": {package_id, node}}` for a protocol refinement; `reproduced` is `true`. A counterexample that replay did not reproduce never reaches the document: its item is `inconclusive` with `replay-parity` or `replay-refused` (FR-281) and carries neither member. |
+| `replay` | Present with `counterexample`: `{"target", "reproduced"}`. `target` is the FSpec FR-323 replay target member object exactly as a replay request carries it: `{"state_clause": Q}` for a state clause, a temporal clause or a state-graph claim (`possible`, `always possible`, `unique path`), `Q` its declared qualified name (EN-1 counterexamples included; a state-graph refutation replays through FSpec FR-393's model-graph arm, whose obligation identity binds the claim, so naming the claim is enough to select it), `{"function": ...}` or `{"frame_operation": ...}` for those targets, and FR-071's `{"protocol_refinement": {package_id, node}}` for a protocol refinement; `reproduced` is `true`. A counterexample that replay did not reproduce never reaches the document: its item is `inconclusive` with `replay-parity` or `replay-refused` (FR-281) and carries neither member. |
 | `accounting` | The item's FSpec FR-331 accounting record: the limits applied, the method and seed where they apply, the limits the run reached (`reached`), and `settled_by`. With `exploration` it is the item's budget use. |
 | `exploration` | For an item whose engine explores states: `{"states", "transitions", "automaton_states"}`, the states stored, transitions expanded and claim-automaton states, each an ASCII decimal count. Absent for a closed-form or provider item. |
 | `axes` | The four outcome axes of FR-622, for an item that has an activation scope. Every `monitor` item has one, the activation of the clause it monitors, so every `monitor` item carries `axes` as FR-622 and FR-286 state; a `simulation` item carries FR-634's members instead. |
@@ -102,6 +102,35 @@ Each item, in request order, carries:
 The settlement of an item is its record's `settled_by` together with, for a
 disposition record, the negotiation disposition and diagnostic the record
 carries.
+
+### The record's `backend` member
+
+FSpec FR-331 keeps two artifacts per item: the result entry, which carries
+`backend`, the `BackendId` of the provider that produced it (FR-288), and the
+accounting record, whose `settled_by` says whether the item was settled by
+that result entry (`result`) or by a negotiation disposition with no result
+entry (`disposition`). The item's `record` is the two merged in FSpec FR-331's
+spellings, so it SHALL carry `backend`, copied from the result entry, exactly
+when `settled_by` is `result`, and SHALL carry no `backend` when `settled_by`
+is `disposition`: a disposition (`invalid-request`, or a negotiation
+`unsupported` that no candidate met) has no producing backend, and
+writing one would claim an engine decided what negotiation refused. No other
+member names the backend, so a reader finds the deciding engine of every
+result-settled item in one place, whatever its verdict.
+
+### Items over several claim instances
+
+A claim whose `over` parameter binds a population has one instance per
+object of the subject's universe, and the item reports one record for all of
+them. The writer SHALL order the instances by the bound object's universe
+key in FSpec FR-181 key order and SHALL report: the first `refuted`
+instance, when any instance is refuted, with its counterexample and replay;
+otherwise the first instance whose record is not `proved`; otherwise a
+`proved` record, whose certificate covers every instance. A claim is false
+when any instance is false, so a single refutation decides the item, and a
+fixed key order makes the reported instance the same on every run. The
+counterexample names the instance it refutes (FSpec FR-364
+`over_binding`; FSpec FR-393 `instance` for state-graph evidence).
 
 ### Temporal dispositions, values and engine roles
 
@@ -173,6 +202,8 @@ The Counter fixture is FR-620's.
 | FR-621-AC-6 | In text mode the AC-2 request prints `0 Bounded refuted` as its first line and exits 10. | Test (TC-1581) |
 | FR-621-AC-7 | The temporal clause `Reaches` (`eventually holds(r.level = 2)` under infinite-trace over a record trace subject), still pending at the end of the `finite` samples 0, 1 it is run over through the FR-641 clause-run request, reports `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; a `finite-replay` analyze item naming a temporal clause settles `invalid-request` `inapplicable-kind` with `detail.family` `temporal-trace`, exit 20; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
 | FR-621-AC-8 | Over the Counter subject, the `proved` EN-1 item of `Bounded` carries `certificate.identity` with exactly the members `node_id`, `model` and `ordinal`, `model` the Counter model's identity text; the `refuted` item of `BelowThree` carries `replay.target` `{"state_clause": Q}` with `Q` ending in `BelowThree`; and, both items required, `aggregate` is `incomplete` with one gap for `BelowThree`'s index, `reason` `not-proved`, `result` `refuted`. | Test (TC-2184) |
+| FR-621-AC-9 | Over the Counter subject provisioned with counters `a` at 1, `b` at 0 and `d` at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b` (the first refuted instance in key order, though `a` precedes it and is proved), and the same document run twice writes equal items; the refuted `always possible (value = 0)` item over the one-counter fixture carries `replay.target` `{"state_clause": Q}` with `Q` ending in the claim's declared name, and `replay.reproduced` `true`. | Test (TC-2292) |
+| FR-621-AC-10 | Over the Counter subject, the `proved` item of `Bounded` and the `refuted` item of `BelowThree` each carry `record.settled_by` `result` and `record.backend` `en-1`; the `invalid-request` item of an unknown claim `Missing` carries `record.settled_by` `disposition` and no `backend` member. | Test (TC-2296) |
 
 ## Dependencies
 

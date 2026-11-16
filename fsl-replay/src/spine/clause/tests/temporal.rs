@@ -1555,18 +1555,7 @@ fn a_selection_that_cannot_run_reports_its_stage_and_cause() {
     );
 
     let bounded_lasso = report(lasso(Unit::Bounded, "Bounded", 0, &[0, 1, 2]));
-    assert_eq!(bounded_lasso.disposition.stage(), ClauseRunStage::Admit);
-    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &bounded_lasso.disposition
-    else {
-        panic!(
-            "expected an admission refusal, got {:?}",
-            bounded_lasso.disposition
-        );
-    };
-    assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&bounded_lasso, ClauseRunStage::Admit, "trace-kind-mismatch");
 
     let ghost = report(ghost());
     assert_eq!(ghost.disposition.stage(), ClauseRunStage::Admit);
@@ -1579,17 +1568,7 @@ fn a_selection_that_cannot_run_reports_its_stage_and_cause() {
     );
 
     let empty_loop = report(lasso(Unit::Infinite, "Reaches", 3, &[0, 1, 2]));
-    assert_eq!(empty_loop.disposition.stage(), ClauseRunStage::Evaluate);
-    assert_eq!(empty_loop.disposition.category(), Category::Refusal);
-    let ClauseDisposition::TemporalRefusal(refusal) = &empty_loop.disposition else {
-        panic!("expected a trace refusal, got {:?}", empty_loop.disposition);
-    };
-    assert_eq!(refusal, &TemporalTraceRefusal::EmptyLoop);
-    let code = refusal.catalog_code();
-    assert_eq!(
-        (code.code(), code.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&empty_loop, ClauseRunStage::Evaluate, "empty-lasso-loop");
 }
 
 /// `Reaches` over the loop 0, 1, 2 with no work budget is incomplete, exit
@@ -1871,18 +1850,7 @@ fn timestamped_profile_and_trace_shape_must_match() {
         &[1],
     );
     let first_report = report(timestamped_clause_on_positions);
-    assert_eq!(first_report.disposition.stage(), ClauseRunStage::Admit);
-    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &first_report.disposition
-    else {
-        panic!(
-            "expected an admission refusal, got {:?}",
-            first_report.disposition
-        );
-    };
-    assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&first_report, ClauseRunStage::Admit, "trace-kind-mismatch");
 
     let position_clause_on_timestamps = request(
         Unit::Bounded,
@@ -1919,18 +1887,7 @@ fn timestamped_profile_and_trace_shape_must_match() {
         &[1],
     );
     let second_report = report(position_clause_on_timestamps);
-    assert_eq!(second_report.disposition.stage(), ClauseRunStage::Admit);
-    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &second_report.disposition
-    else {
-        panic!(
-            "expected an admission refusal, got {:?}",
-            second_report.disposition
-        );
-    };
-    assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&second_report, ClauseRunStage::Admit, "trace-kind-mismatch");
 }
 
 /// FR-501-AC-11/FR-285 (TC-1295): temporal-only result classes retain their
@@ -3573,6 +3530,16 @@ fn with_ledger(
     request
 }
 
+/// FR-645: the run was refused with `reason` at `stage`, as a refusal.
+fn assert_trace_refused(report: &ClauseRunReport, stage: ClauseRunStage, reason: &str) {
+    let ClauseDisposition::TraceRefused(refusal) = &report.disposition else {
+        panic!("expected a trace refusal, got {:?}", report.disposition);
+    };
+    assert_eq!(refusal.reason, reason);
+    assert_eq!(report.disposition.stage(), stage);
+    assert_eq!(report.disposition.category(), Category::Refusal);
+}
+
 fn assert_admit_invalid_value(report: &ClauseRunReport) {
     let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &report.disposition else {
         panic!(
@@ -3594,7 +3561,7 @@ fn a_ledger_with_a_finite_trace_without_progress_is_refused_at_admit_and_returne
         finite(Unit::Bounded, "Bounded", &[0, 1, 2]),
         &ledger,
     ));
-    assert_admit_invalid_value(&report);
+    assert_trace_refused(&report, ClauseRunStage::Admit, "ledger-without-progress");
     assert_eq!(report.ledger, Some(ledger));
 }
 
@@ -3606,7 +3573,7 @@ fn a_ledger_with_a_lasso_is_refused_at_admit_and_returned_unchanged() {
         lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]),
         &ledger,
     ));
-    assert_admit_invalid_value(&report);
+    assert_trace_refused(&report, ClauseRunStage::Admit, "ledger-without-progress");
     assert_eq!(report.ledger, Some(ledger));
 }
 
@@ -3618,7 +3585,7 @@ fn a_ledger_with_an_infinite_trace_clause_is_refused_at_admit_and_returned_uncha
         finite(Unit::Infinite, "Reaches", &[0, 1, 2]),
         &ledger,
     ));
-    assert_admit_invalid_value(&report);
+    assert_trace_refused(&report, ClauseRunStage::Admit, "ledger-without-progress");
     assert_eq!(report.ledger, Some(ledger));
 }
 

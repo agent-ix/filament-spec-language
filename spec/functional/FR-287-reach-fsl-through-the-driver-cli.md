@@ -97,6 +97,11 @@ FR-298) and takes FR-285's exit code.
   the `parse`, `format`, `run` and `compile` verbs shall be as FR-287-AC-3 to
   FR-287-AC-9 state; the driver implements them and TC-1262 specifies the
   tests that bind them.
+- The driver shall hand `--output <file>` on `compile` to
+  `fsl_command::command::compile_outcome_with_overrides` as `RequestOverrides::output`, which writes
+  the checked package to that file as FR-810 states; the driver writes no
+  package bytes of its own for it, and `--output` on any other verb is an
+  unknown option (FSpec FR-301).
 - `--provider-config <file>` on the verbs that route items to providers
   (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall read FSpec
   FR-561's `filament.provider-config/v1` document: its shape (`format`,
@@ -107,9 +112,11 @@ FR-298) and takes FR-285's exit code.
   are not strings; `unknown_wire`/`unsupported-wire` for another `format`; each
   exit 20 with empty stdout) and its refusal as an unknown option on a verb
   that routes no items are FSpec FR-561's, and the driver implements them
-  (FSpec TC-1241). Each configured plugin is started and registered beside
-  the linked providers before negotiation (FR-635), so FSL's `command` and
-  `analyze` take no provider configuration of their own.
+  (FSpec TC-1241). The driver shall start each configured plugin and pass
+  the started providers to the verb's FSL entry as its `providers`
+  parameter, by FR-635's rule for every provider-routing entry ("One rule
+  for every provider-routing entry"), so FSL's `command` and `analyze` take
+  no provider configuration of their own.
 
 ## Acceptance Criteria
 
@@ -149,7 +156,8 @@ request-file operand, usage and arity errors before any file is read (exit 20),
 and writing the producer-owned FR-286 outcome document to stdout unchanged
 in machine mode. FR-286 explicitly replaces the earlier native result
 stream convention when the driver's verbs land; native library artifacts
-remain in-process command products. `run` accepts the `request_bytes` and
+remain in-process command products, except the files the command writes to
+disk on request: FR-665's handoff directory and FR-810's package file. `run` accepts the `request_bytes` and
 `dependent_bytes` options; `compile` uses fixed default ceilings and accepts no
 limit options. For `parse` and `format` it
 owns the command and label operands, their OS encoding (a non-UTF-8 command

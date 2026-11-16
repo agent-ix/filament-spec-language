@@ -333,10 +333,8 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
     let item = run.item(0);
     assert_eq!(label(&item), "proved");
     assert_eq!(item["record"]["backend"], provider.as_str());
-    assert!(matches!(
-        item["record"]["certification"].as_str(),
-        Some("uncertified" | "trusted")
-    ));
+    // FR-635: the test provider is a process plugin, so its proof is trusted.
+    assert_eq!(item["record"]["certification"], "trusted");
     let registry: Vec<Value> = run.document()["registry"]
         .as_array()
         .expect("registry")

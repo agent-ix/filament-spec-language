@@ -285,7 +285,11 @@ fn a_finite_trace_is_unchanged_and_inconsistent_progress_is_refused() {
         },
         &[0, 1, 2],
     );
-    assert_admit_invalid_value(&report(infinite));
+    assert_trace_refused(
+        &report(infinite),
+        ClauseRunStage::Admit,
+        "trace-kind-mismatch",
+    );
 
     let finite_window = request(
         Unit::Timestamped,
@@ -307,7 +311,11 @@ fn a_finite_trace_is_unchanged_and_inconsistent_progress_is_refused() {
         },
         &[0, 1, 2],
     );
-    assert_admit_invalid_value(&report(finite_window));
+    assert_trace_refused(
+        &report(finite_window),
+        ClauseRunStage::Admit,
+        "trace-kind-mismatch",
+    );
 }
 
 /// FR-330-AC-11 for `Progressed`: a binding asserting another profile or clock

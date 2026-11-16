@@ -85,6 +85,43 @@ fn run_request(temporal: Value) -> Value {
         "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
 }
 
+/// The unit of the trace-wire tests: `unit()` without its timed clause.
+///
+/// These tests exercise the request wire for every trace kind and the carried
+/// ledger. The timed clock kind (QSL-2254) and a timed clause over a trace
+/// subject (QSL-2136) are other tickets', so the unit and the clock
+/// selections here use the clock kinds that exist and clauses that check.
+fn trace_unit() -> String {
+    let full = unit();
+    let kept: Vec<&str> = full
+        .lines()
+        .filter(|line| !line.starts_with("profile t =") && !line.starts_with("temporal Ack"))
+        .collect();
+    kept.join("\n") + "\n"
+}
+
+/// `clocks()` without the timed `plant` clock.
+fn trace_clocks() -> Value {
+    let mut selection = clocks();
+    selection.as_object_mut().unwrap().remove("plant");
+    selection
+}
+
+/// [`write`] for a trace-wire test: the unit is [`trace_unit`].
+fn write_trace(directory: &Path, name: &str, request: &Value) -> PathBuf {
+    std::fs::write(directory.join("unit.native"), trace_unit()).unwrap();
+    let path = directory.join(name);
+    std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
+    path
+}
+
+/// [`run_request`] for a trace-wire test: the clocks are [`trace_clocks`].
+fn trace_request(temporal: Value) -> Value {
+    json!({"format": "native-run/1", "request": {
+        "models": [], "program": program(), "clocks": trace_clocks(),
+        "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
+}
+
 /// The binding row of `clock` under `profile`, as the trace asserts it.
 fn binding(profile: &str, clock: &str) -> Value {
     json!({"profile": profile, "clock": clock, "parameters": clocks()[clock].clone()})
@@ -228,8 +265,71 @@ fn missing_unused_and_mismatched_clock_selections_refuse_naming_the_clock() {
     }
 }
 
+/// One FR-501-AC-4 input: the levels at stamps 0, 2 and 5, the `(position,
+/// atom)` valuations absent, and whether the run is `Indeterminate`.
+type TimestampedCase = ([i64; 3], Vec<(u64, u64)>, bool);
+
+/// The sample of `level` as the canonical text a typed position carries.
+fn typed_sample(level: i64) -> fsl_replay::DocumentRef {
+    fsl_replay::spine::sample_position(&format!("{{\"level\":{{\"integer\":\"{level}\"}}}}"))
+}
+
+/// The clause `T` over `stamped` `(stamp, level)` observations, built as a
+/// typed value rather than read from a request file: watermark 5, complete
+/// through 5, scope and execution `closed`, an authoritative origin and the
+/// clause's timestamped-event binding.
+fn typed_timestamped(
+    stamped: &[(u64, i64)],
+    missing: &[(u64, u64)],
+) -> fsl_replay::spine::ClauseRunSelection {
+    use fsl_replay::spine::{
+        ClauseRunSelection, ProgressAssertion, ProgressClosure, ProgressCompleteness,
+        TimestampedMissingValuation, TimestampedObservation, TimestampedWindow, TraceBinding,
+        TraceInput,
+    };
+    ClauseRunSelection::SampledTemporal {
+        name: "T".to_owned(),
+        trace: TraceInput::Timestamped {
+            observations: stamped
+                .iter()
+                .map(|(stamp, level)| TimestampedObservation {
+                    document: typed_sample(*level),
+                    stamp: *stamp,
+                    order_key: None,
+                })
+                .collect(),
+            progress: ProgressAssertion {
+                watermark: 5,
+                completeness: ProgressCompleteness::Complete { through: 5 },
+                scope: ProgressClosure::Closed,
+                execution: ProgressClosure::Closed,
+            },
+            window: Box::new(TimestampedWindow {
+                binding: Some(TraceBinding {
+                    profile: STAMPED.to_owned(),
+                    clock_name: "plant-ms".to_owned(),
+                    parameters: serde_json::from_value(trace_clocks()["plant-ms"].clone())
+                        .expect("the clock configuration"),
+                }),
+                authoritative_origin: true,
+                cover: None,
+                missing_valuations: missing
+                    .iter()
+                    .map(|(position, atom)| TimestampedMissingValuation {
+                        position: *position,
+                        atom: *atom,
+                    })
+                    .collect(),
+            }),
+        },
+        ledger: None,
+    }
+}
+
 /// FR-640-AC-2, FR-641-AC-1 (TC-1660, TC-1662): the timestamped clause runs
-/// over a request-file `timestamped` trace and the result carries the ledger.
+/// over a request-file `timestamped` trace and reports what the same input
+/// built as a typed `ClauseRunRequest` reports, byte for byte, with the
+/// outcomes FR-501-AC-4 states, and the result carries the ledger.
 #[test]
 #[trace(
     "TC-1662",
@@ -239,26 +339,184 @@ fn missing_unused_and_mismatched_clock_selections_refuse_naming_the_clock() {
     "FSpec-TC-1163",
     "FSpec-FR-352-AC-18"
 )]
-#[ignore = "QSL-2133: the `timestamped` trace kind is not on the run wire yet"]
 fn a_timestamped_trace_runs_from_a_request_file_and_returns_the_ledger() {
+    use fsl_replay::spine::{TemporalIndeterminateReason, TemporalVerdict};
     let directory = tempfile::tempdir().unwrap();
-    let observations: Vec<Value> = [(0, 0), (2, 0), (5, 1)]
-        .into_iter()
-        .map(|(stamp, level)| json!({"position": sample(level), "stamp": stamp}))
-        .collect();
-    let request = run_request(json!({"name": "T", "trace": {"timestamped": {
-        "observations": observations,
-        "progress": {"watermark": 5, "completeness": {"complete": {"through": 5}},
-            "scope": "closed", "execution": "closed"},
-        "lower_boundary": "authoritative-origin",
-        "binding": binding(STAMPED, "plant-ms")}}}));
-    let output = run_file(&write(directory.path(), "run.json", &request));
+    // FR-501-AC-4: stamps 0, 2, 5 with `p` (`level > 0`) false at 0 and 5 and
+    // its valuation absent at stamp 2 is `Indeterminate`; true at 5 it is
+    // `Completed(true)`.
+    let cases: [TimestampedCase; 3] = [
+        ([0, 0, 0], vec![(1, 1)], true),
+        ([0, 0, 1], vec![(1, 1)], false),
+        ([0, 0, 1], vec![], false),
+    ];
+    for (index, (levels, missing, indeterminate)) in cases.into_iter().enumerate() {
+        let observations: Vec<Value> = [0_u64, 2, 5]
+            .into_iter()
+            .zip(levels)
+            .map(|(stamp, level)| json!({"position": sample(level), "stamp": stamp}))
+            .collect();
+        let missing_members: Vec<Value> = missing
+            .iter()
+            .map(|(position, atom)| json!({"position": position, "atom": atom}))
+            .collect();
+        let request = trace_request(json!({"name": "T", "trace": {"timestamped": {
+            "observations": observations,
+            "progress": {"watermark": 5, "completeness": {"complete": {"through": 5}},
+                "scope": "closed", "execution": "closed"},
+            "lower_boundary": "authoritative-origin",
+            "binding": binding(STAMPED, "plant-ms"),
+            "missing": missing_members}}}));
+        let path = write_trace(directory.path(), &format!("run-{index}.json"), &request);
+        let output = run_file(&path);
+        let document = result(&output);
+        assert_eq!(document["disposition"]["stage"], "evaluate", "{document}");
+        assert_eq!(
+            document["ledger"]["format"], "filament.progress-ledger/1",
+            "{document}"
+        );
+
+        // The same input built as a typed request: the envelope is the
+        // file's, the selection is built by hand.
+        let prepared = fsl_command::command::prepare_run(&path, Default::default())
+            .unwrap_or_else(|error| panic!("the request prepares: {error:?}"));
+        let fsl_command::command::PreparedRun::Clause(mut typed) = prepared else {
+            panic!("a clause run");
+        };
+        let stamped: Vec<(u64, i64)> = [0_u64, 2, 5].into_iter().zip(levels).collect();
+        typed.selection = typed_timestamped(&stamped, &missing);
+        let selection = typed.selection.clone();
+        let report = fsl_replay::spine::run_clause(*typed).expect("a report");
+        let typed_bytes = fsl_replay::spine::write_clause_run_result_for(&report, Some(&selection))
+            .expect("the report writes");
+        let typed_document: Value = serde_json::from_slice(&typed_bytes).unwrap();
+        assert_eq!(typed_document, document, "run {index}");
+        assert_eq!(
+            output.status.code(),
+            Some(i32::from(report.disposition.exit_code()))
+        );
+        if indeterminate {
+            let fsl_replay::spine::ClauseDisposition::Temporal(TemporalVerdict::Indeterminate {
+                at,
+                reason: TemporalIndeterminateReason::MissingValuation { position, .. },
+            }) = &report.disposition
+            else {
+                panic!("{:?}", report.disposition);
+            };
+            assert_eq!((*at, *position), (0, 1));
+            assert_eq!(output.status.code(), Some(11));
+        } else {
+            assert!(
+                matches!(
+                    report.disposition,
+                    fsl_replay::spine::ClauseDisposition::Temporal(TemporalVerdict::Holds)
+                ),
+                "{:?}",
+                report.disposition
+            );
+            assert_eq!(output.status.code(), Some(0));
+        }
+    }
+}
+
+/// FR-641-AC-2, FR-330-AC-17 (TC-1662): a violated finite record-sample trace
+/// of an event-position clause, which the trace-subject route evaluates,
+/// writes its counterexample, reads back and exits 10.
+#[test]
+#[trace("TC-1662", "FR-641-AC-2", "FR-330-AC-17")]
+fn a_violated_finite_sample_trace_writes_its_counterexample() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = trace_request(json!({"name": "E", "trace": {"finite": samples(&[0, 0, 0])}}));
+    let output = run_file(&write_trace(directory.path(), "finite.json", &request));
     let document = result(&output);
-    assert_eq!(document["disposition"]["stage"], "evaluate", "{document}");
-    assert_eq!(output.status.code(), Some(0), "{document}");
+    assert_eq!(output.status.code(), Some(10), "{document}");
+    assert_eq!(
+        document["disposition"]["temporal"]["kind"], "violated",
+        "{document}"
+    );
+    assert!(
+        find(&document, "counterexample").is_some(),
+        "the violation carries its counterexample: {document}"
+    );
+    fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&document).unwrap())
+        .expect("the violated record reads back");
+}
+
+/// The result document of clause `name` over one `progressed` sample at
+/// level 0 under `profile` and `clock`, asserting `watermark`, complete
+/// through `through`, with scope and execution `closure`.
+fn progressed_run(
+    directory: &Path,
+    (name, profile, clock): (&str, &str, &str),
+    (watermark, through, closure): (u64, u64, &str),
+) -> Value {
+    let request = trace_request(json!({"name": name, "trace": {"progressed": {
+        "positions": samples(&[0]),
+        "progress": {"watermark": watermark, "completeness": {"complete": {"through": through}},
+            "scope": closure, "execution": closure},
+        "lower_boundary": "authoritative-origin",
+        "binding": binding(profile, clock)}}}));
+    let document = result(&run_file(&write_trace(
+        directory,
+        &format!("progressed-{name}-{watermark}-{through}-{closure}.json"),
+        &request,
+    )));
     assert_eq!(
         document["ledger"]["format"], "filament.progress-ledger/1",
         "{document}"
+    );
+    document
+}
+
+/// FR-641-AC-2 (TC-1662): a `progressed` trace of a fixed-sample clause and of
+/// an event-position clause reports the outcomes FR-504-AC-1 and AC-2 state,
+/// and the result carries a `ledger` member. A fixed-sample deadline settles
+/// through silence; an event-position deadline waits for the next event.
+#[test]
+#[trace("TC-1662", "FR-641-AC-2", "FR-504-AC-1", "FR-504-AC-2", "TC-1299")]
+fn a_progressed_trace_settles_a_fixed_sample_deadline_through_silence() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixed = ("S", SAMPLED, "sample");
+    let events = ("E", EVENTS, "events");
+
+    // FR-504-AC-1: watermark 0 leaves `eventually[0,3]` pending on tick 3.
+    let pending = progressed_run(directory.path(), fixed, (0, 0, "open"));
+    assert_eq!(
+        pending["disposition"]["temporal"]["kind"], "pending-window",
+        "{pending}"
+    );
+    assert_eq!(
+        pending["disposition"]["temporal"]["deadline"], 3,
+        "{pending}"
+    );
+    // Watermark 3, with no new observation, settles it as false whether the
+    // scope is open or closed (the basis is TC-1299's own table).
+    let open = progressed_run(directory.path(), fixed, (3, 3, "open"));
+    assert_eq!(
+        open["disposition"]["temporal"]["kind"], "violated",
+        "{open}"
+    );
+    // The violation carries its counterexample over the samples, and the
+    // record reads back.
+    fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&open).unwrap())
+        .expect("the violated record reads back");
+    let closed = progressed_run(directory.path(), fixed, (3, 3, "closed"));
+    assert_eq!(
+        closed["disposition"]["temporal"]["kind"], "violated",
+        "{closed}"
+    );
+
+    // FR-504-AC-2: under event position the same trace does not advance in
+    // silence, and a closed scope reads it by false extension.
+    let next = progressed_run(directory.path(), events, (3, 3, "open"));
+    assert_eq!(
+        next["disposition"]["temporal"]["kind"], "pending-next-event",
+        "{next}"
+    );
+    let extended = progressed_run(directory.path(), events, (0, 0, "closed"));
+    assert_eq!(
+        extended["disposition"]["temporal"]["kind"], "violated",
+        "{extended}"
     );
 }
 
@@ -273,7 +531,6 @@ fn a_timestamped_trace_runs_from_a_request_file_and_returns_the_ledger() {
     "FSpec-TC-1162",
     "FSpec-FR-114-AC-5"
 )]
-#[ignore = "QSL-2133: the `progressed` trace kind and the `ledger` file are not on the run wire yet"]
 fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one() {
     let directory = tempfile::tempdir().unwrap();
     let progressed = |watermark: u64, ledger: Option<&str>| {
@@ -285,9 +542,9 @@ fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one()
         if let Some(ledger) = ledger {
             temporal["ledger"] = json!(ledger);
         }
-        run_request(temporal)
+        trace_request(temporal)
     };
-    let first = result(&run_file(&write(
+    let first = result(&run_file(&write_trace(
         directory.path(),
         "first.json",
         &progressed(3, None),
@@ -300,7 +557,7 @@ fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one()
     )
     .unwrap();
 
-    let regress = result(&run_file(&write(
+    let regress = result(&run_file(&write_trace(
         directory.path(),
         "regress.json",
         &progressed(1, Some("ledger.json")),
@@ -317,7 +574,7 @@ fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one()
         "the refused run returns the ledger unchanged"
     );
 
-    let advance = result(&run_file(&write(
+    let advance = result(&run_file(&write_trace(
         directory.path(),
         "advance.json",
         &progressed(9, Some("ledger.json")),
@@ -339,7 +596,6 @@ fn trace_refusal(document: &Value) -> (&Value, &Value, &Value) {
 /// clause's locus.
 #[test]
 #[trace("TC-1670", "FR-645-AC-1", "FR-645-AC-2")]
-#[ignore = "QSL-2133: trace refusals carry no reason, message or locus yet"]
 fn empty_traces_refuse_with_a_reason_message_and_locus() {
     let directory = tempfile::tempdir().unwrap();
     for (index, (trace, reason, pointer)) in [
@@ -357,8 +613,8 @@ fn empty_traces_refuse_with_a_reason_message_and_locus() {
     .into_iter()
     .enumerate()
     {
-        let request = run_request(json!({"name": "Reaches", "trace": trace}));
-        let output = run_file(&write(
+        let request = trace_request(json!({"name": "Reaches", "trace": trace}));
+        let output = run_file(&write_trace(
             directory.path(),
             &format!("empty-{index}.json"),
             &request,
@@ -378,21 +634,47 @@ fn empty_traces_refuse_with_a_reason_message_and_locus() {
     }
 }
 
-/// FR-645-AC-3, AC-4, FR-642-AC-5 (TC-1671, TC-1665): a trace kind the
-/// clause's profile does not read refuses at stage `admit` naming the
-/// profile and the expected and supplied kinds. A timed clause over a trace
-/// without stamps is the documented case: positions are not time.
+/// The refusal a trace kind the clause's profile does not read reports for the
+/// request file `path`: stage `admit`, the reason, the profile, the expected
+/// and the supplied kinds, and a message naming the clause and the profile.
+fn assert_kind_mismatch(
+    path: &Path,
+    (name, profile, expected, supplied): (&str, &str, Value, &str),
+) {
+    let output = run_file(path);
+    assert_eq!(output.status.code(), Some(20));
+    let document = result(&output);
+    assert_eq!(document["disposition"]["stage"], "admit", "{document}");
+    assert_eq!(
+        find(&document, "reason"),
+        Some(&json!("trace-kind-mismatch")),
+        "{document}"
+    );
+    assert_eq!(
+        find(&document, "profile"),
+        Some(&json!(profile)),
+        "{document}"
+    );
+    assert_eq!(find(&document, "expected"), Some(&expected), "{document}");
+    assert_eq!(
+        find(&document, "supplied"),
+        Some(&json!(supplied)),
+        "{document}"
+    );
+    let message = find(&document, "message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        message.contains(profile) && message.contains(name),
+        "{document}"
+    );
+}
+
+/// FR-645-AC-3 (TC-1671): a trace kind the clause's profile does not read
+/// refuses at stage `admit` naming the profile and the expected and supplied
+/// kinds.
 #[test]
-#[trace(
-    "TC-1671",
-    "FR-645-AC-3",
-    "FR-645-AC-4",
-    "FR-642-AC-5",
-    "FSpec-TC-1161",
-    "FSpec-FR-541-AC-3"
-)]
-#[trace("TC-1665", "FR-642-AC-5")]
-#[ignore = "QSL-2133: trace-kind-mismatch refusals carry no fields yet"]
+#[trace("TC-1671", "FR-645-AC-3")]
 fn a_trace_kind_the_profile_does_not_read_refuses_with_profile_and_kinds() {
     let directory = tempfile::tempdir().unwrap();
     for (index, (name, trace, profile, expected, supplied)) in [
@@ -410,50 +692,33 @@ fn a_trace_kind_the_profile_does_not_read_refuses_with_profile_and_kinds() {
             json!(["timestamped"]),
             "finite",
         ),
-        (
-            "Ack",
-            json!({"finite": samples(&[0, 1])}),
-            TIMED,
-            json!(["timed"]),
-            "finite",
-        ),
     ]
     .into_iter()
     .enumerate()
     {
-        let request = run_request(json!({"name": name, "trace": trace}));
-        let output = run_file(&write(
-            directory.path(),
-            &format!("kind-{index}.json"),
-            &request,
-        ));
-        assert_eq!(output.status.code(), Some(20));
-        let document = result(&output);
-        assert_eq!(document["disposition"]["stage"], "admit", "{document}");
-        assert_eq!(
-            find(&document, "reason"),
-            Some(&json!("trace-kind-mismatch")),
-            "{document}"
-        );
-        assert_eq!(
-            find(&document, "profile"),
-            Some(&json!(profile)),
-            "{document}"
-        );
-        assert_eq!(find(&document, "expected"), Some(&expected), "{document}");
-        assert_eq!(
-            find(&document, "supplied"),
-            Some(&json!(supplied)),
-            "{document}"
-        );
-        let message = find(&document, "message")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        assert!(
-            message.contains(profile) && message.contains(name),
-            "{document}"
-        );
+        let request = trace_request(json!({"name": name, "trace": trace}));
+        let path = write_trace(directory.path(), &format!("kind-{index}.json"), &request);
+        assert_kind_mismatch(&path, (name, profile, expected, supplied));
     }
+}
+
+/// FR-645-AC-4, FR-642-AC-5 (TC-1671, TC-1665): a timed clause over a trace
+/// without stamps is the documented case: positions are not time.
+#[test]
+#[trace(
+    "TC-1671",
+    "FR-645-AC-4",
+    "FR-642-AC-5",
+    "FSpec-TC-1161",
+    "FSpec-FR-541-AC-3"
+)]
+#[trace("TC-1665", "FR-642-AC-5")]
+#[ignore = "QSL-2254/QSL-2136: timed clock kind and timed clause over a trace subject"]
+fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = run_request(json!({"name": "Ack", "trace": {"finite": samples(&[0, 1])}}));
+    let path = write(directory.path(), "kind-timed.json", &request);
+    assert_kind_mismatch(&path, ("Ack", TIMED, json!(["timed"]), "finite"));
 }
 
 /// FR-644-AC-5, FR-643-AC-1 (TC-1668, TC-1666): a `native-monitor/1`
@@ -570,7 +835,6 @@ fn malformed_and_reserved_clock_members_refuse() {
 /// `request` naming the member; a lasso of samples reaches evaluation.
 #[test]
 #[trace("TC-1663", "FR-641-AC-4", "TC-1160", "FR-312-AC-8")]
-#[ignore = "QSL-2133: record samples and the new trace kinds are not on the run wire yet"]
 fn malformed_trace_members_refuse_at_the_request_stage() {
     let directory = tempfile::tempdir().unwrap();
     let over = json!({"reference": {"population": "P", "key": "c1"}});
@@ -615,10 +879,10 @@ fn malformed_trace_members_refuse_at_the_request_stage() {
         ),
     ];
     for (index, (temporal, member)) in cases.into_iter().enumerate() {
-        let output = run_file(&write(
+        let output = run_file(&write_trace(
             directory.path(),
             &format!("malformed-trace-{index}.json"),
-            &run_request(temporal),
+            &trace_request(temporal),
         ));
         assert_eq!(output.status.code(), Some(20));
         let envelope = refusal(&output);
@@ -629,9 +893,13 @@ fn malformed_trace_members_refuse_at_the_request_stage() {
             "{member}: {envelope}"
         );
     }
-    let lasso = run_request(json!({"name": "Reaches",
+    let lasso = trace_request(json!({"name": "Reaches",
         "trace": {"lasso": {"prefix": samples(&[0]), "loop": samples(&[1, 2])}}}));
-    let document = result(&run_file(&write(directory.path(), "lasso.json", &lasso)));
+    let document = result(&run_file(&write_trace(
+        directory.path(),
+        "lasso.json",
+        &lasso,
+    )));
     assert_eq!(document["disposition"]["category"], "success", "{document}");
 }
 
@@ -639,7 +907,6 @@ fn malformed_trace_members_refuse_at_the_request_stage() {
 /// that adds nothing reproduces its bytes.
 #[test]
 #[trace("TC-1663", "FR-641-AC-5")]
-#[ignore = "QSL-2133: the `ledger` file is not on the run wire yet"]
 fn a_ledger_round_trips_through_a_run_that_changes_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let request = |ledger: Option<&str>| {
@@ -649,16 +916,16 @@ fn a_ledger_round_trips_through_a_run_that_changes_nothing() {
         if let Some(ledger) = ledger {
             temporal["ledger"] = json!(ledger);
         }
-        run_request(temporal)
+        trace_request(temporal)
     };
-    let first = result(&run_file(&write(
+    let first = result(&run_file(&write_trace(
         directory.path(),
         "first.json",
         &request(None),
     )));
     let bytes = serde_json::to_vec(&first["ledger"]).unwrap();
     std::fs::write(directory.path().join("ledger.json"), &bytes).unwrap();
-    let again = result(&run_file(&write(
+    let again = result(&run_file(&write_trace(
         directory.path(),
         "again.json",
         &request(Some("ledger.json")),
@@ -670,13 +937,12 @@ fn a_ledger_round_trips_through_a_run_that_changes_nothing() {
 /// carries the same reason, without a request pointer.
 #[test]
 #[trace("TC-1671", "FR-645-AC-5")]
-#[ignore = "QSL-2133: trace refusals carry no reason fields yet"]
 fn an_in_process_trace_refusal_carries_no_request_pointer() {
     let directory = tempfile::tempdir().unwrap();
-    let path = write(
+    let path = write_trace(
         directory.path(),
         "lasso.json",
-        &run_request(json!({"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": []}}})),
+        &trace_request(json!({"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": []}}})),
     );
     let prepared = fsl_command::command::prepare_run(&path, Default::default())
         .unwrap_or_else(|error| panic!("the request prepares: {error:?}"));
@@ -964,4 +1230,64 @@ fn a_monitor_request_supplies_the_integer_division_law() {
         Some("missing-selection"),
         "{refused}"
     );
+}
+
+/// FR-645, QSL-2138: a window aggregate over a record trace subject is read
+/// only by the closed finite trace of the event-position profile. A
+/// `progressed` sample trace is not that route, so the run refuses with a
+/// typed refusal naming the gap, never an internal fault.
+#[test]
+fn a_window_aggregate_over_a_progressed_sample_trace_refuses_and_never_faults() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = trace_unit()
+        + "temporal Count using e over (r: Reading) clock \"events\" on origin \
+           { always[0,2] (count where holds(r.level > 1) over past[0,2] min_count 0 <= 5) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    for trace in [
+        json!({"progressed": {
+            "positions": samples(&[0, 2, 3]),
+            "progress": progress(3),
+            "lower_boundary": "authoritative-origin",
+            "binding": binding(EVENTS, "events")}}),
+        json!({"finite": samples(&[0, 2, 3])}),
+    ] {
+        let path = directory.path().join("count.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&trace_request(json!({"name": "Count", "trace": trace}))).unwrap(),
+        )
+        .unwrap();
+        let output = run_file(&path);
+        let document = result(&output);
+        let category = &document["disposition"]["category"];
+        assert_ne!(category, "internal-failure", "{document}");
+        if trace.get("progressed").is_some() {
+            assert_eq!(output.status.code(), Some(20), "{document}");
+            assert_eq!(
+                find(&document, "reason"),
+                Some(&json!("unsupported-window-aggregate")),
+                "{document}"
+            );
+            let message = find(&document, "message")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            assert!(message.contains("QSL-2138"), "{document}");
+        }
+    }
+}
+
+/// FR-642, FR-641-AC-4 (TC-1664): a `timed` trace of exact rational stamps
+/// reaches FR-330 and a timed clause is answered: `Ack` holds when level 1
+/// is read at stamp 0.
+#[test]
+#[trace("TC-1664", "FR-641-AC-4", "FR-642-AC-1")]
+#[ignore = "QSL-2254: timed clock kind"]
+fn a_timed_trace_answers_a_timed_clause() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = run_request(json!({"name": "Ack", "trace": {"timed": {
+        "prefix": [{"position": sample(1), "stamp": "0"}]}}}));
+    let output = run_file(&write(directory.path(), "timed.json", &request));
+    assert_eq!(output.status.code(), Some(0), "{:?}", output.stderr);
+    let document = result(&output);
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
 }

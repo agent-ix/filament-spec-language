@@ -1392,13 +1392,14 @@ fn execute_prepared(prepared: PreparedRun) -> Result<RunResult> {
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::Clause(request) => {
+            let selection = request.selection.clone();
             let report = fsl_replay::spine::run_clause(*request).map_err(|error| {
                 RunCause::ClauseRequest {
                     member: "clause".to_owned(),
                     reason: error.to_string(),
                 }
             })?;
-            return output::clause_report(&report);
+            return output::clause_report(&report, &selection);
         }
     };
     let prepared = *prepared.data;

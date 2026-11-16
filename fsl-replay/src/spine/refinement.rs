@@ -573,6 +573,7 @@ fn classify_disposition(disposition: &ClauseDisposition) -> Classification {
         // temporal clause, so a temporal disposition is a broken invariant.
         ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
+        | ClauseDisposition::TraceRefused(_)
         | ClauseDisposition::ProgressContradiction(_) => {
             one(ToolFailure, Code::RuntimeInvariant, None)
         }

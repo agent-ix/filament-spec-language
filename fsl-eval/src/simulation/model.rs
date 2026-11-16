@@ -92,7 +92,7 @@ pub use frames::judge::{
 };
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
-pub use letters::{ClauseLetters, LettersRefusal};
+pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};
 pub use probabilistic::{
     same_rewards, same_values, Action, Draw, NotMarkov, ScheduledIdentity, TransitionId,
     UndecidedSuccessor, Unsteppable, WeightedStep,
