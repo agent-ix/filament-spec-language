@@ -34,7 +34,9 @@ fn a_malformed_request_is_a_named_refusal() {
     assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
 }
 
-/// FR-624-AC-2: a checker refusal of the program refuses the request at `check`.
+/// FR-624-AC-2: a checker refusal of the program refuses the request at the
+/// checker stage, which FR-286 spells `S3`; FR-624-AC-2 still says `check`, a
+/// wording conflict tracked as QSL-2288.
 #[trace("TC-1584", "FR-624-AC-2")]
 #[test]
 fn a_refused_program_refuses_at_its_stage() {
