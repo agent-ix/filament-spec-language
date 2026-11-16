@@ -117,8 +117,30 @@ Review scope for this round includes all eight changed Rust source/test files: `
 | FND-001 | fixed | Round 1: Resolved member types replace field/operation records in the retained source view, and the rebuilt index reaches model conformance; the incompatible R/S override has an explicit two-cause regression test. |
 | FND-002 | fixed | Round 1: The prepass admits model variants; model_object_types imports foreign enum shapes and payload handles before late resolution. A model-owned enum field and signature regression is present. |
 | FND-003 | still-open | Round 1: New in disposition pass 1: exact equality replaces scalar-domain conformance for resolved source members. |
+| FND-003 | fixed | Round 2: Resolved Int-to-Integer conformance and bounded interval inclusion are restored; the positive override test covers both legal variance directions and strictly contained intervals. |
 
 ### Round 1 verification limits and tooling
 
 No source edits, builds, tests, aggregate gate or GitHub comments. Quire 0.38.3 (engine 0.52.1), Quoin 0.29.4 and spec-artifacts-process v0.29.2. Matrix generation and explicit artifact validation succeeded with nonfatal inline-schema and duplicate-archetype warnings. Spec-review skipped because this PR changes no specification or plan; optional semantic fan-out not run. Coder-reported checks were not rerun.
+
+
+## Disposition pass 2
+
+Reviewed frozen head `b3d20f682102eb69306ea3254b96c68524d5201f` against base `5b780c3c04c3ea91a91f424fe5b37609c39ec9af`, including the fix delta from round-one head `bbea60fbd9d4dbb7a041a6544859699e104a0643`. Original findings and earlier dispositions are preserved.
+
+### Round 2 verdict
+
+**PASS** — FND-003 is fixed; FND-001 and FND-002 remain fixed. No new findings.
+
+`value_conformance_walk` now admits a resolved bounded integer as `Integer`, and compares two resolved bounded integers by exact interval containment. The mixed resolved-to-native Integer branch agrees. Reverse widening is not introduced: an unbounded Integer still does not conform to a bounded Int, and a wider interval does not fit inside a narrower one. The comparison uses the exact Integer bounds without truncation, recursion or additional allocations.
+
+The new `source_object_operation_overrides_allow_scalar_widening_and_narrowing` test admits both the Int[0,9]-parameter/Integer-result base with its Integer-parameter/Int[0,9]-result child and the strictly contained interval pair. It asserts exact checked Base/Child parameter and result types for the first pair. The existing incompatible R/S override still requires both variance refusal causes; its comparison remains unequal under the nonnumeric fallback.
+
+Rechecked the original fixes: the retained source model's field/operation records still receive the resolved types and its ModelIndex is rebuilt before conformance; qualified model Enum records still pass admission and foreign enum/payload variant shapes and handles still reach record-equivalent type resolution. The AC-12 checked field and signature assertions, AC-13 refusal-code/cause comparisons, and recursive alias definition-cycle comparison remain intact. Previously fixed FND-001/FND-002 require no duplicate disposition row.
+
+Round-two implementation changes are confined to `fsl-semantics/src/model/index.rs` and the matching `source_objects.rs` regression test. Analysis/replay changes between historical heads belong to rebased main, outside this PR. Code-review included the Rust lane; no new unsafe, concurrency, public wire-format, or source-emission behavior is introduced by the round-two delta.
+
+### Round 2 verification limits and tooling
+
+No source edits, builds, tests, aggregate gate or GitHub comments. This is a source-inspection disposition, not a claim of executed test results. Quire 0.38.3 (engine 0.52.1), Quoin 0.29.4 and spec-artifacts-process v0.29.2. Matrix generation and explicit artifact validation succeeded with nonfatal inline-schema and duplicate-archetype warnings; no tooling blocker. Spec-review skipped because the PR changes no specification or plan; optional semantic fan-out not run.
 

@@ -82,3 +82,20 @@ Recomputed matrix at this head: AC-12 is tagged by 18 active binders, AC-13 by t
 
 No source edits, builds, tests, aggregate gate or GitHub comments. Quire 0.38.3 (engine 0.52.1), Quoin 0.29.4 and spec-artifacts-process v0.29.2. Matrix generation and explicit artifact validation succeeded with nonfatal inline-schema and duplicate-archetype warnings. Spec-review skipped because this PR changes no specification or plan; optional semantic fan-out not run. Coder-reported checks were not rerun.
 
+
+## Disposition pass 2
+
+Reviewed frozen head `b3d20f682102eb69306ea3254b96c68524d5201f` against base `5b780c3c04c3ea91a91f424fe5b37609c39ec9af`, including the fix delta from round-one head `bbea60fbd9d4dbb7a041a6544859699e104a0643`. Original findings and earlier dispositions are preserved.
+
+### Round 2 verdict
+
+**PASS** — FND-001 remains fixed and no new gap finding was found. There was no open gap finding before this round, so no duplicate disposition row is added.
+
+The checked member category, typed valid field use and exact signature-to-field equality assertions remain present across the AC-12 table. The incompatible R/S override continues to assert both variance causes. The newly added positive regression covers legal Int-to-Integer parameter widening, Integer-to-Int result narrowing, and strictly contained bounded intervals; it also asserts all four exact checked signature types for the first case. Qualified model enum coverage, AC-13 code/cause comparisons and recursive alias definition-cycle evidence remain unchanged.
+
+Recomputed matrix at this head: AC-12 is tagged by 19 active binders, AC-13 by two. No scoped untagged or ignored-only criterion; no run evidence read. Plan completion: not assessed. The code-review FND-003 is now fixed, so no companion open finding blocks this subset. Emission remains outside QSL-2175, owned by QSL-1880.
+
+### Round 2 verification limits and tooling
+
+No source edits, builds, tests, aggregate gate or GitHub comments. This is a source-inspection disposition, not a claim of executed test results. Quire 0.38.3 (engine 0.52.1), Quoin 0.29.4 and spec-artifacts-process v0.29.2. Matrix generation and explicit artifact validation succeeded with nonfatal inline-schema and duplicate-archetype warnings; no tooling blocker. Spec-review skipped because the PR changes no specification or plan; optional semantic fan-out not run.
+
