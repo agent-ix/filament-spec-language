@@ -215,3 +215,63 @@ should report `incomplete` or refuse. FND-004 and FND-005 make the decisive
 record and the universe silently wrong. FND-002 is a spec gap: FR-255 says the
 caller sets the candidate bound, and FR-641 gives the caller no way to set it.
 It needs a spec decision before the constant can stay.
+
+## New findings (disposition pass 1)
+
+Review round 2 at 61816198ee01801e4cf4a490d029ab55ad1f4066. Focused runs: `cargo test -p fsl-replay --lib -- spine model_trace` (660 passed, 8 ignored), `cargo test -p filament-spec-language --test it -- run_wire` (9 passed, 13 ignored), `cargo test -p fsl-analyze --test it -- model_trace_run monitor` (130 passed, 1 ignored), all with `FSPEC_DIR` set. `cargo clippy --keep-going --workspace --all-targets -- -D warnings` fails with one error (FND-015). A probe test, not committed, ran three record-sample violations through `command::run` (FND-014).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | high | `expansion-limit-reached` is a seventeenth `temporal` kind; FR-267 and FR-621 (and FSpec FR-352) register exactly sixteen, and W5's FR-641 spells this stop as the existing `incomplete` row | fsl-replay/src/spine/native_result/temporal.rs:122-126,605-612,1059,1714-1722 |
+| FND-014 | high | A violated finite record-sample trace of an event-position clause, run from a request file, exits 30: the delegated trace-subject report has no counterexample and the writer refuses the `violated` row | fsl-replay/src/spine/clause/temporal.rs:1040-1047 |
+| FND-015 | medium | Workspace clippy with `-D warnings` is red: `type_complexity` on the new FR-641-AC-1 case table | tests/it/run_wire.rs:344 |
+
+### FND-013
+
+FR-267's temporal table says "a kind outside the sixteen is unregistered on both sides and refused". FR-621 lists the same sixteen kinds, and says "Any other kind is refused by the writer". The new verdict writes and reads `{"kind": "expansion-limit-reached", "limit", "value", "setting"}`. Its category (`incomplete`), basis (`unavailable`) and absent `outcome` agree across the writer, the reader and the validator, and the axes follow from the category. But the row itself is not registered. W5 (#2744) specifies this stop as `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value: N, setting: expansion.max_candidates}` and the run report's outcome `{"kind": "incomplete", "limit": "max_candidates"}`. That is the existing `incomplete` row. The meter case is already FR-330-AC-4's `incomplete` with `outcome` limit `work_units`. Fix: report both stops through the `incomplete` row, extending its payload to carry `max_candidates` if needed, and delete the new kind. Otherwise, register the kind in FR-267, FR-621 and FSpec FR-352 first.
+
+### FND-014
+
+When the trace holds samples, is `Finite` and the profile is event-position, `run_temporal` hands off to `trace_subject::run_subject` (FR-330-AC-17's route). That route builds no counterexample. `verdict_wire` requires one for `violated` (`NativeRunResultError::Counterexample`), so `command::run` fails. The probe gave this result for `E` (`eventually[0,2] holds(r.level = 2)`) over samples 0, 0, 0: exit 30, no result document. The same probe over infinite-trace `Never` on a finite and a lasso sample trace wrote `violated` with `record-sample` counterexample steps and exit 10. This PR's record-sample counterexample fix therefore covers every sample route except the one it delegates. Fix: attach `with_counterexample(node, trace, ...)` to the delegated report, and add a wire test for a violated finite sample trace.
+
+### FND-015
+
+Clippy reports `very complex type used` at `let cases: [([i64; 3], Vec<(u64, u64)>, bool); 3]`. Fix: name the row type with a `type` alias, or use a small struct.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `evaluate_model_trace` returns `ModelTraceEnd::Stopped(stop)`, and `expansion_stop` maps it to category `incomplete` naming `max_candidates`/`expansion.max_candidates` or the `accounting.*` counter. A stop with no named limit is a fault. `a_model_trace_whose_expansion_stops_is_incomplete_naming_the_limit` covers it. The row it is written as is FND-013. |
+| FND-002 | deferred | Lead ruling for round 2: the bound stays a named constant (`MAX_CANDIDATES`), and W5 (#2744) specifies the optional `max_candidates` member (FR-641-AC-7, default 1,000,000), which the coder implements after W5 merges. |
+| FND-003 | fixed | `run_model` refuses an empty non-stutter loop with `site.empty_loop()` at stage `evaluate`. `request_pointer` gives `selection.temporal.trace.model.loop`. `a_model_trace_with_an_empty_loop_is_refused` asserts both. |
+| FND-004 | fixed | `decisive_over` (shared with the snapshot route) evaluates the atom over `ClauseLetters::decisive_observation`'s environment and identity. The test pins position 2, no quantifier, no index, element `false`, the `filament.simulation.state` observation and the object `c`. |
+| FND-005 | fixed | Each universe snapshot is admitted by `admit_trace_snapshot` before simulation, and a failure refuses at `admit`. `universes()` no longer skips a missing or unreadable reference. |
+| FND-006 | fixed | The monitor's `ClauseRefused` record now carries `TraceRefusal::record_fields()`: reason, profile, message, expected, supplied and position. |
+| FND-007 | fixed | Lead ruling: the empty `timestamped` trace stays at stage `admit` with `invalid_runtime_input`/`invalid-value`, as before, and its test is restored. |
+| FND-008 | fixed | The reader now requires cause `invalid-value`, a non-empty `message` and a `reason` among `TRACE_REFUSAL_REASONS`. The wire test adds three tamper cases (reason, cause, message). |
+| FND-009 | fixed | `FSpec-TC-1161`/`FSpec-FR-541-AC-3` moved to `a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds`. |
+| FND-010 | fixed | The `FR-645-AC-3` tag was dropped from the window-aggregate test. |
+| FND-011 | fixed | `run_model` reports `ClauseRunUsage::from_meter(&meter, admitted)`, and the test asserts `evaluation_admissions > 0`. |
+| FND-012 | fixed | `progress_assertion` takes the kind and names `trace.<kind>.progress.watermark.half_open`. |
+
+The record-sample counterexample change in `temporal.rs` is sound, and it
+belongs in this PR. Without it, every record-sample violation on the routes
+this PR adds fails to write, because FR-267's `violated` row requires a
+counterexample. The probe's lasso and finite infinite-trace violations write
+and read back. It is incomplete only on the delegated route (FND-014). A
+sample step is written as
+`{"document": {"authority": "record-sample", "identity": <canonical sample>}}`.
+FR-330 and FSpec FR-364 do not define a step for a record sample. That is a
+spec gap for the batch, not a code defect.
+
+FR-504-AC-1's `decisive-counterexample` against the top-level `basis` is a
+spec inconsistency, not a code defect. FR-266 sets `closed-scope` for every
+temporal `Completed(false)`, and FR-330 returns FR-501's result report (the
+member that would carry FR-504's basis) only for `Timestamped`. FR-504's
+Outputs promise a basis that the `Progressed` run report has nowhere to put.
+The spec batch needs to either retarget FR-504-AC-1's basis wording or have
+FR-330 return the result report for `Progressed`.
+
+Round 2 verdict: REQUEST CHANGES, for FND-013, FND-014 and FND-015. Every
+round-1 finding is fixed except FND-002, which the lead ruling defers.

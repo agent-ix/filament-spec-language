@@ -66,3 +66,13 @@ weaker than their ACs: FR-641-AC-1, FR-641-AC-2 and FR-330-AC-16. The trace
 mis-tags (FSpec-FR-541-AC-3 and FR-645-AC-3) and the model-trace
 `Pending`-for-empty-loop test are recorded in the companion code review
 (SR-2026111608414701, FND-003, FND-009, FND-010).
+
+## Dispositions
+
+Review round 2 at 61816198ee01801e4cf4a490d029ab55ad1f4066.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test runs FR-501-AC-4's three inputs from a request file and as a typed `SampledTemporal` selection, compares the written documents, and asserts `Indeterminate` with `MissingValuation` at (0, 1) with exit 11, and `Holds` with exit 0. The comparison is JSON-equal rather than byte-equal. Both documents come out of the same canonical writer (`write_clause_run_result_for`), so key order and number spelling cannot depend on which route built the input, and every value is compared exactly. That meets the intent of AC-1's "byte-identical": the route does not change the report. |
+| FND-002 | fixed | `a_progressed_trace_settles_a_fixed_sample_deadline_through_silence` covers fixed-sample (pending-window with deadline 3 at watermark 0, then violated through silence at watermark 3 under open and closed scope) and event-position (pending-next-event, then violated by false extension under closed scope), each with a `ledger` member. |
+| FND-003 | fixed | The test builds the 0, 1, 2, 3 lasso with a terminal stutter, and asserts `decisive.position == Some(2)`, no quantifier or index, element `false`, and the value path's observation and object. |
