@@ -31,9 +31,9 @@ relationships:
 FSL's S3 checker SHALL give every temporal claim over a model subject one
 clock binding, `model-steps` or `model-time` (ADR-026 CB-1 to CB-5). Under
 `model-steps` an interval counts steps; under `model-time` it counts time
-units of the model's time source. A claim over a timed model binds
-`model-time` unless it writes `clock "model-steps"`, and a claim over an
-untimed model binds `model-steps`.
+units of the model's time source. A claim that writes no `clock` binds the
+default of its profile: `model-time` under the timed profile and
+`model-steps` under every other profile (FR-942).
 
 ## Use case
 
@@ -73,9 +73,12 @@ FSpec FR-255 key under that binding.
   Over a trace subject the clock name is a free role (FR-610), and that role is
   the key of the request's `clocks` member (FR-640), a timed clause's role taking
   a `timed` configuration (FR-642).
-- **Default.** When a clause over a timed model writes no `clock` clause,
-  the checker SHALL bind `ModelTime`. When a clause over an untimed model
-  writes none, the checker SHALL bind `ModelSteps`.
+- **Default.** When a clause over a model subject writes no `clock` clause,
+  the checker SHALL bind the default of its selected profile (FR-942, FSpec
+  FR-765): `ModelTime` under the timed profile and `ModelSteps` under every
+  other profile. Under the timed profile over an untimed model the default
+  refuses `invalid_timed_model`/`model-time-on-untimed-model` at the clause's
+  `using` alias.
 - **Explicit.** `clock "model-steps"` SHALL bind `ModelSteps` over any
   model. `clock "model-time"` SHALL bind `ModelTime` over a timed model.
 - **Other names.** Over a model subject the clock name SHALL be `model-steps`

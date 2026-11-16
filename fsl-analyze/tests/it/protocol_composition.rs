@@ -78,3 +78,76 @@ fn parallel_join_overflow_and_message_budget() {
     assert_eq!(label(&run.item(1)), "incomplete");
     assert_eq!(run.item(1)["record"]["cause"]["limit"], "max_messages");
 }
+
+/// Run one bare `finite-replay` item of the order fixture over `trace`.
+fn bare_replay(identity: &str, trace: Value) -> Value {
+    let ws = Workspace::new(&format!("bare-replay-{identity}"));
+    let path = litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "finite-replay",
+            "trace": {"authority": "test", "identity": identity}}]}),
+    );
+    ws.write("trace.json", trace.to_string().as_bytes());
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
+    document["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": "trace.json"}));
+    ws.write("analyze.json", document.to_string().as_bytes());
+    analyze(&path).item(0)
+}
+
+/// FR-941-AC-1: a bare protocol claim is proved over a supplied trace when
+/// every step replays, a prefix that stops before the choice included.
+#[trace("TC-2621", "FR-941-AC-1")]
+#[test]
+#[ignore = "QSL-2272: the finite-replay engine for supplied protocol traces is not merged yet"]
+fn a_bare_claim_is_proved_when_every_step_replays() {
+    for (identity, steps) in [
+        ("whole", &["Placed", "Got", "Ship"][..]),
+        ("prefix", &["Placed", "Got"][..]),
+    ] {
+        let item = bare_replay(identity, trace_document(identity, steps));
+        assert_eq!(label(&item), "proved", "{identity}: {item}");
+        assert_eq!(
+            item["record"]["steps"],
+            steps.len(),
+            "{identity}: the replayed step count"
+        );
+    }
+}
+
+/// FR-941-AC-2 and AC-3: the trace document is read before replay, so a
+/// shape defect at a later step is reported over a stale earlier step; a
+/// stale first step of a well-formed trace is declined at position 0.
+#[trace("TC-2621", "FR-941-AC-2", "FR-941-AC-3")]
+#[test]
+#[ignore = "QSL-2272: the finite-replay engine for supplied protocol traces is not merged yet"]
+fn a_trace_is_read_before_it_is_replayed() {
+    let mut malformed = trace_document("malformed", &["Got", "Placed"]);
+    malformed["steps"][1]["x"] = json!(1);
+    let item = bare_replay("malformed", malformed);
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(item["record"]["cause"], "invalid-input");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "unknown-member",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["payload"]["position"], 1,
+        "{item}"
+    );
+
+    let item = bare_replay("stale", trace_document("stale", &["Got"]));
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["payload"]["position"], 0,
+        "{item}"
+    );
+}

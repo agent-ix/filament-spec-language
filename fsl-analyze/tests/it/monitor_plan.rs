@@ -1020,3 +1020,38 @@ fn fixed_sample_and_infinite_trace_clauses_are_planned() {
         "holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3)",
     ));
 }
+
+/// FR-943-AC-2 (FR-251-AC-34): on a 1 MHz counter at 0.002 events per tick,
+/// the timed `once[5 ms, *]` checks and is planned with capacity 12, not
+/// refused at check (`OpenInterval`) or at planning.
+#[trace("TC-2623", "FR-943-AC-2")]
+#[test]
+#[ignore = "QSL-2321: a timed interval [q, *] is refused at check and in the monitor plan"]
+fn a_timed_open_past_interval_is_planned() {
+    let target = MonitorTarget {
+        unit: "us".to_owned(),
+        max_event_rate: Some(ratio(2, 1000)),
+        ..base_target()
+    };
+    let plan = premise_plan("once[5 ms, *] holds(c.versionNumber = 2)", &target);
+    assert_eq!(plan.buffers()[0].1, 12);
+}
+
+/// FR-943-AC-3: under infinite-trace the step `once[3,*]` is planned on the
+/// position counter with retention 4 and capacity 5, never refused
+/// `OpenIntervalLowerBound`; the future `eventually[2,*]` is planned too.
+#[trace("TC-2623", "FR-943-AC-3")]
+#[test]
+#[ignore = "QSL-2321: the position-counted monitor plan refuses [a, *] with a > 0 (OpenIntervalLowerBound)"]
+fn a_step_open_interval_is_planned_on_the_position_counter() {
+    let past = position_counted(
+        "filament.temporal.infinite-trace/v1",
+        "once[3,*] holds(c.versionNumber = 2)",
+    );
+    let plan = plan_of(&past);
+    assert_eq!(plan.buffers()[0].1, 5);
+    let _ = plan_of(&position_counted(
+        "filament.temporal.infinite-trace/v1",
+        "eventually[2,*] holds(c.versionNumber = 2)",
+    ));
+}

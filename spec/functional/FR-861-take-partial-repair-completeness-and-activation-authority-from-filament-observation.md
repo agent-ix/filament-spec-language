@@ -83,7 +83,9 @@ FR-526's.
 - Where the evaluator orders two uncertain event-time intervals or derives
   a partial value, it SHALL use the owner's `partial` rules.
 - Where it accepts, revises or refuses a completeness assertion, it SHALL
-  use the owner's `completeness` rules.
+  use the owner's `completeness` rules. FR-944 states how each evaluator fact maps onto the
+  owner's contexts, selections and views, and the completeness revision rule
+  the owner adds for it.
 - Where it decides an activation scope's disposition and execution and
   evidence states, it SHALL use the owner's `activation` rules.
 - Where it decides which retained results a revision invalidates, it SHALL
@@ -92,6 +94,16 @@ FR-526's.
   sets: no type or function that restates the owner's partial-value
   algebra, completeness revision rule, activation-authority states or
   affected-region planning.
+- Tracked exception (QSL-2327): until filament-observation provides its
+  completeness revision rule (its FR-013, `completeness::revise`),
+  `fsl-eval` SHALL keep exactly one local revision rule, the `Complete {
+  through }` comparison of a new assertion with the retained one, in the one
+  function `fsl_eval::completeness::revise_complete_through`, whose doc
+  comment cites QSL-2327, and in no other item. Every other completeness,
+  partial, activation and repair decision SHALL use the owner. An agreement
+  test SHALL pin that function to FR-944's "Owner requirement: completeness
+  revision" rule text, case by case. When QSL-2327 lands, the function is
+  deleted and the call goes to the owner.
 - While FSL still holds its own implementation, the agreement tests SHALL
   run it and the owner's on the same cases. A case on which they disagree is a defect, reported by
   a failing test that names the case and both answers. Neither answer is
@@ -105,9 +117,9 @@ FR-526's.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-861-AC-1 | On FR-501-AC-13's counter-cover cases (`Counter { uncertainty: 1 }`, request at tick 0, `Complete { through: 3002 }`, watermarks 3001 and 3002), the interval order and partial value the evaluator uses equal those the owner's `partial` module derives for the same stamps. | Test (TC-2442) |
-| FR-861-AC-2 | On FR-502-AC-2's cases (`Complete { through: 100 }` retained, then `Complete { through: 60 }`, `Incomplete` and an uncovered position stamped 80), the owner's `completeness` module accepts and refuses exactly what the evaluator's ledger accepts and refuses. | Test (TC-2442) |
+| FR-861-AC-2 | On FR-502-AC-2's cases (`Complete { through: 100 }` retained, then `Complete { through: 60 }`, `Incomplete` and an uncovered position stamped 80), mapped as FR-944 "Completeness" states, the owner's `completeness` revision rule (filament-observation FR-013, `completeness::revise`) accepts and refuses exactly what the evaluator's ledger accepts and refuses; until that rule exists the per-member `completeness::derive` gives the evaluator's covered set as `Available` facts for each accepted request. | Test (TC-2442) |
 | FR-861-AC-3 | On FR-524-AC-27 to AC-29's scopes and FR-526-AC-2's superseding request, the owner's `activation` module gives the dispositions the evaluator reports, and its `repair` module invalidates exactly the retained result the evaluator's chain supersedes. | Test (TC-2442) |
-| FR-861-AC-4 | After the switch, `fsl-eval`'s manifest names `filament-observation`, its source calls the owner's `partial`, `completeness`, `activation` and `repair` modules, and no FSL crate defines a type or function carrying one of the four rule sets of its own; a disagreement case of AC-1 to AC-3 fails its test naming the case and both answers instead of passing on either one. | Test (TC-2442) |
+| FR-861-AC-4 | After the switch, `fsl-eval`'s manifest names `filament-observation`, its source calls the owner's `partial`, `completeness`, `activation` and `repair` modules, and no FSL crate defines a type or function carrying one of the four rule sets of its own, except the one QSL-2327 function `fsl_eval::completeness::revise_complete_through`: a source scan finds it as the only FSL item comparing two completeness assertions and fails on any second one, and its agreement test accepts `Complete { through: 100 }` and `{ through: 140 }` after `{ through: 100 }` and refuses `{ through: 60 }`, `Incomplete` and an uncovered position stamped 80, as FR-944's rule text states; a disagreement case of AC-1 to AC-3 fails its test naming the case and both answers instead of passing on either one. | Test (TC-2442) |
 
 ## Dependencies
 

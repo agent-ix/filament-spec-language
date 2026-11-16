@@ -28,8 +28,12 @@ each evaluation code SHALL be produced by the `fsl` binary from an ordinary
 request and asserted end to end, from the process exit status:
 
 - exit 10 for a violated state invariant (FR-108's violating-parent case);
-- exit 10 for a value run whose value is undefined (`x mod 0`,
-  `undefined`/`division-by-zero`, FR-100);
+- exit 10 for a value run whose value is undefined at run time: a
+  float argument that is an infinity or a NaN converted to `Rational[..]`
+  (FR-397 "Conversion out of a float", FSpec FR-148), `undefined`/
+  `ieee-not-finite` (FR-100). A constant zero divisor is not a source: S3
+  refuses it before any run (FR-495), and run-time division by zero is
+  reachable only in the internal kernel check mode, which no request selects;
 - exit 11 for a timestamped-event finite-window clause whose window closes
   with its verdict unresolved: FR-641-AC-1's three samples stamped 0, 2 and
   5, watermark 5, `complete` through 5, under a `clocks` member configuring
@@ -68,7 +72,7 @@ The process exit status and the outcome document's category.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-870-AC-1 | `fsl run` over FR-312-AC-1's violating-parent clause request exits 10, and its document's category is violation. | Driver test (TC-2463): only the binary has a process exit status, so the code ticket adds the test in the filament-driver repository (`fsl-cli/tests/binary_process.rs`). |
-| FR-870-AC-2 | `fsl run` over a call request for `function m using v(): Integer pure { 7 mod 0 }` exits 10 with result `{"kind": "undefined", "reason": "division-by-zero"}`. | Driver test (TC-2463) |
+| FR-870-AC-2 | `fsl run` over a call request for `function r using v(a: Float64[nearest-even]): Rational[-100, 100; 1, 16] pure { convert<Rational[-100, 100; 1, 16]>(a) }` (profile `filament.value.complete/v1`) with `call.arguments` binding `a` to `{"kind": "float64", "bits": "7ff0000000000000"}` exits 10 with category undefined and result `{"kind": "undefined", "reason": "ieee-not-finite"}`; the same call with `a` bound to `{"kind": "float64", "bits": "3ff0000000000000"}` exits 0 with the rational 1. | Driver test (TC-2463) |
 | FR-870-AC-3 | `fsl run` over the timestamped finite-window request above exits 11 with category indeterminate and an item or report naming `MissingValuation`; the same request with `p` true at stamp 5 exits 0. | Driver test (TC-2463) |
 | FR-870-AC-4 | `fsl run` over a request naming an unknown function exits 20, and over FR-100-AC-6's `seven` with `accounting.work_units` 0 exits 22; neither exits 10 or 11. | Driver test (TC-2463) |
 | FR-870-AC-5 | The filament-examples suite holds a case expecting exit 11 (AC-3's request), and the examples runner fails when that case exits otherwise. | Inspection (TC-2463): the case lives in the filament-examples repository. |

@@ -4300,9 +4300,12 @@ fn prepare_models(
     // clause reads it.
     for model in inputs.models {
         let clocks = clocks_of(model);
+        let source_field = model.first_source_clock();
         // A clock, or a bound on clocks (FR-230-AC-25), needs dense time.
         let field = match (clocks.fields.first(), model.clock_bounds().next()) {
-            (Some(field), _) => field.name.clone(),
+            (Some(field), _) => source_field
+                .as_ref()
+                .map_or_else(|| field.name.clone(), |(name, _)| name.clone()),
             (None, Some(bound)) => bound.key.node.clone(),
             (None, None) => continue,
         };
@@ -4323,23 +4326,25 @@ fn prepare_models(
                 }
                 continue;
             }
-            Some(source) => Some(source.span),
-            None => state_clauses
-                .iter()
-                .find_map(|clause| {
-                    let form = ExpressionForm {
-                        expression: clause.body.clone(),
-                        spans: clause.spans.body.clone(),
-                    };
-                    Located::of(&form, &clocks, &clause.context)
-                        .and_then(|located| located.first(located.root()))
-                })
-                .or_else(|| {
-                    model
-                        .alias()
-                        .and_then(|alias| inputs.model_spans.get(alias))
-                        .copied()
-                }),
+            Some(source) => Some(source_field.as_ref().map_or(source.span, |(_, span)| *span)),
+            None => source_field.as_ref().map(|(_, span)| *span).or_else(|| {
+                state_clauses
+                    .iter()
+                    .find_map(|clause| {
+                        let form = ExpressionForm {
+                            expression: clause.body.clone(),
+                            spans: clause.spans.body.clone(),
+                        };
+                        Located::of(&form, &clocks, &clause.context)
+                            .and_then(|located| located.first(located.root()))
+                    })
+                    .or_else(|| {
+                        model
+                            .alias()
+                            .and_then(|alias| inputs.model_spans.get(alias))
+                            .copied()
+                    })
+            }),
         };
         if let Some(span) = span {
             return Err(timed(TemporalCause::ClockWithoutDenseTime { field, span }));

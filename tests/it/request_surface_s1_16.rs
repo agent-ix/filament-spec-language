@@ -984,10 +984,7 @@ fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
         value["tl_lowering"]["cross_evaluation"]["agree"], true,
         "{value}"
     );
-    let timed = unit.replace(
-        "filament.temporal.event-position.false-extension/v1",
-        "filament.temporal.timed/v1",
-    );
+    let timed = timed_low();
     let (_, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));
     assert!(value["tl_lowering"].get("formula").is_none(), "{value}");
     assert_eq!(
@@ -1024,4 +1021,206 @@ fn model_based_test_request_rules() {
     let mut unknown = bounded;
     unknown["clause"] = json!("Nothing");
     refusal_names(&mbt(unknown), "Nothing");
+}
+
+// ---- FR-931: the `tl_lowering` request member ---------------------------
+
+/// FR-757-AC-1's `Low` under `profile`, with the body `body`.
+fn low(profile: &str, body: &str) -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile t = \"{profile}\";\n\
+         model Config = \"example/config-version\";\n\
+         temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
+         on origin {{ {body} }}\n"
+    )
+}
+
+/// The timed form of `Low` (FR-757-AC-3, FR-931-AC-2): the ConfigVersion model
+/// timed in `ms`, under the timed profile with no `clock` member, so bound
+/// `model-time`; it checks and FR-527 classifies it unsupported.
+fn timed_low() -> String {
+    "language \"ix:native\" edition \"1-draft\";\n\
+     profile t = \"filament.temporal.timed/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config dense unit ms;\n\
+     temporal Low using t over (c: Config::ConfigVersion) \
+     on origin { always [0 ms, 3 ms] holds(c.versionNumber <= 2) }\n"
+        .to_owned()
+}
+
+const EVENT_POSITION: &str = "filament.temporal.event-position.false-extension/v1";
+const LOW_BODY: &str = "always [0, 3] holds(c.versionNumber <= 2)";
+
+/// FR-931-AC-1 and AC-2: the default and the named correspondences, and the
+/// unsupported record when the clause does not have the named reading.
+#[test]
+#[trace("TC-2601", "FR-931-AC-1")]
+#[trace("TC-2601", "FR-931-AC-2")]
+#[ignore = "QSL-2147: the tl_lowering request member is not implemented yet"]
+fn a_tl_lowering_request_selects_its_correspondence() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let lower = |member: Value| run(&unit, true, ("tl_lowering", member));
+    let (code, default) = lower(json!({"clause": "Low"}));
+    assert_eq!(code, 0, "{default}");
+    let record = &default["tl_lowering"];
+    assert_eq!(record["disposition"], "supported", "{default}");
+    assert_eq!(record["correspondence"], "mltl.closed-trace/v1");
+    assert_eq!(record["formula"], "G[0,3] p0");
+    assert!(record["atoms"]["p0"].is_string(), "{default}");
+    let (code, named) = lower(json!({"clause": "Low", "correspondence": "mltl.closed-trace/v1"}));
+    assert_eq!(code, 0);
+    assert_eq!(
+        named["tl_lowering"], default["tl_lowering"],
+        "byte-equal records"
+    );
+
+    let (code, open) = lower(json!({"clause": "Low", "correspondence": "mltl.online-prefix/v1"}));
+    assert_eq!(code, 0, "{open}");
+    assert_eq!(open["tl_lowering"]["disposition"], "supported");
+    assert_eq!(
+        open["tl_lowering"]["correspondence"],
+        "mltl.online-prefix/v1"
+    );
+
+    let (code, past) =
+        lower(json!({"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}));
+    assert_eq!(code, 21, "{past}");
+    let record = &past["tl_lowering"];
+    assert_eq!(record["disposition"], "unsupported");
+    assert_eq!(record["classified"], "mltl.closed-trace/v1");
+    assert_eq!(record["dimensions"], json!(["direction"]));
+    assert!(record.get("formula").is_none(), "{past}");
+
+    let history = low(
+        EVENT_POSITION,
+        "historically [0, 2] holds(c.versionNumber <= 2)",
+    );
+    let (code, value) = run(&history, true, ("tl_lowering", json!({"clause": "Low"})));
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(
+        value["tl_lowering"]["correspondence"],
+        "mltl.origin-complete-history/v1"
+    );
+
+    let timed = timed_low();
+    let (code, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));
+    assert_eq!(code, 21, "{value}");
+    assert_eq!(value["tl_lowering"]["disposition"], "unsupported");
+    assert!(value["tl_lowering"].get("classified").is_none(), "{value}");
+    assert!(value["tl_lowering"].get("formula").is_none(), "{value}");
+}
+
+/// FR-931-AC-3: every malformed `tl_lowering` member is refused, exit 20,
+/// naming the member.
+#[test]
+#[trace("TC-2602", "FR-931-AC-3")]
+#[ignore = "QSL-2147: the tl_lowering request member is not implemented yet"]
+fn a_malformed_tl_lowering_member_is_refused() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let lower = |member: Value| run(&unit, true, ("tl_lowering", member));
+    let (code, value) = lower(json!({"clause": "Low", "correspondence": "mltl.closed-trace/v2"}));
+    assert_eq!(code, 20, "{value}");
+    let text = value.to_string();
+    assert!(text.contains("unsupported-selection"), "{text}");
+    refusal_names(&value, "tl_lowering.correspondence");
+    refusal_names(&value, "mltl.closed-trace/v2");
+    for (member, names) in [
+        (
+            json!({"clause": "Low", "correspondence": 1}),
+            "tl_lowering.correspondence",
+        ),
+        (
+            json!({"clause": "Low", "correspondence": null}),
+            "tl_lowering.correspondence",
+        ),
+        (json!({}), "tl_lowering.clause"),
+        (json!({"clause": "Low", "formula": "G p0"}), "formula"),
+        (
+            json!({"clause": "Low", "cross_evaluate": {"trace": {"finite": []},
+                "initial": "spine-snapshot.json", "max_steps": 1}}),
+            "tl_lowering.cross_evaluate",
+        ),
+        (
+            json!({"clause": "Low", "cross_evaluate": {}}),
+            "tl_lowering.cross_evaluate",
+        ),
+        (
+            json!({"clause": "Low", "cross_evaluate": {"initial": "spine-snapshot.json",
+                "max_steps": 0}}),
+            "max_steps",
+        ),
+        (
+            json!({"clause": "Low", "cross_evaluate": {"trace": {"lasso": {"prefix": [],
+                "loop": ["spine-snapshot.json"]}}}}),
+            "tl_lowering.cross_evaluate.trace",
+        ),
+    ] {
+        let (code, value) = lower(member.clone());
+        assert_eq!(code, 20, "{member}: {value}");
+        assert!(
+            value.to_string().contains("invalid-request"),
+            "{member}: {value}"
+        );
+        refusal_names(&value, names);
+    }
+    let (code, value) = lower(json!({"clause": "Nothing"}));
+    assert_eq!(code, 20, "{value}");
+    assert!(value.to_string().contains("missing-name"), "{value}");
+    refusal_names(&value, "tl_lowering.clause");
+}
+
+/// FR-931-AC-4 and AC-5: cross-evaluation agrees on the spine's behaviours,
+/// and only `fsl-command` names the TL crates.
+#[test]
+#[trace("TC-2603", "FR-931-AC-4")]
+#[trace("TC-2603", "FR-931-AC-5")]
+#[ignore = "QSL-2147: TL cross-evaluation and the fsl-command TL edge are not implemented yet"]
+fn tl_cross_evaluation_agrees_and_reports_faults() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let (code, value) = run(
+        &unit,
+        true,
+        (
+            "tl_lowering",
+            json!({"clause": "Low",
+                "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": 4}}),
+        ),
+    );
+    assert_eq!(code, 0, "{value}");
+    let cross = &value["tl_lowering"]["cross_evaluation"];
+    let traces = cross["traces"].as_u64().expect("a trace count");
+    assert!(traces >= 1, "{value}");
+    assert!(cross["positions"].as_u64().expect("a position count") >= traces);
+    assert_eq!(cross["agree"], true);
+    assert_eq!(cross["faults"], json!([]));
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = |crate_dir: &str| {
+        std::fs::read_to_string(root.join(crate_dir).join("Cargo.toml")).expect("a manifest")
+    };
+    assert!(
+        manifest("fsl-command").contains("tl-mltl"),
+        "fsl-command holds the TL edge"
+    );
+    for other in [
+        ".",
+        "fsl-foundation",
+        "fsl-cst",
+        "fsl-source",
+        "fsl-forms",
+        "fsl-semantics",
+        "fsl-package",
+        "fsl-route",
+        "fsl-eval",
+        "fsl-replay",
+        "fsl-analyze",
+        "fsl-inspect",
+    ] {
+        let text = manifest(other);
+        assert!(
+            !text.contains("tl-syntax") && !text.contains("tl-mltl"),
+            "{other} names no TL crate"
+        );
+    }
 }
