@@ -3,7 +3,7 @@
 //! chained comparison at its second operator, a parenthesized expression
 //! spans its parentheses, and a bounded malformed corpus never panics.
 use fsl_cst::{CompleteCode, Limits, ParsedSource};
-use fsl_foundation::SourceIdentity;
+use fsl_foundation::{Phase, SourceIdentity};
 use ix_trace_rs::trace;
 
 const HEADER: &str =
@@ -154,6 +154,7 @@ fn an_exponent_number_is_the_unsupported_numeric_form() {
         let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
         assert!(!parsed.is_admissible());
         let diagnostic = &parsed.diagnostics()[0];
+        assert_eq!(diagnostic.phase, Phase::Lex, "{spelling}");
         assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{spelling}");
         assert_eq!(
             diagnostic.cause,
@@ -169,6 +170,13 @@ fn an_exponent_number_is_the_unsupported_numeric_form() {
         );
         assert!(
             diagnostic.message.contains(spelling),
+            "{}",
+            diagnostic.message
+        );
+        assert!(
+            diagnostic
+                .message
+                .contains("an exponent is not part of a number"),
             "{}",
             diagnostic.message
         );
