@@ -617,7 +617,7 @@ fn every_listed_profile_is_accepted_by_a_header() {
 fn version_includes_provider_backed_registry_consumers() {
     use fsl_foundation::bound::DomainKind;
     use fsl_foundation::BackendId;
-    use fsl_route::{Candidate, ManifestMembers, Mode, ProviderOrigin, Registry};
+    use fsl_route::{Candidate, ManifestMembers, ProviderOrigin, Registry};
 
     let base = Registry::new();
     let before = fsl_replay::build_inventory(&base);
