@@ -57,6 +57,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 mod declared_type_tests;
+mod integer_division_range;
+mod modulo_interval;
 mod native_literal;
 mod typing;
 use typing::TypedOperand;
@@ -2238,6 +2240,10 @@ pub(crate) struct Typer<'a> {
     context: Option<crate::family::CheckContext<'a, Scope>>,
     limits: CheckingLimits,
     nodes: &'a mut u64,
+    integer_division_work: u64,
+    /// Let slots whose bound integer value lowers at Integer despite a
+    /// bounded checked type. Slots are unique throughout this typing pass.
+    integer_lowered_locals: BTreeSet<Slot>,
     /// The caller's cancellation handle, polled at every node charge
     /// (FR-276).
     cancel: Option<&'a Cancel>,
@@ -2705,6 +2711,19 @@ impl Typer<'_> {
         required: &ValueType,
     ) -> Result<Node, CheckRefusal> {
         if &node.value_type == required {
+            if let (NodeKind::IntegerDivision { .. } | NodeKind::Local(_), ValueType::Int(target)) =
+                (&node.kind, required)
+            {
+                let location = node.location.clone();
+                return Ok(Node {
+                    kind: NodeKind::Coerce(self.push(node), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                });
+            }
             return Ok(node);
         }
         match (&node.value_type, required) {
@@ -2722,6 +2741,23 @@ impl Typer<'_> {
                 Ok(node)
             }
             (ValueType::Integer | ValueType::Int(_), ValueType::Integer) => Ok(node),
+            (ValueType::Int(source), ValueType::Int(target))
+                if matches!(
+                    node.kind,
+                    NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+                ) && target.lower() <= source.lower()
+                    && source.upper() <= target.upper() =>
+            {
+                let location = node.location.clone();
+                Ok(Node {
+                    kind: NodeKind::Coerce(self.push(node), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                })
+            }
             (ValueType::Int(source), ValueType::Int(target))
                 if target.lower() <= source.lower() && source.upper() <= target.upper() =>
             {
@@ -2769,6 +2805,8 @@ impl<'a> Typer<'a> {
             context: None,
             limits,
             nodes,
+            integer_division_work: 0,
+            integer_lowered_locals: BTreeSet::new(),
             cancel: None,
             locals: Vec::new(),
             local_names: HashMap::new(),
@@ -2822,6 +2860,31 @@ impl<'a> Typer<'a> {
                 .get(id)
                 .map(|found| (&found.kind, &found.value_type))
         })
+    }
+
+    /// Whether an integer argument already has the catalog's Integer type
+    /// when lowered, so its call needs no synthetic widening conversion.
+    fn lowers_as_integer(&self, root: &Node) -> bool {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            match &node.value_type {
+                ValueType::Integer => return true,
+                ValueType::Int(_) => {}
+                _ => continue,
+            }
+            let children = match &node.kind {
+                NodeKind::IntegerDivision { .. } => return true,
+                NodeKind::Local(slot) if self.integer_lowered_locals.contains(slot) => return true,
+                NodeKind::If {
+                    then, otherwise, ..
+                } => vec![*then, *otherwise],
+                NodeKind::Let { body, .. } => vec![*body],
+                NodeKind::Case { arms, .. } => arms.iter().map(|arm| arm.body).collect(),
+                _ => Vec::new(),
+            };
+            pending.extend(children.into_iter().filter_map(|id| self.body.get(id)));
+        }
+        false
     }
 
     /// This pass reading the concrete populations `populations` as a
@@ -4876,17 +4939,38 @@ impl<'a> Typer<'a> {
     /// the value an argument's branches yield reaches this.
     fn upcast(
         &mut self,
-        mut typed: Node,
+        typed: Node,
         required: &ValueType,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
-        typed.value_type = self.model_type(
+        let upcast_type = self.model_type(
             super::state_model::Form::Argument {
                 actual: typed.value_type.clone(),
                 required: required.clone(),
             },
             location,
         )?;
+        if matches!(typed.value_type, ValueType::Integer | ValueType::Int(_))
+            && matches!(
+                typed.kind,
+                NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+            )
+        {
+            if let ValueType::Int(target) = required {
+                let location = typed.location.clone();
+                return Ok(Node {
+                    kind: NodeKind::Coerce(self.push(typed), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                });
+            }
+            return Ok(typed);
+        }
+        let mut typed = typed;
+        typed.value_type = upcast_type;
         Ok(typed)
     }
 
