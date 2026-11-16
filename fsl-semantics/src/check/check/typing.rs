@@ -113,59 +113,6 @@ fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueTyp
         .map_err(|_| refuse(location, CheckCause::UnrepresentableBound))
 }
 
-/// The smallest bounded result interval we can derive for Euclidean `mod`
-/// from the operands' declared integer intervals.
-fn integer_modulo_result_type(dividend: &ValueType, divisor: &ValueType) -> ValueType {
-    let ValueType::Int(divisor) = divisor else {
-        return ValueType::Integer;
-    };
-    let largest_modulus = divisor.lower().abs().max(divisor.upper().abs());
-    if largest_modulus.is_zero() {
-        // The zero-only divisor is handled by the separate nonzero
-        // obligation; retain the unbounded type until that obligation is
-        // recorded.
-        return ValueType::Integer;
-    }
-
-    if let ValueType::Int(dividend) = dividend {
-        let zero = Integer::zero();
-        let smallest_nonzero_modulus = if divisor.lower() > &zero {
-            divisor.lower().clone()
-        } else if divisor.upper() < &zero {
-            divisor.upper().abs()
-        } else {
-            Integer::one()
-        };
-        if dividend.lower() >= &zero && dividend.upper() < &smallest_nonzero_modulus {
-            return ValueType::Int(dividend.clone());
-        }
-    }
-
-    let (lower, upper) =
-        if let (ValueType::Int(dividend), true) = (dividend, divisor.lower() == divisor.upper()) {
-            let modulus = divisor.lower().abs();
-            let Ok(nonzero) = filament_exact::NonZeroInteger::try_from(&modulus) else {
-                return ValueType::Integer;
-            };
-            let span = dividend.upper().sub(dividend.lower()).add(&Integer::one());
-            if span >= modulus {
-                (Integer::zero(), modulus.sub(&Integer::one()))
-            } else {
-                let first = dividend.lower().div_mod_floor(nonzero).1;
-                let last = dividend.upper().div_mod_floor(nonzero).1;
-                if first <= last {
-                    (first, last)
-                } else {
-                    (Integer::zero(), modulus.sub(&Integer::one()))
-                }
-            }
-        } else {
-            (Integer::zero(), largest_modulus.sub(&Integer::one()))
-        };
-
-    ValueType::Int(IntegerInterval::spanning(lower, upper))
-}
-
 /// A two-segment name whose alias also names an enum of the unit (FR-391
 /// "Resolution"): ambiguous, naming the alias, which the model selection and
 /// the enum both declare. Neither declaration is a position of the checked
@@ -3025,14 +2972,6 @@ impl<'a> Typer<'a> {
                         }
                         IntegerDivisionOperator::Mod => None,
                     };
-                    let value_type = match operator {
-                        IntegerDivisionOperator::Mod => {
-                            integer_modulo_result_type(&left.value_type, &right.value_type)
-                        }
-                        IntegerDivisionOperator::Div | IntegerDivisionOperator::Rem => {
-                            ValueType::Integer
-                        }
-                    };
                     let left = self.push(left);
                     let right = self.push(right);
                     Ok(Step::Typed(node(
@@ -3042,7 +2981,7 @@ impl<'a> Typer<'a> {
                             left,
                             right,
                         },
-                        value_type,
+                        ValueType::Integer,
                         &location,
                     )))
                 }
