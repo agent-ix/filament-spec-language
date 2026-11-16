@@ -18,7 +18,7 @@ Scope: FR-765-AC-3.
 ## Test Procedure
 
 From `make examples-check`, copy the examples checkout without `.git` and
-`target` under `CARGO_TARGET_TMPDIR`, append `-edited` to the recorded
+`target` into a temporary folder outside the workspace, append `-edited` to the recorded
 `category` of the first running case of the first system that has one, and
 run `make examples-check FSL_EXAMPLES_DIR=<copy> EXAMPLES_CHECK_TESTS=`.
 

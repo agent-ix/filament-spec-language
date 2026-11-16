@@ -83,11 +83,13 @@ fn first_running_system(suite: &Path) -> (String, String) {
 #[trace("FR-765-AC-3", "TC-2192")]
 #[test]
 fn a_verdict_this_checkout_does_not_give_fails_make_examples_check() {
-    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("examples_check");
-    if base.exists() {
-        fs::remove_dir_all(&base).expect("remove the previous stand-in");
-    }
-    let suite = base.join("filament-examples");
+    // Outside this workspace: under it, cargo would take the copied runner
+    // crate for a member of this workspace.
+    let temp = std::env::temp_dir()
+        .canonicalize()
+        .expect("canonical temp dir");
+    let base = tempfile::tempdir_in(temp).expect("tempdir");
+    let suite = base.path().join("filament-examples");
     copy_tree(&examples(), &suite);
     let (system, id) = first_running_system(&suite);
     let path = suite
@@ -122,7 +124,6 @@ fn a_verdict_this_checkout_does_not_give_fails_make_examples_check() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let _ = fs::remove_dir_all(&base);
 
     assert!(
         !output.status.success(),
