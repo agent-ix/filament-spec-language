@@ -605,7 +605,8 @@ impl<'a> ModelSystem<'a> {
     /// [`Self::typing`] for values alone, which hold no element-count
     /// member: it lives as long as the package.
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
-        encode::Typing::with_variants(self.types, self.package.graph().scope().variant_types())
+        let scope = self.package.graph().scope();
+        encode::Typing::with_variants(self.types, scope.variant_types()).with_enums(scope.enums())
     }
 
     /// Check the universes, then admit each initial document in the given

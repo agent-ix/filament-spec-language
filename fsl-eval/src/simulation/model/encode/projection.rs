@@ -83,7 +83,14 @@ pub(super) trait ValueSink: StructuralSink {
         types: &'t TypeEnvironment,
         key: &NodeKey,
     ) -> Result<Option<&'t CompositeDeclaration>, Self::Error>;
-    fn variant(&mut self, left: &VariantId, right: &VariantId) -> Result<bool, Self::Error>;
+    /// Whether `value` is the member `case` of the enumeration declared by
+    /// `owner`.
+    fn variant(
+        &mut self,
+        owner: &NodeKey,
+        case: &str,
+        value: &VariantId,
+    ) -> Result<bool, Self::Error>;
     fn fields(
         &mut self,
         model: &StateModel,
@@ -284,8 +291,13 @@ impl ValueSink for Retained {
         Ok(types.composite(key.clone()))
     }
 
-    fn variant(&mut self, left: &VariantId, right: &VariantId) -> Result<bool, Self::Error> {
-        Ok(left == right)
+    fn variant(
+        &mut self,
+        owner: &NodeKey,
+        case: &str,
+        value: &VariantId,
+    ) -> Result<bool, Self::Error> {
+        Ok(value.case() == case && value.owner() == owner)
     }
 
     fn fields(
@@ -797,6 +809,35 @@ pub(super) fn project_model_state<S: ValueSink>(
     })
 }
 
+/// The declaration node and case of the enumeration member `value` among
+/// `typing`'s model variant types and source `enum` declarations; `None`
+/// when neither declares it.
+fn enum_member<'t, S: ValueSink>(
+    sink: &mut S,
+    typing: Typing<'t>,
+    value: &VariantId,
+) -> Result<Option<(NodeKey, &'t str)>, S::Error> {
+    for declared in typing.variants {
+        sink.visit()?;
+        for case in declared.cases() {
+            if sink.variant(declared.node_ref(), case.name(), value)? {
+                return Ok(Some((declared.node(), case.name())));
+            }
+        }
+    }
+    for binding in typing.enums {
+        sink.visit()?;
+        let declared = binding.declaration.declaration();
+        let owner = declared.key();
+        for case in declared.members() {
+            if sink.variant(&owner, case, value)? {
+                return Ok(Some((owner, case)));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn declaration<S: ValueSink>(sink: &mut S, key: &NodeKey) -> Result<(), S::Error> {
     sink.scalar(Scalar::DeclarationNode(key))
 }
@@ -1063,27 +1104,15 @@ pub(super) fn project_value<'a, S: ValueSink>(
                 sink.name("nanoseconds")?;
                 sink.scalar(Scalar::Timestamp(value))
             }),
-            Value::Enum(value) => {
-                let mut found = None;
-                'declarations: for declared in typing.variants {
-                    sink.visit()?;
-                    for case in declared.cases() {
-                        if sink.variant(case.variant_ref(), value.variant())? {
-                            found = Some((declared, case));
-                            break 'declarations;
-                        }
-                    }
-                }
-                match found {
-                    Some((declared, case)) => tagged(sink, "enum", |sink| {
-                        sink.name("name")?;
-                        declaration(sink, declared.node_ref())?;
-                        sink.name("member")?;
-                        sink.scalar(Scalar::Text(case.name()))
-                    }),
-                    None => sink.scalar(Scalar::Unencodable("an undeclared enum value")),
-                }
-            }
+            Value::Enum(value) => match enum_member(sink, typing, value.variant())? {
+                Some((declared, case)) => tagged(sink, "enum", |sink| {
+                    sink.name("name")?;
+                    declaration(sink, &declared)?;
+                    sink.name("member")?;
+                    sink.scalar(Scalar::Text(case))
+                }),
+                None => sink.scalar(Scalar::Unencodable("an undeclared enum value")),
+            },
             Value::Population(_) => sink.scalar(Scalar::Unencodable("a population value")),
             Value::Composite(value) => {
                 match match typing.types {

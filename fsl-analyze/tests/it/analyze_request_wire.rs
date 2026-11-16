@@ -144,7 +144,7 @@ fn the_deadline_and_item_limits_settle_incomplete() {
 #[trace("TC-1580", "FR-620-AC-8")]
 #[trace("TC-1580", "FR-281-AC-23")]
 #[test]
-#[ignore = "QSL-2131: EN-7 is not registered in Engines::fsl() yet"]
+#[ignore = "QSL-2130: EN-7 is not registered in Engines::fsl() yet"]
 fn the_fsl_registry_holds_en7() {
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
     assert!(
@@ -617,6 +617,7 @@ fn a_pending_clause_run_reports_its_pending_disposition() {
 /// the Counter program, with no program source, analyzes the same items as
 /// the request over the source and gives an equal outcome.
 #[trace("TC-1580", "FR-620-AC-1")]
+#[trace("TC-2410", "FR-850-AC-1")]
 #[test]
 #[ignore = "QSL-2271: analyze over a checked-package selection is not implemented yet"]
 fn a_package_selection_analyzes_as_its_source() {

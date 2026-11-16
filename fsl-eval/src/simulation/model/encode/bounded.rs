@@ -910,9 +910,14 @@ impl ValueSink for Bounded<'_, '_> {
         }
         Ok(None)
     }
-    fn variant(&mut self, left: &VariantId, right: &VariantId) -> Result<bool, Self::Error> {
-        Ok(self.scope.text_equal(left.case(), right.case())?
-            && self.scope.node_equal(left.owner(), right.owner())?)
+    fn variant(
+        &mut self,
+        owner: &NodeKey,
+        case: &str,
+        value: &VariantId,
+    ) -> Result<bool, Self::Error> {
+        Ok(self.scope.text_equal(case, value.case())?
+            && self.scope.node_equal(owner, value.owner())?)
     }
     fn fields(
         &mut self,

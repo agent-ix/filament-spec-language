@@ -216,3 +216,51 @@ fn clauses_of_one_unit_use_their_own_temporal_profiles() {
          on origin { always holds(c.versionNumber >= 0) }";
     check_with(profiles, body).unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
 }
+
+/// FR-233-AC-5: the timed profile reads model time, so `clock "model-steps"`
+/// under it is a contradiction refused at the clock string; steps of a
+/// timed model are counted under a step profile.
+#[trace("TC-2389", "FR-233-AC-5")]
+#[test]
+#[ignore = "QSL-2140: the timed profile under clock model-steps is refused not-yet-implemented, not as a type mismatch"]
+fn the_timed_profile_refuses_model_steps() {
+    const TIMED: &str =
+        "dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config dense unit ms;\n";
+    let clause = |clock: Option<&str>, formula: &str| {
+        let clock = clock
+            .map(|name| format!("clock \"{name}\" "))
+            .unwrap_or_default();
+        format!(
+            "{TIMED}temporal Settles using t over (c: Config::ConfigVersion) {clock}on origin {{ {formula} }}"
+        )
+    };
+    let timed = profile_t("filament.temporal.timed/v1");
+    let (code, cause, named) = sole_refusal_with(
+        &timed,
+        &clause(Some("model-steps"), "eventually holds(c.versionNumber = 2)"),
+    );
+    assert_eq!((code, cause), (Code::IllTyped, Some("type-mismatch")));
+    assert_eq!(named.as_deref(), Some("\"model-steps\""));
+    check_with(
+        &profile_t("filament.temporal.event-position.false-extension/v1"),
+        &clause(
+            Some("model-steps"),
+            "eventually[0,3] holds(c.versionNumber = 2)",
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("model-steps under event-position checks: {refusals:?}"));
+    check_with(
+        &timed,
+        &clause(None, "eventually[0 ms, 3 ms] holds(c.versionNumber = 2)"),
+    )
+    .unwrap_or_else(|refusals| panic!("model-time under the timed profile checks: {refusals:?}"));
+    let (code, cause, named) = sole_refusal_with(
+        &timed,
+        &clause(Some("events"), "eventually holds(c.versionNumber = 2)"),
+    );
+    assert_eq!(
+        (code, cause),
+        (Code::UnsupportedConstruct, Some("declaration-form"))
+    );
+    assert_eq!(named.as_deref(), Some("\"events\""));
+}

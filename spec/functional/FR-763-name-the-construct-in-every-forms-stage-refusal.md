@@ -74,7 +74,7 @@ members are below.
 | `size-of-type` | `size<T>(e)` | the whole call | `` `size<T>` is not supported in expressions yet `` with `T` as written |
 | `qualified-reaches-edge` | `reaches(a, b, e)` whose edge `e` has more than one segment | the edge name | `` `reaches` over the qualified edge `<text>` is not supported yet `` |
 | `hyper-condition` | a hyper expression as a temporal condition | the hyper expression | `` a hyper expression is not supported as a temporal condition yet `` |
-| `declaration` | a declaration whose leading keyword has no dispatch entry, such as `synthesis` or `verify` | the leading keyword | `` `<text>` declarations are not supported yet `` |
+| `declaration` | a declaration whose leading keyword has no dispatch entry | the leading keyword | `` `<text>` declarations are not supported yet `` |
 
 - The message SHALL be the row's sentence with the placeholders filled from
   `text`, followed by ` (declaration <declaration>)` when `declaration` is not
@@ -83,6 +83,13 @@ members are below.
 - `none` and `result` have no row: S2 builds them as the `Absent` and
   `Result` forms (FR-091 "Expression mapping"), and check, not S2, refuses
   them where their position admits neither.
+- `synthesis` and `verify` declarations are not refusal constructs: S2
+  builds them as the `Synthesis` (FR-754) and `VerificationPlan` (FR-753)
+  forms, so neither refuses with either cause. The dispatch table (FR-067)
+  holds an entry for every leading keyword the grammar gives a declaration
+  production, so the `declaration` row is reached only by a keyword that
+  lacks its entry; the row stays so that such a gap still refuses with a
+  named construct instead of a null cause.
 - A construct that S2 later learns to build leaves this table with it; a new
   site that refuses with either cause adds a row. Every row's kind is a
   `ConstructKind` variant, and `ConstructKind` has no variant without a row.
@@ -97,11 +104,11 @@ members are below.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-763-AC-1 | S2 over a unit holding a `synthesis` declaration, and over one holding a `verify` declaration, refuses with `NoDispatchEntry` whose `construct` is `declaration`, `text` the keyword, `declaration` the declared name and `profile` the `using` profile identity; the cause's catalog code is `unsupported_construct` and its tag `not-yet-implemented`. | Test (TC-2155) |
+| FR-763-AC-1 | The `parse` outcome document of a unit holding `synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };`, and of one holding `verify Release using v { check safe claim M::Safe method model_check domain M::Order bound 20; }`, holds no `unsupported_construct` diagnostic and no diagnostic whose `construct` is `declaration`; `leading_keywords()` yields `synthesis` and `verify`. | Test (TC-2155) |
 | FR-763-AC-2 | S2 over a function body `null` refuses `UnrepresentedConstruct` with `construct` `null-value`, `text` `null`, the function's name and profile, and the span of `null`. | Test (TC-2156) |
 | FR-763-AC-3 | S2 over a function body `size<Integer>(xs)` refuses with `construct` `size-of-type` and `text` `size<Integer>(xs)`; over a function body `xs[0]` it refuses with `construct` `index-selection` and `text` `xs[0]`. | Test (TC-2157) |
 | FR-763-AC-4 | S2 over a state clause `reaches(self, self, Config::ConfigVersion::parent)` refuses with `construct` `qualified-reaches-edge` and `text` `Config::ConfigVersion::parent`, at the edge's span. | Test (TC-2158) |
-| FR-763-AC-5 | For every `ConstructKind` variant, the refusal's message begins with the row's sentence filled from `text`; a construct whose source text is 200 bytes long carries a `text` of at most 123 bytes that ends with `...`. No refusal of either cause has an empty `text`. | Test (TC-2159) |
+| FR-763-AC-5 | For every `ConstructKind` variant that source reaches (every row but `declaration`), the refusal's message begins with the row's sentence filled from `text`; a construct whose source text is 200 bytes long carries a `text` of at most 123 bytes that ends with `...`. No refusal of either cause has an empty `text`. | Test (TC-2159) |
 | FR-763-AC-6 | The `parse` outcome document of AC-2's unit holds one diagnostic with `code` `unsupported_construct`, `cause` `not-yet-implemented` (not `null`), `construct` `null-value`, `text` `null`, `declaration` the function's name and `profile` its profile identity, and the message of AC-5; the document's category is `unsupported`, exit 21. | Test (TC-2160) |
 
 ## Dependencies
