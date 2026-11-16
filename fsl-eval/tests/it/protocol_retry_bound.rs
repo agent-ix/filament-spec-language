@@ -17,7 +17,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    document_reference, DocumentProvision, DocumentRef, ObservationLimits,
+    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
 };
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -79,15 +79,16 @@ fn fixture_with_recovery_view(bound: u64, recovery_view: bool) -> Fixture {
     node["operations"][0]["frame"]["modifies"] =
         serde_json::json!([tc1070::model::id("Node/total")]);
     if recovery_view {
-        domain["types"].as_array_mut().expect("domain types").push(
-            tc1070::model::declaration(
+        domain["types"]
+            .as_array_mut()
+            .expect("domain types")
+            .push(tc1070::model::declaration(
                 "Recovery",
                 "record",
                 json!({
                     "fields": [tc1070::model::field("Recovery", "bal", &tc1070::model::id("Count"))]
                 }),
-            ),
-        );
+            ));
         let count = domain["types"]
             .as_array_mut()
             .expect("domain types")
@@ -182,10 +183,18 @@ fn fixture_with_recovery_view(bound: u64, recovery_view: bool) -> Fixture {
                 "recover (partialRecovered: M::Recovery) {\n      partialRecovered.bal = 0\n    };",
             )
             .replace(
-                "effect Applied of Tried as (applied: Boolean) { true };",
-                "effect Applied of Tried as (applied: Boolean) { true };\n\
+                "effect Applied of Main::Tried as (applied: Boolean) { true };",
+                "effect Applied of Main::Tried as (applied: Boolean) { true };\n\
                  event Trigger by Service as (trigger: Boolean) { true };",
             );
+        let partial = source
+            .find("  compensate Partial for")
+            .expect("the fixture declares a partial compensation template");
+        let main = source[partial..]
+            .find("  run sequence Main")
+            .map(|offset| partial + offset)
+            .expect("the run tree follows the compensation templates");
+        source.replace_range(partial..main, "");
     }
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qsl-1757", "unit.native"),
@@ -301,8 +310,15 @@ fn named_member<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a serd
     match value {
         serde_json::Value::Object(object) => object
             .get(name)
+            .or_else(|| {
+                (object.get("name").and_then(serde_json::Value::as_str) == Some(name))
+                    .then(|| object.get("value"))
+                    .flatten()
+            })
             .or_else(|| object.values().find_map(|value| named_member(value, name))),
-        serde_json::Value::Array(values) => values.iter().find_map(|value| named_member(value, name)),
+        serde_json::Value::Array(values) => {
+            values.iter().find_map(|value| named_member(value, name))
+        }
         _ => None,
     }
 }
@@ -441,10 +457,19 @@ fn the_compensation_template_is_stepped() {
         .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
         .collect();
     assert!(!cends.is_empty(), "an activation creates a stepped thread");
+    let mut threads = BTreeMap::<_, BTreeSet<_>>::new();
     for (transition, _) in cends {
-        assert!(transition.registration().is_some());
-        assert!(transition.thread().is_some());
+        let registration = transition.registration().expect("cend has registration");
+        let thread = transition.thread().expect("cend has a compensation thread");
+        threads
+            .entry(registration.clone())
+            .or_default()
+            .insert(thread.clone());
     }
+    assert!(
+        threads.values().all(|threads| threads.len() == 1),
+        "each activation has one compensation thread"
+    );
 }
 
 #[test]
@@ -463,7 +488,9 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         .collect();
     assert!(!cends.is_empty(), "the recovery predicate is evaluated");
     assert!(
-        cends.iter().all(|(transition, _)| transition.binder_record().is_some()),
+        cends
+            .iter()
+            .all(|(transition, _)| transition.binder_record().is_some()),
         "each cend identity carries its recovery binder record"
     );
     let mut records = BTreeMap::<_, BTreeSet<String>>::new();
@@ -472,25 +499,32 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
             .binder_record_json(transition)
             .expect("record encoding succeeds")
             .expect("recovery-view cend carries its record");
-        let balance = scalar_text(
-            named_member(&record, "bal").expect("the recovery record has bal"),
-        )
-        .expect("bal is a bounded integer");
-        let state_key: serde_json::Value = serde_json::from_slice(
-            reachable.states[*next].key.as_bytes(),
-        )
-        .expect("state key is canonical JSON");
+        let balance =
+            scalar_text(named_member(&record, "bal").expect("the recovery record has bal"))
+                .expect("bal is a bounded integer");
+        let state_key: serde_json::Value =
+            serde_json::from_slice(reachable.states[*next].key.as_bytes())
+                .expect("state key is canonical JSON");
         let status = scalar_text(
             named_member(&state_key, "status").expect("registration status is in the state key"),
         )
         .expect("registration status is text");
         assert_eq!(
             status,
-            if balance == "0" { "recovered" } else { "unrecovered" },
+            if balance == "0" {
+                "recovered"
+            } else {
+                "unrecovered"
+            },
             "the recovery status follows bal={balance}"
         );
         records
-            .entry(transition.registration().expect("cend has registration").clone())
+            .entry(
+                transition
+                    .registration()
+                    .expect("cend has registration")
+                    .clone(),
+            )
             .or_default()
             .insert(serde_json::to_string(&record).expect("record JSON serializes"));
     }
