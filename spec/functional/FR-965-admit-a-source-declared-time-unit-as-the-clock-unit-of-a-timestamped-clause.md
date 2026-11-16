@@ -11,6 +11,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-640
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-933
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-370
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-778
@@ -59,10 +61,12 @@ The clause's clock unit node, or none.
   name never coincide, because a declared name is an identifier and an FCD
   identity is an `ix://` URI, so `T` selects at most one node.
 - The clock unit node SHALL be a linear unit of a dimension named `Time`. A
-  `T` that names no unit, names a unit of another dimension or names an
-  affine unit has no clock unit node: S3 then checks the window in the lower
-  bound's written unit (FR-337), and the emitter refuses the clause
-  `InvalidTemporalClockValue` naming `timestamp_unit` and writes no package.
+  `T` that names no declared unit SHALL refuse the clause with cause
+  `unknown-clock-unit`, and a `T` that names a unit of another dimension with
+  cause `clock-unit-dimension`, each naming the clock and the unit, as FR-933
+  refuses a role clock's binding unit (through the request path,
+  `invalid-request` at stage `emit`, exit 20); an affine time unit refuses
+  `ill_typed`/`type-mismatch` as FR-337 states. No package is written.
 - S3 SHALL convert both bounds of a `duration` window exactly to the clock
   unit and refuse a bound that does not convert to it, as FR-337 states for
   a model-owned clock unit; a source `Time` and a model `Time` are distinct
@@ -76,7 +80,7 @@ The clause's clock unit node, or none.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-965-AC-1 | A unit declaring `dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;` whose timestamped-event clause over `e: Quantity<ms>` is `always[0,3] (quantile 0.5 of e over past[0 ms, 300 s] <= 5 ms)`, checked and emitted under a clock whose `timestamp_unit` is `ms`, emits; its aggregate's `lower` and `upper` are the quantity literals `0` and `300000` whose `type` is the source-owned `ms` unit node (its declaration `ms`, owner kind `source`); the package holds no node whose path is `["scalar_type", "unit", "ms"]`; under `timestamp_unit` `s` the bounds are `0` and `300` typed by the source `s` node; FSL's checked-package reader admits both packages. | Test (TC-2720) |
-| FR-965-AC-2 | Negative: AC-1's clause under `timestamp_unit` `us` (no unit of that name), and with the unit also declaring `dimension Length; unit m : Length = rational(1, 1);` under `timestamp_unit` `m` (a unit not of `Time`), each refuses the emission `InvalidTemporalClockValue` naming `timestamp_unit` and writes no package. | Test (TC-2720) |
+| FR-965-AC-2 | Negative: AC-1's clause under `timestamp_unit` `us` (no unit of that name), and with the unit also declaring `dimension Length; unit m : Length = rational(1, 1);` under `timestamp_unit` `m` (a unit not of `Time`), refuse with cause `unknown-clock-unit` and `clock-unit-dimension` respectively, each naming the clock and the unit (FR-933), and write no package. | Test (TC-2720) |
 | FR-965-AC-3 | A unit that declares AC-1's source units and also selects the domain package `example/config-version` (base dimension `Time`, units `s` and `ms`) as `Config`: under `timestamp_unit` `ms`, `past[0 ms, 300 s]` types both bounds by the source `ms` node; under `timestamp_unit` `ix://example/config-version/unit/ms`, `past[0 Config::ms, 300 Config::s]` types both bounds by the model-owned node `["scalar_type", "unit", "ix://example/config-version/unit/ms"]`, and no other unit node is written for either clock unit. | Test (TC-2720) |
 
 ## Dependencies

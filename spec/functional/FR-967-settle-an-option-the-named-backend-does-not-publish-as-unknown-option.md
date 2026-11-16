@@ -48,8 +48,11 @@ The item's `invalid-request` settlement, or no change to its routing.
 
 ## Behavior
 
-- The entry SHALL check an item's options after resolving its named backend
-  and before computing its candidates. An item whose named backend the
+- The entry SHALL check an item's options after FSpec FR-290's kind
+  admission (`absent-kind`, `unknown-kind`) and its `inapplicable-kind` rule,
+  and after resolving its named backend, and before computing its
+  candidates, so each item has exactly one outcome: an item those rules
+  settle is not checked for options. An item whose named backend the
   registry does not hold settles `unknown-backend` (FR-075) and its options
   are not checked.
 - When a named option is not one the named backend's manifest publishes, the

@@ -136,11 +136,21 @@ no truth), not an error (FR-523).
 - A late observation (FR-501 "Late-data cutoff") SHALL NOT produce a
   `Superseding` or `Invalidating` result by itself: the result it arrives
   after keeps its bytes and its ledger entry. Admitting it is a revisioned
-  repair, a `Superseding` request whose inputs classify the observation
-  `on-time` (an arrival watermark within the cutoff, or no late-data cutoff); the superseding result's input
-  identity differs from the predecessor's by that observation, so the
-  relation is not refused `unchanged-input`, and both results stay readable
-  (FSpec FR-094 "Late-data cutoff").
+  repair: a `Superseding` request that keeps the recorded arrival watermarks
+  and the late-data cutoff unchanged and names, in its temporal selection's
+  `admit_late` member, the late observations it admits, each by its
+  observation identity (FR-106). The evaluator SHALL read each named
+  observation as `on-time`, and the repair result SHALL record them by name
+  in its `admitted_late` list (`{"position", "observation"}` in input order)
+  beside the `late` list of the observations it still excludes, so the new
+  result links the prior result and names the late observation (FSpec FR-094
+  "Late-data cutoff"). The named observations are members of the input
+  identity, so the relation is not refused `unchanged-input`, and both
+  results stay readable. A name that matches no observation the cutoff
+  classifies `late` in the request SHALL refuse the relation at stage
+  `evaluate`, `invalid_runtime_input`/`invalid-value`, member `admit_late`, with
+  `cause` `admitted-not-late`, and an `Original` or `Invalidating` request carrying
+  `admit_late` SHALL refuse the same way with `cause` `admission-without-repair`.
 - On FR-641's run request the relation is the temporal selection's
   `relation` member, `"original"` (the default) or `{"superseding": ID}` or
   `{"invalidating": ID}` with `ID` a prior result's `result_identity`, and the
@@ -265,7 +275,7 @@ no truth), not an error (FR-523).
 | FR-526-AC-28 | A `Meter` charged `U` work units by one call and then passed to AC-27's stopped call reports, after the stop, `U` plus the units of the stopped call's charge log, never less than `U`; a third call on the same meter continues from that total. | Test (TC-1321) |
 | FR-526-AC-29 | Over the clause of AC-1, a request that is AC-1's with one extra `valuations` entry keyed by an atom index the formula does not have (such as 99) at position 1 returns `Err(CallFailure::Admission)` with cause `valuation-atom-unknown`, catalog code `invalid_runtime_input`/`invalid-value` at member `valuations` and fields `atom` (that index) and `position` `1`, and an empty charge log; the same key alone at position 0 names `position` `0`; the same key in an `instance_valuations` map names member `instance_valuations`; and AC-1's request without the key is evaluated, so a stray atom key never yields a result whose `input_identity` differs from the request without it (FR-516 `valuation-atom-unknown`). | Test (TC-1321) |
 | FR-526-AC-30 | A real checked-package temporal evaluation returns an evaluator-issued immutable full-result carrier. Repeated immutable result and predecessor borrows retain the original truth, support, settlement, checked subject and ledger without further meter charges. A changed-input correction names the original carrier's identity, changes actual truth, support, settlement and latest ledger, advances lineage, and leaves the original unchanged, including after mutation of a cloned read snapshot. Compile-fail tests reject constructing the carrier, mutating its original result and substituting a mutated snapshot for an issued carrier. | Test (TC-1321) |
-| FR-526-AC-31 | Over FR-501-AC-29's request, the `Original` result `r1` lists the stamp-3 observation as late and the ledger holds `r1` as latest; a `Superseding(r1)` request whose trace admits that observation on time (arrival watermark 5) completes with lineage 1, reads the observation, and leaves `r1` byte-equal to its earlier value; re-sending `r1`'s own request as `Superseding(r1)` refuses `unchanged-input`. | Test (TC-1548) |
+| FR-526-AC-31 | Over FR-501-AC-29's request, the `Original` result `r1` lists the stamp-3 observation as late and the ledger holds `r1` as latest; a `Superseding(r1)` request with the same trace, arrival watermarks and cutoff and `admit_late` naming that observation's identity completes with lineage 1, reads the observation, records it in `admitted_late` with an empty `late` list, and leaves `r1` byte-equal to its earlier value; re-sending `r1`'s own request as `Superseding(r1)` refuses `unchanged-input`. | Test (TC-1548) |
 
 ## Dependencies
 

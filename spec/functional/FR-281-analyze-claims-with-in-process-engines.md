@@ -223,9 +223,13 @@ depends on no CG crate for it (FR-280).
   rule for it.
 - A provider item runs on its provider only when it reaches `analyze` settled
   `Supported` on that provider's `BackendId`. Registering a provider does not
-  change any other item: an item settled for a bounded engine runs on that
-  engine and no other, and a bounded engine's item whose operands are
-  unbounded settles as it would with no provider registered.
+  change an item whose (kind, mode) the provider does not advertise: such an
+  item settled for a bounded engine runs on that engine and no other, and a
+  bounded engine's item whose operands are unbounded settles as it would with
+  no provider registered. An item the provider also matches has the provider
+  among its candidates, and its candidate set is settled as FR-962 states (an
+  unnamed item whose matching set no tie rule decides settles
+  `ambiguous-backend`; naming a backend selects it).
 - The verdict is the provider's; FSL adds no verdict route of its own. A
   `proved` verdict settles the item `proved`, proof basis `inductive` at depth
   0, naming the provider, with certification `uncertified` for a provider

@@ -25,5 +25,5 @@ Test: `fsl-package/src/emit/tests/temporal_aggregate.rs` `a_source_declared_time
 ## Expected Results
 
 - Step 1: bounds `0`/`300000` of the source `ms` node and `0`/`300` of the source `s` node; no `["scalar_type", "unit", "ms"]` node; both packages admitted.
-- Step 2: `InvalidTemporalClockValue` naming `timestamp_unit`, no package.
+- Step 2: `unknown-clock-unit` under `us` and `clock-unit-dimension` under `m`, each naming the clock and the unit; no package.
 - Step 3: the source node under `ms`, the model-owned node under the FCD identity, one unit node each.

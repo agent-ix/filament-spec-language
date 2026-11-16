@@ -77,8 +77,10 @@ refusal.
   end does for integer watermarks), and `t` under `Exact`. Uncertainty
   therefore never makes an observation late earlier than its latest possible
   instant (FSpec FR-094).
-- The `late` entry's `stamp` member SHALL be that event instant, and its
-  `position` the observation's zero-based index in input order.
+- The `late` entry's `stamp` member SHALL be that event instant, its
+  `position` the observation's zero-based index in input order, and its
+  `observation` the observation's identity (FR-106); the late-list values the
+  criteria below give omit `observation`.
 
 ### Positions of on-time observations
 
@@ -126,7 +128,7 @@ refusal.
 | FR-966-AC-4 | Over FR-501-AC-29's observations (stamp 0 arrival 0, stamp 4 arrival 6, stamp 3 arrival 6) with `p` false at 0 and true at 4 and 3, `eventually[0,5] holds(p)` `on origin`, `W` 7: under `AllowedLateness { lateness: 2 }` the result is `Completed(true)` with decision support {(position 1, p)} and `late` `[{"position": 2, "stamp": 3, "arrival": 6, "anchors": [0]}]`; under `FixedInstant { cutoff: 5 }` both later observations are late, `late` is `[{"position": 1, "stamp": 4, "arrival": 6, "anchors": [0]}, {"position": 2, "stamp": 3, "arrival": 6, "anchors": [0]}]` and the result is `Completed(false)`; a trace of only the stamp-4 and stamp-3 observations under `FixedInstant { cutoff: 5 }` refuses at stage `admit`, `invalid_runtime_input`/`invalid-value`. | Test (TC-2722) |
 | FR-966-AC-5 | Over AC-4's request under `AllowedLateness { lateness: 2 }`, changing one arrival watermark (6 to 7 on the stamp-4 observation), the rule (to `FixedInstant { cutoff: 2 }`), the parameter (2 to 3), the cover (`Exact` to `Bounded { uncertainty: 0 }`), or adding an interval `[4, 4]` to the stamp-4 observation, each alone, gives a `result_identity` and an `input_identity` distinct from AC-4's. | Test (TC-2723) |
 | FR-966-AC-6 | `once[0,4] holds(p)` `on each` over AC-4's observations with `p` false at 0 and true at 4 and 3, `HistoryCutoff`, `AllowedLateness { lateness: 2 }` and `W` 7: the activation at position 0 is `Indeterminate { reason: MissingHistory }`, the one at position 1 is `Completed(true)`, the outcome is `Indeterminate { reason: MissingHistory }`, and `late` is exactly the stamp-3 entry with `anchors` `[1]`; the same request with no late-data cutoff reads all three observations, writes no `late` member and reports no completeness contradiction. | Test (TC-2722) |
-| FR-966-AC-7 | Through `command::run`, FR-526-AC-31's third request (`r1`'s own request as `Superseding(r1)` with `r1`'s ledger) refuses at stage `evaluate`, `invalid_runtime_input`/`invalid-value`, `cause` `unchanged-input`, member `relation`, and writes no result document and no ledger; a `Superseding` naming a `result_identity` the ledger does not hold refuses the same way with `cause` `predecessor-unknown`. | Test (TC-2723) |
+| FR-966-AC-7 | Through `command::run`, FR-526-AC-31's repair (`r1`'s trace, arrivals and cutoff unchanged, `admit_late` naming the stamp-3 observation's `observation` identity from `r1`'s `late` entry) writes `admitted_late` `[{"position": 2, "observation": <that identity>}]`, an empty `late` list and `holds`; `admit_late` naming an identity no late observation carries refuses at stage `evaluate`, `invalid_runtime_input`/`invalid-value`, member `admit_late`, `cause` `admitted-not-late`; the same `admit_late` on an `Original` request refuses `admission-without-repair`. FR-526-AC-31's third request (`r1`'s own request as `Superseding(r1)` with `r1`'s ledger) refuses at stage `evaluate`, `invalid_runtime_input`/`invalid-value`, `cause` `unchanged-input`, member `relation`, and writes no result document and no ledger; a `Superseding` naming a `result_identity` the ledger does not hold refuses the same way with `cause` `predecessor-unknown`. | Test (TC-2723) |
 
 ## Dependencies
 

@@ -149,7 +149,8 @@ The `result_identity` of every outcome follows the identity rule below.
   binding, the clock cover with its kind and uncertainty (`Exact`, `Counter { uncertainty }`
   or `Bounded { uncertainty }`, FR-501), the stamps, interval stamps (both ends
   and both flags), arrival watermarks, valuations and order keys or the
-  positions of the trace, the late-data cutoff (its rule and parameter, FR-966), the progress
+  positions of the trace, the late-data cutoff (its rule and parameter, FR-966), the observation
+  identities a revisioned repair admits (`admit_late`, FR-526), the progress
   inputs (watermark, completeness, scope closure, surrounding-execution closure,
   lower boundary), the retained-instance entries of the request's
   `EvidenceLedger` for the obligation (FR-524), the progress-ledger entry for the

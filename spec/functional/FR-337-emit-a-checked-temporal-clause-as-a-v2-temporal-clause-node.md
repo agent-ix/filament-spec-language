@@ -603,7 +603,8 @@ clock's `timestamp_unit` `T` names (FR-965): the model-owned node whose path
 is `["scalar_type", "unit", T]` when `T` is the FCD identity of a unit an
 admitted domain package declares, or the source-owned unit node of the unit
 named `T` that the clause's own source unit declares. Either is a linear unit
-of a dimension named `Time`; a `T` that names neither has no clock unit node.
+of a dimension named `Time`; a `T` that names neither has no clock unit node
+and refuses the clause as FR-965 states.
 The caller that selects the clause's timestamped-event clock SHALL give the
 selection to S3 as well as to the emitter (the spine passes each selection
 of the unit's source to its check). S3 SHALL convert both bounds of each

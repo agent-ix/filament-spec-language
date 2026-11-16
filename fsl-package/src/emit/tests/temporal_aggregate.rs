@@ -228,9 +228,9 @@ fn the_aggregate_bindings_decide_the_node_identity() {
 
 /// FR-337 "Aggregate formula emission": FSpec FR-370 writes a `duration`
 /// window's bounds as quantities of the `scalar_type`/`unit` node the
-/// selected `timestamp_unit` names (FR-965). A clock in
-/// `us`, which no unit declares, has no clock unit node, so the window has no
-/// encoding and the emission refuses with no package.
+/// selected `timestamp_unit` names (FR-965). S3 here had no clock and kept the
+/// window in `ms`, so under a clock in `s` the bounds are not of the clock
+/// unit node and the emission refuses with no package.
 #[trace("TC-1267", "FR-337-AC-15")]
 #[test]
 fn a_duration_window_outside_the_clock_unit_node_refuses() {
@@ -244,7 +244,7 @@ fn a_duration_window_outside_the_clock_unit_node_refuses() {
             crate::emit::TemporalClockSelection::new(
                 graph.source().clone(),
                 temporal.clause().span(),
-                clock_in("us"),
+                clock_in("s"),
             )
         })
         .collect();
@@ -253,7 +253,7 @@ fn a_duration_window_outside_the_clock_unit_node_refuses() {
         &selections,
         crate::EmitLimits::fixture(),
     )
-    .expect_err("no unit is named `us`");
+    .expect_err("the bounds are in `ms`, not the clock unit `s`");
     assert!(
         matches!(
             refusal,
@@ -528,8 +528,8 @@ fn a_source_declared_time_unit_is_the_clock_unit() {
 }
 
 /// FR-965-AC-2: a `timestamp_unit` naming no unit, or a unit of a dimension
-/// other than `Time`, has no clock unit node, and the emission refuses
-/// `InvalidTemporalClockValue` naming `timestamp_unit` with no package.
+/// other than `Time`, refuses with FR-933's cause `unknown-clock-unit` or
+/// `clock-unit-dimension`, naming the clock and the unit, with no package.
 #[trace("TC-2720", "FR-965-AC-2")]
 #[test]
 #[ignore = "QSL-2138: the clock unit node rule of FR-965 is not implemented yet"]
@@ -539,19 +539,16 @@ fn a_timestamp_unit_naming_no_time_unit_refuses() {
         "dimension Time;\n",
         "dimension Time;\ndimension Length;\nunit m : Length = rational(1, 1);\n",
     );
-    for (text, clock) in [(timestamped(formula), "us"), (length, "m")] {
-        let refusal = emit_with_clock(&text, clock)
-            .unwrap_or_else(|refusals| panic!("under {clock}: {refusals:?}"))
-            .expect_err("no clock unit node");
-        assert!(
-            matches!(
-                refusal,
-                EmitRefusal::InvalidTemporalClockValue {
-                    field: "timestamp_unit",
-                    ..
-                }
-            ),
-            "{clock}: {refusal:?}"
-        );
+    for (text, clock, cause) in [
+        (timestamped(formula), "us", "unknown-clock-unit"),
+        (length, "m", "clock-unit-dimension"),
+    ] {
+        let refused = match emit_with_clock(&text, clock) {
+            Ok(Ok(_)) => panic!("{clock}: no clock unit node, no package"),
+            Ok(Err(refusal)) => format!("{refusal:?}"),
+            Err(refusals) => format!("{refusals:?}"),
+        };
+        assert!(refused.contains(cause), "{clock}: {refused}");
+        assert!(refused.contains(clock), "{clock}: {refused}");
     }
 }

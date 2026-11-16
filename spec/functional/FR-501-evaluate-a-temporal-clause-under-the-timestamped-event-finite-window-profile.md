@@ -351,7 +351,7 @@ ranks below 10.
 ### Late-data cutoff
 
 - With a late-data cutoff, an observation with event instant `t` (the upper
-  end of its interval, or its stamp) and arrival watermark `A` SHALL be
+  end of its uncertainty (FR-966)) and arrival watermark `A` SHALL be
   classified `late` when `A > t + lateness` (`AllowedLateness`) or when
   `t <= cutoff` and `A > cutoff` (`FixedInstant`), and `on-time` otherwise
   (FSpec FR-094 "Late-data cutoff", FR-294). An observation with no arrival
@@ -383,8 +383,10 @@ result carries the `late` list:
   arrival watermark. `stamp` stays required and is the nominal stamp `t`.
 - The member admits `"late_data_cutoff": {"allowed_lateness": N}` or
   `{"fixed_instant": N}`.
-- The result document writes `late`, an array of `{"position": N, "stamp": N,
-  "arrival": N, "anchors": [N, ...]}` in input order, whenever a late-data
+- The result document writes `late`, an array of `{"position": N,
+  "observation": ID, "stamp": N, "arrival": N, "anchors": [N, ...]}` in input
+  order, `observation` the observation's identity (FR-106) by which a
+  revisioned repair admits it (FR-526), whenever a late-data
   cutoff is selected (`[]` when no observation is late), and writes no `late`
   member otherwise.
 

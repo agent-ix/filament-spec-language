@@ -249,7 +249,7 @@ fn the_late_data_cutoff_delays_establishment_and_excludes_late_observations() {
     let settled = run("Seen", late_trace(2, 2, 7, lateness()));
     assert_eq!(kind(&settled), "holds", "{settled}");
     assert_eq!(
-        settled["late"],
+        late_view(&settled),
         json!([{"position": 2, "stamp": 3, "arrival": 6, "anchors": [0]}]),
         "{settled}"
     );
@@ -322,16 +322,24 @@ fn a_late_observation_is_admitted_only_by_a_superseding_result() {
         temporal["evidence_ledger"] = json!("evidence.json");
         next
     };
-    let mut repaired = original_trace.clone();
-    repaired["observations"][2]["arrival"] = json!(5);
-    let second = result(&run_file(&write(
-        directory.path(),
-        "second.json",
-        &superseding(repaired),
-    )));
+    // The repair keeps the recorded arrivals and the cutoff and names the
+    // late observation by its identity (FR-526, FSpec FR-094).
+    let late = first["late"][0]["observation"].clone();
+    assert!(
+        !late.is_null(),
+        "the late entry names its observation: {first}"
+    );
+    let mut repair = superseding(original_trace.clone());
+    repair["request"]["clause"]["selection"]["temporal"]["admit_late"] = json!([late.clone()]);
+    let second = result(&run_file(&write(directory.path(), "second.json", &repair)));
     assert_eq!(kind(&second), "holds", "{second}");
     assert_eq!(second["lineage"], 1, "{second}");
     assert_eq!(second["late"], json!([]), "{second}");
+    assert_eq!(
+        second["admitted_late"],
+        json!([{"position": 2, "observation": late}]),
+        "{second}"
+    );
 
     let unchanged = run_file(&write(
         directory.path(),
@@ -491,7 +499,7 @@ fn late_observations_take_no_position() {
     );
     assert_eq!(kind(&fixed), "violated", "{fixed}");
     assert_eq!(
-        fixed["late"],
+        late_view(&fixed),
         json!([{"position": 1, "stamp": 4, "arrival": 6, "anchors": [0]},
                {"position": 2, "stamp": 3, "arrival": 6, "anchors": [0]}]),
         "{fixed}"
@@ -585,7 +593,7 @@ fn a_history_cutoff_and_a_late_data_cutoff_stay_independent() {
         "{with}"
     );
     assert_eq!(
-        with["late"],
+        late_view(&with),
         json!([{"position": 2, "stamp": 3, "arrival": 6, "anchors": [1]}]),
         "{with}"
     );
@@ -612,6 +620,29 @@ fn a_refused_correction_writes_no_result() {
         serde_json::to_vec(&first["evidence_ledger"]).unwrap(),
     )
     .unwrap();
+    // `admit_late` naming no late observation, and `admit_late` on an
+    // `Original` request, refuse at member `admit_late`.
+    let late = first["late"][0]["observation"].clone();
+    for (relation, named, cause) in [
+        (
+            json!({"superseding": first["result_identity"].clone()}),
+            json!("no-such-observation"),
+            "admitted-not-late",
+        ),
+        (json!("original"), late, "admission-without-repair"),
+    ] {
+        let mut next = request("Seen", original_trace.clone());
+        let temporal = &mut next["request"]["clause"]["selection"]["temporal"];
+        temporal["relation"] = relation;
+        temporal["evidence_ledger"] = json!("evidence.json");
+        temporal["admit_late"] = json!([named]);
+        let output = run_file(&write(directory.path(), "admit.json", &next));
+        assert!(output.stdout.is_empty(), "no result document");
+        let text = document_of(&output).to_string();
+        for needle in ["invalid_runtime_input", "\"admit_late\"", cause] {
+            assert!(text.contains(needle), "{needle}: {text}");
+        }
+    }
     for (named, cause) in [
         (first["result_identity"].clone(), "unchanged-input"),
         (json!("unknown"), "predecessor-unknown"),
@@ -634,4 +665,18 @@ fn a_refused_correction_writes_no_result() {
             assert!(text.contains(needle), "{needle}: {refusal}");
         }
     }
+}
+
+/// The `late` list of `document` without each entry's `observation`
+/// identity, which the criteria's late-list values omit (FR-966).
+fn late_view(document: &Value) -> Value {
+    let mut late = document["late"].clone();
+    if let Some(entries) = late.as_array_mut() {
+        for entry in entries {
+            if let Some(entry) = entry.as_object_mut() {
+                entry.remove("observation");
+            }
+        }
+    }
+    late
 }
