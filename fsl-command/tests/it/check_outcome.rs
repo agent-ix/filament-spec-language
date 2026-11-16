@@ -72,8 +72,7 @@ fn check_outcome_supplies_an_imported_library() {
     assert_eq!(result["category"], "success", "{result}");
     assert_eq!(result["last_stage"], "S4", "{result}");
 
-    let mut without_library = CheckInputs::default();
-    without_library.dependent_bytes = 0;
+    let without_library = CheckInputs::default();
     let missing = command::check_outcome(&source, &without_library)
         .unwrap()
         .to_bytes()
