@@ -193,7 +193,6 @@ fn refused_word(body: &str) -> (String, String) {
 /// word, naming the derived form.
 #[trace("TC-1542", "FR-611-AC-1", "FSpec-TC-1041", "FSpec-FR-092-AC-10")]
 #[test]
-#[ignore = "QSL-2142: the derived-form message for previous and next is not implemented yet"]
 fn previous_and_next_refuse_naming_their_derived_forms() {
     for (body, word, form) in [
         ("previous holds(c.level = 0)", "previous", "once[1,1]"),
@@ -214,7 +213,6 @@ fn previous_and_next_refuse_naming_their_derived_forms() {
 /// and `next` stays an ordinary field name.
 #[trace("TC-1542", "FR-611-AC-2", "FSpec-TC-1041", "FSpec-FR-092-AC-10")]
 #[test]
-#[ignore = "QSL-2142: the derived-form message for weak until is not implemented yet"]
 fn weak_until_refuses_naming_its_derived_form_and_next_stays_an_identifier() {
     let (message, at) = refused_word("holds(c.level = 0) weak until holds(c.level = 2)");
     assert_eq!(at, "weak");
