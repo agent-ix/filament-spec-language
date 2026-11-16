@@ -1101,6 +1101,33 @@ fn model_with_flag() -> DomainPackage {
     package
 }
 
+/// Fixture D with the payload-free model variant type `Tier`.
+fn model_with_tier() -> DomainPackage {
+    use fsl_semantics::model::domain_package::{DomainPackageRecord, EnumRecord, VariantRecord};
+    use orders_model::key;
+    let mut package = model_package(false);
+    package.records.extend([
+        DomainPackageRecord::Enum(EnumRecord {
+            key: key("Tier"),
+            name: "Tier".to_owned(),
+            members: vec!["Gold".to_owned(), "Standard".to_owned()],
+        }),
+        DomainPackageRecord::Variant(VariantRecord {
+            key: key("Tier/Gold"),
+            owner: key("Tier"),
+            case: "Gold".to_owned(),
+            payload_type: None,
+        }),
+        DomainPackageRecord::Variant(VariantRecord {
+            key: key("Tier/Standard"),
+            owner: key("Tier"),
+            case: "Standard".to_owned(),
+            payload_type: None,
+        }),
+    ]);
+    package
+}
+
 /// FR-569 "Declaration checks": a field, parameter or result of a source
 /// object type may name a model-owned value type, a reference to a model
 /// object type, or a collection of either; each checks, and a clause over the
@@ -1118,12 +1145,37 @@ object Z {
   operation step(): M::Flag;
   operation add(x: M::Total, o: Reference<M::Order>): M::Total;
 }
+
 invariant X using P on Z at current { self.total >= 0 }
 invariant Y using P on Z at current { forall(z in zs : deref(z).total <= 9) }
 ";
     let declarations =
         assemble_model(declarations, model_with_flag()).expect("the member types resolve");
     finish(declarations).expect("the clauses over the model-typed fields check");
+}
+
+/// A model-owned enum type admitted as a source record field is admitted as
+/// a source object field and operation signature too (FR-569-AC-12).
+#[trace("FR-569-AC-12", "TC-1940")]
+#[test]
+fn a_source_object_member_may_have_a_model_owned_variant_type() {
+    let source = "\
+object O { f: M::Tier; operation echo(p: M::Tier): M::Tier; }\n\
+function read(o: Reference<O>): M::Tier pure { deref(o).f }\n\
+pre Input using P on O::echo { true }\n\
+post Output using P on O::echo { true }\n";
+    let declarations = assemble_model(source, model_with_tier())
+        .expect("the model-owned variant resolves through M");
+    let graph = finish(declarations).expect("the member and operation types check");
+    let input = graph
+        .state_clause("Input")
+        .expect("input signature is checked");
+    let field_type = source_field_type(&graph, "O", "f");
+    assert_eq!(input.parameters()[1].1, field_type);
+    let output = graph
+        .state_clause("Output")
+        .expect("output signature is checked");
+    assert_eq!(output.parameters()[1].1, field_type);
 }
 
 /// A model type that does not exist, and a model-owned type a field cannot
@@ -1390,6 +1442,26 @@ fn refusal_codes(declarations: &str) -> Vec<(Code, Option<&'static str>)> {
     }
 }
 
+fn source_field_type(
+    graph: &CheckedGraph,
+    object_name: &str,
+    field_name: &str,
+) -> filament_exact::ValueType {
+    graph
+        .scope()
+        .types()
+        .object_types()
+        .find(|object| object.name() == object_name)
+        .and_then(|object| {
+            object
+                .attributes()
+                .iter()
+                .find(|field| field.name() == field_name)
+        })
+        .map(|field| field.value_type().clone())
+        .unwrap_or_else(|| panic!("checked field {object_name}.{field_name}"))
+}
+
 /// A record field of type `ty` checks, and so does an object field of `ty`
 /// read by a state clause; with `operation`, so does an operation taking and
 /// returning `ty`.
@@ -1418,100 +1490,259 @@ fn assert_member_checks_like_record_field(ty: &str, operation: bool) {
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_enum_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Tier", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_enum_parameter_and_result_check_as_a_record_field() {
     assert_member_checks_like_record_field("Tier", true);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_record_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Point", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_record_parameter_and_result_check_as_a_record_field() {
     assert_member_checks_like_record_field("Point", true);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_union_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Mark", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_tuple_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Pair", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_alias_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Small", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_decimal_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Decimal[0, 100; 2, 2; exact]", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_rational_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Rational[0, 9; 1, 4]", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_float_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Float64", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_quantity_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Quantity<m>", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn an_option_of_a_collection_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Option<Sequence<Integer>[0, 3]>", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_nested_collection_member_checks_as_a_record_field() {
     assert_member_checks_like_record_field("Sequence<Set<Integer>[0, 2]>[0, 2]", false);
 }
 
 #[trace("FR-569-AC-12", "TC-1940", "FSpec-FR-610-AC-5", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: source object members of every record-field type check as record fields; not implemented yet"]
 fn a_union_parameter_and_result_check_as_a_record_field() {
     assert_member_checks_like_record_field("Mark", true);
+}
+
+/// Every admitted member type follows the record field's typing and
+/// type-mismatch path, including operation signatures where the criterion
+/// calls them out explicitly.
+#[trace("FR-569-AC-12", "TC-1940")]
+#[test]
+fn admitted_object_member_types_match_source_record_field_typing() {
+    for (ty, operation) in [
+        ("Tier", true),
+        ("Point", true),
+        ("Mark", true),
+        ("Pair", false),
+        ("Small", false),
+        ("Decimal[0, 100; 2, 2; exact]", false),
+        ("Rational[0, 9; 1, 4]", false),
+        ("Float64", false),
+        ("Quantity<m>", false),
+        ("Option<Sequence<Integer>[0, 3]>", false),
+        ("Sequence<Set<Integer>[0, 2]>[0, 2]", false),
+    ] {
+        assert_member_checks_like_record_field(ty, operation);
+        let typed_uses = format!(
+            "{MEMBER_PRELUDE}object O {{ f: {ty}; operation echo(p: {ty}): {ty}; }}\n\
+             function read(o: Reference<O>): {ty} pure {{ deref(o).f }}\n\
+             pre Input using P on O::echo {{ true }}\n\
+             post Output using P on O::echo {{ true }}\n"
+        );
+        let graph = finish(assemble(&typed_uses).expect("typed uses assemble"))
+            .unwrap_or_else(|refusals| panic!("{ty}: {refusals:?}"));
+        let field_type = source_field_type(&graph, "O", "f");
+        let expected_kind = match ty {
+            "Tier" => "Enum",
+            "Point" | "Mark" | "Pair" => "Composite",
+            "Small" => "Int",
+            value if value.starts_with("Decimal[") => "Decimal",
+            value if value.starts_with("Rational[") => "Rational",
+            "Float64" => "Float",
+            value if value.starts_with("Quantity<") => "Quantity",
+            value if value.starts_with("Option<") => "Option",
+            _ => "Collection",
+        };
+        let actual_kind = match &field_type {
+            filament_exact::ValueType::Enum(_) => "Enum",
+            filament_exact::ValueType::Composite(_) => "Composite",
+            filament_exact::ValueType::Int(_) => "Int",
+            filament_exact::ValueType::Decimal(_) => "Decimal",
+            filament_exact::ValueType::Rational(_) => "Rational",
+            filament_exact::ValueType::Float(_) => "Float",
+            filament_exact::ValueType::Quantity(_) => "Quantity",
+            filament_exact::ValueType::Option(_) => "Option",
+            filament_exact::ValueType::Collection(_) => "Collection",
+            other => panic!("unexpected checked type for {ty}: {other:?}"),
+        };
+        assert_eq!(actual_kind, expected_kind, "checked O.f retains {ty}");
+        assert_eq!(
+            graph
+                .state_clause("Input")
+                .expect("input clause")
+                .parameters()[1]
+                .1,
+            field_type,
+            "operation parameter retains {ty}"
+        );
+        assert_eq!(
+            graph
+                .state_clause("Output")
+                .expect("output clause")
+                .parameters()[1]
+                .1,
+            field_type,
+            "operation result retains {ty}"
+        );
+        let record = format!(
+            "{MEMBER_PRELUDE}record R {{ f: {ty}; }}\nfunction bad(r: R): Boolean pure {{ r.f }}\n"
+        );
+        let object = format!(
+            "{MEMBER_PRELUDE}object O {{ f: {ty}; }}\nfunction bad(o: Reference<O>): Boolean pure {{ deref(o).f }}\n"
+        );
+        let record_refusals = refusal_codes(&record);
+        assert!(!record_refusals.is_empty(), "record field {ty} is mistyped");
+        assert_eq!(
+            refusal_codes(&object),
+            record_refusals,
+            "object field {ty} has the same mismatch as a record field"
+        );
+    }
+}
+
+/// Operation variance reads the source model retained for conformance, so a
+/// rich local type change must fail both parameter and result axes.
+#[trace("FR-569-AC-12", "TC-1940")]
+#[test]
+fn rich_source_object_operation_overrides_keep_their_member_types_for_conformance() {
+    let source = "\
+record R { x: Integer; }\n\
+record S { x: Boolean; }\n\
+object Base { operation f(p: R): R; }\n\
+object Child extends Base { operation f(p: S): S redefines Base::f; }\n";
+    let refused = assemble(source).expect("rich source types assemble");
+    let refusals = finish(refused).expect_err("the incompatible override is refused");
+    let causes: Vec<_> = refusals
+        .iter()
+        .filter_map(|refusal| refusal.cause.catalog_code())
+        .map(|code| code.cause())
+        .collect();
+    assert!(causes.contains(&"variance-parameter"), "{causes:?}");
+    assert!(causes.contains(&"variance-result"), "{causes:?}");
+}
+
+/// Source object signatures retain their exact scalar types while conformance
+/// keeps the existing widening and interval-inclusion rules for variance.
+#[trace("FR-569-AC-12", "TC-1940")]
+#[test]
+fn source_object_operation_overrides_allow_scalar_widening_and_narrowing() {
+    let bounded = filament_exact::ValueType::Int(
+        filament_exact::IntegerInterval::new(
+            filament_exact::Integer::from(0_i64),
+            filament_exact::Integer::from(9_i64),
+        )
+        .expect("non-empty integer interval"),
+    );
+    let scalar_source = "\
+object Base { operation f(p: Int[0, 9]): Integer; }\n\
+object Child extends Base { operation f(p: Integer): Int[0, 9] redefines Base::f; }\n\
+pre BaseInput using P on Base::f { true }\n\
+post BaseOutput using P on Base::f { true }\n\
+pre ChildInput using P on Child::f { true }\n\
+post ChildOutput using P on Child::f { true }\n";
+    let graph = finish(assemble(scalar_source).expect("scalar variance assembles"))
+        .unwrap_or_else(|refusals| panic!("scalar widening/narrowing: {refusals:?}"));
+    assert_eq!(
+        graph
+            .state_clause("BaseInput")
+            .expect("base input")
+            .parameters()[1]
+            .1,
+        bounded,
+        "Base parameter retains Int[0, 9]"
+    );
+    assert_eq!(
+        graph
+            .state_clause("BaseOutput")
+            .expect("base output")
+            .parameters()[1]
+            .1,
+        filament_exact::ValueType::Integer,
+        "Base result retains Integer"
+    );
+    assert_eq!(
+        graph
+            .state_clause("ChildInput")
+            .expect("child input")
+            .parameters()[1]
+            .1,
+        filament_exact::ValueType::Integer,
+        "Child parameter retains Integer"
+    );
+    assert_eq!(
+        graph
+            .state_clause("ChildOutput")
+            .expect("child output")
+            .parameters()[1]
+            .1,
+        bounded,
+        "Child result retains Int[0, 9]"
+    );
+
+    let bounded_variance_source = "\
+object Base { operation f(p: Int[1, 8]): Int[0, 9]; }\n\
+object Child extends Base { operation f(p: Int[0, 9]): Int[1, 8] redefines Base::f; }\n";
+    finish(assemble(bounded_variance_source).expect("bounded variance assembles"))
+        .unwrap_or_else(|refusals| panic!("bounded interval variance: {refusals:?}"));
 }
 
 /// A field type a record field refuses is refused for an object member with
@@ -1528,17 +1759,27 @@ fn assert_member_refused_like_record_field(prelude: &str, ty: &str) {
 
 #[trace("FR-569-AC-13", "TC-1940", "FSpec-FR-610-AC-6", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: a member type outside the record-field rule is refused with the record field's code; not implemented yet"]
 fn a_population_typed_member_is_refused_as_a_record_field_is() {
     assert_member_refused_like_record_field(OBJECTS, "Population<Order>[3]");
 }
 
 #[trace("FR-569-AC-13", "TC-1940", "FSpec-FR-610-AC-6", "FSpec-TC-1442")]
 #[test]
-#[ignore = "QSL-2175: a member type outside the record-field rule is refused with the record field's code; not implemented yet"]
 fn a_member_typed_by_a_function_name_is_refused_as_a_record_field_is() {
     assert_member_refused_like_record_field(
         "function helper using P (n: Integer): Integer pure { n }\n",
         "helper",
     );
+}
+
+/// A recursive member name is rejected in the same declaration pass as a
+/// recursive record member, before either declaration set is admitted.
+#[trace("FR-569-AC-12", "TC-1940")]
+#[test]
+fn a_recursive_object_member_is_refused_as_a_recursive_record_field_is() {
+    let recursive = "type Loop = Loop;\n";
+    let record = refusal_codes(&format!("{recursive}record R {{ f: Loop; }}\n"));
+    let object = refusal_codes(&format!("{recursive}object O {{ f: Loop; }}\n"));
+    assert_eq!(record, [(Code::InvalidPackage, Some("definition-cycle"))]);
+    assert_eq!(object, record);
 }

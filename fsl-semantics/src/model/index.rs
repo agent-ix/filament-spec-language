@@ -54,8 +54,10 @@ use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, FieldMemberRecord, NativeValueType, OperationMemberRecord,
     ScalarValueDomain, ValueTypeRef,
 };
+use crate::model::key::effective_id_of;
 use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
 use filament_checked::key::DeclarationKey;
+use filament_exact::{EffectiveId, ValueType};
 use fsl_foundation::diagnostic::Code;
 
 /// One interned declaration key. Index order is [`DeclarationKey`] order.
@@ -425,6 +427,47 @@ impl ModelIndex {
         limit: u64,
     ) -> Result<bool, crate::model::accounting::NormalizationIncomplete> {
         match (s, t) {
+            (ValueTypeRef::Resolved(a), ValueTypeRef::Resolved(b)) => {
+                match (a.as_ref(), b.as_ref()) {
+                    (ValueType::Reference(a), ValueType::Reference(b)) => {
+                        match (self.object_key(a), self.object_key(b)) {
+                            (Some(a), Some(b)) => self.conformance_walk(a, b, limit),
+                            _ => Ok(a == b),
+                        }
+                    }
+                    (ValueType::Int(source), ValueType::Int(target)) => {
+                        Ok(target.lower() <= source.lower() && source.upper() <= target.upper())
+                    }
+                    (ValueType::Int(_), ValueType::Integer) => Ok(true),
+                    _ => Ok(a == b),
+                }
+            }
+            (ValueTypeRef::Resolved(value_type), ValueTypeRef::Package(b)) => {
+                match value_type.as_ref() {
+                    ValueType::Reference(identity) => match self.object_key(identity) {
+                        Some(a) => self.conformance_walk(a, b, limit),
+                        None => Ok(false),
+                    },
+                    _ => Ok(false),
+                }
+            }
+            (ValueTypeRef::Package(a), ValueTypeRef::Resolved(value_type)) => {
+                match value_type.as_ref() {
+                    ValueType::Reference(identity) => match self.object_key(identity) {
+                        Some(b) => self.conformance_walk(a, b, limit),
+                        None => Ok(false),
+                    },
+                    _ => Ok(false),
+                }
+            }
+            (ValueTypeRef::Resolved(value_type), ValueTypeRef::Native(native)) => {
+                Ok(native_value_type(value_type.as_ref()) == Some(*native)
+                    || (matches!(value_type.as_ref(), ValueType::Int(_))
+                        && *native == NativeValueType::Integer))
+            }
+            (ValueTypeRef::Native(native), ValueTypeRef::Resolved(value_type)) => {
+                Ok(native_value_type(value_type.as_ref()) == Some(*native))
+            }
             (ValueTypeRef::Native(a), ValueTypeRef::Native(b)) => Ok(a == b),
             (ValueTypeRef::Unit(a), ValueTypeRef::Unit(b)) => Ok(a == b),
             // A bounded integer scalar is an Integer; a native alias is its
@@ -448,6 +491,17 @@ impl ModelIndex {
             }
             _ => Ok(false),
         }
+    }
+
+    /// The source object declaration whose identity a resolved reference
+    /// carries, when this view owns that object.
+    fn object_key(&self, identity: &EffectiveId) -> Option<&DeclarationKey> {
+        self.package.records.iter().find_map(|record| {
+            let DomainPackageRecord::ObjectType(object) = record else {
+                return None;
+            };
+            (effective_id_of(None, &object.key) == *identity).then_some(&object.key)
+        })
     }
 
     /// All declared field redefinition links followed by an effect test,
@@ -542,6 +596,17 @@ impl ModelIndex {
     /// See [`RecordIndex::conforms_admitted`].
     pub(crate) fn conforms_admitted(&self, s: &DeclarationKey, t: &DeclarationKey) -> bool {
         self.records.conforms_admitted(s, t)
+    }
+}
+
+fn native_value_type(value_type: &ValueType) -> Option<NativeValueType> {
+    match value_type {
+        ValueType::Boolean => Some(NativeValueType::Boolean),
+        ValueType::Integer => Some(NativeValueType::Integer),
+        ValueType::Uuid => Some(NativeValueType::Uuid),
+        ValueType::Timestamp => Some(NativeValueType::Timestamp),
+        ValueType::String => Some(NativeValueType::String),
+        _ => None,
     }
 }
 
