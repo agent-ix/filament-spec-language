@@ -423,7 +423,7 @@ fn completed_run_document_carries_no_axes() {
     assert!(document.get("axes").is_none(), "{document}");
 }
 
-/// A unit's source: `Quantity` has no run value form.
+/// A unit's source: `Quantity` has a run value form (FR-650).
 const QUANTITY_FIXTURE: &str = r#"language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
 dimension Time;
@@ -448,30 +448,20 @@ fn run_quantity(function: &str, arguments: Value) -> Output {
     run_file(&directory.path().join("request.json"))
 }
 
-/// FR-650-AC-6: a parameter with no run value form refuses with exit 21
-/// and its position, whatever the value is, a bare integer included.
+/// FR-650-AC-10: `Quantity` has a run value form, so a bare integer for a
+/// quantity parameter is a wrong value kind at the call, never exit 21, and
+/// a quantity result completes. A type with no form (a collection over a
+/// population) is covered by the `run_value` unit tests.
 #[test]
 #[trace("TC-1705", "FR-650-AC-6")]
-fn a_bare_integer_for_a_parameter_with_no_form_refuses_unsupported() {
+fn quantity_has_a_form_so_it_is_not_refused_unsupported() {
     for value in [json!(2), json!({"integer": "2"})] {
         let output = run_quantity("take", json!([{"parameter":"a","value":value}]));
-        assert_eq!(output.status.code(), Some(21), "{output:?}");
+        assert_eq!(output.status.code(), Some(20), "{output:?}");
         let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
-        assert_eq!(failure["code"], "unknown_required_feature", "{failure}");
-        assert_eq!(failure["cause"], "unsupported-feature", "{failure}");
-        assert_eq!(failure["details"], json!({"position": 0}), "{failure}");
+        assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
+        assert_eq!(failure["cause"], "wrong-value-kind", "{failure}");
     }
-}
-
-/// FR-650-AC-6: a result with no run value form refuses with exit 21, a
-/// non-null cause and the function.
-#[test]
-#[trace("TC-1705", "FR-650-AC-6")]
-fn a_result_with_no_form_refuses_unsupported_naming_the_function() {
     let output = run_quantity("give", json!([]));
-    assert_eq!(output.status.code(), Some(21), "{output:?}");
-    let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(failure["code"], "unknown_required_feature", "{failure}");
-    assert!(failure["cause"].is_string(), "{failure}");
-    assert_eq!(failure["details"]["function"], "give", "{failure}");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
