@@ -1131,27 +1131,28 @@ mod tests {
     #[test]
     fn boolean_and_integer_forms_round_trip() {
         let forms = forms();
-        for (form, value_type, expected) in [
+        for (form, value_type, expected_form) in [
             (
                 json!({"boolean": true}),
                 ValueType::Boolean,
-                Value::Boolean(true),
+                json!({"boolean": true}),
             ),
             (
                 json!({"integer": "9223372036854775808"}),
                 ValueType::Integer,
-                Value::Integer(
-                    "9223372036854775808"
-                        .parse::<Integer>()
-                        .expect("the integer spelling is valid"),
-                ),
+                json!({"integer": "9223372036854775808"}),
             ),
         ] {
             let value = forms
                 .read(&form, &value_type)
                 .expect("the closed run value form decodes");
-            assert_eq!(value, expected);
-            assert_eq!(forms.write(&value).unwrap(), form);
+            match (&value_type, &value) {
+                (ValueType::Boolean, Value::Boolean(true)) => {}
+                (ValueType::Integer, Value::Integer(integer))
+                    if integer.to_string() == "9223372036854775808" => {}
+                _ => panic!("the reader returned the wrong typed value: {value:?}"),
+            }
+            assert_eq!(forms.write(&value).unwrap(), expected_form);
         }
     }
 
