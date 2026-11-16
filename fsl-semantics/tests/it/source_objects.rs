@@ -386,6 +386,13 @@ fn assemble_model(
     package: DomainPackage,
 ) -> Result<PackageDeclarations, AssemblyRefusal> {
     let text = format!("{HEADER}model M = \"test/orders\";\n{declarations}\n");
+    assemble_model_text(&text, package)
+}
+
+fn assemble_model_text(
+    text: &str,
+    package: DomainPackage,
+) -> Result<PackageDeclarations, AssemblyRefusal> {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "tc-1408-d"),
         "unit.native",
@@ -2102,8 +2109,10 @@ fn a_selected_models_dense_time_does_not_time_source_clocks() {
         vec![orders_model::object("Anchor", &[], false)],
     );
     let source = source_timed("time M dense unit ms;\n");
+    let (profile, declarations) = source.split_once('\n').expect("source profile header");
+    let text = format!("{HEADER}{profile}\nmodel M = \"test/orders\";\n{declarations}\n");
     let failures =
-        finish(assemble_model(&source, package).expect("selected and source models assemble"))
+        finish(assemble_model_text(&text, package).expect("selected and source models assemble"))
             .expect_err("selected model time does not cover source clocks");
     let (field, span) = failures
         .iter()
@@ -2118,7 +2127,6 @@ fn a_selected_models_dense_time_does_not_time_source_clocks() {
         })
         .expect("source clock requires source dense time");
     assert_eq!(field, "w");
-    let text = model_text(&source);
     assert!(text[span.start..span.end].contains("w: W"));
 }
 
