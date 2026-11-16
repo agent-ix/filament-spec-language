@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+pub use filament_checked::integer_division::AdmittedIntegerDivision;
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::catalog::CatalogCoded;
 pub use filament_semantic_value::checking::CheckingLimits;

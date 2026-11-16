@@ -49,7 +49,7 @@ pub struct CheckInputs {
     /// Libraries selected by identity and source path, in option order.
     pub libraries: Vec<(String, PathBuf)>,
     /// The admitted integer-division law used while checking this unit.
-    pub integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    pub integer_division: Option<fsl_replay::spine::AdmittedIntegerDivision>,
     /// The caller's stage limits for parse, model selection and checking.
     pub limits: fsl_replay::spine::SpineLimits,
     /// Aggregate bytes available to supplied model and library files.
@@ -1361,7 +1361,7 @@ fn check_sources<T>(
     sources: &[FormalSource],
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
-    integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    integer_division: Option<fsl_replay::spine::AdmittedIntegerDivision>,
     finish: impl FnOnce(
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
