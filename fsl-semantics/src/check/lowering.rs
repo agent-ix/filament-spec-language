@@ -561,6 +561,9 @@ struct CollectionFact {
 #[derive(Clone, Default)]
 pub struct SemanticGraph {
     nodes: HashMap<NodeKey, SemanticNode>,
+    /// Checked interval type nodes retained even when a division application
+    /// itself lowers at the catalog's Integer result type.
+    integer_intervals: BTreeMap<(Integer, Integer), NodeKey>,
     /// Selected model operation identities keyed by their lowered anchor.
     selected_operation_members: BTreeMap<NodeKey, model::SelectedOperationMember>,
     /// Selected model enum declarations keyed by their lowered declaration.
@@ -608,6 +611,14 @@ impl fmt::Debug for SemanticGraph {
 }
 
 impl SemanticGraph {
+    pub(crate) fn integer_interval_node(
+        &self,
+        interval: &filament_exact::IntegerInterval,
+    ) -> Option<NodeKey> {
+        self.integer_intervals
+            .get(&(interval.lower().clone(), interval.upper().clone()))
+            .cloned()
+    }
     /// The selected model operation rows associated with lowered anchors.
     pub fn selected_operation_members(
         &self,
@@ -2849,12 +2860,17 @@ impl<'a> Lowering<'a> {
                 let base = self.scalar("integer", location)?;
                 let min = self.integer_literal(interval.lower().clone(), location)?;
                 let max = self.integer_literal(interval.upper().clone(), location)?;
-                self.bounded(
+                let node = self.bounded(
                     "integer_range",
                     base,
                     vec![("min", min), ("max", max)],
                     location,
-                )
+                )?;
+                let key = require_admitted(node.clone(), location)?;
+                self.graph
+                    .integer_intervals
+                    .insert((interval.lower().clone(), interval.upper().clone()), key);
+                Ok(node)
             }
             ValueType::Rational(domain) => {
                 let base = self.scalar("rational", location)?;
@@ -4248,7 +4264,7 @@ impl<'a> Lowering<'a> {
                 return Ok(binder.semantic_type.clone());
             }
         }
-        self.type_ref(node.value_type(), node.location())
+        self.type_ref(&node.lowered_value_type(), node.location())
     }
 
     /// Key an application node for checked `node` and return a reference to
@@ -4260,7 +4276,31 @@ impl<'a> Lowering<'a> {
         operation: Operation,
         arguments: Vec<MemberTerm>,
     ) -> Result<LeafTerm, CheckRefusal> {
-        let result_type = self.type_ref(node.value_type(), node.location())?;
+        // Retain the checked interval's type node for the requirement bound,
+        // even where the catalog application itself returns Integer.
+        let checked_type = self.type_ref(node.value_type(), node.location())?;
+        if matches!(node.kind(), NodeKind::IntegerDivision { .. })
+            && matches!(node.value_type(), ValueType::Int(_))
+        {
+            if let Some(key) = checked_type.admitted() {
+                if !self.occurrences.has(key.clone()) {
+                    // An inferred interval may have no incoming graph edge:
+                    // its requirement record alone names it. Give that type
+                    // node the division's source anchor before emission.
+                    self.record(
+                        key.clone(),
+                        OccurrenceRole::Generated,
+                        node.location().clone(),
+                    );
+                }
+            }
+        }
+        let lowered_type = node.lowered_value_type();
+        let result_type = if lowered_type.as_ref() == node.value_type() {
+            checked_type
+        } else {
+            self.type_ref(&lowered_type, node.location())?
+        };
         self.typed_application(node.location(), result_type, operator, operation, arguments)
     }
 
@@ -4435,7 +4475,7 @@ impl<'a> Lowering<'a> {
                 return Ok(LowerStep::Lowered(LeafTerm::reference_node(key.into())));
             }
             NodeKind::Coerce(operand, interval) => {
-                if !super::ir::coerce_builds_narrow(node.at(*operand).value_type(), interval) {
+                if !super::ir::coerce_node_builds_narrow(node.at(*operand), interval) {
                     return Ok(LowerStep::Descend(node.at(*operand)));
                 }
                 let member =
@@ -5677,12 +5717,8 @@ impl<'a> Lowering<'a> {
                     NodeKind::Dispatch { operation, .. } => Some(*operation),
                     _ => None,
                 };
-                let term = self.application(
-                    node,
-                    operator,
-                    operation,
-                    terms.into_iter().map(MemberTerm::Leaf).collect(),
-                )?;
+                let arguments = terms.into_iter().map(MemberTerm::Leaf).collect();
+                let term = self.application(node, operator, operation, arguments)?;
                 if let Some(data) = equality_producer {
                     let LeafTerm::Reference {
                         target: NodeRef::Admitted(key),

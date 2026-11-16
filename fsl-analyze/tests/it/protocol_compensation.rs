@@ -6,9 +6,8 @@
 //! `Cell.v`, `charge` is `inc` and `refund` is `dec` (precondition `v >= 1`,
 //! postcondition `v` one lower). The effect binds the account (`M::Cell`,
 //! one record over the universe `{c}`), and `Failure.failed` is a Boolean
-//! trigger. The recovery predicate is a constant: no rule derives a
-//! recovery view from a model state, so a predicate that reads its recovery
-//! binder settles V-8 `unsupported`.
+//! trigger. A recovery predicate that reads its recovery binder is evaluated
+//! at `cend` over each recovery record (FR-207-AC-5, FSpec FR-730).
 
 use std::collections::BTreeSet;
 
@@ -20,11 +19,7 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};
 use fsl_foundation::bound::{DomainKey, DomainKind};
-use fsl_foundation::BackendId;
-use fsl_replay::{
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, OutcomeItem, RequestIndex, ResultLabel,
-    TerminalRecord, TerminalValue, UnavailabilityCause,
-};
+use fsl_replay::{ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ResultLabel};
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
@@ -1230,40 +1225,38 @@ fn committed(reached: &[Reached], at: usize) -> usize {
     found[0]
 }
 
-/// FR-207-AC-5 (TC-652): with the recovery predicate `r.n = 0`, which reads
-/// its recovery binder `r`, the item settles V-8 `unsupported` with cause
-/// `RecoveryView{predicate}` naming the template, before any state is
-/// explored, and the cause travels as `recovery-view` with its template.
-#[trace("TC-652", "FR-207-AC-5")]
+/// FR-207-AC-5 (TC-652), FSpec FR-730-AC-1: a recovery predicate that
+/// reads its recovery binder is evaluated at `cend` over each recovery
+/// record, one successor per record, and nothing settles `unsupported`.
+#[trace("TC-652", "FR-207-AC-5", "FSpec-FR-730-AC-1")]
 #[test]
-fn a_recovery_predicate_over_the_recovery_view_settles_unsupported_before_exploring() {
-    let body = pay("r.n = 0");
-    let case = Case::new(&body, &[0]);
-    let outcome = case.deadlock("Pay");
-    let ModelCheckOutcome::RecoveryView { predicate, stats } = &outcome else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(predicate, TEMPLATE);
-    assert_eq!(stats.product_states, 0);
-    let record = case.settle("Pay", &outcome);
-    let cause = UnavailabilityCause::RecoveryView {
-        predicate: TEMPLATE.to_owned(),
-    };
-    assert_eq!(record.label, ResultLabel::Unsupported);
-    assert_eq!(record.value, TerminalValue::Unsupported(cause.clone()));
-    assert_eq!(cause.as_str(), "recovery-view");
-
-    let item = OutcomeItem::from_terminal(&TerminalRecord::unsupported(
-        RequestIndex::new(0),
-        BackendId::new("backend"),
-        cause,
-    ));
-    let written = serde_json::to_value(&item).expect("an item");
-    assert_eq!(written["result"], "unsupported");
-    assert_eq!(
-        written["cause"],
-        json!({"kind": "recovery-view", "predicate": TEMPLATE})
-    );
+#[ignore = "QSL-2206: a recovery predicate that reads its recovery binder settles unsupported instead of binding each recovery record at cend"]
+fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
+    explore(&pay("r.n = 0"), |system, explored| {
+        let reached = &explored.reached;
+        let t2 = after(
+            reached,
+            after(reached, 0, StepKind::Attempt),
+            StepKind::Event,
+        );
+        let (_, t4) = fail(system, reached, t2, true);
+        let t6 = after(reached, t4, StepKind::CAttempt);
+        let ends: Vec<usize> = reached[t6]
+            .steps
+            .iter()
+            .filter(|(step, _)| step.kind() == StepKind::CEnd)
+            .map(|(_, next)| *next)
+            .collect();
+        assert!(ends.len() >= 2, "one cend per recovery record: {ends:?}");
+        let found: BTreeSet<String> = ends
+            .iter()
+            .flat_map(|at| statuses(&key_json(system, &reached[*at])))
+            .collect();
+        assert_eq!(
+            found,
+            BTreeSet::from(["recovered".to_owned(), "unrecovered".to_owned()])
+        );
+    });
 }
 
 /// FR-207-AC-6 (TC-652): with `attempts 2 of M::RefundAttempt` and the retry

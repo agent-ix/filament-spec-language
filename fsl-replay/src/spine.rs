@@ -320,7 +320,7 @@ pub enum CompileRefusal {
     },
     /// E3 (FR-110): a header profile selection does not resolve against the
     /// closed `DefinitionRole` set.
-    #[error("header profile `{}` does not resolve: {}/{}", .refusals[0].alias, .refusals[0].code().as_str(), .refusals[0].cause())]
+    #[error("{}", .refusals[0].message())]
     Profile {
         /// Every refusing profile in source order, never empty.
         refusals: Vec<ProfileRefusal>,
@@ -847,6 +847,7 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
         return "no error recorded".to_owned();
     };
     let message = match &first.cause {
+        AssemblyCause::Profile(refusal) => refusal.message(),
         AssemblyCause::EmptyUnitList => "the package has no source units".to_owned(),
         AssemblyCause::UnresolvedTypeName { name } => format!("no declaration is named `{name}`"),
         AssemblyCause::UnresolvedUnitName { name, packages } => {

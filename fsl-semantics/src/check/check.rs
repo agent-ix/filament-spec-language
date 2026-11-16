@@ -57,6 +57,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 mod declared_type_tests;
+mod integer_division_range;
+mod modulo_interval;
 mod native_literal;
 mod typing;
 use typing::TypedOperand;
@@ -2238,6 +2240,10 @@ pub(crate) struct Typer<'a> {
     context: Option<crate::family::CheckContext<'a, Scope>>,
     limits: CheckingLimits,
     nodes: &'a mut u64,
+    integer_division_work: u64,
+    /// Let slots whose bound integer value lowers at Integer despite a
+    /// bounded checked type. Slots are unique throughout this typing pass.
+    integer_lowered_locals: BTreeSet<Slot>,
     /// The caller's cancellation handle, polled at every node charge
     /// (FR-276).
     cancel: Option<&'a Cancel>,
@@ -2581,6 +2587,21 @@ fn is_integer(value_type: &ValueType) -> bool {
     matches!(value_type, ValueType::Integer | ValueType::Int(_))
 }
 
+/// A comparison of a guarded clock place with `absent`, read as the place's
+/// presence (FR-230 "Presence and element members").
+pub(super) struct AbsentComparison<'e> {
+    /// The place's owner `r` of `r.f` or `r.f.c`.
+    pub(super) owner: ExprRef<'e>,
+    /// The owner's location.
+    pub(super) owner_location: Location,
+    /// The place's field.
+    pub(super) field: &'e str,
+    /// The union case of the place, when it is one.
+    pub(super) case: Option<&'e str>,
+    /// Whether the comparison requires the place present (`!=`).
+    pub(super) present: bool,
+}
+
 /// Whether `expression`'s own syntax contains a form `pre(...)`'s anchor can
 /// act on: `allInstances`/`lookup` (the only reads FR-153 anchors), or a
 /// nested `pre(...)` (idempotent by construction: a nested `pre` with no
@@ -2705,6 +2726,19 @@ impl Typer<'_> {
         required: &ValueType,
     ) -> Result<Node, CheckRefusal> {
         if &node.value_type == required {
+            if let (NodeKind::IntegerDivision { .. } | NodeKind::Local(_), ValueType::Int(target)) =
+                (&node.kind, required)
+            {
+                let location = node.location.clone();
+                return Ok(Node {
+                    kind: NodeKind::Coerce(self.push(node), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                });
+            }
             return Ok(node);
         }
         match (&node.value_type, required) {
@@ -2722,6 +2756,23 @@ impl Typer<'_> {
                 Ok(node)
             }
             (ValueType::Integer | ValueType::Int(_), ValueType::Integer) => Ok(node),
+            (ValueType::Int(source), ValueType::Int(target))
+                if matches!(
+                    node.kind,
+                    NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+                ) && target.lower() <= source.lower()
+                    && source.upper() <= target.upper() =>
+            {
+                let location = node.location.clone();
+                Ok(Node {
+                    kind: NodeKind::Coerce(self.push(node), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                })
+            }
             (ValueType::Int(source), ValueType::Int(target))
                 if target.lower() <= source.lower() && source.upper() <= target.upper() =>
             {
@@ -2769,6 +2820,8 @@ impl<'a> Typer<'a> {
             context: None,
             limits,
             nodes,
+            integer_division_work: 0,
+            integer_lowered_locals: BTreeSet::new(),
             cancel: None,
             locals: Vec::new(),
             local_names: HashMap::new(),
@@ -2822,6 +2875,31 @@ impl<'a> Typer<'a> {
                 .get(id)
                 .map(|found| (&found.kind, &found.value_type))
         })
+    }
+
+    /// Whether an integer argument already has the catalog's Integer type
+    /// when lowered, so its call needs no synthetic widening conversion.
+    fn lowers_as_integer(&self, root: &Node) -> bool {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            match &node.value_type {
+                ValueType::Integer => return true,
+                ValueType::Int(_) => {}
+                _ => continue,
+            }
+            let children = match &node.kind {
+                NodeKind::IntegerDivision { .. } => return true,
+                NodeKind::Local(slot) if self.integer_lowered_locals.contains(slot) => return true,
+                NodeKind::If {
+                    then, otherwise, ..
+                } => vec![*then, *otherwise],
+                NodeKind::Let { body, .. } => vec![*body],
+                NodeKind::Case { arms, .. } => arms.iter().map(|arm| arm.body).collect(),
+                _ => Vec::new(),
+            };
+            pending.extend(children.into_iter().filter_map(|id| self.body.get(id)));
+        }
+        false
     }
 
     /// This pass reading the concrete populations `populations` as a
@@ -4303,6 +4381,62 @@ impl<'a> Typer<'a> {
         })
     }
 
+    /// Whether `operand`, the operand of a field read `operand.op`, is
+    /// `t.step` over a name `t` this scope does not resolve: the read is
+    /// then the step label `t.step.op` of a trace variable (FR-612).
+    pub(super) fn unbound_step_label(&self, operand: fsl_forms::ExprRef<'_>) -> bool {
+        let fsl_forms::ExprNode::Field {
+            operand: trace,
+            field,
+        } = operand.node()
+        else {
+            return false;
+        };
+        let fsl_forms::ExprNode::Name(name) = operand.at(*trace).node() else {
+            return false;
+        };
+        field == "step"
+            && self
+                .name(&name.name, None, &Location::root(Origin::Expression))
+                .is_err_and(|refusal| matches!(refusal.cause, CheckCause::MissingName(_)))
+    }
+
+    /// `comparison`, located at `location`, when it is `p = absent` or `p
+    /// != absent` (either operand order) of a guarded clock place `p` this
+    /// pass reads the presence of.
+    pub(super) fn absent_comparison<'e>(
+        &self,
+        comparison: fsl_forms::ExprRef<'e>,
+        location: &Location,
+    ) -> Option<AbsentComparison<'e>> {
+        let fsl_forms::ExprNode::Binary {
+            operator,
+            left,
+            right,
+        } = comparison.node()
+        else {
+            return None;
+        };
+        let present = match operator {
+            fsl_forms::BinaryOperator::Equal => false,
+            fsl_forms::BinaryOperator::NotEqual => true,
+            _ => return None,
+        };
+        let (place, side) = match (comparison.at(*left).node(), comparison.at(*right).node()) {
+            (_, fsl_forms::ExprNode::Absent) => (comparison.at(*left), 0),
+            (fsl_forms::ExprNode::Absent, _) => (comparison.at(*right), 1),
+            _ => return None,
+        };
+        let (owner, field, case, depth) = self.place_operand(place)?;
+        Some(AbsentComparison {
+            owner,
+            owner_location: (0..depth).fold(location.child(side), |at, _| at.child(0)),
+            field,
+            case,
+            present,
+        })
+    }
+
     /// The owner and field of `query` when it is `forall(e in r.q:
     /// present(e))` or `exists(..)`, `q` a `Sequence<Option<Clock>>` place
     /// this pass reads the presences of, with whether it is `forall`
@@ -4876,17 +5010,38 @@ impl<'a> Typer<'a> {
     /// the value an argument's branches yield reaches this.
     fn upcast(
         &mut self,
-        mut typed: Node,
+        typed: Node,
         required: &ValueType,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
-        typed.value_type = self.model_type(
+        let upcast_type = self.model_type(
             super::state_model::Form::Argument {
                 actual: typed.value_type.clone(),
                 required: required.clone(),
             },
             location,
         )?;
+        if matches!(typed.value_type, ValueType::Integer | ValueType::Int(_))
+            && matches!(
+                typed.kind,
+                NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+            )
+        {
+            if let ValueType::Int(target) = required {
+                let location = typed.location.clone();
+                return Ok(Node {
+                    kind: NodeKind::Coerce(self.push(typed), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                });
+            }
+            return Ok(typed);
+        }
+        let mut typed = typed;
+        typed.value_type = upcast_type;
         Ok(typed)
     }
 

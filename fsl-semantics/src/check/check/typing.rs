@@ -31,10 +31,14 @@ use super::{
 use crate::check::call_target::{resolve_target, ResolvedTarget};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
-use crate::check::refusal::{CheckCause, CheckRefusal, IdentityForm, IdentityNode, KeyFault};
+use crate::check::refusal::{
+    CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
+    KeyFault, StageLimitCause,
+};
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use crate::check::DispatchOperation;
+use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, FloatType, IeeeValue, IeeeWidth,
     IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, RoundingMode, Value,
@@ -1401,13 +1405,34 @@ impl<'a> Typer<'a> {
                 left,
                 right,
             } => {
+                // `p != absent` and `p = absent` of a guarded clock place are
+                // the place's presence and its negation (FR-230 "Presence and
+                // element members", FSpec FR-322 `CW-05`).
+                if let Some(comparison) = self.absent_comparison(expression, &location) {
+                    if !comparison.present {
+                        frames.push(Frame::Unary(Box::new(UnaryFrame {
+                            form: Unary::Not,
+                            location: location.clone(),
+                        })));
+                    }
+                    frames.push(Frame::PlacePresence(
+                        comparison.field,
+                        comparison.case,
+                        location,
+                    ));
+                    return Ok(Step::Descend(Goal::Infer(
+                        comparison.owner,
+                        None,
+                        comparison.owner_location,
+                    )));
+                }
                 return self.binary(
                     *operator,
                     (expression.at(*left), expression.at(*right)),
                     hint,
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::Negate(operand) => {
                 // A negated `decimal(c, s)` literal takes its operand's
@@ -1436,12 +1461,42 @@ impl<'a> Typer<'a> {
                 ));
             }
             ExprNode::Not(operand) => {
+                // `not (p = absent)` is `present(p)`, located at the
+                // negation, so its spellings type to one presence read.
+                if let Some(comparison) = self
+                    .absent_comparison(expression.at(*operand), &location.child(0))
+                    .filter(|comparison| !comparison.present)
+                {
+                    frames.push(Frame::PlacePresence(
+                        comparison.field,
+                        comparison.case,
+                        location,
+                    ));
+                    return Ok(Step::Descend(Goal::Infer(
+                        comparison.owner,
+                        None,
+                        comparison.owner_location,
+                    )));
+                }
                 let goal = Goal::Expect(
                     expression.at(*operand),
                     Expected::Checked(boolean()),
                     location.child(0),
                 );
                 return Ok(Self::unary(Unary::Not, goal, location, frames));
+            }
+            // FR-612: outside a `hyper` clause, `t.step.op` over a name `t`
+            // that names nothing is a step label, refused at the form as
+            // hyper-only rather than as a missing `t`.
+            ExprNode::Field { operand, .. }
+                if self.hyper.is_none() && self.unbound_step_label(expression.at(*operand)) =>
+            {
+                return Err(CheckRefusal {
+                    location,
+                    cause: CheckCause::Hyper(Box::new(
+                        crate::check::hyper_clause::HyperCause::OutsideHyperClause,
+                    )),
+                });
             }
             ExprNode::Field { operand, field } => {
                 let operand = expression.at(*operand);
@@ -2186,6 +2241,60 @@ impl<'a> Typer<'a> {
         })
     }
 
+    /// The checker-visible result range of Euclidean `mod` (FR-495).
+    fn modulo_result_type(
+        &mut self,
+        dividend: &ValueType,
+        divisor: &ValueType,
+        dividend_range: Option<&IntegerRange>,
+        divisor_range: Option<&IntegerRange>,
+        location: &Location,
+    ) -> Result<ValueType, CheckRefusal> {
+        let result = super::modulo_interval::result_type(
+            dividend,
+            divisor,
+            dividend_range,
+            divisor_range,
+            || {
+                if self.cancel.is_some_and(Cancel::poll) {
+                    return Err(super::cancelled_refusal(location));
+                }
+                if let Some(context) = self.context.as_mut() {
+                    if let Err(incomplete) = context.meter.charge(
+                        filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
+                            .work(Integer::one()),
+                    ) {
+                        return Err(CheckRefusal {
+                            location: location.clone(),
+                            cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+                                stage: CheckingStage::Typing,
+                                kind: CheckingLimitKind::WorkBudget,
+                                limit: incomplete.limit,
+                                actual: u128::from(incomplete.consumed) + 1,
+                                region: None,
+                            })),
+                        });
+                    }
+                }
+                Ok(())
+            },
+        );
+
+        match result {
+            Ok(value_type) => Ok(value_type),
+            Err(super::modulo_interval::ModuloRangeError::Refused(refusal)) => Err(refusal),
+            Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(CheckRefusal {
+                location: location.clone(),
+                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "check.integer-modulo",
+                        "range-invariant",
+                    ),
+                ))),
+            }),
+        }
+    }
+
     /// A typed equality operand and the type its peer is hinted with. A
     /// `convert<T>(e)` operand that changes the type is a `ConvertScalar`
     /// node of type `T`, which the stored equality compares as typed; the
@@ -2604,7 +2713,11 @@ impl<'a> Typer<'a> {
                     .get(frame.typed.len())
                     .and_then(|index| frame.application.call_parameter(*index))
                 {
-                    Some(parameter) if integer_widens(&typed.value_type, &parameter) => {
+                    Some(parameter)
+                        if integer_widens(&typed.value_type, &parameter)
+                            && !(parameter == ValueType::Integer
+                                && self.lowers_as_integer(&typed)) =>
+                    {
                         let location = typed.location.clone();
                         self.convert(&parameter, typed, &location)?
                     }
@@ -2731,7 +2844,17 @@ impl<'a> Typer<'a> {
                             then.value_type.clone()
                         } else if is_integer(&then.value_type) && is_integer(&otherwise.value_type)
                         {
-                            ValueType::Integer
+                            match (self.static_range(&then), self.static_range(&otherwise)) {
+                                (
+                                    Some((then_lower, then_upper)),
+                                    Some((else_lower, else_upper)),
+                                ) => int_type(
+                                    then_lower.min(else_lower),
+                                    then_upper.max(else_upper),
+                                    &location,
+                                )?,
+                                _ => ValueType::Integer,
+                            }
                         } else {
                             return Err(mismatch(&otherwise.location));
                         }
@@ -2764,6 +2887,9 @@ impl<'a> Typer<'a> {
                     &frame.location,
                     LocalKind::Bound,
                 )?;
+                if self.lowers_as_integer(&typed) {
+                    self.integer_lowered_locals.insert(slot);
+                }
                 let goal = frame.branches.goal(frame.body, frame.location.child(1));
                 frame.value = Some((typed, slot));
                 frames.push(Frame::Let(frame));
@@ -2972,6 +3098,80 @@ impl<'a> Typer<'a> {
                         }
                         IntegerDivisionOperator::Mod => None,
                     };
+                    let value_type = match operator {
+                        IntegerDivisionOperator::Mod => {
+                            let left_range = self.static_range(&left);
+                            let right_range = self.static_range(&right);
+                            self.modulo_result_type(
+                                &left.value_type,
+                                &right.value_type,
+                                left_range.as_ref(),
+                                right_range.as_ref(),
+                                &location,
+                            )?
+                        }
+                        IntegerDivisionOperator::Div | IntegerDivisionOperator::Rem => {
+                            let range = if let Some(selection) = selection {
+                                let dividend = self.static_range(&left);
+                                let divisor = self.static_range(&right);
+                                let mut charge = || {
+                                    if self.cancel.is_some_and(filament_exact::Cancel::poll) {
+                                        return Err(super::cancelled_refusal(&location));
+                                    }
+                                    let denied =
+                                        if let Some(context) = &mut self.context {
+                                            context
+                                    .meter
+                                    .charge(
+                                        filament_exact::Charge::new(
+                                            filament_exact::ChargePoint::DeclarationCheck,
+                                        )
+                                        .work(Integer::one()),
+                                    )
+                                    .err()
+                                    .map(|denial| (denial.limit, u128::from(denial.consumed) + 1))
+                                        } else {
+                                            self.integer_division_work =
+                                                self.integer_division_work.saturating_add(1);
+                                            (self.integer_division_work > self.limits.work_budget())
+                                                .then_some((
+                                                    self.limits.work_budget(),
+                                                    u128::from(self.integer_division_work),
+                                                ))
+                                        };
+                                    match denied {
+                                        Some((limit, actual)) => Err(refuse(
+                                            &location,
+                                            CheckCause::ResourceExhausted(Box::new(
+                                                super::StageLimitCause {
+                                                    stage: super::CheckingStage::Typing,
+                                                    kind: super::CheckingLimitKind::WorkBudget,
+                                                    limit,
+                                                    actual,
+                                                    region: None,
+                                                },
+                                            )),
+                                        )),
+                                        None => Ok(()),
+                                    }
+                                };
+                                super::integer_division_range::infer(
+                                    operator,
+                                    selection.profile(),
+                                    dividend,
+                                    divisor,
+                                    &mut charge,
+                                    &location,
+                                )?
+                            } else {
+                                None
+                            };
+                            match range {
+                                Some((lo, hi)) => int_type(lo, hi, &location)?,
+                                None => ValueType::Integer,
+                            }
+                        }
+                    };
                     let left = self.push(left);
                     let right = self.push(right);
                     Ok(Step::Typed(node(
@@ -2981,7 +3181,7 @@ impl<'a> Typer<'a> {
                             left,
                             right,
                         },
-                        ValueType::Integer,
+                        value_type,
                         &location,
                     )))
                 }

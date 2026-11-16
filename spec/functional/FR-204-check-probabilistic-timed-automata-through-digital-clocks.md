@@ -219,8 +219,9 @@ unsupported cause `DelayDistribution{operation}`.
 - A timed witness path SHALL carry ADR-026 CT-1 delays and replay by CT-3
   through FR-202; replay SHALL check that its last timed state has no
   admissible discrete step before the event's time horizon passes.
-- A certificate SHALL name digital product states, and FR-201's checker
-  SHALL re-enumerate the digital MDP. Optimization and evidence SHALL
+- A certificate SHALL be FR-920's `timed-product/v1` document, keyed by
+  digital, region or boundary-region product states, and FR-921's checker
+  SHALL rebuild the digital or region MDP itself (FR-922 to FR-924, FR-877). Optimization and evidence SHALL
   apply ADR-028 §13a/FR-198 infimum/supremum rules over almost-surely
   TS-5-admissible schedulers, including positive finite-wait components
   with admissible exits. Original continuation graphs, observation edges

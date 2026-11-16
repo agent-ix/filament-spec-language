@@ -195,7 +195,7 @@ fn the_override_entry_writes_the_same_package_file() {
 /// `output` path inside the handoff directory refuses naming both.
 #[test]
 #[trace("TC-2297", "FR-810-AC-5")]
-#[ignore = "QSL-2299: needs the compile request's `handoff` member, which QSL-2193 (#2730) adds and main lacks"]
+#[ignore = "QSL-2309: needs the compile request's `handoff` member (QSL-2193, #2730), then the refusal of an output path inside the handoff directory"]
 fn output_and_handoff_are_independent_writes() {
     let both = |directory: &Path, output: Value| {
         let path = request(directory, "tests/fixtures/spine-compile.native", output);

@@ -179,3 +179,18 @@ fn the_absent_any_and_when_terminals_are_three_clauses() {
         terminal(&when.wire).unwrap()["body"]
     );
 }
+
+/// FR-880-AC-6: a `terminal when` that reads `over` under `activation on
+/// each` is written; FSpec FR-464's `terminal` stage reads `over` under
+/// either activation.
+#[test]
+#[trace("TC-2502", "FR-880-AC-6")]
+#[ignore = "QSL-2220: terminal when reading over under on each is refused at S4 instead of written"]
+fn an_each_terminal_condition_that_reads_over_is_written() {
+    let lowered = admitted(&flow(
+        "on each (t: Tick)",
+        "terminal when { present(deref(input).trail) };",
+    ));
+    let node = terminal(&lowered.wire).expect("a terminal node");
+    assert_eq!(argument(node, "mode")["value"], "when");
+}

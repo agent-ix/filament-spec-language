@@ -58,6 +58,7 @@ mod model_simulation;
 mod named_population;
 mod native_literals;
 mod native_scalar_equality;
+mod observation_owner;
 mod one_occurrence;
 mod package_aggregate_route;
 mod property_automata;

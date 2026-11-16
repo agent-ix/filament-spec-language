@@ -21,7 +21,8 @@
 //! site, or keying faults.
 //!
 //! **Result bound.** The target range of the narrow that directly wraps the
-//! application, otherwise the application's own result type.
+//! application, otherwise the application's checked result type, including
+//! the exact interval when an integer division lowers at Integer.
 //!
 //! **Path condition.** The guards the occurrence is checked under, outermost
 //! first: an enclosing `if`'s condition (true in `then`, false in
@@ -48,7 +49,7 @@ use fsl_foundation::source::node_table::{
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 
-use super::ir::{coerce_builds_narrow, scalar_conversion_target, CheckedNode, Slot};
+use super::ir::{coerce_node_builds_narrow, scalar_conversion_target, CheckedNode, Slot};
 use super::lowering::SemanticGraph;
 use super::node_key::{ApplicationTerm, BodyTerm, LeafTerm, MemberTerm, NodeKeyRefusal};
 use super::references::{read_object, ModelReferences};
@@ -842,10 +843,7 @@ impl<'n> ClaimsWalk<'n, '_> {
                 .last()
                 .and_then(|parent| match parent.node.kind() {
                     NodeKind::Coerce(operand, interval)
-                        if coerce_builds_narrow(
-                            parent.node.at(*operand).value_type(),
-                            interval,
-                        ) =>
+                        if coerce_node_builds_narrow(parent.node.at(*operand), interval) =>
                     {
                         Some(interval)
                     }
@@ -1114,10 +1112,15 @@ pub(crate) fn key_claims(
             )
         } else {
             (
-                graph
-                    .node(key.clone())
-                    .and_then(|node| node.semantic_type())
-                    .ok_or_else(unkeyable)?,
+                match &site.bound {
+                    SiteBound::Own(ValueType::Int(interval)) => {
+                        graph.integer_interval_node(interval)
+                    }
+                    _ => graph
+                        .node(key.clone())
+                        .and_then(|node| node.semantic_type()),
+                }
+                .ok_or_else(unkeyable)?,
                 None,
             )
         };

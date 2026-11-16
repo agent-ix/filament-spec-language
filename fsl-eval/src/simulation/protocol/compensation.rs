@@ -33,7 +33,7 @@ use super::{
     ProtocolSystem, Registered, Registration, Status, Thread,
 };
 use crate::simulation::expansion::ExpansionStop;
-use crate::simulation::model::encode::{reference_enc, typed_value_enc, value_enc};
+use crate::simulation::model::encode::{reference_enc, value_enc};
 use crate::simulation::model::{
     verdict, FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict,
 };
@@ -554,11 +554,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
             records.push(Bound {
-                enc: typed_value_enc(
-                    &value,
-                    self.model.types(),
-                    self.package.graph().scope().variant_types(),
-                ),
+                enc: value_enc(&value, self.model.value_typing()),
                 value: Some(value),
             });
         }

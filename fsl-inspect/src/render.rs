@@ -2141,4 +2141,50 @@ mod tests {
             ));
         }
     }
+
+    /// FR-865-AC-1 (TC-2455): the text of an outcome document opens with a
+    /// header naming its operation, category, exit code and last stage, and
+    /// each diagnostic with a cause is followed by its `cause` line.
+    #[test]
+    #[trace("TC-2455", "FR-865-AC-1")]
+    #[ignore = "QSL-1973: the complete text outcome is not implemented yet"]
+    fn text_outcome_names_operation_category_exit_stage_and_cause() {
+        let refusal = OutcomeDocument::new(
+            fsl_replay::Operation::Check,
+            Some(fsl_replay::OutcomeStage::S3),
+            Category::Refusal,
+        )
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("type-mismatch"),
+            "ill_typed",
+            None,
+            "bad value",
+        )]);
+        let text = text_of(&refusal, &RenderSources::from_sources([]));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines.first(),
+            Some(&"check: refusal (exit 20) at S3"),
+            "{text}"
+        );
+        let diagnostic = lines
+            .iter()
+            .position(|line| line.contains("ill_typed: bad value"))
+            .unwrap_or_else(|| panic!("no diagnostic line: {text}"));
+        assert_eq!(
+            lines.get(diagnostic + 1),
+            Some(&"  cause: type-mismatch"),
+            "{text}"
+        );
+
+        let packaged = OutcomeDocument::new(
+            fsl_replay::Operation::Package,
+            Some(fsl_replay::OutcomeStage::S4),
+            Category::Success,
+        );
+        assert_eq!(
+            text_of(&packaged, &RenderSources::from_sources([])),
+            "package: success (exit 0) at S4\n"
+        );
+    }
 }

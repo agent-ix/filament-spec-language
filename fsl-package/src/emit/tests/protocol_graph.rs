@@ -1951,3 +1951,97 @@ fn a_predicate_function_reading_its_protocol_is_admitted() {
     assert!(lowered.ir.is_ok(), "{:?}", lowered.ir.err());
     assert!(lowered.verified, "{}", lowered.text);
 }
+
+/// FR-880-AC-10, FSpec FR-726-AC-1: a channel that carries a bounded scalar
+/// or a bounded collection is written with its `bounded_domain` node as
+/// `carries`, and the package is admitted.
+#[test]
+#[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-1")]
+#[ignore = "QSL-1137: a channel that carries a bounded type is refused at S4 instead of written"]
+fn a_channel_carrying_a_bounded_type_is_admitted() {
+    for carries in [
+        "Int[0, 5]",
+        "Text[0, 8; nfc]",
+        "Decimal[-100,100;0,0;nearest-even]",
+        "Rational[-100, 100; 1, 1]",
+        "Float64[nearest-even]",
+        "Sequence<Boolean>[0, 3]",
+    ] {
+        let text = carrying_flow(carries, "unordered");
+        let lowered = lower_with(model(), PROFILES, &text);
+        assert!(lowered.ir.is_ok(), "{carries}: {:?}", lowered.ir.err());
+        assert!(lowered.verified, "{carries}");
+    }
+}
+
+/// FR-880-AC-10, FSpec FR-726-AC-2: a FIFO key of any FIFO-key-stable type
+/// (a bounded domain, a quantity, a composite of them) is written.
+#[test]
+#[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
+#[ignore = "QSL-1142: a FIFO key over a bounded domain or a quantity is refused at S4 instead of written"]
+fn a_fifo_key_stable_key_is_written() {
+    for (carries, key) in [
+        ("Int[0, 99]", "m"),
+        ("Quantity<m>", "m"),
+        ("Option<Int[0, 5]>", "m"),
+        ("Sequence<Quantity<m>>", "m"),
+        ("WithBounded", "m"),
+        ("WithBounded", "m.b"),
+        ("WithQuantity", "m.q"),
+        ("WithDecimal", "m"),
+        ("WithRational", "m.r"),
+        ("WithText", "m.t"),
+    ] {
+        let text = keyed_flow(carries, key);
+        let lowered = lower_with(model(), PROFILES, &text);
+        assert!(
+            lowered.ir.is_ok(),
+            "{carries} {key}: {:?}",
+            lowered.ir.err()
+        );
+        assert!(lowered.verified, "{carries} {key}");
+    }
+}
+
+/// FR-881-AC-1: a key with an IEEE leaf refuses at S3, typed
+/// `ill_typed`/`operator-ineligible`, never as an S4 construct.
+#[test]
+#[trace("TC-2504", "FR-881-AC-1")]
+#[ignore = "QSL-1997: an unstable FIFO key is not refused at S3 at the key yet"]
+fn an_unstable_fifo_key_refuses_at_the_key() {
+    for carries in ["Float64[nearest-even]", "Option<Float32[nearest-even]>"] {
+        let text = keyed_flow(carries, "m");
+        let refusals = checked(&text, true).expect_err(&text);
+        let [refusal] = refusals.as_slice() else {
+            panic!("one refusal: {refusals:?}");
+        };
+        assert_eq!(
+            refusal.cause.code(),
+            fsl_foundation::Code::IllTyped,
+            "{text}"
+        );
+        assert_eq!(refusal.cause.cause(), Some("operator-ineligible"), "{text}");
+    }
+}
+
+/// FR-880-AC-7: a clause whose `over` input reaches no object type is
+/// written with no `owner_model` edge (FSpec FR-727), and the package is
+/// admitted.
+#[test]
+#[trace("TC-2502", "FR-880-AC-7", "FSpec-FR-727-AC-1")]
+#[ignore = "QSL-2220: a clause whose over input is not an object reference is refused NoOwnerModel at S4"]
+fn a_non_object_over_is_written() {
+    for over in [
+        "Int[0, 3]",
+        "Boolean",
+        "Option<Integer>",
+        "Sequence<Integer>",
+        "Option<M::Order>",
+        "Sequence<M::Order>",
+    ] {
+        let text = flow_over(over, "on origin", &format!("{BUYER}\n{SELLER}"));
+        let lowered = lower_with(model(), PROFILES, &text);
+        assert!(lowered.ir.is_ok(), "{over}: {:?}", lowered.ir.err());
+        assert!(lowered.verified, "{over}");
+    }
+}

@@ -246,7 +246,9 @@ pub use claims::{
 };
 pub use family::{CheckedDeclaration, ValueDeclarations, ValueFunctionFamily};
 pub use model_gate::{ModelFamily, ModelGateRefusal, OwnerKind};
-pub use profile::{resolve_profiles, ProfileCause, ProfileRefusal};
+pub use profile::{
+    integer_division_role, resolve_integer_division, resolve_profiles, ProfileCause, ProfileRefusal,
+};
 // Named only by `fixtures::measure_resolved`'s return type.
 #[cfg(any(test, feature = "test-support"))]
 pub use family::DeclarationMetrics;

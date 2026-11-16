@@ -147,3 +147,64 @@ fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
         .collect();
     assert_eq!(mismatches, ["true"], "{found:?}");
 }
+
+/// FR-884-AC-2 (TC-2508): an unproved-exhaustive `choice` refuses at its
+/// header and two roles of one name refuse at each name, never at the
+/// protocol declaration.
+#[trace("TC-2508", "FR-884-AC-2")]
+#[test]
+#[ignore = "QSL-2215: choice and duplicate-role refusals are located at the whole protocol"]
+fn a_nonexhaustive_choice_and_a_duplicate_role_refuse_at_their_subject() {
+    let run = format!(
+        "sequence Main {{ {TRIED} choice Pick by R visible () {{ \
+         case yes when {{ true }} sequence Yes {{ }} \
+         case no when {{ true }} sequence No {{ }} }} }}"
+    );
+    let found = located_refusals(&protocol("", "role R on M::Actor;", &run));
+    let at: Vec<&String> = found
+        .iter()
+        .filter(|(refusal, _)| {
+            catalog(refusal) == ("undefined_expression", Some("unproved-exhaustiveness"))
+        })
+        .map(|(_, at)| at)
+        .collect();
+    assert_eq!(at, ["choice Pick by R"], "{found:?}");
+
+    let simple = format!("sequence Main {{ {TRIED} }}");
+    let twice = located_refusals(&protocol(
+        "",
+        "role R on M::Actor;\nrole R on M::Actor;",
+        &simple,
+    ));
+    let at: Vec<&String> = twice
+        .iter()
+        .filter(|(refusal, _)| {
+            catalog(refusal) == ("ambiguous_declaration", Some("ambiguous-name"))
+        })
+        .map(|(_, at)| at)
+        .collect();
+    assert_eq!(at, ["R", "R"], "{twice:?}");
+}
+
+/// FR-884-AC-4 (TC-2509): two protocols of one name in one unit refuse at
+/// each name; two different names check.
+#[trace("TC-2509", "FR-884-AC-4")]
+#[test]
+#[ignore = "QSL-2215: two protocols of one name in one unit are admitted"]
+fn two_protocols_of_one_name_refuse_at_each_name() {
+    let run = format!("sequence Main {{ {TRIED} }}");
+    let one = protocol("", "role R on M::Actor;", &run);
+    let found = located_refusals(&format!("{one}\n{one}"));
+    let at: Vec<&String> = found
+        .iter()
+        .filter(|(refusal, _)| {
+            catalog(refusal) == ("ambiguous_declaration", Some("ambiguous-name"))
+        })
+        .map(|(_, at)| at)
+        .collect();
+    assert_eq!(at, ["Flow", "Flow"], "{found:?}");
+    super::checks(&format!(
+        "{one}\n{}",
+        one.replace("protocol Flow", "protocol Drain")
+    ));
+}

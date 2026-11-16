@@ -3,7 +3,7 @@
 //! selects, and the interval and nonzero obligation of `div`, `rem` and
 //! `mod` checked from source.
 
-use filament_exact::DivisionProfile;
+use filament_exact::{DivisionProfile, IntegerInterval, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
@@ -14,6 +14,62 @@ use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
 const VALUE: &str = "profile v = \"filament.value.complete/v1\";\n";
+
+#[trace("TC-2270", "FR-495-AC-21", "FR-062-AC-16")]
+#[test]
+fn an_unnarrowed_division_retains_its_otherwise_unreferenced_interval_type_node() {
+    use fsl_semantics::check::{BindingValue, BodyTerm, LeafTerm, LiteralValue, MemberTerm};
+    let graph = check(
+        VALUE,
+        "function lone using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { a mod b }",
+        CheckMode::Linked,
+    )
+    .expect("the unbounded consumer checks");
+    assert_eq!(graph.requirements().len(), 1);
+    let (_, record) = graph.requirements().iter().next().expect("mod record");
+    let expected = ValueType::Int(IntegerInterval::new(0_i64.into(), 11_i64.into()).unwrap());
+    assert_eq!(record.result_bound().value_type(), &expected);
+    let body = graph.function_state(0).expect("lone function").body;
+    assert_eq!(body.value_type(), &expected);
+    let application = graph
+        .semantic_graph()
+        .node(graph.node_key(body).unwrap().clone())
+        .unwrap();
+    assert_ne!(
+        record.result_bound().node(),
+        application.semantic_type().unwrap()
+    );
+    let bound = graph
+        .semantic_graph()
+        .node(record.result_bound().node())
+        .expect("the interval node is retained without another consumer");
+    assert_eq!(bound.semantic_form(), "integer_range");
+    let BodyTerm::Aggregate(body) = bound.body() else {
+        panic!("range aggregate")
+    };
+    let endpoints = body
+        .members
+        .iter()
+        .map(|member| {
+            let MemberTerm::Binding(binding) = member else {
+                panic!("endpoint")
+            };
+            let BindingValue::Leaf(LeafTerm::Literal {
+                value: LiteralValue::Integer(value),
+                ..
+            }) = &binding.value
+            else {
+                panic!("integer endpoint")
+            };
+            (binding.name.as_str(), value.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        endpoints,
+        [("min", "0".to_owned()), ("max", "11".to_owned())]
+    );
+    assert!(record.conversion_context().is_none());
+}
 
 fn law_header(alias: &str, law: &str) -> String {
     format!("profile {alias} = \"filament.value.integer-division.{law}/v1\";\n")
@@ -39,7 +95,15 @@ fn assemble(headers: &str, declarations: &str) -> Result<PackageDeclarations, St
         SelectedModels::default(),
         Vec::new(),
     )
-    .map_err(|refusal| format!("{refusal:?}"))
+    .map_err(|refusal| {
+        let codes = refusal
+            .errors
+            .iter()
+            .map(|error| error.cause.catalog_code().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{codes}: {refusal:?}")
+    })
 }
 
 fn check(
@@ -76,9 +140,45 @@ fn only_nonzero(refusals: &[CheckRefusal]) {
 const DIV_REM: &str = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n\
                        function r using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a rem b }";
 
+#[test]
+#[trace("TC-2210", "FR-495-AC-19")]
+fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
+    let headers = format!("{VALUE}{}", law_header("d", "euclidean"));
+    let body = "function big using v(a: Int[1000000007,1000000007], b: Int[2,1000000006]): Int[1,500000003] pure { a rem b }";
+    assemble(&headers, body)
+        .unwrap()
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap();
+    let denied = assemble(&headers, body)
+        .unwrap()
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default().with_work_budget(10000),
+        )
+        .unwrap_err();
+    assert_eq!(denied.len(), 1, "{denied:?}");
+    let CheckCause::ResourceExhausted(limit) = &denied[0].cause else {
+        panic!("{denied:?}")
+    };
+    assert_eq!(
+        limit.kind,
+        fsl_semantics::check::CheckingLimitKind::WorkBudget
+    );
+    assert_eq!(limit.limit, 10000);
+    assert_eq!(limit.actual, 10001);
+    let too_narrow = body.replace("Int[1,500000003] pure", "Int[2,500000003] pure");
+    let refused = assemble(&headers, &too_narrow)
+        .unwrap()
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_err();
+    assert_eq!(
+        pairs(&refused),
+        [("undefined_expression".to_owned(), Some("unproved-range"))]
+    );
+}
+
 #[trace("TC-1780", "FR-670-AC-1", "FSpec-TC-1280", "FSpec-FR-570-AC-1")]
 #[test]
-#[ignore = "QSL-1989: a header profile naming the integer-division law is not resolved yet"]
 fn a_law_header_admits_div_and_rem_under_that_law() {
     for (law, profile) in [
         ("euclidean", DivisionProfile::Euclidean),
@@ -120,7 +220,6 @@ fn div_and_rem_with_no_law_refuse_missing_selection() {
 
 #[trace("TC-1781", "FR-670-AC-3", "FSpec-TC-1280", "FSpec-FR-570-AC-3")]
 #[test]
-#[ignore = "QSL-1989: two law headers naming different laws are not refused yet"]
 fn two_different_law_headers_refuse_conflicting_definition() {
     let headers = format!(
         "{VALUE}{}{}",
@@ -159,7 +258,6 @@ fn two_different_law_headers_refuse_conflicting_definition() {
 
 #[trace("TC-1781", "FR-670-AC-4", "FSpec-TC-1280", "FSpec-FR-570-AC-4")]
 #[test]
-#[ignore = "QSL-1989: a law alias in a using position is not refused wrong-selection-role yet"]
 fn a_law_alias_in_using_refuses_wrong_selection_role() {
     let headers = format!("{VALUE}{}", law_header("d", "floor"));
     let outcome = assemble(
@@ -177,7 +275,6 @@ fn a_law_alias_in_using_refuses_wrong_selection_role() {
 
 #[trace("TC-1783", "FR-495-AC-17", "FSpec-TC-1281", "FSpec-FR-147-AC-13")]
 #[test]
-#[ignore = "QSL-1962: Linked records no nonzero obligation for an integer mod yet"]
 fn a_mod_divisor_that_may_be_zero_refuses_unproved_nonzero() {
     let source = "function m0 using v(a: Int[0, 100], b: Int[0, 12]): Int[0, 11] pure { a mod b }";
     only_nonzero(&check(VALUE, source, CheckMode::Linked).expect_err("b may be zero"));
@@ -186,14 +283,59 @@ fn a_mod_divisor_that_may_be_zero_refuses_unproved_nonzero() {
 
 #[trace("TC-1783", "FR-495-AC-17", "FSpec-TC-1281", "FSpec-FR-147-AC-12")]
 #[test]
-#[ignore = "QSL-2002: a mod node is typed Integer instead of its remainder interval"]
 fn a_mod_node_is_typed_by_its_divisor_interval() {
-    for source in [
-        "function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }",
-        "function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }",
+    for (source, lower, upper) in [
+        (
+            "function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }",
+            0_i64,
+            11_i64,
+        ),
+        (
+            "function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }",
+            0_i64,
+            11_i64,
+        ),
+        (
+            "function m4 using v(a: Integer, b: Int[-5, -1]): Int[0, 4] pure { a mod b }",
+            0_i64,
+            4_i64,
+        ),
     ] {
-        check(VALUE, source, CheckMode::Linked)
+        let graph = check(VALUE, source, CheckMode::Linked)
             .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
+        let body = graph
+            .function_state(0)
+            .expect("the function is checked")
+            .body;
+        let body_type = body.value_type();
+        let children = body.children();
+        let [modulo] = children.as_slice() else {
+            panic!("the bounded consumer wraps its checked mod node: {source}");
+        };
+        assert!(
+            matches!(
+                modulo.kind(),
+                filament_checked::node::NodeKind::IntegerDivision {
+                    operator: filament_checked::node::IntegerDivisionOperator::Mod,
+                    ..
+                }
+            ),
+            "the wrapped node is mod for {source}"
+        );
+        assert_eq!(
+            modulo.value_type(),
+            &ValueType::Int(
+                IntegerInterval::new(lower.into(), upper.into()).expect("valid interval")
+            ),
+            "checked mod node type for {source}"
+        );
+        assert_eq!(
+            body_type,
+            &ValueType::Int(
+                IntegerInterval::new(lower.into(), upper.into()).expect("valid interval")
+            ),
+            "checked mod node type for {source}"
+        );
     }
     let refusals = check(
         VALUE,
@@ -219,7 +361,6 @@ fn a_mod_node_is_typed_by_its_divisor_interval() {
     "FSpec-FR-147-AC-13"
 )]
 #[test]
-#[ignore = "QSL-1962: div and rem from source need the header law and their interval and nonzero obligation"]
 fn div_and_rem_carry_their_interval_and_nonzero_obligation_under_each_law() {
     for law in ["euclidean", "floor", "truncating"] {
         let headers = format!("{VALUE}{}", law_header("d", law));
@@ -274,7 +415,6 @@ fn exact(headers: &str, parameters: &str, body: &str, lo: i64, hi: i64) {
 
 #[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
 #[test]
-#[ignore = "QSL-2002: the exact smallest remainder interval is not computed yet"]
 fn a_remainder_node_carries_its_exact_smallest_interval() {
     for (parameters, lo, hi) in [
         ("a: Int[0, 2], b: Int[5, 6]", 0, 2),
@@ -284,17 +424,6 @@ fn a_remainder_node_carries_its_exact_smallest_interval() {
     ] {
         exact(VALUE, parameters, "a mod b", lo, hi);
     }
-    let truncating = format!("{VALUE}{}", law_header("d", "truncating"));
-    exact(
-        &truncating,
-        "a: Int[-7, -7], b: Int[3, 5]",
-        "a rem b",
-        -3,
-        -1,
-    );
-    let floor = format!("{VALUE}{}", law_header("d", "floor"));
-    exact(&floor, "a: Int[7, 7], b: Int[-5, -3]", "a rem b", -3, -1);
-
     let guarded = "if b != 0 then a mod b else 0";
     let bounded = into("a: Int[0, 9], b: Integer", 0, 9, guarded);
     check(VALUE, &bounded, CheckMode::Linked)
@@ -305,9 +434,92 @@ fn a_remainder_node_carries_its_exact_smallest_interval() {
     assert!(only_range(&refusals), "{unbounded}: {refusals:?}");
 }
 
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+fn modulo_uses_literal_and_derived_operand_ranges() {
+    let literal_source = "function literal using v(a: Int[0, 1]): Int[0, 2] pure { -7 mod 3 }";
+    let literal_graph = check(VALUE, literal_source, CheckMode::Linked)
+        .unwrap_or_else(|refusals| panic!("{literal_source}: {refusals:?}"));
+    let literal_body = literal_graph
+        .function_state(0)
+        .expect("the function is checked")
+        .body;
+    let children = literal_body.children();
+    let [literal_mod] = children.as_slice() else {
+        panic!("the bounded consumer wraps its checked literal mod node");
+    };
+    assert_eq!(
+        literal_mod.value_type(),
+        &ValueType::Int(IntegerInterval::new(2_i64.into(), 2_i64.into()).expect("interval")),
+        "the checked literal mod node has its singleton type"
+    );
+    let too_narrow = check(
+        VALUE,
+        "function literal using v(a: Int[0, 1]): Int[0, 1] pure { -7 mod 3 }",
+        CheckMode::Linked,
+    )
+    .expect_err("a bounded consumer excluding the literal mod result is refused");
+    assert!(only_range(&too_narrow), "{too_narrow:?}");
+    exact(VALUE, "a: Int[0, 1], b: Int[5, 6]", "(a + 1) mod b", 1, 2);
+    exact(VALUE, "a: Int[1, 2], b: Int[5, 6]", "(-a) mod b", 3, 5);
+}
+
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+fn a_rem_node_carries_its_exact_smallest_interval_under_each_law() {
+    let truncating = format!("{VALUE}{}", law_header("d", "truncating"));
+    exact(
+        &truncating,
+        "a: Int[-7, -7], b: Int[3, 5]",
+        "a rem b",
+        -3,
+        -1,
+    );
+    let floor = format!("{VALUE}{}", law_header("d", "floor"));
+    exact(&floor, "a: Int[7, 7], b: Int[-5, -3]", "a rem b", -3, -1);
+}
+
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+fn small_modulo_intervals_match_all_nonzero_operand_pairs() {
+    for (dividend_lower, dividend_upper) in [(-4_i64, -2_i64), (-2, 2), (0, 3), (4, 7)] {
+        for (divisor_lower, divisor_upper) in [(-3_i64, -1_i64), (0, 4), (2, 5)] {
+            let mut remainders = Vec::new();
+            for dividend in dividend_lower..=dividend_upper {
+                for divisor in divisor_lower..=divisor_upper {
+                    if divisor != 0 {
+                        remainders.push(dividend.rem_euclid(divisor.abs()));
+                    }
+                }
+            }
+            let Some(lower) = remainders.iter().min().copied() else {
+                continue;
+            };
+            let Some(upper) = remainders.iter().max().copied() else {
+                continue;
+            };
+            if lower == upper {
+                continue;
+            }
+
+            let parameters = format!(
+                "a: Int[{dividend_lower}, {dividend_upper}], b: Int[{divisor_lower}, {divisor_upper}]"
+            );
+            // b = 1 already contributes zero to these oracle domains.
+            // Keep a possibly-zero source divisor defined on the other path
+            // without changing the hull of its nonzero results.
+            let body = if divisor_lower <= 0 && divisor_upper >= 0 {
+                "if b != 0 then a mod b else a mod 1"
+            } else {
+                "a mod b"
+            };
+            exact(VALUE, &parameters, body, lower, upper);
+        }
+    }
+}
+
 #[trace("TC-2211", "FR-495-AC-20", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
 #[test]
-#[ignore = "QSL-2002: the remainder run walk and its work-ceiling charge are not implemented yet"]
 fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
     let parameters = "a: Int[1000000007, 1000000007], b: Int[2, 1000000006]";
     let big = into(parameters, 1, 500_000_003, "a mod b");
@@ -331,6 +543,7 @@ fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
     };
     assert_eq!(limit.kind, CheckingLimitKind::WorkBudget, "{limit:?}");
     assert_eq!(limit.limit, 10_000, "{limit:?}");
+    assert!(limit.actual > u128::from(limit.limit), "{limit:?}");
     // Located at the `mod`, the root of `f`'s body.
     assert!(
         matches!(

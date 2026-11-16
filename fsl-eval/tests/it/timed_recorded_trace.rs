@@ -232,3 +232,49 @@ fn timed_intervals_compare_rational_stamps_exactly() {
         TemporalOutcome::Violated { .. } | TemporalOutcome::Pending
     ));
 }
+
+/// FR-642-AC-6 (TC-2444): with no `through`, a later stamp completes a
+/// window: `req`@0 and `ack`@250 violate `[0, 200]` at position 0, while
+/// `ack`@200, and `req`@0 alone, leave the clause pending.
+#[test]
+#[trace("TC-2444", "FR-642-AC-6")]
+#[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
+fn a_later_stamp_completes_a_timed_window_without_through() {
+    let text = unit("plant", ACK);
+    let mut checked = check(&text);
+    let clause = match checked.pop() {
+        Some(Ok(clause)) if checked.is_empty() => clause,
+        other => panic!("one admitted clause, not {other:?}"),
+    };
+    let run = |stamps: Vec<Rational>, samples: Vec<(bool, bool)>| {
+        let mut letters = Samples {
+            text: &text,
+            clause: &clause,
+            samples,
+        };
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        evaluate_timed_at(
+            &clause,
+            &TimedTrace::new(stamps).unwrap(),
+            TemporalPosition::new(0),
+            &mut letters,
+            &mut meter,
+        )
+        .expect("the trace is readable")
+    };
+    assert!(
+        matches!(
+            run(vec![ms(0), ms(250)], vec![(true, false), (false, true)]),
+            TemporalOutcome::Violated { .. }
+        ),
+        "the stamp 250 completes the window [0, 200], which holds no ack"
+    );
+    assert_eq!(
+        run(vec![ms(0), ms(200)], vec![(true, false), (false, true)]),
+        TemporalOutcome::Pending
+    );
+    assert_eq!(
+        run(vec![ms(0)], vec![(true, false)]),
+        TemporalOutcome::Pending
+    );
+}

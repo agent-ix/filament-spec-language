@@ -1305,24 +1305,6 @@ fn a_postcondition_presence_requirement_is_a_presence_read_with_no_clause_node()
     assert_declared_order(&wire);
 }
 
-/// A presence requirement spelled as a comparison with `absent`, `self.v
-/// != absent`, has no `presence_read` written yet: the model is refused
-/// `not-yet-implemented` at the comparison rather than emitted without the
-/// requirement.
-#[trace("TC-685", "FR-230-AC-50")]
-#[test]
-fn a_presence_requirement_compared_with_absent_is_not_written_yet() {
-    let (member, text) = unwritten(
-        &dropping_document(),
-        "post P using v on Config::ConfigVersion::attemptUpdate { self.v != absent }\n",
-    );
-    assert_eq!(
-        member,
-        fsl_semantics::check::UnwrittenTimedMember::ComparedPresence
-    );
-    assert_eq!(text, "self.v != absent");
-}
-
 /// [`presence_document`] whose `attemptUpdate` frame names `v`.
 fn dropping_document() -> Vec<u8> {
     let mut document: Value = serde_json::from_slice(&presence_document()).expect("JSON");
@@ -1419,7 +1401,7 @@ fn presence_read_bodies(wire: &Value) -> Vec<Value> {
 /// the binder.
 #[trace("TC-2390", "FR-230-AC-66")]
 #[test]
-#[ignore = "QSL-2144: compared and element presences are refused TimedModelNotEmitted, not written"]
+#[ignore = "QSL-2144: element presences in a guard, time invariant or urgency predicate have no specified binder scope beside a non-slot constraint (spec gap)"]
 fn compared_and_element_presences_are_written() {
     let post = |body: &str| {
         emitted(
@@ -1443,6 +1425,28 @@ fn compared_and_element_presences_are_written() {
         let (_, wire) = emitted(&slot_presence_document(), &format!("{member}\n"));
         assert!(!presence_read_bodies(&wire).is_empty(), "{member}");
     }
+}
+
+/// FR-230-AC-66: a presence requirement compared with `absent` writes the
+/// `presence_read` of its `present` form: `self.v != absent` and
+/// `not (self.v = absent)` write the body `present(self.v)` writes.
+#[trace("TC-2390", "FR-230-AC-66")]
+#[test]
+fn a_presence_compared_with_absent_writes_its_present_read() {
+    let post = |body: &str| {
+        emitted(
+            &dropping_document(),
+            &format!("post P using v on Config::ConfigVersion::attemptUpdate {{ {body} }}\n"),
+        )
+        .1
+    };
+    let present = presence_read_bodies(&post("present(self.v)"));
+    assert!(!present.is_empty(), "a presence_read is written");
+    assert_eq!(presence_read_bodies(&post("self.v != absent")), present);
+    assert_eq!(
+        presence_read_bodies(&post("not (self.v = absent)")),
+        present
+    );
 }
 
 /// [`timer_document`] whose `Timer` also holds `ys: Sequence<Clock>[0, 2]`.
@@ -1501,7 +1505,7 @@ fn a_reset_below_two_collections_holds_a_slot_per_level() {
 #[trace("FSpec-TC-1721", "FSpec-FR-342-AC-13")]
 #[trace("FSpec-TC-1722", "FSpec-FR-322-AC-454")]
 #[test]
-#[ignore = "QSL-2144: a point-bound clock-reading clause is refused PointQualifiedClause, not written with point_anchor"]
+#[ignore = "QSL-2144: blocked on filament-contract-model (filament-contract-ir) admitting the FR-322-AC-454 point_anchor binding on clock_guard and clock_reset"]
 fn a_point_bound_clock_clause_names_its_point_anchor() {
     use filament_contract_model::{AnchorName, ExecutionPoint};
     let document = document(false);
