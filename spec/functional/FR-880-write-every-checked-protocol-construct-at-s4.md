@@ -80,11 +80,11 @@ written in the form the standard defines for it:
     whose leaves are FIFO-key-stable.
 
 A pre-test `repeat` (its guard reads no body binder) whose `visible` entry,
-`invariant` or `variant` reads a binder its body declares is refused at S3.
-The refusal is `missing_declaration`/`missing-name` at the read, as an
-out-of-scope read: under pre-test semantics those slots are read at the
-repeat's entry, before the body has bound anything (FSpec FR-466
-"Pre-test and post-test `repeat`").
+`invariant` or `variant` reads a binder its body declares is written without
+`test`, those reads being FSpec FR-729 back-edge reads. Each reads the value
+from the most recently completed body iteration (FR-218-AC-18). At the
+repeat's entry, before any iteration has completed, such a `visible` entry is
+no decision fact and such an `invariant` or `variant` is not evaluated.
 
 ### Decision: S4 writes what S3 checks, in the standard's form
 
@@ -110,7 +110,7 @@ FIFO-key-stable (FR-881).
 | FR-880-AC-6 | `terminal when { present(deref(input).trail) }` under `on each (t: Tick)` compiles, and the `terminal` node's condition reads the `over` binder. | Test (TC-2502) |
 | FR-880-AC-7 | Protocols over `Int[0, 3]`, `Boolean`, a model record `Parts::Handoff`, `Option<Integer>` and `Sequence<Integer>` each compile with no `owner_model` edge. Protocols over `Option<M::Order>` and `Sequence<M::Order>` compile with the edge to `M::Order`. Every package is admitted. | Test (TC-2502) |
 | FR-880-AC-8 | `repeat Loop by Seller visible (got.ok) while { not got.ok }` over a body that binds `got` compiles with `test` `post`. A `repeat` that steps only through a nested `repeat` compiles. Both packages are admitted. A post-test `repeat` whose body has a cycle through no step is still refused at S3 by FR-218's progress rule. | Test (TC-2502) |
-| FR-880-AC-9 | A pre-test `repeat` (guard `true`) whose `visible` entry, `invariant` or `variant` reads the body binder `got` refuses at S3 with `missing_declaration`/`missing-name` at that read, never at S4 and never `not-yet-implemented`. | Test (TC-2502) |
+| FR-880-AC-9 | A pre-test `repeat` (guard `true`) whose `visible` entry reads the body binder `got`, and one whose `invariant` and `variant` read it, each compile without a `test` member and are admitted. The `visible` entry is an `expression` node over `got`. No refusal is produced at S3 or S4. | Test (TC-2502) |
 | FR-880-AC-10 | Channels carrying `Int[0, 5]`, `Text[0, 8; nfc]`, a bounded `Decimal`, a bounded `Rational`, `Float64[nearest-even]` and `Sequence<Boolean>[0, 3]` compile with the `bounded_domain` node as `carries`. FIFO channels keyed by `Int[0, 99]`, a model value type `PartId` (a bounded integer), `Quantity<m>`, `Option<Int[0, 5]>`, a record with a bounded field and a model variant compile with their keys. Every package is admitted. | Test (TC-2503) |
 | FR-880-AC-11 | Over a corpus holding one minimal protocol for each construct FR-218 checks, every protocol that S3 admits writes a package, and no refusal of a checked protocol carries `not-yet-implemented`. | Test (TC-2503) |
 

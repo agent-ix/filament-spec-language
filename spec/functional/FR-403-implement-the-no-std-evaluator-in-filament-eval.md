@@ -142,11 +142,16 @@ The reference evaluates the four kinds, so FR-402 and this requirement
 compare the two evaluators only on inputs without them.
 
 A protocol reference (`protocol <name>`, `NodeKind::ProtocolReference`,
-FR-218) can occur in any body, including a function's. Both evaluators
-SHALL refuse it when evaluation reaches it, with
-`FamilyResult::Refused(ProtocolReferenceUnsupported)`: catalog code
-`unknown_required_feature`/`unsupported-feature`, field `construct` =
-`protocol`, located at the reference (FR-308).
+FR-218) can occur in any body, including a function's. When evaluation that
+reads a model state reaches it (a protocol slot, a state clause, or a
+function body called from either), both evaluators SHALL give it the value
+FR-882 defines: the referenced clause's obligation verdict over the current
+model state, undefined when that verdict is not settled. An evaluation that
+has no model state at all, such as a standalone `Value`-family function run,
+has no state to check the clause over. Both evaluators SHALL refuse the
+reference there with `FamilyResult::Refused(ProtocolReferenceUnsupported)`:
+catalog code `unknown_required_feature`/`unsupported-feature`, field
+`construct` = `protocol`, located at the reference (FR-308).
 
 The separation and stop-report vocabulary that clause evaluation builds
 stays where it is: `fsl_foundation::witness`'s `InvocationBinding`,

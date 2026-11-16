@@ -1619,25 +1619,27 @@ fn a_self_referring_protocol_is_written_as_one_recursion_group() {
     );
 }
 
-/// FR-880-AC-9: a pre-test `repeat` whose `visible` entry reads its body's
-/// binder refuses at S3 as an out-of-scope read, never at S4.
+/// FR-880-AC-9: a pre-test `repeat` whose `visible` entry or proof slots
+/// read its body's binder is written without `test`, those reads being
+/// FSpec FR-729 back-edge reads, and the package is admitted.
 #[test]
-#[trace("TC-2502", "FR-880-AC-9")]
+#[trace("TC-2502", "FR-880-AC-9", "FSpec-FR-729-AC-5")]
 #[ignore = "QSL-2220: a pre-test decision that reads its body is refused at S4 as not-yet-implemented"]
-fn a_pre_test_decision_that_reads_its_body_refuses_at_s3() {
-    use super::protocol_graph::checked;
-    let text = deciding(
+fn a_pre_test_decision_that_reads_its_body_is_written() {
+    for run in [
         "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \
          sequence Body { send Placed via Ch as (placed: Ack) { true }; \
          receive Got via Ch of Placed as (got: Ack) { true }; } }",
-    );
-    let refusals = checked(&text, true).expect_err(&text);
-    assert!(!refusals.is_empty());
-    for refusal in &refusals {
-        assert_eq!(
-            refusal.cause.code(),
-            fsl_foundation::Code::MissingDeclaration
+        "sequence Main { repeat Loop by Seller visible () invariant { got.ok } \
+         variant { if got.ok then 1 else 0 } while { true } sequence Body { \
+         send Placed via Ch as (placed: Ack) { true }; \
+         receive Got via Ch of Placed as (got: Ack) { true }; } }",
+    ] {
+        let lowered = emitted(&deciding(run));
+        let repeat = run_control(&lowered.wire, "Loop");
+        assert!(
+            !repeat.to_string().contains("\"post\""),
+            "a pre-test repeat carries no test member: {repeat}"
         );
-        assert_eq!(refusal.cause.cause(), Some("missing-name"));
     }
 }

@@ -10,18 +10,18 @@ relationships:
 
 ## Description
 
-Verify the remaining FR-880 forms and the S3 refusal of a pre-test decision that reads its body. Scope: FR-880-AC-6, FR-880-AC-7, FR-880-AC-8, FR-880-AC-9.
+Verify the remaining FR-880 forms and the back-edge reads of a pre-test decision. Scope: FR-880-AC-6, FR-880-AC-7, FR-880-AC-8, FR-880-AC-9.
 
 ## Test Procedure
 
 1. Compile `terminal when { present(deref(input).trail) }` under `on each (t: Tick)`.
 2. Compile protocols over `Int[0, 3]`, `Boolean`, `Parts::Handoff`, `Option<Integer>`, `Sequence<Integer>`, `Option<M::Order>` and `Sequence<M::Order>`.
 3. Compile the post-test `Loop` reading `got.ok`, a `repeat` stepping only through a nested `repeat`, and a post-test `repeat` with a stepless body cycle.
-4. Check pre-test `repeat`s (guard `true`) whose `visible`, `invariant` or `variant` reads `got`.
+4. Compile pre-test `repeat`s (guard `true`) whose `visible`, `invariant` or `variant` reads `got`.
 
 ## Expected Results
 
 - Step 1: compiles; the condition reads the `over` binder.
 - Step 2: the first five have no `owner_model`, the last two name `M::Order`; all are admitted.
 - Step 3: the first has `test` `post`, the second compiles, both are admitted; the third refuses at S3 by the progress rule.
-- Step 4: `missing_declaration`/`missing-name` at the read, at S3.
+- Step 4: each compiles without `test`; the `visible` entry is an `expression` node over `got`; no refusal.

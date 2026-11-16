@@ -29,7 +29,7 @@ subject of each kind of refusal is:
 | A decision whose owner is undeclared | the owner name |
 | `ambiguous-name` for two members of one name (roles, channels, relationships, cases, branches) | the name of each declaration, in source order |
 | A missing name (`missing-declaration`) | the name as written |
-| A causal or requirement `definition-cycle` | the first named node of the cycle, in source order |
+| A requirement `definition-cycle` | the requirement (`requires temporal <name>`), naming the protocol and the clause (FR-218-AC-25); a causal `definition-cycle` keeps the locus FR-218 gives it |
 | A FIFO key (FR-881) | the key expression |
 
 Each refusal's message SHALL name its subject: the read text, the guard's
