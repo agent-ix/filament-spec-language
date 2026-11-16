@@ -12,10 +12,12 @@ pub(crate) struct ModuloRangeInvariant;
 pub(crate) fn result_type(
     left: &ValueType,
     right: &ValueType,
+    left_range: Option<&(Integer, Integer)>,
+    right_range: Option<&(Integer, Integer)>,
     mut charge: impl FnMut() -> Result<(), crate::check::CheckRefusal>,
 ) -> Result<ValueType, ModuloRangeError> {
-    let left_bounds = bounded(left);
-    let right_bounds = bounded(right);
+    let left_bounds = bounded(left, left_range);
+    let right_bounds = bounded(right, right_range);
 
     match (left_bounds, right_bounds) {
         (None, None) => {
@@ -81,7 +83,13 @@ pub(crate) enum ModuloRangeError {
     Invariant(ModuloRangeInvariant),
 }
 
-fn bounded(value_type: &ValueType) -> Option<(&Integer, &Integer)> {
+fn bounded<'a>(
+    value_type: &'a ValueType,
+    static_range: Option<&'a (Integer, Integer)>,
+) -> Option<(&'a Integer, &'a Integer)> {
+    if let Some((lower, upper)) = static_range {
+        return Some((lower, upper));
+    }
     match value_type {
         ValueType::Int(interval) => Some((interval.lower(), interval.upper())),
         ValueType::Integer => None,

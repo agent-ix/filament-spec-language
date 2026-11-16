@@ -3,7 +3,7 @@
 //! selects, and the interval and nonzero obligation of `div`, `rem` and
 //! `mod` checked from source.
 
-use filament_exact::DivisionProfile;
+use filament_exact::{DivisionProfile, IntegerInterval, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
@@ -187,13 +187,37 @@ fn a_mod_divisor_that_may_be_zero_refuses_unproved_nonzero() {
 #[trace("TC-1783", "FR-495-AC-17", "FSpec-TC-1281", "FSpec-FR-147-AC-12")]
 #[test]
 fn a_mod_node_is_typed_by_its_divisor_interval() {
-    for source in [
-        "function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }",
-        "function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }",
-        "function m4 using v(a: Integer, b: Int[-5, -1]): Int[0, 4] pure { a mod b }",
+    for (source, lower, upper) in [
+        (
+            "function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }",
+            0_i64,
+            11_i64,
+        ),
+        (
+            "function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }",
+            0_i64,
+            11_i64,
+        ),
+        (
+            "function m4 using v(a: Integer, b: Int[-5, -1]): Int[0, 4] pure { a mod b }",
+            0_i64,
+            4_i64,
+        ),
     ] {
-        check(VALUE, source, CheckMode::Linked)
+        let graph = check(VALUE, source, CheckMode::Linked)
             .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
+        let body_type = graph
+            .function_state(0)
+            .expect("the function is checked")
+            .body
+            .value_type();
+        assert_eq!(
+            body_type,
+            &ValueType::Int(
+                IntegerInterval::new(lower.into(), upper.into()).expect("valid interval")
+            ),
+            "checked mod node type for {source}"
+        );
     }
     let refusals = check(
         VALUE,
@@ -291,6 +315,32 @@ fn a_remainder_node_carries_its_exact_smallest_interval() {
     let refusals = check(VALUE, &unbounded, CheckMode::Linked)
         .expect_err("a negative dividend by an unbounded divisor is unbounded");
     assert!(only_range(&refusals), "{unbounded}: {refusals:?}");
+}
+
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+fn modulo_uses_literal_and_derived_operand_ranges() {
+    let literal_source = "function literal using v(a: Int[0, 1]): Int[0, 2] pure { -7 mod 3 }";
+    let literal_graph = check(VALUE, literal_source, CheckMode::Linked)
+        .unwrap_or_else(|refusals| panic!("{literal_source}: {refusals:?}"));
+    assert_eq!(
+        literal_graph
+            .function_state(0)
+            .expect("the function is checked")
+            .body
+            .value_type(),
+        &ValueType::Int(IntegerInterval::new(2_i64.into(), 2_i64.into()).expect("interval")),
+        "the checked literal mod node has its singleton type"
+    );
+    let too_narrow = check(
+        VALUE,
+        "function literal using v(a: Int[0, 1]): Int[0, 1] pure { -7 mod 3 }",
+        CheckMode::Linked,
+    )
+    .expect_err("a bounded consumer excluding the literal mod result is refused");
+    assert!(only_range(&too_narrow), "{too_narrow:?}");
+    exact(VALUE, "a: Int[0, 1], b: Int[5, 6]", "(a + 1) mod b", 1, 2);
+    exact(VALUE, "a: Int[1, 2], b: Int[5, 6]", "(-a) mod b", 3, 5);
 }
 
 #[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]

@@ -2195,31 +2195,39 @@ impl<'a> Typer<'a> {
         &mut self,
         dividend: &ValueType,
         divisor: &ValueType,
+        dividend_range: Option<&IntegerRange>,
+        divisor_range: Option<&IntegerRange>,
         location: &Location,
     ) -> Result<ValueType, CheckRefusal> {
-        let result = super::modulo_interval::result_type(dividend, divisor, || {
-            if self.cancel.is_some_and(Cancel::poll) {
-                return Err(super::cancelled_refusal(location));
-            }
-            if let Some(context) = self.context.as_mut() {
-                if let Err(incomplete) = context.meter.charge(
-                    filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
-                        .work(Integer::one()),
-                ) {
-                    return Err(CheckRefusal {
-                        location: location.clone(),
-                        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
-                            stage: CheckingStage::Typing,
-                            kind: CheckingLimitKind::WorkBudget,
-                            limit: incomplete.limit,
-                            actual: u128::from(incomplete.consumed) + 1,
-                            region: None,
-                        })),
-                    });
+        let result = super::modulo_interval::result_type(
+            dividend,
+            divisor,
+            dividend_range,
+            divisor_range,
+            || {
+                if self.cancel.is_some_and(Cancel::poll) {
+                    return Err(super::cancelled_refusal(location));
                 }
-            }
-            Ok(())
-        });
+                if let Some(context) = self.context.as_mut() {
+                    if let Err(incomplete) = context.meter.charge(
+                        filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
+                            .work(Integer::one()),
+                    ) {
+                        return Err(CheckRefusal {
+                            location: location.clone(),
+                            cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+                                stage: CheckingStage::Typing,
+                                kind: CheckingLimitKind::WorkBudget,
+                                limit: incomplete.limit,
+                                actual: u128::from(incomplete.consumed) + 1,
+                                region: None,
+                            })),
+                        });
+                    }
+                }
+                Ok(())
+            },
+        );
 
         match result {
             Ok(value_type) => Ok(value_type),
@@ -3024,7 +3032,15 @@ impl<'a> Typer<'a> {
                     };
                     let value_type = match operator {
                         IntegerDivisionOperator::Mod => {
-                            self.modulo_result_type(&left.value_type, &right.value_type, &location)?
+                            let left_range = self.static_range(&left);
+                            let right_range = self.static_range(&right);
+                            self.modulo_result_type(
+                                &left.value_type,
+                                &right.value_type,
+                                left_range.as_ref(),
+                                right_range.as_ref(),
+                                &location,
+                            )?
                         }
                         IntegerDivisionOperator::Div | IntegerDivisionOperator::Rem => {
                             ValueType::Integer
