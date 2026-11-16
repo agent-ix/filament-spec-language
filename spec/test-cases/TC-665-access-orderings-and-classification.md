@@ -63,12 +63,10 @@ Tag the tests `#[trace("TC-665", "FR-220-AC-n")]`.
 - Step 1: no refusal for `SB` and the variants, each attempt atomic or non-atomic by its ordering, no class recorded; class `Local` for the attempt that touches no data place.
 - Step 2: `ill_typed`/`operator-ineligible` at S3 naming each access no possible kind takes; the RMW with no ordering and the `release` load that also writes a register check; the four fences check; `invalid_syntax` at S1 at the `relaxed` token of the
   fence, with no S3 result.
-- Step 3: the two-field attempt checks at S3 under `tso` and under `sc`; the any-object field write refuses `unsupported_construct`/`declaration-form` naming the location; the selection produces a `WeakAccessShape.failures` entry with `MultiLocation` under the selected weak model.
+- Step 3: the two-field attempt and the any-object field write each check at S3 under `tso` and under `sc` with no refusal; under the selected weak model both explore as FR-902 multi-location accesses.
 - Step 4: 16 states and `proved` both times.
-- Step 5: `WeakAccessShape.failures` contains an entry with
-  `MultiLocation{locations}` naming both locations and an entry with
-  `JoinPolicy`; each shape serializes as FSpec FR-439 specifies, and both use
-  the common entry form and canonical ordering.
+- Step 5: neither the two-field attempt nor the `any` join yields a
+  `weak-access-shape` result; both explore by FR-902.
 - Step 6: no refusal; both attempts atomic with ordering `relaxed`; no class recorded.
 - Step 7: no refusal; no class recorded.
 - Step 8: checks under both models; every attempt atomic, ordering recorded, no class recorded.
@@ -76,6 +74,6 @@ Tag the tests `#[trace("TC-665", "FR-220-AC-n")]`.
 - Step 10: only applications with true selected preconditions and matching attempt constraints contribute footprints; `Sx` and `Sy` are stores, `Ly` and `Lx` are loads, and (`c1`, `r`), (`c2`, `r`) are branch-local.
 - Step 11: two stores to one shared location.
 - Step 12: the register is branch-local.
-- Step 13: under `tso` and `ra`, the pre-check returns V-8 `WeakAccessShape.failures` with the `ordering-mismatch` entry FR-220-AC-14 specifies for each invalid non-local access before its outgoing transitions; under `sc`, each is admitted. The release access to a branch-local register remains local throughout exhaustive reachable-state classification and then returns the same `ordering-mismatch` cause with `access` `local`; the two-field attempt has only `multi-location` for its own shape, while the pre-check continues collecting other failures.
-- Step 14: under `tso`, the base example has a `MultiLocation` entry for the `event` reader and not for the ordinary store. With the store's ordering changed to `acquire`, one V-8 `WeakAccessShape.failures` list contains the reader's `MultiLocation` and the store's `OrderingMismatch`; both share ascending JCS-byte order of typed protocol transition identities, and the reader entry's `transition` is `None`. For the unaccessed-`z` variant, the store precondition and load constraints exclude `z` in every reachable state, so the `z.v` reader is not shared and the item is admitted. Under `sc`, the item is admitted for the shared reader and the `finish` reader.
+- Step 13: under `tso` and `ra`, each mismatched ordering explores restricted to its kind as FR-220-AC-14 specifies and is listed in `ordering-restrictions`; under `sc`, each is admitted unchanged. The release access to a branch-local register stays local through exhaustive classification and gets an entry with access `local`; the two-field attempt explores as a multi-location access with its ordering restricted per sub-access.
+- Step 14: under `tso`, the `event` reader of `x.v` explores with its read a `relaxed` load in its step, one successor per visible value; with the store's ordering changed to `acquire`, the store explores as `relaxed` and the restriction is listed. For the unaccessed-`z` variant, the `z.v` reader is not shared. Under `sc`, the shared reader and the `finish` reader are admitted.
 - Step 15: with `max_candidates` 0, and with 6 in the absent-keys variant, construction stops on the bound and the item settles `Stopped{ResourceExhausted, {MaxCandidates, <bound>}}` with no product state, its record `incomplete`/`limit-reached` naming `expansion.max_candidates`; never a refusal or `runtime_invariant`. The variant builds with 12, and `SB` without absent keys builds with 6 and with the default bound.

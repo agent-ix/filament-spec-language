@@ -59,8 +59,8 @@ EN-1 SHALL keep a local access unresolved.
   as shared in a reachable state, EN-1 SHALL discharge that candidate for the
   location.
 - When EN-1 completes reachable-state classification exhaustively, EN-1 SHALL
-  report each remaining candidate whose name was never shared as
-  `OrderingMismatch{access: Local, ordering}`.
+  list each remaining candidate whose name was never shared as an
+  `ordering-restrictions` entry with access `local`.
 - When exploration ends incomplete, EN-1 SHALL return an incomplete result
   without refusing unresolved candidates.
 - Potential footprints MAY identify names to track.
@@ -91,29 +91,14 @@ weak model corresponds to real accesses.
   (ADR-025 MA-2).
 - From EN-1, potential footprints and potential shared locations that reserve
   memory-model backing; they do not contribute to access classification or
-  the pre-check's `WeakAccessShape{failures}`.
+  the meaning of an access (FR-902).
 - A checked `fence` control with its ordering.
-- The S3 refusals `ill_typed`/`operator-ineligible` for an attempt's ordering and
-  `unsupported_construct`/`declaration-form` for an access shape, and the pre-check's V-8 `WeakAccessShape{failures}`. This keeps the existing
-  `weak-access-shape` cause discriminator and replaces its singular
-  `site`, `transition` and `shape` members with a `failures` array. For each
-  reachable protocol state, the pre-check considers only attempt applications
-  whose selected effective precondition evaluates `Completed(true)` over the
-  thread's observation and whose record satisfies the attempt node's constraint
-  (ADR-027 ST-1). Potential footprints may reserve memory backing but SHALL
-  not contribute to sharing or failures. The pre-check settles at the first
-  reachable state with failures, before generating that state's outgoing
-  transitions. Each failure is
-  `{site, transition, shape}`;
-  `shape` is FSpec FR-439's `MultiLocation{locations}` (`multi-location`),
-  `JoinPolicy` (`join-policy`) or `OrderingMismatch{access, ordering}`
-  (`ordering-mismatch`). The list contains every failure from instantiated
-  attempts and failing protocol nodes in combined ascending JCS-byte order of
-  typed protocol transition identity (ADR-027 TS-2); an attempt carries its
-  transition identity and a node-based failure carries `transition: None`.
-  A node-based entry is ordered by the applicable node transition identity; a
-  node reader specifically uses its event transition identity. Its first
-  entry supplies the headline reason, with no category precedence.
+- The S3 refusal `ill_typed`/`operator-ineligible` for an attempt's ordering.
+  S3 refuses no access shape, and no item settles `unsupported` with cause
+  `weak-access-shape`: every shape has the meaning FR-902 gives it (multi-location accesses, multi-location
+  read-modify-writes, node readers of shared locations, orderings a kind
+  does not take, and non-`all` joins). The item's record lists each
+  ordering restriction applied as `ordering-restrictions`.
 
 ## Behavior
 
@@ -170,10 +155,9 @@ the access class depends on sharing.
   only to an access of a `parallel` branch.
 - EN-1 SHALL decide which locations are shared on instantiated footprints.
 - EN-1 SHALL classify each instantiated attempt (ADR-025 MA-2).
-- The EN-1 pre-check (ADR-025 MA-4) SHALL settle every access shape that needs
-  object identity as `WeakAccessShape` (Access shape).
-- The EN-1 pre-check SHALL settle an ordering that the instantiated kind does
-  not take (EN-1 ordering rule, below).
+- EN-1 SHALL step every access shape by FR-902 (Access shape), and SHALL
+  restrict an ordering that the instantiated kind does not take (EN-1
+  ordering rule, below).
 - EN-1's instantiation of an attempt at the initial state, of its enabled
   applications and of its potential transition identities, is an FR-120
   expansion under the subject's `max_candidates` and evaluation meter. If it
@@ -208,59 +192,31 @@ possible takes it.
 `release`, `seq_cst` or none; an RMW one of the five and always has one; a
 local access takes none).
 
-- Before generating outgoing transitions from each reachable protocol state,
-  the EN-1 pre-check SHALL, under a resolved weak model, add to the item's
-  `WeakAccessShape.failures` list an entry
-  `{site, transition, shape: OrderingMismatch{access, ordering}}`
-  for an instantiated load whose selected effective precondition evaluates
-  `Completed(true)`, whose record satisfies its attempt constraint, and that
-  carries `release` or `acq_rel`, a store whose selected effective precondition
-  evaluates `Completed(true)`, whose record satisfies its attempt constraint,
-  and that carries `acquire` or `acq_rel`, an RMW whose selected effective
-  precondition evaluates `Completed(true)`, whose record satisfies its attempt
-  constraint, and that carries no ordering. A local access (class `Local` in
-  the current state) that carries any ordering SHALL be deferred as described
-  under Sharing and classification; it SHALL be added to
-  `WeakAccessShape.failures` only if exhaustive reachable-state classification
-  proves that its accessed name is never shared. Such a deferred entry names
-  the attempt as `site`, its instantiated class as `access` and the ordering
-  it carries as `ordering` (none for the RMW). Other applicable failures SHALL
-  still settle before the current state's outgoing transitions are generated.
-- The shape SHALL be written
-  `{"type":"ordering-mismatch","access":<"load"|"store"|"rmw"|"local">,"ordering":<ordering>}`,
-  `ordering` being the ordering's spelling (`relaxed`, `acquire`, `release`,
-  `acq_rel`, `seq_cst`) or `null` when the attempt carries none.
-- The pre-check SHALL collect every failure entry selected by the rules below
-  for the current reachable state;
-  it SHALL NOT stop at the first failure or prioritize a failure category.
-  Within one attempt, the ordering rule and Access shape rule determine which
-  shape applies: an attempt with `MultiLocation` has no access class and is not
-  tested for `OrderingMismatch`. Entries from distinct attempts and node readers
-  are ordered together by typed protocol transition identity as stated above.
+- Under a resolved weak model, EN-1 SHALL restrict an ordering that the
+  instantiated kind does not take to that kind, as FR-902 states: on a load
+  `acq_rel` acts as `acquire` and `release` as `relaxed`; on a store
+  `acq_rel` acts as `release` and `acquire` as `relaxed`; an RMW with no
+  ordering acts as `relaxed`. A local access carries no memory effect, so
+  its ordering changes nothing.
+- EN-1 SHALL list each restriction applied in the item's record as one
+  `ordering-restrictions` entry `{site, access, written, effective}`, in
+  canonical transition-identity order (ADR-027 TS-2), with a local access's
+  entry added once exhaustive classification shows its name is never shared.
 - Under `sc`, an attempt whose instantiated class does not take its ordering
   SHALL be admitted, because orderings change no behaviour under `sc`.
 
 ### Access shape
 
-- When a `parallel` declares a weak default and an attempt writes an any-object
-  field or a population membership, S3 SHALL refuse it with
-  `unsupported_construct`/`declaration-form`, naming the attempt and the
-  location, because that is one access whatever is shared.
-- S3 SHALL admit every other multi-location shape, two fields of the receiver
-  included, because whether a second field is shared is decided on
-  instantiation.
-- When the resolved model is weak and the pre-check finds on instantiation an
-  enabled attempt whose shared footprint holds two or more locations, an any-object
-  location or a population membership, the pre-check SHALL add its
-  `MultiLocation{locations}` entry to the item's V-8
-  `WeakAccessShape.failures` list.
-- When the resolved model is weak and a reader reads a location that is
-  shared, the pre-check SHALL add a `MultiLocation{locations}` entry naming the
-  reader and the shared locations it reads, with `transition: None`. All such
-  entries and instantiated-attempt failures SHALL appear together in the same
-  V-8 cause in canonical transition-identity order. Under `sc` the reader
-  SHALL be admitted.
-- Under `sc`, every attempt SHALL be admitted whatever its shape.
+- S3 SHALL admit every access shape, an any-object field and a population
+  membership write included: which locations an access touches, and whether
+  they are shared, is decided on instantiation.
+- Under a weak model, EN-1 SHALL step an enabled attempt whose shared
+  footprint holds two or more locations as FR-902's program-order load
+  steps and apply step, and a multi-location read-modify-write as FR-902's
+  locked transaction.
+- Under a weak model, EN-1 SHALL take a node reader's read of a shared
+  location as a `relaxed` load in the reader's step (FR-902).
+- Under `sc`, every attempt SHALL be one step whatever its shape.
 
 ## Acceptance Criteria
 
@@ -268,9 +224,9 @@ local access takes none).
 |----|----------|--------------|
 | FR-220-AC-1 | Over ADR-025 §10's `SB` with source default `sc`, S3 checks `Sx`, `Sy`, `Ly` and `Lx` with no refusal, records each as atomic with its ordering and records no access class; a variant whose loads carry no ordering records them as non-atomic; a `fetch_add` attempt with `ordering acq_rel` checks and records it atomic; an attempt whose operation touches no data place and has no ordering records class `Local`. | Test (TC-665) |
 | FR-220-AC-2 | S3 refuses, naming the attempt and with `ill_typed`/`operator-ineligible`, an ordering on an attempt that touches no data place, `release` on an attempt that only reads, and `acquire` on an attempt that only writes. S3 admits an RMW with no ordering and a `release` load that also writes a register, which AC-14 leaves to EN-1. A fence with each of `acquire`, `release`, `acq_rel` and `seq_cst` checks. | Test (TC-665) |
-| FR-220-AC-3 | In a `parallel` declaring `memory tso`, an attempt whose operation writes two fields of its receiver checks at S3 with no refusal and no class, as it does with source default `sc`, and an attempt that writes an any-object field refuses `unsupported_construct`/`declaration-form`, naming the attempt and the location. | Test (TC-665) |
+| FR-220-AC-3 | In a `parallel` declaring `memory tso`, an attempt whose operation writes two fields of its receiver checks at S3 with no refusal and no class, as it does with source default `sc`, and an attempt that writes an any-object field also checks with no refusal (FR-902-AC-6). | Test (TC-665) |
 | FR-220-AC-4 | `SB` under `sc` with every ordering `relaxed`, and again with every ordering `seq_cst`, reaches the same 16 states and settles `proved` both times. | Test (TC-665) |
-| FR-220-AC-5 | An entry of `WeakAccessShape.failures` takes FSpec FR-439's `MultiLocation` and `JoinPolicy` shapes for the access shapes AC-3 and FR-219-AC-4 name: AC-3's two-field attempt with a request selecting `tso` has an entry with `MultiLocation{locations}` naming both locations, written `{"type":"multi-location","locations":[…]}`; FR-219-AC-4's `parallel` that joins `any`, with a request selecting `tso`, has an entry with `JoinPolicy`, written `{"type":"join-policy"}`. Both entries use the common `{site, transition, shape}` form and are ordered with every other failure by FR-220's canonical transition-identity order. | Test (TC-665) |
+| FR-220-AC-5 | Under a `tso` selection, AC-3's two-field attempt and FR-219-AC-4's `parallel` that joins `any` each explore with no `weak-access-shape` result: the attempt is stepped as FR-902's load steps and apply step, and the join merges its completed branches (FR-902-AC-1, AC-5). | Test (TC-665) |
 | FR-220-AC-6 | `fence F ordering relaxed;` refuses at S1 with `invalid_syntax` at the `relaxed` token and never reaches S3. | Test (TC-665) |
 | FR-220-AC-7 | Two branches, each with a `relaxed` store attempt to the same cell field of one object, and no attempt that reads it, check at S3 with no refusal under `tso` and under `ra`, each attempt atomic with ordering `relaxed` and no class recorded. | Test (TC-665) |
 | FR-220-AC-8 | A branch whose attempts write a register field of its core and then read that register again (the register-read-again shape of message passing and load buffering) checks at S3 with no refusal and no class recorded. | Test (TC-665) |
@@ -279,8 +235,8 @@ local access takes none).
 | FR-220-AC-11 | EN-1 classifies ADR-025 §10's `SB` under `tso` and under `ra` using only attempt applications whose selected precondition is true in the current thread observation and whose attempt constraint admits the application record: `Sx` and `Sy` are stores, `Ly` and `Lx` are loads, and (`c1`, `r`), (`c2`, `r`) are branch-local. Applications whose selected precondition is false contribute no enabled access footprint, including for a receiver or argument in the domain; their potential footprints may reserve memory backing but do not affect these classifications. | Test (EN-1 sharing; TC-665 step 10) |
 | FR-220-AC-12 | EN-1 classifies AC-7's two `relaxed` stores as two stores to one shared location. | Test (EN-1 sharing; TC-665 step 11) |
 | FR-220-AC-13 | EN-1 treats the register of AC-8 as branch-local, because attempts of one branch only touch it. | Test (EN-1 sharing; TC-665 step 12) |
-| FR-220-AC-14 | Under `tso` and `ra`, the pre-check returns V-8 `WeakAccessShape.failures` for an enabled instantiated load with `release` as `{"type":"ordering-mismatch","access":"load","ordering":"release"}`, a load with `acq_rel` as `{"type":"ordering-mismatch","access":"load","ordering":"acq_rel"}`, a store with `acquire` as `{"type":"ordering-mismatch","access":"store","ordering":"acquire"}`, a store with `acq_rel` as `{"type":"ordering-mismatch","access":"store","ordering":"acq_rel"}`, and an RMW with no ordering as `{"type":"ordering-mismatch","access":"rmw","ordering":null}`. Each non-local mismatch settles before that state's outgoing transitions. Under `sc` each is admitted. An attempt with `release` that writes a branch-local register (so S3 admits it) and, on instantiation, touches no shared location remains local throughout exhaustive reachable-state classification and then contributes `{"type":"ordering-mismatch","access":"local","ordering":"release"}` with the same V-8 cause and fields. An attempt with `acquire` that reads a branch-local register and writes two shared fields, which S3 admits because it reads, contributes its `MultiLocation` entry and is not tested for ordering mismatch. The pre-check does not stop at that entry; all other applicable failures are collected in canonical order. | Test (EN-1 pre-check; TC-665 step 13) |
-| FR-220-AC-15 | In `SB`'s `parallel` under `tso`, an `event` reader whose constraint reads `x.v` beside the branch whose enabled attempt stores `x.v` contributes a `MultiLocation` entry and settles V-8 `WeakAccessShape.failures`; the ordinary storing attempt is not itself a failing shape. In a variant where that store carries `acquire`, the reader entry and the enabled store attempt's `OrderingMismatch` entry are both returned in one list, ordered together by ascending JCS bytes of their typed protocol transition identities (ADR-027 TS-2); the reader entry names the event and `(x, v)` and has `transition: None`, and the attempt entry names its instantiated transition. The first entry supplies the headline reason, without category precedence. The `SB` operations' selected preconditions and attempt constraints admit accesses to `x` and `y` only; their `kind` fields are immutable, so in a variant whose universe also holds a `Cell` `z` of kind `Other`, no attempt is enabled for `z`. With the `event` reading `z.v`, the item is admitted: a potential footprint may reserve memory backing for `z`, but it does not make `z.v` enabled-shared or cause a refusal. Under `sc` the shared-reader variant is admitted, and a `finish` whose constraint reads `x.v` after the `join` raises no refusal under `tso`. | Test (EN-1 pre-check; TC-665 step 14) |
+| FR-220-AC-14 | Under `tso` and `ra`, an enabled instantiated load with `release` explores as a `relaxed` load and one with `acq_rel` as an `acquire` load; a store with `acquire` explores as `relaxed` and one with `acq_rel` as `release`; an RMW with no ordering explores as `relaxed`. The record lists each as an `ordering-restrictions` entry `{site, access, written, effective}`. A local access with an ordering whose name is never shared gets an entry with access `local` once classification is exhaustive. No item settles `unsupported`. | Test (EN-1 pre-check; TC-665 step 13) |
+| FR-220-AC-15 | In `SB`'s `parallel` under `tso`, an `event` reader whose constraint reads `x.v` beside the branch whose enabled attempt stores `x.v` explores, its read a `relaxed` load in the reader's step with one successor per value its thread can see; with that store carrying `acquire`, it explores as a `relaxed` store and the record lists the restriction. Under `sc` the reader reads memory, and a `finish` whose constraint reads `x.v` after the `join` explores under `tso`. | Test (EN-1 pre-check; TC-665 step 14) |
 | FR-220-AC-16 | Over ADR-025 §10's `SB` under `tso` and under `ra`, with `max_candidates` 0 the deadlock-freedom item settles `Stopped{ResourceExhausted, {MaxCandidates, 0}}` with no product state explored, its record `incomplete` with `limit-reached` naming `expansion.max_candidates`, not a refusal and not a broken invariant. In a variant whose universe also holds ten `Cell` keys the initial state does not hold, `max_candidates` 6, which the enabled applications fit within (the variant without them builds), stops listing `Cell::set`'s twelve potential identities, and the item settles `Stopped{ResourceExhausted, {MaxCandidates, 6}}` the same way; with `max_candidates` 12 it builds. | Test (EN-1 pre-check; TC-665 step 15) |
 
 ## Dependencies
@@ -295,7 +251,7 @@ local access takes none).
 ## References
 
 - Owning ticket: Linear QSL-372. FSpec half: FSpec FR-435 (Linear STD-138),
-  and FSpec FR-439 for the `weak-access-shape` cause and its shapes.
+  and FSpec FR-439 and FR-741 for the meaning of every access shape.
 - EN-1 sharing, classification and the ordering rule (FR-220-AC-11 to
   FR-220-AC-14): Linear QSL-910 under QSL-565. FSpec FR-435 and FR-439 state
   the same check-time rules, pre-check outcome and `ordering-mismatch` shape

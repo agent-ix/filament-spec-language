@@ -3542,3 +3542,83 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
         .reachable(four)
         .is_ok());
 }
+
+/// FR-902-AC-1, FR-902-AC-5 (TC-2542, TC-2544): under a `tso` selection, an
+/// attempt writing two shared fields of its receiver is stepped as
+/// program-order single-location accesses, and a `parallel` that joins `any`
+/// merges its completed branches. Neither settles `WeakAccessShape`.
+#[trace("TC-2542", "FR-902-AC-1", "FSpec-FR-741-AC-1")]
+#[trace("TC-2544", "FR-902-AC-5", "FSpec-FR-741-AC-4")]
+#[test]
+#[ignore = "QSL-2218: multi-location accesses and non-all joins under a weak model settle WeakAccessShape instead of being stepped"]
+fn multi_location_accesses_and_any_joins_are_stepped_under_tso() {
+    let tso = [select("SB::Both", MemoryModelName::Tso)];
+    let any = Case::new(&any_join_unit());
+    let outcome = any.check(&tso, ModelCheckItem::DeadlockFreedom, None);
+    assert!(
+        !matches!(
+            outcome,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::WeakAccessShape(_),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    let run = format!(
+        "parallel Both {{ branch left sequence L {{ {} }} \
+         branch right sequence R {{ {} {} }} }} join all [left, right];",
+        attempt("Bx", "w", "Cell::both", "", "BothX, BothOne"),
+        attempt("Lx", "c", "Core::read2", "", "ReadsX2, Read2"),
+        attempt("Lw", "c", "Core::read3", "", "ReadsX3, ReadW"),
+    );
+    let two = Case::new(&(contracts() + &protocol("SB", &run)));
+    for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
+        let outcome = two.check(
+            &[select("SB::Both", model)],
+            ModelCheckItem::DeadlockFreedom,
+            None,
+        );
+        assert!(
+            !matches!(
+                outcome,
+                ModelCheckOutcome::Memory {
+                    cause: MemoryCause::WeakAccessShape(_),
+                    ..
+                }
+            ),
+            "{model:?}: {outcome:?}"
+        );
+    }
+}
+
+/// FR-902-AC-3 (TC-2543): an `event` reader of a shared location under a
+/// `tso` selection reads it as a relaxed load in its own step, so the item
+/// explores instead of settling `WeakAccessShape`.
+#[trace("TC-2543", "FR-902-AC-3", "FSpec-FR-741-AC-3")]
+#[test]
+#[ignore = "QSL-2218: a node reader of a shared location settles WeakAccessShape instead of loading relaxed"]
+fn a_reader_of_a_shared_location_loads_relaxed_under_tso() {
+    const SEEN: &str = "event Seen by c as (s: Boolean) { s and k.v >= 0 };";
+    let read_x = Case::over_object(
+        &object_unit("Cell", &sb_with_event(SEEN), "{ d }"),
+        "cells",
+        "x",
+        false,
+    );
+    let outcome = read_x.check(
+        &[select("SB::Both", MemoryModelName::Tso)],
+        ModelCheckItem::DeadlockFreedom,
+        None,
+    );
+    assert!(
+        !matches!(
+            outcome,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::WeakAccessShape(_),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+}

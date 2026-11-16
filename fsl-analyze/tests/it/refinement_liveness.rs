@@ -616,3 +616,40 @@ fn the_decomposition_of_each_class_charges_the_runs_cancellation_handle() {
     assert_ne!(one, two);
     assert!(charges_of(&two) >= charges_of(&one) + 2);
 }
+
+/// FR-899-AC-1 (TC-2536): liveness through a hidden abstract field is
+/// decided by inclusion over the candidate-set product, never settled
+/// `Unsupported`.
+#[trace("TC-2536", "FR-899-AC-1", "FR-143-AC-4")]
+#[test]
+#[ignore = "QSL-2243: liveness through a hidden abstract field settles Unsupported instead of being decided"]
+fn liveness_through_a_hidden_abstract_field_is_decided() {
+    let unit = Unit::register();
+    let outcome = check_aux(&unit.world(&hidden_register_history()));
+    assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
+    assert!(
+        matches!(outcome.liveness, Some(LivenessHalf::Checked(_))),
+        "{:?}",
+        outcome.liveness
+    );
+}
+
+/// FR-899-AC-3 (TC-2537): a strong abstract fairness constraint is read
+/// strongly. The loop `flipA, flipA` enables `flipB` at `a = 0` and never
+/// takes it, so a refinement that is only weakly fair is refuted.
+#[trace("TC-2537", "FR-899-AC-3", "FR-143-AC-6")]
+#[test]
+#[ignore = "QSL-2243: a strong abstract fairness constraint settles Unsupported instead of refuting the loop"]
+fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
+    let unit = probe(
+        ["", "self.a = 0", "", ""],
+        ["", "self.a = 0", ""],
+        &[(0, 0)],
+    );
+    let rows = [
+        "assume fair weak each Impl::Pair::flipA;",
+        "ensure fair strong whole Spec::Pair::flipB;",
+    ];
+    let outcome = check_aux(&unit.world(&probe_refinement(&rows)));
+    assert_eq!(operation_of(outcome), "flipB");
+}

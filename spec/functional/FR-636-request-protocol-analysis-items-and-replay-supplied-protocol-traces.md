@@ -53,14 +53,17 @@ deployed system against its protocol is the use the feature exists for, and
 the trace is replayed by the same re-execution that replays the engine's own
 counterexamples (FR-217), so accepting it adds no second semantics. The
 supplied trace uses the protocol counterexample's trace spelling (FSpec
-FR-433), so one reader serves both.
+FR-433), so one reader serves both. A recording of a deployed system that is
+not in that spelling, or that holds steps the protocol does not enable, is
+assessed in replay mode (FR-895), which reports each deviation as a violated
+obligation rather than declining the input.
 
 ## Inputs
 
 ### Request items
 
-- `claim`: the protocol clause's name. `kind`: `global-conformance` for
-  protocol model checking, `local-projection`, `realizability`,
+- `claim`: the protocol clause's name. `kind`: `global-conformance` (FR-896:
+  over every behaviour, or over a `recording` in replay mode), `local-projection`, `realizability`,
   `composition` or `monitorability`, or `finite-replay`; FR-620's
   `absent-kind` rule applies, since a protocol clause admits several kinds.
 - `temporal.item_kind` `deadlock-freedom` with the protocol as `claim` requests the
@@ -72,6 +75,8 @@ FR-433), so one reader serves both.
   `max_messages` and `max_walk_steps`.
 - `trace`: for `finite-replay`, the `{authority, identity}` of a provisioned
   document holding the trace in FSpec FR-433's spelling.
+- `recording`: for `global-conformance` in replay mode, the `{authority, identity}`
+  of a provisioned FSpec FR-737 recording document (FR-895).
 
 ## Outputs
 

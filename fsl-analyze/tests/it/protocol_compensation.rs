@@ -1823,3 +1823,39 @@ fn a_thread_names_its_registration_and_the_commit_and_attempt_records_are_keyed(
     });
     the_attempt_record_is_keyed_while_a_retry_can_read_it();
 }
+
+/// FR-893-AC-1, AC-2 (TC-2526): exploration reaches a failed attempt
+/// (`cfail`), a timed-out attempt (`ctimeout`) and an expired thread
+/// (`cexpire`), and some reachable registration has status `timed-out`.
+#[trace(
+    "TC-2526",
+    "FR-893-AC-1",
+    "FR-893-AC-2",
+    "FSpec-FR-736-AC-1",
+    "FSpec-FR-736-AC-2"
+)]
+#[test]
+#[ignore = "QSL-2207: the stepper has no cfail, ctimeout or cexpire step, so failed and timed-out outcomes are unreachable"]
+fn every_compensation_outcome_is_reached() {
+    explore(&pay("false"), |system, explored| {
+        let reached = &explored.reached;
+        let names: std::collections::BTreeSet<String> = reached
+            .iter()
+            .flat_map(|state| {
+                state
+                    .steps
+                    .iter()
+                    .map(|(step, _)| format!("{:?}", step.kind()))
+            })
+            .collect();
+        for step in ["CFail", "CTimeout", "CExpire", "CAttempt", "CEnd"] {
+            assert!(names.contains(step), "{step} is reached: {names:?}");
+        }
+        let timed_out = reached.iter().any(|state| {
+            statuses(&key_json(system, state))
+                .iter()
+                .any(|status| status == "timed-out")
+        });
+        assert!(timed_out, "a registration times out");
+    });
+}
