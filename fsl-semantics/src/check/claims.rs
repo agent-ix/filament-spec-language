@@ -21,7 +21,8 @@
 //! site, or keying faults.
 //!
 //! **Result bound.** The target range of the narrow that directly wraps the
-//! application, otherwise the application's own result type.
+//! application, otherwise the application's checked result type, including
+//! the exact interval when an integer division lowers at Integer.
 //!
 //! **Path condition.** The guards the occurrence is checked under, outermost
 //! first: an enclosing `if`'s condition (true in `then`, false in

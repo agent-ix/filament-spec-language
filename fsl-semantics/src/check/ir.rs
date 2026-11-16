@@ -1045,10 +1045,9 @@ pub(crate) fn coerce_builds_narrow(operand: &ValueType, interval: &IntegerInterv
 }
 
 /// Whether a checked [`NodeKind::Coerce`] around `operand` lowers to a
-/// `filament.op.numeric.narrow` application. A direct `mod` coercion remains
-/// explicit even when its exact interval fits inside the target: the target
-/// interval is the scalar claim's result bound and the narrowing occurrence
-/// is its conversion context.
+/// `filament.op.numeric.narrow` application. Integer division and reads of
+/// its binders lower at Integer, so their bounded coercions remain explicit
+/// even when the checked interval already fits inside the target.
 pub(crate) fn coerce_node_builds_narrow(
     operand: CheckedNode<'_>,
     interval: &IntegerInterval,

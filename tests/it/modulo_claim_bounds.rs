@@ -283,7 +283,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
                 "{function} addition context"
             );
         }
-        let (a, second_name, b) = if function == "ifb" {
+        let (a, second_name, b): (i64, &str, i64) = if function == "ifb" {
             (9, "c", 4)
         } else {
             (100, "b", 12)
