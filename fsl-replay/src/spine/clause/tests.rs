@@ -98,14 +98,16 @@ fn compose(
     Ok(original)
 }
 
-/// Build a kernel-checked fixture whose deliberate count refusal must reach
-/// S6a. Source-based spine compilation always checks in linked mode.
-fn kernel_package(
+/// Assemble the fixture before selecting its package check mode.
+fn fixture_declarations(
     identity: fsl_foundation::SourceIdentity,
     path: &str,
     bytes: &[u8],
     packages: &fsl_semantics::model::intake::PackageInput,
-) -> (fsl_package::CheckedPackage, fsl_foundation::Source) {
+) -> (
+    fsl_semantics::check::PackageDeclarations,
+    fsl_foundation::Source,
+) {
     let parsed = fsl_cst::parse(identity, path, bytes, fsl_cst::Limits::default()).unwrap();
     let built = fsl_forms::build_unit(&parsed).unwrap();
     let models = fsl_semantics::model::intake::admit_unit(
@@ -118,23 +120,32 @@ fn kernel_package(
         fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
     })
     .unwrap();
-    let graph = fsl_semantics::check::PackageDeclarations::assemble(
+    let declarations = fsl_semantics::check::PackageDeclarations::assemble(
         parsed.source().reference().clone(),
         "fixture".to_owned(),
         built,
         models,
         Vec::new(),
     )
-    .unwrap()
-    .check(
-        filament_semantic_value::checking::CheckMode::Kernel,
-        Default::default(),
-    )
     .unwrap();
-    (
-        fsl_package::CheckedPackage::link(graph),
-        parsed.source().clone(),
-    )
+    (declarations, parsed.source().clone())
+}
+
+/// Build a kernel fixture for a temporal condition whose count refuses at S6a.
+fn kernel_package(
+    identity: fsl_foundation::SourceIdentity,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> (fsl_package::CheckedPackage, fsl_foundation::Source) {
+    let (declarations, source) = fixture_declarations(identity, path, bytes, packages);
+    let graph = declarations
+        .check(
+            filament_semantic_value::checking::CheckMode::Kernel,
+            Default::default(),
+        )
+        .unwrap();
+    (fsl_package::CheckedPackage::link(graph), source)
 }
 
 /// Exercise the ordinary package evaluator with a kernel fixture, preserving

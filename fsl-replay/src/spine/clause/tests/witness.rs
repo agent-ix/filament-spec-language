@@ -2971,40 +2971,30 @@ fn tc_743_the_separation_check_names_its_failing_step() {
         assert_eq!(check(&unit, "AllBelow", failing, 1_000_000), unmet(step));
     }
 
-    // A domain refused on `high`: `count<Zero>` of one element.
+    // Declared state clauses retain Linked definedness in either package mode.
     let text = witness_unit_text()
-        + "function refusingCount using v(n: Integer): Zero pure { \
-        count<Zero>(m in ints(sequence[n]): m > 0) }\n\
-        invariant RefusedDomain using v on Config::ConfigVersion at current { \
-        forall(n in ints(sequence[0, refusingCount(self.versionNumber)]): n < 500) }\n";
+        + "invariant RefusedDomain using v on Config::ConfigVersion at current { \
+        forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): n < 500) }\n";
     let domain_document = config_version_domain_document();
     let packages =
         fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
-    let (package, source) =
-        super::kernel_package(source(), "witness.native", text.as_bytes(), &packages);
-    let emitted = fsl_package::emit_checked(&package, EmitLimits::fixture())
-        .unwrap()
-        .package()
-        .clone();
-    let unit = Unit {
-        bytes: text.into_bytes(),
-        domain_document,
-        compiled: ComposedUnit {
-            package: std::sync::Arc::new(package),
-            source,
-            emitted,
-        },
-    };
-    let refused = SeparatingWitnessRecord {
-        quantifier: Some(occurrence(&unit, "RefusedDomain", &[], Operator::Quantify)),
-        ..record.clone()
-    };
-    let SeparationOutcome::Failed(SeparationStep::Domain, SeparationReason::Refused(refusal)) =
-        check(&unit, "RefusedDomain", &refused, 1_000_000)
-    else {
-        panic!("a refused domain fails step 2 with its refusal record");
-    };
-    assert_eq!(refusal.code, "integer_out_of_domain");
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        let (declarations, _) =
+            super::fixture_declarations(source(), "witness.native", text.as_bytes(), &packages);
+        let refusals = declarations.check(mode, Default::default()).unwrap_err();
+        assert_eq!(refusals.len(), 1, "{mode:?}: {refusals:?}");
+        let fsl_semantics::check::CheckCause::Unproved(fsl_semantics::check::Obligation::Range {
+            required,
+            proved,
+        }) = &refusals[0].cause
+        else {
+            panic!("{mode:?}: count is refused at check: {refusals:?}");
+        };
+        assert_eq!(required.lower, Some(0_i64.into()));
+        assert_eq!(required.upper, Some(0_i64.into()));
+        assert_eq!(proved.lower, Some(0_i64.into()));
+        assert_eq!(proved.upper, Some(3_i64.into()));
+    }
 
     assert_eq!(
         check(&unit, "AllBelow", &record, 0),

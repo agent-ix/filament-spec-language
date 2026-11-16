@@ -659,6 +659,7 @@ fn check_predicate<'a>(
     // so the node limit applies to the claim's cumulative total.
     let location = state_graph_location(declaration.index, role.site());
     let declarations = &ClauseDeclarations {
+        mode: declarations.mode,
         unit: declarations.unit,
         scope: declarations.scope,
         signatures: declarations.signatures,
