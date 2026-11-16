@@ -107,6 +107,56 @@ fn a_supplied_definition_missing_a_member_refuses() {
     assert!(text.contains("typed_node_schema"), "{value}");
 }
 
+/// FR-660-AC-3 (TC-1741): supplied extension definitions reject core keyword
+/// collisions and dependency cycles at compile time.
+#[test]
+#[trace("TC-1741", "FR-660-AC-3")]
+fn supplied_extension_conflicts_and_cycles_refuse() {
+    let directory = tempfile::tempdir().unwrap();
+    retention_definition(directory.path(), "function.json", "function");
+    let path = extension_request(
+        directory.path(),
+        json!([{"authority": "agent-ix", "identity": "ext.retention",
+            "file": "function.json"}]),
+    );
+    let (exit, value) = compile_refusal(&path);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    assert!(
+        value.to_string().contains("conflicting-definition"),
+        "{value}"
+    );
+    assert!(value.to_string().contains("function"), "{value}");
+
+    let directory = tempfile::tempdir().unwrap();
+    retention_definition(directory.path(), "a.json", "alpha");
+    retention_definition(directory.path(), "b.json", "beta");
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{HEADER}profile a = \"ext.a\";\nprofile b = \"ext.b\";\n{FORM}\n"),
+    )
+    .unwrap();
+    let request = json!({"format": "native-compile/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:extension-cycle", "document": "Ext", "formal_revision": 1}},
+        "extensions": [
+            {"authority": "agent-ix", "identity": "ext.a", "file": "a.json",
+                "depends_on": [{"authority": "agent-ix", "identity": "ext.b"}]},
+            {"authority": "agent-ix", "identity": "ext.b", "file": "b.json",
+                "depends_on": [{"authority": "agent-ix", "identity": "ext.a"}]}
+        ]
+    }});
+    let path = directory.path().join("compile.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (exit, value) = compile_refusal(&path);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    assert!(value.to_string().contains("definition-cycle"), "{value}");
+    assert!(value.to_string().contains("ext.a"), "{value}");
+    assert!(value.to_string().contains("ext.b"), "{value}");
+}
+
 /// FR-660-AC-4 (TC-1741): malformed `extensions` members refuse
 /// `invalid-request` at stage `request` naming the member, and two entries
 /// with one identity refuse `conflicting-definition`.
