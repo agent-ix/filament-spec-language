@@ -228,7 +228,10 @@ fn infinity_to_rational_is_undefined_not_finite() {
         "convert<Rational[-100, 100; 1, 16]>(float64(bits: 0x7ff0000000000000))",
     );
 
-    assert_eq!(outcome, Outcome::Undefined(Undefined::IeeeNotFinite));
+    assert!(matches!(
+        outcome,
+        Outcome::Undefined(Undefined::IeeeNotFinite)
+    ));
 }
 
 /// Trace: FR-397-AC-16
