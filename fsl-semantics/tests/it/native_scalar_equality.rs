@@ -97,6 +97,28 @@ fn refused_at_comparison(declarations: &str, function: &str, cause: IllTypedCaus
     assert!(refusals[0].location.path().is_empty(), "{declarations}");
 }
 
+/// The refusal of an explicit equality conversion, located at the converted
+/// left operand.
+fn refused_at_equality_conversion(declarations: &str) {
+    let refusals = match check(declarations) {
+        Err(refusals) => refusals,
+        Ok(_) => panic!("{declarations}: the equality conversion must be refused"),
+    };
+    assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
+    assert_eq!(
+        refusals[0].cause,
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch),
+        "{declarations}"
+    );
+    assert!(
+        matches!(&refusals[0].location.origin,
+            Origin::Body { function, .. } if function == "bad"),
+        "{declarations}: {:?}",
+        refusals[0].location
+    );
+    assert_eq!(refusals[0].location.path(), vec![0], "{declarations}");
+}
+
 /// TC-1028 step 1, FR-091-AC-40: `String`, `UUID` and `Timestamp` name the
 /// native types as parameter types with no `using` selection or domain
 /// package, and the six comparison functions check.
@@ -196,6 +218,27 @@ fn unlike_operand_types_refuse_type_mismatch_at_the_comparison() {
             IllTypedCause::TypeMismatch,
         );
     }
+}
+
+/// FSpec FR-149-AC-10: a float conversion written directly as an equality
+/// operand is outside the closed equality-conversion table, whether both
+/// sides use it or only one side does.
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-10")]
+#[test]
+fn two_float_conversions_under_equality_refuse_type_mismatch() {
+    refused_at_equality_conversion(
+        "function bad using v(a: Int[0, 1]): Boolean pure { convert<Float64[nearest-even]>(a) = convert<Float64[nearest-even]>(a) }",
+    );
+}
+
+/// FSpec FR-149-AC-10: a conversion on only one equality operand is also
+/// outside the closed equality-conversion table.
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-10")]
+#[test]
+fn one_float_conversion_under_equality_refuses_type_mismatch() {
+    refused_at_equality_conversion(
+        "function bad using v(a: Int[0, 1], b: Float64[nearest-even]): Boolean pure { convert<Float64[nearest-even]>(a) = b }",
+    );
 }
 
 /// TC-1028 R6, FR-056-AC-36 (FSpec FR-149-AC-16): ordering over two operands
