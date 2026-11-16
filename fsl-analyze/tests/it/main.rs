@@ -139,6 +139,7 @@ mod step_simulation;
 mod strong_fairness;
 mod strong_hint;
 mod time_lock_item;
+mod timed_product_certificate;
 mod timed_refinement;
 mod timed_refinement_certificate;
 mod timed_refinement_liveness;

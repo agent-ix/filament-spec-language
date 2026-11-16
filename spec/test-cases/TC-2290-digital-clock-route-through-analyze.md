@@ -14,7 +14,7 @@ relationships:
 
 Verify the caller-selected digital-clock route: it decides a closed subject
 and closed claim on EN-1 over the integer-clock reading with basis
-`digitized-explicit-state`, and refuses a strict constraint or interval.
+`exhaustive`, and refuses a strict constraint or interval.
 Scope: FR-632-AC-4, FR-243-AC-4.
 
 ## Test Procedure
@@ -25,7 +25,7 @@ Scope: FR-632-AC-4, FR-243-AC-4.
 
 ## Expected Results
 
-- Step 1: `proved`, basis `digitized-explicit-state`, backend `en-1`, the same verdict as the zone route.
+- Step 1: `proved`, basis `exhaustive`, backend `en-1`, the same verdict as the zone route.
 - Steps 2 and 3: `declined` `invalid-input` naming the strict constraint or interval; no engine runs.
 - Assertions compare typed members and the exit code, never message text.
 

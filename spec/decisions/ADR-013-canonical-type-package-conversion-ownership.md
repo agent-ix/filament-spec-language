@@ -549,9 +549,6 @@ causes gain `WeakAccessShape{failures}`, category unsupported. Its entries
 are ordered by typed protocol transition identity; the first failure supplies
 the headline reason, and the cause retains every failure.
 
-Amended by ADR-027 ST-12 (protocol transition system). The `Unsupported`
-causes gain `RecoveryView{predicate}`, category unsupported.
-
 Agreement across backends ([FR-448](../functional/FR-448-cross-check-verification-backends-over-the-conformance-corpus.md)).
 When two or more backends answer the same requirement item, their terminal
 records are compared after the proof column above has mapped each one,

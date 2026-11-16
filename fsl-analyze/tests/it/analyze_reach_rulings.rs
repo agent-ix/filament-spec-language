@@ -74,10 +74,7 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
     ));
     let proved = run.item(0);
     assert_eq!(label(&proved), "proved", "{proved}");
-    assert_eq!(
-        proved["record"]["basis"]["type"], "digitized-explicit-state",
-        "{proved}"
-    );
+    assert_eq!(proved["record"]["basis"]["type"], "exhaustive", "{proved}");
     assert_eq!(proved["record"]["backend"], "en-1", "{proved}");
 
     let ws = Workspace::new("rulings-digital-interval");

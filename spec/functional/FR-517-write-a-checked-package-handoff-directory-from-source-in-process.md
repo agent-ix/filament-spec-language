@@ -346,10 +346,7 @@ binders are refused. The compensations keep every stage, bound and retry
 relation of the legacy recipe over the record value types `Attempt` and
 `Recovery`, and their `recover` conditions are those of FR-517-AC-14: the
 reader admits the `sum` query binder that a `recover` slot introduces itself. A `recover` condition that
-reads its recovery binder is checked and emitted, and analysis of **R**
-reports that compensation item `unsupported` with cause
-`recovery-view{predicate}` (FSpec FR-427): no rule derives a recovery view
-from a model state, so this is the expected result, not a defect of **R**.
+reads its recovery binder is checked and emitted.
 
 The unit `U` on `Amount` and `Total` is carried by the model. In the model it is
 an alias of `ix://filament/unit/U` whose `min` and `max` name the alias (FSpec

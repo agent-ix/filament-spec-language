@@ -109,7 +109,7 @@ refuted, with its trap evidence.
 - A counterexample's length SHALL be its number of discrete steps, so V-5's
   definition is unchanged.
 - The record SHALL carry the method: `zone-certified`,
-  `digitized-explicit-state`, or FR-127's methods.
+  `exhaustive`, or FR-127's methods.
 - A verdict SHALL hold for exactly its subject and claim; the record's
   obligation identity binds both (ADR-013 O-09).
 
