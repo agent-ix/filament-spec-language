@@ -1680,6 +1680,71 @@ object Child extends Base { operation f(p: S): S redefines Base::f; }\n";
     assert!(causes.contains(&"variance-result"), "{causes:?}");
 }
 
+/// Source object signatures retain their exact scalar types while conformance
+/// keeps the existing widening and interval-inclusion rules for variance.
+#[trace("FR-569-AC-12", "TC-1940")]
+#[test]
+fn source_object_operation_overrides_allow_scalar_widening_and_narrowing() {
+    let bounded = filament_exact::ValueType::Int(
+        filament_exact::IntegerInterval::new(
+            filament_exact::Integer::from(0_i64),
+            filament_exact::Integer::from(9_i64),
+        )
+        .expect("non-empty integer interval"),
+    );
+    let scalar_source = "\
+object Base { operation f(p: Int[0, 9]): Integer; }\n\
+object Child extends Base { operation f(p: Integer): Int[0, 9] redefines Base::f; }\n\
+pre BaseInput using P on Base::f { true }\n\
+post BaseOutput using P on Base::f { true }\n\
+pre ChildInput using P on Child::f { true }\n\
+post ChildOutput using P on Child::f { true }\n";
+    let graph = finish(assemble(scalar_source).expect("scalar variance assembles"))
+        .unwrap_or_else(|refusals| panic!("scalar widening/narrowing: {refusals:?}"));
+    assert_eq!(
+        graph
+            .state_clause("BaseInput")
+            .expect("base input")
+            .parameters()[1]
+            .1,
+        bounded,
+        "Base parameter retains Int[0, 9]"
+    );
+    assert_eq!(
+        graph
+            .state_clause("BaseOutput")
+            .expect("base output")
+            .parameters()[1]
+            .1,
+        filament_exact::ValueType::Integer,
+        "Base result retains Integer"
+    );
+    assert_eq!(
+        graph
+            .state_clause("ChildInput")
+            .expect("child input")
+            .parameters()[1]
+            .1,
+        filament_exact::ValueType::Integer,
+        "Child parameter retains Integer"
+    );
+    assert_eq!(
+        graph
+            .state_clause("ChildOutput")
+            .expect("child output")
+            .parameters()[1]
+            .1,
+        bounded,
+        "Child result retains Int[0, 9]"
+    );
+
+    let bounded_variance_source = "\
+object Base { operation f(p: Int[1, 8]): Int[0, 9]; }\n\
+object Child extends Base { operation f(p: Int[0, 9]): Int[1, 8] redefines Base::f; }\n";
+    finish(assemble(bounded_variance_source).expect("bounded variance assembles"))
+        .unwrap_or_else(|refusals| panic!("bounded interval variance: {refusals:?}"));
+}
+
 /// A field type a record field refuses is refused for an object member with
 /// the same code and cause, and the object unit yields no checked package.
 fn assert_member_refused_like_record_field(prelude: &str, ty: &str) {

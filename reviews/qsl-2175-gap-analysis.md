@@ -59,3 +59,26 @@ The newly active tests cover source enum, record, union, tuple, alias, decimal, 
 Reverse ownership: FR-569 owns the changed member typing paths. No source-object emission changes were introduced; QSL-1880 remains out of scope. No source/test stub remains in the newly activated cases, but FND-001 records coverage inflation from assertions that cannot distinguish the required types. The optional separate semantic-review fan-out was not run; ordinary code/test alignment and hollow-evidence checks were performed under the requested reviewer methods.
 
 `quire coverage` reported 937 repository diagnostics, none on FR-569, and 4469 repository untracked symbols. Existing `FSpec-` references on the reviewed tests are external namespaced tags under the repo's documented convention, outside the local matrix's document root; no new local FR-569 tag gap was found. These global diagnostics limit any repository-wide claim; this verdict covers only the dispatched subset. Raw matrix and coverage outputs are retained beside this artifact. Quire emitted nonfatal inline-schema and duplicate-archetype warnings. No source edits, builds, tests, or aggregate gate were run.
+
+## Disposition pass 1
+
+Reviewed frozen head `bbea60fbd9d4dbb7a041a6544859699e104a0643` against base `d71c0a8dfde0076cfbc4fbe13985eb2baddd7839`, and the fix delta from `917b4df400cc59b8b128fad10efa498cbb4fd581`. The original findings above remain unchanged.
+
+### Current verdict
+
+**PASS** for the original gap finding — the companion code-review's new high FND-003 still blocks the PR.
+
+The AC-12 table's typed `read` function checks a type-specific valid use for every member form. It additionally checks the actual field's type category, and asserts exact operation parameter/result equality against that checked field type. Unlike the old admission/Boolean-only assertions, these reject an Integer placeholder. The new rich R/S override regression checks both `variance-parameter` and `variance-result` causes. AC-13 still compares concrete refusal codes and causes, and the recursive alias case still checks `invalid_package`/`definition-cycle` against the record equivalent.
+
+Recomputed matrix at this head: AC-12 is tagged by 18 active binders, AC-13 by two. No scoped untagged or ignored-only criterion; no run evidence read. Plan completion: not assessed. The missing legal scalar-variance case is tied to code-review FND-003 rather than duplicated here. No new gap finding was added.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1: The AC-12 table now asserts checked type categories, a typed member read, and exact parameter/result equality with the field type; the R/S override test asserts both variance refusal causes. |
+
+### Round 1 verification limits and tooling
+
+No source edits, builds, tests, aggregate gate or GitHub comments. Quire 0.38.3 (engine 0.52.1), Quoin 0.29.4 and spec-artifacts-process v0.29.2. Matrix generation and explicit artifact validation succeeded with nonfatal inline-schema and duplicate-archetype warnings. Spec-review skipped because this PR changes no specification or plan; optional semantic fan-out not run. Coder-reported checks were not rerun.
+

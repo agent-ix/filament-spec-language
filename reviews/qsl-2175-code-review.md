@@ -80,3 +80,45 @@ Methods: code-review with rust-review lane, including Rust style, exhaustive con
 The common type resolver is reused rather than introducing another scalar-domain implementation. The new wildcard-to-Integer conversion nevertheless violates the Rust rule against mapping an unknown domain variant to a valid but wrong value; FND-001 records its concrete consequence. The field and operation checking table changes retain existing identity keys and effect frames. AC-13's population and function-name refusal comparisons and the alias-cycle refusal are present; the separate gap-analysis artifact records insufficient type assertions for AC-12.
 
 No source edits, builds, tests, or aggregate gate were run, as directed. The coder reported 44 source-object tests, the full semantics suite, formatting, workspace checks/Clippy in both feature configurations, and qualified-core lint passed; those results were not rerun. Quire 0.38.3 (engine 0.52.1), Quoin 0.29.4, spec-artifacts-process v0.29.2 were used for review metadata. Quire emitted nonfatal inline-schema and duplicate-archetype warnings.
+
+## Disposition pass 1
+
+Reviewed frozen head `bbea60fbd9d4dbb7a041a6544859699e104a0643` against base `d71c0a8dfde0076cfbc4fbe13985eb2baddd7839`, and the fix delta from `917b4df400cc59b8b128fad10efa498cbb4fd581`. The original findings above remain unchanged.
+
+### Current verdict
+
+**FAIL** — both original findings are fixed, but new high FND-003 remains open.
+
+The fix updates the retained `SelectedModel.view` via `with_resolved_source_member_types`, rebuilding `ModelIndex` from modified field and operation records. The final `package.model_inputs` and `selected_views` use these updated views. Thus the original placeholder-based false acceptance is fixed. Qualified enum and payload-variant declarations now pass the early match and obtain the foreign shape/meaning handles needed by `model_value_type`; their final types are resolved through the same namespace as record fields.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | high | Resolved source value types use exact equality for conformance, so a valid operation override that widens an Int[0,9] parameter to Integer and narrows an Integer result to Int[0,9] now refuses both variance axes. Preserve scalar-domain conformance for resolved types and cover legal widening/narrowing as well as incompatible overrides. | fsl-semantics/src/model/index.rs:430; fsl-semantics/src/model/index.rs:438; fsl-semantics/src/model/conformance.rs:355; spec/functional/FR-569-declare-object-types-populations-and-operations-in-fsl-source.md:280 |
+
+A legal source-route counterexample is:
+
+```text
+object Base { operation f(p: Int[0, 9]): Integer; }
+object Child extends Base {
+  operation f(p: Integer): Int[0, 9] redefines Base::f;
+}
+```
+
+Before this fix, both axes ask whether a bounded scalar conforms to native Integer; `value_conformance_walk` explicitly accepts this. After replacement, they ask `Resolved(Int[0,9])` versus `Resolved(Integer)`; line 438 returns false through exact equality. Strictly contained bounded intervals similarly lose the prior interval-inclusion rule. This is a source-traced regression, not an executed reproduction. Keep the incompatible R/S negative regression and add the legal positive counterpart.
+
+Review scope for this round includes all eight changed Rust source/test files: `check/assemble.rs`, `check/source_model.rs`, `check/lowering/model.rs`, `model/domain_package.rs`, `model/index.rs`, `model/intake.rs`, `model/normalize.rs`, and `tests/it/source_objects.rs`, all under `fsl-semantics/`. Rust review checked the new enum consumers, retained view/index rebuild, foreign variant resolution and conformance call path. The new enum's lowering display and clock arms were inspected within the existing source-emission boundary; emission remains QSL-1880's scope. No spec/plan changes belong to this PR; the monitor spec files visible between historical heads came from the rebased main.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1: Resolved member types replace field/operation records in the retained source view, and the rebuilt index reaches model conformance; the incompatible R/S override has an explicit two-cause regression test. |
+| FND-002 | fixed | Round 1: The prepass admits model variants; model_object_types imports foreign enum shapes and payload handles before late resolution. A model-owned enum field and signature regression is present. |
+| FND-003 | still-open | Round 1: New in disposition pass 1: exact equality replaces scalar-domain conformance for resolved source members. |
+
+### Round 1 verification limits and tooling
+
+No source edits, builds, tests, aggregate gate or GitHub comments. Quire 0.38.3 (engine 0.52.1), Quoin 0.29.4 and spec-artifacts-process v0.29.2. Matrix generation and explicit artifact validation succeeded with nonfatal inline-schema and duplicate-archetype warnings. Spec-review skipped because this PR changes no specification or plan; optional semantic fan-out not run. Coder-reported checks were not rerun.
+

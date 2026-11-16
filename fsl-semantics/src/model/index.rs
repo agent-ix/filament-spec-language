@@ -435,6 +435,10 @@ impl ModelIndex {
                             _ => Ok(a == b),
                         }
                     }
+                    (ValueType::Int(source), ValueType::Int(target)) => {
+                        Ok(target.lower() <= source.lower() && source.upper() <= target.upper())
+                    }
+                    (ValueType::Int(_), ValueType::Integer) => Ok(true),
                     _ => Ok(a == b),
                 }
             }
@@ -457,7 +461,9 @@ impl ModelIndex {
                 }
             }
             (ValueTypeRef::Resolved(value_type), ValueTypeRef::Native(native)) => {
-                Ok(native_value_type(value_type.as_ref()) == Some(*native))
+                Ok(native_value_type(value_type.as_ref()) == Some(*native)
+                    || (matches!(value_type.as_ref(), ValueType::Int(_))
+                        && *native == NativeValueType::Integer))
             }
             (ValueTypeRef::Native(native), ValueTypeRef::Resolved(value_type)) => {
                 Ok(native_value_type(value_type.as_ref()) == Some(*native))
