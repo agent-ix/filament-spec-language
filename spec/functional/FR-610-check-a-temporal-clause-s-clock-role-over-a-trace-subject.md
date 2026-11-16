@@ -60,6 +60,18 @@ The clause's clock role, as written, on the checked clause, or a refusal.
   | infinite-trace | one position of the trace | the trace's own position sequence; no configuration |
   | timed | an exact time quantity in the configured unit | the role's `timed` configuration (FR-642) |
 
+- **Unwritten clock.** A clause over a trace subject that writes no `clock`
+  SHALL check as the same clause written `clock "default"`: its role is
+  `default`, its checked clause and FSpec FR-252 binding key equal those of
+  the written form, and it is never refused for the missing member. Under the
+  infinite-trace profile the role names the trace's own positions and takes no
+  configuration; under the event-position, fixed-sample, timestamped-event and
+  timed profiles the request's `clocks` member `default` configures it
+  (FR-640), and a request without one refuses FR-640's
+  `missing-clock-selection` naming `default`. Every unwritten clock of a unit
+  is the one role `default`, so one configuration serves them all, as one
+  written role does. A clause over a model subject that writes no `clock`
+  takes FR-233's default binding instead.
 - **Unit-spelled role.** If the role is a unit of the time dimension the unit
   declares or imports, or one of `ps`, `ns`, `us`, `µs`, `ms`, `s`, `min`, `h`
   and `d`, then the checker SHALL refuse `ill_typed`/`type-mismatch` at the
@@ -86,6 +98,7 @@ The clause's clock role, as written, on the checked clause, or a refusal.
 | FR-610-AC-2 | The same clause with `clock "ms"`, `clock "s"` and `clock "min"` under the infinite-trace and event-position profiles, and with a role spelled as a unit `tick` the unit declares in its `Time` dimension, each refuses `ill_typed`/`type-mismatch` at the clock string, with a message naming the role, the profile and "position" (or the profile's tick kind); `clock "msg-clock"` is admitted. | Test (TC-1541) |
 | FR-610-AC-3 | The same clause with `clock "model-steps"` and with `clock "model-time"` over the record trace subject refuses `ill_typed`/`type-mismatch` at the clock string under each of the four step-counting profiles. | Test (TC-1541) |
 | FR-610-AC-4 | A unit whose temporal header profile is `quire.temporal.infinite-trace/v1`, with a clause `using` it, refuses `unknown_profile`/`unsupported-selection` at the identity literal, naming the alias, and produces no checked clause; the same unit with `filament.temporal.infinite-trace/v1` checks. | Test (TC-1541) |
+| FR-610-AC-5 | Over the record trace subject `c: Counter`, `eventually[0,3] holds(c.level = 3)` with no `clock` checks under the infinite-trace, event-position and fixed-sample profiles, never `unsupported_construct`/`not-yet-implemented`; each checked clause records the role `default` and has the horizon of the same clause written `clock "default"`. | Test (TC-2388) |
 
 ## Dependencies
 

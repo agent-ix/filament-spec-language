@@ -68,7 +68,7 @@ impl<'a> MonitorSession<'a> {
     pub fn assert_through(&mut self, through: ExactRational, cancel: &Cancel)
         -> Result<MonitorStep, Failure>;
     pub fn finish(self, cancel: &Cancel) -> Result<MonitorOutcome, Failure>;
-    pub fn checkpoint(&self) -> MonitorState;
+    pub fn checkpoint(&self) -> Result<MonitorState, Failure>;
     pub fn resume(
         package: &'a CheckedPackage,
         state: &MonitorState,
@@ -118,7 +118,7 @@ recording is complete.
 
 ### Decision: the accepted shape of the public API
 
-Four points of the session's public API follow FSL's existing monitor and
+Five points of the session's public API follow FSL's existing monitor and
 spine APIs rather than a first sketch, and are accepted as its contract:
 
 - **Errors are `StageFailure<MonitorRefusal>`.** Every entry returns FR-283's
@@ -137,6 +137,12 @@ spine APIs rather than a first sketch, and are accepted as its contract:
   `Arc`: a settled report is returned at every later step
   unchanged (Finality), so each step shares it rather than cloning a
   counterexample that may list many positions.
+- **`checkpoint` returns `Result<MonitorState, Failure>`.** Writing the
+  state serializes the ledger, the binding and each clause state, and that
+  serialization is the only step that can fail. The fault is returned as
+  FR-283's internal-fault arm of `StageFailure` rather than a state that
+  lacks a member; no refusal and no cancellation is possible, because
+  `checkpoint` reads no input and does no evaluation.
 - **`open` and `resume` take the request by value.** The session keeps the
   request for its life (clause selections, kind, binding, sources), so it
   owns `MonitorOpen<'a>`, borrowing only the package and the inputs the

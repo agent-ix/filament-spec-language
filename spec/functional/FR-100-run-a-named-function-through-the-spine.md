@@ -344,9 +344,9 @@ An unexpected completed kind remains an internal invariant failure.
 
 A completed value is serialized in FR-650's run value form. A Reference is
 `{"reference": {"universe": U, "type": T, "object_identity": O}}`: `U` and
-`T` are the actual UniverseId and most-specific EffectiveId, each 64
-lowercase hexadecimal characters, and `O` is the exact nonempty UTF-8 object
-identity. No population binding or object fields are serialized as a
+`T` are the actual UniverseId and most-specific EffectiveId, written as
+FR-650 "Identity spellings" states (structural identity objects, never hex),
+and `O` is the exact nonempty UTF-8 object identity. No population binding or object fields are serialized as a
 Reference result.
 
 For a call that reaches S6a, `command`'s outcome carries one
@@ -523,7 +523,7 @@ exits with that code's exit status:
 | `Admission` carrying `ForeignModelSelection` with `OfferedSelection::Document(actual)` | `call` | `foreign_reference`, cause `foreign-model-selection` | Exactly `{"position": P, "model_identity": actual, "expected": E}`; `actual` is the original document's modelIdentity string and `E` the cause's full required DomainPackageRef | 20 |
 | `Admission` carrying `ForeignModelSelection` with `OfferedSelection::Population(actual)` | `call` | `foreign_reference`, cause `foreign-model-selection` | Exactly `{"position": P, "population": D, "expected": E}`; `D` is the actual offered population DeclarationKey, not a substitute model selection; `E` the cause's full required DomainPackageRef | 20 |
 | `Admission` carrying `ForeignType { member, type_name }` | `call` | `foreign_reference`, cause `foreign-type` | Exactly `{"position": P, "member": member, "type": D}`; `D` is the cause's actual uncovered/absent type DeclarationKey | 20 |
-| `Admission` carrying `ForeignUniverse { actual, expected }` | `call` | `foreign_reference`, cause `foreign-universe` | Exactly `{"position": P, "required": H, "supplied": A}`; `H` is the actual expected UniverseId as lowercase hex, `A` the actual supplied bytes as lowercase hex, unchanged and unpadded, matching FR-096's cause fields | 20 |
+| `Admission` carrying `ForeignUniverse { actual, expected }` | `call` | `foreign_reference`, cause `foreign-universe` | Exactly `{"position": P, "required": H, "supplied": A}`; `H` is the actual expected UniverseId and `A` the actual supplied universe, each the universe object of FR-650 "Identity spellings" | 20 |
 | `DanglingReference { position }` | `call` | `dangling_reference`, cause `absent-target-in-complete-population` | Exactly `{"position": P}`; no lookup binding/key or invented locus | 20 |
 
 In these rows, `P` is the declared parameter's zero-based position. `D`

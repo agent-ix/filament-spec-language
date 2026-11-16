@@ -1163,6 +1163,7 @@ fn check_graph(
         }
     }
     let mut expected = vec![None; keys.len()];
+    let mut unweighted_zero_component = vec![false; keys.len()];
     for (index, component) in components.iter().enumerate() {
         if bottom[index] {
             cx.work(component.len() as u64)?;
@@ -1183,10 +1184,14 @@ fn check_graph(
                     }
                 }
                 if !positive {
-                    cx.reserve(keys[first].as_bytes().len())?;
-                    return Err(ProbabilityDocumentError::ZeroWeightComponent {
-                        state: keys[first].clone(),
-                    });
+                    // FR-199 defines a weighted component with no positive
+                    // expected weight by its unweighted state occupancy.
+                    // Derive that case from the independently evaluated
+                    // rewards; never accept a producer-supplied fallback flag.
+                    for &state in component {
+                        cx.work(1)?;
+                        unweighted_zero_component[state] = true;
+                    }
                 }
             }
             for &state in component {
@@ -1267,11 +1272,17 @@ fn check_graph(
                 &component.value,
             ))?;
             if let Some(weights) = weights {
-                sum = cx.arithmetic(filament_exact::RationalArithmetic::Multiply(
-                    &sum,
+                let effective_weight = if unweighted_zero_component[state] {
+                    rational(1)
+                } else {
                     weights
                         .get(*key)
-                        .ok_or(ProbabilityDocumentError::Malformed)?,
+                        .ok_or(ProbabilityDocumentError::Malformed)?
+                        .clone()
+                };
+                sum = cx.arithmetic(filament_exact::RationalArithmetic::Multiply(
+                    &sum,
+                    &effective_weight,
                 ))?;
             }
             if current.choices.is_empty() {
