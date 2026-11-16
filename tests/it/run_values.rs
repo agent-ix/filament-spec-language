@@ -100,7 +100,7 @@ fn assert_call_refusal(function: &str, argument: Value, code: &str, cause: &str,
 /// arbitrary-size integer arguments and writes each back in the same form.
 #[test]
 #[trace("FR-650-AC-1")]
-fn run_value_codec_round_trips_boolean_and_big_integer_forms() {
+fn run_value_codec_round_trips_boolean_big_integer_and_normalized_rational_forms() {
     let types = TypeEnvironment::new(Vec::new(), Vec::new()).expect("empty type environment");
     let forms = fsl_replay::spine::RunValueForms::new(&types, &[]);
     let rational_type = ValueType::Rational(
