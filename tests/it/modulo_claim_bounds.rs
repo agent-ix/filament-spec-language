@@ -496,6 +496,11 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         );
         let terminal =
             TerminalRecord::from_plugin_counterexample(member.request_index(), plugin, &replayed);
+        assert_eq!(
+            terminal.backend(),
+            Some(&BackendId::new("acme")),
+            "{function} parity names the plugin"
+        );
         assert!(
             matches!(
                 terminal.value(),
