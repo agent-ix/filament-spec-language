@@ -1,0 +1,3 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function f using v(x: Option<Int[0, 9]>): Int[0, 9] pure { if present(x) then value(x) else 0 }

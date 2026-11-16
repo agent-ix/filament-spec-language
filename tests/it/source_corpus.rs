@@ -48,8 +48,8 @@ struct Actual {
     result: Option<Value>,
 }
 
-/// The corpus starts with no area directories; later area tickets add each
-/// directory. A created directory must contain at least one `.native` file.
+/// An area without a corpus directory is skipped until its ticket adds it.
+/// A created directory must contain at least one `.native` file.
 fn run_area(area: &str) {
     let root = corpus_root();
     let directory = root.join(area);
@@ -501,8 +501,127 @@ fn display_option(value: &Option<String>) -> &str {
 }
 
 #[test]
+/// QSL-2039 acceptance coverage: the user-written value/type source corpus.
 fn corpus_values() {
-    run_area("values");
+    assert_values_corpus_counts();
+    let directory = corpus_root().join("values");
+    assert_values_programs_compile_at_s4(&directory);
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    for key in [
+        "G-001", "G-009", "G-022", "G-024", "G-025", "G-026", "G-027", "G-028", "QSL-1965",
+        "QSL-1986", "QSL-1989", "QSL-2002", "QSL-2004", "QSL-2006", "QSL-2007", "QSL-2008",
+        "STD-654",
+    ] {
+        assert!(
+            report.contains(key),
+            "expected pinned flip key {key}: {report}"
+        );
+    }
+    println!("{report}");
+}
+
+fn assert_values_programs_compile_at_s4(directory: &Path) {
+    let expected = Expectation {
+        verb: "check".to_owned(),
+        exit_code: 0,
+        category: "success".to_owned(),
+        last_stage: Some("S4".to_owned()),
+        code: None,
+        cause: None,
+        result: None,
+        flips_with: None,
+    };
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let request = entry.unwrap().path();
+        let Some(filename) = request.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(stem) = filename.strip_suffix(".request.json") else {
+            continue;
+        };
+        let program = directory.join(format!("{stem}.native"));
+        let actual = execute_compile(&program, &expected)
+            .unwrap_or_else(|error| panic!("{}: {error}", program.display()));
+        if let Some(error) = mismatch(&program, &expected, &actual) {
+            panic!("{error}");
+        }
+    }
+}
+
+/// Keep the source corpus broad enough to cover accepted and refused values
+/// in every named family, rather than allowing one large family to mask a gap.
+fn assert_values_corpus_counts() {
+    let directory = corpus_root().join("values");
+    let entries = std::fs::read_dir(&directory)
+        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()));
+    let mut counts = BTreeMap::<&'static str, (usize, usize)>::new();
+    let mut accepts = 0;
+    let mut rejects = 0;
+    const FAMILIES: &[&str] = &[
+        "bool-",
+        "int-",
+        "dec-",
+        "rat-",
+        "float-",
+        "qty-",
+        "text-",
+        "enum-",
+        "uuid-",
+        "timestamp-",
+        "opt-",
+        "rec-",
+        "tup-",
+        "union-",
+    ];
+
+    for entry in entries {
+        let path = entry.unwrap().path();
+        let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(stem) = filename.strip_suffix(".expected.json") else {
+            continue;
+        };
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let expected: Expectation = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("{}: invalid expectation: {error}", path.display()));
+        if expected.exit_code == 0 {
+            accepts += 1;
+        } else {
+            rejects += 1;
+        }
+        for family in FAMILIES {
+            if stem.starts_with(family) {
+                let counts = counts.entry(family).or_default();
+                if expected.exit_code == 0 {
+                    counts.0 += 1;
+                } else {
+                    counts.1 += 1;
+                }
+            }
+        }
+    }
+
+    assert!(
+        accepts >= 40,
+        "expected at least 40 accepting values programs, found {accepts}"
+    );
+    assert!(
+        rejects >= 40,
+        "expected at least 40 rejecting values programs, found {rejects}"
+    );
+    for family in FAMILIES {
+        let (accepted, rejected) = counts.get(family).copied().unwrap_or_default();
+        assert!(
+            accepted > 0,
+            "value family {family} has no accepting program"
+        );
+        assert!(
+            rejected > 0,
+            "value family {family} has no rejecting program"
+        );
+    }
 }
 
 #[test]

@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record Point { x: Int[0, 9]; }
+function f using v(): Boolean pure { Point { x: 1 } = Point { x: 1 } }

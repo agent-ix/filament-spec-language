@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"int-sub-ok.native","authority":"agent-ix","identity":"test:corpus:int-sub-ok","document":"int-sub-ok","formal_revision":1}},"call":{"function":"f","arguments":[]}}}
