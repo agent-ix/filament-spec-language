@@ -2581,6 +2581,21 @@ fn is_integer(value_type: &ValueType) -> bool {
     matches!(value_type, ValueType::Integer | ValueType::Int(_))
 }
 
+/// A comparison of a guarded clock place with `absent`, read as the place's
+/// presence (FR-230 "Presence and element members").
+pub(super) struct AbsentComparison<'e> {
+    /// The place's owner `r` of `r.f` or `r.f.c`.
+    pub(super) owner: ExprRef<'e>,
+    /// The owner's location.
+    pub(super) owner_location: Location,
+    /// The place's field.
+    pub(super) field: &'e str,
+    /// The union case of the place, when it is one.
+    pub(super) case: Option<&'e str>,
+    /// Whether the comparison requires the place present (`!=`).
+    pub(super) present: bool,
+}
+
 /// Whether `expression`'s own syntax contains a form `pre(...)`'s anchor can
 /// act on: `allInstances`/`lookup` (the only reads FR-153 anchors), or a
 /// nested `pre(...)` (idempotent by construction: a nested `pre` with no
@@ -4300,6 +4315,62 @@ impl<'a> Typer<'a> {
         names(union, Some(field)).then(|| {
             let owner = operand.at(*owner);
             (owner.at(*object), union.as_str(), Some(field.as_str()), 2)
+        })
+    }
+
+    /// Whether `operand`, the operand of a field read `operand.op`, is
+    /// `t.step` over a name `t` this scope does not resolve: the read is
+    /// then the step label `t.step.op` of a trace variable (FR-612).
+    pub(super) fn unbound_step_label(&self, operand: fsl_forms::ExprRef<'_>) -> bool {
+        let fsl_forms::ExprNode::Field {
+            operand: trace,
+            field,
+        } = operand.node()
+        else {
+            return false;
+        };
+        let fsl_forms::ExprNode::Name(name) = operand.at(*trace).node() else {
+            return false;
+        };
+        field == "step"
+            && self
+                .name(&name.name, None, &Location::root(Origin::Expression))
+                .is_err_and(|refusal| matches!(refusal.cause, CheckCause::MissingName(_)))
+    }
+
+    /// `comparison`, located at `location`, when it is `p = absent` or `p
+    /// != absent` (either operand order) of a guarded clock place `p` this
+    /// pass reads the presence of.
+    pub(super) fn absent_comparison<'e>(
+        &self,
+        comparison: fsl_forms::ExprRef<'e>,
+        location: &Location,
+    ) -> Option<AbsentComparison<'e>> {
+        let fsl_forms::ExprNode::Binary {
+            operator,
+            left,
+            right,
+        } = comparison.node()
+        else {
+            return None;
+        };
+        let present = match operator {
+            fsl_forms::BinaryOperator::Equal => false,
+            fsl_forms::BinaryOperator::NotEqual => true,
+            _ => return None,
+        };
+        let (place, side) = match (comparison.at(*left).node(), comparison.at(*right).node()) {
+            (_, fsl_forms::ExprNode::Absent) => (comparison.at(*left), 0),
+            (fsl_forms::ExprNode::Absent, _) => (comparison.at(*right), 1),
+            _ => return None,
+        };
+        let (owner, field, case, depth) = self.place_operand(place)?;
+        Some(AbsentComparison {
+            owner,
+            owner_location: (0..depth).fold(location.child(side), |at, _| at.child(0)),
+            field,
+            case,
+            present,
         })
     }
 
