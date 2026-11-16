@@ -175,6 +175,211 @@ mod orders_model {
 }
 use orders_model::model_package;
 
+/// Source members retain one outer collection as multiplicity, while an
+/// optional collection retains its whole checked type.
+#[trace("FR-569-AC-15", "FR-088-AC-8", "TC-1940")]
+#[test]
+fn retained_source_member_types_separate_only_the_outermost_collection() {
+    use fsl_semantics::model::domain_package::{DomainPackageRecord, Multiplicity, ValueTypeRef};
+    let source = "object Order {\n\
+        f: Decimal[0, 100; 2, 2; exact];\n\
+        s: Sequence<Set<Integer>[0, 2]>[0, 2];\n\
+        r: Reference<Order>; c: Clock;\n\
+        o: Option<Sequence<Integer>[0, 3]>;\n\
+        operation copy(s: Sequence<Set<Integer>[0, 2]>[0, 2]): Option<Sequence<Integer>[0, 3]>;\n\
+    }\n";
+    let declarations = assemble(source).expect("all source member forms assemble");
+    let models = &declarations
+        .model_inputs
+        .as_ref()
+        .expect("retained source model")
+        .0;
+    let view = &models
+        .iter()
+        .find(|model| model.alias.is_empty())
+        .expect("source model")
+        .view;
+    let records = &view.domain_package().records;
+    let field = |name: &str| {
+        records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::FieldMember(field)
+                    if field.key.node.ends_with(&format!("/Order/{name}")) =>
+                {
+                    Some(field)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Order.{name} is retained"))
+    };
+    let one = Multiplicity {
+        lower: 1,
+        upper: Some(1),
+        ordered: false,
+        unique: true,
+    };
+    let sequence = Multiplicity {
+        lower: 0,
+        upper: Some(2),
+        ordered: true,
+        unique: false,
+    };
+    assert_eq!(field("s").multiplicity, sequence);
+    let ValueTypeRef::Resolved(element) = &field("s").value_type else {
+        panic!("resolved nested set");
+    };
+    let filament_exact::ValueType::Collection(set) = element.as_ref() else {
+        panic!("one set element, not another sequence");
+    };
+    assert_eq!(set.kind(), filament_exact::CollectionKind::Set);
+    assert_eq!(set.element(), &filament_exact::ValueType::Integer);
+    assert_eq!(
+        set.bound(),
+        Some(filament_exact::CardinalityBound::new(0, 2).expect("bound"))
+    );
+    assert_eq!(field("o").multiplicity, one);
+    assert!(
+        matches!(&field("o").value_type, ValueTypeRef::Resolved(ty) if matches!(ty.as_ref(), filament_exact::ValueType::Option(_)))
+    );
+    assert_eq!(field("f").multiplicity, one);
+    assert!(
+        matches!(&field("f").value_type, ValueTypeRef::Resolved(ty) if matches!(ty.as_ref(), filament_exact::ValueType::Decimal(_)))
+    );
+    assert_eq!(field("c").value_type, ValueTypeRef::Clock);
+    assert_eq!(field("c").multiplicity, one);
+    let ValueTypeRef::Package(order) = &field("r").value_type else {
+        panic!("reference names Order's key");
+    };
+    assert_eq!(order, &field("r").owner);
+    let operation = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::OperationMember(operation) => Some(operation),
+            _ => None,
+        })
+        .expect("copy operation");
+    assert_eq!(operation.parameters[0].multiplicity, sequence);
+    assert_eq!(operation.parameters[0].value_type, field("s").value_type);
+    let result = operation.result.as_ref().expect("copy result");
+    assert_eq!(result.multiplicity, one);
+    assert_eq!(result.value_type, field("o").value_type);
+    let graph =
+        finish(assemble(&source.replace(" c: Clock;", "")).expect("the data fields assemble"))
+            .expect("the data fields check");
+    for name in ["f", "o"] {
+        let ValueTypeRef::Resolved(value_type) = &field(name).value_type else {
+            panic!("resolved {name}");
+        };
+        assert_eq!(
+            value_type.as_ref(),
+            &source_field_type(&graph, "Order", name)
+        );
+    }
+    let checked_sequence = source_field_type(&graph, "Order", "s");
+    let filament_exact::ValueType::Collection(sequence_type) = &checked_sequence else {
+        panic!("checked outer sequence");
+    };
+    assert_eq!(sequence_type.element(), element.as_ref());
+}
+
+#[trace("FR-569-AC-15", "TC-1940")]
+#[test]
+fn source_model_owned_value_types_have_the_same_resolved_representation() {
+    use fsl_semantics::model::domain_package::{DomainPackageRecord, ValueTypeRef};
+    let declarations = assemble_model(
+        "object Z { total: M::Total; operation f(p: M::Total): M::Total; }",
+        model_package(false),
+    )
+    .expect("model types assemble");
+    let models = &declarations.model_inputs.as_ref().expect("models").0;
+    let source = models
+        .iter()
+        .find(|model| model.alias.is_empty())
+        .expect("source model");
+    let mut types = Vec::new();
+    for record in &source.view.domain_package().records {
+        match record {
+            DomainPackageRecord::FieldMember(field) => types.push(&field.value_type),
+            DomainPackageRecord::OperationMember(operation) => {
+                types.extend(
+                    operation
+                        .parameters
+                        .iter()
+                        .map(|parameter| &parameter.value_type),
+                );
+                types.extend(operation.result.iter().map(|result| &result.value_type));
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(types.len(), 3);
+    for ty in &types {
+        assert!(
+            matches!(ty, ValueTypeRef::Resolved(value) if matches!(value.as_ref(), filament_exact::ValueType::Int(_))),
+            "{ty:?}"
+        );
+    }
+    assert_eq!(types[0], types[1]);
+    assert_eq!(types[1], types[2]);
+    let ValueTypeRef::Resolved(expected) = types[0] else {
+        panic!("resolved Total");
+    };
+    let expected = expected.clone();
+    let graph = finish(declarations).expect("model-owned source signatures check");
+    assert_eq!(*expected, source_field_type(&graph, "Z", "total"));
+}
+
+fn override_causes(source: &str, model: Option<DomainPackage>) -> Vec<&'static str> {
+    let declarations = match model {
+        Some(model) => assemble_model(source, model),
+        None => assemble(source),
+    }
+    .expect("override forms assemble");
+    finish(declarations)
+        .expect_err("the incompatible override is refused")
+        .iter()
+        .filter_map(|refusal| refusal.cause.catalog_code())
+        .map(|code| code.cause())
+        .collect()
+}
+
+#[trace("FR-569-AC-15", "TC-1940")]
+#[test]
+fn adverse_source_overrides_do_not_expand_the_closed_conformance_relation() {
+    for (source, expected) in [
+        ("object Base { operation f(p: Int[0, 9]): Integer; } object Child extends Base { operation f(p: Int[0, 3]): Integer redefines Base::f; }", "variance-parameter"),
+        ("object Order {} object Base { operation f(): Reference<Order>; } object Child extends Base { operation f(): Option<Reference<Order>> redefines Base::f; }", "variance-result"),
+        ("object Base { operation f(p: Decimal[0, 100; 2, 2; exact]): Boolean; } object Child extends Base { operation f(p: Decimal[0, 200; 2, 2; exact]): Boolean redefines Base::f; }", "variance-parameter"),
+    ] {
+        let causes = override_causes(source, None);
+        assert!(causes.contains(&expected), "{expected}: {causes:?}");
+    }
+}
+
+#[trace("FR-569-AC-15", "FSpec-FR-151-AC-2", "TC-1940")]
+#[test]
+fn model_object_reference_variance_recurses_through_options_and_collections() {
+    let mut model = model_package(false);
+    model.records.extend([
+        orders_model::object("Node", &[], false),
+        orders_model::object("Leaf", &["Node"], false),
+    ]);
+    for (base, child) in [
+        ("Option<Reference<M::Node>>", "Option<Reference<M::Leaf>>"),
+        (
+            "Option<Set<Reference<M::Node>>[0, 4]>",
+            "Option<Set<Reference<M::Leaf>>[1, 3]>",
+        ),
+    ] {
+        let source = format!("object Base {{ operation f(): {base}; }} object Child extends Base {{ operation f(): {child} redefines Base::f; }}");
+        finish(assemble_model(&source, model.clone()).expect("model reference overrides assemble"))
+            .unwrap_or_else(|refusals| panic!("{base} to {child}: {refusals:?}"));
+    }
+    let source = "object Base { operation f(): Option<Reference<M::Leaf>>; } object Child extends Base { operation f(): Option<Reference<M::Node>> redefines Base::f; }";
+    assert!(override_causes(source, Some(model)).contains(&"variance-result"));
+}
+
 /// The unit that selects fixture D as `M`, with `declarations`.
 fn assemble_model(
     declarations: &str,
@@ -1336,9 +1541,12 @@ fn other_package() -> DomainPackage {
     )
 }
 
-/// The node of the value type of source member `Owner.name`, as a package
-/// type.
-fn member_type_node(graph: &CheckedGraph, owner: &str, name: &str) -> String {
+/// FR-569-AC-15 retains a model-owned source member as its resolved checked type.
+fn retained_member_type(
+    graph: &CheckedGraph,
+    owner: &str,
+    name: &str,
+) -> filament_exact::ValueType {
     use fsl_semantics::model::domain_package::{DomainPackageRecord, ValueTypeRef};
     graph
         .source_packages()
@@ -1349,8 +1557,8 @@ fn member_type_node(graph: &CheckedGraph, owner: &str, name: &str) -> String {
                 if field.key.node.ends_with(&format!("/{owner}/{name}")) =>
             {
                 match &field.value_type {
-                    ValueTypeRef::Package(key) => Some(key.node.clone()),
-                    other => panic!("{owner}.{name} is not package-typed: {other:?}"),
+                    ValueTypeRef::Resolved(value_type) => Some(value_type.as_ref().clone()),
+                    other => panic!("{owner}.{name} is not resolved: {other:?}"),
                 }
             }
             _ => None,
@@ -1386,7 +1594,7 @@ fn a_model_type_resolves_only_through_the_declaring_units_own_aliases() {
 }
 
 /// Two units that select different packages as `M` each bind their own.
-#[trace("FR-569-AC-2", "TC-1408")]
+#[trace("FR-569-AC-2", "TC-1408", "FR-569-AC-15", "TC-1940")]
 #[test]
 fn two_units_selecting_different_packages_as_m_each_bind_their_own() {
     let a = "model M = \"test/orders\";\nobject A { t: M::Total; }\n";
@@ -1399,8 +1607,17 @@ fn two_units_selecting_different_packages_as_m_each_bind_their_own() {
         let declarations = assemble_two_units(first, second, models.clone())
             .expect("each unit's M::Total resolves");
         let graph = finish(declarations).expect("the units check");
-        assert_eq!(member_type_node(&graph, "A", "t"), "ix://test/orders/Total");
-        assert_eq!(member_type_node(&graph, "B", "t"), "ix://test/other/Total");
+        for (owner, upper) in [("A", 9_i64), ("B", 99_i64)] {
+            let expected = filament_exact::ValueType::Int(
+                filament_exact::IntegerInterval::new(
+                    filament_exact::Integer::from(0_i64),
+                    filament_exact::Integer::from(upper),
+                )
+                .expect("interval"),
+            );
+            assert_eq!(retained_member_type(&graph, owner, "t"), expected);
+            assert_eq!(source_field_type(&graph, owner, "t"), expected);
+        }
     }
 }
 

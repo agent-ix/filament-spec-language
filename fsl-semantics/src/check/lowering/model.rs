@@ -114,6 +114,21 @@ pub(crate) struct PackagePlace {
     pub(crate) members: Vec<(String, Option<String>)>,
 }
 
+/// A clock component's path within a source-declared checked value type.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceClockPlace {
+    /// Steps below the value's containing field.
+    pub path: Vec<PlaceStep>,
+    /// Whether the path passes through an optional value or case.
+    pub optional: bool,
+    /// Whether this clock alone introduces an optional presence bit.
+    pub bit: bool,
+    /// Whether this clock is directly guarded by its union case.
+    pub case: bool,
+    /// Resolved member rows corresponding to the steps.
+    pub members: Vec<(String, Option<String>)>,
+}
+
 /// One row of a clock place's `resolved_path` (FSpec FR-322 "Timed-model
 /// nodes"): for one path step, its declaring type, the member it resolves
 /// to and that member's declared type, and for a step a slot follows, the
@@ -286,6 +301,7 @@ pub struct AdmittedModel {
     /// Every clock place of the package's object types
     /// ([`Self::clock_places`]), found once from `records`.
     places: Vec<PackagePlace>,
+    source_places: BTreeMap<NodeKey, Vec<SourceClockPlace>>,
     /// Every required single-valued field whose type is a package object
     /// type, `(owner, field name, target)`: [`Self::referenced_object`],
     /// found once from `records`.
@@ -920,6 +936,7 @@ impl AdmittedModel {
             source_unit: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
+            source_places: BTreeMap::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -970,6 +987,7 @@ impl AdmittedModel {
             source_unit: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
+            source_places: BTreeMap::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -990,6 +1008,92 @@ impl AdmittedModel {
     pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
         self.alias = Some(alias.into());
         self
+    }
+
+    /// Refresh the source view after its complete member types resolve.
+    pub(crate) fn refresh_source_view(
+        &mut self,
+        view: &EffectiveView,
+        places: BTreeMap<NodeKey, Vec<SourceClockPlace>>,
+    ) {
+        self.index = view.shared_model_index().clone();
+        self.records = view
+            .domain_package()
+            .records
+            .iter()
+            .map(|record| (record.key().clone(), record.clone()))
+            .collect();
+        self.source_places = places;
+        self.places = self.find_places();
+        self.references = self.find_references();
+    }
+
+    /// Clock layouts of admitted model value types, indexed by the same
+    /// checked type keys their record fields use.
+    pub(crate) fn value_clock_layouts(
+        &self,
+        needed: &BTreeSet<NodeKey>,
+    ) -> BTreeMap<NodeKey, Vec<SourceClockPlace>> {
+        let mut layouts = BTreeMap::new();
+        if needed.is_empty() {
+            return layouts;
+        }
+        for (key, record) in &self.records {
+            if !matches!(
+                record,
+                DomainPackageRecord::RecordValueType(_)
+                    | DomainPackageRecord::TupleValueType(_)
+                    | DomainPackageRecord::Enum(_)
+            ) {
+                continue;
+            }
+            let (Some(identity), Ok(Some(node))) =
+                (self.effective_id(key), record_node_key(record))
+            else {
+                continue;
+            };
+            if !needed.contains(&node) {
+                continue;
+            }
+            let root = PackagePlace {
+                owner: identity,
+                field: key.clone(),
+                path: Vec::new(),
+                optional: false,
+                bit: false,
+                case: false,
+                aliases: Vec::new(),
+                declaring: key.node.clone(),
+                members: Vec::new(),
+            };
+            let value_ref = crate::model::domain_package::ValueTypeRef::Package(key.clone());
+            let mut places = Vec::new();
+            self.places_below(
+                &value_ref,
+                root,
+                self.rendered(&value_ref),
+                false,
+                false,
+                &mut Vec::new(),
+                &mut places,
+            );
+            if !places.is_empty() {
+                layouts.insert(
+                    node,
+                    places
+                        .into_iter()
+                        .map(|place| SourceClockPlace {
+                            path: place.path,
+                            optional: place.optional,
+                            bit: place.bit,
+                            case: place.case,
+                            members: place.members,
+                        })
+                        .collect(),
+                );
+            }
+        }
+        layouts
     }
 
     /// This source model as declared by `unit`.
@@ -1631,7 +1735,11 @@ impl AdmittedModel {
                 return;
             }
             ValueTypeRef::Package(key) => key,
-            ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) | ValueTypeRef::Resolved(_) => return,
+            ValueTypeRef::Resolved(value_type) => {
+                self.resolved_places(value_type, at, places);
+                return;
+            }
+            ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => return,
         };
         match self.records.get(key) {
             // A variant type: each case whose payload is `Clock` is a place
@@ -1698,6 +1806,66 @@ impl AdmittedModel {
                 visiting.pop();
             }
             _ => {}
+        }
+    }
+
+    fn resolved_places(
+        &self,
+        value_type: &ValueType,
+        at: PackagePlace,
+        places: &mut Vec<PackagePlace>,
+    ) {
+        let mut pending = vec![(value_type, at)];
+        while let Some((value_type, mut at)) = pending.pop() {
+            match value_type {
+                ValueType::Option(payload) => {
+                    at.optional = true;
+                    pending.push((payload, at));
+                }
+                ValueType::Collection(collection) => {
+                    let (min, max) = collection
+                        .bound()
+                        .map_or((0, None), |bound| (bound.minimum(), Some(bound.maximum())));
+                    at.path.push(PlaceStep::Slot(CollectionShape {
+                        ordered: collection.kind().is_ordered(),
+                        unique: collection.kind().is_unique(),
+                        min,
+                        max,
+                        map: false,
+                    }));
+                    at.members.push((
+                        element_type(at.members.last().map_or("", |member| member.0.as_str()))
+                            .to_owned(),
+                        None,
+                    ));
+                    pending.push((collection.element(), at));
+                }
+                ValueType::Composite(key) => {
+                    if let Some(components) = self.source_places.get(key) {
+                        for component in components {
+                            let mut below = at.clone();
+                            below.path.extend(component.path.iter().cloned());
+                            below.bit = !below.optional && component.bit;
+                            below.case = !below.optional && component.case;
+                            below.optional |= component.optional;
+                            below.members.extend(component.members.iter().cloned());
+                            places.push(below);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn resolved_bears_clock(&self, mut value_type: &ValueType) -> bool {
+        loop {
+            match value_type {
+                ValueType::Option(inner) => value_type = inner,
+                ValueType::Collection(collection) => value_type = collection.element(),
+                ValueType::Composite(key) => return self.source_places.contains_key(key),
+                _ => return false,
+            }
         }
     }
 
@@ -1947,7 +2115,9 @@ impl AdmittedModel {
                             ValueTypeRef::Clock => true,
                             ValueTypeRef::Package(inner) => self.type_bears_clock(inner, visiting),
                             ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => false,
-                            ValueTypeRef::Resolved(_) => false,
+                            ValueTypeRef::Resolved(value_type) => {
+                                self.resolved_bears_clock(value_type)
+                            }
                         }
                 });
                 visiting.pop();
