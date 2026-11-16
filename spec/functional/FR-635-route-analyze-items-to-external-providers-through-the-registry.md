@@ -62,8 +62,10 @@ decided against.
 ### One rule for every provider-routing entry
 
 The verbs that route items to providers are `analyze`, `prove`, `monitor`,
-`replay` and `generate`, the verbs FR-287 gives `--provider-config` (FSpec
-FR-561). Every FSL command entry those verbs reach SHALL take the started
+`run`, `replay` and `generate`, the verbs FR-287 gives `--provider-config`
+and `--provider-limit`. FSpec FR-561 names the same verbs; `run` is one of
+them because a run request's claim items (driver FR-006, FR-014) are
+routed and negotiated like analyze items. Every FSL command entry those verbs reach SHALL take the started
 process providers as one `providers` parameter, each value its `Process`
 descriptor and its `ExternalProvider` transport (the driver's
 `ProcessProvider`, "How a process provider runs an item"), and the run's
@@ -76,8 +78,9 @@ so every verb sees the same registry for the same configuration. The entries
 are `fsl_command::command::analyze_with_providers(path, vocabulary,
 providers, cancel)` for `analyze` (and `prove`, which shares the analyze
 items, FR-280), with `analyze(path, vocabulary, cancel)` the same entry with
-none; `command::monitor` (FR-644); and the FR-280 entries the driver's
-`prove`, `replay` and `generate` call. Each of those requirements refers to
+none; `command::monitor` (FR-644); the `run` entry, whose provider items
+go through the same provider request and transport (FR-950); and the FR-280
+entries the driver's `prove`, `replay` and `generate` call. Each of those requirements refers to
 this rule rather than restating it.
 
 ### How a process provider runs an item
@@ -105,15 +108,18 @@ Analyze SHALL work in this order (FR-950):
      routing sent to this backend, in request order. Each item carries its
      `request_index`, claim `{node, occurrence}`, kind, extent, bounds,
      options and candidates.
-   - `manifest`: the negotiated manifest entry. This is the backend's
-     descriptor as named by the `Disposition` that `negotiate_item` returned
-     for each item, beside the registry snapshot the candidates were checked
-     against.
-   - `limits`: the run's FSpec FR-462 limits, `AnalyzeOptions.provider_limits`,
-     which the driver fills from `--provider-limit` (FR-287). `deadline_ms`
-     is also written as FR-331's `request.deadline_ms`.
-   The request also holds each item's `ValueTarget`, which an in-process
-   arm reads. It is not a wire member.
+   - `manifest`: the full registry snapshot the candidates were checked
+     against, FR-331's request-stage `manifest`. The `Disposition` that
+     `negotiate_item` returned for each item names the negotiated
+     descriptor within it.
+   - `request.deadline_ms`: the `deadline_ms` of the run's FSpec FR-462
+     limits, `AnalyzeOptions.provider_limits`, which the driver fills from
+     `--provider-limit` (FR-287). It is the only limit on the FR-331 wire.
+   The request also holds two members that are not serialized and are not
+   wire members: `transport_limits`, the other six FR-462 limits of
+   `AnalyzeOptions.provider_limits`, which the transport enforces and a
+   linked provider ignores; and each item's `ValueTarget`, which an
+   in-process arm reads.
 3. Call the widened provider call, `ExternalProvider::settle(&ProviderRequest)
    -> ProviderVerdict`, once per request, under the run's cancel handle.
    `fsl_analyze::provider::run` takes the analysis view (FR-940) or the
@@ -124,7 +130,7 @@ The driver's `ProcessProvider` (FR-287) implements `ExternalProvider` and
 only transports. It starts the plugin (FSpec FR-561), converts the FR-331
 `hello` manifest into the FSL descriptor (FR-288), sends the request it is
 given unchanged as one FSpec FR-462 `request` frame through
-`ProcessProviderSession::invoke` under the request's limits, and maps the
+`ProcessProviderSession::invoke` under the request's `deadline_ms` and `transport_limits`, and maps the
 FR-331 `result` frame back to `ProviderVerdict`. It holds no package and no
 routed item of its own, and it builds no request member. The typed FR-331
 reader reads the result frame, and FR-290 settles it: `proved` with

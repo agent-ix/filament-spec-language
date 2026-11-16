@@ -259,8 +259,8 @@ member of its own.
   `replay_target` is the `state_clause` member naming the invariant,
   `occurrence_key` its `state_clause` node and `claim` occurrence, and
   `backend` EN-1's identity. The payload is FSpec FR-364's finite prefix
-  for a reachable-state invariant, with an empty `loop`, and it carries no
-  `over_binding`. The executor SHALL check no fairness, since a safety
+  for a reachable-state invariant, with an empty `loop`, `over_binding`
+  `null` and `fairness` `[]` (FSpec FR-364-AC-2). The executor SHALL check no fairness, since a safety
   violation is a finite prefix. At every replayed state, in order, it SHALL
   evaluate the invariant's letter as FR-338 "Canonical translation state"
   defines it for an invariant root: the checked body for every object of

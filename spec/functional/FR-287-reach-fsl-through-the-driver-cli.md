@@ -105,7 +105,7 @@ FR-298) and takes FR-285's exit code.
   package bytes of its own for it, and `--output` on any other verb is an
   unknown option (FSpec FR-301).
 - `--provider-config <file>` on the verbs that route items to providers
-  (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall read FSpec
+  (`analyze`, `prove`, `monitor`, `run`, `replay`, `generate`) shall read FSpec
   FR-561's `filament.provider-config/v1` document: its shape (`format`,
   `providers`, each entry's `path` and `arguments`), its refusals (a missing
   or unreadable file naming the path; `invalid-request` naming the file and the
@@ -128,9 +128,19 @@ FR-298) and takes FR-285's exit code.
   unchanged through `ProcessProviderSession::invoke` and maps the FR-331
   result back to `ProviderVerdict`. The driver holds no package and no
   routed item, and it has no provider pipeline of its own: the earlier
-  `run_configured_providers` path is removed, with no shim.
+  `run_configured_providers` path is removed, with no shim. `run` is a
+  provider-routing verb like the others (driver FR-006, FR-014): it takes
+  `--provider-config` and `--provider-limit`, and the provider items of its
+  request go through the same FR-950 request and transport. FSpec FR-561
+  names `run` among the verbs that take a provider configuration. `fsl run`
+  with `--provider-config` or `--provider-limit` SHALL call
+  `fsl_command::run_with_providers(request, providers: &[Engine], options)`,
+  which routes the run call's requirement items through the provider seam
+  `fsl_analyze::provider::settle_items` (build each `ProviderRequest`, then
+  `ExternalProvider::settle`) and returns the run outcome with the provider
+  verdicts that driver FR-006 and FR-014 report (FR-950).
 - `--provider-limit <name>=<value>` on the same provider-routing verbs
-  (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall set one of the
+  (`analyze`, `prove`, `monitor`, `run`, `replay`, `generate`) shall set one of the
   caller limits that FSpec FR-462 and FR-305 say bound each process-plugin
   run. FR-561 keeps these budgets out of the provider-configuration
   document, so one document serves runs of any size. The option may be

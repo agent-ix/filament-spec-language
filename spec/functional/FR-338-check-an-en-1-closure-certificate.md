@@ -241,10 +241,11 @@ constraint. It is false at the first object that evaluates
 `Completed(false)` and undefined at the first object that evaluates
 `Undefined`, which FR-125's undefined letter then rejects. The binding is
 `[]`: the invariant quantifies over the state's objects inside its letter,
-and binds no `over` parameter or argument. `profile` is the exact
-admitted profile identity the item was decided under (FR-625), and
-`activation` is `"origin"`, since the safety formula is read once from the
-initial state. A bad state
+and binds no `over` parameter or argument. `profile` is `"filament.temporal.infinite-trace/v1"` and `activation` is
+`"infinite"`, exactly as for the deadlock root: the safety formula is read
+over the subject's infinite behaviours, and the invariant root, like the
+deadlock root, has no authored profile of its own. Its automaton states
+are the `["safety", branches]` keys of the table below. A bad state
 of the certificate is a product state whose model state makes `I` false or
 undefined, so the closure check of an invariant item is the reachable-state
 check of FR-951.
@@ -297,7 +298,7 @@ The closed alternatives for `state` are:
 | --- | --- |
 | TP-2 undecided | `["bounded", clock, branches]`; `clock` is `["origin",remaining]` or `["each"]`. `remaining` is the remaining counted distance of the root's checked horizon. Each branch carries every still-open activation; it is not only the newest activation. |
 | TP-2 decided | `["accept"]` or `["reject"]`, absorbing under EN-5; under EN-1 `on each`, an accepted activation is removed from the live branches and new activations continue, so accepting one activation is not global acceptance. |
-| TP-1 / TP-3 / deadlock | `["safety", branches]`; these are the subset construction's viable elementary configurations of the formula itself after SM-6 trimming. The unique rejecting state is `["safety",[]]`. |
+| TP-1 / TP-3 / deadlock / invariant | `["safety", branches]`; these are the subset construction's viable elementary configurations of the formula itself after SM-6 trimming. The unique rejecting state is `["safety",[]]`. |
 | TP-4, guarded `on each` | `["guarded-buchi", phase, branch]`, only under activation `"each-when"`; `phase` is `"waiting"` or `"active"` ("Guarded `on each` activation" below). |
 | TP-4, unguarded `on each` | `["each-buchi", phase, branch]`, only under activation `"each"`; `phase` is `"waiting"` or `"active"`. The key represents the engine's activation-closed `always(guard implies phi)` form, with the unguarded condition fixed to `true`; its phase records whether the Büchi run has selected a violating activation. |
 | TP-4, `on origin` | `["buchi", branch]`, only under activation `"infinite"`; one elementary configuration of the negated formula, with its acceptance membership. This is not a subset-determinized safety state. |

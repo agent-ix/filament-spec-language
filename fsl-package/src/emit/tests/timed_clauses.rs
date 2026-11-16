@@ -1791,11 +1791,26 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
         panic!("one slot-domain node shared by the three clauses: {domains:?}");
     };
     assert_eq!(domain["semantic_form"], "presence_read", "{domain}");
+    let path = domain["node_id"]["path"].as_array().expect("a path");
     assert_eq!(
-        domain["node_id"]["path"],
-        json!(["expression", "presence_read", "filament.op.option.slots",
-            {"operand": 0}, {"operand": 1}]),
+        path.len(),
+        7,
+        "two arguments, identity, operator, result: {domain}"
+    );
+    assert_eq!(
+        path[..2],
+        [json!("expression"), json!("presence_read")],
         "{domain}"
+    );
+    assert!(path[2].get("operand").is_some() && path[3].get("operand").is_some());
+    assert_eq!(
+        path[4..6],
+        [json!("filament.op.option.slots"), json!("slots")],
+        "{domain}"
+    );
+    assert!(
+        path[6].get("operand").is_some(),
+        "the result type segment: {domain}"
     );
     assert!(
         domain["node_id"]["path"]

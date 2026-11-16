@@ -36,7 +36,7 @@ item has two artifacts of its own:
   or undefined.
 - **Counterexample.** FSpec FR-364's finite prefix for a reachable-state
   invariant: the steps from an initial state to the first reached state
-  where `I` is false, with an empty `loop`. It is the `undefined-evaluation`
+  where `I` is false, with an empty `loop`, `over_binding` `null` and `fairness` `[]`. It is the `undefined-evaluation`
   envelope when `I` is undefined there. FR-128 replays it with no fairness
   check.
 
@@ -74,7 +74,7 @@ family's kind").
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-951-AC-1 | Over FR-625-AC-4's Counter subject, `invariant AtMostThree using v on M::Counter at current { self.value <= 3 }` settles `proved`, basis `exhaustive`, `backend` `en-1`, certification `certified`; its certificate's product states carry the root `["invariant",N,"claim",O]`, `N` and `O` being the clause's `state_clause` node and `claim` occurrence ordinal, and the binding `[]`, and FR-338's checker accepts it. | Test (TC-2661) |
-| FR-951-AC-2 | `invariant AtMostTwo` (`self.value <= 2`) over the same subject settles `refuted`, `backend` `en-1`, with a counterexample whose `prefix` ends at the state where `value = 3`, whose `loop` is empty and which carries no `over_binding`; its FR-128 replay settles `reproduced-with-evaluated-witness` with `trace_position` the last state's position, and the item's `replay.reproduced` is `true`. | Test (TC-2661) |
+| FR-951-AC-2 | `invariant AtMostTwo` (`self.value <= 2`) over the same subject settles `refuted`, `backend` `en-1`, with a counterexample whose `prefix` ends at the state where `value = 3`, whose `loop` is empty, whose `over_binding` is `null` and whose `fairness` is `[]` (FSpec FR-364-AC-2); its FR-128 replay settles `reproduced-with-evaluated-witness` with `trace_position` the last state's position, and the item's `replay.reproduced` is `true`. | Test (TC-2661) |
 | FR-951-AC-3 | Negative: AC-2's counterexample truncated to end at `value = 2` replays to `inconclusive`, `ReplayParity`; with a non-empty `loop` added, or with `kind` `deadlock`, it refuses `invalid_runtime_input`/`invalid-value` before any step is replayed; AC-1's certificate with one product state whose model state has `value = 4` is rejected `BadState` at that state; and a certificate whose root names a `constraint` state clause is refused as a foreign clause root. | Test (TC-2661) |
 | FR-951-AC-4 | Over the Counter subject, the invariant `self.value <= 6 mod (3 - self.value)` checked under `CheckMode::Linked` refuses `undefined_expression`/`unproved-nonzero` at the `mod` at check, as every declared clause does whatever the check mode (FR-495, FR-952), so no item reaches EN-1; the invariant `self.value <= 7 mod 4`, whose divisor is a nonzero literal, checks and settles `proved`. | Test (TC-2661) |
 

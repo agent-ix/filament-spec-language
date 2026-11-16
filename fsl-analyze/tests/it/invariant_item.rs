@@ -4,7 +4,7 @@
 //! refuted by a finite-prefix counterexample that replays.
 
 use ix_trace_rs::trace;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{analyze, counter_request, label, Workspace};
 
@@ -49,7 +49,8 @@ fn a_violated_invariant_is_refuted_by_a_replayed_finite_prefix() {
     assert_eq!(item["record"]["backend"], "en-1", "{item}");
     let counterexample = &item["counterexample"];
     assert_eq!(counterexample["loop"], json!([]), "{item}");
-    assert!(counterexample.get("over_binding").is_none(), "{item}");
+    assert_eq!(counterexample["over_binding"], Value::Null, "{item}");
+    assert_eq!(counterexample["fairness"], json!([]), "{item}");
     let last = counterexample["prefix"]
         .as_array()
         .and_then(|prefix| prefix.last())
