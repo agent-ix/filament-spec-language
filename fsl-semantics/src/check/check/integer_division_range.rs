@@ -159,6 +159,7 @@ pub(super) fn infer(
         if operator == IntegerDivisionOperator::Div {
             return Ok(None);
         }
+        charge()?;
         let magnitude = lo.abs().max(hi.abs()).sub(&one);
         return Ok(Some(match law {
             DivisionProfile::Euclidean => (zero, magnitude),
