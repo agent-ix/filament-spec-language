@@ -1425,6 +1425,41 @@ mod tests {
     use super::*;
     use crate::model::domain_package::{DomainPackageRef, ObjectTypeRecord};
 
+    #[trace("FR-088-AC-13", "TC-2360")]
+    #[test]
+    fn diagnostic_spellings_do_not_change_index_equality_or_conformance() {
+        let point = crate::check::declared_node_key(
+            "test/spellings".to_owned(),
+            vec!["Point".to_owned()],
+            0,
+        )
+        .expect("nominal key");
+        let mut first = crate::model::spelling::SourceSpellings::default();
+        first.name_node(point.clone(), "Point".to_owned());
+        let mut second = first.clone();
+        second.name_node(point.clone(), "Spot".to_owned());
+        let first = ModelIndex::build(package(&[])).with_source_spellings(Arc::new(first));
+        let second = ModelIndex::build(package(&[])).with_source_spellings(Arc::new(second));
+        let value = ValueTypeRef::Resolved(Box::new(ValueType::Composite(point)));
+        let other = ValueTypeRef::Resolved(Box::new(ValueType::Integer));
+        assert_eq!(first, second);
+        assert_eq!(first.package(), second.package());
+        for target in [&value, &other] {
+            assert_eq!(
+                first.value_conformance_walk(&value, target, 10),
+                second.value_conformance_walk(&value, target, 10)
+            );
+        }
+        assert_eq!(
+            crate::model::spelling::fsl_spelling(&value, first.source_spellings(), None),
+            "Point"
+        );
+        assert_eq!(
+            crate::model::spelling::fsl_spelling(&value, second.source_spellings(), None),
+            "Spot"
+        );
+    }
+
     #[trace("FR-569-AC-15", "TC-1940")]
     #[test]
     fn resolved_conformance_recurses_only_through_options_and_same_kind_collections() {

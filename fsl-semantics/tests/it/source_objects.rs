@@ -2139,6 +2139,51 @@ fn resolved_source_member_spellings_keep_aliases_without_changing_identity() {
     let index = source.view.model_index();
     let spellings = index.source_spellings();
     let records = &source.view.domain_package().records;
+    let mut retained = Vec::new();
+    for record in records {
+        match record {
+            DomainPackageRecord::FieldMember(field) => retained.push(&field.value_type),
+            DomainPackageRecord::OperationMember(operation) => {
+                retained.extend(
+                    operation
+                        .parameters
+                        .iter()
+                        .map(|parameter| &parameter.value_type),
+                );
+                retained.extend(operation.result.iter().map(|result| &result.value_type));
+            }
+            _ => {}
+        }
+    }
+    for retained in retained {
+        let ValueTypeRef::Resolved(value_type) = retained else {
+            continue;
+        };
+        let mut pending = vec![value_type.as_ref()];
+        while let Some(value_type) = pending.pop() {
+            use filament_exact::ValueType;
+            match value_type {
+                ValueType::Composite(key) => assert!(spellings.node_name(key).is_some()),
+                ValueType::Enum(shape) => {
+                    for variant in shape.variants() {
+                        assert!(spellings.node_name(variant.owner()).is_some());
+                    }
+                }
+                ValueType::Reference(key) => assert!(spellings.object_name(key).is_some()),
+                ValueType::Quantity(unit) => assert!(spellings
+                    .unit_name(unit.declared_key().expect("declared m"))
+                    .is_some()),
+                ValueType::Option(inner) => pending.push(inner),
+                ValueType::Collection(collection) => pending.push(collection.element()),
+                ValueType::Map(map) => {
+                    pending.push(map.key());
+                    pending.push(map.values());
+                }
+                ValueType::Population(_) => panic!("source members contain no Population"),
+                _ => {}
+            }
+        }
+    }
     let mut point = None;
     for (name, expected) in [
         ("a", "Money"),
