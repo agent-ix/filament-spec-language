@@ -570,3 +570,18 @@ fn a_malformed_abstract_subject_is_refused_at_its_token() {
         assert_eq!(refused_at(&declaration), offending, "{header}");
     }
 }
+
+/// FR-897 (TC-2533), FSpec FR-738: a channel names the systems connection it
+/// travels over with `via` after its `to` role, and S1 admits it.
+#[trace("TC-2533", "FR-897-AC-1", "FSpec-FR-738-AC-1")]
+#[test]
+#[ignore = "QSL-2217: the channel production has no via clause, so a channel over a connection is a syntax error"]
+fn a_channel_names_its_connection_with_via() {
+    let members = "role Inlet on M::Actor;\n\
+        relationship Link = M::link;\n\
+        channel Feed from R to Inlet via Link carries M::Input ordering unordered \
+        delivery exactly-once-premise capacity 2 overflow reject;";
+    let (text, parsed) = parse_admitted(&protocol("on origin", members, "sequence Main { }"));
+    assert!(text.contains("via Link"));
+    assert!(parsed.is_admissible());
+}

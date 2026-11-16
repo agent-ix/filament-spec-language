@@ -426,3 +426,67 @@ fn a_derived_item_over_a_name_that_is_no_model_alias_is_an_unknown_claim() {
         "unknown-claim"
     );
 }
+
+/// FR-896-AC-1, AC-2 (TC-2532): a `global-conformance` item with no
+/// recording is decided over every behaviour of the protocol and its bound
+/// role implementations: the order protocol conforms, and without its
+/// receive it is refuted with the deadlock.
+#[trace("TC-2532", "FR-896-AC-1", "FR-896-AC-2")]
+#[test]
+#[ignore = "QSL-2209: a global-conformance item settles unsupported with a pending obligation instead of being decided"]
+fn global_conformance_is_decided_over_every_behaviour() {
+    for (receive, expected) in [(true, "proved"), (false, "refuted")] {
+        let ws = Workspace::new(&format!("cli-conformance-{receive}"));
+        let run = analyze(&litmus_request(
+            &ws,
+            &order_protocol(receive),
+            json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+        ));
+        assert_eq!(label(&run.item(0)), expected, "receive {receive}");
+    }
+}
+
+/// FR-895-AC-2, FR-894-AC-5 (TC-2530): in replay mode a recording whose
+/// `Seller` receives `Got` before `Buyer` sends `Placed` violates the
+/// causal-order obligation of that pair, and the item settles `refuted`
+/// rather than declining the recording.
+#[trace("TC-2530", "FR-895-AC-2", "FSpec-FR-737-AC-1")]
+#[test]
+#[ignore = "QSL-2210: no replay-mode executor assesses a recorded protocol execution"]
+fn a_receive_recorded_before_its_send_fails_its_causal_order_obligation() {
+    let ws = Workspace::new("cli-replay-mode");
+    let recording = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [
+            {"kind": "receive", "node": "Flow::Main::Got", "role": "Seller",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}}
+        ],
+        "local_order": {"Seller": [0], "Buyer": [1]},
+        "correlations": [{"send": 1, "receive": 0}],
+        "closure": {"state": "closed", "premises": []}
+    });
+    ws.write("recording.json", recording.to_string().as_bytes());
+    let run = analyze(&litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                          "recording": {"authority": "test", "identity": "recording"}}],
+               "documents": [{"file": "recording.json"}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let verdicts = item["obligations"]
+        .as_array()
+        .expect("one verdict per obligation");
+    assert!(
+        verdicts
+            .iter()
+            .any(|verdict| verdict["verdict"] == "violated" && verdict["cause"] == "misordered"),
+        "{item}"
+    );
+}

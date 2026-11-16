@@ -958,7 +958,7 @@ fn tla_export_agrees_with_fsl_exploration() {
 #[test]
 #[trace("TC-2107", "FR-757-AC-2")]
 #[trace("TC-2107", "FR-757-AC-3")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet, and `model-steps` under the timed profile is a spec gap"]
+#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet; QSL-2140: the timed `Low` writes no clock, which is refused MissingClock until FR-942 binds the default"]
 fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -983,10 +983,7 @@ fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
         value["tl_lowering"]["cross_evaluation"]["agree"], true,
         "{value}"
     );
-    let timed = unit.replace(
-        "filament.temporal.event-position.false-extension/v1",
-        "filament.temporal.timed/v1",
-    );
+    let timed = timed_low();
     let (_, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));
     assert!(value["tl_lowering"].get("formula").is_none(), "{value}");
     assert_eq!(
@@ -1036,6 +1033,22 @@ fn low(profile: &str, body: &str) -> String {
          temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ {body} }}\n"
     )
+}
+
+/// The timed form of `Low` (FR-757-AC-3, FR-931-AC-2): the ConfigVersion model
+/// timed in `ms`, under the timed profile with no `clock` member, so bound
+/// `model-time`; it checks and FR-527 classifies it unsupported. The header
+/// selects the timed facet (`filament.temporal.complete/v1`), which a `time`
+/// member needs (FR-230).
+fn timed_low() -> String {
+    "language \"ix:native\" edition \"1-draft\";\n\
+     profile tc = \"filament.temporal.complete/v1\";\n\
+     profile t = \"filament.temporal.timed/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config dense unit ms;\n\
+     temporal Low using t over (c: Config::ConfigVersion) \
+     on origin { always [0 ms, 3 ms] holds(c.versionNumber <= 2) }\n"
+        .to_owned()
 }
 
 const EVENT_POSITION: &str = "filament.temporal.event-position.false-extension/v1";
@@ -1096,12 +1109,15 @@ fn a_tl_lowering_request_selects_its_correspondence() {
 /// with no classified target and no formula.
 #[test]
 #[trace("TC-2601", "FR-931-AC-2")]
-#[ignore = "QSL-2147: `Low` writes `clock \"model-steps\"`, which the timed profile does not check (spec gap)"]
+#[ignore = "QSL-2140: the timed `Low` writes no clock, which is refused MissingClock until FR-942 binds the default"]
 fn a_timed_clause_lowers_to_no_formula() {
-    let timed = low("filament.temporal.timed/v1", LOW_BODY);
+    let timed = timed_low();
     let (code, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));
     assert_eq!(code, 21, "{value}");
-    assert_eq!(value["tl_lowering"]["disposition"], "unsupported");
+    assert_eq!(
+        value["tl_lowering"]["disposition"], "unsupported",
+        "{value}"
+    );
     assert!(value["tl_lowering"].get("classified").is_none(), "{value}");
     assert!(value["tl_lowering"].get("formula").is_none(), "{value}");
 }

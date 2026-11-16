@@ -181,3 +181,26 @@ fn an_unknown_claim_over_a_package_settles_unknown_claim() {
     );
     assert_eq!(run.exit, 20);
 }
+
+/// FR-940-AC-1 and AC-3: the package route's `BarePackage` reads the same
+/// facts through `AnalysisView` as the source route's `AdmittedPackageRead`
+/// of the compiled package, so a `package` request is no longer
+/// refused as not implemented and its items equal the source route's.
+#[trace("TC-2620", "FR-940-AC-1", "FR-940-AC-3")]
+#[test]
+#[ignore = "QSL-2271: the analysis engines do not read a package through AnalysisView yet"]
+fn a_package_request_reads_the_source_route_facts_through_the_view() {
+    let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
+    let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}, {"claim": "AtMostTwo"}]);
+    let ws = Workspace::new("package-view");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-view.json", &members);
+    assert!(
+        !run.document().to_string().contains("not-yet-implemented"),
+        "{}",
+        run.document()
+    );
+    assert_eq!(run.document()["items"], source.document()["items"]);
+    assert_eq!(run.exit, source.exit);
+}

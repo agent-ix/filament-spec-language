@@ -18,6 +18,9 @@ fsl-route = { path = "../fsl-route" }
 filament-contract-model = { workspace = true }
 filament-exact = { workspace = true }
 filament-semantic-value = { workspace = true }
+# FR-862: the replay request reader converts a witness value to its owner's
+# canonical wire bytes, and reads a request tree with no nesting ceiling.
+quire-canonical = { workspace = true, features = ["serde_json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] }
 thiserror = "2.0.20"

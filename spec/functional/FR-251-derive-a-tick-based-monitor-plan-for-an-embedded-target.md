@@ -479,6 +479,8 @@ may repair such a disagreement by inventing another evaluation rule.
   cannot decide, and never a refusal. Plan derivation SHALL NOT refuse these
   clauses, nor an unbounded operator over an unbounded one, nor one over a
   future operator; no operator is typed "unsupported" for want of an interval.
+  The timed form `[q, *]` checks under the timed profile and the step form
+  `[a, *]` under infinite-trace (FR-943), so both reach this rule.
   - **Lower boundary.** The monitor's lower-boundary kind is FR-501's
     `HistoryCutoff`, which is what `history_start`, initially the baseline,
     already means for a bounded past operator: the monitor starts at a counter

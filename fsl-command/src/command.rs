@@ -6,6 +6,7 @@ mod clause;
 mod monitor;
 mod output;
 mod output_file;
+mod replay;
 mod tl;
 mod wire;
 
@@ -71,6 +72,7 @@ impl FileCategory {
     }
 }
 
+#[derive(Default)]
 struct FileCounts {
     programs: usize,
     models: usize,
@@ -369,6 +371,25 @@ pub enum RunCause {
     /// FR-644: the caller cancelled a monitor run.
     #[error("the monitor run was cancelled")]
     MonitorCancelled,
+    /// FR-862: a `native-replay/1` request member is outside FSpec
+    /// FR-336's replay request mapping, missing, or does not decode.
+    #[error("invalid replay request: {0}")]
+    ReplayRequest(crate::replay_request::RequestDefect),
+    /// FR-862: a `byte_provision` file could not be read, or exceeds the
+    /// request's file-count or byte ceilings.
+    #[error("replay byte_provision file {bytes_path}: {cause}")]
+    ReplayBytes {
+        /// The row's `bytes_path`, as the request spells it.
+        bytes_path: String,
+        /// Why the file was not read.
+        cause: Box<RunCause>,
+    },
+    /// FR-862: FR-071 or FR-098 refused the decoded replay request.
+    #[error("{}", .0.refusal)]
+    Replay(Box<replay::ReplayFailure>),
+    /// FR-862: the settled replay has no FR-323 per-item result encoding.
+    #[error("cannot serialize replay result: {0}")]
+    ReplayOutput(#[source] fsl_replay::CauseCodecError),
 }
 
 /// The two owner projections of the same source-intake refusal.
@@ -470,6 +491,10 @@ impl RunCause {
             Self::AnalyzeFault | Self::MonitorFault | Self::MonitorCancelled => {
                 Code::RuntimeInvariant
             }
+            Self::ReplayRequest(_) => Code::InvalidRequest,
+            Self::ReplayBytes { cause, .. } => cause.code(),
+            Self::Replay(failure) => failure.refusal.code(),
+            Self::ReplayOutput(_) => Code::OutputFailure,
         }
     }
 
@@ -494,6 +519,9 @@ impl RunCause {
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
+            Self::ReplayBytes { cause, .. } => cause.category(),
+            Self::Replay(failure) => failure.outcome.category(),
+            Self::ReplayOutput(_) => filament_semantic_value::catalog::Category::InternalFailure,
             _ => self.code().category(),
         }
     }
@@ -535,6 +563,7 @@ impl RunError {
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
+            RunCause::Replay(failure) => failure.outcome.clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -592,7 +621,10 @@ impl RunError {
             | RunCause::AnalyzeUniverse(_)
             | RunCause::AnalyzeFault
             | RunCause::MonitorFault
-            | RunCause::MonitorCancelled => OutcomeDocument::new(operation, None, self.category())
+            | RunCause::MonitorCancelled
+            | RunCause::ReplayRequest(_)
+            | RunCause::ReplayBytes { .. }
+            | RunCause::ReplayOutput(_) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     None,
                     self.cause.code().as_str(),
@@ -774,6 +806,9 @@ pub fn run_with_limits_and_overrides(
     let monitored = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         if monitor::is_monitor_request(bytes) {
             monitor::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
+        } else if replay::is_replay_request(bytes) {
+            // FR-862: a `native-replay/1` request replays its FR-336 request.
+            replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
             Ok(None)
         }

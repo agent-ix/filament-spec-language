@@ -1803,3 +1803,33 @@ fn w_wire_bytes_do_not_follow_unrelated_protocols() {
         |_: &WireGraph, _: &Value, raw: &Value| raw.clone(),
     );
 }
+
+/// FR-892-AC-4 (TC-2525): a compensation template missing its clock
+/// selection is refused with a message that names it as a compensate
+/// template, never as a "temporal declaration".
+#[trace("TC-2525", "FR-892-AC-4")]
+#[test]
+#[ignore = "QSL-2225: the missing-selection refusal calls a compensate template a temporal declaration"]
+fn a_missing_template_clock_names_the_compensate_template() {
+    let graph = tc134_timed_graph();
+    let selections = tc134_selections(&graph);
+    let package = CheckedPackage::link(graph);
+    let first = package
+        .graph()
+        .protocols()
+        .iter()
+        .flat_map(|protocol| protocol.obligations.compensations.iter().map(|c| c.span))
+        .next()
+        .expect("a compensation");
+    let mut missing = selections.clone();
+    missing.retain(|selection| selection.declaration_span != first);
+    let refusal = crate::emit::emit_checked_with_temporal_selections(
+        &package,
+        &missing,
+        crate::EmitLimits::fixture(),
+    )
+    .expect_err("the missing selection refuses");
+    let message = refusal.to_string();
+    assert!(message.contains("compensate template"), "{message}");
+    assert!(!message.contains("temporal declaration"), "{message}");
+}

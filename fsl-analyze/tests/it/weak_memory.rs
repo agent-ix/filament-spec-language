@@ -20,10 +20,10 @@ use ix_trace_rs::trace;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::protocol::{
-    classify_accesses, visible, AccessShape, CarriedComponent, ClaimReads, InstanceAccess,
-    MemoryModel, MemorySelection, MemorySelectionRefusal, PositionAnchor, ProtocolLocation,
-    ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind,
-    Sc, StepKind, ThreadPath, Tso, WaitCause, WeakAccesses,
+    classify_accesses, visible, CarriedComponent, ClaimReads, InstanceAccess, MemoryModel,
+    MemorySelection, MemorySelectionRefusal, PositionAnchor, ProtocolLocation, ProtocolRefusal,
+    ProtocolState, ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind, Sc, StepKind,
+    ThreadPath, Tso, WaitCause, WeakAccesses,
 };
 use fsl_eval::simulation::{
     independent, ExpansionLimit, Location, SubjectSystem, TransitionSystem,
@@ -38,7 +38,7 @@ use fsl_replay::{
     ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal, ModelTraceReplayResult,
     ModelTraceSettlement, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject,
     ReachedLimit, ReplayLimits, ReplayRefusal, ResultLabel, StatedMemoryBound,
-    TemporalCounterexample, TerminalValue, UnavailabilityCause, UndecidedCause, WeakAccessFailure,
+    TemporalCounterexample, TerminalValue, UndecidedCause,
 };
 use fsl_route::model_request::ModelRequest;
 use fsl_semantics::check::{AccessClass, FormulaNodeId};
@@ -811,59 +811,31 @@ fn any_join_unit() -> String {
     contracts() + &protocol("SB", &run)
 }
 
+/// Whether `case` under `model` explores to a verdict instead of settling a
+/// `weak-access-shape` cause (FR-902: every access shape has a meaning).
+fn explores(case: &Case, model: MemoryModelName) -> bool {
+    let selection = [select("SB::Both", model)];
+    !matches!(
+        case.check(&selection, ModelCheckItem::DeadlockFreedom, None),
+        ModelCheckOutcome::Memory {
+            cause: MemoryCause::WeakAccessShape(_),
+            ..
+        }
+    )
+}
+
 /// FR-219-AC-4 (TC-664 step 4) and FR-220-AC-5 (TC-665 step 5): a `tso`
 /// selection for a `parallel` with no `memory` clause that joins `any`
-/// settles V-8 `WeakAccessShape.failures` with `JoinPolicy` before any state is
-/// explored, written `{"type":"join-policy"}`, and the same request with no
-/// `memory` member checks under `sc`. An attempt writing two fields of its
-/// receiver, both shared, settles `MultiLocation` under a `tso` selection,
-/// naming both locations, and checks under `sc`.
+/// explores by FR-902's join rule, and an attempt writing two fields of its
+/// receiver, both shared, explores as program-order single-location
+/// accesses. Both check under `sc` as before.
 #[trace("TC-664", "FR-219-AC-4")]
 #[trace("TC-665", "FR-220-AC-5")]
 #[test]
-fn a_weak_selection_settles_the_access_shapes_before_exploring() {
+#[ignore = "QSL-2218: a weak selection settles WeakAccessShape for a non-all join and a multi-location attempt instead of exploring"]
+fn a_weak_selection_explores_an_any_join_and_a_multi_location_attempt() {
     let any = Case::new(&any_join_unit());
-    let selected = any.check(
-        &[select("SB::Both", MemoryModelName::Tso)],
-        ModelCheckItem::DeadlockFreedom,
-        None,
-    );
-    let ModelCheckOutcome::Memory {
-        cause: MemoryCause::WeakAccessShape(shape),
-        stats,
-    } = &selected
-    else {
-        panic!("{selected:?}");
-    };
-    assert_eq!(stats.product_states, 1);
-    assert_eq!(shape.shape, AccessShape::JoinPolicy);
-    assert_eq!(shape.site, "Both");
-    assert_eq!(shape.transition, None);
-    assert_eq!(
-        shape.shape_text().expect("text"),
-        r#"{"type":"join-policy"}"#
-    );
-    assert_eq!(
-        shape.failures_text().expect("failure list text"),
-        r#"[{"shape":{"type":"join-policy"},"site":"Both","transition":null}]"#
-    );
-    let record = any.settle(
-        &[select("SB::Both", MemoryModelName::Tso)],
-        &selected,
-        true,
-        None,
-    );
-    assert_eq!(record.label, ResultLabel::Unsupported);
-    assert_eq!(
-        record.value,
-        TerminalValue::Unsupported(UnavailabilityCause::WeakAccessShape {
-            failures: vec![WeakAccessFailure {
-                site: "Both".to_owned(),
-                transition: None,
-                shape: r#"{"type":"join-policy"}"#.to_owned(),
-            }],
-        })
-    );
+    assert!(explores(&any, MemoryModelName::Tso));
     assert!(
         matches!(
             any.check(&[], ModelCheckItem::DeadlockFreedom, None),
@@ -871,7 +843,6 @@ fn a_weak_selection_settles_the_access_shapes_before_exploring() {
         ),
         "the any join checks under sc"
     );
-
     let run = format!(
         "parallel Both {{ branch left sequence L {{ {} }} \
          branch right sequence R {{ {} {} }} }} join all [left, right];",
@@ -880,61 +851,19 @@ fn a_weak_selection_settles_the_access_shapes_before_exploring() {
         attempt("Lw", "c", "Core::read3", "", "ReadsX3, ReadW"),
     );
     let two = Case::new(&(contracts() + &protocol("SB", &run)));
-    let outcome = two.check(
-        &[select("SB::Both", MemoryModelName::Tso)],
-        ModelCheckItem::DeadlockFreedom,
-        None,
-    );
-    let ModelCheckOutcome::Memory {
-        cause: MemoryCause::WeakAccessShape(shape),
-        ..
-    } = &outcome
-    else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(shape.site, "Both/left/L/Bx");
-    assert!(shape.transition.is_some());
-    let AccessShape::MultiLocation { locations } = &shape.shape else {
-        panic!("{shape:?}");
-    };
-    let accesses = two.accesses(&[select("SB::Both", MemoryModelName::Tso)]);
-    let names: BTreeSet<(String, String)> = locations
-        .iter()
-        .map(|location| named(&accesses, location))
-        .collect();
-    let receiver = names
-        .iter()
-        .next()
-        .map(|(key, _)| key.clone())
-        .expect("a location");
-    assert_eq!(
-        names,
-        BTreeSet::from([name(&receiver, "v"), name(&receiver, "w")])
-    );
-    let text: Json = serde_json::from_str(&shape.shape_text().expect("text")).expect("JSON");
-    assert_eq!(text["type"], json!("multi-location"));
-    let fields: BTreeSet<&str> = text["locations"]
-        .as_array()
-        .expect("locations")
-        .iter()
-        .map(|location| {
-            assert_eq!(location["type"], json!("location"));
-            assert!(location["object"].is_object());
-            location["field"].as_str().expect("a field")
-        })
-        .collect();
-    assert_eq!(fields, BTreeSet::from(["v", "w"]));
+    assert!(explores(&two, MemoryModelName::Tso));
     assert!(matches!(
         two.check(&[], ModelCheckItem::DeadlockFreedom, None),
         ModelCheckOutcome::Holds { .. }
     ));
 }
 
-/// FR-220-AC-5: the first reachable failing state collects both weak-join
-/// policy entries before generating its outgoing steps.
+/// FR-220-AC-5: nested `join any` controls under a weak selection explore
+/// past the outer fork; no reachable state carries a weak-access finding.
 #[trace("TC-665", "FR-220-AC-5")]
 #[test]
-fn access_shapes_are_settled_at_the_first_reachable_model_state() {
+#[ignore = "QSL-2218: nested any joins under tso settle WeakAccessShape at the first reachable state instead of exploring"]
+fn nested_any_joins_explore_under_a_weak_selection() {
     let run = "parallel Both { \
         branch left sequence L { \
             parallel InnerL { \
@@ -949,173 +878,37 @@ fn access_shapes_are_settled_at_the_first_reachable_model_state() {
             } join any [a, b] outstanding cancel; \
         } \
     } join all [left, right];";
-    let body = contracts() + &protocol("SB", run);
-    let case = Case::new(&body);
+    let case = Case::new(&(contracts() + &protocol("SB", run)));
     let selection = [select("SB::Both", MemoryModelName::Tso)];
     let system = case.system(&selection, Tso::default()).expect("builds");
     let initial = system.initial().into_iter().next().expect("initial");
     let setup = system.successors(&initial).expect("expands initial state");
-    assert!(!setup.successors.is_empty());
-    assert!(!setup
-        .findings
-        .iter()
-        .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_))));
     let forked = setup
         .successors
         .iter()
         .find(|(transition, _)| transition.node() == Some("Both"))
         .map(|(_, state)| state.clone())
         .expect("outer fork");
-    let refused = system.successors(&forked).expect("returns state finding");
-    assert!(refused.successors.is_empty());
-    assert!(matches!(
-        refused.findings.as_slice(),
-        [ModelFinding::WeakAccessShape(shape)] if shape.failures.len() == 2
-    ));
-    let ModelFinding::WeakAccessShape(shape) = &refused.findings[0] else {
-        unreachable!("the assertion above found the weak-access finding");
-    };
-    let failures: Json = serde_json::from_str(&shape.failures_text().expect("failure list text"))
-        .expect("valid failure list JSON");
-    assert_eq!(
-        failures
-            .as_array()
-            .expect("failure array")
-            .iter()
-            .map(|failure| failure["site"].as_str().expect("failure site"))
-            .collect::<Vec<_>>(),
-        ["Both/left/L/InnerL", "Both/right/R/InnerR"]
-    );
-
-    let outcome = case.check(&selection, ModelCheckItem::DeadlockFreedom, None);
-    let ModelCheckOutcome::Memory {
-        cause: MemoryCause::WeakAccessShape(shape),
-        stats,
-    } = outcome
-    else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(stats.product_states, 2);
-    assert_eq!(shape.failures.len(), 2);
+    let after = system
+        .successors(&forked)
+        .expect("expands the forked state");
+    assert!(!after.successors.is_empty());
+    assert!(!after
+        .findings
+        .iter()
+        .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_))));
+    assert!(explores(&case, MemoryModelName::Tso));
 }
 
-/// FR-220-AC-14: the initial pre-check returns every enabled ordering
-/// mismatch instead of stopping at the first store.
+/// FR-220-AC-14 (TC-665 step 13): under `tso` and under `ra`, each ordering
+/// the instantiated kind does not take is restricted to the kind (a load
+/// with `release` or `acq_rel`, a store with `acquire` or `acq_rel`, an RMW
+/// with no ordering, a local access with `release`) and the item explores;
+/// each is admitted under `sc`, and a well-ordered RMW explores as before.
 #[trace("TC-665", "FR-220-AC-14")]
 #[test]
-fn ordering_mismatches_are_accumulated_at_the_first_state() {
-    let case = Case::new(&sb_unit(&sb_run("", "acquire", "")));
-    let selection = [select("SB::Both", MemoryModelName::Tso)];
-    let outcome = case.check(&selection, ModelCheckItem::DeadlockFreedom, None);
-    let ModelCheckOutcome::Memory {
-        cause: MemoryCause::WeakAccessShape(shape),
-        stats,
-    } = outcome
-    else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(stats.product_states, 1);
-    assert_eq!(shape.failures.len(), 2);
-    assert!(shape.failures.iter().all(|failure| matches!(
-        failure.shape,
-        AccessShape::OrderingMismatch {
-            access: AccessClass::Store,
-            ordering: Some(fsl_semantics::check::AccessOrdering::Acquire),
-        }
-    )));
-    let failures: Json = serde_json::from_str(&shape.failures_text().expect("failure list text"))
-        .expect("valid failure list JSON");
-    assert!(failures.as_array().is_some_and(|failures| {
-        failures.len() == 2
-            && failures.iter().all(|failure| {
-                failure["shape"]["type"] == "ordering-mismatch"
-                    && failure["shape"]["access"] == "store"
-                    && failure["shape"]["ordering"] == "acquire"
-            })
-    }));
-}
-
-/// FR-220-AC-14: a local ordering mismatch is deferred until the reachable
-/// graph closes, then retained when its touched names never become shared.
-#[trace("TC-665", "FR-220-AC-14")]
-#[test]
-fn a_never_shared_local_ordering_is_refused_after_exhaustive_reachability() {
-    let run = format!(
-        "parallel Both {{ branch left sequence L {{ {} }} branch right sequence R {{ }} }} \
-         join all [left, right];",
-        attempt("Cp", "c", "Core::copy", "release", "CopyR"),
-    );
-    let case = Case::new(&(contracts() + &protocol("SB", &run)));
-    for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
-        let entries = weak_entries(&case, model).expect("settles V-8 after exploration");
-        assert!(
-            entries.iter().any(|entry| {
-                entry["site"] == "Both/left/L/Cp"
-                    && entry["shape"] == mismatch("local", json!("release"))
-            }),
-            "{model:?}: {entries:?}"
-        );
-    }
-}
-
-/// The V-8 failure shapes of `case` under `model`, or none when it explores.
-fn weak_shapes(case: &Case, model: MemoryModelName) -> Option<Vec<Json>> {
-    let selection = [select("SB::Both", model)];
-    match case.check(&selection, ModelCheckItem::DeadlockFreedom, None) {
-        ModelCheckOutcome::Memory {
-            cause: MemoryCause::WeakAccessShape(shape),
-            ..
-        } => {
-            let failures: Json =
-                serde_json::from_str(&shape.failures_text().expect("failure list text"))
-                    .expect("valid failure list JSON");
-            Some(
-                failures
-                    .as_array()
-                    .expect("a failure list")
-                    .iter()
-                    .map(|failure| failure["shape"].clone())
-                    .collect(),
-            )
-        }
-        _ => None,
-    }
-}
-
-/// The V-8 failure entries (`shape`, `site`, `transition`) of `case` under
-/// `model`, in settled order.
-fn weak_entries(case: &Case, model: MemoryModelName) -> Option<Vec<Json>> {
-    let selection = [select("SB::Both", model)];
-    match case.check(&selection, ModelCheckItem::DeadlockFreedom, None) {
-        ModelCheckOutcome::Memory {
-            cause: MemoryCause::WeakAccessShape(shape),
-            ..
-        } => {
-            let failures: Json =
-                serde_json::from_str(&shape.failures_text().expect("failure list text"))
-                    .expect("valid failure list JSON");
-            failures.as_array().cloned()
-        }
-        _ => None,
-    }
-}
-
-/// The wire form of an `ordering-mismatch` shape.
-fn mismatch(access: &str, ordering: Json) -> Json {
-    json!({"type": "ordering-mismatch", "access": access, "ordering": ordering})
-}
-
-/// FR-220-AC-14 (TC-665 step 13): under `tso` and under `ra` the pre-check
-/// settles `ordering-mismatch` for a load with `release` or `acq_rel`, a
-/// store with `acquire` or `acq_rel`, an RMW with no ordering and a local
-/// access with `release`, and admits each under `sc`. A well-ordered attempt
-/// contributes nothing.
-#[trace("TC-665", "FR-220-AC-14")]
-#[test]
-fn each_ordering_mismatch_settles_its_shape_under_tso_and_ra() {
-    // `first` beside a read of `x` with ordering `other` in the other
-    // branch: a relaxed read makes `x` shared when `first` writes it, and
-    // the unordered read keeps the local case's only mismatch its own.
+#[ignore = "QSL-2218: a mismatched ordering settles WeakAccessShape instead of being restricted to its access kind"]
+fn each_mismatched_ordering_is_restricted_under_tso_and_ra() {
     let one_branch = |first: String, other: &str| {
         let run = format!(
             "parallel Both {{ branch left sequence L {{ {first} }} branch right sequence R {{ {} }} }} \
@@ -1125,37 +918,20 @@ fn each_ordering_mismatch_settles_its_shape_under_tso_and_ra() {
         Case::new(&(contracts() + &protocol("SB", &run)))
     };
     let cases = [
-        (
-            Case::new(&sb_unit(&sb_run("", "relaxed", "release"))),
-            vec![mismatch("load", json!("release")); 2],
+        Case::new(&sb_unit(&sb_run("", "relaxed", "release"))),
+        Case::new(&sb_unit(&sb_run("", "relaxed", "acq_rel"))),
+        Case::new(&sb_unit(&sb_run("", "acquire", "relaxed"))),
+        Case::new(&sb_unit(&sb_run("", "acq_rel", "relaxed"))),
+        Case::new(&sb_unit(&sb_run("", "acquire", "release"))),
+        one_branch(
+            attempt("Ad", "w", "Cell::add", "", "AddX, AddOne"),
+            "relaxed",
         ),
-        (
-            Case::new(&sb_unit(&sb_run("", "relaxed", "acq_rel"))),
-            vec![mismatch("load", json!("acq_rel")); 2],
-        ),
-        (
-            Case::new(&sb_unit(&sb_run("", "acquire", "relaxed"))),
-            vec![mismatch("store", json!("acquire")); 2],
-        ),
-        (
-            Case::new(&sb_unit(&sb_run("", "acq_rel", "relaxed"))),
-            vec![mismatch("store", json!("acq_rel")); 2],
-        ),
-        (
-            one_branch(
-                attempt("Ad", "w", "Cell::add", "", "AddX, AddOne"),
-                "relaxed",
-            ),
-            vec![mismatch("rmw", Json::Null)],
-        ),
-        (
-            one_branch(attempt("Cp", "c", "Core::copy", "release", "CopyR"), ""),
-            vec![mismatch("local", json!("release"))],
-        ),
+        one_branch(attempt("Cp", "c", "Core::copy", "release", "CopyR"), ""),
     ];
-    for (case, expected) in &cases {
+    for case in &cases {
         for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
-            assert_eq!(weak_shapes(case, model).as_ref(), Some(expected));
+            assert!(explores(case, model), "{model:?}");
         }
         assert!(
             matches!(
@@ -1170,26 +946,17 @@ fn each_ordering_mismatch_settles_its_shape_under_tso_and_ra() {
         "relaxed",
     );
     for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
-        assert!(
-            matches!(
-                ordered.check(
-                    &[select("SB::Both", model)],
-                    ModelCheckItem::DeadlockFreedom,
-                    None
-                ),
-                ModelCheckOutcome::Holds { .. }
-            ),
-            "a well-ordered RMW is admitted under {model:?}"
-        );
+        assert!(explores(&ordered, model), "{model:?}");
     }
 }
 
-/// FR-220-AC-14: an `acquire` attempt writing two shared fields contributes
-/// its `multi-location` entry and no ordering entry, and the pre-check goes
-/// on to collect a `release` load's `ordering-mismatch`.
+/// FR-220-AC-14: an `acquire` attempt writing two shared fields explores as
+/// a multi-location access whose sub-accesses take the restricted ordering,
+/// beside a `release` load restricted to `relaxed`; the item explores.
 #[trace("TC-665", "FR-220-AC-14")]
 #[test]
-fn a_multi_location_attempt_is_not_tested_for_ordering_and_the_pre_check_continues() {
+#[ignore = "QSL-2218: a multi-location attempt and a release load settle WeakAccessShape instead of exploring"]
+fn a_multi_location_attempt_beside_a_mismatched_load_explores() {
     let run = format!(
         "parallel Both {{ branch left sequence L {{ {} }} \
          branch right sequence R {{ {} {} }} }} join all [left, right];",
@@ -1199,62 +966,7 @@ fn a_multi_location_attempt_is_not_tested_for_ordering_and_the_pre_check_continu
     );
     let case = Case::new(&(contracts() + &protocol("SB", &run)));
     for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
-        let entries = weak_entries(&case, model).expect("settles V-8");
-        let found: Vec<(&str, &str, Json)> = entries
-            .iter()
-            .map(|entry| {
-                (
-                    entry["site"].as_str().expect("a site"),
-                    entry["shape"]["type"].as_str().expect("a shape type"),
-                    entry["shape"].clone(),
-                )
-            })
-            .collect();
-        assert_eq!(found.len(), 2, "{found:?}");
-        assert_eq!(found[0].0, "Both/left/L/Bx");
-        assert_eq!(found[0].1, "multi-location");
-        assert_eq!(found[1].0, "Both/right/R/Lx");
-        assert_eq!(found[1].2, mismatch("load", json!("release")));
-    }
-}
-
-/// FR-220-AC-14: the collected failures come in canonical order, by the
-/// canonical bytes of each transition, which here differs from declaration
-/// order: the stores precede the loads, and each pair is ordered by receiver.
-#[trace("TC-665", "FR-220-AC-14")]
-#[test]
-fn ordering_mismatches_are_collected_in_canonical_order() {
-    let case = Case::new(&sb_unit(&sb_run("", "acquire", "release")));
-    for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
-        let entries = weak_entries(&case, model).expect("settles V-8");
-        let found: Vec<(&str, Json)> = entries
-            .iter()
-            .map(|entry| {
-                (
-                    entry["site"].as_str().expect("a site"),
-                    entry["shape"].clone(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            found,
-            vec![
-                ("Both/left/L/Sx", mismatch("store", json!("acquire"))),
-                ("Both/right/R/Sy", mismatch("store", json!("acquire"))),
-                ("Both/right/R/Lx", mismatch("load", json!("release"))),
-                ("Both/left/L/Ly", mismatch("load", json!("release"))),
-            ]
-        );
-        let bytes: Vec<&[u8]> = entries
-            .iter()
-            .map(|entry| {
-                entry["transition"]
-                    .as_str()
-                    .expect("a transition")
-                    .as_bytes()
-            })
-            .collect();
-        assert!(bytes.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(explores(&case, model), "{model:?}");
     }
 }
 
@@ -1375,9 +1087,8 @@ fn sb_with_event(event: &str) -> String {
 
 /// FR-220-AC-15 (TC-665 step 14): an `event` in a branch of `SB`'s weak
 /// `parallel`, whose constraint reads `x.v`, beside the branch whose attempt
-/// stores `x.v`, settles V-8 `WeakAccessShape` with `MultiLocation` naming
-/// the event and `(x, v)` before any state is explored, under `tso` and
-/// `ra`; under `sc` it is admitted. The same `event` reading the unaccessed
+/// stores `x.v`, explores under `tso` and `ra`, its read a `relaxed` load
+/// in the event's step (FR-902); under `sc` it is admitted. The same `event` reading the unaccessed
 /// `z.v` is admitted under `tso`, and so is a `finish` that reads `x.v`
 /// after the `join`.
 ///
@@ -1385,7 +1096,8 @@ fn sb_with_event(event: &str) -> String {
 /// admits, so its field is not part of any enabled attempt footprint.
 #[trace("TC-665", "FR-220-AC-15")]
 #[test]
-fn a_constraint_reading_a_shared_location_settles_the_multi_location_shape() {
+#[ignore = "QSL-2218: a node reader of a shared location settles WeakAccessShape instead of loading relaxed"]
+fn a_constraint_reading_a_shared_location_loads_it_relaxed() {
     const SEEN: &str = "event Seen by c as (s: Boolean) { s and k.v >= 0 };";
     let tso = [select("SB::Both", MemoryModelName::Tso)];
     let read_x = Case::over_object(
@@ -1397,34 +1109,14 @@ fn a_constraint_reading_a_shared_location_settles_the_multi_location_shape() {
 
     for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
         let selection = [select("SB::Both", model)];
-        let outcome = read_x.check(&selection, ModelCheckItem::DeadlockFreedom, None);
-        let ModelCheckOutcome::Memory {
-            cause: MemoryCause::WeakAccessShape(shape),
-            stats,
-        } = &outcome
-        else {
-            panic!("{outcome:?}");
-        };
-        // Fork-time preview gives EN-1 the child observations before it
-        // emits the fork, so this initial-state refusal explores nothing.
-        assert_eq!(stats.product_states, 1);
-        assert_eq!(shape.site, "Both/right/R/Seen");
-        let AccessShape::MultiLocation { locations } = &shape.shape else {
-            panic!("{shape:?}");
-        };
+        assert!(explores(&read_x, model), "{model:?}");
         let accesses = read_x.accesses(&selection);
-        let names: Vec<(String, String)> = locations
+        let reads: Vec<(String, String)> = accesses
+            .node_reads("Both/right/R/Seen")
             .iter()
             .map(|location| named(&accesses, location))
             .collect();
-        assert_eq!(names, vec![name("x", "v")]);
-        assert_eq!(
-            accesses.node_reads("Both/right/R/Seen"),
-            locations.as_slice()
-        );
-        let text: Json = serde_json::from_str(&shape.shape_text().expect("text")).expect("JSON");
-        assert_eq!(text["type"], json!("multi-location"));
-        assert_eq!(text["locations"][0]["field"], json!("v"));
+        assert_eq!(reads, vec![name("x", "v")]);
     }
     assert!(matches!(
         read_x.check(&[], ModelCheckItem::DeadlockFreedom, None),
@@ -1547,27 +1239,17 @@ fn enabled_sharing_is_recomputed_after_a_guarded_store() {
     check(&case, Ra::default(), MemoryModelName::Ra);
 }
 
-/// The refusal `case` settles on its first branch-observation state: the
-/// shape's site, whether it names a transition, and the names of its locations.
-fn tso_shape(case: &Case) -> (String, bool, Vec<(String, String)>) {
+/// The locations the node `site` of `case` reads under `tso`, by name, after
+/// checking that the item explores (FR-902: a reader loads `relaxed`).
+fn tso_reads(case: &Case, site: &str) -> Vec<(String, String)> {
     let selection = [select("SB::Both", MemoryModelName::Tso)];
-    let outcome = case.check(&selection, ModelCheckItem::DeadlockFreedom, None);
-    let ModelCheckOutcome::Memory {
-        cause: MemoryCause::WeakAccessShape(shape),
-        ..
-    } = &outcome
-    else {
-        panic!("{outcome:?}");
-    };
-    let AccessShape::MultiLocation { locations } = &shape.shape else {
-        panic!("{shape:?}");
-    };
+    assert!(explores(case, MemoryModelName::Tso), "{site}");
     let accesses = case.accesses(&selection);
-    let names = locations
+    accesses
+        .node_reads(site)
         .iter()
         .map(|location| named(&accesses, location))
-        .collect();
-    (shape.site.clone(), shape.transition.is_some(), names)
+        .collect()
 }
 
 /// FR-220 "Sharing and classification" (ADR-025 MA-1): an `effect`,
@@ -1576,6 +1258,7 @@ fn tso_shape(case: &Case) -> (String, bool, Vec<(String, String)>) {
 /// branch whose attempt stores it.
 #[trace("TC-665")]
 #[test]
+#[ignore = "QSL-2218: a node reader of a shared location settles WeakAccessShape instead of loading relaxed"]
 fn an_effect_commit_send_or_receive_constraint_reads_toward_sharing() {
     let store = attempt("Sx", "w", "Cell::set", "", "IsX, StoreOne");
     let channel = "channel ch from w to w carries Boolean ordering unordered \
@@ -1627,17 +1310,15 @@ fn an_effect_commit_send_or_receive_constraint_reads_toward_sharing() {
         let unit = contracts() + &protocol_with("SB", members, &run);
         let unit = unit.replace("over (k: M::Core)", "over (k: M::Cell)");
         let case = Case::over_object(&unit, "cells", "x", false);
-        let (found, _, names) = tso_shape(&case);
-        assert_eq!(found, site);
-        assert_eq!(names, vec![name("x", "v")], "{site}");
+        assert_eq!(tso_reads(&case, site), vec![name("x", "v")], "{site}");
     }
 }
 
-/// The combined settlement order of the pre-check, and a reader's missing
-/// transition, follow FR-220: the typed transition identity orders entries,
-/// while a reader carries no transition.
+/// FR-902: a multi-location attempt beside a reader, and a reader alone,
+/// each explore under `tso`; the reader reads `x.v`.
 #[test]
-fn an_attempt_shape_settles_before_a_reader_shape_and_a_reader_has_no_transition() {
+#[ignore = "QSL-2218: a multi-location attempt and a node reader settle WeakAccessShape instead of exploring"]
+fn a_multi_location_attempt_and_a_reader_explore_under_tso() {
     const SEEN: &str = "event Seen by c as (s: Boolean) { s and k.v >= 0 };";
     let both = format!(
         "parallel Both {{ branch left sequence L {{ {} }} \
@@ -1647,9 +1328,7 @@ fn an_attempt_shape_settles_before_a_reader_shape_and_a_reader_has_no_transition
         attempt("Lw", "c", "Core::read3", "", "ReadsX3, ReadW"),
     );
     let case = Case::over_object(&object_unit("Cell", &both, "{ d }"), "cells", "x", false);
-    let (site, transition, _) = tso_shape(&case);
-    assert_eq!(site, "Both/left/L/Bx");
-    assert!(transition);
+    assert!(explores(&case, MemoryModelName::Tso));
 
     let reader = Case::over_object(
         &object_unit("Cell", &sb_with_event(SEEN), "{ d }"),
@@ -1657,9 +1336,10 @@ fn an_attempt_shape_settles_before_a_reader_shape_and_a_reader_has_no_transition
         "x",
         false,
     );
-    let (site, transition, _) = tso_shape(&reader);
-    assert_eq!(site, "Both/right/R/Seen");
-    assert!(!transition);
+    assert_eq!(
+        tso_reads(&reader, "Both/right/R/Seen"),
+        vec![name("x", "v")]
+    );
 }
 
 /// A reader constraint that calls a function has no footprint rule
@@ -3541,4 +3221,84 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
         .expect("builds")
         .reachable(four)
         .is_ok());
+}
+
+/// FR-902-AC-1, FR-902-AC-5 (TC-2542, TC-2544): under a `tso` selection, an
+/// attempt writing two shared fields of its receiver is stepped as
+/// program-order single-location accesses, and a `parallel` that joins `any`
+/// merges its completed branches. Neither settles `WeakAccessShape`.
+#[trace("TC-2542", "FR-902-AC-1", "FSpec-FR-741-AC-1")]
+#[trace("TC-2544", "FR-902-AC-5", "FSpec-FR-741-AC-4")]
+#[test]
+#[ignore = "QSL-2218: multi-location accesses and non-all joins under a weak model settle WeakAccessShape instead of being stepped"]
+fn multi_location_accesses_and_any_joins_are_stepped_under_tso() {
+    let tso = [select("SB::Both", MemoryModelName::Tso)];
+    let any = Case::new(&any_join_unit());
+    let outcome = any.check(&tso, ModelCheckItem::DeadlockFreedom, None);
+    assert!(
+        !matches!(
+            outcome,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::WeakAccessShape(_),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    let run = format!(
+        "parallel Both {{ branch left sequence L {{ {} }} \
+         branch right sequence R {{ {} {} }} }} join all [left, right];",
+        attempt("Bx", "w", "Cell::both", "", "BothX, BothOne"),
+        attempt("Lx", "c", "Core::read2", "", "ReadsX2, Read2"),
+        attempt("Lw", "c", "Core::read3", "", "ReadsX3, ReadW"),
+    );
+    let two = Case::new(&(contracts() + &protocol("SB", &run)));
+    for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
+        let outcome = two.check(
+            &[select("SB::Both", model)],
+            ModelCheckItem::DeadlockFreedom,
+            None,
+        );
+        assert!(
+            !matches!(
+                outcome,
+                ModelCheckOutcome::Memory {
+                    cause: MemoryCause::WeakAccessShape(_),
+                    ..
+                }
+            ),
+            "{model:?}: {outcome:?}"
+        );
+    }
+}
+
+/// FR-902-AC-3 (TC-2543): an `event` reader of a shared location under a
+/// `tso` selection reads it as a relaxed load in its own step, so the item
+/// explores instead of settling `WeakAccessShape`.
+#[trace("TC-2543", "FR-902-AC-3", "FSpec-FR-741-AC-3")]
+#[test]
+#[ignore = "QSL-2218: a node reader of a shared location settles WeakAccessShape instead of loading relaxed"]
+fn a_reader_of_a_shared_location_loads_relaxed_under_tso() {
+    const SEEN: &str = "event Seen by c as (s: Boolean) { s and k.v >= 0 };";
+    let read_x = Case::over_object(
+        &object_unit("Cell", &sb_with_event(SEEN), "{ d }"),
+        "cells",
+        "x",
+        false,
+    );
+    let outcome = read_x.check(
+        &[select("SB::Both", MemoryModelName::Tso)],
+        ModelCheckItem::DeadlockFreedom,
+        None,
+    );
+    assert!(
+        !matches!(
+            outcome,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::WeakAccessShape(_),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
 }

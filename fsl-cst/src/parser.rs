@@ -793,6 +793,25 @@ fn scan(
         let spelling = &source.text()[range.clone()];
         let (class, kind) = match result {
             Ok(Kind::Comment) => (TokenClass::Comment, Some(Kind::Comment)),
+            Ok(Kind::Fractional) if spelling.contains(['e', 'E']) => {
+                diagnostics.push(*super::diagnostic::error(
+                    source,
+                    CompleteCode::InvalidSyntax,
+                    CompleteCause::InvalidToken,
+                    Phase::Lex,
+                    span.start,
+                    span.end,
+                    format!(
+                        "`{spelling}` is not a numeric literal: an exponent is not part of a number; write a decimal literal such as 0.5, decimal(c, s) or rational(n, d)"
+                    ),
+                ));
+                recoveries.push(Recovery {
+                    kind: RecoveryKind::Delete,
+                    span,
+                    expected: "decimal literal or exact number".into(),
+                });
+                (TokenClass::Invalid, None)
+            }
             // FSpec FR-339-AC-5: `helper`, `rec`, `cast` and `Tuple`, which
             // the recognizer holds unsupported for the historical grammar,
             // are ordinary identifiers under `1-draft`.

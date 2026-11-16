@@ -17,12 +17,13 @@ use super::dispatch::{Construct, FormsCause, FormsRefusal};
 use super::spans::{DeclarationSpans, ExpressionSpans};
 use super::syntax::{
     AbsenceMode, Accumulation, AliasForm, ArmForm, BinaryOperator, BinderQuery, BuiltinType,
-    CaseForm, DeclarationForm, DeclarationKind, DeclaredName, DimensionEquivalenceForm,
-    DimensionForm, DimensionTermForm, EnumForm, EnumMemberForm, ExactNumberForm, ExactNumberKind,
-    ExactValueForm, ExactValueKind, ExprId, ExprNode, Expression, ExpressionBuilder,
-    FieldInitializer, FunctionDeclaration, NameForm, PopulationForm, QuantityForm, RatioNumberForm,
-    RatioNumberKind, RatioTermForm, RecordFieldForm, RecordForm, StepLabelForm, StringLiteral,
-    TermOperator, TupleForm, TypeForm, TypeFormHead, UnitForm, UnitTermForm, UsingAlias,
+    CaseForm, DecimalSpellingKind, DeclarationForm, DeclarationKind, DeclaredName,
+    DimensionEquivalenceForm, DimensionForm, DimensionTermForm, EnumForm, EnumMemberForm,
+    ExactNumberForm, ExactNumberKind, ExactValueForm, ExactValueKind, ExprId, ExprNode, Expression,
+    ExpressionBuilder, FieldInitializer, FunctionDeclaration, NameForm, PopulationForm,
+    QuantityForm, RatioNumberForm, RatioNumberKind, RatioTermForm, RecordFieldForm, RecordForm,
+    StepLabelForm, StringLiteral, TermOperator, TupleForm, TypeForm, TypeFormHead, UnitForm,
+    UnitTermForm, UsingAlias,
 };
 use filament_exact::{CollectionKind, Integer};
 use fsl_cst::{CstElement, CstNode, CstToken, LosslessCst, Production, TokenClass, TokenKind};
@@ -773,7 +774,7 @@ enum Shape {
     Float32(u32),
     Float64(u64),
     Rational(Integer, Integer),
-    Decimal(Integer, u32),
+    Decimal(Integer, u32, DecimalSpellingKind),
     Quantity(QuantityForm),
     String(StringLiteral),
     Name(NameForm),
@@ -894,9 +895,13 @@ impl Shape {
                 arity(0)?;
                 ExprNode::Rational(numerator, denominator)
             }
-            Self::Decimal(coefficient, scale) => {
+            Self::Decimal(coefficient, scale, spelling) => {
                 arity(0)?;
-                ExprNode::DecimalValue { coefficient, scale }
+                ExprNode::DecimalValue {
+                    coefficient,
+                    scale,
+                    spelling,
+                }
             }
             Self::Quantity(quantity) => {
                 arity(0)?;
@@ -1862,6 +1867,20 @@ impl<'c> Mapping<'c> {
                     let value = integer(&text(token, node)?, node)?;
                     self.leaf(Shape::Integer(value), &task)
                 }
+                TokenKind::Grammar if token.spelling().contains(&b'.') => {
+                    let spelling = text(token, node)?;
+                    let Some((whole, fraction)) = spelling.split_once('.') else {
+                        return Err(unexpected(node));
+                    };
+                    let digits = format!("{whole}{fraction}");
+                    let digits = digits.trim_start_matches('0');
+                    let coefficient = integer(if digits.is_empty() { "0" } else { digits }, node)?;
+                    let scale = u32::try_from(fraction.len()).map_err(|_| unexpected(node))?;
+                    self.leaf(
+                        Shape::Decimal(coefficient, scale, DecimalSpellingKind::DecimalLiteral),
+                        &task,
+                    )
+                }
                 TokenKind::Text => {
                     // The lexer admitted the token, so its JSON decoding
                     // cannot fail; a refusal here is an unexpected shape.
@@ -2011,7 +2030,10 @@ impl<'c> Mapping<'c> {
                         .to_string()
                         .parse::<u32>()
                         .map_err(|_| unexpected(child))?;
-                    return self.leaf(Shape::Decimal(form.first, scale), &task);
+                    return self.leaf(
+                        Shape::Decimal(form.first, scale, DecimalSpellingKind::DecimalConstructor),
+                        &task,
+                    );
                 }
                 let parts = nodes_of(&items, Production::SignedInteger);
                 let [numerator, denominator] = parts.as_slice() else {
