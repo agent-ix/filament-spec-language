@@ -272,7 +272,6 @@ fn compile_without_law(source: &str) -> Result<CompiledPackage, crate::ReplayRef
 /// `conflicting-definition`; a caller law alone still decides.
 #[trace("TC-1782", "FR-670-AC-5", "FSpec-TC-1280", "FSpec-FR-570-AC-3")]
 #[test]
-#[ignore = "QSL-1989: a header law is not resolved, so it cannot agree or conflict with a caller-supplied law yet"]
 fn a_header_law_agrees_with_or_refuses_a_caller_supplied_law() {
     let body = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n";
     let headed =
@@ -299,7 +298,6 @@ fn a_header_law_agrees_with_or_refuses_a_caller_supplied_law() {
 /// with no `div` or `rem` leaves the emitted package unchanged.
 #[trace("TC-1782", "FR-670-AC-6", "FSpec-TC-1280", "FSpec-FR-570-AC-5")]
 #[test]
-#[ignore = "QSL-1989: a header naming the integer-division law is refused wrong-selection-role today"]
 fn a_law_header_without_div_or_rem_leaves_the_package_identity_unchanged() {
     let body = "function m using v(a: Int[-7, 7], b: Int[1, 3]): Int[-6, 9] pure { a mod b + b }\n";
     let plain = compile_without_law(&format!("{HEADER}{body}")).expect("no law is demanded");

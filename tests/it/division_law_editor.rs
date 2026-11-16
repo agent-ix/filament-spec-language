@@ -14,7 +14,6 @@ const LAWS: [&str; 3] = [
 
 #[trace("TC-1782", "FR-670-AC-7", "FR-110-AC-12")]
 #[test]
-#[ignore = "QSL-1989: the header profile catalog holds only layer identities"]
 fn the_header_profile_catalog_admits_each_integer_division_law() {
     let catalog = complete::header_profile_catalog();
     for law in LAWS {

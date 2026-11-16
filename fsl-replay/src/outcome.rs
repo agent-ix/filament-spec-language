@@ -1649,6 +1649,8 @@ impl From<&CallIncomplete> for ResultLimit {
 /// as an empty array.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeDocument {
+    #[cfg(feature = "quire-extraction")]
+    native_fences: Option<crate::spine::NativeFenceReport>,
     format: &'static str,
     operation: Operation,
     last_stage: Option<OutcomeStage>,
@@ -1665,6 +1667,13 @@ impl Serialize for OutcomeDocument {
         document.serialize_field("operation", &self.operation)?;
         document.serialize_field("last_stage", &self.last_stage)?;
         document.serialize_field("category", self.category.as_str())?;
+        #[cfg(feature = "quire-extraction")]
+        if let Some(report) = &self.native_fences {
+            document.serialize_field("items", &report.fences)?;
+        } else {
+            document.serialize_field("items", &self.items)?;
+        }
+        #[cfg(not(feature = "quire-extraction"))]
         document.serialize_field("items", &self.items)?;
         document.serialize_field("diagnostics", &self.diagnostics)?;
         document.serialize_field("artifacts", &[(); 0])?;
@@ -1679,10 +1688,25 @@ impl Serialize for OutcomeDocument {
 pub struct OutcomeWriteError(#[from] serde_json::Error);
 
 impl OutcomeDocument {
+    /// One check document carrying an independent result for every native fence.
+    #[cfg(feature = "quire-extraction")]
+    pub fn from_native_fences(report: &crate::spine::NativeFenceReport) -> Self {
+        let category = report
+            .fences
+            .iter()
+            .map(|fence| fence.category)
+            .max_by_key(|category| category.exit_code())
+            .unwrap_or(Category::Success);
+        let mut document = Self::new(Operation::Check, Some(OutcomeStage::S4), category);
+        document.native_fences = Some(report.clone());
+        document
+    }
     /// A document of `operation` that last reached `last_stage` with the
     /// outcome's `category`, and no items, diagnostics or artifacts.
     pub fn new(operation: Operation, last_stage: Option<OutcomeStage>, category: Category) -> Self {
         Self {
+            #[cfg(feature = "quire-extraction")]
+            native_fences: None,
             format: OUTCOME_FORMAT,
             operation,
             last_stage,

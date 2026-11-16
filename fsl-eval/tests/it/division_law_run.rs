@@ -102,7 +102,6 @@ fn only_nonzero(refusals: &[CheckRefusal]) {
 
 #[trace("TC-1780", "FR-670-AC-1", "FSpec-TC-1280", "FSpec-FR-570-AC-1")]
 #[test]
-#[ignore = "QSL-1989: a header profile naming the integer-division law is not resolved yet"]
 fn div_and_rem_run_under_the_law_the_header_selects() {
     let declarations = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n\
                         function r using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a rem b }";
