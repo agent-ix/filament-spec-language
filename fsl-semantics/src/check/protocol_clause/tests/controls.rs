@@ -4,7 +4,17 @@
 use ix_trace_rs::trace;
 
 use super::{checks, recovery_flow, refusals};
-use crate::check::protocol_clause::ControlStep;
+use crate::check::protocol_clause::{CheckedControl, ControlStep, ProtocolNodeId};
+
+fn control(kind: fsl_forms::ProtocolNodeKind) -> CheckedControl {
+    CheckedControl {
+        node: ProtocolNodeId(usize::MAX),
+        kind,
+        name: kind.label().to_owned(),
+        path: Vec::new(),
+        children: Vec::new(),
+    }
+}
 
 /// FR-426-AC-9, FR-427-AC-6: finish is stepped by the evaluator and the
 /// compensation template is driven by its compensation threads.
@@ -18,24 +28,16 @@ fn no_specified_control_is_unstepped() {
             .controls
             .controls
             .iter()
-            .any(|control| control.step() == ControlStep::Finish),
-        "the protocol finish has a stepped control"
-    );
-    assert!(
-        protocol
-            .controls
-            .controls
-            .iter()
-            .any(|control| control.step() == ControlStep::CompensateTemplate),
-        "the compensation declaration has an evaluator-owned control"
-    );
-    assert!(
-        protocol
-            .controls
-            .controls
-            .iter()
             .all(|control| !matches!(control.step(), ControlStep::Unstepped(_))),
         "neither specified control remains unstepped"
+    );
+    assert_eq!(
+        control(fsl_forms::ProtocolNodeKind::Finish).step(),
+        ControlStep::Finish
+    );
+    assert_eq!(
+        control(fsl_forms::ProtocolNodeKind::CompensateTemplate).step(),
+        ControlStep::CompensateTemplate
     );
 }
 
