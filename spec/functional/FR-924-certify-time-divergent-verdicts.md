@@ -56,8 +56,21 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
   greatest, for an expected elapsed time the same with each exit's reward,
   and ranks SHALL be checked with the component as one state. Actions that
   stay in the component neither bound the value nor give progress.
-- A cycle that holds an action taking positive time SHALL keep FR-201's plain
-  conditions: a scheduler may follow it forever, because time diverges on it.
+- On the region route a positive-time action does not by itself make time
+  diverge: a loop that resets one clock and delays it into a region below
+  another clock's fraction returns to the same regions while the total delay
+  converges. The checker SHALL apply the Alur–Dill progress condition: an end
+  component is progressive when, for every clock entry of the key (the
+  deadline and elapsed clocks included), an action of the component resets it,
+  a delay of the component takes it across an integer boundary, or it is at
+  its cap at a state of the component. Every maximal end component that is not
+  progressive SHALL be checked as a zero-time component above, with one value
+  and its exits; a progressive end component SHALL keep FR-201's plain
+  conditions, because a scheduler may stay in it forever with time diverging.
+  On the digital route every delay adds a whole unit, so every end component
+  that holds a delay is progressive and only zero-time components collapse.
+  The progress condition was chosen over a unit tick clock in the region key
+  because it needs no extra key member and leaves digital keys unchanged.
 - A component with no exit, and a state with no admissible delay and no
   enabled discrete move, SHALL be a time-lock: a terminal state, value 0 for
   an event not yet met and no further elapsed reward, a pending deadline
@@ -69,9 +82,10 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
 |----|----------|--------------|
 | FR-924-AC-1 | `Retx` (guard `self.x >= 1 ms`, reset) with `toggle` (pre `true`, post `self.retried = not self.retried`): `Deadline` at 0.99 over every scheduler settles `proved`, `ExactValue{99/100}`, with a document the checker accepts in which the two states of each toggle pair carry one value; `Max` settles `ExactValue{9999/10000}`. | Test (TC-2493) |
 | FR-924-AC-2 | AC-1's `Deadline` item, every certificate value strictly between 0 and 1 set to 0 (the toggle-forever value), settles `inconclusive`, `CertificateRejected`, rule `InequalityFails` at a state of a toggle component. | Test (TC-2493) |
-| FR-924-AC-3 | `probabilistic MeanLow using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(c.late) >= 1 ms }` over `Retx` settles `proved` on the minimum `10/9 ms`; the item with the initial value set to `1 ms` (the retry cycle, which holds delays, read as taking no time) settles `inconclusive`, `CertificateRejected`, rule `InequalityFails`. | Test (TC-2493) |
+| FR-924-AC-3 | `probabilistic MeanLow using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(c.late) >= 1 ms }` over `Retx` settles `proved` on the minimum `10/9 ms`; the item whose `exact` certificate has the initial value set to `1 ms` (the retry cycle, which holds delays, read as taking no time) settles `inconclusive`, `CertificateRejected`, rule `InequalityFails`. | Test (TC-2493) |
 | FR-924-AC-4 | The `Retx` variant whose `send` has no guard and no reset (FR-204-AC-16): `Deadline` settles `proved`, `ExactValue{1}`, with a document the checker accepts, no component made transient, because every action leaves its zero-time cycle with positive probability. | Test (TC-2493) |
 | FR-924-AC-5 | `Retx` under `One` with `delay M::Call::send ~ discrete { 5 ms: 1 };` (FR-204-AC-17) is time-locked at its initial state: `UnderMax` (`probability <= 0.999`) settles `proved`, `ExactValue{0}`, with a document the checker accepts; the item with that state's value set to 1 settles `inconclusive`, `CertificateRejected`, rule `InequalityFails`. | Test (TC-2493) |
+| FR-924-AC-6 | `Retx` (guard `self.x >= 1 ms`, reset) with a second clock `y` and an operation `again`, guarded `not self.late and self.y < 1 ms` and setting `self.y = 0 ms`, whose strict guard selects the region route: `Deadline` at 0.99 over every scheduler settles `proved`, `ExactValue{99/100}`, with an accepted `region` certificate. The loop "reset `y`, delay into `0 < frac(y) < frac(x)`, reset `y`" crosses no integer for `x` and is not progressive; the item whose `exact` certificate has every value strictly between 0 and 1 set to 0 settles `inconclusive`, `CertificateRejected`, rule `InequalityFails`. | Test (TC-2493) |
 
 ## Dependencies
 

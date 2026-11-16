@@ -71,8 +71,20 @@ fn retx_with(
     declarations: &str,
     claims: &str,
 ) -> World {
+    retx_over(&["x"], operations, guard, reset, declarations, claims)
+}
+
+/// [`retx_with`] over the clocks `clocks`, `x` first.
+fn retx_over(
+    clocks: &[&str],
+    operations: &[(&str, &[&str])],
+    guard: &str,
+    reset: bool,
+    declarations: &str,
+    claims: &str,
+) -> World {
     let mut document: Value =
-        serde_json::from_slice(&timed_world::document(&["x"], operations)).expect("JSON");
+        serde_json::from_slice(&timed_world::document(clocks, operations)).expect("JSON");
     document["types"][1]["operations"][0]["params"] = json!([{
         "identity": timed_world::ident("Call/send/lost"),
         "name": "lost",
@@ -701,13 +713,14 @@ fn a_wrong_clock_cap_is_malformed() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
     let text = doc.to_string();
-    // The first `x` entry `[identity,value,"2"]` with its cap raised to 3.
-    let raised = if text.contains(",\"2\"]") {
-        text.replacen(",\"2\"]", ",\"3\"]", 1)
+    // The first `x` entry `[identity,value,"3"]` (FR-196: the cap of `x` is 3)
+    // with its cap lowered to 2.
+    let lowered = if text.contains(",\"3\"]") {
+        text.replacen(",\"3\"]", ",\"2\"]", 1)
     } else {
-        text.replacen(",\\\"2\\\"]", ",\\\"3\\\"]", 1)
+        text.replacen(",\\\"3\\\"]", ",\\\"2\\\"]", 1)
     };
-    let changed: Value = serde_json::from_str(&raised).expect("JSON");
+    let changed: Value = serde_json::from_str(&lowered).expect("JSON");
     assert_ne!(changed, doc, "the document names the cap of x");
     match check(&world, "Deadline", &changed) {
         Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
@@ -716,4 +729,34 @@ fn a_wrong_clock_cap_is_malformed() {
         }
         other => panic!("expected Malformed at values, got {other:?}"),
     }
+}
+
+/// FR-924-AC-6 (FSpec FR-753-AC-7): on the region route the loop "reset `y`,
+/// delay into `0 < frac(y) < frac(x)`, reset `y`" takes positive time but
+/// `x` crosses no integer, so it is not progressive (Alur–Dill) and its Zeno
+/// value 0 is rejected.
+#[trace("TC-2493", "FR-924-AC-6")]
+#[trace("FSpec-TC-1820", "FSpec-FR-753-AC-7")]
+#[test]
+#[ignore = "QSL-2156: the Alur–Dill progress condition on region end components not implemented yet"]
+fn reset_loop_zeno_values_are_rejected() {
+    let world = retx_over(
+        &["x", "y"],
+        &[("send", &["late", "x"]), ("again", &["y"])],
+        GUARD,
+        true,
+        "pre Again using v on M::Call::again { not self.late and self.y < 1 ms }\n\
+         post Reset using v on M::Call::again { self.y = 0 ms }\n",
+        &every_deadlines(),
+    );
+    let record = settle(&world, "Deadline");
+    assert_eq!(proved_value(&record), ratio(99, 100));
+    let doc = document(&record);
+    assert_eq!(doc["objective"]["timed"]["route"], "region");
+    assert!(accepted(&world, "Deadline", &doc));
+    let tampered = settle_tampered(&world, "Deadline", set_interior_values(ratio(0, 1)));
+    assert_eq!(
+        rejected_item_rule(&tampered),
+        CertificateRule::InequalityFails
+    );
 }

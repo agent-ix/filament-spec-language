@@ -91,7 +91,7 @@ the result.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-921-AC-1 | FR-920-AC-1's document with one value altered is rejected `InequalityFails` at a `ProbabilisticProductState`; with its identity changed it is refused `IdentityMismatch` before the product is rebuilt. | Test (TC-2490) |
-| FR-921-AC-2 | The same document with `route` set to `"region"`, or `scale` set to `"2"`, is refused `ObjectiveMismatch`; with the cap of `x` in one key changed from 2 to 3 it is rejected `Malformed` at `values`. | Test (TC-2490) |
+| FR-921-AC-2 | The same document with `route` set to `"region"`, or `scale` set to `"2"`, is refused `ObjectiveMismatch`; with the cap of `x` in one key changed from 3 to 2 it is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-3 | The same document with one reachable row removed, or with one added row for a key the product does not reach, is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-4 | `fsl-probability-check`, a separate process with no `fsl-analyze` linkage, accepts the documents of FR-922-AC-1, FR-923-AC-1, FR-924-AC-1 and FR-877-AC-1 from their bytes and the byte provision, and rejects each with one value altered. | Test (TC-2495) |
 

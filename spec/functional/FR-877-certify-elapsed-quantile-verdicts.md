@@ -56,8 +56,9 @@ every scheduler delivers within 2 ms with probability at least `9/10`:
   certified by an `exact` or `lower` document of that minimum. `>= c` SHALL
   be decided as `max E[[activated] · ([M < c] − q)] < 0`, certified by an
   `upper` document whose initial value is below 0; at exactly 0 the checker
-  SHALL search the tight actions from the initial state (FR-201) and reject
-  at the first activated state reached.
+  SHALL search the tight actions from the initial state (FR-201) and, when
+  they reach an activated state, reject `ThresholdMissed` at the initial
+  state: every inequality holds, but the strict side of the claim is missed.
 - The comparison `M < c` is strict, so a `>=` claim takes the region route
   (FR-922); `M <= c` keeps the digital route when every other constraint is
   closed.
@@ -69,7 +70,7 @@ every scheduler delivers within 2 ms with probability at least `9/10`:
 | FR-877-AC-1 | Over `Retx` (guard `self.x >= 1 ms`) under every scheduler, with `M` = `elapsed from holds(not c.late) until holds(c.late) within 4 ms`: `quantile 0.5 of (M) <= 2 ms` settles `proved` with a digital `exact` document of initial value `2/5` that the checker accepts. | Test (TC-2494) |
 | FR-877-AC-2 | `quantile 0.5 of (M) <= 1 ms` settles `refuted`, the transform's minimum being `−1/2`; AC-1's item with its initial value set to `1/2` settles `inconclusive`, `CertificateRejected`, rule `InequalityFails`. | Test (TC-2494) |
 | FR-877-AC-3 | `quantile 0.5 of (M) >= 1 ms` settles `proved` with a `region` `upper` document of initial value `−1/2` that the checker accepts. | Test (TC-2494) |
-| FR-877-AC-4 | `quantile 0.9 of (M) >= 2 ms` settles `refuted` (sending at 1 ms gives `Pr(M < 2 ms) = 9/10`): the transform's maximum is exactly 0 and the tight actions reach the activated initial state, so no `upper` document of initial value 0 proves it (FSpec FR-753-AC-5). | Test (TC-2494) |
+| FR-877-AC-4 | `quantile 0.9 of (M) >= 2 ms` settles `refuted` (sending at 1 ms gives `Pr(M < 2 ms) = 9/10`): the transform's maximum is exactly 0 and the tight actions reach the activated initial state, so an `upper` document of initial value 0 for it is rejected `ThresholdMissed` at the initial state (FSpec FR-753-AC-5). | Test (TC-2494) |
 
 ## Dependencies
 

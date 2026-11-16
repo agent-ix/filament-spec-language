@@ -66,7 +66,7 @@ unsound, and the checker rejects a certificate that states it.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-922-AC-1 | `Retx` with the guard `self.x > 1 ms` over every scheduler: `Deadline` at 0.99 settles `proved`, `ExactValue{99/100}`, with a `region` document the checker accepts; `Max` (`probability <= 0.999`) settles `proved`, `ExactValue{999/1000}`, with a `region` document the checker accepts. | Test (TC-2491) |
-| FR-922-AC-2 | AC-1's `Deadline` document with `route` set to `"digital"` is refused `ObjectiveMismatch`; the `Max` document with every value replaced by the corresponding value of the `>= 1 ms` guard's digital product, initial value `9999/10000`, is rejected `InequalityFails`, and the tampered item settles `inconclusive`, `CertificateRejected`. | Test (TC-2491) |
+| FR-922-AC-2 | AC-1's `Deadline` document with `route` set to `"digital"` is refused `ObjectiveMismatch`; the `Max` `exact` certificate with every value replaced by the corresponding value of the `>= 1 ms` guard's digital product, initial value `9999/10000`, is rejected `InequalityFails`, and the tampered item settles `inconclusive`, `CertificateRejected`. | Test (TC-2491) |
 | FR-922-AC-3 | `MeanTime` with the guard `self.x > 1 ms` settles its maximum `20/9 ms` with a `boundary-region` document the checker accepts; the minimum is the infimum `10/9 ms`. | Test (TC-2491) |
 
 ## Dependencies
