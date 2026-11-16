@@ -17,7 +17,8 @@ unit. Scope: FR-091-AC-7 and FR-091-AC-76.
 
 ## Test Procedure
 
-1. Check the four functions of FR-091-AC-76. Test:
+1. Check the four functions of FR-091-AC-76 and `function a using v():
+   Option<Integer> pure { absent }`. Test:
    `fsl-semantics/tests/it/option_values.rs`
    `none_and_result_build_and_check_decides_their_position`.
 2. Build the function bodies `xs[0]`, `null` and `reaches(a, b, M::R)`.
@@ -26,7 +27,7 @@ unit. Scope: FR-091-AC-7 and FR-091-AC-76.
 
 ## Expected Results
 
-- Step 1: `o` checks; `n` refuses `ill_typed`/`type-mismatch`; the `let`
+- Step 1: `o` and `a` check; `n` refuses `ill_typed`/`type-mismatch`; the `let`
   refuses `ill_typed`/`ambiguous-literal`; `r` refuses
   `wrong_snapshot`/`wrong-anchor`; none refuses `unsupported_construct`.
 - Step 2: each refuses `UnrepresentedConstruct` at its construct.

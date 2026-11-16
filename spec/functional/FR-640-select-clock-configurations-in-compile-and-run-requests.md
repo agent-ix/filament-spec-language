@@ -132,7 +132,8 @@ computed over the package compiled with these rows.
   this member a program whose library uses a clock of its own would compile
   and then fail every replay. The entry for a clock name the program's own
   declarations also use equals their rows, because one `clocks` member serves
-  every unit.
+  every unit, and SHALL be written all the same: a replay serves library
+  units from this member alone.
 - The configuration's `kind` SHALL be the one the declaration's profile serves
   (table above). A clock name written by declarations under two profiles that
   need different kinds cannot be served by one member and refuses.
@@ -167,23 +168,29 @@ computed over the package compiled with these rows.
   the package (the replay recompile and the monitor's emission, FR-283, FR-643),
   so no step runs with an empty selection list while the request supplied one.
   A replay request has no `clocks` member: the replay recompile SHALL read its
-  selections from the proving package's `temporal_bindings` rows and its lock
-  `dependency_clock_selections` entries, each row's or entry's `clock_name`
-  and `clock` giving one member, and SHALL serve the program and every
-  recompiled library unit from that one selection, so it compiles with exactly the
+  program's selections from the proving package's `temporal_bindings` rows,
+  each row's `clock_name` and `clock` giving one member, and every recompiled
+  library unit's selections from its lock `dependency_clock_selections`
+  entries alone, never from a program row of the same clock name, so a
+  package that omits an entry its emitter had to write fails its replay
+  instead of borrowing a program row. It thereby compiles with exactly the
   configuration the proof ran under and cannot be handed a different one.  The replay
   request wire has no `clocks` member, so a replay cannot be handed another
   configuration; a driver that reads a replay request document refuses a
   `clocks` member there `invalid-request` at stage `request`, naming it.
-- The replay recompile SHALL refuse, with no result, a library declaration
-  whose clock name that selection does not hold (`missing-clock-selection`,
-  naming the clock and the library, at `/package/lock/dependency_clock_selections`),
-  a `dependency_clock_selections` entry that no recompiled library
-  declaration reads (`unused-clock-selection` at
-  `/package/lock/dependency_clock_selections/{i}`), and an entry whose kind is
-  not the one the reading declaration's profile serves (`clock-kind-mismatch`
-  at `/package/lock/dependency_clock_selections/{i}/clock/kind`). Each is a
-  `ReplayRefusal::Recompile` carrying the FR-640 cause in its details. A
+- The replay SHALL refuse, with no result, in FSpec FR-323's rule order.
+  Within rule 2 (the recompile's own refusals), a library declaration whose
+  clock name has no `dependency_clock_selections` entry refuses
+  `missing-clock-selection`, naming the clock and the library, at
+  `/package/lock/dependency_clock_selections`, and an entry whose kind is not
+  the one the reading declaration's profile serves refuses
+  `clock-kind-mismatch` at
+  `/package/lock/dependency_clock_selections/{i}/clock/kind`. In rule 4,
+  after every unit is recompiled (only then is every entry's use known), an
+  entry that no recompiled library declaration reads refuses
+  `unused-clock-selection` at `/package/lock/dependency_clock_selections/{i}`.
+  Each is a `ReplayRefusal::Recompile` carrying the FR-640 cause in its
+  details. A
   package whose entry disagrees with its own `temporal_bindings` row for one
   clock name is refused by the package reader (FSpec FR-322) before any
   recompile.
@@ -209,7 +216,7 @@ computed over the package compiled with these rows.
 | FR-640-AC-8 | The `clocks` object rebuilt from the `temporal_bindings` rows of the package FR-640-AC-1 compiles (each row's `clock_name` naming a member whose value is the row's `clock`) compiles the same program to byte-identical package bytes; this is the selection list the replay recompile builds from the proving package, so a replay recompiles under exactly the configuration the proof ran under. `ReplayRequestWire` has no `clocks` member. | Test (TC-2182) |
 | FR-640-AC-9 | A request compiling a program and one library unit whose clause writes clock `plant-ms`, with one `clocks` member `plant-ms`, binds both clauses to that member and refuses no member as `unused-clock-selection`; without the member, the library clause refuses `missing-clock-selection` naming `plant-ms`. | Test (TC-2183) |
 | FR-640-AC-10 | Through `command::compile`, a program that imports library `test/plant`, whose timestamped-event clause `Late` is on clock `lib-ms` and which no program declaration uses, compiled with `clocks` `{"lib-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}}`, exits 0 and its package lock holds `dependency_clock_selections` `[{"clock_name": "lib-ms", "clock": {"kind": "timestamped_event", "timestamp_unit": "ms"}}]`; with `timestamp_unit` `s` the package bytes differ; a program whose library declares no clause has no such member. | Test (TC-2212) |
-| FR-640-AC-11 | The package of AC-10, replayed through `fsl_replay::replay` for its function `entry` with `test/plant` as its one `dependencies` entry and no clock in the request, recompiles and settles `reproduced-without-witness` with the value the in-process call gives. The same request with the member removed from the package refuses `ReplayRefusal::Recompile` with `missing-clock-selection` naming `lib-ms` at `/package/lock/dependency_clock_selections`; with an added entry `spare` it refuses `unused-clock-selection` at that entry; with the `lib-ms` entry a `fixed_sample` configuration it refuses `clock-kind-mismatch` at `/package/lock/dependency_clock_selections/0/clock/kind`. None yields a result. | Test (TC-2213) |
+| FR-640-AC-11 | The package of AC-10, replayed through `fsl_replay::replay` for its function `entry` with `test/plant` as its one `dependencies` entry and no clock in the request, recompiles and settles `reproduced-without-witness` with the value the in-process call gives. The same request with the member removed from the package refuses `ReplayRefusal::Recompile` with `missing-clock-selection` naming `lib-ms` and `test/plant` at `/package/lock/dependency_clock_selections`, and so does a variant whose program's own clause is also on `lib-ms`, with the member removed and the program's `lib-ms` row kept; with an added entry `spare` it refuses `unused-clock-selection` at that entry; with the `lib-ms` entry a `fixed_sample` configuration it refuses `clock-kind-mismatch` at `/package/lock/dependency_clock_selections/0/clock/kind`. None yields a result. | Test (TC-2213) |
 
 ## Dependencies
 

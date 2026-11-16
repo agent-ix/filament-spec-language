@@ -7,8 +7,8 @@ use crate::command_harness::compile_file;
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
     call_site, replay, DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits,
-    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestTargetWire, StateEnvironment, SuppliedLibrary,
+    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
+    StateEnvironment, SuppliedLibrary,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -30,6 +30,14 @@ const LIBRARY_HEAD: &str = "language \"ix:native\" edition \"1-draft\";\n\
      function flag using v(): Boolean pure { true }\n";
 const LIBRARY_CLAUSE: &str = "temporal Late using w over (r: Reading) clock \"lib-ms\" \
      on origin { eventually[0,5] holds(r.level > 0) }\n";
+/// The program with a clause of its own on the library's clock `lib-ms`.
+const SHARED: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+     import \"test/plant\" as P;\n\
+     function entry using v(): Boolean pure { P::flag() }\n\
+     temporal Early using w over (r: P::Reading) clock \"lib-ms\" \
+     on origin { eventually[0,2] holds(r.level > 0) }\n";
 
 fn source(file: &str, identity: &str) -> Value {
     json!({"file": file, "authority": AUTHORITY, "identity": identity,
@@ -42,8 +50,8 @@ fn library_text() -> String {
 
 /// The proving package `command::compile` writes for the program and the
 /// library whose clause alone uses `lib-ms`.
-fn proving_package(directory: &Path) -> Vec<u8> {
-    std::fs::write(directory.join("unit.native"), PROGRAM).unwrap();
+fn proving_package(directory: &Path, program: &str) -> Vec<u8> {
+    std::fs::write(directory.join("unit.native"), program).unwrap();
     std::fs::write(directory.join("plant.native"), library_text()).unwrap();
     let request = json!({"format": "native-compile/1", "request": {
         "models": [],
@@ -75,13 +83,14 @@ fn canonical(package: &Value) -> ReplayPackage {
 
 /// A `function` replay of `entry` over `package`, with `test/plant` as the
 /// one `dependencies` entry and no clock configuration in the request.
-fn request(package: &Value) -> ReplayRequestWire {
+fn request(package: &Value, program: &str) -> ReplayRequestWire {
     let name = package["name"].as_str().expect("a package name").to_owned();
-    let selected = QualifiedName::new(vec![filament_exact::Identifier::new("entry").unwrap()])
-        .unwrap();
+    let selected =
+        QualifiedName::new(vec![filament_exact::Identifier::new("entry").unwrap()]).unwrap();
     // `call_site` emits with no clock selections, so the site is taken from
     // the same program over the library without its clause: the function's
-    // key does not depend on the library's clauses.
+    // key does not depend on the library's clauses, nor on the program's
+    // own clauses.
     let dependencies = DependencyInput::new([SuppliedLibrary {
         identity: LIBRARY.to_owned(),
         source: SourceIdentity::new(AUTHORITY, LIBRARY_ID),
@@ -121,7 +130,7 @@ fn request(package: &Value) -> ReplayRequestWire {
             (
                 AUTHORITY.to_owned(),
                 PROGRAM_ID.to_owned(),
-                PROGRAM.as_bytes().to_vec(),
+                program.as_bytes().to_vec(),
             ),
             (
                 AUTHORITY.to_owned(),
@@ -133,8 +142,8 @@ fn request(package: &Value) -> ReplayRequestWire {
     }
 }
 
-fn refused(package: &Value, cause: &str, pointer: &str) {
-    let refusal = replay(request(package), ReplayLimits::default())
+fn refused(package: &Value, program: &str, cause: &str, pointer: &str) {
+    let refusal = replay(request(package, program), ReplayLimits::default())
         .expect_err("the recorded clocks do not serve the library");
     assert!(
         matches!(refusal, ReplayRefusal::Recompile { .. }),
@@ -142,6 +151,9 @@ fn refused(package: &Value, cause: &str, pointer: &str) {
     );
     assert!(format!("{refusal:?}").contains(cause), "{refusal:?}");
     assert_eq!(refusal.pointer().as_deref(), Some(pointer), "{refusal:?}");
+    if cause == "missing-clock-selection" {
+        assert!(format!("{refusal:?}").contains(LIBRARY), "{refusal:?}");
+    }
 }
 
 #[trace("TC-2213", "FR-640-AC-11", "FSpec-TC-1662", "FSpec-FR-323-AC-38")]
@@ -149,18 +161,22 @@ fn refused(package: &Value, cause: &str, pointer: &str) {
 #[ignore = "QSL-2274: replay does not read library clock selections from the proving package yet"]
 fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     let directory = tempfile::tempdir().unwrap();
-    let package: Value = serde_json::from_slice(&proving_package(directory.path())).unwrap();
+    let package: Value =
+        serde_json::from_slice(&proving_package(directory.path(), PROGRAM)).unwrap();
     assert_eq!(
         package["lock"]["dependency_clock_selections"],
         json!([{"clock_name": "lib-ms",
             "clock": {"kind": "timestamped_event", "timestamp_unit": "ms"}}])
     );
-    let result = replay(request(&package), ReplayLimits::default())
+    let result = replay(request(&package, PROGRAM), ReplayLimits::default())
         .expect("the library recompiles under the recorded clock");
     let ReplayResult::Input(input) = result else {
         panic!("an input replay");
     };
-    assert_eq!(input.value(), Some(fsl_replay::EvaluatedValue::Boolean(true)));
+    assert_eq!(
+        input.value(),
+        Some(fsl_replay::EvaluatedValue::Boolean(true))
+    );
 
     let mut missing = package.clone();
     missing["lock"]
@@ -169,6 +185,7 @@ fn replay_recovers_a_library_only_clock_from_the_proving_package() {
         .remove("dependency_clock_selections");
     refused(
         &missing,
+        PROGRAM,
         "missing-clock-selection",
         "/package/lock/dependency_clock_selections",
     );
@@ -181,6 +198,7 @@ fn replay_recovers_a_library_only_clock_from_the_proving_package() {
             "clock": {"kind": "timestamped_event", "timestamp_unit": "ms"}}));
     refused(
         &spare,
+        PROGRAM,
         "unused-clock-selection",
         "/package/lock/dependency_clock_selections/1",
     );
@@ -191,7 +209,24 @@ fn replay_recovers_a_library_only_clock_from_the_proving_package() {
         "period": {"kind": "integer", "decimal": "1"}, "unit": "ms"});
     refused(
         &wrong,
+        PROGRAM,
         "clock-kind-mismatch",
         "/package/lock/dependency_clock_selections/0/clock/kind",
+    );
+
+    // A library is served only from the lock member, never from a program
+    // row of the same clock name.
+    let directory = tempfile::tempdir().unwrap();
+    let mut shared: Value =
+        serde_json::from_slice(&proving_package(directory.path(), SHARED)).unwrap();
+    shared["lock"]
+        .as_object_mut()
+        .unwrap()
+        .remove("dependency_clock_selections");
+    refused(
+        &shared,
+        SHARED,
+        "missing-clock-selection",
+        "/package/lock/dependency_clock_selections",
     );
 }

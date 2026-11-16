@@ -314,8 +314,8 @@ fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
     check(VALUE, &big, CheckMode::Linked)
         .unwrap_or_else(|refusals| panic!("the default ceiling fits the walk: {refusals:?}"));
     let raised = into(parameters, 2, 500_000_003, "a mod b");
-    let refusals = check(VALUE, &raised, CheckMode::Linked)
-        .expect_err("the minimum remainder is 1");
+    let refusals =
+        check(VALUE, &raised, CheckMode::Linked).expect_err("the minimum remainder is 1");
     assert!(only_range(&refusals), "{refusals:?}");
 
     let refusals = assemble(VALUE, &big)
@@ -331,4 +331,14 @@ fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
     };
     assert_eq!(limit.kind, CheckingLimitKind::WorkBudget, "{limit:?}");
     assert_eq!(limit.limit, 10_000, "{limit:?}");
+    // Located at the `mod`, the root of `f`'s body.
+    assert!(
+        matches!(
+            &refusals[0].location.origin,
+            filament_semantic_value::location::ExpressionOwner::Body { function, .. }
+                if function == "f"
+        ),
+        "{refusals:?}"
+    );
+    assert!(refusals[0].location.path().is_empty(), "{refusals:?}");
 }

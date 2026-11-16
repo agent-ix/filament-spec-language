@@ -69,8 +69,13 @@ fn some_with_a_payload_outside_the_element_type_refuses_at_the_call() {
 #[trace("TC-2214", "FR-091-AC-76")]
 #[test]
 fn none_and_result_build_and_check_decides_their_position() {
-    check("function o using v(): Option<Integer> pure { none }")
-        .unwrap_or_else(|refusals| panic!("none is the empty option: {refusals:?}"));
+    for declaration in [
+        "function o using v(): Option<Integer> pure { none }",
+        "function a using v(): Option<Integer> pure { absent }",
+    ] {
+        check(declaration)
+            .unwrap_or_else(|refusals| panic!("{declaration}: the empty option: {refusals:?}"));
+    }
     for (declaration, code, cause) in [
         (
             "function n using v(): Integer pure { none }",
