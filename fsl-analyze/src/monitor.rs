@@ -701,7 +701,7 @@ fn request_failure(clause: &str, disposition: &ClauseDisposition) -> Option<Fail
                 failure: Box::new(refused(
                     Code::InvalidRuntimeInput,
                     "invalid-value",
-                    BTreeMap::from([("reason", refusal.reason.to_owned())]),
+                    refusal.record_fields(),
                 )),
             })
         }
@@ -730,9 +730,10 @@ fn verdict_of(clause: &str, disposition: &ClauseDisposition) -> Result<MonitorVe
             }
             V::Indeterminate { .. } => MonitorVerdict::Indeterminate,
             V::MissingFairnessPremise { .. } => MonitorVerdict::MissingFairnessPremise,
-            V::Incomplete(_) | V::ActivationIncomplete { .. } | V::ProgressLimitReached(_) => {
-                MonitorVerdict::Incomplete
-            }
+            V::Incomplete(_)
+            | V::ActivationIncomplete { .. }
+            | V::ProgressLimitReached(_)
+            | V::ExpansionLimitReached(_) => MonitorVerdict::Incomplete,
             V::WindowLimitReached { .. } => MonitorVerdict::WindowLimitReached,
         },
         D::TemporalRefusal(_) | D::TraceRefused(_) => MonitorVerdict::TraceRefused,

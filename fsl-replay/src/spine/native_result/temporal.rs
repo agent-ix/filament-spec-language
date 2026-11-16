@@ -14,6 +14,7 @@ use super::{
     OutcomeRead, Stage,
 };
 use crate::model_check::counterexample::{ObservedTemporalCounterexample, ObservedTemporalKind};
+use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::spine::{
     ContradictedDimension, ObservedPosition, ProgressClosure, ProgressCompleteness,
     ProgressContradiction, ProgressLimitReached, ProgressRefusal, ProgressValue,
@@ -114,6 +115,11 @@ pub(super) enum TemporalWire {
         setting: &'static str,
     },
     ProgressLimitReached {
+        limit: &'static str,
+        value: u64,
+        setting: &'static str,
+    },
+    ExpansionLimitReached {
         limit: &'static str,
         value: u64,
         setting: &'static str,
@@ -483,7 +489,8 @@ pub(super) fn item_counterexample(
         | TemporalVerdict::Incomplete(_)
         | TemporalVerdict::ActivationIncomplete { .. }
         | TemporalVerdict::WindowLimitReached { .. }
-        | TemporalVerdict::ProgressLimitReached(_) => return Ok(None),
+        | TemporalVerdict::ProgressLimitReached(_)
+        | TemporalVerdict::ExpansionLimitReached(_) => return Ok(None),
     };
     let wire = checked_counterexample(counterexample, at, reason)?;
     Ok(Some(serde_json::to_value(wire)?))
@@ -592,6 +599,14 @@ pub(super) fn verdict_wire(
                 limit: reached.limit,
                 value: reached.value,
                 setting: reached.setting,
+            },
+            None,
+        ),
+        TemporalVerdict::ExpansionLimitReached(reached) => (
+            TemporalWire::ExpansionLimitReached {
+                limit: reached.limit.as_str(),
+                value: reached.value,
+                setting: reached.limit.setting(),
             },
             None,
         ),
@@ -717,6 +732,15 @@ pub enum TemporalRecord {
         /// The limit's name.
         limit: String,
         /// The capacity in the run.
+        value: u64,
+        /// The setting that raises it.
+        setting: String,
+    },
+    /// A model run's expansion stopped at a limit of FR-255.
+    ExpansionLimitReached {
+        /// The limit's name.
+        limit: String,
+        /// The limit's value in the run.
         value: u64,
         /// The setting that raises it.
         setting: String,
@@ -986,6 +1010,14 @@ impl TemporalRecord {
                     setting: COVERED_POSITIONS_SETTING,
                 })
             }
+            Self::ExpansionLimitReached {
+                limit,
+                value,
+                setting,
+            } => TemporalVerdict::ExpansionLimitReached(ReachedLimit {
+                limit: expansion_limit(limit, setting)?,
+                value: *value,
+            }),
             Self::Incomplete {} | Self::ProgressContradicted { .. } | Self::TraceRefused { .. } => {
                 return None;
             }
@@ -1024,6 +1056,7 @@ impl TemporalRecord {
             Self::ActivationIncomplete { .. } => "activation-incomplete",
             Self::WindowLimitReached { .. } => "window-limit-reached",
             Self::ProgressLimitReached { .. } => "progress-limit-reached",
+            Self::ExpansionLimitReached { .. } => "expansion-limit-reached",
             Self::ProgressContradicted { .. } => "progress-contradicted",
             Self::TraceRefused { .. } => "trace-refused",
         }
@@ -1678,6 +1711,16 @@ pub(super) fn validate_temporal(
             no_outcome()?;
             unavailable(Category::Incomplete)
         }
+        TemporalRecord::ExpansionLimitReached { limit, setting, .. } => {
+            if expansion_limit(limit, setting).is_none() {
+                return Err(invalid(
+                    "disposition.temporal.limit",
+                    "expansion limit names max_candidates or an accounting counter with its setting",
+                ));
+            }
+            no_outcome()?;
+            unavailable(Category::Incomplete)
+        }
         TemporalRecord::WindowLimitReached { limit, setting, .. } => {
             if !is_window_limit_setting(limit, setting) {
                 return Err(invalid(
@@ -1757,6 +1800,20 @@ fn is_window_limit(limit: &str) -> bool {
 #[ix_trace_rs::string_edge]
 fn is_progress_limit(limit: &str, setting: &str) -> bool {
     limit == COVERED_POSITIONS_LIMIT && setting == COVERED_POSITIONS_SETTING
+}
+
+/// The limit a model run's expansion-limit row names: `max_candidates` with
+/// `expansion.max_candidates`, or an accounting counter with its
+/// `accounting.*` setting (FR-255).
+#[ix_trace_rs::string_edge]
+fn expansion_limit(limit: &str, setting: &str) -> Option<ModelCheckLimit> {
+    std::iter::once(ModelCheckLimit::MaxCandidates)
+        .chain(
+            filament_exact::LimitKind::ALL
+                .into_iter()
+                .map(|counter| ModelCheckLimit::EvaluationMeter { counter }),
+        )
+        .find(|candidate| candidate.as_str() == limit && candidate.setting() == setting)
 }
 
 /// Whether a window-limit row names `max_window_values` and its setting.

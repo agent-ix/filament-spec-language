@@ -1444,10 +1444,18 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
                 && value.truth.is_none()
                 && value.refusal.as_ref().is_some_and(|refusal| {
                     refusal.code == "invalid_runtime_input"
+                        && refusal.cause.as_deref() == Some("invalid-value")
+                        && refusal
+                            .message
+                            .as_deref()
+                            .is_some_and(|message| !message.is_empty())
                         && refusal
                             .fields
                             .as_ref()
-                            .is_some_and(|fields| fields.contains_key("reason"))
+                            .and_then(|fields| fields.get("reason"))
+                            .is_some_and(|reason| {
+                                super::clause::TRACE_REFUSAL_REASONS.contains(&reason.as_str())
+                            })
                 });
             if trace_refusal {
                 return Ok(());
@@ -2748,7 +2756,8 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
         | TemporalVerdict::Incomplete(_)
         | TemporalVerdict::ActivationIncomplete { .. }
         | TemporalVerdict::WindowLimitReached { .. }
-        | TemporalVerdict::ProgressLimitReached(_) => ItemRecord::default(),
+        | TemporalVerdict::ProgressLimitReached(_)
+        | TemporalVerdict::ExpansionLimitReached(_) => ItemRecord::default(),
     })
 }
 

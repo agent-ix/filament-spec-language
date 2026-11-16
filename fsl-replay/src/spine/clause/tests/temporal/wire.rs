@@ -248,6 +248,25 @@ fn each_temporal_report_writes_its_row_and_each_edit_refuses() {
     );
     assert!(refusal["locus"].is_object());
     read(&empty_loop).expect("the refusal reads back");
+    // The reader checks the record, not only that it names a reason.
+    refuses(
+        &edited(&empty_loop, |value| {
+            value["disposition"]["refusal"]["fields"]["reason"] = json!("empty-hoop");
+        }),
+        "disposition.outcome",
+    );
+    refuses(
+        &edited(&empty_loop, |value| {
+            value["disposition"]["refusal"]["cause"] = json!("invalid-hoop");
+        }),
+        "disposition.outcome",
+    );
+    refuses(
+        &edited(&empty_loop, |value| {
+            value["disposition"]["refusal"]["message"] = json!("");
+        }),
+        "disposition.outcome",
+    );
 
     // FR-645-AC-2: the empty `Finite` report, the same shape.
     let empty = document(&report(finite(Unit::Infinite, "Reaches", &[])));

@@ -3,37 +3,44 @@
 //!
 //! The behaviour is an initial-state snapshot, the universes (the snapshots
 //! whose complete populations are the simulated populations), and the steps
-//! of its prefix and loop. The run admits the initial state, re-executes the
-//! steps over the model system the package and universes define, closes and
-//! fairness-checks the loop, and evaluates the clause over the reconstructed
-//! states on the one evaluator a replayed counterexample uses (FR-329
-//! `Lasso::Model`).
+//! of its prefix and loop. The run admits the initial state and the
+//! universes, re-executes the steps over the model system the package and
+//! universes define, closes and fairness-checks the loop, and evaluates the
+//! clause over the reconstructed states on the one evaluator a replayed
+//! counterexample uses (FR-329 `Lasso::Model`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{ObjectId, ObjectReference, ValueType};
-use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use fsl_eval::temporal::TemporalPosition;
-use fsl_foundation::witness::{ObservationIdentity, RuntimeValuePath, ValuePathSubject};
-use fsl_semantics::check::TemporalClauseNode;
-use fsl_semantics::model::observation::population_universe_for;
+use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
+use fsl_eval::temporal::DecisiveStop;
+use fsl_eval::value::ObservationIdentity;
+use fsl_semantics::check::{FormulaNode, TemporalClauseNode};
+use fsl_semantics::model::observation::{admit_trace_snapshot, AdmissionUsage};
 use serde::Deserialize;
 
-use super::temporal::{observed_disposition, refused, OverObject, TraceInput};
+use super::temporal::{decisive_over, observed_disposition, refused, OverObject, TraceInput};
+use super::trace_refusal::ClauseSite;
 use super::{ClauseDisposition, ClauseRunUsage, CompiledRun};
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::{CounterexampleKind, Lasso, TemporalCounterexample};
-use crate::model_check::replay::evaluate_model_trace;
+use crate::model_check::limits::{meter_bound, ModelCheckLimit, ReachedLimit};
+use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
 use crate::spine::TemporalVerdict;
 
-/// The per-expansion candidate bound of a model-arm run: the request carries
-/// none, so it is the one a model check defaults to.
+/// The per-expansion candidate bound of a model-arm run. No requirement
+/// specifies it: FR-255 gives `expansion.max_candidates` no default and
+/// FR-641 gives the run request no member to set it (W5 spec ruling
+/// pending), so the run fixes it here. A stop at the bound is reported as
+/// `ExpansionLimitReached`, never as a verdict.
+const MAX_CANDIDATES: u64 = 1_000_000;
+
+/// The expansion bound of a model-arm run.
 const EXPANSION: ExpansionLimits = ExpansionLimits {
-    max_candidates: 1_000_000,
+    max_candidates: MAX_CANDIDATES,
 };
 
 /// What a model-arm run reports besides its disposition.
@@ -72,16 +79,15 @@ struct ObjectRead {
 
 /// FSpec FR-520's universes: one per complete population the universe
 /// snapshots declare, its keys the union of their objects' keys in reference
-/// order.
-fn universes(run: &CompiledRun<'_>, documents: &[crate::DocumentRef]) -> Vec<PopulationUniverse> {
+/// order. `None` when an admitted snapshot is not there to read.
+fn universes(
+    run: &CompiledRun<'_>,
+    documents: &[crate::DocumentRef],
+) -> Option<Vec<PopulationUniverse>> {
     let mut found: BTreeMap<DeclarationKey, (Vec<String>, BTreeSet<String>)> = BTreeMap::new();
-    for bytes in documents
-        .iter()
-        .filter_map(|reference| run.provisions.snapshots.get(reference))
-    {
-        let Ok(read) = serde_json::from_slice::<SnapshotRead>(bytes) else {
-            continue;
-        };
+    for reference in documents {
+        let bytes = run.provisions.snapshots.get(reference)?;
+        let read = serde_json::from_slice::<SnapshotRead>(bytes).ok()?;
         for population in read
             .populations
             .iter()
@@ -100,10 +106,12 @@ fn universes(run: &CompiledRun<'_>, documents: &[crate::DocumentRef]) -> Vec<Pop
             }
         }
     }
-    found
-        .into_iter()
-        .map(|(population, (keys, _))| PopulationUniverse { population, keys })
-        .collect()
+    Some(
+        found
+            .into_iter()
+            .map(|(population, (keys, _))| PopulationUniverse { population, keys })
+            .collect(),
+    )
 }
 
 /// FR-330 "Admit" and "Evaluate" for `TraceInput::Model`.
@@ -123,21 +131,63 @@ pub(super) fn run_model(
     else {
         return fault("model-run-has-a-model-trace");
     };
-    let stopped = |disposition| ModelRun {
+    let mut admitted = AdmissionUsage::default();
+    let stopped = |disposition, admitted: AdmissionUsage| ModelRun {
         disposition,
-        usage: ClauseRunUsage::default(),
+        usage: ClauseRunUsage {
+            admission_consumed: admitted,
+            ..ClauseRunUsage::default()
+        },
         decisive: None,
     };
     let Some(over) = over else {
-        return stopped(refused(
-            "invalid-value",
-            BTreeMap::from([("member", "over".to_owned())]),
-        ));
+        return stopped(
+            refused(
+                "invalid-value",
+                BTreeMap::from([("member", "over".to_owned())]),
+            ),
+            admitted,
+        );
     };
     let clause = node.clause();
     let (_, over_type) = clause.over();
-    let ValueType::Reference(effective) = over_type else {
-        return stopped(refused("invalid-value", BTreeMap::new()));
+    // FR-645: a model behaviour whose loop holds no step is refused, as a
+    // lasso with an empty loop is (FR-329-AC-3).
+    if repeat.is_empty() && !*terminal_stutter {
+        let site = ClauseSite {
+            package: run.package,
+            node,
+        };
+        return stopped(
+            ClauseDisposition::TraceRefused(Box::new(site.empty_loop())),
+            admitted,
+        );
+    }
+    // FR-330: the universe snapshots are observations of the trace, admitted
+    // by FR-106 before the behaviour is simulated over their populations.
+    let graph = run.package.graph();
+    for document in universe_documents {
+        match admit_trace_snapshot(
+            graph.model_inputs(),
+            graph.scope().types(),
+            run.packages,
+            run.model_limits,
+            run.provisions.snapshots,
+            document,
+            run.observation_limits,
+            &[],
+        ) {
+            Ok((_, usage)) => {
+                admitted.document_bytes =
+                    admitted.document_bytes.saturating_add(usage.document_bytes);
+                admitted.objects = admitted.objects.saturating_add(usage.objects);
+                admitted.values = admitted.values.saturating_add(usage.values);
+            }
+            Err(failure) => return stopped(ClauseDisposition::Admit(failure), admitted),
+        }
+    }
+    let Some(universes) = universes(run, universe_documents) else {
+        return fault("admitted-universe-snapshot-reads");
     };
     let request = ModelSimulationRequest {
         package: run.package,
@@ -145,7 +195,7 @@ pub(super) fn run_model(
         normalization: run.model_limits,
         snapshots: run.provisions.snapshots,
         initial: vec![initial.clone()],
-        universes: universes(run, universe_documents),
+        universes,
         observation: run.observation_limits,
         expansion: EXPANSION,
         meter: run.accounting,
@@ -153,7 +203,7 @@ pub(super) fn run_model(
     };
     let system = match ModelSystem::new(request) {
         Ok(system) => system,
-        Err(failure) => return stopped(ClauseDisposition::Admit(failure)),
+        Err(failure) => return stopped(ClauseDisposition::Admit(failure), admitted),
     };
     let instance = match system.instances(over_type) {
         Ok(instances) => instances
@@ -162,13 +212,16 @@ pub(super) fn run_model(
         Err(_) => return fault("model-instances-are-listed"),
     };
     let Some(instance) = instance else {
-        return stopped(refused(
-            "wrong-role-mapping",
-            BTreeMap::from([
-                ("population", over.population.clone()),
-                ("object", over.key.clone()),
-            ]),
-        ));
+        return stopped(
+            refused(
+                "wrong-role-mapping",
+                BTreeMap::from([
+                    ("population", over.population.clone()),
+                    ("object", over.key.clone()),
+                ]),
+            ),
+            admitted,
+        );
     };
     let letters = match system.clause_letters(node) {
         Ok(letters) => letters,
@@ -179,18 +232,13 @@ pub(super) fn run_model(
     let entry = prefix.len();
     let mut steps = prefix.clone();
     steps.extend(repeat.iter().cloned());
-    let lasso = if *terminal_stutter {
-        Some(Lasso {
-            entry: steps.len(),
-            terminal_stutter: true,
-        })
-    } else if repeat.is_empty() {
-        None
-    } else {
-        Some(Lasso {
-            entry,
-            terminal_stutter: false,
-        })
+    let lasso = Lasso {
+        entry: if *terminal_stutter {
+            steps.len()
+        } else {
+            entry
+        },
+        terminal_stutter: *terminal_stutter,
     };
     let payload = TemporalCounterexample {
         initial_state: 0,
@@ -198,74 +246,101 @@ pub(super) fn run_model(
         over_binding: Some(instance.clone()),
         fairness: Vec::new(),
         kind: CounterexampleKind::Formula,
-        lasso,
+        lasso: Some(lasso),
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
     };
     let evaluated = match evaluate_model_trace(&system, &payload, clause, &letters, run.accounting)
     {
-        Ok(Some(evaluated)) => evaluated,
-        Ok(None) => {
-            return stopped(ClauseDisposition::Temporal(TemporalVerdict::Pending));
+        Ok(ModelTraceEnd::Evaluated(evaluated)) => *evaluated,
+        Ok(ModelTraceEnd::Stopped(stop)) => {
+            return stopped(expansion_stop(&stop, run.accounting), admitted)
         }
-        Err(refusal) => return stopped(replay_refusal(refusal)),
+        Err(refusal) => return stopped(replay_refusal(refusal), admitted),
     };
-    let (disposition, _) =
-        observed_disposition(None, evaluated.outcome, run.package.graph(), run.sources);
-    let decisive = match (&disposition, evaluated.decisive) {
-        (ClauseDisposition::Temporal(TemporalVerdict::Violated { .. }), Some(Ok(Some(atom)))) => {
-            Some(decisive_record(
-                run,
-                &system,
-                &instance,
-                effective,
-                atom.position,
-            ))
+    let ModelTraceRun {
+        outcome,
+        decisive,
+        observation,
+        mut meter,
+        ..
+    } = evaluated;
+    let (disposition, _) = observed_disposition(None, outcome, run.package.graph(), run.sources);
+    let violated = matches!(
+        disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
+    );
+    let mut decisive_record = None;
+    let mut disposition = disposition;
+    if violated {
+        match decisive {
+            Some(Ok(Some(atom))) => {
+                let holds = matches!(
+                    clause.formula().nodes().get(atom.atom.index()),
+                    Some(FormulaNode::Holds { .. })
+                );
+                if let (true, Some(observed)) = (holds, observation) {
+                    match decisive_over(
+                        run,
+                        node,
+                        atom,
+                        &observed.over,
+                        &observed.environment,
+                        ObservationIdentity {
+                            authority: observed.identity.authority,
+                            identity: observed.identity.identity,
+                        },
+                        &mut meter,
+                    ) {
+                        Ok(record) => decisive_record = record,
+                        Err(stopped_at) => disposition = *stopped_at,
+                    }
+                }
+            }
+            Some(Err(DecisiveStop::Incomplete(incomplete))) => {
+                disposition = ClauseDisposition::Temporal(TemporalVerdict::Incomplete(incomplete));
+            }
+            Some(Err(DecisiveStop::Fault(internal))) => {
+                disposition = ClauseDisposition::EvaluateFault(internal);
+            }
+            Some(Ok(None)) | None => {}
         }
-        _ => None,
-    };
+    }
     ModelRun {
         disposition,
-        usage: ClauseRunUsage::default(),
-        decisive: decisive.flatten(),
+        usage: ClauseRunUsage::from_meter(&meter, admitted),
+        decisive: decisive_record,
     }
 }
 
-/// The decisive record of a violated model-arm run: the atom is `false` at
-/// the position, read over the state the steps reconstructed. A model state
-/// has no observation document, so the path is rooted at the over object
-/// under the position's state.
-fn decisive_record(
-    run: &CompiledRun<'_>,
-    _system: &ModelSystem<'_>,
-    instance: &ModelInstance,
-    effective: &filament_exact::EffectiveId,
-    position: TemporalPosition,
-) -> Option<crate::TemporalDecisive> {
-    let universe = population_universe_for(
-        run.package.graph().model_inputs(),
-        run.packages,
-        run.model_limits,
-        effective.clone(),
-    )
-    .ok()?;
-    let reference = ObjectReference::new(
-        universe,
-        effective.clone(),
-        ObjectId::new(&instance.key).ok()?,
-    );
-    Some(
-        crate::TemporalDecisive::undecided(RuntimeValuePath {
-            observation: ObservationIdentity {
-                authority: "model-state".to_owned(),
-                identity: format!("position-{}", position.index()),
-            },
-            subject: ValuePathSubject::Object(reference),
-            steps: Vec::new(),
-        })
-        .at_position(position.index()),
-    )
+/// The disposition of an expansion that stopped before the behaviour was
+/// replayed (FR-203, FR-126): the bound it reached, or the `accounting.*`
+/// counter, and its value in the run. A stop that names no bound is a fault,
+/// never a completed run.
+fn expansion_stop(
+    stop: &ExpansionStop,
+    accounting: filament_exact::ScalarLimits,
+) -> ClauseDisposition {
+    let reached = match stop.limit {
+        Some(ExpansionLimit::MaxCandidates) => ReachedLimit {
+            limit: ModelCheckLimit::MaxCandidates,
+            value: MAX_CANDIDATES,
+        },
+        Some(ExpansionLimit::EvaluationMeter(counter)) => ReachedLimit {
+            limit: ModelCheckLimit::EvaluationMeter { counter },
+            value: meter_bound(&accounting, counter),
+        },
+        None => {
+            return ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "temporal",
+                    "model-expansion-stops-at-a-named-limit",
+                ),
+            )
+        }
+    };
+    ClauseDisposition::Temporal(TemporalVerdict::ExpansionLimitReached(reached))
 }
 
 fn fault(invariant: &'static str) -> ModelRun {
@@ -287,5 +362,42 @@ fn replay_refusal(refusal: ReplayRefusal) -> ClauseDisposition {
             "invalid-value",
             BTreeMap::from([("reason", other.to_string())]),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_semantic_value::catalog::CatalogCode;
+
+    /// FR-255: the candidate bound is reported as `max_candidates`, raised by
+    /// `expansion.max_candidates`, with the value the run ran under.
+    #[test]
+    fn a_stop_at_the_candidate_bound_names_max_candidates() {
+        let stop = ExpansionStop {
+            cause: CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+            limit: Some(ExpansionLimit::MaxCandidates),
+        };
+        let ClauseDisposition::Temporal(TemporalVerdict::ExpansionLimitReached(reached)) =
+            expansion_stop(&stop, crate::AccountingLimits::default().0)
+        else {
+            panic!("a stop at the candidate bound is a limit");
+        };
+        assert_eq!(reached.limit.as_str(), "max_candidates");
+        assert_eq!(reached.limit.setting(), "expansion.max_candidates");
+        assert_eq!(reached.value, MAX_CANDIDATES);
+    }
+
+    /// A stop that names no bound is a fault, never a completed run.
+    #[test]
+    fn a_stop_with_no_named_limit_is_a_fault() {
+        let stop = ExpansionStop {
+            cause: CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+            limit: None,
+        };
+        assert!(matches!(
+            expansion_stop(&stop, crate::AccountingLimits::default().0),
+            ClauseDisposition::EvaluateFault(_)
+        ));
     }
 }

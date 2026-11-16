@@ -52,7 +52,7 @@ pub use temporal::{
     TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
     TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
-pub use trace_refusal::TraceRefusal;
+pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
     run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
     TraceSubjectClauseRequest,
@@ -554,6 +554,10 @@ pub enum TemporalVerdict {
     /// The progress ledger's covered positions outgrew `progress.
     /// covered_positions` (FR-502); no truth value, ledger unchanged.
     ProgressLimitReached(ProgressLimitReached),
+    /// A model-arm run's expansion stopped at a bound its request does not
+    /// carry or at an `accounting.*` counter (FR-203, FR-255): the limit it
+    /// reached and the value it ran under; no truth value.
+    ExpansionLimitReached(crate::model_check::limits::ReachedLimit),
 }
 
 impl TemporalVerdict {
@@ -577,7 +581,8 @@ impl TemporalVerdict {
             Self::Incomplete(_)
             | Self::ActivationIncomplete { .. }
             | Self::WindowLimitReached { .. }
-            | Self::ProgressLimitReached(_) => Category::Incomplete,
+            | Self::ProgressLimitReached(_)
+            | Self::ExpansionLimitReached(_) => Category::Incomplete,
         }
     }
 
@@ -1031,6 +1036,7 @@ impl ClauseRunReport {
                 TemporalVerdict::Incomplete(_)
                     | TemporalVerdict::WindowLimitReached { .. }
                     | TemporalVerdict::ProgressLimitReached(_)
+                    | TemporalVerdict::ExpansionLimitReached(_)
                     | TemporalVerdict::ActivationIncomplete { .. }
             ) | ClauseDisposition::Evaluate(CallOutcome::Incomplete(_))
         );

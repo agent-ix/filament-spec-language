@@ -2792,7 +2792,15 @@ fn timestamped_completeness_may_run_ahead_and_an_empty_trace_is_refused() {
         &TemporalVerdict::PendingWindow { at: 0, deadline: 5 }
     );
     let refused = report(timestamped(&[], &[], 5, Some(5)));
-    assert_trace_refused(&refused, ClauseRunStage::Evaluate, "empty-finite-trace");
+    assert_eq!(refused.disposition.stage(), ClauseRunStage::Admit);
+    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &refused.disposition else {
+        panic!(
+            "expected an admission refusal, got {:?}",
+            refused.disposition
+        );
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "invalid-value");
     assert_eq!(refused.usage.temporal_visits, 0);
     let decreasing = report(timestamped(&[0, 5, 2], &[0, 0, 0], 5, Some(5)));
     assert_eq!(outcome(&decreasing), &TemporalVerdict::Violated { at: 0 });

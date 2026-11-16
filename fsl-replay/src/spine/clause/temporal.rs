@@ -114,12 +114,12 @@ impl TraceInput {
         let kind = self.kind();
         match (reason, self) {
             ("ledger-without-progress", _) => "selection.temporal.ledger".to_owned(),
+            ("empty-lasso-loop", Self::Model { .. }) => {
+                "selection.temporal.trace.model.loop".to_owned()
+            }
             ("empty-lasso-loop", _) => "selection.temporal.trace.lasso.loop".to_owned(),
             ("empty-finite-trace", Self::Progressed { .. }) => {
                 "selection.temporal.trace.progressed.positions".to_owned()
-            }
-            ("empty-finite-trace", Self::Timestamped { .. }) => {
-                "selection.temporal.trace.timestamped.observations".to_owned()
             }
             _ => format!("selection.temporal.trace.{kind}"),
         }
@@ -761,10 +761,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ..
     } = trace
     {
+        // FR-645 keeps each refusal's existing stage: an empty timestamped
+        // trace was refused at admit before the trace refusals were named.
         if observations.is_empty() {
-            return early(ClauseDisposition::TraceRefused(Box::new(
-                site.empty_trace("timestamped"),
-            )));
+            return early(refused("invalid-value", BTreeMap::new()));
         }
         if window.missing_valuations.iter().any(|missing| {
             usize::try_from(missing.position)
@@ -1097,10 +1097,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             observing,
             &mut meter,
         );
-        let (disposition, counterexample) = match objects {
-            Some(_) => with_counterexample(node, trace, window.disposition, window.undefined),
-            None => (window.disposition, None),
-        };
+        // A violation carries its counterexample (FR-330 Outputs) over record
+        // samples as over snapshots: the samples are its steps.
+        let (disposition, counterexample) =
+            with_counterexample(node, trace, window.disposition, window.undefined);
         // FR-504: a progressed trace's violation reads its decisive atom
         // through the finite-trace evaluator, over the supplied trace. A
         // record sample has none.
@@ -1167,10 +1167,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             window,
         };
         let window = run_finite_window(run, node, &view, observing, &mut meter);
-        let (disposition, counterexample) = match objects {
-            Some(_) => with_counterexample(node, trace, window.disposition, window.undefined),
-            None => (window.disposition, None),
-        };
+        // A violation carries its counterexample (FR-330 Outputs) over record
+        // samples as over snapshots: the samples are its steps.
+        let (disposition, counterexample) =
+            with_counterexample(node, trace, window.disposition, window.undefined);
         let accepted = !matches!(
             disposition.category(),
             filament_semantic_value::catalog::Category::Refusal
@@ -1228,7 +1228,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 &mut meter,
             )
         }
-        None => (disposition, None, None),
+        None => {
+            let (disposition, counterexample) =
+                with_counterexample(node, trace, disposition, observed.undefined);
+            (disposition, counterexample, None)
+        }
     };
     let accepted = !matches!(
         disposition.category(),
@@ -1604,9 +1608,6 @@ fn decisive_record(
     atom: DecisiveAtom,
     meter: &mut Meter,
 ) -> Result<Option<crate::TemporalDecisive>, Box<ClauseDisposition>> {
-    use filament_eval::FamilyOutcome;
-    use filament_exact::{Outcome, Value};
-    use fsl_eval::value::CheckedPackageEvaluation as _;
     let DecisiveRun {
         run,
         node,
@@ -1641,19 +1642,44 @@ fn decisive_record(
     let objects = environments
         .get(slot)
         .ok_or_else(|| fault("decisive-position-has-an-environment"))?;
+    decisive_over(
+        run,
+        node,
+        atom,
+        over,
+        objects,
+        fsl_eval::value::ObservationIdentity {
+            authority: document.authority.clone(),
+            identity: document.identity.clone(),
+        },
+        meter,
+    )
+}
+
+/// The decisive record of `atom`, evaluated over `objects`, the observation
+/// `observation` names, with the clause's `over` parameter bound to `over`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn decisive_over(
+    run: &CompiledRun<'_>,
+    node: &fsl_semantics::check::TemporalClauseNode,
+    atom: DecisiveAtom,
+    over: &filament_exact::ObjectReference,
+    objects: &ObjectEnvironment,
+    observation: fsl_eval::value::ObservationIdentity,
+    meter: &mut Meter,
+) -> Result<Option<crate::TemporalDecisive>, Box<ClauseDisposition>> {
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{Outcome, Value};
+    use fsl_eval::value::CheckedPackageEvaluation as _;
+    let fault = |invariant: &'static str| {
+        Box::new(ClauseDisposition::EvaluateFault(
+            filament_semantic_value::catalog::InternalFault::new("temporal", invariant),
+        ))
+    };
+    let position = atom.position.index();
     let evaluation = run
         .package
-        .evaluate_holds_traced(
-            node,
-            atom.atom,
-            over,
-            objects,
-            fsl_eval::value::ObservationIdentity {
-                authority: document.authority.clone(),
-                identity: document.identity.clone(),
-            },
-            meter,
-        )
+        .evaluate_holds_traced(node, atom.atom, over, objects, observation, meter)
         .map_err(|failure| {
             let refusal = *convert_call_failure(failure);
             Box::new(if let RunRefusal::Fault(internal) = refusal {

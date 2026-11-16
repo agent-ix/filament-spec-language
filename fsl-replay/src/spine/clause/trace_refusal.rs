@@ -10,6 +10,16 @@ use fsl_semantics::check::{TemporalClauseNode, TemporalProfile};
 
 use super::ClauseRunStage;
 
+/// FR-645's reason tokens, the ones a trace refusal record carries in its
+/// `reason` field.
+pub const REASONS: [&str; 5] = [
+    "trace-kind-mismatch",
+    "empty-finite-trace",
+    "empty-lasso-loop",
+    "ledger-without-progress",
+    "unsupported-window-aggregate",
+];
+
 /// A refusal of the shape or the fit of a supplied trace (FR-645).
 #[derive(Clone, Debug)]
 pub struct TraceRefusal {
@@ -31,6 +41,29 @@ pub struct TraceRefusal {
     pub message: String,
     /// The source region of the clause's declaration.
     pub locus: Option<SourceRegion>,
+}
+
+impl TraceRefusal {
+    /// The refusal as the text fields of a catalog record: `reason`,
+    /// `profile`, `message`, and `expected` (comma-joined), `supplied` and
+    /// `position` where the refusal has them.
+    pub fn record_fields(&self) -> std::collections::BTreeMap<&'static str, String> {
+        let mut fields = std::collections::BTreeMap::from([
+            ("reason", self.reason.to_owned()),
+            ("profile", self.profile.to_owned()),
+            ("message", self.message.clone()),
+        ]);
+        if !self.expected.is_empty() {
+            fields.insert("expected", self.expected.join(","));
+        }
+        if let Some(supplied) = self.supplied {
+            fields.insert("supplied", supplied.to_owned());
+        }
+        if let Some(position) = self.position {
+            fields.insert("position", position.to_string());
+        }
+        fields
+    }
 }
 
 /// The trace kinds a clause under `profile` reads, in FR-641's table order

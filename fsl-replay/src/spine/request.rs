@@ -1438,7 +1438,7 @@ fn selection(
                 },
                 TemporalTraceParts::Progressed(parts) => TraceInput::Progressed {
                     trace: positions(&parts.positions)?,
-                    progress: progress_assertion(&parts.progress)?,
+                    progress: progress_assertion(&parts.progress, "progressed")?,
                     lower_boundary: lower_boundary(parts.lower_boundary),
                     binding: trace_binding(parts.binding),
                 },
@@ -1476,7 +1476,7 @@ fn selection(
                         .collect::<Result<Vec<_>, ClauseRequestReadError>>()?;
                     TraceInput::Timestamped {
                         observations,
-                        progress: progress_assertion(&parts.progress)?,
+                        progress: progress_assertion(&parts.progress, "timestamped")?,
                         window: Box::new(TimestampedWindow {
                             binding: Some(trace_binding(parts.binding)),
                             authoritative_origin: matches!(
@@ -1519,13 +1519,16 @@ fn selection(
 }
 
 /// FR-641 `G` as the progress assertion the spine reads.
-fn progress_assertion(wire: &ProgressWire) -> Result<ProgressAssertion, ClauseRequestReadError> {
+fn progress_assertion(
+    wire: &ProgressWire,
+    kind: &str,
+) -> Result<ProgressAssertion, ClauseRequestReadError> {
     let watermark = match wire.watermark {
         WatermarkWire::Inclusive(tick) => tick,
         // FR-501 reads a half-open watermark as the inclusive `end - 1`.
         WatermarkWire::HalfOpen { half_open } => half_open.checked_sub(1).ok_or_else(|| {
             invalid(
-                "trace.progress.watermark.half_open",
+                format!("trace.{kind}.progress.watermark.half_open"),
                 "a half-open watermark of 0 covers no tick",
             )
         })?,
