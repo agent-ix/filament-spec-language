@@ -10,9 +10,10 @@ use filament_exact::{
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_eval::temporal::{
-    AggregateAtom, AtomReading, CaptureReading, FirstUndefined, LetterStop, LetterTape, ObservedLocus, TapeEntry, TapeLetter, TapeReading,
-    TemporalLetters, TemporalOutcome, TemporalPosition, TemporalTrace, UndefinedCause, WindowRead,
-    WindowSource, WindowTrace, DEFAULT_MAX_WINDOW_VALUES,
+    AggregateAtom, AtomReading, CaptureReading, FirstUndefined, LetterStop, LetterTape,
+    ObservedLocus, TapeEntry, TapeLetter, TapeReading, TemporalLetters, TemporalOutcome,
+    TemporalPosition, TemporalTrace, UndefinedCause, WindowRead, WindowSource, WindowTrace,
+    DEFAULT_MAX_WINDOW_VALUES,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::source_map::NativeLanguage;
@@ -312,7 +313,12 @@ pub(crate) fn read_subject_letter(
     let captured = clause.captures().len() > 0;
     // Captures fixed at a later `on each` activation would change what every
     // atom reads, so such a clause is read by value.
-    if captured && !matches!(clause.activation(), fsl_semantics::check::Activation::Origin) {
+    if captured
+        && !matches!(
+            clause.activation(),
+            fsl_semantics::check::Activation::Origin
+        )
+    {
         return None;
     }
     let captures = if captured && activates {
@@ -1045,11 +1051,7 @@ impl SubjectWindowSource<'_> {
         meter: &mut Meter,
     ) -> Result<WindowRead<Value>, LetterStop> {
         let (body, slots) = expression.ok_or_else(|| fault("aggregate-expression-present"))?;
-        let Some(sample) = self
-            .samples
-            .get(position.index())
-            .cloned()
-        else {
+        let Some(sample) = self.samples.get(position.index()).cloned() else {
             return Ok(WindowRead::Missing);
         };
         let mut bindings = vec![sample.clone()];

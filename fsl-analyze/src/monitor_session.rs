@@ -444,11 +444,8 @@ impl<'a> MonitorSession<'a> {
                     .map(PackageAuthentication::temporal),
             );
             if let Err(disposition) = checked {
-                return Err(
-                    request_failure(&clause.name, &disposition).unwrap_or_else(|| {
-                        state_fault("trace-authentication-refuses-at-admit")
-                    }),
-                );
+                return Err(request_failure(&clause.name, &disposition)
+                    .unwrap_or_else(|| state_fault("trace-authentication-refuses-at-admit")));
             }
         }
         Ok(())
@@ -595,15 +592,18 @@ impl<'a> MonitorSession<'a> {
                         _ => None,
                     })
                     .ok_or_else(|| state_fault("sample-clause-has-a-record-subject"))?;
-                let sample: Value =
-                    admit_record_sample(self.package.graph().scope().types(), &record, text.as_bytes())
-                        .map_err(|mut record| {
-                            record.fields.insert("position", self.seen.to_string());
-                            StageFailure::Refused(MonitorRefusal::Admission {
-                                position: usize::try_from(self.seen).unwrap_or(usize::MAX),
-                                failure: Box::new(AdmissionFailure::Refused(Box::new(record))),
-                            })
-                        })?;
+                let sample: Value = admit_record_sample(
+                    self.package.graph().scope().types(),
+                    &record,
+                    text.as_bytes(),
+                )
+                .map_err(|mut record| {
+                    record.fields.insert("position", self.seen.to_string());
+                    StageFailure::Refused(MonitorRefusal::Admission {
+                        position: usize::try_from(self.seen).unwrap_or(usize::MAX),
+                        failure: Box::new(AdmissionFailure::Refused(Box::new(record))),
+                    })
+                })?;
                 (reference, AdmittedValue::Sample(sample))
             }
             (MonitorPosition::Snapshot(bytes), false) => {
@@ -685,9 +685,10 @@ impl<'a> MonitorSession<'a> {
                 Box::new(ProgressRefusal::from(contradiction)),
             )));
         }
-        let (slots, ledger) = self.advance(self.seen, Some(progress), cancel, |state, cancel| {
-            state.assert_progress(&progress, cancel)
-        })?;
+        let (slots, ledger) =
+            self.advance(self.seen, Some(progress), cancel, |state, cancel| {
+                state.assert_progress(&progress, cancel)
+            })?;
         self.assertion = Some(progress);
         Ok(self.commit(slots, ledger))
     }
@@ -757,10 +758,7 @@ impl<'a> MonitorSession<'a> {
             // values or identities than its limit settles `incomplete`, and
             // its state is dropped.
             let over = if state.retained() > self.limits.retained_positions {
-                Some((
-                    "monitor.retained_positions",
-                    self.limits.retained_positions,
-                ))
+                Some(("monitor.retained_positions", self.limits.retained_positions))
             } else if state.cited() > self.limits.retained_identities {
                 Some((
                     "monitor.retained_identities",
@@ -1222,4 +1220,3 @@ impl<'a> MonitorSession<'a> {
         Ok(session)
     }
 }
-

@@ -205,15 +205,15 @@ pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
 pub use clause::{
-    assertion_json, assertion_of, pending_report, AdmittedPosition, AdmittedValue, Advance,
-    ClauseLimits, ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, CLAUSE_STATE_FORMAT,
-    admit_progress, authenticate_emission, authenticate_package_trace, clause_trace_binding,
-    name_clause_atom, read_ledger, run_clause, run_clause_with_temporal_selections,
-    run_package_temporal, run_package_trace_subject, run_trace_subject_clause, sample_position,
-    temporal_batch_exit_code, temporal_batch_outcome, write_ledger, AuthenticatedTemporalSelection,
-    AuthenticationFailure, ClauseArgument, ClauseArgumentValue, ClauseDisposition,
-    ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
-    ClauseRunStage, ClauseRunUsage, ConsequentEventRefusal, ConsequentSourceEvent,
+    admit_progress, assertion_json, assertion_of, authenticate_emission,
+    authenticate_package_trace, clause_trace_binding, name_clause_atom, pending_report,
+    read_ledger, run_clause, run_clause_with_temporal_selections, run_package_temporal,
+    run_package_trace_subject, run_trace_subject_clause, sample_position, temporal_batch_exit_code,
+    temporal_batch_outcome, write_ledger, AdmittedPosition, AdmittedValue, Advance,
+    AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument, ClauseArgumentValue,
+    ClauseDisposition, ClauseLimits, ClauseOpen, ClauseRefusal, ClauseRunRefusal, ClauseRunReport,
+    ClauseRunRequest, ClauseRunSelection, ClauseRunSource, ClauseRunStage, ClauseRunUsage,
+    ClauseState, ClauseTraceKind, ConsequentEventRefusal, ConsequentSourceEvent,
     ConsequentSourceEvents, ConsequentState, ContradictedDimension, FiniteWindowAssessment,
     FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LedgerBinding, LedgerReadError,
     ObservedPosition, OperationName, OverObject, PackageAuthentication, PackageTemporalRequest,
@@ -224,7 +224,7 @@ pub use clause::{
     TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
     TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
     TimestampedWindow, TraceBinding, TraceInput, TraceRefusal, TraceSubjectClauseRequest,
-    DEFAULT_MODEL_MAX_CANDIDATES,
+    CLAUSE_STATE_FORMAT, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 mod refinement;
 pub use refinement::{

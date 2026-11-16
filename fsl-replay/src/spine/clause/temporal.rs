@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 use filament_exact::{Meter, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::temporal::{
-    evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop,
-    FirstUndefined, HoldsStop, ObservedPositions, PositionRefusal, ProgressedRefusal,
-    TemporalOutcome, TemporalPosition, TemporalRefusal, TemporalTrace, TimestampedTrace,
-    UndefinedCause, UndefinedEvaluation, WindowRefusal,
+    evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined,
+    HoldsStop, ObservedPositions, PositionRefusal, ProgressedRefusal, TemporalOutcome,
+    TemporalPosition, TemporalRefusal, TemporalTrace, TimestampedTrace, UndefinedCause,
+    UndefinedEvaluation, WindowRefusal,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::Source;
@@ -922,12 +922,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             } else {
                 fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause)
             };
-            match TimestampedTrace::admit_progressed(
-                &facts,
-                identities,
-                assertion,
-                &mut meter,
-            ) {
+            match TimestampedTrace::admit_progressed(&facts, identities, assertion, &mut meter) {
                 Ok(Ok(admitted)) => Some(admitted),
                 Ok(Err(inconsistent)) => {
                     let member = match inconsistent {
@@ -1547,13 +1542,13 @@ fn run_window(
         }
         positions @ (ObservedPositions::Samples(_) | ObservedPositions::Tape(_)) => {
             fsl_eval::temporal::evaluate_positions_finite_window(
-            run.package,
-            node,
-            positions,
-            trace,
-            valuations,
-            meter,
-        )
+                run.package,
+                node,
+                positions,
+                trace,
+                valuations,
+                meter,
+            )
         }
     };
     let undefined = observed.undefined;

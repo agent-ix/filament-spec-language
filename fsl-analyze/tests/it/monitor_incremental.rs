@@ -1602,7 +1602,10 @@ fn each_advance_reports_the_batch_report_over_the_prefix() {
         let observed = text(*level);
         last = Some(
             never
-                .advance(admitted(&world, "AtMostOne", &observed, index as u64), &cancel)
+                .advance(
+                    admitted(&world, "AtMostOne", &observed, index as u64),
+                    &cancel,
+                )
                 .expect("advances"),
         );
     }
@@ -1812,10 +1815,17 @@ fn the_open_scope_reading_and_the_lower_boundary_reach_the_state() {
         advance.report.disposition
     );
     assert_eq!(
-        advance.report.finite_window.as_ref().map(|window| window.basis),
+        advance
+            .report
+            .finite_window
+            .as_ref()
+            .map(|window| window.basis),
         Some(fsl_replay::SettlementBasis::DecisiveCounterexample)
     );
-    assert_eq!(advance.report.basis, fsl_replay::SettlementBasis::ClosedScope);
+    assert_eq!(
+        advance.report.basis,
+        fsl_replay::SettlementBasis::ClosedScope
+    );
     assert!(advance.decided.is_some(), "a watermark alone decides it");
 
     // FR-504-AC-6: `once[0,2]` `on each`, two positions, `p` false.
@@ -1917,7 +1927,12 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
     let world = world();
     let cancel = Cancel::new();
     let mut session = world
-        .open(&["Below", "Nine", "Recent"], MonitorTraceKind::Finite, None, 4)
+        .open(
+            &["Below", "Nine", "Recent"],
+            MonitorTraceKind::Finite,
+            None,
+            4,
+        )
         .expect("opens");
     let mut last = None;
     for k in 0..1000 {
@@ -1966,8 +1981,5 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
     }
     let step = last.expect("a step");
     assert_eq!(category(&step, 0), Category::Violation);
-    assert_eq!(
-        step.statuses[0].1.settlement().map(|s| s.step),
-        Some(3)
-    );
+    assert_eq!(step.statuses[0].1.settlement().map(|s| s.step), Some(3));
 }

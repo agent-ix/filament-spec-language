@@ -19,8 +19,8 @@ use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
-use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
+use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace, UndefinedCause,
@@ -377,12 +377,7 @@ fn evaluate_window_over(
             crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
         }
     };
-    let result = evaluate_finite_window(
-        &facts,
-        trace,
-        &mut letters,
-        meter,
-    );
+    let result = evaluate_finite_window(&facts, trace, &mut letters, meter);
     // As `evaluate_observed`: a refusal the result passed over is dropped.
     let stopped = match (letters.stopped, &result) {
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,

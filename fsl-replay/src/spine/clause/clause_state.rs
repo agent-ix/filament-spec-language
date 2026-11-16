@@ -34,16 +34,15 @@ use fsl_semantics::model::observation::{
 };
 use serde_json::{json, Value as Json};
 
+use super::package_authentication::PackageAuthentication;
 use super::progress::{
-    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressLedger,
-    ProgressLowerBoundary,
+    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary,
 };
 use super::temporal::{
     clause_trace_binding, run_package_temporal_over, PackageTemporalRequest, TapeInput,
-    TimestampedCover, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput,
+    TimestampedCover, TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding,
+    TraceInput,
 };
-use super::package_authentication::PackageAuthentication;
 use super::trace_subject::{read_subject_letter, SubjectSamples};
 use super::{
     ClauseDisposition, ClauseRunReport, ClauseRunUsage, ConsequentSourceEvents, OverObject,
@@ -512,7 +511,11 @@ impl<'a> ClauseState<'a> {
             over: self.open.over.as_ref(),
             ledger: if open { None } else { self.ledger.as_ref() },
             sources: self.open.sources,
-            authentication: self.open.authentication.as_deref().map(PackageAuthentication::temporal),
+            authentication: self
+                .open
+                .authentication
+                .as_deref()
+                .map(PackageAuthentication::temporal),
             cancel,
         };
         let shorter;
@@ -661,12 +664,11 @@ impl<'a> ClauseState<'a> {
 
     /// FR-820: the number of admitted positions the state holds by value.
     pub fn retained(&self) -> u64 {
-        let held = match self.reading {
+        match self.reading {
             Reading::Values => u64::try_from(self.seen.len()).unwrap_or(u64::MAX),
             Reading::Observed => self.tape.held(),
             Reading::Subject => u64::try_from(self.values.len()).unwrap_or(u64::MAX),
-        };
-        held
+        }
     }
 
     /// FR-820: the number of position identities the state keeps for the
