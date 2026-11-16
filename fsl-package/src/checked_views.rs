@@ -16,8 +16,8 @@ pub(crate) mod predicate;
 mod subject;
 
 pub use mapping::{
-    mapping_support, AuthenticatedSelection, Classification, Closure, MappingRefusal, Retained,
-    Support, Target, Unmatched, OUTSTANDING_PREMISES,
+    mapping_support, support_of, AuthenticatedSelection, Classification, Closure, MappingRefusal,
+    Retained, Support, Target, Unmatched, OUTSTANDING_PREMISES,
 };
 pub use predicate::{
     checked_predicate, instance_bound_atoms, CheckedPredicateView, PredicateKind,

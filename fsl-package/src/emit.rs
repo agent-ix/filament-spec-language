@@ -215,7 +215,7 @@ pub enum EmitRefusal {
     /// FR-640: a clock selection keyed by clock name does not fit the
     /// program's clock-bearing declarations.
     #[error("{0}")]
-    ClockSelection(ClockSelectionRefusal),
+    ClockSelection(Box<ClockSelectionRefusal>),
     /// FR-640, FR-763: a clause whose quantified traces derive different clock
     /// configurations from their models, which one binding row cannot carry
     /// yet: an implementation gap, named by the clause.
@@ -7353,6 +7353,7 @@ fn clock_profile(
         ClockConfiguration::TimestampedEvent { .. } => {
             TemporalProfile::TimestampedEventFiniteWindow
         }
+        ClockConfiguration::Timed { .. } => TemporalProfile::Timed,
     }
 }
 
@@ -7498,6 +7499,7 @@ pub fn clock_configuration_invalid_field(
         ClockConfiguration::TimestampedEvent { timestamp_unit } => {
             (!valid_name(timestamp_unit)).then_some("timestamp_unit")
         }
+        ClockConfiguration::Timed { unit } => (!valid_name(unit)).then_some("unit"),
     }
 }
 
@@ -7702,12 +7704,19 @@ fn temporal_binding_rows(
             occurrence: temporal.claim().ordinal(),
             name: clause.name().into(),
         });
-        if !matches!(
-            profile,
-            TemporalProfile::EventPositionFalseExtension
-                | TemporalProfile::FixedSampleFalseExtension
-                | TemporalProfile::TimestampedEventFiniteWindow
-        ) {
+        // A timed clause over a record trace subject binds its clock role
+        // through a `timed` configuration (FR-640, FR-933); over a model it
+        // binds `model-time` and writes no row.
+        let trace_subject_timed = profile == TemporalProfile::Timed
+            && !matches!(clause.over().1, filament_exact::ValueType::Reference(_));
+        if !trace_subject_timed
+            && !matches!(
+                profile,
+                TemporalProfile::EventPositionFalseExtension
+                    | TemporalProfile::FixedSampleFalseExtension
+                    | TemporalProfile::TimestampedEventFiniteWindow
+            )
+        {
             continue;
         }
         let location = graph

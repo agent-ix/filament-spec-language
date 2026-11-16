@@ -1356,6 +1356,7 @@ impl Pass<'_, '_> {
                         units: self.input.time_units,
                         rational_bits: self.input.limits.rational_bits(),
                         target,
+                        unit_free: false,
                     })
                 } else {
                     None

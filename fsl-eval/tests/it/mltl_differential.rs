@@ -128,7 +128,6 @@ const PRE_ORIGIN_CASES: &[(&str, Reference)] = &[
 /// reference outcome in fsl-eval over every small trace.
 #[trace("TC-2604", "FR-932-AC-1")]
 #[test]
-#[ignore = "QSL-2148: the FR-932 corpus is not verified against fsl-eval yet"]
 fn fsl_eval_agrees_with_the_reference_on_the_whole_corpus() {
     for (body, truth) in CASES.iter().chain(PRE_ORIGIN_CASES) {
         let fx = fixture(EVENT, "c: Counter", "on each (q: Counter)", body);

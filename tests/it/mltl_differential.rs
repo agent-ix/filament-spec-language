@@ -100,7 +100,6 @@ fn run(body: &str, values: &[i64], lowering: bool) -> (u8, Value) {
 /// under its default correspondence; the mixed case is unsupported.
 #[test]
 #[trace("TC-2604", "FR-932-AC-2")]
-#[ignore = "QSL-2148: the tl-mltl differential through tl_lowering is not implemented yet"]
 fn fsl_eval_the_reference_and_tl_mltl_agree() {
     for (cases, correspondence) in [
         (PAST, "mltl.origin-complete-history/v1"),
@@ -131,7 +130,6 @@ fn fsl_eval_the_reference_and_tl_mltl_agree() {
 /// closed past window at the origin would give the opposite on both.
 #[test]
 #[trace("TC-2604", "FR-932-AC-3")]
-#[ignore = "QSL-2148: the tl-mltl differential through tl_lowering is not implemented yet"]
 fn the_pre_origin_reading_is_one_reading() {
     let values = [0, 0, 0];
     let clipped_once_not = |_i: usize| false; // window at 0 clipped to nothing
@@ -166,4 +164,64 @@ fn the_pre_origin_reading_is_one_reading() {
             "{body}"
         );
     }
+}
+
+/// FR-757-AC-2, FR-931-AC-4: through the `fsl-command` library entry, an atom
+/// table that maps `p0` to the negated leaf renders through the record writer
+/// as one `correspondence-loss` fault naming the clause, the trace, the
+/// position and both verdicts, and the run's exit is 30; the faithful table
+/// agrees.
+#[test]
+#[trace("TC-2107", "FR-757-AC-2")]
+#[trace("TC-2603", "FR-931-AC-4")]
+fn a_mis_mapped_atom_is_a_correspondence_loss() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         record Counter { level: Int[0, 9]; }\n\
+         temporal C using e over (c: Counter) clock \"events\" on origin \
+         { always[0,2] holds(c.level = 1) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let samples: Vec<Value> = [1, 1, 1]
+        .iter()
+        .map(|level: &i64| json!({"sample": {"level": {"integer": level.to_string()}}}))
+        .collect();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:mltl-mismap", "document": "Mltl", "formal_revision": 1}},
+        "clocks": {"events": {"kind": "event_position", "sequence_authority": "events"}},
+        "clause": {"selection": {"temporal": {"name": "C", "trace": {"finite": samples}}},
+            "observations": {}}}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let clause_run = fsl_command::command::read_clause_run_request(&path).expect("a clause run");
+    let report = fsl_replay::spine::run_temporal_valuation(clause_run).expect("a report");
+    let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) = &report.disposition
+    else {
+        panic!("a valuation: {:?}", report.disposition);
+    };
+    let faithful = fsl_command::command::tl_record(
+        valuation,
+        unit,
+        None,
+        &fsl_command::command::AtomMapping::default(),
+    )
+    .expect("the clause lowers");
+    assert_eq!(faithful.exit_code, 0, "{}", faithful.record);
+    assert_eq!(faithful.record["cross_evaluation"]["agree"], true);
+
+    let mut mapping = fsl_command::command::AtomMapping::default();
+    mapping.negated.insert("p0".to_owned());
+    let mismapped = fsl_command::command::tl_record(valuation, unit, None, &mapping)
+        .expect("the clause lowers");
+    assert_eq!(mismapped.exit_code, 30, "{}", mismapped.record);
+    let cross = &mismapped.record["cross_evaluation"];
+    assert_eq!(cross["agree"], false);
+    assert_eq!(
+        cross["faults"],
+        json!([{"kind": "correspondence-loss", "clause": "C", "trace": 0, "position": 0,
+            "native": true, "tl": false}])
+    );
 }

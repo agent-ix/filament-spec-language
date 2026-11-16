@@ -7,6 +7,7 @@ mod monitor;
 mod output;
 mod output_file;
 mod replay;
+mod tl;
 mod wire;
 
 pub use analyze::{
@@ -15,6 +16,7 @@ pub use analyze::{
 };
 pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -221,6 +223,9 @@ pub enum PreparedRun {
     Function(PreparedFunctionRun),
     /// A clause selection for the existing clause runner.
     Clause(Box<fsl_replay::spine::ClauseRunRequest>),
+    /// FR-931: a `tl_lowering` request: the clause's valuation run, the
+    /// lowering it asks for, and the program text its atoms are named in.
+    TlLowering(Box<PreparedLowering>),
 }
 
 /// Original intake failure, without recovering typed data from display messages.
@@ -292,6 +297,30 @@ pub enum RunCause {
     /// FR-027/FR-480: a source-unit list must not be empty.
     #[error("the compile program has no source units")]
     EmptyCompileProgram,
+    /// FR-931: `tl_lowering.correspondence` names no TL correspondence.
+    #[error("unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1")]
+    TlCorrespondence {
+        /// The value given.
+        value: String,
+    },
+    /// FR-931: `tl_lowering.clause` names no temporal clause of the program.
+    #[error(
+        "missing_declaration/missing-name: tl_lowering.clause {name:?} names no temporal clause"
+    )]
+    TlClause {
+        /// The name given.
+        name: String,
+    },
+    /// FR-931: a `tl_lowering` form this build does not run yet
+    /// (`unsupported_construct`/`not-yet-implemented`).
+    #[error("unsupported_construct/not-yet-implemented: {member} is not implemented yet")]
+    TlNotYetImplemented {
+        /// The request member the gap is in.
+        member: &'static str,
+    },
+    /// FR-931: the lowering of a supported clause broke an invariant.
+    #[error("the TL lowering faulted: {0}")]
+    TlFault(String),
     /// The request's `libraries` are refused before any library is read.
     #[error("the request's libraries are refused: {0}")]
     Libraries(LibrarySelection),
@@ -454,6 +483,10 @@ impl RunCause {
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
+            Self::TlCorrespondence { .. } => Code::UnknownProfile,
+            Self::TlClause { .. } => Code::MissingDeclaration,
+            Self::TlNotYetImplemented { .. } => Code::UnsupportedConstruct,
+            Self::TlFault(_) => Code::RuntimeInvariant,
             Self::AnalyzeUniverse(
                 fsl_analyze::analyze::document::UniverseRefusal::Unprovisioned { .. },
             ) => Code::InvalidRequest,
@@ -494,7 +527,7 @@ impl RunCause {
     /// failure at S6a"); every other cause takes its code's category.
     pub fn category(&self) -> filament_semantic_value::catalog::Category {
         match self {
-            Self::Output(_) | Self::ClauseOutput(_) => {
+            Self::Output(_) | Self::ClauseOutput(_) | Self::TlFault(_) => {
                 filament_semantic_value::catalog::Category::InternalFailure
             }
             Self::SpineRun(refusal) => refusal.category(),
@@ -584,6 +617,10 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
+            | RunCause::TlCorrespondence { .. }
+            | RunCause::TlClause { .. }
+            | RunCause::TlNotYetImplemented { .. }
+            | RunCause::TlFault(_)
             | RunCause::ClocksGivenTwice
             | RunCause::OutputGivenTwice
             | RunCause::OutputExists { .. }
@@ -1408,6 +1445,11 @@ fn prepare_run_bytes(
     overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    // FR-931: a malformed `tl_lowering` member refuses before any source
+    // file is read.
+    if let Some(member) = &request.tl_lowering {
+        tl::decode(member)?;
+    }
     let mut intake = intake_with_bytes(
         directory,
         FileCounts {
@@ -1433,6 +1475,38 @@ fn prepare_run_bytes(
     prepare_complete_run(&mut intake, &request, source)
 }
 
+/// FR-931: prepare a `tl_lowering` request. Its clause is read through
+/// FR-312's clause-run reader as a `temporal` selection over the trace to
+/// cross-evaluate (or an empty one), so the compile, the trace's admission
+/// and every refusal before evaluation are the clause run's own.
+fn prepare_lowering(
+    intake: &mut Intake<'_>,
+    request: &wire::Request,
+    member: &serde_json::Value,
+    source: FormalSource,
+) -> Result<PreparedRun> {
+    if request.call.is_some() || request.clause.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "tl_lowering".to_owned(),
+            reason: "tl_lowering, call and clause are mutually exclusive".to_owned(),
+        });
+    }
+    let lowering = tl::decode(member)?;
+    if matches!(lowering.cross, Some(tl::CrossEvaluate::Initial)) {
+        return Err(RunCause::TlNotYetImplemented {
+            member: "tl_lowering.cross_evaluate.initial",
+        });
+    }
+    let clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
+    let text = source.source().text().to_owned();
+    let run = clause::read(intake, request, &clause, source)?;
+    Ok(PreparedRun::TlLowering(Box::new(PreparedLowering {
+        request: run,
+        lowering,
+        source: text,
+    })))
+}
+
 /// Prepare FR-100's function or clause selection without executing a stage.
 /// `source` is the program source, already read by bounded intake.
 fn prepare_complete_run(
@@ -1440,6 +1514,9 @@ fn prepare_complete_run(
     request: &wire::Request,
     source: FormalSource,
 ) -> Result<PreparedRun> {
+    if let Some(member) = &request.tl_lowering {
+        return prepare_lowering(intake, request, member, source);
+    }
     if let Some(clause) = &request.clause {
         if request.call.is_some() {
             return Err(RunCause::ClauseRequest {
@@ -1532,9 +1609,46 @@ fn prepare_complete_run(
     }))
 }
 
+/// A prepared FR-931 lowering: the valuation run of its clause and what the
+/// record is built from.
+pub struct PreparedLowering {
+    request: fsl_replay::spine::ClauseRunRequest,
+    lowering: tl::TlLowering,
+    source: String,
+}
+
+fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
+    let PreparedLowering {
+        request,
+        lowering,
+        source,
+    } = prepared;
+    let selection = request.selection.clone();
+    let report = fsl_replay::spine::run_temporal_valuation(request).map_err(|error| {
+        RunCause::ClauseRequest {
+            member: "tl_lowering".to_owned(),
+            reason: error.to_string(),
+        }
+    })?;
+    let valuation = match &report.disposition {
+        fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) => valuation,
+        fsl_replay::spine::ClauseDisposition::MissingName { name } => {
+            return Err(RunCause::TlClause { name: name.clone() })
+        }
+        _ => return output::clause_report(&report, &selection),
+    };
+    let record = tl::lower(valuation, &source, &lowering).map_err(RunCause::TlFault)?;
+    Ok(RunResult {
+        exit_code: record.exit_code,
+        value: NativeResult::lowering_document(tl::document(record.record)),
+        outcome: None,
+    })
+}
+
 fn execute_prepared(prepared: PreparedRun) -> Result<RunResult> {
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
+        PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();
             let report = fsl_replay::spine::run_clause(*request).map_err(|error| {

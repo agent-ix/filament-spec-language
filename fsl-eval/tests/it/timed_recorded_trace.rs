@@ -2,8 +2,9 @@
 //! FR-642 (TC-1664, TC-1665): a timed clause over a declared record trace
 //! subject, its clock role bound by the request's `timed` clock selection,
 //! is admitted by the checker and evaluated pointwise over a recorded timed
-//! trace (FSpec FR-416, FR-541). Today the checker refuses it as a timed
-//! trace subject that is not checked yet.
+//! trace (FSpec FR-416, FR-541).
+
+use std::collections::BTreeMap;
 
 use ix_trace_rs::trace;
 
@@ -14,8 +15,8 @@ use fsl_eval::temporal::{
 };
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    check_clauses, CheckedTemporalClause, FormulaNode, FormulaNodeId, PackageDeclarations,
-    TemporalProfile, SCALAR_LIMITS_UNLIMITED,
+    check_clauses, CheckedTemporalClause, ClockConfiguration, FormulaNode, FormulaNodeId,
+    PackageDeclarations, TemporalProfile, SCALAR_LIMITS_UNLIMITED,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
@@ -40,12 +41,9 @@ fn unit(clock: &str, body: &str) -> String {
 /// The unit through S1, S2, the assembler and the temporal check, with no
 /// model and no time source: the clock role is a trace-subject role, and
 /// `timed_unit` is the `unit` of its `{"kind": "timed"}` configuration
-/// (FR-933), `None` for no configuration.
-///
-/// QSL-2136 adds the in-process configuration input to the S3 check and
-/// passes `timed_unit` through it; until then the check takes none.
+/// (FR-933), `None` for no configuration. The check takes it as the request
+/// path does, keyed by clock name.
 fn check(text: &str, timed_unit: Option<&str>) -> Vec<Result<CheckedTemporalClause, String>> {
-    let _configured = timed_unit;
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
@@ -70,6 +68,16 @@ fn check(text: &str, timed_unit: Option<&str>) -> Vec<Result<CheckedTemporalClau
         Vec::new(),
     )
     .expect("the unit assembles");
+    let clocks: BTreeMap<String, ClockConfiguration> = timed_unit
+        .map(|unit| {
+            (
+                "plant".to_owned(),
+                ClockConfiguration::Timed { unit: unit.into() },
+            )
+        })
+        .into_iter()
+        .collect();
+    let package = package.with_clock_configurations(&clocks);
     check_clauses(&package)
         .into_iter()
         .map(|result| result.map_err(|cause| format!("{cause:?}")))
@@ -134,7 +142,6 @@ fn ms(value: u64) -> Rational {
     "FSpec-TC-1161",
     "FSpec-FR-541-AC-1"
 )]
-#[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
 fn a_timed_clause_over_a_record_trace_subject_is_checked_and_evaluated_pointwise() {
     let text = unit("plant", ACK);
     let mut checked = check(&text, Some("ms"));
@@ -182,7 +189,6 @@ fn a_timed_clause_over_a_record_trace_subject_is_checked_and_evaluated_pointwise
 /// that is not checked yet.
 #[test]
 #[trace("TC-1664", "FR-642-AC-1")]
-#[ignore = "QSL-2136: model-time over a record trace subject is not refused as model-time-on-trace-subject yet"]
 fn model_time_over_a_record_trace_subject_names_the_missing_time_source() {
     let mut checked = check(&unit("model-time", ACK), Some("ms"));
     let refusal = match checked.pop() {
@@ -201,7 +207,6 @@ fn model_time_over_a_record_trace_subject_names_the_missing_time_source() {
 /// and 2/3 ms it does not.
 #[test]
 #[trace("TC-1664", "FR-642-AC-4", "FSpec-TC-1161", "FSpec-FR-541-AC-2")]
-#[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
 fn timed_intervals_compare_rational_stamps_exactly() {
     let text = unit("plant", "eventually[0 ms, 500 us] holds(r.ack)").replace(
         "unit ms :",
@@ -246,7 +251,6 @@ fn timed_intervals_compare_rational_stamps_exactly() {
 /// `ack`@200, and `req`@0 alone, leave the clause pending.
 #[test]
 #[trace("TC-2444", "FR-642-AC-6")]
-#[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
 fn a_later_stamp_completes_a_timed_window_without_through() {
     let text = unit("plant", ACK);
     let mut checked = check(&text, Some("ms"));
@@ -293,7 +297,6 @@ fn a_later_stamp_completes_a_timed_window_without_through() {
 /// refuses `missing-clock-selection` and infers no unit.
 #[test]
 #[trace("TC-2605", "FR-933-AC-1")]
-#[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
 fn a_role_clock_clause_reads_its_bounds_in_its_binding_unit() {
     let text = |body: &str| {
         unit("plant", body).replace(

@@ -418,6 +418,9 @@ pub use checked_dispatch::{
     checked_dispatch_operation, object_type_supertypes, DispatchBridgeRefusal, DispatchRoot,
     MissingClauseField, OperationClauses,
 };
+/// A clock role's configuration, as a request's `clocks` member writes it and
+/// [`PackageDeclarations::with_clock_configurations`] takes it (FR-640).
+pub use filament_contract_model::ClockConfiguration;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
@@ -500,7 +503,7 @@ pub use protocol_slots::{
 };
 pub use refusal::{
     AliasKind, AmbiguousMember, AmbiguousQualified, ArmFault, ChannelEnd, CheckCause, CheckRefusal,
-    CheckingLimitKind, CheckingStage, DispatchFunctionRole, DispatchLinkCause,
+    CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
     MemberCandidate, NavigationBound, Obligation, ObservationReason, PredicateRole,

@@ -25,6 +25,11 @@ quire-canonical = { workspace = true, features = ["serde_json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] }
 thiserror = "2.0.20"
+# ADR-011, FR-931: the temporal correspondence stage is this crate's
+# only; no other FSL crate names the TL crates. `tl-syntax` is pinned to
+# the revision `tl-mltl` itself pins, so both name one `Formula` type.
+tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", branch = "main" }
+tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", rev = "9607722f24ac1978b5e0e0ceeb0cb2a828e10177", default-features = false, features = ["alloc", "serde"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

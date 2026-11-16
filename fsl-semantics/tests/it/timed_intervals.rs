@@ -343,10 +343,11 @@ fn a_punctual_interval_is_unsupported_outside_a_bounded_window() {
 
 /// FR-233 as FR-234 reads it: `model-time` over a model with no time source
 /// refuses `invalid_timed_model`/`model-time-on-untimed-model` at the clock
-/// clause naming the model; another clock role, or a subject that is no
-/// model object type, has no stated timed binding and refuses as not yet
-/// implemented.
+/// clause naming the model, and another clock role over a model refuses as
+/// not yet implemented; `model-time` over a record trace subject refuses
+/// `invalid_timed_model`/`model-time-on-trace-subject` at the clock (FR-642).
 #[trace("TC-689", "FR-234")]
+#[trace("TC-1664", "FR-642-AC-1")]
 #[test]
 fn the_timed_profile_needs_a_model_time_binding_over_a_timed_model() {
     let body = "eventually[0 ms, 3 ms] holds(c.healthy)";
@@ -375,19 +376,17 @@ fn the_timed_profile_needs_a_model_time_binding_over_a_timed_model() {
 
     let units = format!("{UNITS}record Loose {{ n: Integer; }}\n");
     let (text, _, outcome) = check_with(&units, "Loose", "model-time", body, vec![dense_ms()]);
+    // FR-642 "Checking": a record trace subject has no model time source.
     let cause = cause_of(outcome);
     assert_eq!(
         cause,
-        TemporalCause::TimedTraceSubject {
-            span: Span {
-                start: first(&text, "temporal C").start,
-                end: text.trim_end().len(),
-            },
+        TemporalCause::ModelTimeOnTraceSubject {
+            span: first(&text, "\"model-time\""),
         }
     );
     assert_eq!(
         (cause.code(), cause.tag()),
-        (Code::UnsupportedConstruct, "not-yet-implemented")
+        (Code::InvalidTimedModel, "model-time-on-trace-subject")
     );
 }
 

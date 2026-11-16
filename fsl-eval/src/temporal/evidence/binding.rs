@@ -44,7 +44,7 @@ pub enum MismatchedDimension {
     Epoch,
     /// A fixed-sample period.
     SamplePeriod,
-    /// A fixed-sample unit.
+    /// A fixed-sample or timed unit.
     ClockUnit,
     /// An event-position sequence authority.
     SequenceAuthority,
@@ -211,6 +211,7 @@ fn alternative(clock: &ClockConfiguration) -> &'static str {
         ClockConfiguration::EventPosition { .. } => "event_position",
         ClockConfiguration::FixedSample { .. } => "fixed_sample",
         ClockConfiguration::TimestampedEvent { .. } => "timestamped_event",
+        ClockConfiguration::Timed { .. } => "timed",
     }
 }
 
@@ -300,6 +301,16 @@ fn parameters_mismatch(
                 None
             }
         }
+        (
+            ClockConfiguration::Timed { unit: asserted },
+            ClockConfiguration::Timed { unit: expected },
+        ) => (asserted != expected).then(|| {
+            differs(
+                MismatchedDimension::ClockUnit,
+                asserted.to_string(),
+                expected.to_string(),
+            )
+        }),
         (asserted, row) => Some(differs(
             MismatchedDimension::ClockParameters,
             alternative(asserted).to_owned(),
