@@ -41,7 +41,9 @@ fn owned_fixture() -> tempfile::TempDir {
 }
 
 fn make(root: &Path) -> Command {
-    make_with_file(root, &workspace().join("Makefile")).env("CARGO_TARGET_DIR", root.join("target"))
+    let mut command = make_with_file(root, &workspace().join("Makefile"));
+    command.env("CARGO_TARGET_DIR", root.join("target"));
+    command
 }
 
 fn make_with_file(root: &Path, file: &Path) -> Command {
