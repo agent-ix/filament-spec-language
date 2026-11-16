@@ -338,8 +338,8 @@ pub fn claim_locus_wire(
 
 /// FSpec FR-412's structural `CertificateIdentity` `{node_id, model,
 /// ordinal}` of the obligation `claim` names over the subject model
-/// `model`: `node_id` the claim's node, `model` the model's identity text
-/// (`null` when the item has no model subject) and `ordinal` the claim
+/// `model`: `node_id` the claim's node, `model` the owning model's identity
+/// text and `ordinal` the claim
 /// occurrence's ordinal (FSpec FR-418-AC-9), the identity
 /// [`crate::ObligationIdentity`] mints for a claim occurrence.
 ///
@@ -348,12 +348,12 @@ pub fn claim_locus_wire(
 /// When the node key has no wire spelling.
 pub fn certificate_identity_wire(
     claim: &fsl_foundation::source::provenance::OccurrenceKey,
-    model: Option<&str>,
+    model: &str,
 ) -> Result<serde_json::Value, serde_json::Error> {
     #[derive(Serialize)]
     struct Identity<'a> {
         node_id: WireNode,
-        model: Option<&'a str>,
+        model: &'a str,
         ordinal: u32,
     }
     let identity = crate::ObligationIdentity::from_claim_occurrence(claim);

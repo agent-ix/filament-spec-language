@@ -154,12 +154,18 @@ fn read<'d>(
     limits.deadline = request
         .deadline_ms
         .map_or(DeadlineSupply::Unbounded, DeadlineSupply::Milliseconds);
-    let subject = request
-        .subject
-        .unwrap_or_else(|| SubjectSelection::default_over(&documents));
-    subject
-        .check_universes(&documents)
-        .map_err(RunCause::AnalyzeUniverse)?;
+    // FR-620: an explicit `subject.universes` refuses an unprovisioned or
+    // incomplete reference; the default subject's universes are the complete
+    // populations its snapshots declare, so it refuses neither.
+    let subject = match request.subject {
+        Some(subject) => {
+            subject
+                .check_universes(&documents)
+                .map_err(RunCause::AnalyzeUniverse)?;
+            subject
+        }
+        None => SubjectSelection::default_over(&documents),
+    };
     let compile = wire::CompileRequest {
         models: request.models,
         program: wire::CompileProgram {
@@ -241,7 +247,11 @@ fn run_input(
         |checked, packages, libraries, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();
+            // FR-620: the request's units in request order, the program then
+            // each library as listed, rank the default items.
+            let mut units = Vec::new();
             for read in std::iter::once(&source).chain(libraries) {
+                units.push(read.source().reference().clone());
                 provision.insert(
                     read.source().reference(),
                     read.source().text().as_bytes().to_vec(),
@@ -254,7 +264,7 @@ fn run_input(
                     .register(descriptor.clone())
                     .map_err(|_| RunCause::AnalyzeFault)?;
             }
-            let resolved = resolve_items(package, &subject, items.as_deref(), &registry);
+            let resolved = resolve_items(package, &subject, items.as_deref(), &registry, &units);
             let run = AnalyzeRun {
                 package,
                 binding: subject.binding(&packages, &documents),

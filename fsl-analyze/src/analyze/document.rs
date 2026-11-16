@@ -18,7 +18,7 @@ use std::num::NonZeroU64;
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::{CatalogCode, Category};
-use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
 use fsl_replay::{OutcomeAxes, TerminalRecord, TerminalValue};
@@ -134,9 +134,11 @@ impl SubjectSelection {
     }
 
     /// The binding `analyze` takes over this subject: the initial states,
-    /// and one universe per population the universe snapshots declare, its
-    /// keys the union of their objects' keys in reference order. The caller
-    /// has checked the references with [`Self::check_universes`].
+    /// and one universe per complete population the universe snapshots
+    /// declare, its keys the union of their objects' keys in reference order.
+    /// An explicit subject's references were checked with
+    /// [`Self::check_universes`]; the default subject leaves an incomplete
+    /// population out (FR-620).
     pub fn binding<'a>(
         &self,
         packages: &'a fsl_semantics::model::intake::PackageInput,
@@ -149,7 +151,11 @@ impl SubjectSelection {
                 .get(&selection.reference())
                 .and_then(|bytes| snapshot(bytes))
         }) {
-            for population in &read.populations {
+            for population in read
+                .populations
+                .iter()
+                .filter(|population| population.complete)
+            {
                 let (keys, seen) = universes
                     .entry(DeclarationKey {
                         package: read.model.identity.clone(),
@@ -281,35 +287,104 @@ impl ItemKindSelection {
     }
 }
 
+/// The largest count a request member carries: every JSON reader holds it
+/// exactly (FSpec FR-520), and it fits the `usize` an explicit-state engine
+/// counts in on every supported target.
+const MAX_COUNT: u64 = 9_007_199_254_740_991;
+
+/// Read one count member named `member`: a JSON integer from `minimum` to
+/// 2^53 - 1 that fits `usize`. A larger value refuses the whole request
+/// naming the member, never a silently dropped bound (FR-620).
+fn count<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+    member: &str,
+    minimum: u64,
+) -> Result<u64, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value < minimum || value > MAX_COUNT || usize::try_from(value).is_err() {
+        return Err(serde::de::Error::custom(format!(
+            "{member} {value} is not a count from {minimum} to {MAX_COUNT}"
+        )));
+    }
+    Ok(value)
+}
+
+/// Generate the `deserialize_with` reader of each named count member.
+macro_rules! count_members {
+    ($($reader:ident => $member:literal),+ $(,)?) => {
+        $(
+            fn $reader<'de, D: serde::Deserializer<'de>>(
+                decoder: D,
+            ) -> Result<Option<NonZeroU64>, D::Error> {
+                count(decoder, $member, 1).map(NonZeroU64::new)
+            }
+        )+
+    };
+}
+
+count_members! {
+    read_max_states => "temporal.limits.max_states",
+    read_max_transitions => "temporal.limits.max_transitions",
+    read_max_automaton_states => "temporal.limits.max_automaton_states",
+    read_max_walk_steps => "temporal.limits.max_walk_steps",
+    read_max_witness_set => "temporal.limits.max_witness_set",
+    read_max_relation_tuples => "temporal.limits.max_relation_tuples",
+    read_max_clocks => "temporal.limits.max_clocks",
+    read_max_task_product_work => "temporal.limits.max_task_product_work",
+    read_max_store_buffer => "temporal.limits.max_store_buffer",
+    read_max_messages => "temporal.limits.max_messages",
+    read_max_live_instances => "temporal.limits.max_live_instances",
+    read_max_solver_steps => "temporal.limits.max_solver_steps",
+    read_max_solver_time => "temporal.limits.max_solver_time",
+}
+
+/// `temporal.max_depth`: a count from 0 to 2^53 - 1 that fits `usize`.
+fn read_max_depth<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    count(decoder, "temporal.max_depth", 0).map(Some)
+}
+
 /// FSpec FR-331's `temporal.limits`, each member a positive count.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalLimitsSelection {
     /// `max_states`.
+    #[serde(default, deserialize_with = "read_max_states")]
     pub max_states: Option<NonZeroU64>,
     /// `max_transitions`.
+    #[serde(default, deserialize_with = "read_max_transitions")]
     pub max_transitions: Option<NonZeroU64>,
     /// `max_automaton_states`.
+    #[serde(default, deserialize_with = "read_max_automaton_states")]
     pub max_automaton_states: Option<NonZeroU64>,
     /// `max_walk_steps`.
+    #[serde(default, deserialize_with = "read_max_walk_steps")]
     pub max_walk_steps: Option<NonZeroU64>,
     /// `max_witness_set`.
+    #[serde(default, deserialize_with = "read_max_witness_set")]
     pub max_witness_set: Option<NonZeroU64>,
     /// `max_relation_tuples`.
+    #[serde(default, deserialize_with = "read_max_relation_tuples")]
     pub max_relation_tuples: Option<NonZeroU64>,
     /// `max_clocks` (FSpec FR-415).
+    #[serde(default, deserialize_with = "read_max_clocks")]
     pub max_clocks: Option<NonZeroU64>,
     /// `max_task_product_work` (FSpec FR-415).
+    #[serde(default, deserialize_with = "read_max_task_product_work")]
     pub max_task_product_work: Option<NonZeroU64>,
     /// `max_store_buffer` (FSpec FR-439).
+    #[serde(default, deserialize_with = "read_max_store_buffer")]
     pub max_store_buffer: Option<NonZeroU64>,
     /// `max_messages` (FSpec FR-439).
+    #[serde(default, deserialize_with = "read_max_messages")]
     pub max_messages: Option<NonZeroU64>,
     /// `max_live_instances` (FSpec FR-428).
+    #[serde(default, deserialize_with = "read_max_live_instances")]
     pub max_live_instances: Option<NonZeroU64>,
     /// `max_solver_steps` (FSpec FR-368).
+    #[serde(default, deserialize_with = "read_max_solver_steps")]
     pub max_solver_steps: Option<NonZeroU64>,
     /// `max_solver_time` (FSpec FR-368).
+    #[serde(default, deserialize_with = "read_max_solver_time")]
     pub max_solver_time: Option<NonZeroU64>,
 }
 
@@ -348,7 +423,7 @@ pub struct TemporalSelection {
     #[serde(default)]
     pub stutter_closure: Option<bool>,
     /// A bounded search's horizon.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "read_max_depth")]
     pub max_depth: Option<u64>,
     /// The item's own budgets.
     #[serde(default)]
@@ -597,13 +672,16 @@ fn claim_occurrence(
 /// Resolve `selections` (FR-620 "Resolving items") over `package`, the
 /// request's default `subject` and the caller's `registry`; `None`
 /// selections are FR-620's default items: one per checked claim and kind,
-/// then each model subject's derived items. Each result is either an item
-/// to negotiate and run or an item already settled.
+/// then each model subject's derived items, the claims ordered by `units`,
+/// the request's source units in request order (the program, then each
+/// library as listed). Each result is either an item to negotiate and run
+/// or an item already settled.
 pub fn resolve_items(
     package: &CheckedPackage,
     subject: &SubjectSelection,
     selections: Option<&[ItemSelection]>,
     registry: &Registry,
+    units: &[RawSourceRef],
 ) -> Vec<ResolvedItem> {
     match selections {
         Some(selections) => selections
@@ -619,7 +697,7 @@ pub fn resolve_items(
                 )
             })
             .collect(),
-        None => default_items(package, subject, registry),
+        None => default_items(package, subject, registry, units),
     }
 }
 
@@ -750,9 +828,10 @@ fn temporal_item(
             .item_kind
             .map_or(ItemKind::Formula, ItemKindSelection::kind),
         stutter_closure: selection.stutter_closure,
+        // The reader admits only counts that fit `usize` (`read_max_depth`).
         max_depth: selection
             .max_depth
-            .and_then(|depth| usize::try_from(depth).ok()),
+            .map(|depth| usize::try_from(depth).unwrap_or(usize::MAX)),
         ..TemporalItem::default()
     };
     if item.item_kind == ItemKind::Formula {
@@ -771,9 +850,10 @@ fn temporal_item(
                 *slot = value.get();
             }
         };
+        // The reader admits only counts that fit `usize` (`count`).
         let set_usize = |value: Option<NonZeroU64>, slot: &mut usize| {
-            if let Some(value) = value.and_then(|value| usize::try_from(value.get()).ok()) {
-                *slot = value;
+            if let Some(value) = value {
+                *slot = usize::try_from(value.get()).unwrap_or(usize::MAX);
             }
         };
         set_usize(limits.max_states, &mut item.limits.limits.max_states);
@@ -802,6 +882,7 @@ fn default_items(
     package: &CheckedPackage,
     subject: &SubjectSelection,
     registry: &Registry,
+    units: &[RawSourceRef],
 ) -> Vec<ResolvedItem> {
     let graph = package.graph();
     let records = requirement_items(package, registry, None);
@@ -815,31 +896,34 @@ fn default_items(
             nodes.push(record.node().clone());
         }
     }
-    let sources = graph.sources();
     let position = |node: &filament_exact::NodeKey| -> (usize, u64) {
-        let region = graph
-            .temporal_clauses()
-            .iter()
-            .find(|clause| clause.identity() == *node)
-            .and_then(|clause| u64::try_from(clause.clause().span().start).ok())
-            .map(|start| (graph.source().clone(), start))
+        let region = claim_occurrence(package, &records, node)
+            .and_then(|occurrence| {
+                graph.occurrence_region(occurrence.node().clone(), occurrence.origin())
+            })
+            .map(|region| (region.source().clone(), region.start()))
             .or_else(|| {
-                let occurrence = claim_occurrence(package, &records, node)?;
-                let region =
-                    graph.occurrence_region(occurrence.node().clone(), occurrence.origin())?;
-                Some((region.source().clone(), region.start()))
+                // A temporal clause's own declaration span lies in the
+                // program unit when its occurrence records no region.
+                let clause = graph
+                    .temporal_clauses()
+                    .iter()
+                    .find(|clause| clause.identity() == *node)?;
+                let start = u64::try_from(clause.clause().span().start).ok()?;
+                Some((units.first()?.clone(), start))
             });
         region.map_or((usize::MAX, u64::MAX), |(source, start)| {
-            let unit = sources
+            let unit = units
                 .iter()
-                .position(|candidate| **candidate == source)
+                .position(|candidate| *candidate == source)
                 .unwrap_or(usize::MAX);
             (unit, start)
         })
     };
-    // FR-620: source order across every declaration family, each unit's
-    // declarations by the start byte of their span; the sort is stable, so
-    // a node with no recorded region keeps its place after those with one.
+    // FR-620: source order across every declaration family, the units in
+    // request order and each unit's declarations by the start byte of their
+    // span; the sort is stable, so a node with no recorded region keeps its
+    // place after those with one.
     nodes.sort_by_cached_key(|node| position(node));
     let mut resolved = Vec::new();
     for node in &nodes {
@@ -979,7 +1063,8 @@ impl ClaimItem {
     ///
     /// # Errors
     ///
-    /// When the claim's node key has no wire spelling.
+    /// When the claim's node key or a fairness constraint has no wire
+    /// spelling.
     pub fn request_item_wire(
         &self,
         subject: &SubjectSelection,
@@ -1026,7 +1111,13 @@ impl ClaimItem {
             member.insert("item_kind".to_owned(), json!(temporal.item_kind.to_wire()));
             member.insert(
                 "fairness".to_owned(),
-                Value::Array(temporal.fairness.iter().map(fairness_wire).collect()),
+                Value::Array(
+                    temporal
+                        .fairness
+                        .iter()
+                        .map(fairness_wire)
+                        .collect::<Result<_, _>>()?,
+                ),
             );
             if let Some(stutter) = temporal.stutter_closure {
                 member.insert("stutter_closure".to_owned(), json!(stutter));
@@ -1053,11 +1144,17 @@ impl ClaimItem {
 }
 
 /// FSpec FR-364's `{kind, operation, granularity}` fairness constraint.
-fn fairness_wire(constraint: &filament_semantic_value::fairness::FairnessConstraint) -> Value {
-    quire_canonical::to_vec(constraint, quire_canonical::Limits::new(u64::MAX))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or(Value::Null)
+///
+/// # Errors
+///
+/// When the constraint has no canonical spelling, which the caller reports
+/// as a fault rather than writing a placeholder entry.
+fn fairness_wire(
+    constraint: &filament_semantic_value::fairness::FairnessConstraint,
+) -> Result<Value, serde_json::Error> {
+    let bytes = quire_canonical::to_vec(constraint, quire_canonical::Limits::new(u64::MAX))
+        .map_err(|error| <serde_json::Error as serde::ser::Error>::custom(error.to_string()))?;
+    serde_json::from_slice(&bytes)
 }
 
 /// What one request settles for the FR-621 document.
@@ -1129,13 +1226,9 @@ pub fn analyze_document(
                 let echo = item
                     .request_item_wire(&subject)
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
-                let model = subject
-                    .initial_states
-                    .first()
-                    .and_then(|selection| binding.snapshots.get(&selection.reference()))
-                    .and_then(|bytes| snapshot(bytes))
-                    .map(|read| read.model.identity);
-                let identity = fsl_replay::certificate_identity_wire(&item.claim, model.as_deref())
+                let identity = owning_model(package, &item.claim)
+                    .map(|model| fsl_replay::certificate_identity_wire(&item.claim, model))
+                    .transpose()
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
                 echoes.insert(
                     item.request_index,
@@ -1230,7 +1323,7 @@ pub fn analyze_document(
             ItemMembers {
                 claim_name,
                 request: echo.map(|echo| echo.request.clone()),
-                identity: echo.map(|echo| echo.identity.clone()),
+                identity: echo.and_then(|echo| echo.identity.clone()),
                 target,
                 detail: detail.copied(),
                 scoped: echo.is_some_and(|echo| echo.scoped),
@@ -1307,8 +1400,9 @@ struct Echo {
     claim_name: String,
     /// The admitted FSpec FR-331 request item.
     request: Value,
-    /// FSpec FR-412's certificate identity of the item's obligation.
-    identity: Value,
+    /// FSpec FR-412's certificate identity of the item's obligation;
+    /// `None` when no one domain package owns the claim.
+    identity: Option<Value>,
     /// Whether the aggregate requires the item.
     required: bool,
     /// Whether the item has an activation scope (FR-622).
@@ -1324,6 +1418,30 @@ struct ItemMembers {
     detail: Option<super::ItemDetail>,
     scoped: bool,
     axes: OutcomeAxes,
+}
+
+/// The identity of the domain package that owns the obligation `claim`
+/// names, FR-621's certificate `model` (FSpec FR-201, FR-412): the package
+/// of a temporal clause's `over` object type, else the package's one model
+/// selection. `None` when the claim names no single owning package: a
+/// package with no model selection, or several and a claim with no `over`
+/// object type.
+fn owning_model<'p>(package: &'p CheckedPackage, claim: &OccurrenceKey) -> Option<&'p str> {
+    let graph = package.graph();
+    let over = graph
+        .temporal_clauses()
+        .iter()
+        .find(|clause| clause.identity() == *claim.node())
+        .and_then(|clause| match &clause.clause().over().1 {
+            filament_exact::ValueType::Reference(object_type) => {
+                Some(object_type.original().package())
+            }
+            _ => None,
+        });
+    over.or_else(|| match graph.model_selections() {
+        [selection] => Some(selection.identity.as_str()),
+        _ => None,
+    })
 }
 
 /// FSpec FR-323's replay target member object for the reproduced

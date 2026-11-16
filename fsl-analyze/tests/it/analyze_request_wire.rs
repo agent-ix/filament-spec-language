@@ -269,6 +269,12 @@ fn analyze_items_name_certificate_replay_target_and_gaps() {
     let mut members: Vec<&str> = identity.keys().map(String::as_str).collect();
     members.sort_unstable();
     assert_eq!(members, ["model", "node_id", "ordinal"]);
+    assert_eq!(identity["model"], "test/counter", "{proved}");
+    assert_eq!(identity["node_id"], proved["request"]["claim"]["node"]);
+    assert_eq!(
+        identity["ordinal"],
+        proved["request"]["claim"]["occurrence"]["ordinal"]
+    );
     let refuted = run.item(1);
     assert_eq!(label(&refuted), "refuted", "{refuted}");
     let target = refuted["replay"]["target"]["state_clause"]
@@ -281,6 +287,19 @@ fn analyze_items_name_certificate_replay_target_and_gaps() {
         aggregate["gaps"],
         json!([{"request_index": 1, "reason": "not-proved", "result": "refuted"}])
     );
+}
+
+/// The message of a whole-request refusal's first diagnostic.
+fn refusal_message(run: &crate::analyze_cli_support::Run) -> String {
+    let document = run.document();
+    assert_eq!(
+        document["diagnostics"][0]["code"], "invalid-request",
+        "{document}"
+    );
+    document["diagnostics"][0]["message"]
+        .as_str()
+        .expect("a diagnostic message")
+        .to_owned()
 }
 
 /// FR-620-AC-10 (TC-2185): default items follow source order, an
@@ -300,14 +319,30 @@ fn analyze_defaults_universes_and_limit_names() {
         .map(|item| item["claim_name"].clone())
         .collect();
     assert_eq!(names, [json!("BelowThree"), json!("Bounded")]);
-
-    let mut universes = request_members(Some(json!([{"claim": "Bounded"}])));
-    universes["subject"] = json!({"universes": [{"authority": "test", "identity": "nowhere"}]});
-    let ws = Workspace::new("wire-universes");
     assert_eq!(
-        analyze(&counter_request_with(&ws, &bounded(), universes)).exit,
-        20
+        run.item(2)["request"]["temporal"]["item_kind"],
+        "deadlock-freedom"
     );
+
+    let start = json!({"authority": "test", "identity": "start"});
+    let mut universes = request_members(Some(json!([{"claim": "Bounded"}])));
+    universes["subject"] = json!({"initial_states": [start], "universes": [start],
+        "proof_bounds": []});
+    let ws = Workspace::new("wire-universes-provisioned");
+    let provisioned = analyze(&counter_request_with(&ws, &bounded(), universes.clone()));
+    assert_eq!(
+        label(&provisioned.item(0)),
+        "proved",
+        "{}",
+        provisioned.document()
+    );
+    universes["subject"]["universes"] = json!([{"authority": "test", "identity": "nowhere"}]);
+    let ws = Workspace::new("wire-universes");
+    let run = analyze(&counter_request_with(&ws, &bounded(), universes));
+    assert_eq!(run.exit, 20);
+    let message = refusal_message(&run);
+    assert!(message.contains("subject.universes[0]"), "{message}");
+    assert!(message.contains("nowhere"), "{message}");
 
     for (normalization, exit) in [
         (json!({"work_units": 5_000_000}), 0),
@@ -316,11 +351,12 @@ fn analyze_defaults_universes_and_limit_names() {
         let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
         request["limits"] = json!({"normalization": normalization});
         let ws = Workspace::new("wire-normalization");
-        assert_eq!(
-            analyze(&counter_request_with(&ws, &bounded(), request)).exit,
-            exit,
-            "{normalization}"
-        );
+        let run = analyze(&counter_request_with(&ws, &bounded(), request));
+        assert_eq!(run.exit, exit, "{normalization}");
+        if exit == 20 {
+            let message = refusal_message(&run);
+            assert!(message.contains("bogus"), "{message}");
+        }
     }
 }
 
@@ -401,4 +437,149 @@ fn hashed_bytes_is_not_a_normalization_limit() {
             );
         }
     }
+}
+
+/// FR-620 "Subject, compilation and default items": the units rank in
+/// request order, the program first and then each library as listed, so a
+/// library whose labels sort before the program's moves no program claim.
+/// A library's declarations live in its own checked package, so none of
+/// them is a default item of the program.
+#[trace("TC-2185", "FR-620-AC-10")]
+#[test]
+fn default_items_rank_units_in_request_order() {
+    let ws = Workspace::new("wire-default-library");
+    ws.write(
+        "library.fsl",
+        b"language \"ix:native\" edition \"1-draft\";\n\
+          profile v = \"filament.value.complete/v1\";\n\
+          function Early using v(): Boolean pure { true }\n",
+    );
+    let mut request = request_members(None);
+    request["libraries"] = json!([{"identity": "aaa/library", "source": {"file": "library.fsl",
+        "authority": "aaa", "identity": "aaa-library", "document": "Library",
+        "formal_revision": 1}}]);
+    let body = format!("{}{}", below_three(), bounded());
+    let run = analyze(&counter_request_with(&ws, &body, request));
+    let document = run.document();
+    let names: Vec<Value> = document["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items in {document}"))
+        .iter()
+        .map(|item| item["claim_name"].clone())
+        .collect();
+    assert_eq!(
+        names[..2],
+        [json!("BelowThree"), json!("Bounded")],
+        "{document}"
+    );
+    assert!(!names.contains(&json!("Early")), "{document}");
+}
+
+/// FR-620: the default subject's universes are the complete populations
+/// its snapshots declare, so the default binding leaves an incomplete
+/// population out and the reader refuses no universe for it; an explicit
+/// `subject.universes` naming that snapshot refuses `incomplete_population`
+/// at the request stage, exit 22.
+#[trace("TC-2185", "FR-620-AC-10")]
+#[test]
+fn only_an_explicit_universe_refuses_an_incomplete_population() {
+    use fsl_analyze::analyze::document::{SubjectSelection, UniverseRefusal};
+    let mut snapshot: Value =
+        serde_json::from_slice(&crate::analyze_cli_support::counter_snapshot(&[("a", 0)]))
+            .expect("the snapshot is JSON");
+    snapshot["populations"][0]["complete"] = json!(false);
+    let bytes = snapshot.to_string().into_bytes();
+    let mut documents = fsl_semantics::model::observation::DocumentProvision::new();
+    let reference = fsl_semantics::model::observation::document_reference(&bytes)
+        .expect("the snapshot declares its identity");
+    documents.insert(reference, bytes.clone());
+    let default = SubjectSelection::default_over(&documents);
+    assert_eq!(default.initial_states.len(), 1);
+    let packages = fsl_semantics::model::intake::PackageInput::default();
+    assert!(default.binding(&packages, &documents).universes.is_empty());
+
+    let start = json!({"authority": "test", "identity": "start"});
+    let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
+    request["subject"] = json!({"initial_states": [start], "universes": [start],
+        "proof_bounds": []});
+    let ws = Workspace::new("wire-incomplete-explicit");
+    let path = counter_request_with(&ws, &bounded(), request);
+    ws.write("start.json", &bytes);
+    let run = analyze(&path);
+    let document = run.document();
+    assert_eq!(
+        document["diagnostics"][0]["code"], "incomplete_population",
+        "{document}"
+    );
+    assert_eq!(
+        document["diagnostics"][0]["message"],
+        UniverseRefusal::Incomplete {
+            population: "ix://test/counter/counters".to_owned()
+        }
+        .to_string(),
+        "{document}"
+    );
+    assert_eq!(run.exit, 22, "{document}");
+}
+
+/// FR-620 "Reading": a `temporal.limits` or `temporal.max_depth` count past
+/// 2^53 - 1 refuses the whole request naming the member, never a dropped
+/// bound.
+#[trace("TC-1580", "FR-620-AC-3")]
+#[test]
+fn an_oversized_temporal_count_refuses_naming_the_member() {
+    for (temporal, member) in [
+        (
+            json!({"limits": {"max_states": 9_007_199_254_740_992_u64}}),
+            "temporal.limits.max_states",
+        ),
+        (
+            json!({"max_depth": 9_007_199_254_740_992_u64}),
+            "temporal.max_depth",
+        ),
+    ] {
+        let ws = Workspace::new("wire-oversized-count");
+        let run = analyze(&counter_request(
+            &ws,
+            &bounded(),
+            json!([{"claim": "Bounded", "temporal": temporal}]),
+        ));
+        assert_eq!(run.exit, 20, "{member}");
+        let message = refusal_message(&run);
+        assert!(message.contains(member), "{message}");
+    }
+}
+
+/// FR-621-AC-7 (TC-1581), first half: a `finite-replay` item whose clause is
+/// still pending at the end of the supplied trace carries
+/// `disposition.temporal` kind `pending`, category `pending`, basis
+/// `unsettled` and `axes.settlement` `unsettled`, and exits 0.
+#[trace("TC-1581", "FR-621-AC-7")]
+#[test]
+#[ignore = "QSL-2121: analyze has no finite-replay engine, so an item with a supplied trace settles unsupported"]
+fn a_pending_finite_replay_item_reports_its_pending_disposition() {
+    let reaches =
+        crate::analyze_cli_support::clause("Reaches", "", "eventually holds(c.value = 3)");
+    let ws = Workspace::new("wire-finite-replay");
+    let trace = json!({"format": "filament.protocol-trace/v1", "identity":
+        {"authority": "test", "identity": "recorded"}, "steps": []});
+    ws.write("recorded.json", trace.to_string().as_bytes());
+    let mut request = request_members(Some(json!([
+        {"claim": "Reaches", "kind": "finite-replay",
+         "trace": {"authority": "test", "identity": "recorded"}}
+    ])));
+    request["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": "recorded.json"}));
+    let run = analyze(&counter_request_with(&ws, &reaches, request));
+    assert_eq!(run.exit, 0);
+    let item = run.item(0);
+    assert_eq!(item["category"], "pending", "{item}");
+    assert_eq!(
+        item["record"]["disposition"]["temporal"]["kind"], "pending",
+        "{item}"
+    );
+    assert_eq!(item["record"]["basis"], "unsettled", "{item}");
+    assert_eq!(item["axes"]["settlement"], "unsettled", "{item}");
 }
