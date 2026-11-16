@@ -419,7 +419,7 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 
 # The committed performance benchmarks (`fsl-bench/`), one
 # criterion bench per axis group, each runnable by name. `make bench` runs all
-# ten; `make bench-probe` prints the counts, refusal boundaries and one-shot
+# eleven; `make bench-probe` prints the counts, refusal boundaries and one-shot
 # large-input timings (with peak RSS) the criterion benches do not record.
 # Compare a candidate with current main in one interleaved session; see
 # `fsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
@@ -427,14 +427,20 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 # Not part of `ci:`
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
-BENCH_AXES := parser checker cst model evaluator text_cluster mc reach key en4
+BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4
+BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
 
 .PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
 
 bench: $(addprefix bench-,$(BENCH_AXES))
 
-$(addprefix bench-,$(BENCH_AXES)): bench-%:
+$(addprefix bench-,$(BENCH_GENERIC_AXES)): bench-%:
 	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
+
+bench-evaluator_kernel:
+	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start
+	cargo bench --locked -p fsl-bench --bench evaluator_kernel -- $(BENCH_ARGS)
+	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- report -- $(BENCH_ARGS)
 
 # One process per `check`/`eval` size: peak RSS is process-wide.
 BENCH_PROBE := cargo run --locked --release -q -p fsl-bench --bin fsl-bench-probe --
