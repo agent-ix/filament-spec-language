@@ -58,7 +58,9 @@ pub use trace_subject::{
     TraceSubjectClauseRequest,
 };
 
-use super::call::{convert_call_failure, convert_outcome, select};
+use super::call::{
+    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select,
+};
 pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::lifecycle as front_end;
 use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
@@ -1493,10 +1495,124 @@ fn run_clause_reading(
 }
 
 struct CompiledClauseProgram {
+    models: super::AdmittedModels,
     checked: super::CheckedUnit,
     emitted: super::EmittedUnit,
     sources: Vec<Source>,
     temporal_package: Option<Box<filament_contract_model::CheckedPackageV2>>,
+}
+
+/// Source and compile inputs shared by a whole FR-651 `items` request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProgramCompilationRequest {
+    /// The native program source identity.
+    pub source: SourceIdentity,
+    /// The program's display path.
+    pub path: String,
+    /// The exact admitted source bytes.
+    pub bytes: Vec<u8>,
+    /// The package identity the compiler assigns to the program.
+    pub package_name: String,
+    /// Domain package documents selected by the program's model declarations.
+    pub packages: fsl_semantics::model::intake::PackageInput,
+    /// Supplied library closure.
+    pub dependencies: DependencyInput,
+    /// Front-end stage limits.
+    pub limits: SpineLimits,
+    /// The request's named clock configurations.
+    pub clocks: RequestClocks,
+}
+
+/// Inputs to one selection in a mixed FR-651 batch.
+pub enum ProgramBatchSelection {
+    /// A state clause, function predicate, frame or temporal selection.
+    Clause(ClauseRunRequest),
+    /// FR-100's value call.
+    Call {
+        /// The call to execute.
+        call: super::Call,
+        /// Whether FR-395 call requirement members must be returned for
+        /// settlement by the command layer.
+        include_requirements: bool,
+    },
+    /// FR-652's no-clause value-invariant selection.
+    ValueInvariants(ValueInvariantsBatchRequest),
+}
+
+/// FR-652 inputs needed to admit and evaluate one value-invariant selection
+/// against an already compiled program.
+pub struct ValueInvariantsBatchRequest {
+    /// Snapshot documents supplied by the items request.
+    pub snapshots: fsl_semantics::model::observation::DocumentProvision,
+    /// Invocation documents supplied by the items request.
+    pub invocations: fsl_semantics::model::observation::DocumentProvision,
+    /// Selected current snapshot.
+    pub snapshot: DocumentRef,
+    /// Optional selected invocation.
+    pub invocation: Option<DocumentRef>,
+    /// FR-106 observation limits for this item.
+    pub observation_limits: ObservationLimits,
+    /// This item's independent evaluation accounting.
+    pub accounting: ScalarLimits,
+}
+
+/// Successful FR-651 batch item results, retained in request order.
+pub enum ProgramBatchItemResult {
+    /// A clause-family result.
+    Clause(ClauseRunReport),
+    /// A value-call result or its per-item refusal.
+    Call(Result<ProgramBatchCallOutcome, Box<RunRefusal>>),
+    /// A value-invariant result or its per-item refusal.
+    ValueInvariants(Result<ValueInvariantsBatchOutcome, ValueInvariantsBatchFailure>),
+}
+
+/// One call result and, when requested, its requirement items from the same
+/// checked package.
+pub struct ProgramBatchCallOutcome {
+    /// The per-item call outcome.
+    pub outcome: CallOutcome,
+    /// FR-395 requirement items available for command-layer settlement.
+    pub requirements: Option<crate::CallRequirements>,
+}
+
+/// Results from one whole-request compilation, including the checked unit
+/// needed by command-layer settlement callbacks.
+pub struct ProgramBatchOutcome {
+    /// Per-selection results in the same order as the request.
+    pub items: Vec<ProgramBatchItemResult>,
+    /// The checked unit shared by every result.
+    pub checked: super::CheckedUnit,
+}
+
+/// Evaluation results of one admitted value-invariant selection.
+pub struct ValueInvariantsBatchOutcome {
+    /// The ordered evaluation result for each reached invariant/value pair.
+    pub evaluation: fsl_eval::value::ValueInvariantEvaluation,
+    /// FR-106 admission usage for this selection.
+    pub admission_usage: fsl_semantics::model::observation::AdmissionUsage,
+}
+
+/// A value-invariant item refusal after the whole request compiled.
+pub enum ValueInvariantsBatchFailure {
+    /// FR-106 admission refused or was incomplete.
+    Admission(fsl_semantics::model::observation::AdmissionFailure),
+    /// Evaluation refused or faulted.
+    Evaluation(filament_eval::CallFailure),
+}
+
+/// Why the mixed item batch could not use one common program compilation.
+#[derive(Debug)]
+pub enum ProgramBatchRefusal {
+    /// The requests did not share one compile input.
+    DifferentCompilation,
+    /// The one compile refused before any item ran.
+    Compile(Box<ClauseRunReport>),
+}
+
+struct CompiledProgramContext {
+    program: CompiledClauseProgram,
+    packages: fsl_semantics::model::intake::PackageInput,
+    model_limits: ModelNormalizationLimits,
 }
 
 /// Compile the common program once, then independently evaluate each
@@ -1554,6 +1670,191 @@ fn compile_clause_program(
     request: &ClauseRunRequest,
     needs_temporal: bool,
 ) -> Result<CompiledClauseProgram, Box<ClauseRunReport>> {
+    compile_program_parts(
+        request.source.unit(),
+        request.package_name.clone(),
+        &request.packages,
+        &request.dependencies,
+        request.limits,
+        &request.clocks,
+        needs_temporal,
+    )
+}
+
+fn compile_program_context(
+    request: &ProgramCompilationRequest,
+    needs_temporal: bool,
+) -> Result<CompiledProgramContext, Box<ClauseRunReport>> {
+    let unit = Unit {
+        identity: &request.source,
+        path: &request.path,
+        bytes: &request.bytes,
+        language: None,
+    };
+    let program = compile_program_parts(
+        unit,
+        request.package_name.clone(),
+        &request.packages,
+        &request.dependencies,
+        request.limits,
+        &request.clocks,
+        needs_temporal,
+    )?;
+    Ok(CompiledProgramContext {
+        program,
+        packages: request.packages.clone(),
+        model_limits: request.limits.model,
+    })
+}
+
+/// Compile the shared program once, then run every FR-651 item through the
+/// same checked package while retaining each item's own inputs and budgets.
+pub fn run_program_batch(
+    compilation: ProgramCompilationRequest,
+    selections: Vec<ProgramBatchSelection>,
+) -> Result<ProgramBatchOutcome, ProgramBatchRefusal> {
+    run_program_batch_with_compile(compilation, selections, compile_program_context)
+}
+
+fn run_program_batch_with_compile(
+    compilation: ProgramCompilationRequest,
+    selections: Vec<ProgramBatchSelection>,
+    compile: impl FnOnce(
+        &ProgramCompilationRequest,
+        bool,
+    ) -> Result<CompiledProgramContext, Box<ClauseRunReport>>,
+) -> Result<ProgramBatchOutcome, ProgramBatchRefusal> {
+    if selections.iter().any(|selection| match selection {
+        ProgramBatchSelection::Clause(request) => {
+            !clause_matches_compilation(request, &compilation)
+        }
+        ProgramBatchSelection::Call { call, .. } => call.clocks != compilation.clocks,
+        ProgramBatchSelection::ValueInvariants(_) => false,
+    }) {
+        return Err(ProgramBatchRefusal::DifferentCompilation);
+    }
+    if selections.is_empty() {
+        return Ok(Vec::new());
+    }
+    let needs_temporal = selections.iter().any(|selection| {
+        matches!(
+            selection,
+            ProgramBatchSelection::Clause(ClauseRunRequest {
+                selection: ClauseRunSelection::Temporal { .. }
+                    | ClauseRunSelection::SampledTemporal { .. },
+                ..
+            })
+        )
+    });
+    let compiled = compile(&compilation, needs_temporal).map_err(ProgramBatchRefusal::Compile)?;
+    let items = selections
+        .into_iter()
+        .map(|selection| match selection {
+            ProgramBatchSelection::Clause(request) => ProgramBatchItemResult::Clause(
+                run_compiled_clause_selection(&compiled.program, &request),
+            ),
+            ProgramBatchSelection::Call {
+                call,
+                include_requirements,
+            } => {
+                let cancel = Cancel::new();
+                let result = run_call_compiled(
+                    &compiled.program.checked,
+                    &compiled.program.models,
+                    &call,
+                    &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+                    &fsl_eval::execution::SuppliedBackends::default(),
+                    &fsl_eval::execution::PrepareLimits::default(),
+                    &cancel,
+                )
+                .and_then(|outcome| {
+                    let requirements = if include_requirements {
+                        Some(crate::call_requirements_for(
+                            &compiled.program.checked,
+                            &call,
+                        )?)
+                    } else {
+                        None
+                    };
+                    Ok(ProgramBatchCallOutcome {
+                        outcome,
+                        requirements,
+                    })
+                });
+                ProgramBatchItemResult::Call(result)
+            }
+            ProgramBatchSelection::ValueInvariants(request) => {
+                ProgramBatchItemResult::ValueInvariants(run_compiled_value_invariants(
+                    &compiled, request,
+                ))
+            }
+        })
+        .collect();
+    Ok(ProgramBatchOutcome {
+        items,
+        checked: compiled.program.checked,
+    })
+}
+
+fn clause_matches_compilation(
+    request: &ClauseRunRequest,
+    compilation: &ProgramCompilationRequest,
+) -> bool {
+    let unit = request.source.unit();
+    unit.language.is_none()
+        && unit.identity == &compilation.source
+        && unit.path == compilation.path
+        && unit.bytes == compilation.bytes
+        && request.package_name == compilation.package_name
+        && request.packages == compilation.packages
+        && request.dependencies == compilation.dependencies
+        && request.limits == compilation.limits
+        && request.clocks == compilation.clocks
+}
+
+fn run_compiled_value_invariants(
+    compiled: &CompiledProgramContext,
+    request: ValueInvariantsBatchRequest,
+) -> Result<ValueInvariantsBatchOutcome, ValueInvariantsBatchFailure> {
+    use fsl_eval::value::CheckedPackageEvaluation;
+
+    let package = compiled.program.checked.package();
+    let graph = package.graph();
+    let (observations, admission_usage) =
+        fsl_semantics::model::observation::admit_value_invariant_selection(
+            graph.model_inputs(),
+            graph.scope().types(),
+            graph.scope().operations(),
+            &compiled.packages,
+            compiled.model_limits,
+            &fsl_semantics::model::observation::Provisions {
+                snapshots: &request.snapshots,
+                invocations: &request.invocations,
+            },
+            &request.snapshot,
+            request.invocation.as_ref(),
+            request.observation_limits,
+        )
+        .map_err(ValueInvariantsBatchFailure::Admission)?;
+    let mut meter = Meter::new(request.accounting);
+    let evaluation = package
+        .evaluate_value_invariant_selection(&observations, &mut meter)
+        .map_err(ValueInvariantsBatchFailure::Evaluation)?;
+    Ok(ValueInvariantsBatchOutcome {
+        evaluation,
+        admission_usage,
+    })
+}
+
+fn compile_program_parts(
+    unit: Unit<'_>,
+    package_name: String,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    clocks: &RequestClocks,
+    needs_temporal: bool,
+) -> Result<CompiledClauseProgram, Box<ClauseRunReport>> {
     let report = |disposition: ClauseDisposition| ClauseRunReport {
         basis: undecided_basis(&disposition),
         witness: None,
@@ -1567,7 +1868,6 @@ fn compile_clause_program(
         authenticated_temporal_selection: None,
         refused_at: None,
     };
-    let unit = request.source.unit();
     if let Some(language) = unit.language {
         if NativeLanguage::of(language).is_none() {
             return Err(Box::new(report(ClauseDisposition::UnknownLanguage {
@@ -1583,35 +1883,33 @@ fn compile_clause_program(
                 path: unit.path,
                 bytes: unit.bytes,
             },
-            request.limits.source,
+            limits.source,
             &cancel,
         )?
         .into_value();
-        let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
-            .into_value();
-        let check_selections = request.clocks.check_selections(&parsed);
+        let models = front_end::select(&parsed, packages, limits.model, &cancel)?.into_value();
+        let check_selections = clocks.check_selections(&parsed);
         let checked = front_end::check_with_refinement_internals(
             &parsed,
-            request.package_name.clone(),
+            package_name.clone(),
             crate::spine::SourceInputs {
                 refinement_internals: None,
                 temporal_selections: &check_selections,
-                clocks: Some(&request.clocks),
+                clocks: Some(clocks),
             },
             &models,
-            &request.dependencies,
-            request.limits,
+            dependencies,
+            limits,
             &cancel,
         )?
         .into_value();
-        let package_selections = request
-            .clocks
+        let package_selections = clocks
             .package_selections(&checked, &[&parsed])
             .map_err(front_end::FrontEndFailure::Refused)?;
         let emitted = front_end::package_with_temporal_selections(
             &checked,
             &package_selections,
-            request.limits.package,
+            limits.package,
             &cancel,
         )?
         .into_value();
@@ -1635,8 +1933,8 @@ fn compile_clause_program(
             &models,
             &checked,
             &emitted,
-            request.limits.imports,
-            request.limits.package.emit(),
+            limits.imports,
+            limits.package.emit(),
         ) {
             Ok(evidence) => evidence,
             Err(_) => {
@@ -1667,6 +1965,7 @@ fn compile_clause_program(
         None
     };
     Ok(CompiledClauseProgram {
+        models,
         checked,
         emitted,
         sources,

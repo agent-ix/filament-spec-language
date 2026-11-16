@@ -649,6 +649,27 @@ pub(crate) fn run_reading<T>(
         front_end::package_with_temporal_selections(&checked, &selections, limits.package, cancel)
             .map_err(refusal)?
             .into_value();
+    let outcome = run_compiled(&checked, &models, call, objects, backends, prepare, cancel)?;
+    let read = read(&checked, &emitted, &models)?;
+    Ok((outcome, read))
+}
+
+/// Run a call against one already compiled program. The call gets fresh
+/// argument admission and evaluation accounting while reusing the checked
+/// package, emitted package and admitted model set.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_compiled(
+    checked: &super::CheckedUnit,
+    models: &super::AdmittedModels,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    backends: &SuppliedBackends<'_>,
+    prepare: &PrepareLimits,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    backends
+        .member(call.backend)
+        .map_err(|entry| Box::new(RunRefusal::Unsupported(entry)))?;
     let package = checked.package();
     let selected = select(package, &call.function)?;
     let forms = Forms::new(
@@ -717,8 +738,7 @@ pub(crate) fn run_reading<T>(
         }
         _ => convert_outcome(evaluation, package.graph(), &sources)?,
     };
-    let read = read(&checked, &emitted, &models)?;
-    Ok((outcome, read))
+    Ok(outcome)
 }
 
 /// The selected function: its S6a name and declared parameters.

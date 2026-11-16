@@ -2,8 +2,8 @@
 //! FR-651: read several independent selections through the public run command.
 
 use super::{
-    execute_prepared, output::NativeResult, prepare_run_bytes, RequestOverrides, Result, RunCause,
-    RunError, RunLimits, RunResult,
+    output::NativeResult, prepare_run_bytes, RequestOverrides, Result, RunCause, RunError,
+    RunLimits, RunResult,
 };
 use serde_json::{json, Map, Value};
 use std::path::Path;
@@ -12,9 +12,19 @@ const FORMAT: &str = "native-run-items/1";
 
 enum ItemExecution {
     Run(Result<RunResult>),
-    Clause(Option<Box<fsl_replay::spine::ClauseRunRequest>>),
+    Batch {
+        selection: Option<fsl_replay::spine::ProgramBatchSelection>,
+        call_output: Option<CallOutput>,
+    },
     ValueInvariants(Result<(Vec<Value>, u8)>),
     PopulationNotHeld(String),
+}
+
+struct CallOutput {
+    source: fsl_foundation::source::Source,
+    function: String,
+    requirements: Option<super::requirements::Requirements>,
+    packages: fsl_semantics::model::intake::PackageInput,
 }
 
 pub(super) fn run_bytes(
@@ -215,16 +225,6 @@ pub(super) fn run_bytes(
         normalized.push((index, kind.clone(), value.clone()));
     }
 
-    // The clause batch below owns its full compile preflight. Call and
-    // value-invariant paths still compile independently, so parse the shared
-    // source first to make syntax failures request-level across those paths.
-    if normalized
-        .iter()
-        .any(|(_, kind, _)| matches!(kind.as_str(), "call" | "value_invariants"))
-    {
-        preflight_program_parse(directory, &request, limits.dependent_bytes)?;
-    }
-
     let accounting = items.get("accounting").cloned();
     let observation_limits = items.get("observation_limits").cloned();
     let mut expanded = Vec::<(usize, String, Value, Option<Value>, Option<String>)>::new();
@@ -298,6 +298,7 @@ pub(super) fn run_bytes(
     }
 
     let mut prepared = Vec::with_capacity(expanded.len());
+    let mut compilation = None;
     for (index, kind, value, object, missing_population) in expanded {
         if let Some(population) = missing_population {
             prepared.push((index, object, ItemExecution::PopulationNotHeld(population)));
@@ -337,7 +338,7 @@ pub(super) fn run_bytes(
             single_body.insert("clause".to_owned(), Value::Object(clause));
         }
         let single_bytes = serde_json::to_vec(&single).map_err(RunCause::Json)?;
-        if kind == "value_invariants" {
+        let execution = if kind == "value_invariants" {
             let snapshot_key = value
                 .get("snapshot")
                 .and_then(Value::as_str)
@@ -347,128 +348,213 @@ pub(super) fn run_bytes(
                 .and_then(Value::as_str)
                 .ok_or_else(|| refused(snapshot_key, "observation key is not present"))?;
             let snapshot_bytes = super::read_file(&directory.join(file), limits.dependent_bytes)?;
-            let result =
-                prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides)
-                    .and_then(|prepared| match prepared {
-                        super::PreparedRun::Clause(request) => {
-                            let bytes = snapshot_bytes;
-                            let reference =
-                                fsl_semantics::model::observation::document_reference(&bytes)
-                                    .ok_or_else(|| {
-                                        refused(snapshot_key, "invalid snapshot identity")
-                                    })?;
-                            let invocation = value
-                                .get("invocation")
+            match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides)? {
+                super::PreparedRun::Clause(request) => {
+                    let request = *request;
+                    let candidate = compilation_from_clause(&request)?;
+                    set_compilation(&mut compilation, candidate)?;
+                    let reference =
+                        fsl_semantics::model::observation::document_reference(&snapshot_bytes)
+                            .ok_or_else(|| refused(snapshot_key, "invalid snapshot identity"))?;
+                    let invocation = value
+                        .get("invocation")
+                        .and_then(Value::as_str)
+                        .map(|invocation_key| {
+                            let file = observations
+                                .get(invocation_key)
                                 .and_then(Value::as_str)
-                                .map(|invocation_key| {
-                                    let file = observations
-                                        .get(invocation_key)
-                                        .and_then(Value::as_str)
-                                        .ok_or_else(|| {
-                                            refused(
-                                                invocation_key,
-                                                "observation key is not present",
-                                            )
-                                        })?;
-                                    let bytes = super::read_file(
-                                        &directory.join(file),
-                                        limits.dependent_bytes,
-                                    )?;
-                                    fsl_semantics::model::observation::document_reference(&bytes)
-                                        .ok_or_else(|| {
-                                            refused(invocation_key, "invalid invocation identity")
-                                        })
+                                .ok_or_else(|| {
+                                    refused(invocation_key, "observation key is not present")
+                                })?;
+                            let bytes =
+                                super::read_file(&directory.join(file), limits.dependent_bytes)?;
+                            fsl_semantics::model::observation::document_reference(&bytes)
+                                .ok_or_else(|| {
+                                    refused(invocation_key, "invalid invocation identity")
                                 })
-                                .transpose()?;
-                            run_value_invariants(*request, &reference, invocation.as_ref())
-                        }
-                        super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_) => Err(
-                            refused("value_invariants", "expected a clause-run preparation"),
-                        ),
-                    });
-            prepared.push((index, object, ItemExecution::ValueInvariants(result)));
+                        })
+                        .transpose()?;
+                    let selection = fsl_replay::spine::ProgramBatchSelection::ValueInvariants(
+                        fsl_replay::spine::ValueInvariantsBatchRequest {
+                            snapshots: request.snapshots,
+                            invocations: request.invocations,
+                            snapshot: reference,
+                            invocation,
+                            observation_limits: request.observation_limits,
+                            accounting: request.accounting,
+                        },
+                    );
+                    ItemExecution::Batch {
+                        selection: Some(selection),
+                        call_output: None,
+                    }
+                }
+                super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_) => {
+                    return Err(refused(
+                        "value_invariants",
+                        "expected a clause-run preparation",
+                    ));
+                }
+            }
         } else {
-            let execution = match prepare_run_bytes(
-                directory,
-                &single_bytes,
-                limits.dependent_bytes,
-                overrides,
-            ) {
-                Ok(super::PreparedRun::Clause(request)) => ItemExecution::Clause(Some(request)),
-                Ok(
-                    prepared
-                    @ (super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_)),
-                ) => ItemExecution::Run(execute_prepared(prepared, settle)),
-                Err(cause) => ItemExecution::Run(Err(cause)),
-            };
-            prepared.push((index, object, execution));
-        }
+            match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides) {
+                Ok(super::PreparedRun::Clause(request)) => {
+                    let request = *request;
+                    let candidate = compilation_from_clause(&request)?;
+                    set_compilation(&mut compilation, candidate)?;
+                    ItemExecution::Batch {
+                        selection: Some(fsl_replay::spine::ProgramBatchSelection::Clause(request)),
+                        call_output: None,
+                    }
+                }
+                Ok(super::PreparedRun::Function(prepared_function)) => {
+                    let requirements = prepared_function.requirements().cloned();
+                    let input = prepared_function.into_input();
+                    let candidate = compilation_from_function(&input);
+                    set_compilation(&mut compilation, candidate)?;
+                    let call_output = Some(CallOutput {
+                        source: input.source.clone(),
+                        function: input.call.function.clone(),
+                        requirements: requirements.clone(),
+                        packages: input.packages.clone(),
+                    });
+                    ItemExecution::Batch {
+                        selection: Some(fsl_replay::spine::ProgramBatchSelection::Call {
+                            call: input.call,
+                            include_requirements: requirements.is_some(),
+                        }),
+                        call_output,
+                    }
+                }
+                Ok(super::PreparedRun::TlLowering(_)) => {
+                    return Err(refused(
+                        "items.selections",
+                        "tl_lowering is not an item selection",
+                    ));
+                }
+                Err(cause) => return Err(cause),
+            }
+        };
+        prepared.push((index, object, execution));
     }
 
-    let mut clause_slots = Vec::new();
-    let mut clause_requests = Vec::new();
+    let mut batch_slots = Vec::new();
+    let mut batch_selections = Vec::new();
+    let mut batch_source = None;
     for (slot, (_, _, execution)) in prepared.iter_mut().enumerate() {
-        if let ItemExecution::Clause(request) = execution {
-            if let Some(request) = request.take() {
-                clause_slots.push((slot, request.selection.clone()));
-                clause_requests.push(*request);
+        if let ItemExecution::Batch {
+            selection,
+            call_output,
+        } = execution
+        {
+            if let Some(batch_selection) = selection.take() {
+                if batch_source.is_none() {
+                    batch_source = call_output
+                        .as_ref()
+                        .map(|output| {
+                            (
+                                output.source.identity().clone(),
+                                output.source.path().to_owned(),
+                            )
+                        })
+                        .or_else(|| {
+                            compilation
+                                .as_ref()
+                                .map(|source| (source.source.clone(), source.path.clone()))
+                        });
+                }
+                let clause_selection = match &batch_selection {
+                    fsl_replay::spine::ProgramBatchSelection::Clause(request) => {
+                        Some(request.selection.clone())
+                    }
+                    _ => None,
+                };
+                batch_slots.push((slot, call_output.take(), clause_selection));
+                batch_selections.push(batch_selection);
             }
         }
     }
-    if !clause_requests.is_empty() {
-        let batch_source = clause_requests
-            .first()
-            .and_then(|request| match &request.source {
-                fsl_replay::spine::ClauseRunSource::Program { identity, path, .. } => {
-                    Some((identity.clone(), path.clone()))
-                }
-                _ => None,
-            });
-        match fsl_replay::spine::run_clause_batch(clause_requests) {
-            Ok(fsl_replay::spine::ClauseRunBatchOutcome::CompileRefusal(report)) => {
-                match report.disposition {
+    if !batch_selections.is_empty() {
+        let compilation = compilation.ok_or(RunCause::ItemsFault)?;
+        let batch = fsl_replay::spine::run_program_batch(compilation, batch_selections).map_err(
+            |error| match error {
+                fsl_replay::spine::ProgramBatchRefusal::DifferentCompilation => refused(
+                    "items.selections",
+                    "selections did not share one compilation",
+                ),
+                fsl_replay::spine::ProgramBatchRefusal::Compile(report) => match report.disposition
+                {
                     fsl_replay::spine::ClauseDisposition::Compile(refusal)
                         if refusal.stage() == fsl_replay::spine::SpineStage::Source =>
                     {
                         if let Some((source, path)) = batch_source {
-                            return Err(RunCause::Spine(Box::new(super::SpineFailure {
+                            RunCause::Spine(Box::new(super::SpineFailure {
                                 source,
                                 path,
                                 span: None,
                                 refusal: *refusal,
-                            })));
+                            }))
+                        } else {
+                            refused("items.selections", "source compilation refused")
                         }
-                        return Err(refused(
-                            "items.selections",
-                            "source compilation refused without a program identity",
-                        ));
                     }
-                    disposition => {
-                        return Err(refused(
-                            "items.selections",
-                            format!("shared program compilation refused: {disposition:?}"),
-                        ));
-                    }
-                }
-            }
-            Ok(fsl_replay::spine::ClauseRunBatchOutcome::Reports(reports)) => {
-                if reports.len() != clause_slots.len() {
-                    return Err(RunCause::ItemsFault);
-                }
-                for ((slot, selection), report) in clause_slots.into_iter().zip(reports) {
-                    let result = super::output::clause_report(&report, &selection);
-                    prepared[slot].2 = ItemExecution::Run(result);
-                }
-            }
-            Err(fsl_replay::spine::ClauseRunBatchRefusal::EmptySource) => {
-                return Err(refused("program", "source is empty"));
-            }
-            Err(fsl_replay::spine::ClauseRunBatchRefusal::DifferentCompilation) => {
-                return Err(refused(
-                    "items.selections",
-                    "clause selections did not share one compilation",
-                ));
-            }
+                    disposition => refused(
+                        "items.selections",
+                        format!("shared program compilation refused: {disposition:?}"),
+                    ),
+                },
+            },
+        )?;
+        if batch.items.len() != batch_slots.len() {
+            return Err(RunCause::ItemsFault);
+        }
+        for ((slot, call_output, clause_selection), outcome) in
+            batch_slots.into_iter().zip(batch.items)
+        {
+            let execution = match (outcome, call_output, clause_selection) {
+                (
+                    fsl_replay::spine::ProgramBatchItemResult::Clause(report),
+                    None,
+                    Some(selection),
+                ) => ItemExecution::Run(super::output::clause_report(&report, &selection)),
+                (
+                    fsl_replay::spine::ProgramBatchItemResult::Call(result),
+                    Some(call_output),
+                    None,
+                ) => ItemExecution::Run(
+                    result
+                        .map_err(|refusal| RunCause::SpineRun(refusal))
+                        .and_then(|batch_call| {
+                            let settled = match (call_output.requirements, batch_call.requirements)
+                            {
+                                (Some(selection), Some(requirements)) => {
+                                    Some(super::settle::settle_call(
+                                        &batch.checked,
+                                        &requirements,
+                                        &selection,
+                                        &call_output.packages,
+                                        settle,
+                                    )?)
+                                }
+                                (None, None) => None,
+                                _ => return Err(RunCause::ItemsFault),
+                            };
+                            super::output::spine_run_result_for_source(
+                                &call_output.source,
+                                &call_output.function,
+                                batch_call.outcome,
+                                settled,
+                            )
+                        }),
+                ),
+                (
+                    fsl_replay::spine::ProgramBatchItemResult::ValueInvariants(result),
+                    None,
+                    None,
+                ) => ItemExecution::ValueInvariants(Ok(value_invariant_items(result)?)),
+                _ => return Err(RunCause::ItemsFault),
+            };
+            prepared[slot].2 = execution;
         }
     }
 
@@ -550,7 +636,7 @@ pub(super) fn run_bytes(
                     (value, error.category().exit_code())
                 }
             },
-            ItemExecution::Clause(_) => return Err(RunCause::ItemsFault),
+            ItemExecution::Batch { .. } => return Err(RunCause::ItemsFault),
         };
         exit_code = more_severe(exit_code, item_exit);
         let mut item = json!({"selection": index, "result": value});
@@ -575,45 +661,126 @@ pub(super) fn run_bytes(
     }))
 }
 
-fn preflight_program_parse(directory: &Path, request: &Value, byte_limit: usize) -> Result<()> {
-    let program: super::wire::Program = serde_json::from_value(
-        request
-            .get("request")
-            .and_then(|request| request.get("program"))
-            .cloned()
-            .ok_or_else(|| refused("program", "expected a program object"))?,
-    )
-    .map_err(|error| refused("program", error.to_string()))?;
-    let identities = program
-        .source
-        .identity
-        .bind()
-        .map_err(RunCause::Identifier)?;
-    let source_path = directory.join(&program.source.file);
-    let bytes = super::read_file(&source_path, byte_limit)?;
-    let path = program.source.file;
-    let cancel = filament_exact::Cancel::new();
-    match fsl_replay::spine::parse(
-        &fsl_replay::spine::ParseRequest {
-            source: &identities.native,
-            path: &path,
-            bytes: &bytes,
-        },
-        fsl_replay::spine::SpineLimits::default().source,
-        &cancel,
-    ) {
-        Ok(_) => Ok(()),
-        Err(failure) => match fsl_replay::spine::refusal_or_fault(failure) {
-            Ok(refusal) => Err(RunCause::Spine(Box::new(super::SpineFailure {
-                source: identities.native,
-                path,
-                span: None,
-                refusal: *refusal,
-            }))),
-            Err(fault) => Err(RunCause::SpineRun(Box::new(
-                fsl_replay::spine::RunRefusal::Fault(fault),
-            ))),
-        },
+fn compilation_from_clause(
+    request: &fsl_replay::spine::ClauseRunRequest,
+) -> Result<fsl_replay::spine::ProgramCompilationRequest> {
+    let fsl_replay::spine::ClauseRunSource::Program {
+        identity,
+        path,
+        bytes,
+    } = &request.source
+    else {
+        return Err(refused("program", "items require a native program source"));
+    };
+    Ok(fsl_replay::spine::ProgramCompilationRequest {
+        source: identity.clone(),
+        path: path.clone(),
+        bytes: bytes.clone(),
+        package_name: request.package_name.clone(),
+        packages: request.packages.clone(),
+        dependencies: request.dependencies.clone(),
+        limits: request.limits,
+        clocks: request.clocks.clone(),
+    })
+}
+
+fn compilation_from_function(
+    input: &super::FunctionRunInput,
+) -> fsl_replay::spine::ProgramCompilationRequest {
+    fsl_replay::spine::ProgramCompilationRequest {
+        source: input.source.identity().clone(),
+        path: input.source.path().to_owned(),
+        bytes: input.source.text().as_bytes().to_vec(),
+        package_name: input.package_name.clone(),
+        packages: input.packages.clone(),
+        dependencies: input.dependencies.clone(),
+        limits: fsl_replay::spine::SpineLimits::default(),
+        clocks: input.call.clocks.clone(),
+    }
+}
+
+fn set_compilation(
+    shared: &mut Option<fsl_replay::spine::ProgramCompilationRequest>,
+    candidate: fsl_replay::spine::ProgramCompilationRequest,
+) -> Result<()> {
+    if shared
+        .as_ref()
+        .is_some_and(|existing| existing != &candidate)
+    {
+        return Err(refused(
+            "items.selections",
+            "selections did not share one compilation",
+        ));
+    }
+    *shared = Some(candidate);
+    Ok(())
+}
+
+fn value_invariant_items(
+    result: std::result::Result<
+        fsl_replay::spine::ValueInvariantsBatchOutcome,
+        fsl_replay::spine::ValueInvariantsBatchFailure,
+    >,
+) -> Result<(Vec<Value>, u8)> {
+    use fsl_semantics::model::observation::AdmissionFailure;
+    match result {
+        Ok(outcome) => {
+            let values = outcome
+                .evaluation
+                .results
+                .iter()
+                .map(|result| {
+                    let holds = result.holds();
+                    json!({
+                        "invariant": {"package": result.clause.package, "node": result.clause.node},
+                        "path": fsl_replay::runtime_value_path_json(&result.path),
+                        "result": invariant_result(
+                            if holds { "success" } else { "violation" },
+                            "evaluate", Some(holds), None, &outcome.admission_usage,
+                        ),
+                    })
+                })
+                .collect();
+            let exit = match outcome.evaluation.outcome {
+                fsl_eval::value::ValueInvariantOutcome::True => 0,
+                fsl_eval::value::ValueInvariantOutcome::False => 10,
+                fsl_eval::value::ValueInvariantOutcome::Incomplete(_) => 22,
+            };
+            Ok((values, exit))
+        }
+        Err(fsl_replay::spine::ValueInvariantsBatchFailure::Admission(failure)) => {
+            let (category, exit, code, cause, fields) = match failure {
+                AdmissionFailure::Refused(record) => (
+                    "refusal",
+                    20,
+                    record.catalog.code().to_owned(),
+                    record.catalog.cause().to_owned(),
+                    serde_json::to_value(record.fields).unwrap_or(Value::Null),
+                ),
+                AdmissionFailure::Incomplete(record) => (
+                    "incomplete",
+                    22,
+                    record.catalog.code().to_owned(),
+                    record.catalog.cause().to_owned(),
+                    serde_json::to_value(record.fields).unwrap_or(Value::Null),
+                ),
+                AdmissionFailure::Fault(_) => return Err(RunCause::ItemsFault),
+            };
+            Ok((
+                vec![json!({"result": invariant_result(
+                    category, "admit", None,
+                    Some(json!({"code": code, "cause": cause, "fields": fields})),
+                    &fsl_semantics::model::observation::AdmissionUsage::default(),
+                )})],
+                exit,
+            ))
+        }
+        Err(fsl_replay::spine::ValueInvariantsBatchFailure::Evaluation(
+            filament_eval::CallFailure::Fault(_),
+        )) => Err(RunCause::ItemsFault),
+        Err(fsl_replay::spine::ValueInvariantsBatchFailure::Evaluation(failure)) => {
+            Err(refused("evaluation", failure.to_string()))
+        }
     }
 }
 
@@ -879,136 +1046,6 @@ fn category_for_exit(exit_code: u8) -> &'static str {
         11 => "indeterminate",
         _ => "success",
     }
-}
-
-fn run_value_invariants(
-    request: fsl_replay::spine::ClauseRunRequest,
-    snapshot: &fsl_semantics::model::observation::DocumentRef,
-    invocation: Option<&fsl_semantics::model::observation::DocumentRef>,
-) -> Result<(Vec<Value>, u8)> {
-    use fsl_eval::value::CheckedPackageEvaluation;
-    use fsl_replay::spine::{ClauseRunSource, ParseRequest};
-
-    let ClauseRunSource::Program {
-        identity,
-        path,
-        bytes,
-    } = request.source
-    else {
-        return Err(refused("program", "expected a program source"));
-    };
-    let cancel = filament_exact::Cancel::new();
-    let parsed = fsl_replay::spine::parse(
-        &ParseRequest {
-            source: &identity,
-            path: &path,
-            bytes: &bytes,
-        },
-        request.limits.source,
-        &cancel,
-    )
-    .map_err(|error| refused("program", format!("compile failed: {error:?}")))?
-    .into_value();
-    let models =
-        fsl_replay::spine::select(&parsed, &request.packages, request.limits.model, &cancel)
-            .map_err(|error| refused("models", format!("model selection failed: {error:?}")))?
-            .into_value();
-    let temporal_selections = request.clocks.check_selections(&parsed);
-    let checked = fsl_replay::spine::check_with_refinement_internals(
-        &parsed,
-        request.package_name,
-        fsl_replay::spine::SourceInputs {
-            refinement_internals: None,
-            temporal_selections: &temporal_selections,
-            clocks: Some(&request.clocks),
-        },
-        &models,
-        &request.dependencies,
-        request.limits,
-        &cancel,
-    )
-    .map_err(|error| refused("program", format!("check failed: {error:?}")))?
-    .into_value();
-    let package = checked.package();
-    let graph = package.graph();
-    let (observations, admission_usage) =
-        match fsl_semantics::model::observation::admit_value_invariant_selection(
-            graph.model_inputs(),
-            graph.scope().types(),
-            graph.scope().operations(),
-            &request.packages,
-            request.limits.model,
-            &fsl_semantics::model::observation::Provisions {
-                snapshots: &request.snapshots,
-                invocations: &request.invocations,
-            },
-            snapshot,
-            invocation,
-            request.observation_limits,
-        ) {
-            Ok(admitted) => admitted,
-            Err(failure) => {
-                let (category, exit, code, cause, fields) = match failure {
-                    fsl_semantics::model::observation::AdmissionFailure::Refused(record) => (
-                        "refusal",
-                        20,
-                        record.catalog.code().to_owned(),
-                        record.catalog.cause().to_owned(),
-                        serde_json::to_value(record.fields).unwrap_or(Value::Null),
-                    ),
-                    fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => (
-                        "incomplete",
-                        22,
-                        record.catalog.code().to_owned(),
-                        record.catalog.cause().to_owned(),
-                        serde_json::to_value(record.fields).unwrap_or(Value::Null),
-                    ),
-                    fsl_semantics::model::observation::AdmissionFailure::Fault(_) => {
-                        return Err(RunCause::ClauseRequest {
-                            member: "snapshot".to_owned(),
-                            reason: "observation admission invariant failed".to_owned(),
-                        })
-                    }
-                };
-                return Ok((
-                    vec![json!({"result": invariant_result(
-                        category, "admit", None,
-                        Some(json!({"code": code, "cause": cause, "fields": fields})),
-                        &fsl_semantics::model::observation::AdmissionUsage::default(),
-                    )})],
-                    exit,
-                ));
-            }
-        };
-    let mut meter = filament_exact::Meter::new(request.accounting);
-    let evaluation = package
-        .evaluate_value_invariant_selection(&observations, &mut meter)
-        .map_err(|failure| match failure {
-            filament_eval::CallFailure::Fault(_) => RunCause::ItemsFault,
-            other => refused("evaluation", other.to_string()),
-        })?;
-    let results = evaluation
-        .results
-        .iter()
-        .map(|result| {
-            let holds = result.holds();
-            json!({
-                "invariant": {"package": result.clause.package, "node": result.clause.node},
-                "path": fsl_replay::runtime_value_path_json(&result.path),
-                "result": invariant_result(
-                    if holds { "success" } else { "violation" },
-                    "evaluate", Some(holds), None, &admission_usage,
-                ),
-            })
-        })
-        .collect::<Vec<_>>();
-    let exit = match evaluation.outcome {
-        fsl_eval::value::ValueInvariantOutcome::True => 0,
-        fsl_eval::value::ValueInvariantOutcome::False => 10,
-        fsl_eval::value::ValueInvariantOutcome::Incomplete(_) => 22,
-    };
-    let _ = admission_usage;
-    Ok((results, exit))
 }
 
 fn invariant_result(

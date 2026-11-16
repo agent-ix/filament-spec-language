@@ -479,6 +479,15 @@ pub(super) fn spine_run_result(
     outcome: fsl_replay::spine::CallOutcome,
     settled: Option<fsl_analyze::analyze::document::SettledRun>,
 ) -> super::Result<RunResult> {
+    spine_run_result_for_source(source.source(), function, outcome, settled)
+}
+
+pub(super) fn spine_run_result_for_source(
+    source: &fsl_foundation::Source,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
+) -> super::Result<RunResult> {
     use fsl_replay::spine::{CallOutcome, CallRefusal};
     let call_category = outcome.category();
     let lifecycle = fsl_replay::OutcomeDocument::from_call(&outcome);
@@ -561,8 +570,8 @@ pub(super) fn spine_run_result(
     let document = types::SpineRunReport {
         format: types::Format::SpineRunResult,
         source: types::RunSource {
-            identity: source.source().identity(),
-            path: source.source().path(),
+            identity: source.identity(),
+            path: source.path(),
         },
         function,
         outcome,
