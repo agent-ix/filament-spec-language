@@ -393,29 +393,46 @@ impl Node {
 /// reaches is never read.
 #[derive(Clone)]
 pub struct CheckedBody {
+    /// Keep the arena and its derived cache together without growing the
+    /// inline bodies embedded in other checked IR values.
+    data: Box<CheckedBodyData>,
+    identity: Arc<()>,
+}
+
+#[derive(Clone)]
+struct CheckedBodyData {
     /// Never empty: the root is the last node.
     nodes: Vec<Node>,
     /// Integer nodes whose lowered type must widen to Integer.
     lowered_integer: Vec<bool>,
-    identity: Arc<()>,
 }
 
 impl fmt::Debug for CheckedBody {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CheckedBody")
-            .field("nodes", &self.nodes)
+            .field("nodes", &self.data.nodes)
             .finish()
     }
 }
 
 impl PartialEq for CheckedBody {
     fn eq(&self, other: &Self) -> bool {
-        self.nodes == other.nodes
+        self.data.nodes == other.data.nodes
     }
 }
 
 impl CheckedBody {
+    fn new(nodes: Vec<Node>) -> Self {
+        Self {
+            data: Box::new(CheckedBodyData {
+                lowered_integer: lowered_integer_types(&nodes),
+                nodes,
+            }),
+            identity: Arc::default(),
+        }
+    }
+
     /// A malformed checked-state fixture for producer tests, never shipped.
     #[cfg(any(test, feature = "test-support"))]
     pub fn fixture(
@@ -447,18 +464,14 @@ impl CheckedBody {
             ordering_part: false,
             field_population: None,
         });
-        Self {
-            lowered_integer: lowered_integer_types(&nodes),
-            nodes,
-            identity: Arc::default(),
-        }
+        Self::new(nodes)
     }
 
     /// Link the reachability `id`, over a relationship end or a field edge,
     /// to the authored bound of the population it walks (FR-380). A node
     /// that is no such reachability is left as it is.
     pub(in crate::check) fn link_population(&mut self, id: NodeId, bound: AuthoredBound) {
-        let Some(node) = self.nodes.get_mut(id.0) else {
+        let Some(node) = self.data.nodes.get_mut(id.0) else {
             return;
         };
         match &mut node.kind {
@@ -488,11 +501,7 @@ impl CheckedBody {
                 field_population: None,
             })
             .collect::<Vec<_>>();
-        Self {
-            lowered_integer: lowered_integer_types(&nodes),
-            nodes,
-            identity: Arc::default(),
-        }
+        Self::new(nodes)
     }
 
     /// Process-local ownership, preserved by exact body clones. This token
@@ -510,7 +519,7 @@ impl CheckedBody {
     /// Replace the location of every node for which `relocate` returns a new
     /// one.
     pub(in crate::check) fn relocate(&mut self, relocate: impl Fn(&Location) -> Option<Location>) {
-        for node in &mut self.nodes {
+        for node in &mut self.data.nodes {
             if let Some(moved) = relocate(&node.location) {
                 node.location = moved;
             }
@@ -521,7 +530,7 @@ impl CheckedBody {
     pub fn root(&self) -> CheckedNode<'_> {
         CheckedNode {
             body: self,
-            id: NodeId(self.nodes.len().saturating_sub(1)),
+            id: NodeId(self.data.nodes.len().saturating_sub(1)),
         }
     }
 
@@ -531,25 +540,29 @@ impl CheckedBody {
     ///
     /// When `id` is from another body and past this one's last node.
     pub fn node(&self, id: NodeId) -> CheckedNode<'_> {
-        assert!(id.0 < self.nodes.len(), "{id:?} names no node of this body");
+        assert!(
+            id.0 < self.data.nodes.len(),
+            "{id:?} names no node of this body"
+        );
         CheckedNode { body: self, id }
     }
 
     /// How many nodes the body stores.
     pub fn len(&self) -> usize {
-        self.nodes.len()
+        self.data.nodes.len()
     }
 
     /// Whether the body stores no node: never, since it holds its root.
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.data.nodes.is_empty()
     }
 
     /// Whether a node of the body reads the presences of a clock
     /// collection's elements (`forall(e in r.q: present(e))`), which the
     /// current timed-clause producer does not write.
     pub(crate) fn reads_slot_presence(&self) -> bool {
-        self.nodes
+        self.data
+            .nodes
             .iter()
             .any(|node| matches!(node.kind, NodeKind::SlotPresence { .. }))
     }
@@ -557,7 +570,8 @@ impl CheckedBody {
     /// Whether a node of the body reads the local slot `slot`: for a slot
     /// below the body's parameter count, whether it reads that parameter.
     pub fn reads_local(&self, slot: Slot) -> bool {
-        self.nodes
+        self.data
+            .nodes
             .iter()
             .any(|node| matches!(node.kind, NodeKind::Local(read) if read == slot))
     }
@@ -566,7 +580,8 @@ impl CheckedBody {
     /// are its parameters: `bound`, or one past the highest slot a node of
     /// the body reads or binds, whichever is larger.
     pub fn frame_slots(&self, bound: usize) -> usize {
-        self.nodes
+        self.data
+            .nodes
             .iter()
             .flat_map(|node| match &node.kind {
                 NodeKind::Local(slot) | NodeKind::Let { slot, .. } => vec![*slot],
@@ -606,11 +621,7 @@ impl BodyBuilder {
     /// The body whose root is `root`, stored after every pushed node.
     pub(in crate::check) fn finish(mut self, root: Node) -> CheckedBody {
         self.nodes.push(root);
-        CheckedBody {
-            lowered_integer: lowered_integer_types(&self.nodes),
-            nodes: self.nodes,
-            identity: Arc::default(),
-        }
+        CheckedBody::new(self.nodes)
     }
 }
 
@@ -625,7 +636,7 @@ pub struct CheckedNode<'a> {
 impl<'a> CheckedNode<'a> {
     /// The node itself.
     fn node(self) -> &'a Node {
-        &self.body.nodes[self.id.0]
+        &self.body.data.nodes[self.id.0]
     }
 
     /// This node's id in its body.
@@ -651,7 +662,7 @@ impl<'a> CheckedNode<'a> {
     /// FR-495's lowered integer type, including division-bound locals and
     /// the hull of a control node's yielded leaves.
     pub(crate) fn lowered_value_type(self) -> std::borrow::Cow<'a, ValueType> {
-        if self.body.lowered_integer[self.id.0] {
+        if self.body.data.lowered_integer[self.id.0] {
             std::borrow::Cow::Owned(ValueType::Integer)
         } else {
             std::borrow::Cow::Borrowed(self.value_type())
