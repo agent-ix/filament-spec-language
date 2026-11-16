@@ -753,9 +753,6 @@ fn value_type(
         let [element] = form.arguments.as_slice() else {
             return Err(unsupported());
         };
-        if matches!(element.head, TypeFormHead::Collection(_)) {
-            return Err(unsupported());
-        }
         let (element, _) = value_type(model, context, owner, site, element, scalars)?;
         let bound = |at: usize| {
             form.bounds
@@ -806,6 +803,7 @@ fn scalar_type(
         TypeFormHead::Builtin(BuiltinType::Integer) => {
             Ok(ValueTypeRef::Native(NativeValueType::Integer))
         }
+        TypeFormHead::Builtin(BuiltinType::Clock) => Ok(ValueTypeRef::Clock),
         TypeFormHead::Builtin(BuiltinType::Reference) => {
             let [target] = form.arguments.as_slice() else {
                 return Err(unsupported());
@@ -864,6 +862,11 @@ fn scalar_type(
             }));
             Ok(ValueTypeRef::Package(key))
         }
-        _ => Err(unsupported()),
+        // The synthetic package is admitted before the unit's complete type
+        // namespace exists. `assemble` replaces this temporary model view
+        // with the type resolved from the original form once enums,
+        // composites, aliases and units have been bound. Keep a simple
+        // placeholder here so the model's structural checks can run first.
+        _ => Ok(ValueTypeRef::Native(NativeValueType::Integer)),
     }
 }

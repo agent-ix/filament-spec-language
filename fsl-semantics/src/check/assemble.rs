@@ -38,8 +38,8 @@ use filament_exact::{
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_forms::{
     AliasForm, BuiltinType, DeclarationForm, DeclaredName, DimensionEquivalenceForm, DimensionForm,
-    EnumForm, ExprNode, Expression, FunctionDeclaration, OperationBodyForm, ParsedUnit,
-    PopulationBoundForm, RecordFieldForm, StateClauseForm, TerminalDeclarationForm,
+    EnumForm, ExprNode, Expression, FunctionDeclaration, ObjectMemberForm, OperationBodyForm,
+    ParsedUnit, PopulationBoundForm, RecordFieldForm, StateClauseForm, TerminalDeclarationForm,
     TerminalDeclarationKind, TimeInvariantForm, TimeSourceForm, TypeForm, TypeFormHead, UnitForm,
     UrgentForm,
 };
@@ -3335,6 +3335,117 @@ fn resolution_error(unit: &Unit, error: TypeFormError) -> AssemblyError {
     }
 }
 
+/// Re-resolves source object members after the unit's complete type
+/// namespace has been assembled. The synthetic domain package is needed
+/// earlier for structural model checks, before these names are available;
+/// its member types are temporary placeholders only.
+fn resolve_source_object_members(
+    unit: &Unit,
+    names: &Names,
+    spellings: &ModelSpellings,
+    source_owners: &BTreeMap<String, RawSourceRef>,
+    object_types: &mut [ObjectTypeDeclaration],
+    operations: &mut OperationTable,
+    errors: &mut Vec<AssemblyError>,
+) {
+    for object in &unit.objects {
+        let Some(index) = object_types
+            .iter()
+            .position(|declaration| declaration.name() == object.name.name)
+        else {
+            continue;
+        };
+        let declaration = &object_types[index];
+        let key = declaration.key();
+        let object_name = declaration.name().to_owned();
+        let supertypes = declaration.supertypes().to_vec();
+        let object_names = names.in_unit(spellings, source_owners.get(&object.name.name));
+        let mut fields = Vec::new();
+        for member in &object.members {
+            let ObjectMemberForm::Field(field) = member else {
+                continue;
+            };
+            let Some(existing) = declaration
+                .attributes()
+                .iter()
+                .find(|existing| existing.name() == field.name.name)
+            else {
+                // Clock places are carried by the timed model rather than
+                // the value type environment.
+                continue;
+            };
+            match resolve_form(&object_names, &field.type_form) {
+                Ok(value_type) => {
+                    let resolved = FieldDeclaration::new(
+                        field.name.name.clone(),
+                        value_type,
+                        if field.optional {
+                            Presence::Optional
+                        } else {
+                            Presence::Required
+                        },
+                    );
+                    fields.push(match existing.redefines() {
+                        Some(target) => resolved.with_redefines(target.clone()),
+                        None => resolved,
+                    });
+                }
+                Err(error) => errors.push(resolution_error(unit, error)),
+            }
+        }
+        object_types[index] = ObjectTypeDeclaration::new(key.clone(), object_name, fields)
+            .with_supertypes(supertypes);
+
+        let existing_operations = operations.declared_by(key.clone());
+        let mut resolved_operations = Vec::new();
+        for member in &object.members {
+            let ObjectMemberForm::Operation(operation) = member else {
+                continue;
+            };
+            let mut parameters = Vec::new();
+            let mut clocks = Vec::new();
+            for (position, parameter) in operation.parameters.iter().enumerate() {
+                if matches!(
+                    &parameter.value_type.head,
+                    TypeFormHead::Builtin(BuiltinType::Clock)
+                ) {
+                    clocks.push((position, parameter.name.name.clone()));
+                    continue;
+                }
+                match resolve_form(&object_names, &parameter.value_type) {
+                    Ok(value_type) => parameters.push((parameter.name.name.clone(), value_type)),
+                    Err(error) => errors.push(resolution_error(unit, error)),
+                }
+            }
+            let (result, clock_result) = match &operation.result {
+                Some(form) if matches!(&form.head, TypeFormHead::Builtin(BuiltinType::Clock)) => {
+                    (None, true)
+                }
+                Some(form) => match resolve_form(&object_names, form) {
+                    Ok(value_type) => (Some(value_type), false),
+                    Err(error) => {
+                        errors.push(resolution_error(unit, error));
+                        (None, false)
+                    }
+                },
+                None => (None, false),
+            };
+            let effect = existing_operations
+                .iter()
+                .find(|existing| existing.name() == operation.name.name)
+                .map(|existing| existing.effect().clone())
+                .unwrap_or_default();
+            resolved_operations.push(
+                OperationDeclaration::new(operation.name.name.clone(), parameters, result, effect)
+                    .with_clocks(clocks, clock_result),
+            );
+        }
+        if !resolved_operations.is_empty() {
+            operations.declare(key, resolved_operations);
+        }
+    }
+}
+
 /// The admitted enum of `form` under `owners` (FR-091 "Enum declarations"
 /// steps 2 to 5). The cases are sorted by byte order unless the form is
 /// `ordered`. A refusal here is a nominal-admission fault: the caller has
@@ -4922,6 +5033,17 @@ impl PackageDeclarations {
                     }
                 }
             }
+        }
+        if errors.is_empty() {
+            resolve_source_object_members(
+                &unit,
+                &names,
+                &model_spellings,
+                &source_owners,
+                &mut object_types,
+                &mut operations,
+                &mut errors,
+            );
         }
         if !errors.is_empty() {
             return refuse(errors);
