@@ -137,8 +137,10 @@ entry").
   change of the clause's settled status, category or disposition), so the events plus the
   summary agree with a batch run over the same records in FR-643's "Batch
   equality" sense (FSpec FR-114): a pending clause's latest event carries the
-  batch disposition over the records so far, and a settled clause's carries
-  the batch disposition over the records that decided it.
+  batch disposition over the records so far, a settled clause's carries
+  the batch disposition over the records that decided it, and a clause
+  settled on a limit carries its `incomplete` limit report instead, which no
+  batch run produces (FR-643 "Settlement").
 - A malformed record (not one closed object of the forms above, an observation
   key `observations` lacks, a stamp of the wrong form for the kind) SHALL produce
   a `filament.monitor-event/1` with `category` `refusal`, `invalid-request`,

@@ -100,8 +100,11 @@ impl ClauseState {
     that kind ending there (the closed reading for an event-position or
     fixed-sample clause over a `Finite` trace);
   - `decided`: for an event-position or fixed-sample clause, FR-504's
-    open-scope verdict over positions `0..=n-1` with seen horizon
-    `S = n - 1`, present exactly when it is definite (basis
+    open-scope verdict over the positions seen, with seen horizon
+    `S = n - 1` over a `Finite` trace and FR-504's `S` over a `Progressed`
+    trace (`n - 1` for event-position; for fixed-sample `min(W, through)`
+    under `Complete { through }`, reading the silent samples up to it, and
+    `n - 1` under `Incomplete`), present exactly when it is definite (basis
     `decisive-counterexample` or `decisive-witness`); a `Finite` trace needs
     no binding for it. For the other profiles, `report` itself when the
     profile's evaluator reports it decided (FR-643 "Settling"), and absent

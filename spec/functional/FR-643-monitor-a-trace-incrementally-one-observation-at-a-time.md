@@ -253,8 +253,13 @@ spine APIs rather than a first sketch, and are accepted as its contract:
     `Reaches` (`eventually holds(r.level = 2)`) stays `Pending` after it
     sees level 2 (FR-330-AC-2);
   - event-position and fixed-sample (closed-trace) profiles: FR-820's
-    `decided` verdict, FR-504's open-scope reading of the positions seen
-    with `S = n - 1`, when it is definite (basis `decisive-counterexample`
+    `decided` verdict, FR-504's open-scope reading of the positions seen, when
+    it is definite. Its seen horizon is `S = n - 1` over a `Finite` trace and
+    FR-504's `S` over a `Progressed` trace: `n - 1` for an event-position
+    clause, and for a fixed-sample clause `min(W, through)` under
+    `Complete { through }` and `n - 1` under `Incomplete`, so a watermark
+    alone, with its silent samples, can decide it (FR-504-AC-1). It is
+    definite (basis `decisive-counterexample`
     or `decisive-witness`). The closed reading `B(k)` of a short prefix is
     not decided: a bounded `eventually` whose window runs past the newest
     position is violated under false extension and may be satisfied by the
