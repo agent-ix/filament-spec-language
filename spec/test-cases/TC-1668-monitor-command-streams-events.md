@@ -20,4 +20,4 @@ Call `command::monitor` with a `native-monitor/1` request over TC-1666's clauses
 
 - One event per change at the record that caused it; the summary equals the closed batch run; exit 10.
 - The bad record yields one `refusal` event naming it; the other events and the summary are unchanged.
-- AC-5: each latest event's category equals the run over the samples so far; its disposition equals the run up to its record. `Never` settles at record 2 with `settled` `true` and a three-sample counterexample; `Reaches` stays `pending` with `settled` `false`. The summary equals the latest events, `settled` included; exit 10.
+- AC-5: each latest event's category equals the run over the samples so far; its disposition equals the run up to its record. `Never` settles at record 2 with `settled` `true` and a three-sample counterexample; `Reaches` stays `pending` with `settled` `false`. The summary equals the latest events, `settled` included, and its `settlement` is `{"step": "4", "trigger": "finish"}` for `Reaches`; exit 10.

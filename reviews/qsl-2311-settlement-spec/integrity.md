@@ -1,0 +1,73 @@
+---
+id: SR-2026111613152601
+title: "Integrity review of the QSL-2311 settlement member"
+type: SpecReview
+analysis: integrity
+scope: "agent-ix/filament-spec-language; PR #2752 branch qsl-2311-settlement at 1ba65452c98d984b69ac158aad5352877c69b1ec, git diff origin/main...HEAD (FR-643, FR-644, TC-2321, new TC-2340)"
+review_set: subset
+relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-643
+    type: reviews
+  - target: ix://agent-ix/filament-spec-language/FR-644
+    type: reviews
+---
+
+## Summary
+
+Ticket: QSL-2311. The diff makes a settled clause report exactly `B(s)` and moves the deciding open-scope reading into a closed `Settlement` record (`step`, `trigger`, `basis`, `horizon`, `position`, `through`). It also records the four accepted public API deviations in FR-643. It was checked against FR-643 and FR-644 as amended by QSL-2306 (#2750), FR-820 (Outputs `decided`, AC-4), FR-504 ("Seen horizon", "Open scope", Outputs, AC-1, AC-5), FR-501 (basis, decision support, AC-14), FR-330 (Outputs, `decisive`, AC-12), FR-283 (`MonitorRecord`) and FR-641 (positions, ledger member).
+
+Ids: TC-2340 is new and unique, and FR-644-AC-7 appears once. `PATH= quire validate --scope . 'spec/**/*.md'` exits 0, with no warning on a changed file.
+
+AC-7's expected values follow from the spec for the decided cases. `E` is event-position over a `Finite` trace. So `B(3)` is the closed reading, `success`, with top-level basis `closed-scope` (FR-504 Outputs, FR-504-AC-1) and no `finite_window` (FR-330 Outputs gives one only for `Progressed` or `Timestamped`). FR-820's `decided` is FR-504's open-scope reading with `S = n - 1 = 2`, basis `decisive-witness` (FR-820-AC-4), and its FR-501 decision support is {(2, holds)}. Over 0, 1, 1 the window `[0, 2]` is wholly inside `S`, so the reading is `Completed(false)` at activation 0 with `decisive-counterexample`. The summary-ledger rule matches FR-641, which writes a ledger only for `progressed` and `timestamped`. Nothing that the ruling keeps is narrowed: Settling, Finality and the event rule are unchanged, and the open-scope basis, horizon and position are moved into `Settlement`, not dropped.
+
+Five defects remain. The `limit` trigger contradicts the new "exactly `B(s)`" rule. `step` at `finish` is defined two ways. `horizon` and `position` are not uniquely defined for every profile. And the record-sample decision contradicts FR-330's sample identity.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | high | The Settlement bullet says a settled clause's report SHALL be exactly `B(s)`, with no exception, and in the same bullet it defines `trigger` `limit` for a clause settled `incomplete` on `retained_positions` or `retained_identities`. A limit-settled clause reports `incomplete` with a `monitor.retained_*` limit record (Retained state, FR-643-AC-5). FR-283's batch `monitor` never produces that record, so the report is not `B(s)`, and `B(k)` does not share its category. The two SHALLs conflict, and FR-643-AC-5 cannot pass under the new rule. Fix: exempt `trigger` `limit` from "exactly `B(s)`" and from the category-and-truth agreement, and say its report is the `incomplete` limit report. | spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:185-196; spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:170-175; spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:281-288; spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:319 |
+| FND-002 | medium | `step` is "`s`, the call at which the clause settled". Calls are counted over `step`, `assert_progress` and `assert_through` (Batch equality), and `finish` is not one of them, so FR-643 gives no value of `step` for `trigger` `finish`. FR-644 gives `n`, the number of observations. On a `Progressed` or `Timed` stream with progress or `through` records, the call count and `n` differ, so the two specs disagree. AC-7's `"2"` holds only because a `Finite` stream has one call per observation. Fix: define `step` for `finish` once in FR-643, for example as the number of calls made before `finish`, and have FR-644 cite that definition. Also say whether a refused call counts. | spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:192; spec/functional/FR-644-stream-observations-through-the-monitor-command.md:119-122 |
+| FND-003 | medium | `horizon` is not uniquely defined. (a) A fixed-sample clause on a `Progressed` trace matches both "`S = n - 1` of FR-504's open-scope reading" (FR-820's `decided` uses `S = n - 1`) and "the asserted watermark of a progressed ... reading" (FR-504's fixed-sample `S = min(W, through)`). (b) A timed clause gets "the newest stamp or the latest `through`", with no rule for which. (c) A `Timed` stamp is an `ExactRational`, but `horizon` is "a decimal string", while `through` uses FR-642's exact-rational form. Fix: give one horizon per profile and kind. For a timed clause, use the `through` when `assert_through` settled it and the newest stamp otherwise, written in FR-642's exact-rational form. | spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:202-206 |
+| FND-004 | medium | `position` for a success is "the witnessing position", but no reading cited reports one by that name. FR-330 says a successful report carries no `decisive`, so a reader may well write `null` ("when the reading names none"), and AC-7 expects `"2"`. AC-7's value is available only from FR-501's decision support {(2, holds)}, and that is a set, so a success with several support positions (an `always`, an `until`) has no defined choice. A violation uses the activation position (`where`). Fix: name the sources, for example the outcome's `where` for a violation and the least position of the FR-501 decision support for a success, and `null` for a reading with no decision support (infinite-trace, timed). | spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:207-210; spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:321 |
+| FND-005 | medium | The decision says the canonical JCS text of a sample "is the position's identity (FR-641's record-sample position)", so "two equal samples are the same text". FR-641 defines no sample identity. FR-330 gives a record-sample position's identity as its `sample` index, and FR-283 says a `Samples` trace has no document identities. Two equal samples at different indices are distinct positions, and a counterexample cites them by index. Fix: say that the text is the sample's canonical value, admitted without re-serializing, and that its identity remains the index (FR-330). | spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:128-131 |
+| FND-006 | low | The decision says FR-283's `MonitorRecord` holds its `ClauseRunReport` "behind an `Arc<ClauseRunReport>`". FR-283 defines `MonitorRecord { clause, verdict, category }`, mentions no `Arc`, and lists `report` only as an unlisted accessor. Fix: either amend FR-283's `MonitorRecord`, or say that the session's `ClauseStatus` holds the record behind an `Arc`. | spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:132-136 |
+| FND-007 | low | "No open-scope `finite_window` report" can be read as forbidding a `finite_window` on every settled report. On a `Progressed` or `Timestamped` session under scope `open`, `B(s)` itself carries FR-330's open-scope `finite_window`, so that reading contradicts "exactly `B(s)`". Fix: say "no member `B(s)` lacks", for example no `finite_window` or ledger on a `Finite` trace. | spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md:186-188 |
+| FND-008 | low | The `filament.monitor-event/1` closed member list `{"format", "record", "position", "clause", "settled", "category", "basis", "disposition"}` omits `settlement`, which a later sentence adds. Fix: list `settlement` in the closed object as present exactly when `settled` is `true`. | spec/functional/FR-644-stream-observations-through-the-monitor-command.md:100-115 |
+
+## Scope and evidence
+
+- FR-643 Settlement (spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md): A settled clause's report SHALL be exactly B(s), the batch report over its deciding prefix, with no member taken from the reading that decided it; the session SHALL report the reading that decided the clause beside it as its Settlement (step, trigger, basis, horizon, position, through). Role: examined.
+- FR-643 Batch equality (spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md): a clause that settled at call s <= k SHALL report exactly B(s); the reading that decided it is its Settlement, never part of its report. Role: examined.
+- FR-643 Decision: the accepted shape of the public API (spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md): StageFailure<MonitorRefusal>, Sample as canonical text, Arc reports, open and resume take the request by value. Role: examined.
+- FR-643 Outputs (spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md): ClauseStatus Settled(MonitorRecord, Settlement) or Pending(MonitorRecord); MonitorOutcome with the final ledger when the kind carries progress, and each settled clause's Settlement. Role: examined.
+- FR-643-AC-7 (spec/functional/FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md): E over 0, 1, 2 settles at step 3 with report exactly B(3) (success, closed-scope, no finite_window, no ledger) and Settlement {step 3, decided, decisive-witness, horizon 2, position 2}; over 0, 1, 1 with decisive-counterexample, horizon 2, position 0; finish over 0, 1 gives {step 2, finish} and B(2). Role: examined.
+- FR-644 Outputs, event and summary (spec/functional/FR-644-stream-observations-through-the-monitor-command.md): the event's disposition is that of B(k) or B(s); an event with settled true carries settlement; the summary carries settlement for every clause, and the final ledger exactly when the kind is progressed or timestamped. Role: examined.
+- FR-644-AC-7 (spec/functional/FR-644-stream-observations-through-the-monitor-command.md): a finite stream of E over 0, 1, 2 gives at record 2 settled true, disposition equal to the native-run/1 clause run, and settlement {step 3, decided, decisive-witness, horizon 2, position 2}; records 0 and 1 carry no settlement; the summary has no ledger. Role: examined.
+- TC-2321 Step 2 and TC-2340 (spec/test-cases/): restate FR-643-AC-7 and FR-644-AC-7 without drift. Role: examined.
+- FR-820 Outputs `decided`, FR-820-AC-4; FR-504 Seen horizon, Open scope, Outputs, AC-1, AC-5; FR-501 basis, decision support, AC-14; FR-330 Outputs and `decisive`; FR-283 MonitorRecord; FR-641 positions and ledger. Role: context_only.
+
+## Verdict
+
+REQUEST CHANGES. FND-001 is a contradiction between two SHALLs and makes FR-643-AC-5 unsatisfiable. FND-002 to FND-005 leave members of the new closed record undefined for some profiles. The ruling is otherwise implemented faithfully, and AC-7's decided values follow from FR-820, FR-504 and FR-501.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | low | FR-644 Behavior still says "a settled clause's [latest event] carries the batch disposition over the records that decided it", with no exception for `trigger` `limit`. Under FR-643 "Settlement" as amended, a limit-settled clause carries the `incomplete` limit report, which no batch run gives. Fix: add "other than one settled on a limit, whose event carries the limit report (FR-643 \"Settlement\")". | spec/functional/FR-644-stream-observations-through-the-monitor-command.md:136-141 |
+
+## Dispositions
+
+Round 1 is checked at head 3e7a52e3952840908642ee5d9f1bf49bc17b27e0. On finding 2, the lead ruled that refused and cancelled calls do not count.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Batch equality now says "other than on a limit", and Settlement exempts `limit` from exactly-`B(s)` and from category-and-truth agreement; FR-643-AC-5 now expects the limit settlement. |
+| FND-002 | fixed | The new "Counted calls" bullet counts accepted calls from 1, excludes refused and cancelled calls per the lead ruling, and sets `step` at `finish` to the counted calls before it. FR-644 cites it. FR-643-AC-7 (`"2"`) and FR-644-AC-5 (`"4"`) follow. |
+| FND-003 | still-open | Parts (b) and (c) are fixed: timed uses `through` when that settled the clause and the newest stamp otherwise, in exact-rational form. Part (a) is not. The new row gives fixed-sample over `Progressed` FR-504's `S = min(W, through)`. But FR-643 "Settling" (line 255-258) and FR-820 Outputs `decided` (line 102-104) both define the deciding reading of a fixed-sample clause as FR-504's open-scope reading with `S = n - 1`, so the reported horizon is not that of the reading that decided the clause. Fix one side: make the row `n - 1`, or change "Settling" and FR-820 `decided` to use FR-504's seen horizon `S`. The second fits FR-504-AC-1, where a watermark alone decides. The rest of the table is complete for every pair FR-643 admits (event-position: Finite and Progressed; fixed-sample: Finite and Progressed; finite-window: Timestamped; infinite-trace: Finite; timed: Timed, per FR-645-AC-3 and FR-641). |
+| FND-004 | fixed | `position` is now `where` for a violation (an `Undefined` violation included), the least FR-501 decision-support position for a success, and `null` otherwise. AC-7's `"2"` and `"0"` and AC-10's `"0"` follow. |
+| FND-005 | fixed | The text is now the sample's canonical value. The position's identity stays its index (FR-330), and equal samples at different indices are distinct positions. |
+| FND-006 | fixed | The session's `ClauseStatus` holds the `MonitorRecord` and its report behind an `Arc`, and FR-283 is no longer misdescribed. |
+| FND-007 | fixed | The text now reads "with no member `B(s)` lacks: for example no `finite_window` and no ledger on a `Finite` trace". |
+| FND-008 | fixed | `settlement` is in the closed member list of `filament.monitor-event/1`, present exactly when `settled` is `true`. |

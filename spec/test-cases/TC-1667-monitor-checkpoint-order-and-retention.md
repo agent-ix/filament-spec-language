@@ -20,4 +20,4 @@ Checkpoint TC-1666's session after step 2 and resume it; resume under another pa
 
 - The resumed session reports steps 3 to 5 as the original; mismatches refuse `monitor-state-mismatch`.
 - The regressing stamp refuses `Watermark` and the next observation is accepted; the observation after the closed scope refuses `Closure` and leaves the session unchanged.
-- `Recent` settles `incomplete` naming `monitor.retained_positions` at the third observation; `Reaches` and `Never`, which retain no value, stay `Pending`.
+- `Recent` settles `incomplete` naming `monitor.retained_positions` at the third observation, with settlement `{step "3", trigger "limit"}`; `Reaches` and `Never`, which retain no value, stay `Pending`.
