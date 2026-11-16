@@ -108,7 +108,6 @@ fn the_contract_check_passes_over_the_committed_bindings() {
         }
     }
     for path in [
-        "fsl_package::protocol_view::role_internality",
         "fsl_package::SchedulabilityRoot::obligation_identity",
         "fsl_replay::check_closed_form",
         "fsl_analyze::monitor_root::admit_progress_view",
@@ -144,11 +143,11 @@ fn an_accessor_no_module_exposes_fails_the_check() {
 #[ignore = "QSL-2228: `xtask consumer-facades` is not implemented yet"]
 fn an_unbound_inventory_fact_fails_the_check() {
     let mut bindings = committed_bindings();
-    protocol_facts(&mut bindings).retain(|fact| fact["fact"] != "CF-PR-04");
+    protocol_facts(&mut bindings).retain(|fact| fact["fact"] != "CF-PR-05");
     let output = check_with(&bindings);
     let text = report(&output);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("CF-PR-04"), "{text}");
+    assert!(text.contains("CF-PR-05"), "{text}");
     assert!(text.contains("unbound"), "{text}");
 }
 

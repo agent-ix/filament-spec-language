@@ -363,7 +363,6 @@ fn the_pinned_inventory_lists_the_required_facts() {
         ("protocol", "protocol view"),
         ("protocol", "causal relation"),
         ("protocol", "endpoints"),
-        ("protocol", "internality"),
         ("protocol", "await"),
         ("protocol", "visibility of a choice"),
         ("protocol", "attempts maximum"),

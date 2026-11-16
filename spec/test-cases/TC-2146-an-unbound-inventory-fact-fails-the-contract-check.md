@@ -16,11 +16,11 @@ Scope: FR-761-AC-3.
 
 ## Test Procedure
 
-Copy `docs/consumer-facades.json` to a scratch file without the `CF-PR-04` binding and run `cargo xtask consumer-facades --bindings <scratch>`.
+Copy `docs/consumer-facades.json` to a scratch file without the `CF-PR-05` binding and run `cargo xtask consumer-facades --bindings <scratch>`.
 
 Tag the tests `#[trace("TC-2146", "FR-761-AC-3", "FSpec-TC-1646", "FSpec-FR-661-AC-3")]`.
 
 ## Expected Results
 
 - Exit 1.
-- The report names `CF-PR-04` as unbound.
+- The report names `CF-PR-05` as unbound.
