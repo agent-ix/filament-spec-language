@@ -376,6 +376,23 @@ pub enum ClauseDisposition {
     /// invariant reached outside the outcome mapping (FR-100's own
     /// internal-failure exit status).
     EvaluateFault(filament_semantic_value::catalog::InternalFault),
+    /// Stage `evaluate` (FR-757 "Cross-evaluation"): a valuation run's
+    /// checked clause and, over a supplied closed finite trace, every `holds`
+    /// atom's reading at each position and the clause's native value at each
+    /// activation position. Only [`run_temporal_valuation`] reports it.
+    TemporalValuation(Box<TemporalValuation>),
+}
+
+/// What a valuation run of a temporal clause reads (FR-757, FR-931): the
+/// checked clause a TL lowering is built from and, when a trace was
+/// supplied, the native valuation a cross-evaluation compares against.
+#[derive(Debug)]
+pub struct TemporalValuation {
+    /// The checked clause.
+    pub clause: fsl_semantics::check::CheckedTemporalClause,
+    /// The valuation over the supplied trace; `None` when the trace is an
+    /// empty finite trace, which asks for the clause alone.
+    pub positions: Option<fsl_eval::temporal::ObservedValuation>,
 }
 
 impl ClauseDisposition {
@@ -391,7 +408,8 @@ impl ClauseDisposition {
             | Self::TemporalRefusal(_)
             | Self::ProgressContradiction(_)
             | Self::FrameViolation(_)
-            | Self::EvaluateFault(_) => ClauseRunStage::Evaluate,
+            | Self::EvaluateFault(_)
+            | Self::TemporalValuation(_) => ClauseRunStage::Evaluate,
         }
     }
 
@@ -422,6 +440,8 @@ impl ClauseDisposition {
                 Category::InternalFailure
             }
             Self::FrameViolation(_) => Category::Violation,
+            // A valuation is a completed read of the trace, not a verdict.
+            Self::TemporalValuation(_) => Category::Success,
             Self::Temporal(outcome) => outcome.category(),
             // The refusal's own catalog code decides: a malformed trace is a
             // refusal, a profile the evaluator does not read is unsupported.
@@ -1039,6 +1059,7 @@ impl ClauseRunReport {
             | ClauseDisposition::TraceRefused(_)
             | ClauseDisposition::ProgressContradiction(_)
             | ClauseDisposition::EvaluateFault(_)
+            | ClauseDisposition::TemporalValuation(_)
             | ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) => {
                 ActivationAxis::Unavailable
             }
@@ -1200,6 +1221,27 @@ pub fn run_clause(request: ClauseRunRequest) -> Result<ClauseRunReport, ClauseRu
 pub fn run_clause_with_temporal_selections(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading(request, temporal_selections, false)
+}
+
+/// FR-757 "Cross-evaluation", FR-931: compile the unit as [`run_clause`]
+/// does and, for a `Temporal` or `SampledTemporal` selection, report
+/// [`ClauseDisposition::TemporalValuation`] in place of the verdict: the
+/// checked clause and, over a non-empty closed finite trace, the native
+/// valuation of its atoms and activations. An empty finite trace asks for
+/// the clause alone. Every refusal before evaluation is the one the clause
+/// run gives.
+pub fn run_temporal_valuation(
+    request: ClauseRunRequest,
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading(request, &[], true)
+}
+
+fn run_clause_reading(
+    request: ClauseRunRequest,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    valuation: bool,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
     if unit.bytes.is_empty() {
@@ -1393,6 +1435,7 @@ pub fn run_clause_with_temporal_selections(
                         admitted_package,
                     }),
                     cancel: None,
+                    valuation,
                 },
             ))
         }
@@ -1422,6 +1465,7 @@ pub fn run_clause_with_temporal_selections(
                         admitted_package,
                     }),
                     cancel: None,
+                    valuation,
                 },
             ))
         }

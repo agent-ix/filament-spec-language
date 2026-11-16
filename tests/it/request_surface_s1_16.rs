@@ -331,7 +331,6 @@ fn hybrid_flows_export_unrepresented() {
 /// `mltl.closed-trace/v1`, `p0` naming its `holds` leaf.
 #[test]
 #[trace("TC-2107", "FR-757-AC-1")]
-#[ignore = "QSL-2147: lowering to TL formulas not implemented yet"]
 fn a_supported_clause_lowers_to_a_tl_formula() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -959,7 +958,7 @@ fn tla_export_agrees_with_fsl_exploration() {
 #[test]
 #[trace("TC-2107", "FR-757-AC-2")]
 #[trace("TC-2107", "FR-757-AC-3")]
-#[ignore = "QSL-2147: TL cross-evaluation not implemented yet"]
+#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet, and `model-steps` under the timed profile is a spec gap"]
 fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -1047,7 +1046,6 @@ const LOW_BODY: &str = "always [0, 3] holds(c.versionNumber <= 2)";
 #[test]
 #[trace("TC-2601", "FR-931-AC-1")]
 #[trace("TC-2601", "FR-931-AC-2")]
-#[ignore = "QSL-2147: the tl_lowering request member is not implemented yet"]
 fn a_tl_lowering_request_selects_its_correspondence() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let lower = |member: Value| run(&unit, true, ("tl_lowering", member));
@@ -1092,7 +1090,14 @@ fn a_tl_lowering_request_selects_its_correspondence() {
         value["tl_lowering"]["correspondence"],
         "mltl.origin-complete-history/v1"
     );
+}
 
+/// FR-931-AC-2's timed case: `Low` under the timed profile is unsupported
+/// with no classified target and no formula.
+#[test]
+#[trace("TC-2601", "FR-931-AC-2")]
+#[ignore = "QSL-2147: `Low` writes `clock \"model-steps\"`, which the timed profile does not check (spec gap)"]
+fn a_timed_clause_lowers_to_no_formula() {
     let timed = low("filament.temporal.timed/v1", LOW_BODY);
     let (code, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));
     assert_eq!(code, 21, "{value}");
@@ -1105,7 +1110,6 @@ fn a_tl_lowering_request_selects_its_correspondence() {
 /// naming the member.
 #[test]
 #[trace("TC-2602", "FR-931-AC-3")]
-#[ignore = "QSL-2147: the tl_lowering request member is not implemented yet"]
 fn a_malformed_tl_lowering_member_is_refused() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let lower = |member: Value| run(&unit, true, ("tl_lowering", member));
@@ -1160,13 +1164,11 @@ fn a_malformed_tl_lowering_member_is_refused() {
     refusal_names(&value, "tl_lowering.clause");
 }
 
-/// FR-931-AC-4 and AC-5: cross-evaluation agrees on the spine's behaviours,
-/// and only `fsl-command` names the TL crates.
+/// FR-931-AC-4: cross-evaluation agrees on the spine's behaviours.
 #[test]
 #[trace("TC-2603", "FR-931-AC-4")]
-#[trace("TC-2603", "FR-931-AC-5")]
-#[ignore = "QSL-2147: TL cross-evaluation and the fsl-command TL edge are not implemented yet"]
-fn tl_cross_evaluation_agrees_and_reports_faults() {
+#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration from a snapshot) is not implemented yet"]
+fn tl_cross_evaluation_agrees_on_the_spine_behaviours() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let (code, value) = run(
         &unit,
@@ -1184,7 +1186,12 @@ fn tl_cross_evaluation_agrees_and_reports_faults() {
     assert!(cross["positions"].as_u64().expect("a position count") >= traces);
     assert_eq!(cross["agree"], true);
     assert_eq!(cross["faults"], json!([]));
+}
 
+/// FR-931-AC-5: only `fsl-command` names the TL crates.
+#[test]
+#[trace("TC-2603", "FR-931-AC-5")]
+fn only_fsl_command_names_the_tl_crates() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest = |crate_dir: &str| {
         std::fs::read_to_string(root.join(crate_dir).join("Cargo.toml")).expect("a manifest")
