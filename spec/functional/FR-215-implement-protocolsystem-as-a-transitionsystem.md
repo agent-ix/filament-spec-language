@@ -163,8 +163,9 @@ compiler produces it and CG reads it in counterexamples; it serializes as
 - The records a binder of a record type ranges over SHALL be the record
   type's value domain: every record that gives each field a value of that
   field's value domain. A field's value domain is FR-120's for its type; for a
-  field of an enum type, each member in declaration order; for a field of a
-  record type, that record type's value domain by this rule. The records SHALL
+  field of an enum type, each member in FR-141 canonical member order
+  (declaration order for an ordered enum, case-name order otherwise); for a
+  field of a record type, that record type's value domain by this rule. The records SHALL
   be ordered with the first declared field most significant, each field in its
   own domain order. The protocol system SHALL enumerate this domain for every
   binder of an `event`, `send`, `receive`, `finish`, `cattempt` and `activate`
