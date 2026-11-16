@@ -86,8 +86,8 @@ struct Compiled {
 }
 
 enum FixturePackage {
-    Linked(spine::CheckedUnit),
-    Kernel(fsl_package::CheckedPackage),
+    Linked(Box<spine::CheckedUnit>),
+    Kernel(Box<fsl_package::CheckedPackage>),
 }
 
 impl FixturePackage {
@@ -188,7 +188,7 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
         return Compiled {
             text,
             sources: vec![cst.source().clone()],
-            unit: FixturePackage::Kernel(fsl_package::CheckedPackage::link(graph)),
+            unit: FixturePackage::Kernel(Box::new(fsl_package::CheckedPackage::link(graph))),
             selections,
         };
     }
@@ -208,7 +208,7 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
     sources.extend(checked.libraries().iter().cloned());
     Compiled {
         text,
-        unit: FixturePackage::Linked(checked),
+        unit: FixturePackage::Linked(Box::new(checked)),
         sources,
         selections,
     }
