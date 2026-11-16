@@ -1,30 +1,31 @@
 ---
 id: TC-260
-title: "ValueTypeRef is exactly the four-member union Clock/Native/Package/Unit"
+title: "ValueTypeRef is exactly the five-member union Clock/Native/Package/Unit/Resolved"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
-# TC-260: ValueTypeRef is exactly the four-member union Clock/Native/Package/Unit
+# TC-260: ValueTypeRef is exactly the five-member union Clock/Native/Package/Unit/Resolved
 
 ## Description
 
-Verify that `ValueTypeRef` is defined exactly as the four-member union
-`{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String)}`,
-with no fifth variant, and that no model field type anywhere in the crate is represented
+Verify that `ValueTypeRef` is defined exactly as the five-member union
+`{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String),
+Resolved(Box<ValueType>)}`, with no sixth variant, that `Resolved` is built
+only by the source-object assembler and has no wire form, and that no model field type anywhere in the crate is represented
 by a bare `NodeKey` or a raw string type name instead of going through
 this union. Scope: FR-088-AC-8.
 
 ## Test Procedure
 
-1. Read `ValueTypeRef`'s definition and confirm it has exactly four
-   variants, `Clock`, `Native(NativeValueType)`, `Package(DeclarationKey)` and
-   `Unit(String)`, in that shape. `Clock` carries no fields and is a place in
+1. Read `ValueTypeRef`'s definition and confirm it has exactly five
+   variants, `Clock`, `Native(NativeValueType)`, `Package(DeclarationKey)`,
+   `Unit(String)` and `Resolved(Box<ValueType>)`, in that shape. `Clock` carries no fields and is a place in
    a timed model (FR-230); the `String` of `Unit` is a unit name the assembler
    resolves (FR-056-AC-42), not a type name.
 2. Search the whole compiled crate for any other definition of a type
-   named `ValueTypeRef`, or for any fifth variant added to this one;
+   named `ValueTypeRef`, or for any sixth variant added to this one;
    confirm none exists.
 3. Search every model field-type declaration site in the crate (the places
    that record a field's type for a domain-model declaration) and confirm
@@ -41,10 +42,18 @@ this union. Scope: FR-088-AC-8.
    a bare `NodeKey` directly (bypassing `ValueTypeRef::Package`) and
    confirm no code path in the crate accepts this form as a model field
    type.
+5. Search the crate for every construction of `ValueTypeRef::Resolved` and
+   confirm each lies in the source-object assembler (FR-569 "The source
+   model"), none in domain package intake or a wire reader. Confirm no
+   serializer or wire writer encodes a `Resolved`, and that `Display` of a
+   `Resolved(Decimal[0, 100; 2, 2; exact])` prints the FSL type spelling and
+   no Rust `Debug` text.
 
 ## Expected Results
 
-- Steps 1-2: exactly one `ValueTypeRef` definition, with exactly the four
-  named variants; a fifth variant or a second definition fails this step.
+- Steps 1-2: exactly one `ValueTypeRef` definition, with exactly the five
+  named variants; a sixth variant or a second definition fails this step.
 - Step 3: every model field type is `ValueTypeRef`-typed.
 - Step 4: no bare-`NodeKey`/raw-string field-type path exists.
+- Step 5: `Resolved` is built only by the source-object assembler, never
+  encoded on a wire, and displayed by its FSL type spelling.

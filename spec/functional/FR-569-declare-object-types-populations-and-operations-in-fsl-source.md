@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-088
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-092
@@ -217,6 +219,33 @@ effective view, FR-103's operations and frames, FSpec FR-150 and FR-151
 clause resolution and FR-106 and FR-107's admission and evaluation SHALL run
 over it with the same code paths and the same rules as over a model's
 effective view.
+
+A source member's record holds its type the way a model member's does. The
+outermost collection of a field, parameter or result type is the record's
+`Multiplicity`, and the record's `value_type` is the element type left after
+removing that collection. A `Clock` element is `ValueTypeRef::Clock`. A
+`Reference<T>` element over a source or model object type is
+`ValueTypeRef::Package` naming `T`'s declaration key. Every other element is
+`ValueTypeRef::Resolved`, holding the `ValueType` the element has as a
+source record field (FR-088 "A model field type names a package node, except
+a source object member's"). For example, `Sequence<Set<Integer>[0, 2]>[0, 2]`
+is an ordered multiplicity `0..2` with `Resolved` of `Set<Integer>[0, 2]`.
+The assembler fills every member's type once the unit's type namespace has
+been assembled. No temporary type from an earlier assembly step survives into
+the view that conformance, dispatch, frames, admission or evaluation read.
+
+Over this view, `Resolved` follows the record field's rules:
+
+- **Conformance.** A `Resolved` type conforms to another `Resolved` type by
+  the checker's value-type conformance, which is FSpec FR-146 interval
+  containment, `Int[..]` within `Integer`, and component-wise conformance for
+  `Option` and collections. Each `Reference` inside either type conforms by
+  FSpec FR-151's object conformance, for source and model object types alike.
+  A `Resolved` type does not conform to a type of any other variant.
+- **Clock places.** A `Resolved` type bears a clock place exactly where the
+  record field's type does, for example a member of a source record type that
+  has a `Clock` field (FR-230 "Records and admitted aggregate paths"), and
+  that member's places are the ones the record field has.
 
 The `pre` and `post` state clauses that name a source-declared operation are
 that operation's contract clauses, its `requires` and `ensures` in source
@@ -566,6 +595,7 @@ lands, as FR-390 states.
 | FR-569-AC-12 | Source route. For each member type, an `object` field of that type, and an operation parameter or result of that type, assembles and checks exactly when a source `record` field of that type does, and `self.f` in a state clause on the object has the type the record field has: a source `enum` (`Tier { Gold, Standard }`), a source `record` (`Point { x: Integer; }`), a `union` with a payload member, a `tuple`, a `type` alias, `Decimal[0, 100; 2, 2; exact]`, `Rational[0, 9; 1, 4]`, `Float64` under the IEEE profile, `Quantity<m>` over a declared `dimension L; unit m : L = 1;`, `Option<Sequence<Integer>[0, 3]>` and `Sequence<Set<Integer>[0, 2]>[0, 2]`; the enum and record cases also hold as an operation parameter and as an operation result. None is refused `unknown_required_feature`/`unsupported-feature`. | Test (TC-1940) |
 | FR-569-AC-13 | Source route. A field typed `Population<Order>[3]`, and a field typed by the name of a source function, are each refused at the type with the code and cause a source record field of the same type gets, and the unit yields no checked package. | Test (TC-1940) |
 | FR-569-AC-14 | Waits on QC-30 (target emission). Over fixture S, S4 emits a package that FSL's I2 reader admits, holding `Order` as a `model`/`object_type` node with `declaration` `["Order"]` and the unit's `SourceOwner`. With `Order`'s owner replaced by a `ModelOwner` naming fixture D's package and IR node of `Order`, the I2 reader refuses `malformed_wire` at the node's `owner`; with its `declaration` removed and its `SourceOwner` kept, it refuses `malformed_wire` at the node's `owner`. A member type of AC-12 emits a binding naming the type node a record field of that type is bound to. | Test (TC-1941) |
+| FR-569-AC-15 | Source route. After a source object unit is assembled, its view holds every member type as below. `f: Decimal[0, 100; 2, 2; exact]` holds `Resolved` of that decimal type. `s: Sequence<Set<Integer>[0, 2]>[0, 2]` holds multiplicity `0..2` (ordered) and `Resolved` of `Set<Integer>[0, 2]`, not a sequence nested inside a sequence. `r: Reference<Order>` holds `Package` of `Order`'s key, and `c: Clock` holds `Clock`. No member holds a temporary type. Over `object Base { operation f(p: Int[0, 9]): Integer; }`, an override `f(p: Integer): Int[0, 9]` checks and an override `f(p: Int[0, 3]): Integer` is refused `ill_typed`/`variance-parameter`. With `M` selecting a model whose `Leaf` extends `Node`, an override narrowing an operation result from `Option<Reference<M::Node>>` to `Option<Reference<M::Leaf>>` checks. A member `w: W`, where `record W { c: Clock; }` is declared under a dense time source, records the clock place that a record field of type `W` records. | Test (TC-1940) |
 
 
 ## Dependencies
