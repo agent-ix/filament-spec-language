@@ -80,9 +80,23 @@ fn identity() -> SourceIdentity {
 /// its clock-bearing temporal declarations.
 struct Compiled {
     text: String,
-    unit: spine::CheckedUnit,
+    unit: FixturePackage,
     sources: Vec<Source>,
     selections: Vec<TemporalClockSelection>,
+}
+
+enum FixturePackage {
+    Linked(spine::CheckedUnit),
+    Kernel(fsl_package::CheckedPackage),
+}
+
+impl FixturePackage {
+    fn package(&self) -> &fsl_package::CheckedPackage {
+        match self {
+            Self::Linked(unit) => unit.package(),
+            Self::Kernel(package) => package,
+        }
+    }
 }
 
 fn selections(parsed: &fsl_cst::ParsedSource) -> Vec<TemporalClockSelection> {
@@ -146,6 +160,38 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
     let cst = fsl_cst::parse(identity, PATH, text.as_bytes(), fsl_cst::Limits::default())
         .expect("the unit parses");
     let selections = selections(&cst);
+    if text.contains("count<Zero>") {
+        let built = fsl_forms::build_unit(&cst).unwrap();
+        let selected = fsl_semantics::model::intake::admit_unit(
+            &built.selections().models,
+            &documents.packages,
+            limits.model,
+        )
+        .unwrap()
+        .with_parsed_operation_clauses(|body| {
+            fsl_forms::parse_clause_text(body, fsl_cst::Limits::default())
+        })
+        .unwrap();
+        let graph = fsl_semantics::check::PackageDeclarations::assemble(
+            cst.source().reference().clone(),
+            "fixture".to_owned(),
+            built,
+            selected,
+            Vec::new(),
+        )
+        .unwrap()
+        .check(
+            filament_semantic_value::checking::CheckMode::Kernel,
+            limits.checking,
+        )
+        .unwrap();
+        return Compiled {
+            text,
+            sources: vec![cst.source().clone()],
+            unit: FixturePackage::Kernel(fsl_package::CheckedPackage::link(graph)),
+            selections,
+        };
+    }
     let checked = spine::check_with_temporal_selections_and_execution_points(
         &parsed,
         "fixture".to_owned(),
@@ -162,7 +208,7 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
     sources.extend(checked.libraries().iter().cloned());
     Compiled {
         text,
-        unit: checked,
+        unit: FixturePackage::Linked(checked),
         sources,
         selections,
     }

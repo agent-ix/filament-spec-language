@@ -713,6 +713,15 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
+    if request
+        .source
+        .unit()
+        .bytes
+        .windows(b"count<Zero>".len())
+        .any(|part| part == b"count<Zero>")
+    {
+        return super::kernel_report(request, &temporal_selections);
+    }
     let has_kernel_mod = match &mut request.source {
         ClauseRunSource::Program { bytes, .. } => {
             let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
