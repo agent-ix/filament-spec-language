@@ -38,7 +38,25 @@ FR-484). The `OperationContract` witness is supplied by the operation-contract
 check arm (`contract-checker`, FSpec FR-483 and FR-485), which advertises
 `operation-contract` in `bounded` mode. QSL-905 supplies the operation-contract
 record the arm settles; it does not itself register or implement a provider.
-The production snapshot SHALL return each arm's descriptor as the candidate
+EN-1 also advertises `operation-contract`, in the mode it advertises for
+`temporal-satisfaction`, for an
+`invariant` state clause over a model subject. Such an invariant claims that
+it holds at every reachable state of the subject, a reachability question,
+which EN-1's explicit-state search decides exhaustively with a certificate and
+a replayed counterexample (FR-625); the contract checker decides an
+operation's precondition, postcondition and frame over bounded inputs and has
+no reachable-state set to search. The production snapshot SHALL therefore
+settle the tie between the two `operation-contract` providers by the claim:
+
+| `operation-contract` claim | Provider |
+|---|---|
+| An `invariant` state clause, when the request names a model subject | EN-1 |
+| An `invariant` state clause with no model subject | `contract-checker` |
+| An operation's `pre` or `post` contract, or a frame obligation | `contract-checker` |
+
+The rule reads only the claim's form and whether a model subject is named,
+never a caller preference, so one item always routes to one provider. The
+production snapshot SHALL return each arm's descriptor as the candidate
 outcome for its witness capability. The registry builder SHALL NOT insert a
 placeholder for either capability.
 
@@ -103,7 +121,7 @@ API and dependency changes, not claims about existing code.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-489-AC-1 | A production snapshot built from `fsl_analyze::Engines::fsl()` contains exactly the engine descriptors that collection exposes, including EN-1, EN-4, EN-6, `value-checker` and `contract-checker`, and no descriptor without its engine implementation. | Test (TC-1272) |
-| FR-489-AC-2 | Candidate queries over the production snapshot include EN-1 and EN-6 for `temporal-satisfaction` and EN-4 for `probabilistic-satisfaction` when the query supplies the evidence kind EN-4 advertises, as FR-075-AC-13 requires; the FR-345 `ValueValidity` witness capability gives exactly `value-checker` and the `OperationContract` witness capability gives exactly `contract-checker`. | Test (TC-1272) |
+| FR-489-AC-2 | Candidate queries over the production snapshot include EN-1 and EN-6 for `temporal-satisfaction` and EN-4 for `probabilistic-satisfaction` when the query supplies the evidence kind EN-4 advertises, as FR-075-AC-13 requires; the FR-345 `ValueValidity` witness capability gives exactly `value-checker` and the `OperationContract` witness capability gives exactly `contract-checker`. An `operation-contract` item naming an `invariant` state clause in a request that names a model subject gives exactly EN-1; the same item with no model subject, and an `operation-contract` item naming an operation's `pre` or `post` contract or a frame obligation, give exactly `contract-checker`. | Test (TC-1272) |
 | FR-489-AC-3 | If the injected descriptor source fails or a production registration is refused, the factory returns a typed build error and the CLI reports tool failure; it never drops the descriptor and continues with a partial snapshot. | Test (TC-1272) |
 | FR-489-AC-4 | Two independently built production snapshots are equal, and the production builder uses no process-global registry state. | Test (TC-1272) |
 | FR-489-AC-5 | `Engines::registrations()` yields exactly the descriptors owned by the EN-1, EN-4, EN-5, EN-6, `value-checker`, `contract-checker` and `protocol-analysis` engines in `Engines::fsl()`; `xtask` declares `fsl-analyze` as a normal dependency and its production factory registers each yielded descriptor once. | Test (TC-1272) |

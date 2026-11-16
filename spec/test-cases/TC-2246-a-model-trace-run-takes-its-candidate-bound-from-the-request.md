@@ -17,13 +17,13 @@ Verify the `model` trace's `max_candidates` member and the outcome when the boun
 ## Test Procedure
 
 1. Through `command::run`, run FR-330-AC-16's `Model` trace as a `model` member with no `max_candidates`.
-2. Run it with `max_candidates` 1 over a step whose reconstruction expands more than one candidate.
+2. Run it with `max_candidates` 1 over a step whose reconstruction expands two candidates, then with `max_candidates` equal to the largest candidate count of any step.
 3. Run it with `max_candidates` 0, and with `max_candidates` on a `lasso` member.
 4. Compare the result identities of two runs that differ only in `max_candidates`.
 
 ## Expected Results
 
 - Step 1: FR-330-AC-16's outcome.
-- Step 2: `incomplete`, exit 22, `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}`, no truth and no counterexample.
+- Step 2: `incomplete`, exit 22, `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}`, no truth and no counterexample. With the bound equal to the largest count: FR-330-AC-16's outcome, never `incomplete`.
 - Step 3: `invalid-request` at stage `request`, exit 20, naming the member.
 - Step 4: the identities differ.

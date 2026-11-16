@@ -136,9 +136,9 @@ refused. The member's bytes are what a later request's `ledger` file holds.
 - A trace that mixes snapshot keys and samples, a sample trace with `over`, and
   a snapshot trace without `over` SHALL refuse `invalid-request` at stage
   `request`, naming `trace` or `over`.
-- When a progress assertion's watermark is `{"half_open": 0}`, the reader
-  SHALL refuse the request `invalid-request` at stage `request`, exit 20,
-  naming the member `trace.progress.watermark.half_open`, before any
+- When a request carries the progress watermark `{"half_open": 0}`, the run
+  reader SHALL refuse the request `invalid-request` at stage `request`, exit
+  20, naming the member `trace.progress.watermark.half_open`, before any
   position is admitted. An exclusive end of 0 covers no tick, so it has no
   inclusive reading (FR-501 reads `E` as `E - 1`), and the inclusive form
   cannot state "nothing covered" either: progress always covers at least
@@ -155,7 +155,8 @@ refused. The member's bytes are what a later request's `ledger` file holds.
   `max_candidates` of 0, of a wrong JSON type, or on a trace member other
   than `model` SHALL refuse `invalid-request` at stage `request`, exit 20,
   naming the member.
-- When reconstructing a step reaches that bound, the run SHALL report
+- When a step's candidate count would exceed that bound (FR-120's rule;
+  a step with exactly `max_candidates` candidates is expanded in full), the run SHALL report
   `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value:
   N, setting: expansion.max_candidates}` (FR-127's spelling of the stop, the
   run report's outcome `{"kind": "incomplete", "limit": "max_candidates"}`),
@@ -185,7 +186,7 @@ refused. The member's bytes are what a later request's `ledger` file holds.
 | FR-641-AC-4 | A `model` trace and a `lasso` of samples each reach FR-330 and report its outcome; a trace mixing a key and a sample, a sample trace with `over`, a `timestamped` observation missing `stamp`, and a ledger file with two entries for one binding each refuse `invalid-request` at stage `request`, exit 20, naming the member. | Test (TC-1663) |
 | FR-641-AC-5 | Reading a ledger file and writing it back from a run that changes nothing reproduces its bytes. | Test (TC-1663) |
 | FR-641-AC-6 | Through `command::run`, a `timestamped` trace of `T` whose progress watermark is `{"half_open": 0}` refuses `invalid-request` at stage `request`, exit 20, naming `trace.progress.watermark.half_open`, with no result document; the same request with `{"half_open": 6}` reports the outcome of the request with watermark 5. | Test (TC-2241) |
-| FR-641-AC-7 | Through `command::run`, FR-330-AC-16's `Model` trace written as a `model` member with no `max_candidates` reports FR-330-AC-16's outcome under the bound 1,000,000; with `max_candidates` 1 over a step whose reconstruction expands more than one candidate it reports `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}` and no truth; `max_candidates` 0, and `max_candidates` on a `lasso` member, refuse `invalid-request` at stage `request`, exit 20, naming the member; two runs differing only in `max_candidates` give different result identities. | Test (TC-2246) |
+| FR-641-AC-7 | Through `command::run`, FR-330-AC-16's `Model` trace written as a `model` member with no `max_candidates` reports FR-330-AC-16's outcome under the bound 1,000,000; with `max_candidates` 1 over a step whose reconstruction expands two candidates it reports `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}` and no truth; with `max_candidates` equal to the largest candidate count of any step it reports FR-330-AC-16's outcome, never `incomplete`; `max_candidates` 0, and `max_candidates` on a `lasso` member, refuse `invalid-request` at stage `request`, exit 20, naming the member; two runs differing only in `max_candidates` give different result identities. | Test (TC-2246) |
 
 ## Dependencies
 

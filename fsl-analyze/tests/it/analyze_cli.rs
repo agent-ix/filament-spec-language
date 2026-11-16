@@ -117,10 +117,15 @@ fn invariant_items_prove_and_refute() {
         json!([{"claim": "AtMostThree"}, {"claim": "AtMostTwo"},
             {"claim": "AtMostThree", "kind": "temporal-satisfaction"}]),
     ));
-    // An invariant keeps its `state-model` family's one kind and runs on EN-1.
+    // An invariant keeps its `state-model` family's one kind; over the
+    // request's model subject the tie-break routes it to EN-1, never to the
+    // contract checker (FR-489).
     assert_eq!(run.item(0)["request"]["kind"], "operation-contract");
+    assert_eq!(run.item(0)["record"]["backend"], "en-1");
     assert_eq!(label(&run.item(0)), "proved");
+    assert_eq!(run.item(0)["record"]["basis"]["type"], "exhaustive");
     assert_eq!(label(&run.item(1)), "refuted");
+    assert_eq!(run.item(1)["record"]["backend"], "en-1");
     let refused = run.item(2);
     assert_eq!(refused["record"]["diagnostic"]["cause"], "inapplicable-kind");
     assert_eq!(
@@ -190,22 +195,32 @@ fn weak_fairness_decides_liveness() {
     let cycle = refuted["counterexample"]["loop"]
         .as_array()
         .expect("a lasso loop");
-    assert!(
-        cycle.iter().all(|step| !step.to_string().contains(
-            r#""name":"value","value":{"type":"integer","value":"3"}"#
-        )),
-        "the loop stays below 3: {refuted}"
-    );
+    assert!(!cycle.is_empty(), "{refuted}");
+    // Every loop step is the `setTo(0)` self-loop taken at `value = 0`: its
+    // FSpec FR-181 transition identity names `setTo`, and its post state
+    // holds `value` 0 (`Stay` admits only `n = 0` there), so the cycle
+    // never takes `inc`.
+    for step in cycle {
+        let transition = step["transition"].to_string();
+        assert!(transition.contains("setTo"), "a setTo step: {step}");
+        assert!(
+            step["post_state"]["state"].to_string().contains(
+                r#""name":"value","value":{"type":"integer","value":"0"}"#
+            ),
+            "at value = 0: {step}"
+        );
+    }
     let ws = Workspace::new("cli-liveness-inc-only");
     let run = analyze(&counter_request(&ws, &unfair, json!([{"claim": "Unfair"}])));
     assert_eq!(label(&run.item(0)), "proved");
 }
 
-/// FR-627-AC-4: fairness over a supplied trace is a missing premise.
+/// FR-627-AC-4: a `finite-replay` item naming a temporal clause is
+/// inapplicable to its `temporal-trace` family (FR-507).
 #[trace("TC-1587", "FR-627-AC-4")]
 #[test]
-#[ignore = "QSL-2123: finite-replay items with fairness are not reachable through fsl analyze yet"]
-fn strong_fairness_over_a_supplied_trace_is_refused() {
+#[ignore = "QSL-2123: a finite-replay item naming a temporal clause does not settle inapplicable-kind through fsl analyze yet"]
+fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
     let strong = clause(
         "Strong",
         "fair strong M::Counter::inc;",

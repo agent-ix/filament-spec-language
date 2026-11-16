@@ -47,7 +47,8 @@ fn verdict_and_counts_match_the_breadth_first_oracle() {
     assert_eq!(item["exploration"]["transitions"], steps.to_string());
 }
 
-/// FR-625-AC-3: a state budget and a horizon stop the search incomplete.
+/// FR-625-AC-3: a state budget stops the search `incomplete`; a horizon
+/// cut settles `inconclusive` `bound-reached` (FR-127 V-5).
 #[trace("TC-1585", "FR-625-AC-3")]
 #[test]
 #[ignore = "QSL-2122: explicit-state budgets are not reachable through fsl analyze yet"]

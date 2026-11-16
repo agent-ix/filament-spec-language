@@ -62,6 +62,10 @@ no fairness (FR-620). Strong fairness decides on the explicit-state product
   fairness, and the same clause is decided over a model subject here. A
   `finite-replay` item over a protocol clause with a fairness constraint
   settles by FR-132 too (FR-636).
+- **Budgets and cancellation** are FR-625's; `max_automaton_states` bounds the
+  claim automaton.
+- **Refusals.** A lasso whose replayed cycle is not fair settles
+  `inconclusive` `replay-parity`.
 
 ### Decision: the supplied-trace path is the clause run's, not analyze's
 
@@ -74,10 +78,6 @@ analyze wire, while the clause-run request already carries every temporal
 trace kind (FR-641). The capability, evaluating a fair clause over a recorded
 trace and naming the premise that cannot be checked there, stays whole on the
 clause-run and monitor paths.
-- **Budgets and cancellation** are FR-625's; `max_automaton_states` bounds the
-  claim automaton.
-- **Refusals.** A lasso whose replayed cycle is not fair settles
-  `inconclusive` `replay-parity`.
 
 ## Acceptance Criteria
 

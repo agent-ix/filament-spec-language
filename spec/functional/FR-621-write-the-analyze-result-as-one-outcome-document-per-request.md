@@ -105,8 +105,10 @@ carries.
 
 ### Temporal dispositions, values and engine roles
 
-- An item that reports a temporal disposition (a `finite-replay` or
-  `monitor`-style evaluation of a clause over one trace) SHALL carry it as
+- An item that reports a temporal disposition (a `monitor` item's
+  evaluation of a temporal clause over one supplied trace, or a
+  `finite-replay` item's evaluation of a protocol clause over its replayed
+  trace) SHALL carry it as
   FSpec FR-352's `disposition.temporal` with one of its sixteen kinds
   (`holds`, `violated`, `undefined`, `insufficient-data`, `pending`,
   `pending-window`, `pending-next-event`, `indeterminate`,
@@ -119,7 +121,12 @@ carries.
   `incomplete` and no outcome; `progress-contradicted` has category
   `refusal` with outcome `invalid_runtime_input`/`invalid-value`. Any other
   kind is refused by the writer as below. The `axes.settlement` member of
-  such an item equals the disposition's `basis`.
+  such an item equals the disposition's `basis`. A temporal clause is never
+  evaluated over a supplied trace by a `finite-replay` item: that kind
+  applies to the `protocol` family only, and such an item settles
+  `inapplicable-kind` (FR-507, FR-627); the FR-641 clause run and the monitor
+  evaluate a temporal clause over a supplied trace and write the same
+  `disposition.temporal` rows (FR-267).
 - Every value in a counterexample state, an assignment, a witness or a
   simulation trace SHALL use FSpec FR-181's typed canonical forms, such as
   `{"type": "integer", "value": "3"}`, because the analyze document is the
@@ -164,7 +171,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-4 | Every `category` and record label in the analyze documents of AC-1 to AC-3 is a kind FSpec FR-352 registers; a writer handed an unregistered kind writes an `internal-failure` document, exit 30, naming it. | Test (TC-1581) |
 | FR-621-AC-5 | The document the library writes for a request and the document the driver writes in machine mode for the same request are byte-equal. | Test (TC-1581) |
 | FR-621-AC-6 | In text mode the AC-2 request prints `0 Bounded refuted` as its first line and exits 10. | Test (TC-1581) |
-| FR-621-AC-7 | A `finite-replay` item whose clause is still pending at the end of the supplied trace carries `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
+| FR-621-AC-7 | The temporal clause `Reaches` (`eventually holds(r.level = 2)` under infinite-trace over a record trace subject), still pending at the end of the `finite` samples 0, 1 it is run over through the FR-641 clause-run request, reports `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; a `finite-replay` analyze item naming a temporal clause settles `invalid-request` `inapplicable-kind` with `detail.family` `temporal-trace`, exit 20; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
 | FR-621-AC-8 | Over the Counter subject, the `proved` EN-1 item of `Bounded` carries `certificate.identity` with exactly the members `node_id`, `model` and `ordinal`, `model` the Counter model's identity text; the `refuted` item of `BelowThree` carries `replay.target` `{"state_clause": Q}` with `Q` ending in `BelowThree`; and, both items required, `aggregate` is `incomplete` with one gap for `BelowThree`'s index, `reason` `not-proved`, `result` `refuted`. | Test (TC-2184) |
 
 ## Dependencies
