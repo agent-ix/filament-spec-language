@@ -234,6 +234,9 @@ pub struct ClauseState<'a> {
     undefined_atom: Option<usize>,
     /// The first undefined reading a trace-subject stream met.
     first_undefined: Option<FirstUndefined>,
+    /// The canonical text of each record sample held by value, by
+    /// position, for a state that cites its samples by index.
+    texts: BTreeMap<u64, String>,
 }
 
 /// The `pending` report of a clause no evaluation has read yet.
@@ -251,6 +254,14 @@ pub fn pending_report() -> ClauseRunReport {
         decisive: None,
         authenticated_temporal_selection: None,
         refused_at: None,
+    }
+}
+
+/// FR-330-AC-18: the identity of the record sample at `index`, its index.
+fn index_reference(index: u64) -> DocumentRef {
+    DocumentRef {
+        authority: super::temporal::SAMPLE_AUTHORITY.to_owned(),
+        identity: index.to_string(),
     }
 }
 
@@ -351,6 +362,7 @@ impl<'a> ClauseState<'a> {
             atom_values: BTreeMap::new(),
             undefined_atom: None,
             first_undefined: None,
+            texts: BTreeMap::new(),
         })
     }
 
@@ -390,6 +402,7 @@ impl<'a> ClauseState<'a> {
         let index = u64::try_from(self.seen.len()).map_err(|_| fault("position-in-u64"))?;
         let held_values = self.values.clone();
         let held_pins = self.pinned.clone();
+        let held_texts = self.texts.clone();
         let held_captures = self.captures.clone();
         let held_carried = (
             self.stream.clone(),
@@ -408,8 +421,9 @@ impl<'a> ClauseState<'a> {
             }
             AdmittedValue::Sample(_) => None,
         };
+        let reference = self.cite(index, position.reference);
         self.seen.push(Seen {
-            reference: position.reference,
+            reference,
             stamp: position.stamp,
             order_key: position.order_key,
         });
@@ -427,6 +441,7 @@ impl<'a> ClauseState<'a> {
                 }
                 self.values = held_values;
                 self.pinned = held_pins;
+                self.texts = held_texts;
                 self.captures = held_captures;
                 (
                     self.stream,
@@ -441,6 +456,29 @@ impl<'a> ClauseState<'a> {
                 Err(refusal)
             }
         }
+    }
+
+    /// FR-330-AC-18, FR-643 "Retained state": whether the state cites each
+    /// record sample by its index, holding a sample's text only while it holds
+    /// the sample by value. A reading that runs the batch evaluation again
+    /// reads each sample from its position's identity.
+    fn indexed(&self) -> bool {
+        match self.reading {
+            Reading::Subject => true,
+            Reading::Streamed => self.node.clause().profile() == TemporalProfile::InfiniteTrace,
+            Reading::Observed | Reading::Values => false,
+        }
+    }
+
+    /// The identity the state keeps for the position `index` the caller names
+    /// `reference`: its index, keeping the sample's text while it is held, for
+    /// an indexed state.
+    fn cite(&mut self, index: u64, reference: DocumentRef) -> DocumentRef {
+        if !self.indexed() {
+            return reference;
+        }
+        self.texts.insert(index, reference.identity);
+        index_reference(index)
     }
 
     /// FR-820: advance a streamed reading by `position`. The sample is read
@@ -460,11 +498,15 @@ impl<'a> ClauseState<'a> {
         let mut stream = self.stream.clone();
         let mut exhausted = self.exhausted.clone();
         let mut stop = self.stop.clone();
+        let mut stop_text = None;
         if let (Some(carried), None) = (stream.as_mut(), exhausted.as_ref()) {
             match push_sample(self.package, self.node, carried, &sample, &mut meter) {
                 Ok(read) => {
                     if !read.is_empty() && stop.is_none() {
                         stop = Some((index, sample));
+                        if self.indexed() {
+                            stop_text = Some(position.reference.identity.clone());
+                        }
                     }
                 }
                 Err(StreamStop::Incomplete(incomplete)) => {
@@ -473,8 +515,13 @@ impl<'a> ClauseState<'a> {
                 }
             }
         }
+        let reference = if self.indexed() {
+            index_reference(index)
+        } else {
+            position.reference
+        };
         self.seen.push(Seen {
-            reference: position.reference,
+            reference,
             stamp: position.stamp,
             order_key: position.order_key,
         });
@@ -495,6 +542,9 @@ impl<'a> ClauseState<'a> {
         };
         self.stream = stream;
         self.stop = stop;
+        if let (Some((at, _)), Some(text)) = (self.stop.as_ref(), stop_text) {
+            self.texts.insert(*at, text);
+        }
         self.exhausted = exhausted;
         self.report = Arc::clone(&report);
         self.evaluated = Some((self.seen.len(), None));
@@ -597,6 +647,9 @@ impl<'a> ClauseState<'a> {
                 let pinned = &self.pinned;
                 self.values
                     .retain(|position, _| *position >= keep_from || pinned.contains(position));
+                let values = &self.values;
+                self.texts
+                    .retain(|position, _| values.contains_key(position));
             }
         }
     }
@@ -996,6 +1049,7 @@ impl<'a> ClauseState<'a> {
             "reading": self.reading.name(),
             "positions": positions,
             "values": self.values.keys().collect::<Vec<_>>(),
+            "texts": self.texts.iter().map(|(index, text)| json!([index, text])).collect::<Vec<_>>(),
             "stream": stream,
             "stop": self.stop.as_ref().map(|(index, _)| *index),
             "pinned": self.pinned.iter().collect::<Vec<_>>(),
@@ -1031,7 +1085,8 @@ impl<'a> ClauseState<'a> {
         let mut state = Self::open(package, clause, request)?;
         let document: Json = serde_json::from_slice(bytes).map_err(|_| mismatch())?;
         let object = document.as_object().ok_or_else(mismatch)?;
-        const MEMBERS: [&str; 13] = [
+        const MEMBERS: [&str; 14] = [
+            "texts",
             "atoms",
             "undefined_atom",
             "format",
@@ -1058,19 +1113,25 @@ impl<'a> ClauseState<'a> {
             ValueType::Composite(record) => Some(record.clone()),
             _ => None,
         };
-        // A sample position's identity is its canonical text, so a held
-        // sample is admitted again from it.
-        let admit = |reference: &DocumentRef| -> Result<Value, ClauseRefusal> {
+        // A held sample is admitted again from its canonical text: the text
+        // the state holds for it, or the identity of a position a reading
+        // that runs the batch evaluation again names by its text.
+        let mut texts = BTreeMap::new();
+        for entry in object["texts"].as_array().ok_or_else(mismatch)? {
+            let index = entry[0].as_u64().ok_or_else(mismatch)?;
+            let text = entry[1].as_str().ok_or_else(mismatch)?;
+            texts.insert(index, text.to_owned());
+        }
+        state.texts = texts.clone();
+        let admit = |index: u64, reference: &DocumentRef| -> Result<Value, ClauseRefusal> {
             let record = record.as_ref().ok_or_else(mismatch)?;
-            admit_record_sample(
-                package.graph().scope().types(),
-                record,
-                reference.identity.as_bytes(),
-            )
-            .map_err(|_| mismatch())
+            let text = texts.get(&index).unwrap_or(&reference.identity);
+            admit_record_sample(package.graph().scope().types(), record, text.as_bytes())
+                .map_err(|_| mismatch())
         };
         let positions = object["positions"].as_array().ok_or_else(mismatch)?;
         for position in positions {
+            let seen = u64::try_from(state.seen.len()).map_err(|_| mismatch())?;
             let text = |member: &str| position[member].as_str().map(str::to_owned);
             let reference = DocumentRef {
                 authority: text("authority").ok_or_else(mismatch)?,
@@ -1090,7 +1151,7 @@ impl<'a> ClauseState<'a> {
             }
             if matches!(state.reading, Reading::Subject | Reading::Observed) {
                 let entry = match &position["letter"] {
-                    Json::Null => TapeEntry::Held(admit(&reference)?),
+                    Json::Null => TapeEntry::Held(admit(seen, &reference)?),
                     letter => TapeEntry::Read(letter_of(letter).ok_or_else(mismatch)?),
                 };
                 state.tape.push(entry);
@@ -1114,7 +1175,7 @@ impl<'a> ClauseState<'a> {
                 .seen
                 .get(usize::try_from(index).map_err(|_| mismatch())?)
                 .ok_or_else(mismatch)?;
-            let value = admit(&position.reference)?;
+            let value = admit(index, &position.reference)?;
             state.values.insert(index, value);
         }
         state.pinned = indices("pinned")?.into_iter().collect();
@@ -1183,7 +1244,7 @@ impl<'a> ClauseState<'a> {
                     .seen
                     .get(usize::try_from(index).map_err(|_| mismatch())?)
                     .ok_or_else(mismatch)?;
-                let sample = admit(&position.reference)?;
+                let sample = admit(index, &position.reference)?;
                 let read = read_sample_stop(package, clause, &sample, index, &mut meter);
                 let refused = match &read.stopped {
                     Some(fsl_eval::temporal::HoldsStop::Refused { at, .. }) => Some(*at),

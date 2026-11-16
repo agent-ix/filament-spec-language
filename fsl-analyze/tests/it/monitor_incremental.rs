@@ -1967,6 +1967,17 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
         };
         let carried: serde_json::Value = serde_json::from_str(text).expect("a clause state");
         assert_eq!(carried["values"], serde_json::json!([]));
+        assert_eq!(carried["texts"], serde_json::json!([]), "no sample is held");
+        // A position identity names the sample's index, never its value.
+        for (index, position) in carried["positions"]
+            .as_array()
+            .expect("positions")
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(position["identity"], index.to_string(), "{position}");
+            assert!(position["document"].is_null(), "{position}");
+        }
         assert!(carried["stop"].is_null(), "no position stopped its reading");
         // A streamed clause carries its residuals, no letter per position; a
         // taped one holds a letter for each.
