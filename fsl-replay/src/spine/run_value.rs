@@ -38,7 +38,7 @@ pub struct ArgumentDefect {
 
 /// Why a read stopped.
 #[derive(Debug)]
-pub(crate) enum ReadStop {
+pub enum ReadStop {
     /// The argument is not a value of the parameter's declared type.
     Defect(ArgumentDefect),
     /// The declared type has a form this reader does not carry.
@@ -49,7 +49,7 @@ pub(crate) enum ReadStop {
 
 /// Why a write stopped.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum WriteStop {
+pub enum WriteStop {
     /// The value has no run value form, or nests deeper than the form's
     /// bound.
     NoForm,
@@ -59,18 +59,19 @@ pub(crate) enum WriteStop {
 
 /// The declarations of one checked package a value form names.
 #[derive(Clone, Copy)]
-pub(crate) struct Forms<'a> {
+pub struct RunValueForms<'a> {
     types: &'a TypeEnvironment,
     enums: &'a [EnumBinding],
 }
 
-impl<'a> Forms<'a> {
-    pub(crate) fn new(types: &'a TypeEnvironment, enums: &'a [EnumBinding]) -> Self {
+impl<'a> RunValueForms<'a> {
+    /// The declared types and enum bindings available to one compiled unit.
+    pub fn new(types: &'a TypeEnvironment, enums: &'a [EnumBinding]) -> Self {
         Self { types, enums }
     }
 
     /// Whether a value of `value_type` has a run value form.
-    pub(crate) fn has_form(&self, value_type: &ValueType) -> bool {
+    pub fn has_form(&self, value_type: &ValueType) -> bool {
         self.has_form_visiting(value_type, &mut BTreeSet::new())
     }
 
@@ -121,11 +122,7 @@ impl<'a> Forms<'a> {
     }
 
     /// The Boolean-or-integer argument a bare JSON integer binds.
-    pub(crate) fn bare_integer(
-        &self,
-        number: i64,
-        value_type: &ValueType,
-    ) -> Result<Value, ReadStop> {
+    pub fn bare_integer(&self, number: i64, value_type: &ValueType) -> Result<Value, ReadStop> {
         match value_type {
             ValueType::Boolean => match number {
                 0 => Ok(Value::Boolean(false)),
@@ -150,7 +147,7 @@ impl<'a> Forms<'a> {
     }
 
     /// The value of `value_type` the object `form` spells.
-    pub(crate) fn read(&self, form: &Json, value_type: &ValueType) -> Result<Value, ReadStop> {
+    pub fn read(&self, form: &Json, value_type: &ValueType) -> Result<Value, ReadStop> {
         self.read_at(form, value_type, &mut Path::new())
     }
 
@@ -658,7 +655,7 @@ impl<'a> Forms<'a> {
     }
 
     /// The run value form of `value`.
-    pub(crate) fn write(&self, value: &Value) -> Result<Json, WriteStop> {
+    pub fn write(&self, value: &Value) -> Result<Json, WriteStop> {
         self.write_at(value, 0)
     }
 
@@ -1116,13 +1113,13 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    fn forms() -> Forms<'static> {
+    fn forms() -> RunValueForms<'static> {
         // An empty environment: the types below name no declaration.
         static TYPES: std::sync::OnceLock<TypeEnvironment> = std::sync::OnceLock::new();
         let types = TYPES.get_or_init(|| {
             TypeEnvironment::new(Vec::new(), Vec::new()).expect("the empty environment is valid")
         });
-        Forms::new(types, &[])
+        RunValueForms::new(types, &[])
     }
 
     /// FR-650-AC-1: Boolean and integer argument forms decode to the

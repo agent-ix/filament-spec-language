@@ -5,9 +5,11 @@
 //! The identity fixture's functions return their argument, so one call
 //! checks the argument form and the result form of one kind.
 
-use crate::command_harness::{run_file, Output};
+use crate::command_harness::{Output, run_file};
+use filament_exact::{Integer, Value, ValueType};
+use filament_semantic_value::declaration::TypeEnvironment;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// FR-650's identity fixture.
@@ -92,6 +94,38 @@ fn assert_call_refusal(function: &str, argument: Value, code: &str, cause: &str,
     assert_eq!(failure["cause"], cause, "{function}: {failure}");
     assert_eq!(failure["details"]["position"], 0, "{function}: {failure}");
     assert_eq!(failure["details"]["path"], path, "{function}: {failure}");
+}
+
+/// FR-650-AC-1: the language's run value codec admits typed Boolean and
+/// arbitrary-size integer arguments and writes each back in the same form.
+#[test]
+#[trace("FR-650-AC-1")]
+fn run_value_codec_round_trips_boolean_and_big_integer_forms() {
+    let types = TypeEnvironment::new(Vec::new(), Vec::new()).expect("empty type environment");
+    let forms = fsl_replay::spine::RunValueForms::new(&types, &[]);
+    for (form, value_type, expected) in [
+        (
+            json!({"boolean": true}),
+            ValueType::Boolean,
+            json!({"boolean": true}),
+        ),
+        (
+            json!({"integer": "9223372036854775808"}),
+            ValueType::Integer,
+            json!({"integer": "9223372036854775808"}),
+        ),
+    ] {
+        let value = forms.read(&form, &value_type).expect("typed form reads");
+        assert!(matches!(
+            (&value_type, &value),
+            (ValueType::Boolean, Value::Boolean(true)) | (ValueType::Integer, Value::Integer(_))
+        ));
+        if let Value::Integer(integer) = &value {
+            assert_eq!(integer.to_string(), "9223372036854775808");
+            assert_eq!(integer, &"9223372036854775808".parse::<Integer>().unwrap());
+        }
+        assert_eq!(forms.write(&value).unwrap(), expected);
+    }
 }
 
 #[test]

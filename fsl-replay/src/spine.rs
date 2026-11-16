@@ -203,7 +203,7 @@ pub use call::{
     default_accounting, run, run_with_profile_catalog, Call, CallArgument, CallIncomplete,
     CallLocus, CallOutcome, CallRefusal, CallValue, RunRefusal, DEFAULT_WORK_UNITS,
 };
-pub use run_value::ArgumentDefect;
+pub use run_value::{ArgumentDefect, ReadStop, RunValueForms, WriteStop};
 
 pub(crate) mod clause;
 pub use clause::{
