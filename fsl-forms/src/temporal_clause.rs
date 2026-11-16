@@ -66,6 +66,7 @@ pub(crate) fn temporal_clause(construct: Construct<'_>) -> Result<DeclarationFor
             parameter: Box::new(parameter_form(cst, parameter)?),
             when: nodes_of(&activation_items, Production::Expression)
                 .first()
+                .or(nodes_of(&activation_items, Production::HyperExpression).first())
                 .map(|condition| expression_form(cst, condition))
                 .transpose()?,
         },

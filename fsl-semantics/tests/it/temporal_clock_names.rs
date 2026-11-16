@@ -175,7 +175,6 @@ fn forms_refusal(body: &str) -> (Code, String) {
 /// the `on each ... when` guard alike, with no S1 syntax error.
 #[trace("TC-1543", "FR-612-AC-1", "FR-612-AC-2")]
 #[test]
-#[ignore = "QSL-2143: hyper-only forms in a single-trace clause do not refuse uniformly yet"]
 fn hyper_only_forms_refuse_in_a_single_trace_clause() {
     for (body, at) in [
         (
