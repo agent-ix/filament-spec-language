@@ -56,7 +56,7 @@ pub use trace_subject::{
 use super::call::{convert_call_failure, convert_outcome, select};
 pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::lifecycle as front_end;
-use super::{CompileRefusal, DependencyInput, SpineLimits};
+use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
 use crate::proof_result::SettlementBasis;
 use crate::result::SeparatingWitnessRecord;
 use crate::witness::derive_separating_witness;
@@ -241,6 +241,9 @@ pub struct ClauseRunRequest {
     pub observation_limits: ObservationLimits,
     /// The evaluation meter's accounting limits (FR-100's `accounting` object).
     pub accounting: ScalarLimits,
+    /// FR-640: the clock configurations of the unit's clock-bearing
+    /// declarations, by clock name; empty when the request supplied none.
+    pub clocks: RequestClocks,
 }
 
 /// Why [`run_clause`] returned no report: a request that cannot be formed
@@ -1120,13 +1123,17 @@ pub(crate) fn admit_clause_observations(
     )
 }
 
-/// FR-109: `fsl_replay::spine::run_clause`.
+/// FR-109: `fsl_replay::spine::run_clause`. The unit's clock-bearing
+/// declarations take their configurations from `request.clocks` by clock
+/// name (FR-640).
 pub fn run_clause(request: ClauseRunRequest) -> Result<ClauseRunReport, ClauseRunRefusal> {
     run_clause_with_temporal_selections(request, &[])
 }
 
 /// [`run_clause`] with explicit clock configurations for checked temporal
-/// declarations in the selected source and its resolved libraries.
+/// declarations in the selected source and its resolved libraries, keyed by
+/// each declaration's exact locus. Non-empty `temporal_selections` replace
+/// the configurations `request.clocks` names.
 pub fn run_clause_with_temporal_selections(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
@@ -1172,20 +1179,37 @@ pub fn run_clause_with_temporal_selections(
         .into_value();
         let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
             .into_value();
-        let checked = front_end::check_with_temporal_selections_and_execution_points(
+        let by_name = temporal_selections.is_empty();
+        let check_selections = if by_name {
+            request.clocks.check_selections(&parsed)
+        } else {
+            temporal_selections.to_vec()
+        };
+        let checked = front_end::check_with_refinement_internals(
             &parsed,
             request.package_name.clone(),
-            &crate::spine::StateClauseExecutionPoints::new(),
-            temporal_selections,
+            crate::spine::SourceInputs {
+                refinement_internals: None,
+                temporal_selections: &check_selections,
+                clocks: by_name.then_some(&request.clocks),
+            },
             &models,
             &request.dependencies,
             request.limits,
             &cancel,
         )?
         .into_value();
+        let package_selections = if by_name {
+            request
+                .clocks
+                .package_selections(&checked, &[&parsed])
+                .map_err(front_end::FrontEndFailure::Refused)?
+        } else {
+            temporal_selections.to_vec()
+        };
         let emitted = front_end::package_with_temporal_selections(
             &checked,
-            temporal_selections,
+            &package_selections,
             request.limits.package,
             &cancel,
         )?

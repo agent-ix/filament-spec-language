@@ -134,10 +134,21 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::AnalyzeFault => (types::Stage::Output, types::Details::None),
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
-            types::Details::Spine {
-                source: &failure.source,
-                path: &failure.path,
-                span: failure.span,
+            match clock_selection_refusal(&failure.refusal) {
+                Some(refusal) => types::Details::ClockSelection {
+                    cause: refusal.cause.as_str(),
+                    clock: &refusal.clock,
+                    declaration: refusal.declaration.as_ref().map(|at| at.name.as_str()),
+                    profile: refusal.declaration.as_ref().map(|at| at.profile.identity()),
+                    source: &failure.source,
+                    path: &failure.path,
+                    span: failure.span,
+                },
+                None => types::Details::Spine {
+                    source: &failure.source,
+                    path: &failure.path,
+                    span: failure.span,
+                },
             },
         ),
         RunCause::SpineRun(refusal) => (
@@ -444,6 +455,23 @@ fn effective_type_text(identity: &filament_exact::EffectiveId) -> String {
         .map(|original| format!("{}:{}", original.package(), original.node()))
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// FR-640: the clock-selection refusal `refusal` carries, the program's own
+/// or one of a library unit it compiles with (FR-099).
+fn clock_selection_refusal(
+    refusal: &fsl_replay::spine::CompileRefusal,
+) -> Option<&fsl_replay::spine::ClockSelectionRefusal> {
+    match refusal {
+        fsl_replay::spine::CompileRefusal::Emit(
+            fsl_replay::spine::EmitRefusal::ClockSelection(refusal),
+            _,
+        ) => Some(refusal),
+        fsl_replay::spine::CompileRefusal::Dependency { refusal, .. } => {
+            clock_selection_refusal(refusal)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

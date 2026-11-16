@@ -1541,7 +1541,11 @@ pub fn check(
     check_with_refinement_internals(
         parsed,
         package_name,
-        None,
+        SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &[],
+            clocks: None,
+        },
         models,
         dependencies,
         limits,
@@ -1578,6 +1582,7 @@ pub fn check_with_profile_catalog(
         &BTreeMap::new(),
         None,
         &[],
+        None,
         None,
         Some(profile_catalog),
         models,
@@ -1687,12 +1692,27 @@ pub fn check_units(
     )
 }
 
+/// The per-source inputs of a check beside the unit itself: the request's
+/// unchecked refinement-internal-list value (FR-147/FR-099) and the clock
+/// selections S3 reads ([`super::RequestClocks::check_selections`]).
+#[derive(Clone, Debug, Default)]
+pub struct SourceInputs<'a> {
+    /// The unit's unchecked internal-list value; `None` when absent.
+    pub refinement_internals: Option<serde_json::Value>,
+    /// The clock selections S3 reads.
+    pub temporal_selections: &'a [fsl_package::TemporalClockSelection],
+    /// The request's `clocks` member (FR-640), which serves the library
+    /// units the check compiles; `None` when the caller selects by locus.
+    pub clocks: Option<&'a super::RequestClocks>,
+}
+
 /// S3 and S4 over an admitted source-unit list, with the root request's
-/// unchecked refinement-internal-list value carried into the combined unit.
+/// unchecked refinement-internal-list value carried into the combined unit and the
+/// request's clock selections ([`SourceInputs`]).
 pub fn check_units_with_refinement_internals(
     admitted: &AdmittedUnitList,
     package_name: String,
-    refinement_internals: Option<serde_json::Value>,
+    inputs: SourceInputs<'_>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -1704,7 +1724,9 @@ pub fn check_units_with_refinement_internals(
         models,
         dependencies,
         UnitCheckOptions {
-            refinement_internals: refinement_internals.as_ref(),
+            refinement_internals: inputs.refinement_internals.as_ref(),
+            temporal_selections: inputs.temporal_selections,
+            clocks: inputs.clocks,
             ..UnitCheckOptions::default()
         },
         limits,
@@ -1715,6 +1737,7 @@ pub fn check_units_with_refinement_internals(
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitCheckOptions<'a> {
     pub(crate) temporal_selections: &'a [fsl_package::TemporalClockSelection],
+    pub(crate) clocks: Option<&'a super::RequestClocks>,
     pub(crate) continue_protocol_refusals: bool,
     pub(crate) refinement_internals: Option<&'a serde_json::Value>,
     pub(crate) extension_catalog: Option<ProfileCatalogInput<'a>>,
@@ -1761,6 +1784,7 @@ pub(crate) fn check_units_with_options(
             limits,
             cancel,
             temporal_selections: options.temporal_selections,
+            clocks: options.clocks,
             integer_division: None,
             extension_catalog: options.extension_catalog,
             active: Vec::new(),
@@ -1866,25 +1890,31 @@ pub(crate) fn check_units_with_options(
 }
 
 /// S3 and S4 with the unit's unchecked internal-list value and each
-/// dependency library's own value carried to its source owner (FR-147/FR-099).
+/// dependency library's own value carried to its source owner (FR-147/FR-099), and the
+/// request's clock selections ([`SourceInputs`]).
 pub fn check_with_refinement_internals(
     parsed: &ParsedUnitSource,
     package_name: String,
-    refinement_internals: Option<serde_json::Value>,
+    inputs: SourceInputs<'_>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
-    check_with_execution_points_and_refinement_internals(
+    check_with_context_and_temporal_selections(
         parsed,
         package_name,
         &BTreeMap::new(),
-        refinement_internals,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
+        None,
+        None,
         models,
         dependencies,
         limits,
         cancel,
+        false,
     )
 }
 
@@ -1936,6 +1966,7 @@ pub fn check_with_execution_points_and_refinement_internals(
         &[],
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -1966,6 +1997,7 @@ pub fn check_with_temporal_selections_and_execution_points(
         execution_points,
         None,
         temporal_selections,
+        None,
         None,
         None,
         models,
@@ -2005,6 +2037,7 @@ pub(crate) fn check_for_continuation(
         inputs.execution_points,
         None,
         inputs.temporal_selections,
+        None,
         inputs.integer_division,
         None,
         models,
@@ -2025,6 +2058,7 @@ fn check_with_context_and_temporal_selections(
     execution_points: &super::StateClauseExecutionPoints,
     refinement_internals: Option<serde_json::Value>,
     temporal_selections: &[fsl_package::TemporalClockSelection],
+    clocks: Option<&super::RequestClocks>,
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     extension_catalog: Option<ProfileCatalogInput<'_>>,
     models: &AdmittedModels,
@@ -2056,6 +2090,7 @@ fn check_with_context_and_temporal_selections(
             limits,
             cancel,
             temporal_selections,
+            clocks,
             integer_division,
             extension_catalog,
             active: Vec::new(),
@@ -3073,7 +3108,7 @@ fn emit_unit(
     cancel: &Cancel,
     limits: PackageLimits,
 ) -> Result<Emission, Box<CompileRefusal>> {
-    let emission = fsl_package::emit_checked_with_temporal_selections_and_cancel(
+    let emission = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
         package,
         selections,
         cancel,
@@ -3279,6 +3314,9 @@ struct Resolution<'a> {
     limits: SpineLimits,
     cancel: &'a Cancel,
     temporal_selections: &'a [fsl_package::TemporalClockSelection],
+    /// The request's `clocks` member (FR-640), which serves a library unit
+    /// no explicit selection names.
+    clocks: Option<&'a super::RequestClocks>,
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     /// The catalog that holds the extensions a unit or library selects
     /// (FR-354); `None` holds none.
@@ -3684,7 +3722,7 @@ impl<'a> Resolution<'a> {
         // FR-337 "Aggregate formula emission": a clause's `duration` windows
         // convert to its selected timestamped-event clock unit at S3.
         declarations =
-            declarations.with_clock_units(clock_units(&self.temporal_selections_for(&frame.raw)));
+            declarations.with_clock_units(clock_units(&self.check_selections_for(frame)));
         // FR-302: link the dispatch table of each family a dispatched call's
         // member name may name, under the caller's model normalization
         // limits, before `check` types the calls against them. A family
@@ -3783,6 +3821,7 @@ impl<'a> Resolution<'a> {
     fn check_frame(&mut self, mut root: Frame) -> Result<pkg::CheckedPackage, Box<CompileRefusal>> {
         let mut libraries: Vec<Library> = Vec::new();
         loop {
+            let in_library = !libraries.is_empty();
             let frame = current(&mut root, &mut libraries);
             if let Some(import) = frame.unit.selections().imports.get(frame.next).cloned() {
                 let raw = frame.raw.clone();
@@ -3805,6 +3844,17 @@ impl<'a> Resolution<'a> {
                 continue;
             }
             let source = frame.raw.clone();
+            // FR-640: a library unit no explicit selection names reads the
+            // request's `clocks`; the locator is taken before the check
+            // consumes the frame's parsed units.
+            let by_name = in_library
+                && self.clocks.is_some()
+                && self.temporal_selections_for(&source).is_empty();
+            let locator = if by_name {
+                super::ClockLocator::new(frame.source_units.iter())
+            } else {
+                super::ClockLocator::default()
+            };
             let package = self
                 .finish_unit(frame)
                 .map_err(|refusal| unwind(&libraries, refusal))?;
@@ -3812,7 +3862,12 @@ impl<'a> Resolution<'a> {
                 return Ok(package);
             }
             let cancel = self.cancel;
-            let selections = self.temporal_selections_for(&source);
+            let selections = match self.clocks.filter(|_| by_name) {
+                Some(clocks) => clocks
+                    .library_selections(&package, &locator)
+                    .map_err(|refusal| unwind(&libraries, refusal))?,
+                None => self.temporal_selections_for(&source),
+            };
             let emission = charged(cancel, &mut self.work.e4, || {
                 emit_unit(&package, &selections, cancel, self.limits.package)
             })
@@ -3867,6 +3922,21 @@ impl<'a> Resolution<'a> {
         source: &RawSourceRef,
     ) -> Vec<fsl_package::TemporalClockSelection> {
         temporal_selections_for_source(self.temporal_selections, source)
+    }
+
+    /// The selections S3 reads for `frame`: the explicit ones of its source,
+    /// or, when there are none, those the request's `clocks` names
+    /// ([`super::RequestClocks::check_selections`]).
+    fn check_selections_for(&self, frame: &Frame) -> Vec<fsl_package::TemporalClockSelection> {
+        let explicit = self.temporal_selections_for(&frame.raw);
+        match self.clocks {
+            Some(clocks) if explicit.is_empty() => frame
+                .source_units
+                .iter()
+                .flat_map(|unit| clocks.check_selections(unit))
+                .collect(),
+            _ => explicit,
+        }
     }
 
     /// ADR-015 D-1's steps for one `import` of the unit `raw` names:

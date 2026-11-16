@@ -1464,6 +1464,7 @@ fn a_clause_function_is_a_known_owner_and_no_fault() {
 
     let (text, packages) = unit(&document, &declarations);
     let call = fsl_replay::Call {
+        clocks: Default::default(),
         function: "inc".to_owned(),
         arguments: vec![fsl_replay::CallArgument {
             parameter: "x".to_owned(),

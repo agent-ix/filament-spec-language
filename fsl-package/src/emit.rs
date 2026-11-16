@@ -212,6 +212,20 @@ pub enum EmitRefusal {
     /// (FSpec FR-487).
     #[error("the tick-monitor plan cannot be written: {0}")]
     MonitorPlanInvariant(&'static str),
+    /// FR-640: a clock selection keyed by clock name does not fit the
+    /// program's clock-bearing declarations.
+    #[error("{0}")]
+    ClockSelection(ClockSelectionRefusal),
+    /// FR-640, FR-763: a clause whose quantified traces derive different clock
+    /// configurations from their models, which one binding row cannot carry
+    /// yet: an implementation gap, named by the clause.
+    #[error(
+        "a clause whose traces need different clock configurations is not supported yet (declaration {declaration})"
+    )]
+    PerTraceClockConfigurations {
+        /// The clause's declared name.
+        declaration: String,
+    },
     /// The strict reader refused the base package the plan root is written
     /// over (FR-251 "Fault boundary", QSL-1822), so no plan root exists for
     /// it. The refusal is the reader's, not a broken producer invariant. For
@@ -436,6 +450,8 @@ impl EmitRefusal {
             | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
+            Self::ClockSelection(_) => Code::InvalidRequest,
+            Self::PerTraceClockConfigurations { .. } => Code::UnsupportedConstruct,
             Self::TimedModelNodeSetMismatch
             | Self::UnkeyedProbabilisticClaim { .. }
             | Self::TimedOrder(_) => Code::RuntimeInvariant,
@@ -463,6 +479,8 @@ impl EmitRefusal {
         match self {
             Self::StaleProtocolReference { .. } => Some("missing-name"),
             Self::MonitorBaseRefused(_) => None,
+            Self::ClockSelection(refusal) => Some(refusal.cause.as_str()),
+            Self::PerTraceClockConfigurations { .. } => Some("not-yet-implemented"),
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Some("not-yet-implemented"),
@@ -4681,6 +4699,23 @@ pub fn emit_checked_with_temporal_selections_and_cancel(
     )
 }
 
+/// [`emit_checked_with_temporal_selections_and_cancel`] for a library unit a
+/// request compiles with its program (FR-099), remembering the emission. The
+/// request's clock selections (FR-640) serve its library units too, so the
+/// emission under them is the library's one package: its importers link
+/// these bytes, and a later [`emit_checked`] of it returns them.
+pub fn emit_dependency_with_temporal_selections_and_cancel(
+    package: &CheckedPackage,
+    selections: &[TemporalClockSelection],
+    cancel: &Cancel,
+    limits: EmitLimits,
+) -> Result<Emission, EmitRefusal> {
+    let emission =
+        emit_checked_with_temporal_selections_and_cancel(package, selections, cancel, limits)?;
+    package.remember_emission(&emission);
+    Ok(emission)
+}
+
 /// The metadata of a timed clause node with one `expression` occurrence,
 /// keyed `id` until the emitter rekeys it.
 fn clause_metadata(id: CheckedNodeId) -> TimedNodeMetadata {
@@ -7426,12 +7461,21 @@ fn temporal_clock_invalid_field(
     clock_name: &str,
     clock: &filament_contract_model::ClockConfiguration,
 ) -> Option<&'static str> {
+    if !fsl_foundation::selection::valid_selection_identity(clock_name) {
+        return Some("clock_name");
+    }
+    clock_configuration_invalid_field(clock)
+}
+
+/// The first member of `clock` that is empty, oversized, noncanonical or
+/// outside its declared range (a non-positive `period`, a non-reduced
+/// rational); `None` for a well-formed configuration.
+pub fn clock_configuration_invalid_field(
+    clock: &filament_contract_model::ClockConfiguration,
+) -> Option<&'static str> {
     use filament_contract_model::ClockConfiguration;
 
     let valid_name = |value: &str| fsl_foundation::selection::valid_selection_identity(value);
-    if !valid_name(clock_name) {
-        return Some("clock_name");
-    }
     match clock {
         ClockConfiguration::EventPosition { sequence_authority } => {
             (!valid_name(sequence_authority)).then_some("sequence_authority")
@@ -8319,11 +8363,16 @@ mod selected_rows;
 #[cfg(test)]
 pub(crate) mod tests;
 
+mod clock_selection;
 pub(crate) mod equality_reader;
 /// ADR-014 §4 (TC-440): FSL's extent classification agrees with
 /// IR's `requires-bound` at the pinned IR revision.
 #[cfg(test)]
 mod extent_agreement;
+pub use clock_selection::{
+    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
+    ClockSelectionDeclaration, ClockSelectionRefusal,
+};
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;

@@ -5622,11 +5622,11 @@ impl PackageDeclarations {
         package.temporal_selections = selections
             .profiles
             .iter()
-            .filter_map(|profile| {
-                Some(super::temporal_clause::TemporalSelection {
-                    profile: super::profile::TemporalProfile::from_identity(&profile.identity)?,
-                    span: profile.span,
-                })
+            .map(|profile| super::temporal_clause::TemporalSelection {
+                profile: super::profile::TemporalProfile::from_identity(&profile.identity),
+                identity: profile.identity.clone(),
+                alias: profile.alias.clone(),
+                span: profile.span,
             })
             .collect();
         package.protocol_attempts = protocol_attempts;

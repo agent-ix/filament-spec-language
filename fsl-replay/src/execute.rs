@@ -1817,12 +1817,22 @@ pub(crate) fn recompile_with_temporal_selections(
             ))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // FR-640-AC-8: without explicit selections the recompile reads its
+    // clocks from the proving package's `temporal_bindings` rows; a replay
+    // request carries no `clocks` member of its own.
+    let read;
+    let clocks = if temporal_selections.is_empty() {
+        read = request.package().clocks()?;
+        RecompileClocks::ByName(&read)
+    } else {
+        RecompileClocks::Explicit(temporal_selections)
+    };
     let (compiled, evidence) = run_spine_units(
         &units,
         &package_name,
         &packages,
         &dependencies,
-        temporal_selections,
+        clocks,
         limits.spine,
         request.refinement_internals(),
     )
@@ -2011,12 +2021,21 @@ fn package_sources<'a>(
     )
 }
 
+/// The clock configurations a recompile compiles under: the caller's
+/// explicit selections, keyed by declaration locus, or the `clocks` by clock
+/// name read from the proving package (FR-640-AC-8).
+#[derive(Clone, Copy)]
+enum RecompileClocks<'a> {
+    Explicit(&'a [fsl_package::TemporalClockSelection]),
+    ByName(&'a spine::RequestClocks),
+}
+
 fn run_spine_units(
     units: &[(SourceIdentity, String, &[u8])],
     package: &LibraryName,
     packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
-    temporal_selections: &[fsl_package::TemporalClockSelection],
+    clocks: RecompileClocks<'_>,
     limits: SpineLimits,
     refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
@@ -2063,13 +2082,25 @@ fn run_spine_units(
     let models = spine::select_units(&admitted, packages, limits.model, limits.source, &cancel)
         .map_err(&refusal)?
         .into_value();
+    let check_selections: Vec<_> = match clocks {
+        RecompileClocks::Explicit(selections) => selections.to_vec(),
+        RecompileClocks::ByName(clocks) => admitted
+            .units()
+            .iter()
+            .flat_map(|unit| clocks.check_selections(unit))
+            .collect(),
+    };
     let checked = spine::check_units_with_options(
         &admitted,
         package.as_str().to_owned(),
         &models,
         dependencies,
         spine::UnitCheckOptions {
-            temporal_selections,
+            temporal_selections: &check_selections,
+            clocks: match clocks {
+                RecompileClocks::Explicit(_) => None,
+                RecompileClocks::ByName(clocks) => Some(clocks),
+            },
             continue_protocol_refusals: true,
             refinement_internals: refinement_internals
                 .map(internals_value)
@@ -2088,9 +2119,18 @@ fn run_spine_units(
             "non-empty-package-has-checked-unit",
         ))
     })?;
+    let package_selections = match clocks {
+        RecompileClocks::Explicit(selections) => selections.to_vec(),
+        RecompileClocks::ByName(clocks) => {
+            let units: Vec<_> = admitted.units().iter().collect();
+            clocks
+                .package_selections(&checked, &units)
+                .map_err(ReplayRefusal::Recompile)?
+        }
+    };
     let emitted = spine::package_with_temporal_selections(
         &checked,
-        temporal_selections,
+        &package_selections,
         limits.package,
         &cancel,
     )

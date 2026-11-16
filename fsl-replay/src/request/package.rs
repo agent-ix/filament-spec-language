@@ -88,6 +88,40 @@ impl ReplayPackage {
         }
     }
 
+    /// FR-640 "Behavior", FR-640-AC-8: the `clocks` object the package's
+    /// `temporal_bindings` rows record, each row's `clock_name` naming a
+    /// member whose value is the row's `clock`. A row bound by a model
+    /// binding name (`model-steps`, `model-time`) was derived from the model
+    /// and is no member. The replay recompile compiles with exactly these
+    /// configurations, so it runs under the clocks the proof ran under; the
+    /// recompiled package's admission against these bytes judges every row.
+    pub(crate) fn clocks(&self) -> Result<crate::spine::RequestClocks, ReplayRequestRefusal> {
+        const ROWS: &str = "/package/temporal_bindings";
+        let mut members = std::collections::BTreeMap::new();
+        if let Some(rows) = member(self.document.root(), "temporal_bindings") {
+            for (index, row) in array(rows, ROWS)?.enumerate() {
+                let pointer = format!("{ROWS}/{index}");
+                let name = string(
+                    required(row, "clock_name", &pointer)?,
+                    &format!("{pointer}/clock_name"),
+                )?;
+                if fsl_package::is_model_binding_name(name) {
+                    continue;
+                }
+                let at = format!("{pointer}/clock");
+                let clock = serde_json::from_value(json_value(required(row, "clock", &pointer)?))
+                    .map_err(|_| field_refusal(&at, PackageMemberCause::WrongKind))?;
+                members.entry(name.to_owned()).or_insert(clock);
+            }
+        }
+        crate::spine::RequestClocks::new(members).map_err(|invalid| {
+            field_refusal(
+                &format!("{ROWS}/{}", invalid.clock),
+                PackageMemberCause::WrongKind,
+            )
+        })
+    }
+
     pub(super) fn descriptor(&self) -> Result<Descriptor, ReplayRequestRefusal> {
         let root = self.document.root();
         let name = string(required(root, "name", "/package")?, "/package/name")?.to_owned();
@@ -294,3 +328,22 @@ pub(super) fn member<'document>(
 fn package_pointer(native: Option<&str>) -> String {
     format!("/package{}", native.unwrap_or_default())
 }
+
+/// A clock configuration node as JSON: its objects and strings, which are
+/// every member a configuration has. Any other node becomes `null`, which no
+/// configuration admits.
+fn json_value(value: NodeRef<'_>) -> serde_json::Value {
+    match value.node() {
+        Node::String(text) => serde_json::Value::String(text.to_owned()),
+        Node::Object(members) => serde_json::Value::Object(
+            members
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), json_value(value)))
+                .collect(),
+        ),
+        Node::Null | Node::Bool(_) | Node::Number(_) | Node::Array(_) => serde_json::Value::Null,
+    }
+}
+
+#[cfg(test)]
+mod tests;

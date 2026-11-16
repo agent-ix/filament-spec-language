@@ -375,6 +375,8 @@ fn each_temporal_clause_refusal_has_its_class() {
         ),
         (
             TemporalCause::ProfileSelection {
+                alias: "v".to_owned(),
+                selected: Vec::new(),
                 found: Vec::new(),
                 span,
             },

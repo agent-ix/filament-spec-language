@@ -96,6 +96,10 @@ pub struct Call {
     /// default. A backend the caller did not supply refuses; no other
     /// backend runs in its place.
     pub backend: filament_eval::ExecutionBackendChoice,
+    /// FR-640, FR-100: the clock configurations of the program's
+    /// clock-bearing declarations by clock name; empty when the request
+    /// supplied none.
+    pub clocks: super::RequestClocks,
 }
 
 impl Call {
@@ -113,6 +117,7 @@ impl Call {
             accounting,
             supplied,
             backend: filament_eval::ExecutionBackendChoice::default(),
+            clocks: super::RequestClocks::default(),
         }
     }
 }
@@ -563,12 +568,30 @@ pub(crate) fn run_reading<T>(
     let models = front_end::select(&parsed, packages, limits.model, cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = front_end::check(&parsed, package_name, &models, dependencies, limits, cancel)
-        .map_err(refusal)?
-        .into_value();
-    let emitted = front_end::package(&checked, limits.package, cancel)
-        .map_err(refusal)?
-        .into_value();
+    let check_selections = call.clocks.check_selections(&parsed);
+    let checked = front_end::check_with_refinement_internals(
+        &parsed,
+        package_name,
+        super::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &check_selections,
+            clocks: Some(&call.clocks),
+        },
+        &models,
+        dependencies,
+        limits,
+        cancel,
+    )
+    .map_err(refusal)?
+    .into_value();
+    let selections = call
+        .clocks
+        .package_selections(&checked, &[&parsed])
+        .map_err(|compile| Box::new(RunRefusal::Compile(compile)))?;
+    let emitted =
+        front_end::package_with_temporal_selections(&checked, &selections, limits.package, cancel)
+            .map_err(refusal)?
+            .into_value();
     let package = checked.package();
     let selected = select(package, &call.function)?;
     let arguments = bind_arguments(selected.parameters, &call.arguments)?;

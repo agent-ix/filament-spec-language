@@ -3204,6 +3204,7 @@ mod tests {
                 .accounting
                 .0;
             let call = Call {
+                clocks: Default::default(),
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
                 accounting,
@@ -3244,6 +3245,7 @@ mod tests {
     #[test]
     fn execute_result_and_cancelled_check_documents() {
         let call = Call {
+            clocks: Default::default(),
             function: "seven".to_owned(),
             arguments: Vec::new(),
             accounting: default_accounting(1_000_000),
@@ -3528,6 +3530,7 @@ mod tests {
             &DependencyInput::default(),
             SpineLimits::default(),
             &Call {
+                clocks: Default::default(),
                 function: function.to_owned(),
                 arguments: Vec::new(),
                 accounting: default_accounting(1_000_000),

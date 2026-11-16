@@ -744,6 +744,7 @@ fn evaluate_clause_reports_incomplete_when_the_meter_is_exhausted() {
 fn request(selection: ClauseRunSelection) -> ClauseRunRequest {
     let (unit, packages) = unit_and_packages();
     ClauseRunRequest {
+        clocks: Default::default(),
         source: ClauseRunSource::Program {
             identity: source(),
             path: "clause-run.native".to_owned(),
@@ -1613,6 +1614,7 @@ fn config_version_request_for(
     selection: ClauseRunSelection,
 ) -> ClauseRunRequest {
     ClauseRunRequest {
+        clocks: Default::default(),
         source: ClauseRunSource::Program {
             identity: source(),
             path: path.to_owned(),

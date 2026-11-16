@@ -94,11 +94,14 @@ pub use checked_v2::{
 pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
 pub use emit::{
-    checked_occurrence, declaration_less_function_id, emit_checked, emit_checked_with_cancel,
+    checked_occurrence, clock_configuration_invalid_field, clock_kind,
+    declaration_less_function_id, emit_checked, emit_checked_with_cancel,
     emit_checked_with_protocol_results,
     emit_checked_with_protocol_results_and_temporal_selections_and_cancel,
     emit_checked_with_temporal_selections, emit_checked_with_temporal_selections_and_cancel,
-    emit_monitor_plan_over, emit_package, emit_package_with_temporal_selections, emit_timed_models,
+    emit_dependency_with_temporal_selections_and_cancel, emit_monitor_plan_over, emit_package,
+    emit_package_with_temporal_selections, emit_timed_models, is_model_binding_name,
+    profile_clock_kind, ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal,
     Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission,
     ProtocolEmissionAggregate, ProtocolEmissionResult, SelectedSourceCollectionRow,
     SelectedSourceRecordMemberRow, SelectedSourceRecordRow, TemporalBindingRows, TemporalClauseRef,

@@ -2323,6 +2323,7 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
             &dependencies,
             UnitCheckOptions {
                 temporal_selections: &[],
+                clocks: None,
                 continue_protocol_refusals,
                 refinement_internals: None,
                 extension_catalog: None,
@@ -3312,6 +3313,7 @@ fn a_cancel_tripped_mid_run_is_cancelled_with_its_cause_never_a_fault() {
             &DependencyInput::default(),
             SpineLimits::default(),
             &crate::spine::Call {
+                clocks: Default::default(),
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
                 accounting: default_accounting(DEFAULT_WORK_UNITS),
@@ -3447,7 +3449,11 @@ fn an_unimported_library_internal_list_defect_refuses_the_compile_at_its_owner()
     let failure = check_with_refinement_internals(
         &parsed,
         "fixture".to_owned(),
-        None,
+        super::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &[],
+            clocks: None,
+        },
         &models,
         &dependencies,
         limits,

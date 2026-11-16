@@ -44,6 +44,9 @@ pub(super) struct CompileRequest {
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// FR-640: the clock configurations by clock name; empty when absent.
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
 }
 
 /// The compiler accepts its legacy single-program object or FR-480's ordered
@@ -128,6 +131,9 @@ pub(super) struct Request {
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// FR-640: the clock configurations by clock name; empty when absent.
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
@@ -463,4 +469,42 @@ fn deadline<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>,
         )));
     }
     Ok(Some(value))
+}
+
+/// FR-640's `clocks`: an object from clock name to one closed clock
+/// configuration in the `TemporalBinding` `clock` wire form. A value that is
+/// not an object, a repeated name, an empty name and a member that is not a
+/// well-formed configuration each refuse, naming `clocks` or the member.
+fn clocks<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<fsl_replay::spine::RequestClocks, D::Error> {
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = fsl_replay::spine::RequestClocks;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a clocks object keyed by clock name")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut members = std::collections::BTreeMap::new();
+            while let Some(name) = map.next_key::<String>()? {
+                let value = map.next_value::<serde_json::Value>()?;
+                let bad = |reason: String| {
+                    serde::de::Error::custom(format!("clocks member {name:?}: {reason}"))
+                };
+                if members.contains_key(&name) {
+                    return Err(bad("given more than once".to_owned()));
+                }
+                let clock = ir::ClockConfiguration::deserialize(value)
+                    .map_err(|error| bad(error.to_string()))?;
+                members.insert(name, clock);
+            }
+            fsl_replay::spine::RequestClocks::new(members).map_err(serde::de::Error::custom)
+        }
+    }
+    decoder.deserialize_map(Visitor)
 }

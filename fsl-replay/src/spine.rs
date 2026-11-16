@@ -34,7 +34,10 @@ use fsl_foundation::diagnostic::{unit_spelling, LimitExceeded, Locus};
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::Setting;
 use fsl_foundation::{Code, SourceIdentity, Span};
-use fsl_package::{EmitRefusal, ImportViewRefusal, LinkRefusal, OmittedNode};
+pub use fsl_package::{
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, EmitRefusal,
+};
+use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ExtensionCause,
@@ -46,7 +49,11 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{UnitIntakeCause, UnitIntakeRefusal};
 use fsl_semantics::model::refusal::MemberPath;
 
+mod clocks;
 mod lifecycle;
+pub(crate) use clocks::ClockLocator;
+pub use clocks::{InvalidClock, RequestClocks};
+pub use fsl_package::TemporalClockSelection;
 mod subject;
 pub use lifecycle::{
     admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,
@@ -57,7 +64,7 @@ pub use lifecycle::{
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
     CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
     ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
-    ProtocolCheckSite, TypeDeclaration, TypeReport, TypeRequirement,
+    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
@@ -1655,11 +1662,24 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         // FR-326: name what the `TemporalTrace` check refused.
         CheckCause::Temporal(cause) => {
             message = match cause.as_ref() {
-                TemporalCause::ProfileSelection { found, .. } if found.is_empty() => {
-                    format!("{message}: the unit selects no temporal profile")
+                TemporalCause::ProfileSelection {
+                    alias,
+                    selected,
+                    found,
+                    ..
+                } if found.is_empty() => {
+                    let selection = if selected.is_empty() {
+                        "no profile".to_owned()
+                    } else {
+                        format!("`{}`", selected.join("`, `"))
+                    };
+                    format!(
+                        "{message}: the clause's `using` alias `{alias}` selects {selection}, \
+                         which is no temporal profile"
+                    )
                 }
-                TemporalCause::ProfileSelection { found, .. } => format!(
-                    "{message}: the unit selects {} temporal profiles: {}",
+                TemporalCause::ProfileSelection { alias, found, .. } => format!(
+                    "{message}: the clause's `using` alias `{alias}` selects {} temporal profiles: {}",
                     found.len(),
                     found.join(", ")
                 ),

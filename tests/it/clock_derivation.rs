@@ -37,7 +37,6 @@ fn find<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 
 #[trace("TC-2181", "FR-640-AC-7")]
 #[test]
-#[ignore = "QSL-1964: derived clock configurations for fixed-sample and timestamped-event model clauses not implemented yet"]
 fn model_subject_clauses_derive_their_clock_configuration() {
     let directory = tempfile::tempdir().unwrap();
     write(directory.path(), "model.json", MODEL);
@@ -75,7 +74,6 @@ fn model_subject_clauses_derive_their_clock_configuration() {
 
 #[trace("TC-2183", "FR-640-AC-9")]
 #[test]
-#[ignore = "QSL-1964: the request `clocks` member serving library units not implemented yet"]
 fn library_units_share_the_request_clocks() {
     let directory = tempfile::tempdir().unwrap();
     let library = "language \"ix:native\" edition \"1-draft\";\n\
@@ -86,7 +84,8 @@ fn library_units_share_the_request_clocks() {
     let program = "language \"ix:native\" edition \"1-draft\";\n\
          profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          import \"test/plant\" as P;\n\
-         temporal Early using w over (r: P::Reading) clock \"plant-ms\" \
+         record Reading { level: Int[0, 9]; }\n\
+         temporal Early using w over (r: Reading) clock \"plant-ms\" \
          on origin { eventually[0,2] holds(r.level > 0) }\n";
     write(directory.path(), "plant.native", library.as_bytes());
     write(directory.path(), "unit.native", program.as_bytes());
@@ -113,6 +112,19 @@ fn library_units_share_the_request_clocks() {
         "{}",
         String::from_utf8_lossy(&served.stderr)
     );
+    let package: Value = serde_json::from_slice(&served.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("temporal binding rows");
+    assert_eq!(
+        rows.iter()
+            .map(|row| (&row["clock_name"], &row["clock"]))
+            .collect::<Vec<_>>(),
+        [(
+            &json!("plant-ms"),
+            &json!({"kind": "timestamped_event", "timestamp_unit": "ms"})
+        )]
+    );
     let missing = compile(directory.path(), &request(None));
     assert_eq!(missing.status.code(), Some(20));
     let failure: Value = serde_json::from_slice(&missing.stderr).expect("a refusal");
@@ -121,6 +133,7 @@ fn library_units_share_the_request_clocks() {
         Some(&json!("missing-clock-selection"))
     );
     assert_eq!(find(&failure, "clock"), Some(&json!("plant-ms")));
+    assert_eq!(find(&failure, "declaration"), Some(&json!("Late")));
 }
 
 #[trace("TC-2212", "FR-640-AC-10", "FSpec-TC-1661", "FSpec-FR-322-AC-452")]
@@ -185,4 +198,194 @@ fn the_program_package_records_its_library_clock_selections() {
     assert_eq!(output.status.code(), Some(0));
     let package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
     assert!(package["lock"].get("dependency_clock_selections").is_none());
+}
+
+/// FR-640-AC-9: a member only a library unit's clause reads is used: a
+/// program with no clock-bearing clause of its own compiles with it, and a
+/// member no unit reads still refuses `unused-clock-selection`.
+#[trace("TC-2183", "FR-640-AC-9")]
+#[test]
+fn a_member_only_a_library_clause_reads_is_not_unused() {
+    let directory = tempfile::tempdir().unwrap();
+    let library = "language \"ix:native\" edition \"1-draft\";\n\
+         profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+         record Reading { level: Int[0, 9]; }\n\
+         temporal Late using w over (r: Reading) clock \"plant-ms\" \
+         on origin { eventually[0,5] holds(r.level > 0) }\n";
+    let program = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         import \"test/plant\" as P;\n\
+         function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
+    write(directory.path(), "plant.native", library.as_bytes());
+    write(directory.path(), "unit.native", program.as_bytes());
+    let clock = json!({"kind": "timestamped_event", "timestamp_unit": "ms"});
+    let request = json!({"format": "native-compile/1", "request": {
+        "models": [],
+        "program": {"source": source("unit.native", "test:clocks-program")},
+        "libraries": [{"identity": "test/plant",
+            "source": source("plant.native", "test:clocks-plant")}],
+        "clocks": {"plant-ms": clock.clone()}}});
+    let output = compile(directory.path(), &request);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut spare = request.clone();
+    spare["request"]["clocks"]["spare"] = clock;
+    let unused = compile(directory.path(), &spare);
+    assert_eq!(unused.status.code(), Some(20));
+    let failure: Value = serde_json::from_slice(&unused.stderr).expect("a refusal");
+    assert_eq!(
+        find(&failure, "cause"),
+        Some(&json!("unused-clock-selection"))
+    );
+    assert_eq!(find(&failure, "clock"), Some(&json!("spare")));
+}
+
+/// The ConfigVersion model document republished under `identity`.
+fn model_as(identity: &str) -> Vec<u8> {
+    String::from_utf8(MODEL.to_vec())
+        .unwrap()
+        .replace("example/config-version", identity)
+        .into_bytes()
+}
+
+/// `command::compile` of `unit` against one model document per
+/// `(alias identity, file)`.
+fn compile_over_models(
+    directory: &Path,
+    unit: &str,
+    models: &[&str],
+) -> crate::command_harness::Output {
+    let mut entries = Vec::new();
+    for (index, identity) in models.iter().enumerate() {
+        let file = format!("model-{index}.json");
+        write(directory, &file, &model_as(identity));
+        entries.push(json!({"format": "semantic-ir/2.0.0",
+            "source": source(&file, &format!("test:clocks-model-{index}"))}));
+    }
+    write(directory, "unit.native", unit.as_bytes());
+    compile(
+        directory,
+        &json!({"format": "native-compile/1", "request": {
+            "models": entries,
+            "program": {"source": source("unit.native", "test:clocks-unit")}}}),
+    )
+}
+
+/// The declaration identity text of `example/<name>`'s `ConfigVersion`, the
+/// sequence authority a trace of that model's steps derives (FR-640-AC-3).
+fn config_version_authority(package: &str) -> String {
+    format!("{{\"node\":\"ix://{package}/ConfigVersion\",\"package\":\"{package}\"}}")
+}
+
+/// FR-640 "Behavior": a hyper clause over one model's behaviours derives its
+/// event-position configuration from the model, as a single-trace clause
+/// over that model's type does: the sequence authority is the type's
+/// declaration identity text, and no `clocks` member serves it.
+#[trace("FR-640-AC-7", "FR-640-AC-3")]
+#[test]
+fn a_hyper_clause_over_one_model_derives_the_single_trace_authority() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         hyper Same using e over behaviours (c: Config::ConfigVersion) \
+         forall trace a of Config forall trace b of Config \
+         { always[0,3] holds(c.versionNumber @ a = c.versionNumber @ b) }\n";
+    let output = compile_over_models(directory.path(), unit, &["example/config-version"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("temporal binding rows");
+    let [row] = rows.as_slice() else {
+        panic!("one binding row: {rows:?}");
+    };
+    assert_eq!(row["clock_name"], "model-steps");
+    assert_eq!(
+        row["clock"],
+        json!({"kind": "event_position",
+            "sequence_authority": config_version_authority("example/config-version")})
+    );
+}
+
+/// FR-640, FR-763: a hyper clause whose two quantified traces are of two
+/// models derives two event-position configurations, which its one binding
+/// row cannot carry yet: it refuses `unsupported_construct`/
+/// `not-yet-implemented` naming the clause. Under fixed-sample both traces
+/// derive the same configuration, and the clause compiles.
+#[trace("FR-640-AC-7")]
+#[test]
+fn a_hyper_clause_over_two_models_refuses_two_event_position_clocks() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = |identity: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile t = \"{identity}\";\n\
+             model S = \"example/device-saving\";\n\
+             model N = \"example/device-normal\";\n\
+             hyper Saves using t over behaviours (d: S::ConfigVersion, e: N::ConfigVersion) \
+             forall trace s of S forall trace n of N \
+             {{ always[0,3] holds(d.versionNumber @ s <= e.versionNumber @ n) }}\n"
+        )
+    };
+    let models = ["example/device-saving", "example/device-normal"];
+    let refused = compile_over_models(
+        directory.path(),
+        &unit("filament.temporal.event-position.false-extension/v1"),
+        &models,
+    );
+    assert_eq!(refused.status.code(), Some(21), "unsupported (FR-285)");
+    let failure: Value = serde_json::from_slice(&refused.stderr).expect("a refusal");
+    assert_eq!(failure["code"], "unsupported_construct", "{failure}");
+    assert_eq!(failure["cause"], "not-yet-implemented", "{failure}");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("(declaration Saves)")),
+        "{failure}"
+    );
+    let sampled = compile_over_models(
+        directory.path(),
+        &unit("filament.temporal.fixed-sample.false-extension/v1"),
+        &models,
+    );
+    assert_eq!(
+        sampled.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&sampled.stderr)
+    );
+}
+
+/// FR-326-AC-4 (TC-836): a clause whose `using` alias selects the value
+/// profile refuses `unknown_profile`/`unsupported-selection`, and the message
+/// names the alias and the identity it selects.
+#[trace("TC-836", "FR-326-AC-4")]
+#[test]
+fn a_clause_under_a_value_profile_alias_names_the_alias_and_its_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         record Reading { level: Int[0, 9]; }\n\
+         temporal C using v over (r: Reading) clock \"events\" \
+         on origin { eventually[0,1] holds(r.level = 3) }\n";
+    let output = compile_over_models(directory.path(), unit, &[]);
+    assert_eq!(output.status.code(), Some(20));
+    let failure: Value = serde_json::from_slice(&output.stderr).expect("a refusal");
+    assert_eq!(failure["code"], "unknown_profile", "{failure}");
+    assert_eq!(failure["cause"], "unsupported-selection", "{failure}");
+    let message = failure["message"].as_str().expect("a message");
+    assert!(
+        message.contains("`v`") && message.contains("`filament.value.complete/v1`"),
+        "{message}"
+    );
 }

@@ -172,6 +172,7 @@ fn read<'d>(
         },
         refinement_internals: request.refinement_internals,
         libraries: request.libraries,
+        clocks: Default::default(),
     };
     Ok((
         AnalyzeInput {
@@ -242,7 +243,7 @@ fn run_input(
         intake,
         sources,
         false,
-        |checked, packages, libraries, _| {
+        |checked, _, packages, libraries, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();
             // FR-620: the request's units in request order, the program then

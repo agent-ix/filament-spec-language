@@ -283,7 +283,11 @@ fn compile_accepts_a_multi_unit_program_array() {
     let checked = fsl_replay::spine::check_units_with_refinement_internals(
         &admitted,
         "test:unit-a".to_owned(),
-        Some(json!([])),
+        fsl_replay::spine::SourceInputs {
+            refinement_internals: Some(json!([])),
+            temporal_selections: &[],
+            clocks: None,
+        },
         &models,
         &dependencies,
         limits,
@@ -957,7 +961,11 @@ fn refinement_internals_compile_matches_the_spine_composition() {
         let checked = fsl_replay::spine::check_units_with_refinement_internals(
             &admitted,
             "test:spine".to_owned(),
-            root_internals,
+            fsl_replay::spine::SourceInputs {
+                refinement_internals: root_internals,
+                temporal_selections: &[],
+                clocks: None,
+            },
             &models,
             &dependencies,
             limits,

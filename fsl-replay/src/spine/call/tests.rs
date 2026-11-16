@@ -32,6 +32,7 @@ fn source() -> SourceIdentity {
 
 fn call(function: &str, arguments: Vec<CallArgument>) -> Call {
     Call {
+        clocks: Default::default(),
         function: function.to_owned(),
         arguments,
         accounting: default_accounting(1_000_000),
@@ -243,6 +244,7 @@ fn tc_792_source_compiled_lookup_driver_preserves_present_and_absent_paths() {
             &DependencyInput::default(),
             SpineLimits::default(),
             &Call {
+                clocks: Default::default(),
                 function: "query".to_owned(),
                 arguments: vec![
                     CallArgument {
@@ -296,6 +298,7 @@ fn tc_792_source_driver_admits_unused_parameters_before_body_evaluation() {
         &DependencyInput::default(),
         SpineLimits::default(),
         &Call {
+            clocks: Default::default(),
             function: "unused".to_owned(),
             arguments: vec![
                 CallArgument {
@@ -336,6 +339,7 @@ fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
         &DependencyInput::default(),
         SpineLimits::default(),
         &Call {
+            clocks: Default::default(),
             function: "query".to_owned(),
             arguments: vec![CallArgument {
                 parameter: "p".to_owned(),
@@ -371,6 +375,7 @@ fn tc_792_source_driver_cancellation_returns_no_lookup_result() {
         &DependencyInput::default(),
         SpineLimits::default(),
         &Call {
+            clocks: Default::default(),
             function: "query".to_owned(),
             arguments: vec![
                 CallArgument {
@@ -407,6 +412,7 @@ fn arg(parameter: &str, value: i64) -> CallArgument {
 #[trace("TC-792", "FR-100-AC-16")]
 fn tc_792_typed_call_contract_is_not_an_integer_only_facade() {
     let call = Call {
+        clocks: Default::default(),
         function: "held".to_owned(),
         arguments: vec![CallArgument {
             parameter: "w".to_owned(),

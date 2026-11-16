@@ -53,6 +53,7 @@ fn argument(parameter: &str, value: Value) -> CallArgument {
 
 fn call(function: &str, arguments: Vec<CallArgument>, work_units: u64) -> Call {
     Call {
+        clocks: Default::default(),
         function: function.to_owned(),
         arguments,
         accounting: default_accounting(work_units),

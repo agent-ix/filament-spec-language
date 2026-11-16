@@ -846,10 +846,15 @@ fn complete_sources(
         intake,
         sources,
         unit_list,
-        |checked, _, _, failure| {
+        |checked, selections, _, _, failure| {
             let cancel = filament_exact::Cancel::new();
             let limits = fsl_replay::spine::SpineLimits::default();
-            let result = fsl_replay::spine::package(checked, limits.package, &cancel);
+            let result = fsl_replay::spine::package_with_temporal_selections(
+                checked,
+                selections,
+                limits.package,
+                &cancel,
+            );
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
             Ok(CompileOutcome {
@@ -870,6 +875,7 @@ fn check_sources<T>(
     unit_list: bool,
     finish: impl FnOnce(
         &fsl_replay::spine::CheckedUnit,
+        &[fsl_replay::spine::TemporalClockSelection],
         fsl_semantics::model::intake::PackageInput,
         Vec<&FormalSource>,
         &dyn Fn(fsl_replay::spine::FrontEndFailure) -> RunCause,
@@ -959,7 +965,11 @@ fn check_sources<T>(
                 .map_err(failure)
         })
         .collect::<Result<Vec<_>>>()?;
-    let checked = if unit_list {
+    let check_selections: Vec<_> = parsed
+        .iter()
+        .flat_map(|unit| request.clocks.check_selections(unit))
+        .collect();
+    let (checked, package_selections) = if unit_list {
         let admitted = fsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies)
             .map_err(|refusal| spine_failure(*refusal))?;
         let models = fsl_replay::spine::select_units(
@@ -974,7 +984,11 @@ fn check_sources<T>(
         let checked = fsl_replay::spine::check_units_with_refinement_internals(
             &admitted,
             package_name(canonical_unit_source(sources).source().identity()),
-            request.refinement_internals.clone(),
+            fsl_replay::spine::SourceInputs {
+                refinement_internals: request.refinement_internals.clone(),
+                temporal_selections: &check_selections,
+                clocks: Some(&request.clocks),
+            },
             &models,
             &dependencies,
             limits,
@@ -982,10 +996,16 @@ fn check_sources<T>(
         )
         .map_err(failure)?
         .into_value();
-        checked
+        let checked = checked
             .into_iter()
             .next()
-            .ok_or(RunCause::EmptyCompileProgram)?
+            .ok_or(RunCause::EmptyCompileProgram)?;
+        let units: Vec<_> = admitted.units().iter().collect();
+        let selections = request
+            .clocks
+            .package_selections(&checked, &units)
+            .map_err(|refusal| spine_failure(*refusal))?;
+        (checked, selections)
     } else {
         let parsed = parsed
             .into_iter()
@@ -994,20 +1014,30 @@ fn check_sources<T>(
         let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
             .map_err(failure)?
             .into_value();
-        fsl_replay::spine::check_with_refinement_internals(
+        let checked = fsl_replay::spine::check_with_refinement_internals(
             &parsed,
             package_name(first_source.identity()),
-            request.refinement_internals.clone(),
+            fsl_replay::spine::SourceInputs {
+                refinement_internals: request.refinement_internals.clone(),
+                temporal_selections: &check_selections,
+                clocks: Some(&request.clocks),
+            },
             &models,
             &dependencies,
             limits,
             &cancel,
         )
         .map_err(failure)?
-        .into_value()
+        .into_value();
+        let selections = request
+            .clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(|refusal| spine_failure(*refusal))?;
+        (checked, selections)
     };
     finish(
         &checked,
+        &package_selections,
         packages,
         libraries.iter().map(|(_, source)| source).collect(),
         &failure,
@@ -1263,12 +1293,13 @@ fn prepare_complete_run(
             value: filament_exact::Value::Integer(filament_exact::Integer::from(argument.value)),
         })
         .collect();
-    let spine_call = fsl_replay::spine::Call::new(
+    let mut spine_call = fsl_replay::spine::Call::new(
         call.function.clone(),
         arguments,
         call_accounting(&call.accounting),
         request.limits.supplied.unwrap_or_default(),
     );
+    spine_call.clocks = request.clocks.clone();
     Ok(PreparedRun::Function(PreparedFunctionRun {
         data: Box::new(FunctionRunData {
             source,

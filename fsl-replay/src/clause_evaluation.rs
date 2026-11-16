@@ -254,6 +254,7 @@ pub fn evaluate_clause(request: ClauseEvaluationRequest) -> ClauseEvaluation {
         }
     };
     let run = ClauseRunRequest {
+        clocks: Default::default(),
         package_name,
         source: ClauseRunSource::Program {
             identity: source,
