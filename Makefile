@@ -28,9 +28,10 @@ check-spec-validation:
 	}; \
 	"$$target/check-spec-validation"
 
-# The validator resolves the npm @agent-ix/quire-cli launcher from npm's
-# global package root and invokes it with the resolved Node executable. The
-# child PATH is empty to prevent module installation during a gate.
+# The validator scans PATH for canonical npm @agent-ix/quire-cli JavaScript
+# launchers, selecting the lexicographically first installation, then invokes
+# it with the resolved Node executable. The child PATH is empty to prevent
+# module installation during a gate.
 # Missing modules must fail with the CLI's configuration diagnostic instead.
 
 # QSL#214 (FR-063-AC-5): demonstrated on every full-gate run, not only when

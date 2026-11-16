@@ -2,12 +2,11 @@
 #![forbid(unsafe_code)]
 
 use std::env;
-use std::ffi::OsStr;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const VALIDATOR_PACKAGE: &str = "@agent-ix/quire-cli";
-const VALIDATOR_LAUNCHER: &str = "bin/launcher.js";
 const DOCUMENTS: &str = "spec/**/*.md";
 
 fn main() -> ExitCode {
@@ -21,11 +20,13 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<u8, String> {
-    let npm = find_executable("npm")
-        .ok_or_else(|| "npm is required to locate the @agent-ix/quire-cli Node launcher".to_owned())?;
     let node = find_executable("node")
         .ok_or_else(|| "node is required to run the @agent-ix/quire-cli Node launcher".to_owned())?;
-    let launcher = npm_launcher(&npm)?;
+    let launcher = find_npm_launcher().ok_or_else(|| {
+        format!(
+            "npm {VALIDATOR_PACKAGE} Node launcher is missing from PATH; expose its quire bin"
+        )
+    })?;
     let documents = env::var_os("SPEC_VALIDATION_DOCUMENTS")
         .unwrap_or_else(|| DOCUMENTS.into());
 
@@ -43,44 +44,21 @@ fn run() -> Result<u8, String> {
         .unwrap_or(1))
 }
 
-fn npm_launcher(npm: &Path) -> Result<PathBuf, String> {
-    let output = Command::new(npm)
-        .args(["root", "-g"])
-        .output()
-        .map_err(|error| format!("could not ask npm for its global package root: {error}"))?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "could not locate the npm {VALIDATOR_PACKAGE} Node launcher (npm root -g failed): {}",
-            detail.trim()
-        ));
-    }
+fn find_npm_launcher() -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    let launchers = env::split_paths(&path)
+        .map(|directory| directory.join("quire"))
+        .filter(|candidate| is_executable(candidate))
+        .filter_map(|candidate| candidate.canonicalize().ok())
+        .filter(|candidate| {
+            candidate.is_file()
+                && candidate.extension().is_some_and(|extension| extension == "js")
+                && candidate.ends_with(Path::new("node_modules/@agent-ix/quire-cli/bin/launcher.js"))
+        })
+        .collect::<BTreeSet<_>>();
 
-    let root = String::from_utf8_lossy(&output.stdout);
-    let root = root.trim();
-    if root.is_empty() {
-        return Err(format!(
-            "could not locate the npm {VALIDATOR_PACKAGE} Node launcher (npm root -g returned an empty path)"
-        ));
-    }
-
-    let launcher = Path::new(root)
-        .join(VALIDATOR_PACKAGE)
-        .join(VALIDATOR_LAUNCHER);
-    let launcher = launcher.canonicalize().map_err(|_| {
-        format!(
-            "npm {VALIDATOR_PACKAGE} Node launcher is missing: {}",
-            launcher.display()
-        )
-    })?;
-    if !launcher.is_file() || launcher.extension() != Some(OsStr::new("js")) {
-        return Err(format!(
-            "npm {VALIDATOR_PACKAGE} Node launcher is missing or is not a JavaScript file: {}",
-            launcher.display()
-        ));
-    }
-
-    Ok(launcher)
+    // BTreeSet ordering makes the chosen installation independent of PATH order.
+    launchers.into_iter().next()
 }
 
 fn find_executable(name: &str) -> Option<PathBuf> {
