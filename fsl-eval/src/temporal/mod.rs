@@ -141,6 +141,30 @@ pub fn evaluate_with_enabledness<L: TemporalLetters>(
     )
 }
 
+/// [`evaluate_with_enabledness`] that also finds the decisive atom of a
+/// violation (FR-330 "The decisive atom") on the same evaluator and meter.
+pub fn evaluate_with_enabledness_decisive<L: TemporalLetters>(
+    clause: &CheckedTemporalClause,
+    trace: TemporalTrace,
+    letters: &mut L,
+    meter: &mut Meter,
+) -> (
+    Result<TemporalOutcome, TemporalRefusal>,
+    Option<DecisiveSearch>,
+) {
+    engine::run_seeking(
+        engine::Subject {
+            fairness: &[],
+            ..engine::Subject::of_clause(clause)
+        },
+        trace,
+        engine::Goal::Clause,
+        true,
+        letters,
+        meter,
+    )
+}
+
 /// Evaluate `clause` on a finite prefix of `len` positions whose continuation
 /// is unknown, under any profile: the three-valued reading of an
 /// infinite-trace prefix (FR-328), where a position past the prefix is

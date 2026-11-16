@@ -425,15 +425,53 @@ pub struct TimedWire {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelWire {
-    /// The initial state key.
-    pub initial: serde_json::Value,
-    /// The universes.
-    pub universes: serde_json::Value,
+    /// The initial-state snapshot's observations key.
+    pub initial: String,
+    /// The snapshots (observations keys) whose complete populations are the
+    /// universes.
+    pub universes: Vec<String>,
     /// Steps before the loop.
-    pub prefix: Vec<serde_json::Value>,
-    /// Repeating steps.
+    pub prefix: Vec<ModelStepWire>,
+    /// Repeating steps; the one terminal stutter step closes a terminal loop.
     #[serde(rename = "loop")]
-    pub repeat: Vec<serde_json::Value>,
+    pub repeat: Vec<ModelStepWire>,
+}
+
+/// One step of a model-arm behaviour.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStepWire {
+    /// The step's transition identity.
+    pub transition: ModelTransitionWire,
+    /// The state key of the step's post-state.
+    pub post_state: PostStateWire,
+}
+
+/// A post-state key, base64url of its canonical bytes.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostStateWire {
+    /// The key text.
+    pub key: String,
+}
+
+/// A transition identity: `{"type": "transition", operation, receiver,
+/// arguments}` or `{"type": "terminal-stutter"}`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelTransitionWire {
+    /// `transition` or `terminal-stutter`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The operation's typed value.
+    #[serde(default)]
+    pub operation: Option<Box<RawValue>>,
+    /// The receiver's typed value.
+    #[serde(default)]
+    pub receiver: Option<Box<RawValue>>,
+    /// The arguments' typed values.
+    #[serde(default)]
+    pub arguments: Option<Vec<Box<RawValue>>>,
 }
 
 /// The temporal member of an FR-312 request.
@@ -709,10 +747,24 @@ pub enum TemporalTraceParts {
     Progressed(ProgressedParts),
     /// A timestamped finite-window trace.
     Timestamped(TimestampedParts),
-    /// A model-arm lasso (FR-641): read, not yet run.
-    Model,
+    /// A model-arm behaviour (FR-641).
+    Model(ModelParts),
     /// A timed trace (FR-642): read, not yet run.
     Timed(TimedParts),
+}
+
+/// A model-arm behaviour read from the wire.
+pub struct ModelParts {
+    /// The initial-state snapshot's observations key.
+    pub initial: String,
+    /// The universe snapshots' observations keys.
+    pub universes: Vec<String>,
+    /// The steps before the loop.
+    pub prefix: Vec<crate::ModelStep>,
+    /// The loop's steps, a terminal stutter step excluded.
+    pub repeat: Vec<crate::ModelStep>,
+    /// Whether the loop is the one terminal stutter step.
+    pub terminal_stutter: bool,
 }
 
 /// A timed trace's positions with their rational stamps.
@@ -737,6 +789,102 @@ fn canonical_sample(raw: &RawValue, member: &str) -> Result<String, ClauseReques
     let bytes = quire_canonical::to_vec(&document.root(), quire_canonical::Limits::new(u64::MAX))
         .map_err(|error| invalid(member, error.to_string()))?;
     String::from_utf8(bytes).map_err(|error| invalid(member, error.to_string()))
+}
+
+/// The canonical JSON text of the typed value `raw`.
+fn canonical_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestReadError> {
+    let document = quire_canonical::read(raw.get().as_bytes(), u64::MAX)
+        .map_err(|error| invalid(member, error.to_string()))?;
+    let bytes = quire_canonical::to_vec(&document.root(), quire_canonical::Limits::new(u64::MAX))
+        .map_err(|error| invalid(member, error.to_string()))?;
+    String::from_utf8(bytes).map_err(|error| invalid(member, error.to_string()))
+}
+
+/// One step of a model-arm behaviour; `None` for the terminal stutter step.
+fn model_step(
+    step: &ModelStepWire,
+    member: &str,
+) -> Result<Option<crate::ModelStep>, ClauseRequestReadError> {
+    use base64::Engine;
+    let transition = &step.transition;
+    let post_state = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(step.post_state.key.as_bytes())
+        .map_err(|error| invalid(format!("{member}.post_state.key"), error.to_string()))?;
+    let identity = match transition.kind.as_str() {
+        "terminal-stutter" => return Ok(None),
+        "transition" => {
+            let operation = transition.operation.as_deref().ok_or_else(|| {
+                invalid(
+                    format!("{member}.transition.operation"),
+                    "an operation is required",
+                )
+            })?;
+            let at = format!("{member}.transition");
+            filament_semantic_value::model_transition::ModelTransition::new(
+                canonical_text(operation, &format!("{at}.operation"))?,
+                transition
+                    .receiver
+                    .as_deref()
+                    .map(|receiver| canonical_text(receiver, &format!("{at}.receiver")))
+                    .transpose()?,
+                transition
+                    .arguments
+                    .iter()
+                    .flatten()
+                    .enumerate()
+                    .map(|(index, argument)| {
+                        canonical_text(argument, &format!("{at}.arguments[{index}]"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .map_err(|error| invalid(&at, error.to_string()))?
+        }
+        _ => {
+            return Err(invalid(
+                format!("{member}.transition.type"),
+                "a transition or a terminal-stutter",
+            ))
+        }
+    };
+    Ok(Some(crate::ModelStep {
+        transition: identity,
+        post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(post_state),
+        delay: None,
+    }))
+}
+
+/// FR-641 `model`: the initial state, universes, and the prefix and loop
+/// steps of a model-arm behaviour.
+fn model_parts(model: &ModelWire) -> Result<ModelParts, ClauseRequestReadError> {
+    let steps = |wire: &[ModelStepWire], member: &str| {
+        wire.iter()
+            .enumerate()
+            .map(|(index, step)| model_step(step, &format!("{member}[{index}]")))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let prefix = steps(&model.prefix, "trace.model.prefix")?;
+    let looped = steps(&model.repeat, "trace.model.loop")?;
+    if prefix.iter().any(Option::is_none) {
+        return Err(invalid(
+            "trace.model.prefix",
+            "a terminal stutter step closes a loop, never a prefix",
+        ));
+    }
+    let stutters = looped.iter().filter(|step| step.is_none()).count();
+    if stutters > 1 || (stutters == 1 && looped.len() != 1) {
+        return Err(invalid(
+            "trace.model.loop",
+            "a terminal stutter loop is the one terminal stutter step",
+        ));
+    }
+    Ok(ModelParts {
+        initial: model.initial.clone(),
+        universes: model.universes.clone(),
+        prefix: prefix.into_iter().flatten().collect(),
+        repeat: looped.into_iter().flatten().collect(),
+        terminal_stutter: stutters == 1,
+    })
 }
 
 fn position_part(
@@ -815,8 +963,8 @@ impl TemporalSelectionWire {
                 cover: timestamped.cover,
                 missing: timestamped.missing.clone(),
             })
-        } else if trace.model.is_some() {
-            TemporalTraceParts::Model
+        } else if let Some(model) = &trace.model {
+            TemporalTraceParts::Model(model_parts(model)?)
         } else if let Some(timed) = &trace.timed {
             let points = |points: &[TimedPointWire], member: &str| {
                 points
@@ -849,6 +997,9 @@ impl TemporalSelectionWire {
                 "trace",
                 "every position of a trace is an observations key or every one is a sample",
             ));
+        }
+        if matches!(parts, TemporalTraceParts::Model(_)) && self.over.is_none() {
+            return Err(invalid("over", "a model trace needs an over"));
         }
         // A trace with no position is judged by the run, whichever form it
         // would have had: `over` decides it.
@@ -884,7 +1035,7 @@ impl TemporalTraceParts {
                 .iter()
                 .map(|(position, ..)| position)
                 .collect(),
-            Self::Model => Vec::new(),
+            Self::Model(_) => Vec::new(),
             Self::Timed(parts) => parts
                 .prefix
                 .iter()
@@ -1291,12 +1442,17 @@ fn selection(
                     lower_boundary: lower_boundary(parts.lower_boundary),
                     binding: trace_binding(parts.binding),
                 },
-                TemporalTraceParts::Model => {
-                    return Err(invalid(
-                        "trace.model",
-                        "a model trace is read but not yet run by this build",
-                    ))
-                }
+                TemporalTraceParts::Model(parts) => TraceInput::Model {
+                    initial: document(&parts.initial)?,
+                    universes: parts
+                        .universes
+                        .iter()
+                        .map(|key| document(key))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    prefix: parts.prefix,
+                    repeat: parts.repeat,
+                    terminal_stutter: parts.terminal_stutter,
+                },
                 TemporalTraceParts::Timed(_) => {
                     return Err(invalid(
                         "trace.timed",
@@ -1512,6 +1668,35 @@ mod tests {
                 "{selection} names one trace kind of FR-641"
             );
         }
+    }
+
+    /// FR-641 (TC-1663), FSpec FR-364: the `model` trace reads its initial
+    /// state, universes and steps; a terminal stutter step closes a loop and
+    /// never a prefix.
+    #[test]
+    #[ix_trace_rs::trace("TC-1663", "FR-641-AC-4")]
+    fn a_model_trace_reads_its_steps_and_refuses_a_misplaced_stutter() {
+        let step = r#"{"transition":{"type":"transition","operation":"inc","receiver":null,"arguments":[]},"post_state":{"key":"W10"}}"#;
+        let stutter = r#"{"transition":{"type":"terminal-stutter"},"post_state":{"key":"W10"}}"#;
+        let model = |prefix: &str, looped: &str| {
+            format!(
+                r#"{{"temporal":{{"name":"E","trace":{{"model":{{"initial":"s0","universes":["s0"],"prefix":[{prefix}],"loop":[{looped}]}}}},"over":{{"reference":{{"population":"P","key":"c1"}}}}}}}}"#
+            )
+        };
+        let read = |text: String| {
+            let wire: ClauseRunSelectionWire = serde_json::from_str(&text).unwrap();
+            wire.into_parts()
+        };
+        assert!(read(model(step, step)).is_ok());
+        assert!(read(model(step, stutter)).is_ok());
+        assert!(
+            read(model(stutter, step)).is_err(),
+            "a prefix has no stutter"
+        );
+        assert!(read(model(step, &format!("{stutter},{step}"))).is_err());
+        let no_over =
+            model(step, step).replace(r#","over":{"reference":{"population":"P","key":"c1"}}"#, "");
+        assert!(read(no_over).is_err(), "a model trace needs an over");
     }
 
     #[test]

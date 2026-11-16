@@ -78,6 +78,21 @@ pub enum TraceInput {
         /// lasso, which the evaluator refuses.
         repeat: Vec<DocumentRef>,
     },
+    /// A model-arm behaviour (FR-641 `model`, FSpec FR-364): an initial state,
+    /// the universes, and the steps of its prefix and loop; FR-330 reconstructs
+    /// its positions as FR-329 states for `Lasso::Model`.
+    Model {
+        /// The initial-state snapshot.
+        initial: DocumentRef,
+        /// The snapshots whose complete populations are the universes.
+        universes: Vec<DocumentRef>,
+        /// The steps before the loop.
+        prefix: Vec<crate::ModelStep>,
+        /// The steps of the loop, a terminal stutter step excluded.
+        repeat: Vec<crate::ModelStep>,
+        /// Whether the loop is the one terminal stutter step.
+        terminal_stutter: bool,
+    },
 }
 
 impl TraceInput {
@@ -89,6 +104,7 @@ impl TraceInput {
             Self::Progressed { .. } => "progressed",
             Self::Timestamped { .. } => "timestamped",
             Self::Lasso { .. } => "lasso",
+            Self::Model { .. } => "model",
         }
     }
 
@@ -115,7 +131,7 @@ impl TraceInput {
     fn carries_progress(&self) -> bool {
         match self {
             Self::Progressed { .. } | Self::Timestamped { .. } => true,
-            Self::Finite(_) | Self::Lasso { .. } => false,
+            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => false,
         }
     }
 
@@ -151,7 +167,7 @@ impl TraceInput {
                     })
                     .collect(),
             )),
-            Self::Finite(_) | Self::Lasso { .. } => None,
+            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => None,
         }
     }
 
@@ -176,6 +192,9 @@ impl TraceInput {
                 .map(|observation| &observation.document),
             ),
             Self::Lasso { prefix, repeat } => Box::new(prefix.iter().chain(repeat)),
+            Self::Model {
+                initial, universes, ..
+            } => Box::new(std::iter::once(initial).chain(universes)),
         }
     }
 
@@ -195,6 +214,9 @@ impl TraceInput {
                 prefix: u64::try_from(prefix.len()).ok()?,
                 loop_len: u64::try_from(repeat.len()).ok()?,
             }),
+            // A model behaviour is reconstructed from its steps, not read as
+            // observations.
+            Self::Model { .. } => None,
         }
     }
 }
@@ -506,7 +528,10 @@ fn authenticate_binding(
     })
 }
 
-fn refused(cause: &'static str, fields: BTreeMap<&'static str, String>) -> ClauseDisposition {
+pub(super) fn refused(
+    cause: &'static str,
+    fields: BTreeMap<&'static str, String>,
+) -> ClauseDisposition {
     ClauseDisposition::Admit(AdmissionFailure::Refused(Box::new(AdmissionRecord {
         catalog: CatalogCode::new(Code::InvalidRuntimeInput.as_str(), cause),
         fields,
@@ -563,7 +588,9 @@ fn authenticate_trace(
     let binding = match trace {
         TraceInput::Progressed { binding, .. } => Some(binding),
         TraceInput::Timestamped { window, .. } => window.binding.as_ref(),
-        TraceInput::Finite(_) | TraceInput::Lasso { .. } => return Ok(None),
+        TraceInput::Finite(_) | TraceInput::Lasso { .. } | TraceInput::Model { .. } => {
+            return Ok(None)
+        }
     };
     let subject =
         subject_of().map_err(|fault| Box::new(ClauseDisposition::EvaluateFault(fault)))?;
@@ -758,6 +785,17 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             site.ledger_without_progress(),
         )));
     }
+    // FR-330: a model-arm behaviour is re-executed, not read as snapshots.
+    if matches!(trace, TraceInput::Model { .. }) {
+        let model = super::model_trace::run_model(run, node, trace, over);
+        let mut finished = report(
+            model.disposition,
+            model.usage,
+            authenticated_temporal_selection,
+        );
+        finished.decisive = model.decisive;
+        return finished;
+    }
     let Some(shape) = trace.shape() else {
         return early(refused("invalid-value", BTreeMap::new()));
     };
@@ -773,7 +811,8 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         TraceInput::Finite(_)
         | TraceInput::Progressed { .. }
         | TraceInput::Timestamped { .. }
-        | TraceInput::Lasso { .. } => None,
+        | TraceInput::Lasso { .. }
+        | TraceInput::Model { .. } => None,
     };
     if let Some(refusal) = empty {
         return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
@@ -835,7 +874,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 }
             }
         }
-        TraceInput::Finite(_) | TraceInput::Timestamped { .. } | TraceInput::Lasso { .. } => None,
+        TraceInput::Finite(_)
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Lasso { .. }
+        | TraceInput::Model { .. } => None,
     };
 
     let mut admitted = AdmissionUsage::default();
@@ -1652,7 +1694,8 @@ pub(super) fn observation_slot(trace: &TraceInput, at: usize) -> Option<usize> {
         TraceInput::Lasso { .. }
         | TraceInput::Finite(_)
         | TraceInput::Progressed { .. }
-        | TraceInput::Timestamped { .. } => Some(at),
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Model { .. } => Some(at),
     }
 }
 

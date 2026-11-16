@@ -29,6 +29,7 @@ use fsl_semantics::model::observation::{
 };
 
 mod ledger_wire;
+mod model_trace;
 mod package_authentication;
 mod progress;
 mod temporal;

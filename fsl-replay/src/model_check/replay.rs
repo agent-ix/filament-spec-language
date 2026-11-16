@@ -1743,6 +1743,69 @@ fn check_formula<S: SubjectSystem>(
     })
 }
 
+/// FR-330 `TraceInput::Model`: the evaluation of a clause over a model-arm
+/// behaviour supplied as a request, not as a counterexample to settle.
+#[derive(Debug)]
+pub struct ModelTraceRun {
+    /// What the FR-329 (or FR-328, for a finite prefix) evaluator returned.
+    pub outcome: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
+    /// The decisive atom of a violation, found on the same evaluator.
+    pub decisive: Option<fsl_eval::temporal::DecisiveSearch>,
+    /// The number of replayed positions, loop states included.
+    pub positions: usize,
+}
+
+/// FR-330 "Admit": re-execute the behaviour `payload` names from its initial
+/// state over `system`, close and fairness-check its loop, and evaluate
+/// `clause` over the reconstructed states with FR-125's letters, on the one
+/// evaluator a replayed counterexample uses. `None` when an expansion
+/// stops (the run then completes no value).
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] as [`replay_model_trace`] refuses a model counterexample's
+/// initial state, steps, loop closure and fairness.
+pub fn evaluate_model_trace(
+    system: &ModelSystem<'_>,
+    payload: &TemporalCounterexample,
+    clause: &CheckedTemporalClause,
+    letters: &dyn ModelLetters,
+    limits: ScalarLimits,
+) -> Result<Option<ModelTraceRun>, ReplayRefusal> {
+    let Some((positions, _)) = replay_prefix(system, payload, &MODEL_STEPS)? else {
+        return Ok(None);
+    };
+    let trace = match payload.lasso {
+        Some(lasso) => {
+            close_loop(system, &positions, lasso)?;
+            let Some(states) = loop_states_of(system, payload, &positions, lasso)? else {
+                return Ok(None);
+            };
+            if let Some(constraint) = unfair_constraint(system, &states, lasso, clause.fairness())?
+            {
+                return Err(ReplayRefusal::UnfairLasso { constraint });
+            }
+            trace_of(lasso, positions.len())
+        }
+        None => TemporalTrace::Finite {
+            len: position_of(positions.len()),
+        },
+    };
+    let mut replayed = replayed_letters(system, payload, &positions, letters)?;
+    let mut meter = Meter::new(limits);
+    let (outcome, decisive) = fsl_eval::temporal::evaluate_with_enabledness_decisive(
+        clause,
+        trace,
+        &mut replayed,
+        &mut meter,
+    );
+    Ok(Some(ModelTraceRun {
+        outcome,
+        decisive,
+        positions: positions.len(),
+    }))
+}
+
 /// The letters of a counterexample's replayed positions, for the instance
 /// its `over` binding names.
 fn replayed_letters<'a, S: SubjectSystem>(
