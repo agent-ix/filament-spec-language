@@ -303,9 +303,10 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
 /// FR-267: expose the library's canonical clause report to the CLI adapter.
 pub(super) fn clause_report(
     report: &fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
-    let bytes =
-        fsl_replay::spine::write_clause_run_result(report).map_err(RunCause::ClauseOutput)?;
+    let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
+        .map_err(RunCause::ClauseOutput)?;
     let value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
     Ok(RunResult {
         // FR-285: a finite-window `pending` exits 0 and `indeterminate` 11.

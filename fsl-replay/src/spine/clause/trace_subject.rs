@@ -204,7 +204,7 @@ pub fn run_package_trace_subject(request: &PackageTraceSubjectRequest<'_>) -> Cl
 }
 
 /// FR-330-AC-17: the trace-subject evaluation of `name` over `samples`.
-fn run_subject(
+pub(super) fn run_subject(
     run: &CompiledRun<'_>,
     name: &str,
     subject: &ValueType,

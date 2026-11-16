@@ -1381,6 +1381,9 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             let code = refusal.catalog_code();
             Some(catalog(code.code(), code.cause()))
         }
+        ClauseDisposition::TraceRefused(_) => {
+            Some(catalog("invalid_runtime_input", "invalid-value"))
+        }
         ClauseDisposition::ProgressContradiction(refusal) => {
             let code = &refusal.record.catalog;
             Some(catalog(code.code(), code.cause()))

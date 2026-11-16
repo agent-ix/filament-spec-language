@@ -204,21 +204,22 @@ pub use call::{
 pub(crate) mod clause;
 pub use clause::{
     admit_progress, authenticate_emission, authenticate_package_trace, name_clause_atom,
-    run_clause, run_clause_with_temporal_selections, run_package_temporal,
-    run_package_trace_subject, run_trace_subject_clause, temporal_batch_exit_code,
-    temporal_batch_outcome, AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument,
-    ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest,
-    ClauseRunSelection, ClauseRunSource, ClauseRunStage, ClauseRunUsage, ConsequentEventRefusal,
-    ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState, ContradictedDimension,
-    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
-    LedgerBinding, ObservedPosition, OperationName, OverObject, PackageAuthentication,
-    PackageTemporalRequest, PackageTraceSubjectRequest, PackagesStage, ProgressAssertion,
-    ProgressClosure, ProgressCompleteness, ProgressContradiction, ProgressLedger,
-    ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal,
-    ProgressValue, TemporalAuthentication, TemporalIndeterminateReason, TemporalPositionRefusal,
-    TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
-    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput, TraceSubjectClauseRequest,
+    read_ledger, run_clause, run_clause_with_temporal_selections, run_package_temporal,
+    run_package_trace_subject, run_trace_subject_clause, sample_position, temporal_batch_exit_code,
+    temporal_batch_outcome, write_ledger, AuthenticatedTemporalSelection, AuthenticationFailure,
+    ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunReport,
+    ClauseRunRequest, ClauseRunSelection, ClauseRunSource, ClauseRunStage, ClauseRunUsage,
+    ConsequentEventRefusal, ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState,
+    ContradictedDimension, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
+    FiniteWindowSupport, LedgerBinding, LedgerReadError, ObservedPosition, OperationName,
+    OverObject, PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest,
+    PackagesStage, ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
+    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
+    ProgressRefusal, ProgressValue, TemporalAuthentication, TemporalIndeterminateReason,
+    TemporalPositionRefusal, TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict,
+    TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, TraceRefusal,
+    TraceSubjectClauseRequest,
 };
 mod refinement;
 pub use refinement::{
@@ -232,8 +233,8 @@ mod protocol_structure;
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, write_clause_run_result,
-    CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord, ClosureRead,
-    CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
+    write_clause_run_result_for, CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord,
+    ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
     FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
     IndeterminateReasonRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError,
     NativeRunResult, NativeRunResultError, PositionRead, ProgressValueRead, ProtocolAnalysisKind,

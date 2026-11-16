@@ -232,45 +232,30 @@ fn each_temporal_report_writes_its_row_and_each_edit_refuses() {
         })
     );
 
-    let empty_loop = round_trips(&report(lasso(Unit::Infinite, "Reaches", 3, &[0, 1, 2])));
+    // FR-645-AC-1: the empty loop is a stage `evaluate` refusal carrying its
+    // reason, message and locus, and no `temporal` row.
+    let empty_loop = document(&report(lasso(Unit::Infinite, "Reaches", 3, &[0, 1, 2])));
+    assert_eq!(empty_loop["disposition"]["stage"], "evaluate");
+    assert_eq!(empty_loop["disposition"]["category"], "refusal");
+    assert!(empty_loop["disposition"].get("temporal").is_none());
+    let refusal = &empty_loop["disposition"]["refusal"];
+    assert_eq!(refusal["code"], "invalid_runtime_input");
+    assert_eq!(refusal["cause"], "invalid-value");
+    assert_eq!(refusal["fields"]["reason"], "empty-lasso-loop");
     assert_eq!(
-        temporal(&empty_loop),
-        &json!({"kind": "trace-refused", "variant": "empty-loop"})
+        refusal["message"],
+        "a lasso needs at least one loop position"
     );
-    assert_eq!(
-        empty_loop["disposition"]["outcome"],
-        json!({"kind": "refused", "code": "invalid_runtime_input", "cause": "invalid-value"})
-    );
-    assert!(empty_loop["disposition"].get("refusal").is_none());
-    refuses(
-        &edited(&empty_loop, |value| {
-            value["disposition"]["temporal"]["variant"] = json!("empty-hoop");
-        }),
-        "disposition.temporal.variant",
-    );
-    refuses(
-        &edited(&empty_loop, |value| {
-            value["disposition"]["refusal"] =
-                json!({"code": "invalid_runtime_input", "cause": "invalid-value"});
-        }),
-        "disposition.refusal",
-    );
+    assert!(refusal["locus"].is_object());
+    read(&empty_loop).expect("the refusal reads back");
 
-    // FR-330-AC-3's empty `Finite` report.
-    let empty = report(finite(Unit::Infinite, "Reaches", &[]));
-    assert!(matches!(
-        empty.disposition,
-        ClauseDisposition::TemporalRefusal(crate::spine::TemporalTraceRefusal::EmptyTrace)
-    ));
-    let empty = round_trips(&empty);
+    // FR-645-AC-2: the empty `Finite` report, the same shape.
+    let empty = document(&report(finite(Unit::Infinite, "Reaches", &[])));
     assert_eq!(
-        temporal(&empty),
-        &json!({"kind": "trace-refused", "variant": "empty-trace"})
+        empty["disposition"]["refusal"]["fields"]["reason"],
+        "empty-finite-trace"
     );
-    assert_eq!(
-        empty["disposition"]["outcome"],
-        json!({"kind": "refused", "code": "invalid_runtime_input", "cause": "invalid-value"})
-    );
+    read(&empty).expect("the refusal reads back");
 
     // FR-109-AC-3's dangling-parent document is a stage `admit` refusal.
     let dangling = document(

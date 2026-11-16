@@ -722,7 +722,7 @@ fn verdict_of(clause: &str, disposition: &ClauseDisposition) -> Result<MonitorVe
             }
             V::WindowLimitReached { .. } => MonitorVerdict::WindowLimitReached,
         },
-        D::TemporalRefusal(_) => MonitorVerdict::TraceRefused,
+        D::TemporalRefusal(_) | D::TraceRefused(_) => MonitorVerdict::TraceRefused,
         D::Evaluate(_) | D::ArgumentRefusal(_) => MonitorVerdict::ConditionRefused,
         other => {
             return Err(StageFailure::Fault(InternalFault::new(

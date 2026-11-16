@@ -411,3 +411,33 @@ impl From<LedgerBinding> for eval::LedgerBinding {
         }
     }
 }
+
+impl ProgressLedgerEntry {
+    /// An entry retaining `assertion` and the positions an accepted request
+    /// covered (FR-641's ledger file form).
+    pub fn new(
+        assertion: ProgressAssertion,
+        covered: impl IntoIterator<Item = ObservedPosition>,
+    ) -> Self {
+        Self {
+            assertion,
+            covered: covered.into_iter().collect(),
+        }
+    }
+}
+
+impl ProgressLedger {
+    /// Every binding with its entry, in binding order.
+    pub fn entries(&self) -> impl Iterator<Item = (&LedgerBinding, &ProgressLedgerEntry)> {
+        self.entries.iter()
+    }
+
+    /// A ledger holding `entries`, one per binding.
+    pub fn from_entries(
+        entries: impl IntoIterator<Item = (LedgerBinding, ProgressLedgerEntry)>,
+    ) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
+    }
+}

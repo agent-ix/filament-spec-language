@@ -85,6 +85,43 @@ fn run_request(temporal: Value) -> Value {
         "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
 }
 
+/// The unit of the trace-wire tests: `unit()` without its timed clause.
+///
+/// These tests exercise the request wire for every trace kind and the carried
+/// ledger. The timed clock kind (QSL-2254) and a timed clause over a trace
+/// subject (QSL-2136) are other tickets', so the unit and the clock
+/// selections here use the clock kinds that exist and clauses that check.
+fn trace_unit() -> String {
+    let full = unit();
+    let kept: Vec<&str> = full
+        .lines()
+        .filter(|line| !line.starts_with("profile t =") && !line.starts_with("temporal Ack"))
+        .collect();
+    kept.join("\n") + "\n"
+}
+
+/// `clocks()` without the timed `plant` clock.
+fn trace_clocks() -> Value {
+    let mut selection = clocks();
+    selection.as_object_mut().unwrap().remove("plant");
+    selection
+}
+
+/// [`write`] for a trace-wire test: the unit is [`trace_unit`].
+fn write_trace(directory: &Path, name: &str, request: &Value) -> PathBuf {
+    std::fs::write(directory.join("unit.native"), trace_unit()).unwrap();
+    let path = directory.join(name);
+    std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
+    path
+}
+
+/// [`run_request`] for a trace-wire test: the clocks are [`trace_clocks`].
+fn trace_request(temporal: Value) -> Value {
+    json!({"format": "native-run/1", "request": {
+        "models": [], "program": program(), "clocks": trace_clocks(),
+        "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
+}
+
 /// The binding row of `clock` under `profile`, as the trace asserts it.
 fn binding(profile: &str, clock: &str) -> Value {
     json!({"profile": profile, "clock": clock, "parameters": clocks()[clock].clone()})
@@ -239,20 +276,19 @@ fn missing_unused_and_mismatched_clock_selections_refuse_naming_the_clock() {
     "FSpec-TC-1163",
     "FSpec-FR-352-AC-18"
 )]
-#[ignore = "QSL-2133: the `timestamped` trace kind is not on the run wire yet"]
 fn a_timestamped_trace_runs_from_a_request_file_and_returns_the_ledger() {
     let directory = tempfile::tempdir().unwrap();
     let observations: Vec<Value> = [(0, 0), (2, 0), (5, 1)]
         .into_iter()
         .map(|(stamp, level)| json!({"position": sample(level), "stamp": stamp}))
         .collect();
-    let request = run_request(json!({"name": "T", "trace": {"timestamped": {
+    let request = trace_request(json!({"name": "T", "trace": {"timestamped": {
         "observations": observations,
         "progress": {"watermark": 5, "completeness": {"complete": {"through": 5}},
             "scope": "closed", "execution": "closed"},
         "lower_boundary": "authoritative-origin",
         "binding": binding(STAMPED, "plant-ms")}}}));
-    let output = run_file(&write(directory.path(), "run.json", &request));
+    let output = run_file(&write_trace(directory.path(), "run.json", &request));
     let document = result(&output);
     assert_eq!(document["disposition"]["stage"], "evaluate", "{document}");
     assert_eq!(output.status.code(), Some(0), "{document}");
@@ -273,7 +309,6 @@ fn a_timestamped_trace_runs_from_a_request_file_and_returns_the_ledger() {
     "FSpec-TC-1162",
     "FSpec-FR-114-AC-5"
 )]
-#[ignore = "QSL-2133: the `progressed` trace kind and the `ledger` file are not on the run wire yet"]
 fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one() {
     let directory = tempfile::tempdir().unwrap();
     let progressed = |watermark: u64, ledger: Option<&str>| {
@@ -285,9 +320,9 @@ fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one()
         if let Some(ledger) = ledger {
             temporal["ledger"] = json!(ledger);
         }
-        run_request(temporal)
+        trace_request(temporal)
     };
-    let first = result(&run_file(&write(
+    let first = result(&run_file(&write_trace(
         directory.path(),
         "first.json",
         &progressed(3, None),
@@ -300,7 +335,7 @@ fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one()
     )
     .unwrap();
 
-    let regress = result(&run_file(&write(
+    let regress = result(&run_file(&write_trace(
         directory.path(),
         "regress.json",
         &progressed(1, Some("ledger.json")),
@@ -317,7 +352,7 @@ fn a_carried_ledger_refuses_a_regressing_watermark_and_advances_on_a_later_one()
         "the refused run returns the ledger unchanged"
     );
 
-    let advance = result(&run_file(&write(
+    let advance = result(&run_file(&write_trace(
         directory.path(),
         "advance.json",
         &progressed(9, Some("ledger.json")),
@@ -339,7 +374,6 @@ fn trace_refusal(document: &Value) -> (&Value, &Value, &Value) {
 /// clause's locus.
 #[test]
 #[trace("TC-1670", "FR-645-AC-1", "FR-645-AC-2")]
-#[ignore = "QSL-2133: trace refusals carry no reason, message or locus yet"]
 fn empty_traces_refuse_with_a_reason_message_and_locus() {
     let directory = tempfile::tempdir().unwrap();
     for (index, (trace, reason, pointer)) in [
@@ -357,8 +391,8 @@ fn empty_traces_refuse_with_a_reason_message_and_locus() {
     .into_iter()
     .enumerate()
     {
-        let request = run_request(json!({"name": "Reaches", "trace": trace}));
-        let output = run_file(&write(
+        let request = trace_request(json!({"name": "Reaches", "trace": trace}));
+        let output = run_file(&write_trace(
             directory.path(),
             &format!("empty-{index}.json"),
             &request,
@@ -378,21 +412,47 @@ fn empty_traces_refuse_with_a_reason_message_and_locus() {
     }
 }
 
-/// FR-645-AC-3, AC-4, FR-642-AC-5 (TC-1671, TC-1665): a trace kind the
-/// clause's profile does not read refuses at stage `admit` naming the
-/// profile and the expected and supplied kinds. A timed clause over a trace
-/// without stamps is the documented case: positions are not time.
+/// The refusal a trace kind the clause's profile does not read reports for the
+/// request file `path`: stage `admit`, the reason, the profile, the expected
+/// and the supplied kinds, and a message naming the clause and the profile.
+fn assert_kind_mismatch(
+    path: &Path,
+    (name, profile, expected, supplied): (&str, &str, Value, &str),
+) {
+    let output = run_file(path);
+    assert_eq!(output.status.code(), Some(20));
+    let document = result(&output);
+    assert_eq!(document["disposition"]["stage"], "admit", "{document}");
+    assert_eq!(
+        find(&document, "reason"),
+        Some(&json!("trace-kind-mismatch")),
+        "{document}"
+    );
+    assert_eq!(
+        find(&document, "profile"),
+        Some(&json!(profile)),
+        "{document}"
+    );
+    assert_eq!(find(&document, "expected"), Some(&expected), "{document}");
+    assert_eq!(
+        find(&document, "supplied"),
+        Some(&json!(supplied)),
+        "{document}"
+    );
+    let message = find(&document, "message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        message.contains(profile) && message.contains(name),
+        "{document}"
+    );
+}
+
+/// FR-645-AC-3 (TC-1671): a trace kind the clause's profile does not read
+/// refuses at stage `admit` naming the profile and the expected and supplied
+/// kinds.
 #[test]
-#[trace(
-    "TC-1671",
-    "FR-645-AC-3",
-    "FR-645-AC-4",
-    "FR-642-AC-5",
-    "FSpec-TC-1161",
-    "FSpec-FR-541-AC-3"
-)]
-#[trace("TC-1665", "FR-642-AC-5")]
-#[ignore = "QSL-2133: trace-kind-mismatch refusals carry no fields yet"]
+#[trace("TC-1671", "FR-645-AC-3", "FSpec-TC-1161", "FSpec-FR-541-AC-3")]
 fn a_trace_kind_the_profile_does_not_read_refuses_with_profile_and_kinds() {
     let directory = tempfile::tempdir().unwrap();
     for (index, (name, trace, profile, expected, supplied)) in [
@@ -410,50 +470,27 @@ fn a_trace_kind_the_profile_does_not_read_refuses_with_profile_and_kinds() {
             json!(["timestamped"]),
             "finite",
         ),
-        (
-            "Ack",
-            json!({"finite": samples(&[0, 1])}),
-            TIMED,
-            json!(["timed"]),
-            "finite",
-        ),
     ]
     .into_iter()
     .enumerate()
     {
-        let request = run_request(json!({"name": name, "trace": trace}));
-        let output = run_file(&write(
-            directory.path(),
-            &format!("kind-{index}.json"),
-            &request,
-        ));
-        assert_eq!(output.status.code(), Some(20));
-        let document = result(&output);
-        assert_eq!(document["disposition"]["stage"], "admit", "{document}");
-        assert_eq!(
-            find(&document, "reason"),
-            Some(&json!("trace-kind-mismatch")),
-            "{document}"
-        );
-        assert_eq!(
-            find(&document, "profile"),
-            Some(&json!(profile)),
-            "{document}"
-        );
-        assert_eq!(find(&document, "expected"), Some(&expected), "{document}");
-        assert_eq!(
-            find(&document, "supplied"),
-            Some(&json!(supplied)),
-            "{document}"
-        );
-        let message = find(&document, "message")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        assert!(
-            message.contains(profile) && message.contains(name),
-            "{document}"
-        );
+        let request = trace_request(json!({"name": name, "trace": trace}));
+        let path = write_trace(directory.path(), &format!("kind-{index}.json"), &request);
+        assert_kind_mismatch(&path, (name, profile, expected, supplied));
     }
+}
+
+/// FR-645-AC-4, FR-642-AC-5 (TC-1671, TC-1665): a timed clause over a trace
+/// without stamps is the documented case: positions are not time.
+#[test]
+#[trace("TC-1671", "FR-645-AC-4", "FR-642-AC-5")]
+#[trace("TC-1665", "FR-642-AC-5")]
+#[ignore = "QSL-2254/QSL-2136: timed clock kind and timed clause over a trace subject"]
+fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = run_request(json!({"name": "Ack", "trace": {"finite": samples(&[0, 1])}}));
+    let path = write(directory.path(), "kind-timed.json", &request);
+    assert_kind_mismatch(&path, ("Ack", TIMED, json!(["timed"]), "finite"));
 }
 
 /// FR-644-AC-5, FR-643-AC-1 (TC-1668, TC-1666): a `native-monitor/1`
@@ -570,7 +607,6 @@ fn malformed_and_reserved_clock_members_refuse() {
 /// `request` naming the member; a lasso of samples reaches evaluation.
 #[test]
 #[trace("TC-1663", "FR-641-AC-4", "TC-1160", "FR-312-AC-8")]
-#[ignore = "QSL-2133: record samples and the new trace kinds are not on the run wire yet"]
 fn malformed_trace_members_refuse_at_the_request_stage() {
     let directory = tempfile::tempdir().unwrap();
     let over = json!({"reference": {"population": "P", "key": "c1"}});
@@ -615,10 +651,10 @@ fn malformed_trace_members_refuse_at_the_request_stage() {
         ),
     ];
     for (index, (temporal, member)) in cases.into_iter().enumerate() {
-        let output = run_file(&write(
+        let output = run_file(&write_trace(
             directory.path(),
             &format!("malformed-trace-{index}.json"),
-            &run_request(temporal),
+            &trace_request(temporal),
         ));
         assert_eq!(output.status.code(), Some(20));
         let envelope = refusal(&output);
@@ -629,9 +665,13 @@ fn malformed_trace_members_refuse_at_the_request_stage() {
             "{member}: {envelope}"
         );
     }
-    let lasso = run_request(json!({"name": "Reaches",
+    let lasso = trace_request(json!({"name": "Reaches",
         "trace": {"lasso": {"prefix": samples(&[0]), "loop": samples(&[1, 2])}}}));
-    let document = result(&run_file(&write(directory.path(), "lasso.json", &lasso)));
+    let document = result(&run_file(&write_trace(
+        directory.path(),
+        "lasso.json",
+        &lasso,
+    )));
     assert_eq!(document["disposition"]["category"], "success", "{document}");
 }
 
@@ -639,7 +679,6 @@ fn malformed_trace_members_refuse_at_the_request_stage() {
 /// that adds nothing reproduces its bytes.
 #[test]
 #[trace("TC-1663", "FR-641-AC-5")]
-#[ignore = "QSL-2133: the `ledger` file is not on the run wire yet"]
 fn a_ledger_round_trips_through_a_run_that_changes_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let request = |ledger: Option<&str>| {
@@ -649,16 +688,16 @@ fn a_ledger_round_trips_through_a_run_that_changes_nothing() {
         if let Some(ledger) = ledger {
             temporal["ledger"] = json!(ledger);
         }
-        run_request(temporal)
+        trace_request(temporal)
     };
-    let first = result(&run_file(&write(
+    let first = result(&run_file(&write_trace(
         directory.path(),
         "first.json",
         &request(None),
     )));
     let bytes = serde_json::to_vec(&first["ledger"]).unwrap();
     std::fs::write(directory.path().join("ledger.json"), &bytes).unwrap();
-    let again = result(&run_file(&write(
+    let again = result(&run_file(&write_trace(
         directory.path(),
         "again.json",
         &request(Some("ledger.json")),
@@ -670,13 +709,12 @@ fn a_ledger_round_trips_through_a_run_that_changes_nothing() {
 /// carries the same reason, without a request pointer.
 #[test]
 #[trace("TC-1671", "FR-645-AC-5")]
-#[ignore = "QSL-2133: trace refusals carry no reason fields yet"]
 fn an_in_process_trace_refusal_carries_no_request_pointer() {
     let directory = tempfile::tempdir().unwrap();
-    let path = write(
+    let path = write_trace(
         directory.path(),
         "lasso.json",
-        &run_request(json!({"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": []}}})),
+        &trace_request(json!({"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": []}}})),
     );
     let prepared = fsl_command::command::prepare_run(&path, Default::default())
         .unwrap_or_else(|error| panic!("the request prepares: {error:?}"));

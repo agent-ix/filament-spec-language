@@ -28,10 +28,13 @@ use fsl_semantics::model::observation::{
     Provisions,
 };
 
+mod ledger_wire;
 mod package_authentication;
 mod progress;
 mod temporal;
+mod trace_refusal;
 mod trace_subject;
+pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
 pub use package_authentication::{
     authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
 };
@@ -43,11 +46,12 @@ pub use progress::{
 use temporal::TemporalRun;
 pub use temporal::{
     admit_progress, authenticate_package_trace, name_clause_atom, run_package_temporal,
-    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
-    OverObject, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
-    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
-    TraceBinding, TraceInput,
+    sample_position, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
+    FiniteWindowSupport, OverObject, PackageTemporalRequest, ProgressRefusal,
+    TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
+pub use trace_refusal::TraceRefusal;
 pub use trace_subject::{
     run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
     TraceSubjectClauseRequest,
@@ -127,6 +131,32 @@ pub enum ClauseRunSelection {
         /// requests of this clause; `None` evaluates the trace alone.
         ledger: Option<ProgressLedger>,
     },
+    /// FR-641: a temporal clause over a declared record trace subject, run over
+    /// a trace of record samples. Each position of `trace` is a sample carried
+    /// as [`sample_position`]; the clause's subject parameter is bound to the
+    /// sample at each position and no `over` object exists.
+    SampledTemporal {
+        /// The temporal clause's declared name.
+        name: String,
+        /// The samples the clause is run over.
+        trace: TraceInput,
+        /// FR-502: the progress ledger carried from earlier requests.
+        ledger: Option<ProgressLedger>,
+    },
+}
+
+impl ClauseRunSelection {
+    /// FR-645: the member path, from `clause`, of the part of the request's
+    /// trace that the trace refusal `reason` is about; `None` for a selection
+    /// that holds no trace.
+    pub fn request_pointer(&self, reason: &str) -> Option<String> {
+        match self {
+            Self::Temporal { trace, .. } | Self::SampledTemporal { trace, .. } => {
+                Some(trace.request_pointer(reason))
+            }
+            Self::Clause(_) | Self::Function { .. } | Self::Frame { .. } => None,
+        }
+    }
 }
 
 /// FR-115: the operation a `Frame` selection names, `M::T::op`: model
@@ -315,6 +345,10 @@ pub enum ClauseDisposition {
     /// Stage `evaluate`, category `refusal` (FR-330): the evaluator refused
     /// the supplied trace (a lasso with an empty loop, for one).
     TemporalRefusal(TemporalTraceRefusal),
+    /// Stage `admit` or `evaluate`, category `refusal` (FR-645): a trace the
+    /// clause's profile does not read, or one that holds no position, with
+    /// its reason, message and the clause's locus.
+    TraceRefused(Box<TraceRefusal>),
     /// Stage `evaluate`, category `refusal` (FR-502): the supplied progress
     /// contradicts what the request's ledger retains for the binding.
     ProgressContradiction(Box<ProgressRefusal>),
@@ -331,6 +365,7 @@ impl ClauseDisposition {
             Self::Compile(_) | Self::UnknownLanguage { .. } => ClauseRunStage::Compile,
             Self::MissingName { .. } | Self::NotAPredicate { .. } => ClauseRunStage::Select,
             Self::Admit(_) | Self::ArgumentRefusal(_) => ClauseRunStage::Admit,
+            Self::TraceRefused(refusal) => refusal.stage,
             Self::Evaluate(_)
             | Self::Temporal(_)
             | Self::TemporalRefusal(_)
@@ -374,6 +409,7 @@ impl ClauseDisposition {
                 fsl_foundation::diagnostic::Code::from_code(refusal.catalog_code().code())
                     .map_or(Category::InternalFailure, |code| code.category())
             }
+            Self::TraceRefused(_) => Category::Refusal,
             Self::ProgressContradiction(refusal) => {
                 fsl_foundation::diagnostic::Code::from_code(refusal.record.catalog.code())
                     .map_or(Category::InternalFailure, |code| code.category())
@@ -975,6 +1011,7 @@ impl ClauseRunReport {
             | ClauseDisposition::Admit(_)
             | ClauseDisposition::ArgumentRefusal(_)
             | ClauseDisposition::TemporalRefusal(_)
+            | ClauseDisposition::TraceRefused(_)
             | ClauseDisposition::ProgressContradiction(_)
             | ClauseDisposition::EvaluateFault(_)
             | ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) => {
@@ -1248,7 +1285,10 @@ pub fn run_clause_with_temporal_selections(
         sources: &sources,
         progress_capacity: request.limits.progress.covered_positions,
     };
-    let admitted_package = if matches!(&request.selection, ClauseRunSelection::Temporal { .. }) {
+    let admitted_package = if matches!(
+        &request.selection,
+        ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. }
+    ) {
         let evidence = match super::bind::admission_evidence(
             &models,
             &checked,
@@ -1302,6 +1342,34 @@ pub fn run_clause_with_temporal_selections(
             ref operation,
             ref invocation,
         } => Ok(run_frame(&run, operation, invocation)),
+        ClauseRunSelection::SampledTemporal {
+            ref name,
+            ref trace,
+            ref ledger,
+        } => {
+            let Some(admitted_package) = admitted_package.as_deref() else {
+                return Ok(report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "temporal-selection-retains-strictly-admitted-package",
+                    ),
+                )));
+            };
+            Ok(temporal::run_temporal(
+                &run,
+                &TemporalRun {
+                    name,
+                    trace,
+                    over: None,
+                    ledger: ledger.as_ref(),
+                    authentication: Some(temporal::TemporalAuthentication {
+                        clock_rows: emitted.temporal_binding_rows(),
+                        admitted_package,
+                    }),
+                    cancel: None,
+                },
+            ))
+        }
         ClauseRunSelection::Temporal {
             ref name,
             ref trace,
@@ -1321,7 +1389,7 @@ pub fn run_clause_with_temporal_selections(
                 &TemporalRun {
                     name,
                     trace,
-                    over,
+                    over: Some(over),
                     ledger: ledger.as_ref(),
                     authentication: Some(temporal::TemporalAuthentication {
                         clock_rows: emitted.temporal_binding_rows(),
