@@ -11,15 +11,28 @@ check-no-committed-binaries:
 # artifacts. A narrower document selection supports the native gate controls.
 SPEC_VALIDATION_DOCUMENTS ?= spec/**/*.md
 export SPEC_VALIDATION_DOCUMENTS
+WORKSPACE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 .PHONY: check-spec-validation
 check-spec-validation:
-	@validator=$$(command -v quire) || { echo "check-spec-validation: native quire is required on PATH" >&2; exit 127; }; \
-	node=$$(command -v node) || { echo "check-spec-validation: native node is required on PATH" >&2; exit 127; }; \
-	PATH= "$$node" "$$validator" validate --scope . "$$SPEC_VALIDATION_DOCUMENTS"
+	@helper="$(WORKSPACE_ROOT)/xtask/ci_spec_validation.rs"; \
+	if [ ! -r "$$helper" ]; then \
+	  echo "check-spec-validation: Rust validator helper is missing: $$helper" >&2; exit 1; \
+	fi; \
+	if ! rustc=$$(command -v rustc); then \
+	  echo "check-spec-validation: rustc is required to build the Rust validator helper" >&2; exit 127; \
+	fi; \
+	target="$${CARGO_TARGET_DIR:-target}/ci-tools/spec-validation"; \
+	mkdir -p "$$target"; \
+	"$$rustc" --edition=2021 --crate-name fsl_ci_spec_validation -D warnings "$$helper" -o "$$target/check-spec-validation" || { \
+	  echo "check-spec-validation: failed to build the Rust validator helper" >&2; exit 1; \
+	}; \
+	"$$target/check-spec-validation"
 
-# The native CLI tries `quoin plugin ensure-defaults` when discovery is empty.
-# Its child PATH above is empty to prevent installation during a gate; missing
-# modules must fail with the CLI's configuration diagnostic instead.
+# The validator scans PATH for canonical npm @agent-ix/quire-cli JavaScript
+# launchers, selecting the lexicographically first installation, then invokes
+# it with the resolved Node executable. The child PATH is empty to prevent
+# module installation during a gate.
+# Missing modules must fail with the CLI's configuration diagnostic instead.
 
 # QSL#214 (FR-063-AC-5): demonstrated on every full-gate run, not only when
 # run by hand. Runs three normal builds (the root crate, fsl-route and
