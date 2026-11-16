@@ -129,8 +129,7 @@ fn a_driver_serializes_format_success_at_s2() {
     assert_eq!(document.category().exit_code(), 0);
     let mut json = document_json(&document);
     assert_eq!(json.as_object().unwrap().len(), 8);
-    // `result` carries the formatted text (FR-286-AC-16,
-    // `format_json_result_carries_text`); every other member is as below.
+    assert_eq!(json["result"], json!({"kind": "formatted", "text": output}));
     json["result"] = Value::Null;
     assert_eq!(json, expected("success", json!([])));
     let borrowed_text = output.clone();
@@ -267,7 +266,6 @@ fn a_driver_serializes_a_constructed_format_invariant_failure() {
 /// formatted text as its `result`, and formatting that text gives it back.
 #[trace("TC-2178", "FR-286-AC-16")]
 #[test]
-#[ignore = "QSL-2192: the format outcome's `formatted` result not implemented yet"]
 fn format_json_result_carries_text() {
     let source = parsed(FIXTURE);
     let limits = FormatLimits::default();

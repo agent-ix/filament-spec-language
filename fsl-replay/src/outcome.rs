@@ -1627,6 +1627,11 @@ pub enum ResultValue {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecuteResult {
+    /// The canonical text produced by a completed `format` operation.
+    Formatted {
+        /// The complete UTF-8 formatter output.
+        text: String,
+    },
     /// A completed S1 parse report (FR-663).
     Parsed {
         /// The parsed source's caller-supplied labels.
@@ -1857,9 +1862,9 @@ impl OutcomeDocument {
         }
     }
 
-    /// The document of a `format` outcome. The complete UTF-8 text stays in
-    /// the staged success value; this non-execute document has no result or
-    /// artifacts. S2 is the reporting default, not a stage run by this adapter.
+    /// The document of a `format` outcome. A success carries the complete
+    /// UTF-8 formatted text as its result. S2 is the reporting default, not a
+    /// stage run by this adapter.
     /// Refusals retain their original typed diagnostic and catalog category;
     /// internal failures report no stage (FR-286).
     pub fn from_format<E>(result: &Result<Staged<String>, E>) -> Self
@@ -1867,7 +1872,14 @@ impl OutcomeDocument {
         for<'a> &'a E: Into<FormatOutcomeRefusal>,
     {
         match result {
-            Ok(_) => Self::new(Operation::Format, Some(OutcomeStage::S2), Category::Success),
+            Ok(staged) => {
+                let mut document =
+                    Self::new(Operation::Format, Some(OutcomeStage::S2), Category::Success);
+                document.result = Some(ExecuteResult::Formatted {
+                    text: staged.value().clone(),
+                });
+                document
+            }
             Err(refusal) => {
                 let refusal: FormatOutcomeRefusal = refusal.into();
                 let stage = if refusal.category == Category::InternalFailure {
