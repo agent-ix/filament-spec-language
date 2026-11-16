@@ -558,7 +558,6 @@ fn an_oversized_temporal_count_refuses_naming_the_member() {
 /// `inapplicable-kind` with `family` `temporal-trace` (FR-507, FR-627-AC-4).
 #[trace("TC-1581", "FR-621-AC-7")]
 #[test]
-#[ignore = "QSL-2272: the pending clause run and the inapplicable finite-replay item are not both reported yet"]
 fn a_pending_clause_run_reports_its_pending_disposition() {
     let ws = Workspace::new("wire-pending-run");
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
