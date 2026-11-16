@@ -53,6 +53,7 @@ mod clocks;
 mod lifecycle;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
+pub use fsl_package::TemporalClockSelection;
 mod subject;
 pub use lifecycle::{
     admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,

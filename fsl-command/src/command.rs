@@ -875,7 +875,7 @@ fn check_sources<T>(
     unit_list: bool,
     finish: impl FnOnce(
         &fsl_replay::spine::CheckedUnit,
-        &[fsl_package::TemporalClockSelection],
+        &[fsl_replay::spine::TemporalClockSelection],
         fsl_semantics::model::intake::PackageInput,
         Vec<&FormalSource>,
         &dyn Fn(fsl_replay::spine::FrontEndFailure) -> RunCause,
