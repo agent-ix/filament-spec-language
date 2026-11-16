@@ -524,3 +524,41 @@ fn a_collection_over_a_population_refuses_at_check_and_every_other_type_has_a_fo
     );
     assert_ne!(output.status.code(), Some(21), "{output:?}");
 }
+
+/// The package fixture whose `gives` result and `takes` parameter are a
+/// collection over a population, as an IR producer can write them.
+const POPULATION_COLLECTION: &str = "tests/fixtures/population-collection.checked-package.json";
+
+#[test]
+#[trace("TC-1705", "FR-650-AC-6")]
+#[ignore = "QSL-2182: a selected package declaring a collection over a population is not refused unknown_required_feature at stage call yet"]
+fn a_selected_package_with_a_population_collection_type_refuses_unsupported() {
+    let fixture = std::fs::canonicalize(POPULATION_COLLECTION)
+        .unwrap_or_else(|error| panic!("the fixture {POPULATION_COLLECTION} exists: {error}"));
+    for (function, arguments, details) in [
+        ("gives", json!([]), json!({"function": "gives"})),
+        (
+            "takes",
+            json!([{"parameter": "a", "value": {"sequence": []}}]),
+            json!({"position": 0}),
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let request = json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source":
+                spine_source("spine-model.semantic-ir.json", "SpineModel")}],
+            "package": {"file": fixture.to_string_lossy()},
+            "call": {"function": function, "arguments": arguments},
+        }});
+        spine::write(directory.path(), Case::Healthy).unwrap();
+        let path = directory.path().join("request.json");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let output = run_file(&path);
+        assert_eq!(output.status.code(), Some(21), "{function}: {output:?}");
+        let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(failure["stage"], "call", "{failure}");
+        assert_eq!(failure["code"], "unknown_required_feature", "{failure}");
+        assert_eq!(failure["cause"], "unsupported-feature", "{failure}");
+        assert_eq!(failure["details"], details, "{failure}");
+    }
+}

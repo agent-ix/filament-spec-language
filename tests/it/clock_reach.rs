@@ -150,6 +150,6 @@ fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     );
     assert_eq!(
         fsl_foundation::diagnostic::category_of(&catalog),
-        Some(filament_semantic_value::catalog::Category::Refusal)
+        Some(filament_semantic_value::catalog::Category::Unsupported)
     );
 }

@@ -95,7 +95,7 @@ admitted, and each item adds the stage that settled it:
 | A request-level refusal after linking: a snapshot or binding that does not fit the linked package (FR-624-AC-3) | `S4` |
 | A document whose items are all settled by a disposition before any engine ran (an unknown claim, an unregistered backend) | `S4` |
 | An item settled by a negotiated backend, or by its negotiation's `unsupported` disposition | `S6b` |
-| An item settled by an FSL in-process engine (EN-1 to EN-7, the zone search): `proved`, `measured`, `refuted` without replay, `incomplete` at a budget, `inconclusive` (an unknown verdict or a rejected certificate) | `S6c` |
+| An item settled by an FSL in-process engine (EN-1 to EN-7, the zone search): `proved`, `measured`, `incomplete` at a budget, `inconclusive` (an unknown verdict or a rejected certificate) | `S6c` |
 | An item whose counterexample is built as a typed witness and not replayed | `S7` |
 | An item whose counterexample is replayed (its `replay` member is present) | `S8` |
 | A cancelled request, and an internal failure (an engine or evaluator fault), category internal-failure | `null` (FR-286) |

@@ -328,26 +328,30 @@ form" states; no other result type refuses.
 
 ### Types with no form
 
-Every type a checked function can declare has a run value form. The one kind
-of type FSpec FR-181 gives no form, a type that holds a population inside a
-collection, an option, a map or a record or tuple field (such as
-`Sequence<Population<M::Thing>[1]>`), never reaches a run: S3 refuses its
-declaration wherever it appears, `ill_typed`/`operator-ineligible` (FSpec
-FR-144, a population is not a value and is no element type), category
-refusal, exit 20, at stage `check`, before any request is read. A
-population is a parameter or result type only at the top level, where it
-has the population form.
+Every type FSL source can declare for a function has a run value form. The
+one kind of type FSpec FR-181 gives no form is a type that holds a
+population inside a collection, an option, a map or a record or tuple field
+(such as `Sequence<Population<M::Thing>[1]>`), and it reaches a run in one
+way only:
 
-The run stage SHALL still read each parameter and result type through one
+- **From FSL source** it cannot be spelled: S3 refuses its declaration
+  wherever it appears, `ill_typed`/`operator-ineligible` (FSpec FR-144, a
+  population is not a value and is no element type), category refusal,
+  exit 20, at stage `check`. A population is a parameter or result type of
+  FSL source only at the top level, where it has the population form.
+- **In a selected checked package** (the request's `package` member, FR-100,
+  such as a package another producer wrote from IR), a function may declare
+  such a type, because FSpec FR-144 admits the type and refuses only its
+  value. The run SHALL refuse it `unknown_required_feature`/
+  `unsupported-feature` at stage `call`, category unsupported, exit 21,
+  before any call (FSpec FR-144): with `details` `{"position": P}` for a
+  parameter and `{"function": "<the function string>"}` for a result.
+
+The run stage SHALL read each parameter and result type through one
 exhaustive mapping from the checked `ValueType` to its run value form, and
-SHALL refuse a type for which the mapping yields no form
-`unknown_required_feature`/`unsupported-feature` at stage `call`, category
-unsupported, exit 21, before any call: with `details` `{"position": P}` for
-a parameter and `{"function": "<the function string>"}` for a result. Only a
-checked package that S3 did not produce could carry such a type, so this
-refusal guards the mapping's totality rather than naming a reachable source
-form; it is never a fallback for a type the table gives a form, so a Quantity,
-a Map, a Reference or a population result never refuses with it.
+this refusal is the mapping's only arm without a form; it is never a fallback
+for a type the table gives a form, so a Quantity, a Map, a Reference or a
+top-level population never refuses with it.
 
 ### Examples
 
@@ -407,7 +411,7 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 | FR-650-AC-3 | Over the identity fixture, each refuses at stage `call`, exit 20, no result document, with `details.position` 0 and the `details.path` given: `id_str` with `{"kind": "text", "text": "a"}`, `invalid_runtime_input`/`wrong-value-kind`, `""`; `id_rec` with `fields` lacking `y`, `missing-member`, `/record/fields`; `id_rec` with an extra field `z`, `unknown-member`, `/record/fields/z`; `id_enum` with case `Blue`, `invalid-value`, `/variant/case`; `id_rat` with denominator `"0"`, `invalid-value`, `""`; `id_set` with `[{"integer": "1"}, {"integer": "1"}]`, `duplicate-member`, `/set/1`; `id_seq` with four elements, `cardinality_out_of_bound`/`above-maximum`, `""`; `id_tup` with one component, `invalid-value`, `/tuple/components`; `id_bool` with `2`, `invalid_runtime_input`/`invalid-value`, `""`. | Test (TC-1702) |
 | FR-650-AC-4 | Over FR-109-AC-4's `sameIdentity` unit as a native-run/1 `call` whose `snapshot` is the distinct-identities current snapshot: `a` `{"reference": {"population": P, "key": "root"}}` and `b` the same with key `child` completes `{"boolean": false}`, exit 0; `a` given instead as the identity-reference form of `root` completes the same; `b` with key `ghost` refuses `dangling_reference`/`absent-target-in-complete-population` at stage `call` with `details.position` 1, exit 20; the first request with `snapshot` removed refuses `invalid_runtime_input`/`missing-member` at stage `call`, `details.position` 0, `details.path` naming `snapshot`, exit 20. A function over a Population parameter called with `{"population": P}` binds that population with the parameter's declared maximum and completes; with a population the snapshot does not hold it refuses `invalid_runtime_input`/`wrong-role-mapping` at stage `call`. | Test (TC-1703) |
 | FR-650-AC-5 | TC-792's present lookup, run from a native-run/1 file request whose `call.snapshot` holds the looked-up object, completes with `{"reference": {"universe": U, "type": T, "object_identity": O}}` equal to the returned reference's three components, exit 0; passing that completed value unchanged as the argument of a function `function same using v(r: Reference<T>): Reference<T> pure { r }` in the same request shape completes with the identical value. | Test (TC-1704) |
-| FR-650-AC-6 | A unit declaring `function gives using v(): Sequence<Population<Config::ConfigVersion>[1]>[0, 1] pure { [] }`, or `function takes using v(a: Sequence<Population<Config::ConfigVersion>[1]>[0, 1]): Boolean pure { true }`, over the ConfigVersion model refuses at S3 `ill_typed`/`operator-ineligible`, category refusal, exit 20, and no run of it reaches stage `call`. A function whose parameter or result type is `Quantity<s>`, `Map<String, Int[0, 9]>[0, 2]`, `Reference<Config::ConfigVersion>` or a top-level population does not refuse `unknown_required_feature`. No identity-fixture function refuses `unsupported_construct`. | Test (TC-1705) |
+| FR-650-AC-6 | From source, a unit declaring `function gives using v(): Sequence<Population<Config::ConfigVersion>[1]>[0, 1] pure { [] }`, or `function takes using v(a: Sequence<Population<Config::ConfigVersion>[1]>[0, 1]): Boolean pure { true }`, over the ConfigVersion model refuses at S3 `ill_typed`/`operator-ineligible`, category refusal, exit 20, and reaches no call. A native-run/1 request whose `package` member selects the fixture package `tests/fixtures/population-collection.checked-package.json` (the compiled ConfigVersion package with the result type of its function `gives`, and the parameter type of its function `takes`, rewritten to that collection type, as an IR producer can write them) refuses `unknown_required_feature`/`unsupported-feature` at stage `call`, exit 21, before any call, with `details` `{"function": "gives"}` for `gives` and `{"position": 0}` for `takes`. A function whose parameter or result type is `Quantity<s>`, `Map<String, Int[0, 9]>[0, 2]`, `Reference<Config::ConfigVersion>` or a top-level population does not refuse `unknown_required_feature`. | Test (TC-1705) |
 | FR-650-AC-16 | The run stage reads every parameter and result type through one exhaustive match over `ValueType` with no wildcard arm, each arm yielding the type's run value form or, only for a type holding a population below the top level, the `unknown_required_feature`/`unsupported-feature` refusal at stage `call`, exit 21, with `details` `{"position": P}` for a parameter and `{"function": "<the function string>"}` for a result, before any call. | Inspection (TC-2380) |
 | FR-650-AC-7 | FR-312's `function` selection admits the run value form: FR-109-AC-4's `sameIdentity` with `a` given as the identity-reference form of `child` and `b` as `{"reference": {"population": P, "key": "child"}}` reports `success`, `truth: true`, exit 0; a Boolean claim `function short using v(t: Text[0, 8; nfc]): Boolean pure { size(t) < 3 }` selected with `t` `{"kind": "text", "text": "ab"}` over the same snapshot reports `success`. | Test (TC-1706) |
 | FR-650-AC-8 | The `execute` outcome (FR-286) of FR-100-AC-1's `seven` carries `result` `{"kind": "completed", "value": {"integer": "7"}}`, and of `id_rec` with the table's record argument `result` `{"kind": "completed", "value": V}` with `V` that record; each `value` equals the `spine-run-result/1` document's for the same request. | Test (TC-1707) |

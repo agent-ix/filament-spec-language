@@ -23,4 +23,4 @@ Tag the tests `#[trace("TC-2387", "FR-194-AC-13")]`.
 ## Expected Results
 
 - `quantile 0.95` reports `violated`, exit 10; `quantile 0.9` holds, exit 0.
-- The model-subject refusal is category refusal, exit 20.
+- The model-subject refusal is category `unsupported`, exit 21.

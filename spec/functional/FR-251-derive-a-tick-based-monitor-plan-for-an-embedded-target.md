@@ -406,8 +406,9 @@ may repair such a disagreement by inventing another evaluation rule.
 
 ## Behavior
 
-- The plan SHALL read the clause under the timestamped-event profile, with
-  positions as observed events and time stamps as integer ticks; its clock
+- For a timed clause, the plan SHALL read the clause under the
+  timestamped-event profile, with positions as observed events and time
+  stamps as integer ticks; its clock
   binding SHALL name the counter, its unit and its width (FSpec FR-252).
 - **Non-timed clauses.** The plan SHALL also be derived for a clause whose
   ticks count positions rather than time: a clause under the event-position
@@ -422,7 +423,8 @@ may repair such a disagreement by inventing another evaluation rule.
   `b + 2`). The clause's interval bounds are position counts, read without
   unit conversion; the `MonitorTarget`'s `unit` is the position counter's
   unit (`event`, `sample`, `position` or `step`), and its `width_bits` is the
-  width of the RT position counter. A fixed-sample silent sample is a
+  width of the RT position counter. The plan root's `tick_unit` is that
+  position-counter unit node (FSpec FR-487-AC-15), never a time unit. A fixed-sample silent sample is a
   watermark tick (`on_watermark`), never an event, so a deadline passes
   during silence exactly as FR-504 settles it. Every other rule of this
   requirement applies, so the plan of a non-timed clause and the FSL
