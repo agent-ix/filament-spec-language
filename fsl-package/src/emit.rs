@@ -216,6 +216,16 @@ pub enum EmitRefusal {
     /// program's clock-bearing declarations.
     #[error("{0}")]
     ClockSelection(ClockSelectionRefusal),
+    /// FR-640, FR-763: a clause whose quantified traces derive different clock
+    /// configurations from their models, which one binding row cannot carry
+    /// yet: an implementation gap, named by the clause.
+    #[error(
+        "a clause whose traces need different clock configurations is not supported yet (declaration {declaration})"
+    )]
+    PerTraceClockConfigurations {
+        /// The clause's declared name.
+        declaration: String,
+    },
     /// The strict reader refused the base package the plan root is written
     /// over (FR-251 "Fault boundary", QSL-1822), so no plan root exists for
     /// it. The refusal is the reader's, not a broken producer invariant. For
@@ -441,6 +451,7 @@ impl EmitRefusal {
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
+            Self::PerTraceClockConfigurations { .. } => Code::UnsupportedConstruct,
             Self::TimedModelNodeSetMismatch
             | Self::UnkeyedProbabilisticClaim { .. }
             | Self::TimedOrder(_) => Code::RuntimeInvariant,
@@ -469,6 +480,7 @@ impl EmitRefusal {
             Self::StaleProtocolReference { .. } => Some("missing-name"),
             Self::MonitorBaseRefused(_) => None,
             Self::ClockSelection(refusal) => Some(refusal.cause.as_str()),
+            Self::PerTraceClockConfigurations { .. } => Some("not-yet-implemented"),
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Some("not-yet-implemented"),

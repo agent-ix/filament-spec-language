@@ -648,9 +648,12 @@ fn the_assembler_keeps_temporal_clauses_and_refuses_an_undeclared_alias() {
         assembled
             .temporal_selections
             .iter()
-            .map(|selection| selection.profile)
+            .map(|selection| (selection.alias.as_str(), selection.profile))
             .collect::<Vec<_>>(),
-        [crate::check::TemporalProfile::InfiniteTrace]
+        [
+            ("v", None),
+            ("t", Some(crate::check::TemporalProfile::InfiniteTrace))
+        ]
     );
 
     let (text, found) = errors(&clause("missing"));

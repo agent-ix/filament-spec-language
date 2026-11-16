@@ -1592,6 +1592,8 @@ pub enum TemporalCause {
     ProfileSelection {
         /// The clause's `using` alias.
         alias: String,
+        /// The identity of each selection the alias names, in source order.
+        selected: Vec<String>,
         /// The identity of each temporal profile the alias selects.
         found: Vec<&'static str>,
         /// The clause's span.

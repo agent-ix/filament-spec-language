@@ -108,7 +108,7 @@ impl RequestClocks {
         let mut pending: Vec<&pkg::CheckedPackage> =
             package.dependencies().values().map(AsRef::as_ref).collect();
         while let Some(library) = pending.pop() {
-            for declaration in declarations(library, &ClockLocator::default()) {
+            for declaration in declarations(library) {
                 if declaration.model.is_none()
                     && profile_clock_kind(declaration.profile).is_some()
                     && self.get(declaration.clock).is_some()
@@ -164,16 +164,14 @@ impl RequestClocks {
             ));
         }
         let mut selections = Vec::new();
-        for declaration in declarations(package, locator) {
+        for declaration in declarations(package) {
             let Some(expected) = profile_clock_kind(declaration.profile) else {
                 continue;
             };
-            let clock = if let Some(model) = &declaration.model {
+            let clock = if let Some(traces) = &declaration.model {
                 // A model subject: the model supplies the binding, and the
                 // configuration is derived from it and the profile.
-                let Some(clock) =
-                    model_configuration(declaration.profile, declaration.clock, model)
-                else {
+                let Some(clock) = derived_configuration(&declaration, traces)? else {
                     continue;
                 };
                 clock
@@ -225,15 +223,12 @@ impl RequestClocks {
 
 /// What the parsed units of one checked package tell a clock selection that
 /// its checked graph does not: where each `temporal` clause's `clock`
-/// argument is, which locates a refusal, and the identity each model alias
-/// selects, which is a hyper clause's sequence authority. Built before the
-/// check consumes the parsed units.
+/// argument is, which locates a refusal. Built before the check consumes the
+/// parsed units.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ClockLocator {
     /// Each `temporal` clause's source, declaration span and `clock` span.
     clocks: Vec<(RawSourceRef, Span, Span)>,
-    /// Each `model` selection's source, alias and identity.
-    models: Vec<(RawSourceRef, String, String)>,
 }
 
 impl ClockLocator {
@@ -250,11 +245,6 @@ impl ClockLocator {
                     }
                 }
             }
-            for model in &unit.syntax().selections().models {
-                locator
-                    .models
-                    .push((source.clone(), model.alias.clone(), model.identity.clone()));
-            }
         }
         locator
     }
@@ -266,14 +256,6 @@ impl ClockLocator {
             .iter()
             .find(|(at, declaration, _)| at == source && *declaration == span)
             .map_or(span, |(_, _, clock)| *clock)
-    }
-
-    /// The identity the `model` alias `alias` of `source` selects.
-    fn model(&self, source: &RawSourceRef, alias: &str) -> Option<&str> {
-        self.models
-            .iter()
-            .find(|(at, name, _)| at == source && name == alias)
-            .map(|(_, _, identity)| identity.as_str())
     }
 }
 
@@ -291,10 +273,7 @@ fn emit_refusal(
 /// Every clock-bearing declaration of `package`'s own graph, in source
 /// order: its temporal clauses, its hyper clauses and its `compensate`
 /// templates.
-fn declarations<'a>(
-    package: &'a pkg::CheckedPackage,
-    locator: &ClockLocator,
-) -> Vec<Declaration<'a>> {
+fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
     let graph = package.graph();
     let mut declarations = Vec::new();
     for node in graph.temporal_clauses() {
@@ -311,15 +290,21 @@ fn declarations<'a>(
             profile: clause.profile(),
             clock: clause.clock(),
             model: match &clause.over().1 {
-                ValueType::Reference(object) => Some(subject_authority(object.original())),
+                ValueType::Reference(object) => {
+                    Some(vec![Some(subject_authority(object.original()))])
+                }
                 _ => None,
             },
             source,
             span: clause.span(),
         });
     }
-    // FR-640: a hyper clause ranges over a model's behaviours, so its
-    // binding comes from the model its first quantifier names.
+    // FR-640: a hyper clause ranges over its models' behaviours, so each
+    // quantified trace takes its binding from its own quantifier's model.
+    // That trace's sequence authority is the declaration identity text of
+    // the object type the clause's parameters bind for that model, the same
+    // text a single-trace clause over that type uses; `None` when the
+    // parameters bind no one type of it.
     for hyper in graph.hyper_clauses() {
         let Some(source) = hyper
             .assembled_occurrence()
@@ -329,19 +314,29 @@ fn declarations<'a>(
         else {
             continue;
         };
-        let Some(model) = hyper
+        let traces = hyper
             .quantifiers()
-            .first()
-            .and_then(|quantifier| locator.model(&source, quantifier.alias.as_str()))
-            .map(str::to_owned)
-        else {
-            continue;
-        };
+            .iter()
+            .map(|quantifier| {
+                let mut types = hyper
+                    .parameters()
+                    .iter()
+                    .filter(|parameter| parameter.alias == quantifier.alias)
+                    .map(|parameter| subject_authority(parameter.population.object().original()))
+                    .collect::<Vec<_>>();
+                types.sort();
+                types.dedup();
+                match types.as_slice() {
+                    [only] => Some(only.clone()),
+                    _ => None,
+                }
+            })
+            .collect();
         declarations.push(Declaration {
             name: hyper.name(),
             profile: hyper.profile(),
             clock: "model-steps",
-            model: Some(model),
+            model: Some(traces),
             source,
             span: hyper.span(),
         });
@@ -382,12 +377,56 @@ struct Declaration<'a> {
     name: &'a str,
     profile: TemporalProfile,
     clock: &'a str,
-    /// The sequence authority of the model the declaration reads its
-    /// binding from; `None` over a trace subject and for a `compensate`
+    /// For a declaration that reads its binding from a model, the sequence
+    /// authority of each trace it quantifies: one for a single-trace clause,
+    /// one per quantifier for a hyper clause, `None` where it is not
+    /// determined. `None` over a trace subject and for a `compensate`
     /// template.
-    model: Option<String>,
+    model: Option<Vec<Option<String>>>,
     source: RawSourceRef,
     span: Span,
+}
+
+/// FR-640: the configuration a declaration over model traces derives, the
+/// one every trace derives (FR-640 "Behavior"); `None` when the profile and
+/// binding configure none. A clause whose traces derive different
+/// configurations, or an event-position trace with no determined sequence
+/// authority, needs one configuration per trace, which a binding row cannot
+/// carry yet: it refuses `unsupported_construct`/`not-yet-implemented` naming
+/// the clause (FR-763's form).
+fn derived_configuration(
+    declaration: &Declaration<'_>,
+    traces: &[Option<String>],
+) -> Result<Option<ClockConfiguration>, Box<CompileRefusal>> {
+    let mut derived: Option<Option<ClockConfiguration>> = None;
+    for authority in traces {
+        let clock = match authority {
+            Some(authority) => {
+                model_configuration(declaration.profile, declaration.clock, authority)
+            }
+            None if declaration.profile == TemporalProfile::EventPositionFalseExtension => {
+                return Err(per_trace_clocks(declaration))
+            }
+            None => model_configuration(declaration.profile, declaration.clock, ""),
+        };
+        match &derived {
+            Some(first) if first != &clock => return Err(per_trace_clocks(declaration)),
+            Some(_) => {}
+            None => derived = Some(clock),
+        }
+    }
+    Ok(derived.flatten())
+}
+
+/// The implementation-gap refusal of a clause whose traces need different
+/// clock configurations.
+fn per_trace_clocks(declaration: &Declaration<'_>) -> Box<CompileRefusal> {
+    Box::new(CompileRefusal::Emit(
+        EmitRefusal::PerTraceClockConfigurations {
+            declaration: declaration.name.to_owned(),
+        },
+        region(&declaration.source, declaration.span),
+    ))
 }
 
 /// The sequence authority of a temporal clause over the model object type

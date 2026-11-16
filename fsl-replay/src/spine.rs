@@ -1661,8 +1661,21 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         // FR-326: name what the `TemporalTrace` check refused.
         CheckCause::Temporal(cause) => {
             message = match cause.as_ref() {
-                TemporalCause::ProfileSelection { alias, found, .. } if found.is_empty() => {
-                    format!("{message}: the clause's `using` alias `{alias}` selects no temporal profile")
+                TemporalCause::ProfileSelection {
+                    alias,
+                    selected,
+                    found,
+                    ..
+                } if found.is_empty() => {
+                    let selection = if selected.is_empty() {
+                        "no profile".to_owned()
+                    } else {
+                        format!("`{}`", selected.join("`, `"))
+                    };
+                    format!(
+                        "{message}: the clause's `using` alias `{alias}` selects {selection}, \
+                         which is no temporal profile"
+                    )
                 }
                 TemporalCause::ProfileSelection { alias, found, .. } => format!(
                     "{message}: the clause's `using` alias `{alias}` selects {} temporal profiles: {}",

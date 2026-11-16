@@ -315,6 +315,7 @@ fn the_unit_selects_exactly_one_temporal_profile() {
         cause,
         TemporalCause::ProfileSelection {
             alias: "v".to_owned(),
+            selected: vec![VALUE.to_owned()],
             found: Vec::new(),
             span: Span { start, end }
         }

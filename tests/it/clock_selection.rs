@@ -2,9 +2,9 @@
 //! FR-640: the `clocks` member of native-compile/1 and native-run/1 requests
 //! through the library `command` over request files.
 //!
-//! FR-326 checks a unit under one temporal profile, so each unit here selects
-//! one: the event-position, fixed-sample and timestamped-event units each
-//! declare their clauses over a record trace subject.
+//! Every unit here declares its clauses over a record trace subject. One
+//! unit mixes the event-position, fixed-sample and timestamped-event
+//! profiles under three aliases (FR-326-AC-7); the others select one each.
 
 use crate::command_harness::{compile_file, run_file, Output};
 use ix_trace_rs::trace;
@@ -50,6 +50,32 @@ fn stamped_unit() -> String {
         STAMPED,
         "temporal T using t over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n",
     )
+}
+
+/// One unit whose clauses use three temporal profiles under the aliases
+/// `e`, `f` and `w`, one clock each (FR-640-AC-1).
+fn mixed_unit() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile e = \"{EVENTS}\";\n\
+         profile f = \"{SAMPLED}\";\n\
+         profile w = \"{STAMPED}\";\n\
+         record Reading {{ level: Int[0, 9]; }}\n\
+         temporal E using e over (r: Reading) clock \"events\" on origin {{ eventually[0,2] holds(r.level = 2) }}\n\
+         temporal S using f over (r: Reading) clock \"sample\" on origin {{ eventually[0,3] holds(r.level = 2) }}\n\
+         temporal T using w over (r: Reading) clock \"plant-ms\" on origin {{ eventually[0,5] holds(r.level > 0) }}\n\
+         function seven using v(): Int[0, 9] pure {{ 7 }}\n"
+    )
+}
+
+/// The `clocks` member configuring [`mixed_unit`]'s three clocks.
+fn mixed_clocks() -> Value {
+    json!({
+        "events": {"kind": "event_position", "sequence_authority": "events"},
+        "sample": sample_clocks()["sample"].clone(),
+        "plant-ms": stamped_clocks()["plant-ms"].clone(),
+    })
 }
 
 fn event_clocks() -> Value {
@@ -125,7 +151,8 @@ fn refusal(output: &Output) -> Value {
 
 /// FR-640-AC-1 (TC-1660): `clocks` configures the event-position,
 /// fixed-sample and timestamped-event clocks of record-subject clauses by
-/// clock name. The package holds one `temporal_bindings` row per clause,
+/// clock name, in one unit that mixes the three profiles and in units of one
+/// profile each. The package holds one `temporal_bindings` row per clause,
 /// carrying its clock name and the member's configuration; the two clauses
 /// on `events` get equal configurations from the one member.
 #[test]
@@ -133,6 +160,15 @@ fn refusal(output: &Output) -> Value {
 fn clocks_member_binds_each_trace_subject_clock_by_name() {
     let directory = tempfile::tempdir().unwrap();
     for (unit, clocks, expected) in [
+        (
+            mixed_unit(),
+            mixed_clocks(),
+            vec![
+                ("events", "event_position"),
+                ("sample", "fixed_sample"),
+                ("plant-ms", "timestamped_event"),
+            ],
+        ),
         (
             event_unit(),
             event_clocks(),
@@ -172,6 +208,36 @@ fn clocks_member_binds_each_trace_subject_clock_by_name() {
             }
         }
     }
+}
+
+/// FR-640-AC-8 (TC-2182): the `clocks` object rebuilt from a package's
+/// `temporal_bindings` rows, each row's `clock_name` naming a member whose
+/// value is the row's `clock`, compiles the same program to byte-identical
+/// package bytes. It is the selection list the replay recompile builds.
+#[test]
+#[trace("TC-2182", "FR-640-AC-8")]
+fn clocks_rebuilt_from_the_rows_compile_the_same_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = compile(
+        directory.path(),
+        &mixed_unit(),
+        "first.json",
+        mixed_clocks(),
+    );
+    let mut rebuilt = serde_json::Map::new();
+    for row in rows(&first) {
+        let name = row["clock_name"].as_str().expect("a clock name").to_owned();
+        rebuilt.insert(name, row["clock"].clone());
+    }
+    assert_eq!(Value::Object(rebuilt.clone()), mixed_clocks());
+    let second = compile(
+        directory.path(),
+        &mixed_unit(),
+        "second.json",
+        Value::Object(rebuilt),
+    );
+    assert_eq!(second.status.code(), Some(0));
+    assert_eq!(first.stdout, second.stdout);
 }
 
 /// FR-640-AC-5 (TC-1660): a changed `events` sequence authority changes the

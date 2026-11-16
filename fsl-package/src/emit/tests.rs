@@ -2011,6 +2011,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::ClockSelection(_)) => {
                 panic!("the emitter never resolves clock names")
             }
+            Err(EmitRefusal::PerTraceClockConfigurations { .. }) => {
+                panic!("the emitter never derives clock configurations")
+            }
             Err(EmitRefusal::SourceObjectEmission { .. }) => {
                 panic!("the fixture set declares no source object type")
             }

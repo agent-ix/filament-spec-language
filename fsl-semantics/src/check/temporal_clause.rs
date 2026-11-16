@@ -98,11 +98,16 @@ pub use timed::{
 /// The stage name this module's faults report.
 const STAGE: &str = "check.temporal";
 
-/// One header profile the `TemporalTrace` catalog holds (FR-110).
+/// One header `profile` selection as the `TemporalTrace` check reads it
+/// (FR-110): its identity, and the temporal profile it is when the catalog
+/// holds one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TemporalSelection {
-    /// The profile the header selected.
-    pub profile: TemporalProfile,
+    /// The temporal profile the header selected; `None` for a selection with
+    /// no temporal facet.
+    pub profile: Option<TemporalProfile>,
+    /// The selected definition identity, as written.
+    pub identity: String,
     /// The alias the `profile` declaration binds, which a clause names in
     /// its `using`.
     pub alias: String,
@@ -1218,23 +1223,29 @@ pub(crate) fn located(
 /// alias selects. A unit may select several temporal profiles; the alias,
 /// not the unit, names the clause's profile. An alias that resolves to no
 /// temporal profile, or to more than one, refuses at the clause's `span`,
-/// naming the alias and the temporal selections it resolved to.
+/// naming the alias, the selection identities it resolved to and the
+/// temporal profiles among them.
 pub(crate) fn clause_profile(
     selections: &[TemporalSelection],
     using: &fsl_forms::UsingAlias,
     span: Span,
 ) -> Result<TemporalProfile, TemporalCause> {
-    let mut resolved = selections
-        .iter()
-        .filter(|selection| selection.alias == using.alias);
-    match (resolved.next(), resolved.next()) {
-        (Some(only), None) => Ok(only.profile),
+    let aliased = || {
+        selections
+            .iter()
+            .filter(|selection| selection.alias == using.alias)
+    };
+    let mut temporal = aliased().filter_map(|selection| selection.profile);
+    match (temporal.next(), temporal.next()) {
+        (Some(only), None) => Ok(only),
         _ => Err(TemporalCause::ProfileSelection {
             alias: using.alias.clone(),
-            found: selections
-                .iter()
-                .filter(|selection| selection.alias == using.alias)
-                .map(|selection| selection.profile.identity())
+            selected: aliased()
+                .map(|selection| selection.identity.clone())
+                .collect(),
+            found: aliased()
+                .filter_map(|selection| selection.profile)
+                .map(TemporalProfile::identity)
                 .collect(),
             span,
         }),
