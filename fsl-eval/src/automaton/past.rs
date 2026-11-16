@@ -198,6 +198,19 @@ impl Past {
         }
     }
 
+    /// The history before position 0 for an unbounded past operator. Unlike
+    /// a closed interval's false extension, an open interval only ranges over
+    /// positions that exist in the trace, so its recurrence starts empty.
+    pub(super) fn empty(self) -> Memory {
+        Memory {
+            base: Base::Flag(false),
+            ages: Vec::new(),
+            history: Vec::new(),
+            buckets: Vec::new(),
+            tail: false,
+        }
+    }
+
     /// The memory after one position at which the guard (the left operand of
     /// `since`) and the witness hold or not, reached by a step that
     /// `counted` or not, and whether the operator holds at that position.
