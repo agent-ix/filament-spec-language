@@ -934,6 +934,7 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     }
     let (extensions, source) = match arguments.as_slice() {
         ["check", source] => (Vec::new(), *source),
+        ["check", _authority, _name, source] => (Vec::new(), *source),
         ["check", "--extensions", set_path, _authority, _name, source] => {
             let set_bytes = read_file(&directory.join(set_path), TOTAL_BYTES)?;
             let set: ExtensionSetFile = serde_json::from_slice(&set_bytes)?;
