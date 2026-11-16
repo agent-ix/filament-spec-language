@@ -183,7 +183,14 @@ pub fn check_field_redefinition(
             cause: ModelRefusalCause::VarianceResult,
             detail: format!(
                 "{} does not conform to {}",
-                redefining.value_type, redefined.value_type
+                index.spelling(
+                    &redefining.value_type,
+                    &super::spelling::MemberSlot::Field(redefining_key.clone())
+                ),
+                index.spelling(
+                    &redefined.value_type,
+                    &super::spelling::MemberSlot::Field(redefined_key.clone())
+                )
             ),
         }),
         Err(incomplete) => return ConformanceCheckOutcome::Incomplete(incomplete),
@@ -264,7 +271,14 @@ pub fn check_subsetting(
             },
             detail: format!(
                 "{} does not conform to {}",
-                subsetting.value_type, subsetted.value_type
+                index.spelling(
+                    &subsetting.value_type,
+                    &super::spelling::MemberSlot::Field(subsetting_key.clone())
+                ),
+                index.spelling(
+                    &subsetted.value_type,
+                    &super::spelling::MemberSlot::Field(subsetted_key.clone())
+                )
             ),
         }),
         Err(incomplete) => return ConformanceCheckOutcome::Incomplete(incomplete),
@@ -369,7 +383,20 @@ pub fn check_operation_redefinition(
                     },
                     detail: format!(
                         "parameter {display_index}: expected {} to conform to {}",
-                        dp.value_type, rp.value_type
+                        index.spelling(
+                            &dp.value_type,
+                            &super::spelling::MemberSlot::Parameter {
+                                operation: redefined_key.clone(),
+                                position: i
+                            }
+                        ),
+                        index.spelling(
+                            &rp.value_type,
+                            &super::spelling::MemberSlot::Parameter {
+                                operation: redefining_key.clone(),
+                                position: i
+                            }
+                        )
                     ),
                 }),
                 Err(incomplete) => return ConformanceCheckOutcome::Incomplete(incomplete),
@@ -417,7 +444,17 @@ pub fn check_operation_redefinition(
                     axis: "result-type",
                     code: Code::IllTyped,
                     cause: ModelRefusalCause::VarianceResult,
-                    detail: format!("{} does not conform to {}", rr.value_type, dr.value_type),
+                    detail: format!(
+                        "{} does not conform to {}",
+                        index.spelling(
+                            &rr.value_type,
+                            &super::spelling::MemberSlot::Result(redefining_key.clone())
+                        ),
+                        index.spelling(
+                            &dr.value_type,
+                            &super::spelling::MemberSlot::Result(redefined_key.clone())
+                        )
+                    ),
                 }),
                 Err(incomplete) => return ConformanceCheckOutcome::Incomplete(incomplete),
             }

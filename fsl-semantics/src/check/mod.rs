@@ -1971,11 +1971,15 @@ impl PackageDeclarations {
                             // FR-480 "Selections and imports": the model the
                             // time source's own unit binds its alias to.
                             let alias = source.model.name.as_str();
-                            let timed = self.model_spellings.model(
-                                &self.models,
-                                self.source_owners.get(owner),
-                                alias,
-                            );
+                            let timed = self
+                                .model_spellings
+                                .model(&self.models, self.source_owners.get(owner), alias)
+                                .or_else(|| {
+                                    self.models.iter().find(|model| {
+                                        model.visible_in(self.source_owners.get(owner))
+                                            && model.source_object_time_node(alias).is_some()
+                                    })
+                                });
                             // FR-230: at most one `time` member per state model, so
                             // two aliases of one package are one key; an alias
                             // that did not resolve keys by its spelling.
@@ -1995,7 +1999,10 @@ impl PackageDeclarations {
                             }
                             seen_time_sources.insert(key, source.span);
                             if let Some(model) = timed {
-                                let model_nodes = model.object_type_model_node_keys();
+                                let model_nodes = model.source_object_time_node(alias).map_or_else(
+                                    || model.object_type_model_node_keys(),
+                                    |node| vec![node],
+                                );
                                 let [model_node] = model_nodes.as_slice() else {
                                     let cause = if model_nodes.is_empty() {
                                         TemporalCause::MissingTimedModel {
