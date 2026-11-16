@@ -790,6 +790,9 @@ pub(crate) struct FunctionInput<'a> {
     /// The object type `T` of each `Population<T>[N]` parameter, by
     /// parameter position (`None` for every other parameter).
     pub(crate) population_targets: &'a [Option<EffectiveId>],
+    /// The object type `T` of a `Population<T>[N]` result (`None` for every
+    /// other result type).
+    pub(crate) result_population_target: Option<EffectiveId>,
     /// The owner and kind of a clause function synthesized from a model
     /// clause (FR-094), or `None` for a source-declared function.
     pub(crate) clause: Option<&'a ModelClause>,
@@ -4074,7 +4077,11 @@ impl<'a> Lowering<'a> {
                 semantic_type: type_key,
             });
         }
-        let result = self.type_ref(function.result, function.location)?;
+        let result = self.binder_ref(
+            function.result,
+            function.result_population_target.clone(),
+            function.location,
+        )?;
         self.record(
             result.clone(),
             OccurrenceRole::Type,

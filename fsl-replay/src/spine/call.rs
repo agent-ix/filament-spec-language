@@ -679,6 +679,18 @@ pub(crate) fn run_reading<T>(
         }
         None => objects,
     };
+    let bound_world;
+    let objects = if call.snapshot.is_some() {
+        bound_world = bind_snapshot_populations(
+            objects,
+            models.models(),
+            selected.parameters,
+            call,
+        )?;
+        &bound_world
+    } else {
+        objects
+    };
     let universe_of = |declared: &filament_exact::EffectiveId| {
         fsl_semantics::model::observation::population_universe_for(
             package.graph().model_inputs(),
@@ -761,6 +773,90 @@ pub(crate) fn run_reading<T>(
     };
     let read = read(&checked, &emitted, &models)?;
     Ok((outcome, read))
+}
+
+/// FR-650 "Population argument": FR-084 admission binds each population the
+/// call names for a `Population<T>[N]` parameter, with the parameter's
+/// declared maximum, and FR-089 records its identity in the object context.
+fn bind_snapshot_populations(
+    objects: &ObjectEnvironment,
+    models: &[fsl_semantics::model::intake::SelectedModel],
+    parameters: &[(String, ValueType)],
+    call: &Call,
+) -> Result<ObjectEnvironment, Box<RunRefusal>> {
+    use fsl_semantics::model::dispatch::GeneralizationClosure;
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    use fsl_semantics::model::population::{
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
+    };
+    let mut environment = objects.clone();
+    for (position, (name, value_type)) in parameters.iter().enumerate() {
+        let ValueType::Population(maximum) = value_type else {
+            continue;
+        };
+        let Some(named) = call
+            .wire_arguments
+            .iter()
+            .find(|argument| argument.parameter == *name)
+            .and_then(|argument| argument.value.get("population"))
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let Some(members) = objects.population_members(named) else {
+            continue;
+        };
+        let wrong = || Box::new(RunRefusal::WrongValueKind { position });
+        let Some((model, key)) = models.iter().find_map(|model| {
+            model
+                .view
+                .domain_package()
+                .records
+                .iter()
+                .find_map(|record| match record {
+                    DomainPackageRecord::Population(population) if population.key.node == named => {
+                        Some((model, population.key.clone()))
+                    }
+                    _ => None,
+                })
+        }) else {
+            continue;
+        };
+        let documents = members
+            .iter()
+            .map(|member| {
+                model
+                    .view
+                    .type_identities()
+                    .iter()
+                    .find(|(_, identity)| *identity == member.object_type())
+                    .map(|(declaration, _)| PopulationMember {
+                        object: member.object().as_str().to_owned(),
+                        type_identity: declaration.clone(),
+                        field_values: Vec::new(),
+                    })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(wrong)?;
+        let document = PopulationDocument {
+            model_identity: model.view.model_selection().identity.clone(),
+            members: documents,
+        };
+        let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+        let AdmissionOutcome::Admitted(binding) = admit_binding(
+            &model.view,
+            &document,
+            &key,
+            GeneralizationClosure::Closed,
+            *maximum,
+            &mut meter,
+        ) else {
+            return Err(wrong());
+        };
+        environment = environment.with_population(binding).map_err(|_| wrong())?;
+    }
+    Ok(environment)
 }
 
 /// FR-650 "Arguments": the object world of the call's snapshot, admitted

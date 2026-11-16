@@ -411,12 +411,12 @@ fn a_deep_value_round_trips_and_null_refuses() {
 #[trace("TC-2375", "FR-650-AC-14")]
 fn a_population_result_is_a_set_of_references() {
     let directory = spine_dir(
-        "function all using v(p: Population<Config::ConfigVersion>[4]): \
+        "function members using v(p: Population<Config::ConfigVersion>[4]): \
          Population<Config::ConfigVersion>[4] pure { p }\n",
     );
     let value = completed(&spine_call(
         directory.path(),
-        "all",
+        "members",
         json!([{"parameter": "p", "value": {"population": population()}}]),
     ));
     let members = value["set"].as_array().expect("a set");
