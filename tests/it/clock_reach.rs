@@ -144,7 +144,7 @@ fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     assert_eq!(exit, 0, "{p90}");
     assert_eq!(p90["disposition"]["temporal"]["kind"], "holds");
     // The exit ladder (FR-285), not the refusal-record map `category_of`.
-    let category = fsl_foundation::diagnostic::Code::UnsupportedConstruct.category();
+    let category = model_subject_aggregate_refusal().code().category();
     assert_eq!(
         category,
         filament_semantic_value::catalog::Category::Unsupported
@@ -159,10 +159,23 @@ fn a_quantile_aggregate_reaches_a_verdict_through_run() {
 #[trace("TC-2387", "FR-194-AC-13")]
 fn the_model_subject_aggregate_refusal_is_unsupported() {
     // The exit ladder (FR-285), not the refusal-record map `category_of`.
-    let category = fsl_foundation::diagnostic::Code::UnsupportedConstruct.category();
+    let category = model_subject_aggregate_refusal().code().category();
     assert_eq!(
         category,
         filament_semantic_value::catalog::Category::Unsupported
     );
     assert_eq!(category.exit_code(), 21);
+}
+
+/// The model-subject aggregate refusal (FR-194-AC-7) as the checker raises
+/// it: `unsupported_construct`/`expression-form`, read from the refusal.
+fn model_subject_aggregate_refusal() -> fsl_semantics::check::TemporalCause {
+    let cause = fsl_semantics::check::TemporalCause::AggregateModelSubject {
+        span: fsl_foundation::Span { start: 0, end: 1 },
+    };
+    assert_eq!(
+        (cause.code().to_string(), cause.tag()),
+        ("unsupported_construct".to_owned(), "expression-form")
+    );
+    cause
 }

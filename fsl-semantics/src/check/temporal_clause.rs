@@ -1760,7 +1760,10 @@ fn clause_clock(
                 declarations.timed.units.scale(role),
                 Ok(_) | Err(TimeUnitCause::AffineUnit { .. })
             );
-        if !timed_profile && (spells_unit || role == MODEL_STEPS || role == timed::MODEL_TIME) {
+        // FR-610 "Unit-spelled role" refuses under every profile; under the
+        // timed profile the model binding names are `role_binding`'s to refuse.
+        let model_name = role == MODEL_STEPS || role == timed::MODEL_TIME;
+        if spells_unit || (!timed_profile && model_name) {
             return Err(TemporalCause::ClockRoleSpellsTick {
                 role: role.to_owned(),
                 profile,

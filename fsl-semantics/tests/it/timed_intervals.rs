@@ -411,6 +411,47 @@ fn the_timed_profile_needs_a_model_time_binding_over_a_timed_model() {
     );
 }
 
+/// FR-610 "Unit-spelled role" (TC-1541): under the timed profile too, a
+/// trace subject's clock role that spells a time unit refuses
+/// `ill_typed`/`type-mismatch` at the clock string, whatever `timed` unit
+/// the role is configured with; the same configuration under a free-text
+/// role binds.
+#[test]
+#[trace("TC-1541", "FR-610-AC-2")]
+fn a_unit_spelled_role_over_a_trace_subject_refuses_under_the_timed_profile() {
+    let units = format!("{UNITS}record Loose {{ n: Integer; }}\n");
+    let body = "eventually[0 ms, 3 ms] holds(c.n = 1)";
+    let timed_role = |clock: &str| {
+        let (text, package, _) = check_with(&units, "Loose", clock, body, Vec::new());
+        let clocks = std::collections::BTreeMap::from([(
+            clock.to_owned(),
+            filament_contract_model::ClockConfiguration::Timed { unit: "s".into() },
+        )]);
+        let mut checked = check_clauses(&package.with_clock_configurations(&clocks));
+        let outcome = checked.pop().expect("one clause");
+        (text, outcome)
+    };
+    let (text, outcome) = timed_role("ms");
+    let cause = cause_of(outcome);
+    assert_eq!(
+        cause,
+        TemporalCause::ClockRoleSpellsTick {
+            role: "ms".to_owned(),
+            profile: TemporalProfile::Timed,
+            span: first(&text, "\"ms\""),
+        }
+    );
+    assert_eq!(
+        (cause.code(), cause.tag()),
+        (Code::IllTyped, "type-mismatch")
+    );
+    let (_, outcome) = timed_role("plant");
+    assert!(
+        outcome.is_ok(),
+        "a free-text role binds its timed unit: {outcome:?}"
+    );
+}
+
 /// FR-233 "Intervals" through FR-230's time units: a step interval has
 /// bounds with no unit (`ill_typed`/`type-mismatch`), `[a, *]` refuses as
 /// ADR-014 TR-3 states, and a bound whose unit is unknown or of another
