@@ -47,6 +47,28 @@ pub(super) struct CompileRequest {
     /// FR-640: the clock configurations by clock name; empty when absent.
     #[serde(default, deserialize_with = "clocks")]
     pub clocks: fsl_replay::spine::RequestClocks,
+    /// FR-810: the file the checked package is written to; none when absent.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub output: Option<OutputMember>,
+}
+
+/// FR-810's closed `output` record.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OutputMember {
+    #[serde(deserialize_with = "package_path")]
+    pub package: std::path::PathBuf,
+}
+
+fn package_path<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<std::path::PathBuf, D::Error> {
+    match serde_json::Value::deserialize(decoder)? {
+        serde_json::Value::String(path) if !path.is_empty() => Ok(path.into()),
+        _ => Err(serde::de::Error::custom(
+            "output member \"package\" must be a non-empty string",
+        )),
+    }
 }
 
 /// The compiler accepts its legacy single-program object or FR-480's ordered

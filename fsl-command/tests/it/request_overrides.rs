@@ -85,6 +85,7 @@ fn compile_entries_take_the_override_as_the_member() {
     let supplied = raw(&clocks());
     let overrides = RequestOverrides {
         clocks: Some(&supplied),
+        ..Default::default()
     };
 
     let bytes = command::compile_with_overrides(&bare, &overrides).unwrap();
@@ -117,6 +118,7 @@ fn run_entries_take_the_override_as_the_member() {
     let supplied = raw(&unused());
     let overrides = RequestOverrides {
         clocks: Some(&supplied),
+        ..Default::default()
     };
 
     let expected = refusal_of(&command::run(&member).unwrap_err());
@@ -137,6 +139,7 @@ fn run_entries_take_the_override_as_the_member() {
         RunLimits::default(),
         &RequestOverrides {
             clocks: Some(&malformed),
+            ..Default::default()
         },
     )
     .err()
@@ -167,6 +170,7 @@ fn a_member_and_an_override_together_refuse() {
     let supplied = raw(&clocks());
     let overrides = RequestOverrides {
         clocks: Some(&supplied),
+        ..Default::default()
     };
     let errors = [
         command::compile_with_overrides(&compile, &overrides).unwrap_err(),
@@ -212,6 +216,7 @@ fn a_malformed_override_refuses_as_a_malformed_member_does() {
     for (supplied, member) in [(unknown, "events"), (repeated, "events")] {
         let overrides = RequestOverrides {
             clocks: Some(&supplied),
+            ..Default::default()
         };
         let error = command::compile_with_overrides(&bare, &overrides).unwrap_err();
         let envelope = refusal_of(&error);
