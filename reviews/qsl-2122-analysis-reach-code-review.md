@@ -1,0 +1,82 @@
+---
+id: SR-2026111610120001
+title: "code review of PR 2743 FSL analysis reach"
+type: SpecReview
+analysis: code-review
+scope: "agent-ix/filament-spec-language; PR 2743 head 39b65c91fc938a547ce59cf47de935203db19e10; fsl-analyze/src/analyze/{document,request,items,clause_item,derived_item,reduction_item,state_graph_item,timed_item}.rs, fsl-analyze/src/analyze.rs, fsl-analyze/src/model_check/manifest.rs, fsl-replay/src/{outcome.rs,outcome/counterexample.rs,proof_result.rs,lib.rs}, fsl-route/src/lib.rs, fsl-analyze/tests/it/*"
+review_set: subset
+evaluated_revision: "39b65c91fc938a547ce59cf47de935203db19e10"
+relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-620
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-623
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-626
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-627
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-628
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-632
+    type: references
+---
+
+## Summary
+
+Tickets: QSL-2122, QSL-2123, QSL-2129, QSL-2124, QSL-2125 (one commit each, plus the QSL-2122/2123 finish commit 39b65c91f). Code review with the rust-review lane (rust-style loaded) of `git diff origin/main...HEAD`. The branch is based on W5 (#2744); origin/main also has #2745, which this diff does not touch. Out of scope by the brief: the EN-1 invariant item (QSL-2301), `record.backend` (W6), the QSL-2296 spec questions and QSL-1900 (QSL-2299). The five unspecified state-graph choices recorded in QSL-2296 are not re-ruled here.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | medium | The unrouted check now fires only for a `supported` disposition, so `requires-bound` (and negotiation's own `unsupported`) also override it, not only the family refusal the comment names; an item with an unread member can be told to add a bound that would still leave it unsupported | fsl-analyze/src/analyze/document.rs:1465-1486 |
+| FND-002 | medium | A derived item resolved by model alias echoes the named `backend` but keeps candidates computed with no backend, so an unknown backend never settles `unknown-backend` and `en-6` on an untimed subject still runs EN-1 | fsl-analyze/src/analyze/document.rs:918-968, 1208-1212 |
+| FND-003 | medium | `TimedSystem::with_max_clocks` refusals map to `runtime_invariant`/`established-invariant-broken`, including `NotSimulated::RequiresBound` and `Unbounded`, which depend on the request's binding; zone search maps the same refusal to `RequiresBound` | fsl-analyze/src/analyze/timed_item.rs:134-136, 272-274 |
+| FND-004 | medium | A state-graph item skips FR-243's timing restriction and runs on EN-1's untimed system even over a timed subject; EN-6 lists no `state_graph_forms`, so the timed case should settle `unsupported`, not run untimed | fsl-analyze/src/analyze/document.rs:838-846, fsl-analyze/src/analyze/request.rs:456-469, 676 |
+| FND-005 | medium | Ignore reasons of split stubs name the ticket that closes with this PR, not the ticket that unblocks them (QSL-2301 for the EN-1 invariant item, QSL-2296 for the spec questions) | fsl-analyze/tests/it/analyze_cli.rs:108, 259, 315; fsl-analyze/tests/it/analyze_coverage_cli.rs:237, 275; fsl-analyze/tests/it/analyze_family_cli.rs:320 |
+| FND-006 | low | `temporal.max_depth` on a deadlock-freedom item is echoed in the item's request but the EN-1 derived run hard-codes `max_depth: None`, so the member is silently ignored | fsl-analyze/src/analyze/derived_item.rs:129 |
+| FND-007 | low | `replay_over` writes `backend: en-1` into the replay request and envelope for every caller, including EN-6 timed replays | fsl-analyze/src/analyze/clause_item.rs:367, 392 |
+| FND-008 | low | `max_clocks` left `sets_other_engine_limits`, so an untimed EN-1 item accepts it silently (it was `unsupported`), and no un-ignored test shows EN-6 reads it | fsl-analyze/src/analyze/document.rs:393-400, 1042 |
+| FND-009 | low | A proved state-graph item whose evidence fails to spell loses its evidence silently, while the same failure on a refuted item is a fault; FR-628 requires a `possible` proof to carry its witness | fsl-analyze/src/analyze/state_graph_item.rs:184-194 |
+| FND-010 | low | QSL-2129 tests under-assert: timed deadlock accepts `proved` or `refuted`, the exact-delay check accepts any object or string, and the ticket's nested `until` is tested as nested `eventually` | fsl-analyze/tests/it/analyze_timed_cli.rs:68, 103; fsl-analyze/tests/it/zone_mitl.rs:208 |
+| FND-011 | low | Doc comment of `a_derived_item_over_a_name_that_is_no_model_alias_is_an_unknown_claim` starts mid-sentence | fsl-analyze/tests/it/analyze_cli.rs:402 |
+| FND-012 | low | PR body is stale: commit shas do not match the branch and it lists QSL-2295 stubs as ignored that 39b65c91f un-ignores | PR 2743 body |
+
+## Verdict
+
+REQUEST CHANGES for FND-001 to FND-005. FND-006 to FND-012 are small fixes in the same round.
+
+### FND-001 detail
+
+`analyze_document` (document.rs:1465) now negotiates first and applies the unrouted settlement only when `disposition` is `Supported`. The comment says the intent is that "a kind its claim's family does not admit is refused first (FR-507, FR-627-AC-4)". That is the `InvalidRequest` disposition only. With the guard written as `Supported`, a `RequiresBound` disposition goes through to settlement: an item carrying `premises`, `hybrid`, `abstract_subject`, `smt_encoding` or another member no route reads, whose one candidate is bounded-only, now settles `requires-bound` instead of `unsupported` `unsupported-requested-capability`. Negotiation's own `Unsupported` also replaces the unrouted record (same exit code, different diagnostic payload). Fix: `if unrouted && !matches!(disposition, Disposition::InvalidRequest)`, plus a test with an unread member over an unbounded extent.
+
+### FND-002 detail
+
+`resolve_derived` (document.rs:918) takes the claim from `derived_items(package, subject, registry, &[], 0)`, whose candidates come from `registry.candidates(item.kind(), None)` (line 1211). It then sets `claim.item.backend` from the selection but never recomputes `claim.candidates`. The test double and the driver negotiate from `candidates`, so `{"claim": "M", "backend": "no-such", "temporal": {"item_kind": "deadlock-freedom"}}` settles as if no backend were named, and its echo names a backend its `candidates` do not contain. Fix: when `selection.backend` is set, recompute with `registry.candidates(kind, named)` and the same timing restriction, and add a test for the unknown-backend case.
+
+### FND-003 detail
+
+`TimedSubjectRefusal::NotSimulated(RequiresBound)` is what `TimedSystem` returns for an unbounded root (`zone_mitl.rs::an_unbounded_root_requires_a_bound`), and `Unbounded` is a clock owner whose population has no universe in the binding. Both come from the request's subject. `request.rs:676` forces mode `Bounded` for every zone item, so the extent check does not stop such an item before the run. Fix: map `NotSimulated` to the refusal `zone_refusal` gives for `ZoneCheckRefusal::RequiresBound` (items.rs:898), map `Unbounded` to a typed refusal, and keep `BROKEN` only for the variants the checker guarantees absent.
+
+### FND-004 detail
+
+In `resolve_one` the state-graph branch replaces `restrict_to_timing` instead of adding to it, and in `work` the state-graph arm comes before the timed arms. A `possible` claim over a timed subject therefore runs `ModelSystem` without the timed reading of `TimedSystem`. Applying both restrictions gives `unsupported` for a timed subject, because EN-6 advertises no `state_graph_forms`. That is the honest answer until a timed state-graph route exists. Confidence is low: this review did not confirm what the untimed system does with clock guards.
+
+### FND-005 detail
+
+- `invariant_items_prove_and_refute` names QSL-2122. The work is split to QSL-2301, and `record.backend` to the W6 ruling (QSL-2296).
+- `possible_claims_prove_and_refute` names QSL-2125, and `digital_clocks_agree_and_the_clock_budget_stops` names QSL-2129. Both wait on QSL-2296 (items 5 and 6).
+- The three QSL-2132 stubs wait on QSL-2296 (items 8 and 9).
+
+When QSL-2122, QSL-2125 and QSL-2129 close, nothing points at these stubs. Fix: lead each reason with the unblocking ticket, for example `QSL-2301 (from QSL-2122): ...` and `QSL-2296 (from QSL-2125): ...`.
+
+### What was checked and is sound
+
+- **document.rs ordering (brief item 1).** `InvalidRequest` now wins over unrouted, as FR-627-AC-4 needs, and `a_finite_replay_item_over_a_temporal_clause_is_inapplicable` asserts exit 20, `inapplicable-kind` and family `temporal-trace`. `reductions` on a non-temporal kind stays unrouted. Settlements change only in the FND-001 cases.
+- **QSL-2125 pipeline (brief item 2).** `restrict_to_state_graph_form` keeps only descriptors listing the form, and EN-1 lists all three forms. The unsupported test names `en-6` and gets `unsupported-requested-capability`, exit 21. The FR-393 spelling writes `trap`, `path-pair`, `witness` and `undefined` arms from one function. Each refuted instance is replayed through `replay_model_graph`, and a refuted record with no spelled evidence is a fault, never a verdict. `witness_samples` and `seed` are read only for state-graph claims. On other items they stay unrouted. The five QSL-2296 choices are applied consistently with one another. FND-004 and FND-009 are the only inconsistencies found.
+- **QSL-2124 fixture fix (brief item 3).** `symmetric_document()` sets `symmetric: true` on the domain package's populations, which is FR-150's annotation. The old `symmetric M::counters;` unit text is not FSL. `malformed_selections_are_refused_typed` rewrites `document(false)` so that `"declared"` has no class. The test is unchanged in what it asserts, apart from the `cause.kind` spelling the other analyze tests already use.
+- **QSL-2129 (brief item 4).** Clause, MITL, deadlock and time-lock items over a timed subject run on EN-6 with zone certificates and timed replay. `max_states` and `max_transitions` bound the symbolic states and edges. The wrong-dimension bound is refused at check, exit 20. Gaps: FND-003, FND-007, FND-008 and FND-010.
+- **Internal faults reachable from a request (brief item 5).** FND-003. The other `BROKEN` returns found are guarded by checker invariants (clause letters, clause name, claim occurrence).
+- **No Python and no logic-bearing shell** is in the diff.
+
+Evidence: `nice -n 19 qsl-slot cargo test -p fsl-analyze -p fsl-route -p fsl-replay`: fsl-analyze `it` 1648 passed, 0 failed, 64 ignored (the 9 FSPEC_DIR-gated tests rerun with FSPEC_DIR set, 54 passed); fsl-route + fsl-replay 1754 passed, 0 failed, 20 ignored.
