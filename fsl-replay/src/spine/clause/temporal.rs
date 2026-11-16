@@ -917,8 +917,13 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 },
             };
             let identities = documents.iter().map(observation_identity).collect();
+            let facts = if tape.is_some_and(|tape| tape.open_aggregates) {
+                fsl_eval::temporal::evidence::ClauseFacts::of_checked_letters(clause)
+            } else {
+                fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause)
+            };
             match TimestampedTrace::admit_progressed(
-                &fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause),
+                &facts,
                 identities,
                 assertion,
                 &mut meter,

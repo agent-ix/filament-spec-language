@@ -30,17 +30,26 @@ use crate::counter::UNLIMITED;
 const PATH: &str = "monitor-incremental.native";
 const STAMPED: &str = "filament.temporal.timestamped-event.finite-window/v1";
 const EVENTS: &str = "filament.temporal.event-position.false-extension/v1";
+const SAMPLES: &str = "filament.temporal.fixed-sample.false-extension/v1";
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
     profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
     profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
     profile i = \"filament.temporal.infinite-trace/v1\";\n\
+    profile f = \"filament.temporal.fixed-sample.false-extension/v1\";\n\
     record Reading { level: Int[0, 9]; }\n\
+    record Run { level: Int[0, 9]; stopped: Boolean; }\n\
     temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
     temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
     temporal Reaches using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 2) }\n\
-    temporal Never using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 2) }\n    temporal Below using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 9) }\n    temporal Recent using e over (r: Reading) clock \"events\" on origin { always[0,9] (count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1) }\n";
+    temporal Never using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 2) }\n    temporal Below using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 9) }\n    temporal Recent using e over (r: Reading) clock \"events\" on origin { always[0,9] (count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1) }\n\
+    temporal Bounded using e over (r: Reading) clock \"events\" on origin { eventually[0,1] holds(r.level = 2) }\n\
+    temporal AtMostOne using i over (r: Reading) clock \"steps\" on origin { always holds(r.level <= 1) }\n\
+    temporal Nine using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 9) }\n\
+    temporal Sampled using f over (r: Reading) clock \"samples\" on origin { eventually[0,3] holds(r.level = 9) }\n\
+    temporal Past using e over (r: Reading) clock \"events\" on each (q: Reading) { once[0,2] holds(r.level = 9) }\n\
+    temporal Fast using e over (r: Run) clock \"events\" on origin { capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }\n";
 
 struct World {
     unit: spine::CheckedUnit,
@@ -69,6 +78,15 @@ fn selections(parsed: &fsl_cst::ParsedSource) -> Vec<TemporalClockSelection> {
                 },
                 STAMPED => ClockConfiguration::TimestampedEvent {
                     timestamp_unit: "ms".into(),
+                },
+                SAMPLES => ClockConfiguration::FixedSample {
+                    epoch: fsl_package::ClockExactNumber::Integer {
+                        decimal: "0".into(),
+                    },
+                    period: fsl_package::ClockExactNumber::Integer {
+                        decimal: "1".into(),
+                    },
+                    unit: "sample".into(),
                 },
                 _ => return None,
             };
@@ -1057,7 +1075,6 @@ fn retained_identities_end_a_pending_clause_incomplete() {
 /// stay `Pending`. It waits on FR-820's value pruning.
 #[test]
 #[trace("TC-1667", "FR-643-AC-5")]
-#[ignore = "QSL-2307: FR-820 incremental ClauseState and value pruning"]
 fn recent_reports_incomplete_at_the_retained_positions_limit() {
     use filament_semantic_value::catalog::Category;
     let world = world();
@@ -1457,4 +1474,500 @@ fn a_finite_session_ignores_a_non_matching_selection_list() {
             "prefix {index}"
         );
     }
+}
+
+// FR-820 (TC-2320, TC-2441): FR-643's sessions are built on the carried
+// clause state, so its own properties are tested here, over the unit above.
+
+use fsl_replay::spine::{
+    AdmittedPosition, AdmittedValue, ClauseLimits, ClauseOpen, ClauseRunReport, ClauseState,
+    ClauseTraceKind,
+};
+
+fn clause_node<'a>(world: &'a World, name: &str) -> &'a fsl_semantics::check::TemporalClauseNode {
+    world
+        .unit
+        .package()
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == name)
+        .expect("the clause is declared")
+}
+
+fn clause_open<'a>(
+    world: &'a World,
+    kind: ClauseTraceKind,
+    binding: Option<TraceBinding>,
+    lower_boundary: ProgressLowerBoundary,
+) -> ClauseOpen<'a> {
+    ClauseOpen {
+        kind,
+        lower_boundary,
+        binding,
+        cover: None,
+        ledger: None,
+        sources: &world.sources,
+        authentication: None,
+        packages: &world.packages,
+        over: None,
+        limits: ClauseLimits {
+            model: ModelNormalizationLimits::default(),
+            observation: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+        },
+    }
+}
+
+fn finite_state<'a>(world: &'a World, name: &str) -> ClauseState<'a> {
+    ClauseState::open(
+        world.unit.package(),
+        clause_node(world, name),
+        &clause_open(
+            world,
+            ClauseTraceKind::Finite,
+            None,
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens")
+}
+
+/// The record sample `text` of the clause `name`'s subject at `index`.
+fn admitted(world: &World, name: &str, text: &str, index: u64) -> AdmittedPosition<'static> {
+    let filament_exact::ValueType::Composite(record) = &clause_node(world, name).clause().over().1
+    else {
+        panic!("a record subject");
+    };
+    let value = fsl_semantics::model::observation::admit_record_sample(
+        world.unit.package().graph().scope().types(),
+        record,
+        text.as_bytes(),
+    )
+    .expect("the sample admits");
+    AdmittedPosition {
+        reference: spine::sample_position(text),
+        stamp: index,
+        order_key: None,
+        value: AdmittedValue::Sample(value),
+    }
+}
+
+/// Every member of a report but its usage, which counts the work the run
+/// itself did.
+fn members(report: &ClauseRunReport) -> String {
+    format!(
+        "{:?} | {:?} | {:?} | {:?} | {:?} | {:?} | {:?} | {:?} | {:?}",
+        report.disposition,
+        report.basis,
+        report.counterexample,
+        report.decisive,
+        report.finite_window,
+        report.refused_at,
+        report.ledger,
+        report.witness.is_some(),
+        report.consequent_source_events,
+    )
+}
+
+/// FR-820-AC-1 (TC-2320): `Bounded`, `Reaches` and `always holds(level <= 1)`
+/// over levels 0, 1, 2, 1, 0: the report after each `advance` is FR-330's
+/// over the prefix of that length, member for member.
+#[test]
+#[trace("TC-2320", "FR-820-AC-1")]
+fn each_advance_reports_the_batch_report_over_the_prefix() {
+    let world = world();
+    let cancel = Cancel::new();
+    let levels = [0, 1, 2, 1, 0];
+    for name in ["Bounded", "Reaches", "AtMostOne"] {
+        let mut state = finite_state(&world, name);
+        for (index, level) in levels.iter().enumerate() {
+            let observed = text(*level);
+            let advance = state
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+            let batch = world.batch_report(name, &levels[..=index]);
+            assert_eq!(
+                members(&advance.report),
+                members(&batch),
+                "{name} after position {index}"
+            );
+        }
+    }
+    // The violations carry their counterexamples, built from the identities.
+    let mut never = finite_state(&world, "AtMostOne");
+    let mut last = None;
+    for (index, level) in levels.iter().enumerate() {
+        let observed = text(*level);
+        last = Some(
+            never
+                .advance(admitted(&world, "AtMostOne", &observed, index as u64), &cancel)
+                .expect("advances"),
+        );
+    }
+    let report = last.expect("a report").report;
+    assert_eq!(
+        report.counterexample.as_ref().map(|c| c.prefix.len()),
+        Some(5)
+    );
+}
+
+/// FR-820-AC-2 (TC-2320): over 1,000 samples cycling 0 to 8 the
+/// infinite-trace clauses hold no value, the window clause holds the
+/// `min(k, 4)` values of its window, and every report is FR-330's; over 2,
+/// 0, 2 the window clause reports `violation` at position 2.
+#[test]
+#[trace("TC-2320", "FR-820-AC-2")]
+fn a_state_holds_only_the_values_its_clause_reads() {
+    use filament_semantic_value::catalog::Category;
+    let world = world();
+    let cancel = Cancel::new();
+    let levels: Vec<i64> = (0..1000).map(|k| k % 9).collect();
+    let mut below = finite_state(&world, "Below");
+    let mut nine = finite_state(&world, "Nine");
+    let mut recent = finite_state(&world, "Recent");
+    for (index, level) in levels.iter().enumerate() {
+        let observed = text(*level);
+        let k = index as u64 + 1;
+        for (name, state) in [("Below", &mut below), ("Nine", &mut nine)] {
+            let advance = state
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+            assert_eq!(state.retained(), 0, "{name} after position {k}");
+            if index % 97 == 0 || index == levels.len() - 1 {
+                assert_eq!(
+                    members(&advance.report),
+                    members(&world.batch_report(name, &levels[..=index])),
+                    "{name} after position {k}"
+                );
+            }
+        }
+        // `Recent`'s activation `always[0,9]` is open through position 9.
+        if index < 10 {
+            let advance = recent
+                .advance(admitted(&world, "Recent", &observed, index as u64), &cancel)
+                .expect("advances");
+            assert_eq!(recent.retained(), k.min(4), "Recent after position {k}");
+            assert_eq!(
+                members(&advance.report),
+                members(&world.batch_report("Recent", &levels[..=index])),
+                "Recent after position {k}"
+            );
+        }
+    }
+    assert_eq!(
+        world.batch_report("Recent", &levels[..10]).category(),
+        Category::Success
+    );
+    let mut window = finite_state(&world, "Recent");
+    let mut last = None;
+    for (index, level) in [2, 0, 2].iter().enumerate() {
+        let observed = text(*level);
+        last = Some(
+            window
+                .advance(admitted(&world, "Recent", &observed, index as u64), &cancel)
+                .expect("advances"),
+        );
+    }
+    let report = last.expect("a report").report;
+    assert_eq!(report.category(), Category::Violation);
+    assert_eq!(
+        members(&report),
+        members(&world.batch_report("Recent", &[2, 0, 2]))
+    );
+}
+
+/// FR-820-AC-3 (TC-2320): a state written after position 2 and read back
+/// reports, for positions 3 and 4, what the uninterrupted state reports; a
+/// cancelled `advance` leaves the bytes unchanged.
+#[test]
+#[trace("TC-2320", "FR-820-AC-3")]
+fn a_state_read_back_from_its_bytes_continues_as_the_original() {
+    let world = world();
+    let cancel = Cancel::new();
+    let levels = [0, 1, 2, 1, 0];
+    for name in ["Bounded", "Reaches", "AtMostOne", "Recent"] {
+        let mut original = finite_state(&world, name);
+        for (index, level) in levels[..3].iter().enumerate() {
+            let observed = text(*level);
+            original
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+        }
+        let bytes = original.to_bytes().expect("writes");
+        let stopped = Cancel::new();
+        stopped.cancel(filament_exact::CancelCause::Requested);
+        let observed = text(levels[3]);
+        assert!(original
+            .advance(admitted(&world, name, &observed, 3), &stopped)
+            .is_err());
+        assert_eq!(original.to_bytes().expect("writes"), bytes, "{name}");
+        let mut resumed = ClauseState::from_bytes(
+            world.unit.package(),
+            clause_node(&world, name),
+            &clause_open(
+                &world,
+                ClauseTraceKind::Finite,
+                None,
+                ProgressLowerBoundary::AuthoritativeOrigin,
+            ),
+            &bytes,
+            &cancel,
+        )
+        .expect("reads back");
+        assert_eq!(
+            members(&resumed.report()),
+            members(&original.report()),
+            "{name}"
+        );
+        for index in 3..5 {
+            let observed = text(levels[index]);
+            let a = original
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+            let b = resumed
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+            assert_eq!(members(&a.report), members(&b.report), "{name} at {index}");
+            assert_eq!(resumed.retained(), original.retained(), "{name} at {index}");
+        }
+    }
+}
+
+fn samples_binding() -> TraceBinding {
+    TraceBinding {
+        profile: SAMPLES.to_owned(),
+        clock_name: "samples".to_owned(),
+        parameters: ClockConfiguration::FixedSample {
+            epoch: fsl_package::ClockExactNumber::Integer {
+                decimal: "0".into(),
+            },
+            period: fsl_package::ClockExactNumber::Integer {
+                decimal: "1".into(),
+            },
+            unit: "sample".into(),
+        },
+    }
+}
+
+/// FR-820-AC-4 (TC-2320): `E` over a `Finite` trace reports the closed
+/// reading with no `decided` until level 2 decides it; a fixed-sample
+/// `Progressed` state is decided by a watermark alone; a `HistoryCutoff`
+/// boundary reports `MissingHistory`.
+#[test]
+#[trace("TC-2320", "FR-820-AC-4")]
+fn the_open_scope_reading_and_the_lower_boundary_reach_the_state() {
+    use filament_semantic_value::catalog::Category;
+    let world = world();
+    let cancel = Cancel::new();
+    let mut e = finite_state(&world, "E");
+    for (index, level) in [0, 1].iter().enumerate() {
+        let observed = text(*level);
+        let advance = e
+            .advance(admitted(&world, "E", &observed, index as u64), &cancel)
+            .expect("advances");
+        assert_eq!(advance.report.category(), Category::Violation);
+        assert!(advance.decided.is_none(), "not decided at {index}");
+    }
+    let observed = text(2);
+    let advance = e
+        .advance(admitted(&world, "E", &observed, 2), &cancel)
+        .expect("advances");
+    let decided = advance.decided.expect("decided");
+    assert_eq!(decided.category(), Category::Success);
+    assert_eq!(
+        decided.finite_window.as_ref().map(|window| window.basis),
+        Some(fsl_replay::SettlementBasis::DecisiveWitness)
+    );
+
+    // FR-504-AC-1: one position with `p` false, then watermark 3 alone.
+    let mut sampled = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Sampled"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Progressed,
+            Some(samples_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    let observed = text(0);
+    sampled
+        .advance(admitted(&world, "Sampled", &observed, 0), &cancel)
+        .expect("advances");
+    sampled
+        .assert_progress(&progress(0), &cancel)
+        .expect("watermark 0");
+    let advance = sampled
+        .assert_progress(&progress(3), &cancel)
+        .expect("watermark 3");
+    assert!(
+        matches!(
+            advance.report.disposition,
+            spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Violated { at: 0 })
+        ),
+        "{:?}",
+        advance.report.disposition
+    );
+    assert_eq!(
+        advance.report.finite_window.as_ref().map(|window| window.basis),
+        Some(fsl_replay::SettlementBasis::DecisiveCounterexample)
+    );
+    assert_eq!(advance.report.basis, fsl_replay::SettlementBasis::ClosedScope);
+    assert!(advance.decided.is_some(), "a watermark alone decides it");
+
+    // FR-504-AC-6: `once[0,2]` `on each`, two positions, `p` false.
+    let mut past = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Past"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Progressed,
+            Some(events_binding()),
+            ProgressLowerBoundary::HistoryCutoff,
+        ),
+    )
+    .expect("opens");
+    for index in 0..2 {
+        let observed = text(0);
+        past.advance(admitted(&world, "Past", &observed, index), &cancel)
+            .expect("advances");
+    }
+    let advance = past
+        .assert_progress(&progress(1), &cancel)
+        .expect("progress");
+    assert!(
+        format!("{:?}", advance.report.disposition).contains("MissingHistory"),
+        "{:?}",
+        advance.report.disposition
+    );
+}
+
+fn run_text(level: i64, stopped: bool) -> String {
+    format!(r#"{{"level":{{"integer":"{level}"}},"stopped":{{"boolean":{stopped}}}}}"#)
+}
+
+/// FR-860-AC-6 (TC-2441): `Fast`'s state written after position 1 and read
+/// back reports, after positions 2 and 3, what the uninterrupted state
+/// reports, `violation` at position 0, with the capture carried in its bytes
+/// and not counted in `retained()`.
+#[test]
+#[trace("TC-2441", "FR-860-AC-6")]
+fn a_capture_is_kept_in_the_state_bytes() {
+    let world = world();
+    let cancel = Cancel::new();
+    let levels = [5, 1, 1, 1];
+    let mut original = finite_state(&world, "Fast");
+    for (index, level) in levels[..2].iter().enumerate() {
+        let observed = run_text(*level, false);
+        original
+            .advance(admitted(&world, "Fast", &observed, index as u64), &cancel)
+            .expect("advances");
+        assert_eq!(original.retained(), 0, "the capture is not a held value");
+    }
+    let bytes = original.to_bytes().expect("writes");
+    let written: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+    assert_eq!(written["captures"], serde_json::json!([{"boolean": true}]));
+    let mut resumed = ClauseState::from_bytes(
+        world.unit.package(),
+        clause_node(&world, "Fast"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Finite,
+            None,
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+        &bytes,
+        &cancel,
+    )
+    .expect("reads back");
+    let mut last = None;
+    for (index, level) in levels.iter().enumerate().skip(2) {
+        let observed = run_text(*level, false);
+        let a = original
+            .advance(admitted(&world, "Fast", &observed, index as u64), &cancel)
+            .expect("advances");
+        let b = resumed
+            .advance(admitted(&world, "Fast", &observed, index as u64), &cancel)
+            .expect("advances");
+        assert_eq!(members(&a.report), members(&b.report), "at {index}");
+        assert_eq!(resumed.retained(), 0);
+        last = Some(b.report);
+    }
+    assert!(
+        matches!(
+            last.expect("a report").disposition,
+            spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Violated { at: 0 })
+        ),
+        "the capture keeps the value it took at position 0"
+    );
+}
+
+/// FR-643-AC-9 (TC-2322): over 1,000 samples cycling 0 to 8 with
+/// `retained_positions` 4, `Below` and `Nine` stay `Pending` to the end with
+/// no `incomplete`, `Recent` settles `success` at step 10, and the checkpoint
+/// after the last sample holds no admitted value; over 2, 0, 2 `Recent`
+/// settles `violation` at step 3.
+#[test]
+#[trace("TC-2322", "FR-643-AC-9")]
+fn a_long_stream_keeps_only_the_values_its_clauses_read() {
+    use filament_semantic_value::catalog::Category;
+    let world = world();
+    let cancel = Cancel::new();
+    let mut session = world
+        .open(&["Below", "Nine", "Recent"], MonitorTraceKind::Finite, None, 4)
+        .expect("opens");
+    let mut last = None;
+    for k in 0..1000 {
+        let observed = text(k % 9);
+        let step = session.step(sample(&observed), &cancel).expect("steps");
+        assert!(!step.statuses[0].1.is_settled(), "Below at step {}", k + 1);
+        assert!(!step.statuses[1].1.is_settled(), "Nine at step {}", k + 1);
+        if k == 9 {
+            assert_eq!(category(&step, 2), Category::Success);
+            assert_eq!(
+                step.statuses[2].1.settlement().map(|s| (s.step, s.trigger)),
+                Some((10, fsl_analyze::monitor::SettleTrigger::Decided))
+            );
+        }
+        if k < 9 {
+            assert!(!step.statuses[2].1.is_settled(), "Recent at step {}", k + 1);
+        }
+        last = Some(step);
+    }
+    let step = last.expect("a step");
+    assert_eq!(category(&step, 0), Category::Pending);
+    assert_eq!(category(&step, 1), Category::Pending);
+    let state: serde_json::Value =
+        serde_json::from_slice(session.checkpoint().expect("checkpoints").as_bytes())
+            .expect("JSON");
+    for clause in state["clauses"].as_array().expect("clauses") {
+        let Some(text) = clause["state"].as_str() else {
+            continue;
+        };
+        let carried: serde_json::Value = serde_json::from_str(text).expect("a clause state");
+        assert_eq!(carried["values"], serde_json::json!([]));
+        assert!(carried["positions"]
+            .as_array()
+            .expect("positions")
+            .iter()
+            .all(|position| !position["letter"].is_null()));
+    }
+
+    let mut session = world
+        .open(&["Recent"], MonitorTraceKind::Finite, None, 4)
+        .expect("opens");
+    let mut last = None;
+    for level in [2, 0, 2] {
+        let observed = text(level);
+        last = Some(session.step(sample(&observed), &cancel).expect("steps"));
+    }
+    let step = last.expect("a step");
+    assert_eq!(category(&step, 0), Category::Violation);
+    assert_eq!(
+        step.statuses[0].1.settlement().map(|s| s.step),
+        Some(3)
+    );
 }

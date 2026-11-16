@@ -190,6 +190,7 @@ struct Seen {
 }
 
 /// FR-820's carried state of one clause over one trace.
+#[derive(Clone)]
 pub struct ClauseState<'a> {
     package: &'a fsl_package::CheckedPackage,
     node: &'a TemporalClauseNode,

@@ -369,8 +369,16 @@ fn evaluate_window_over(
         classes: valuations.classes,
         silent_from: valuations.silent_from,
     };
+    let facts = match positions {
+        ObservedPositions::Tape(_) => {
+            crate::temporal::facts::ClauseFacts::of_checked_letters(clause.clause())
+        }
+        ObservedPositions::Objects { .. } | ObservedPositions::Samples(_) => {
+            crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
+        }
+    };
     let result = evaluate_finite_window(
-        &crate::temporal::facts::ClauseFacts::of_checked(clause.clause()),
+        &facts,
         trace,
         &mut letters,
         meter,
