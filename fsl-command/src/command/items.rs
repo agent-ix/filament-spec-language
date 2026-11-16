@@ -381,10 +381,9 @@ pub(super) fn run_bytes(
                                 .transpose()?;
                             run_value_invariants(*request, &reference, invocation.as_ref())
                         }
-                        super::PreparedRun::Function(_) => Err(refused(
-                            "value_invariants",
-                            "expected a clause-run preparation",
-                        )),
+                        super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_) => Err(
+                            refused("value_invariants", "expected a clause-run preparation"),
+                        ),
                     });
             prepared.push((index, object, ItemExecution::ValueInvariants(result)));
         } else {
@@ -395,7 +394,10 @@ pub(super) fn run_bytes(
                 overrides,
             ) {
                 Ok(super::PreparedRun::Clause(request)) => ItemExecution::Clause(Some(request)),
-                Ok(prepared) => ItemExecution::Run(execute_prepared(prepared)),
+                Ok(
+                    prepared
+                    @ (super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_)),
+                ) => ItemExecution::Run(execute_prepared(prepared)),
                 Err(cause) => ItemExecution::Run(Err(cause)),
             };
             prepared.push((index, object, execution));
