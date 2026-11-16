@@ -59,3 +59,18 @@ REQUEST CHANGES for FND-001. The rest of the change is consistent and ready.
 | ID | Disposition | Resolution |
 | --- | --- | --- |
 | FND-001 | fixed | FR-268-AC-3 keeps the refused-domain case. The domain now calls `function z using v(x: Integer): Int[0, 0] pure { count<Int[0, 0]>(m in ints(sequence[x]): m > 0) }` in a Kernel-checked package, so the count sits in a function body outside the declared clause. The FR-766 Notes say a called function's body is checked under its own declaration's mode and its unproved range belongs to that body, not to the clause, which sees `Int[0, 0]` from the signature. So it composes with FR-495. The FR-766 behavior bullet names called function bodies. TC-743 and the four QSL-2003 ignore notes say the witness.rs fixture moves its count into `z` and keeps its step-2 refusal record. |
+
+## Round 2 (d59766d3e)
+
+| ID | Round-2 verdict | Evidence |
+| --- | --- | --- |
+| FND-001 | fixed | FR-268-AC-3 keeps its run-time refused-domain case. The domain `ints(sequence[0, z(self.versionNumber)])` calls `function z ... Int[0, 0] pure { count<Int[0, 0]>(...) }` under `CheckMode::Kernel`. FR-766 now has a Kernel bullet ("including the body of a function a declared clause calls"), and its Notes explain why this composes. TC-743 step 3 and the three ignore notes say the same thing. |
+
+The fix breaks nothing new. The fix agrees with FR-495's declared-clause
+bullet, which says "`Kernel` selects how a function body is checked" and
+governs only the obligations of the clause itself. The clause's call is typed
+`Int[0, 0]` by the function's signature, so the clause has no unproved
+obligation. Under `Linked` the count still refuses in `z`'s body, so nothing
+is narrowed. The fix adds no new ids.
+
+Round-2 verdict: APPROVE.
