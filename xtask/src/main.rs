@@ -16,14 +16,15 @@ use std::process::ExitCode;
 use xtask::{
     canonical_types, checked_input, conformance,
     error::{Error, Result},
-    qualification, refinement, route_lint, seam_probe, string_edge, test_suites, Outcome,
+    examples_check, qualification, refinement, route_lint, seam_probe, string_edge, test_suites,
+    Outcome,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
                      cargo xtask route-lint\n       cargo xtask checked-input\n       \
                      cargo xtask test-suites <lane> [<cargo test args>]\n       \
                      cargo xtask conformance-input\n       cargo xtask conformance\n       \
-                     cargo xtask ci\n       cargo xtask refinement versioning <corpus>\n       \
+                     cargo xtask ci\n       cargo xtask examples-check\n       cargo xtask refinement versioning <corpus>\n       \
                      cargo xtask refinement layering <corpus>\n       \
                      cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \\
                      cargo xtask canonical-types [<workspace>]";
@@ -63,6 +64,7 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         "conformance-input" => conformance::check_input(&workspace_root),
         "conformance" => conformance::run(&workspace_root),
         "ci" => conformance::run_ci(&workspace_root),
+        "examples-check" => examples_check::run(&workspace_root),
         _ => Err(Error::Usage(USAGE)),
     };
     summary.map(Outcome::success)

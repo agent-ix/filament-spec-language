@@ -16,6 +16,7 @@ pub mod checked_input;
 pub mod conformance;
 pub mod definition_scan;
 pub mod error;
+pub mod examples_check;
 pub mod feature_scope;
 pub mod import_graph;
 pub mod qualification;
