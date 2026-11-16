@@ -18,11 +18,9 @@ fn corpus_areas() -> impl Iterator<Item = &'static str> {
         .filter(|line| !line.is_empty())
 }
 
-/// A member that may be absent, `null` or a string.
-fn member<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(deserializer).map(Some)
+/// A member that must be present: a string or `null`.
+fn member<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,10 +28,10 @@ fn member<'de, D: serde::Deserializer<'de>>(
 struct Expectation {
     verb: String,
     exit_code: u8,
-    category: Option<String>,
-    /// Absent: not checked. `null`: the outcome reached no stage.
-    #[serde(default, deserialize_with = "member")]
-    last_stage: Option<Option<String>>,
+    category: String,
+    /// Required: the ADR-011 stage the outcome reached, or `null` for none.
+    #[serde(deserialize_with = "member")]
+    last_stage: Option<String>,
     code: Option<String>,
     cause: Option<String>,
     result: Option<Value>,
@@ -456,8 +454,8 @@ fn lifecycle_members(value: &Value) -> Result<(String, Option<String>), String> 
 
 fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<String> {
     let differs = expected.exit_code != actual.exit_code
-        || required_differs(&expected.category, &actual.category)
-        || required_differs(&expected.last_stage, &actual.last_stage)
+        || actual.category.as_ref() != Some(&expected.category)
+        || actual.last_stage.as_ref() != Some(&expected.last_stage)
         || optional_differs(&expected.code, &actual.code)
         || optional_differs(&expected.cause, &actual.cause)
         || expected
@@ -471,9 +469,9 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             expected.verb,
             expected.exit_code,
             actual.exit_code,
-            display_option(&expected.category),
+            expected.category.as_str(),
             display_option(&actual.category),
-            display_stage(&expected.last_stage),
+            display_stage(&Some(expected.last_stage.clone())),
             display_stage(&actual.last_stage),
             display_option(&expected.code),
             display_option(&actual.code),
@@ -482,14 +480,6 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             expected.flips_with.as_deref().unwrap_or("none"),
         )
     })
-}
-
-/// An expected member must be present and equal in the actual outcome; an
-/// outcome that does not expose it differs.
-fn required_differs<T: PartialEq>(expected: &Option<T>, actual: &Option<T>) -> bool {
-    expected
-        .as_ref()
-        .is_some_and(|expected| actual.as_ref() != Some(expected))
 }
 
 fn optional_differs(expected: &Option<String>, actual: &Option<String>) -> bool {
@@ -549,7 +539,7 @@ const ACCEPTING_PROGRAM: &str = include_str!("../fixtures/spine-compile.native")
 const RUN_PROGRAM: &str = include_str!("../fixtures/spine-run.native");
 
 fn expectation(verb: &str, exit_code: u8) -> String {
-    json!({"verb":verb,"exit_code":exit_code,"category":"success"}).to_string()
+    json!({"verb":verb,"exit_code":exit_code,"category":"success","last_stage":"S4"}).to_string()
 }
 
 fn write_case(directory: &Path, name: &str, program: &str, expected: &str) {
@@ -591,7 +581,7 @@ fn corpus_runner_detects_code_and_cause_mismatch() {
             directory.path(),
             "refusing",
             invalid,
-            &json!({"verb":"check","exit_code":20,"category":"refusal","code":"wrong_code","cause":"wrong_cause"}).to_string(),
+            &json!({"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"wrong_code","cause":"wrong_cause"}).to_string(),
         );
     let error = run_directory(directory.path()).unwrap_err();
     assert!(
@@ -614,6 +604,8 @@ fn corpus_runner_reads_code_from_run_outcome() {
         &json!({
             "verb":"run",
             "exit_code":20,
+            "category":"refusal",
+            "last_stage":"S6a",
             "code":"wrong_code",
             "cause":"wrong_cause"
         })
@@ -737,7 +729,7 @@ fn corpus_runner_rejects_expectation_without_program() {
 fn corpus_runner_reports_flip_keys() {
     let directory = tempfile::tempdir().unwrap();
     let expected =
-        json!({"verb":"check","exit_code":0,"category":"success","flips_with":"QSL-1965"})
+        json!({"verb":"check","exit_code":0,"category":"success","last_stage":"S4","flips_with":"QSL-1965"})
             .to_string();
     write_case(directory.path(), "one", ACCEPTING_PROGRAM, &expected);
     write_case(directory.path(), "two", ACCEPTING_PROGRAM, &expected);
@@ -750,7 +742,7 @@ fn corpus_runner_reports_flip_keys() {
 #[test]
 fn corpus_runner_executes_all_programs_before_reporting_mismatches() {
     let directory = tempfile::tempdir().unwrap();
-    let expected = json!({"verb":"check","exit_code":10,"flips_with":"QSL-1965"}).to_string();
+    let expected = json!({"verb":"check","exit_code":10,"category":"success","last_stage":"S4","flips_with":"QSL-1965"}).to_string();
     write_case(directory.path(), "one", ACCEPTING_PROGRAM, &expected);
     write_case(directory.path(), "two", ACCEPTING_PROGRAM, &expected);
 
@@ -917,9 +909,13 @@ fn corpus_runner_detects_missing_lifecycle_fields() {
         json!({"verb":"run","exit_code":0,"category":"success","last_stage":null}),
     )
     .unwrap();
-    assert_eq!(expected.last_stage, Some(None));
-    let omitted: Expectation = serde_json::from_value(json!({"verb":"run","exit_code":0})).unwrap();
-    assert_eq!(omitted.last_stage, None);
+    assert_eq!(expected.last_stage, None);
+    for omitted in [
+        json!({"verb":"run","exit_code":0,"category":"success"}),
+        json!({"verb":"run","exit_code":0,"last_stage":"S6a"}),
+    ] {
+        assert!(serde_json::from_value::<Expectation>(omitted).is_err());
+    }
 
     let actual = Actual {
         exit_code: 0,
