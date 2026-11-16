@@ -2209,6 +2209,11 @@ impl<'a> Typer<'a> {
                         return Err(refusal);
                     }
                 }
+                if matches!(&target, ValueType::Float(_))
+                    && !super::admits_equality_conversion(&typed.value_type, &target, &self.units)
+                {
+                    return Err(mismatch(&location));
+                }
                 if matches!(typed.value_type, ValueType::Float(_)) {
                     let source = typed.value_type.clone();
                     let converted = self.convert(&target, typed, &location)?;
