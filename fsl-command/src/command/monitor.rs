@@ -465,6 +465,7 @@ fn drive(
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
             observations: request.observations.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;
@@ -482,6 +483,8 @@ fn drive(
         std::slice::from_ref(&program),
         false,
         SpineLimits::default(),
+        None,
+        None,
         |checked, selections, _, packages, libraries, _, _, _, _| {
             let mut sources: Vec<Source> = vec![program.source().clone()];
             sources.extend(libraries.iter().map(|library| library.source().clone()));

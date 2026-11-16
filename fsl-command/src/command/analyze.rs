@@ -127,6 +127,7 @@ fn read<'d>(
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
             observations: request.documents.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;
@@ -352,6 +353,8 @@ fn run_input(
         sources,
         false,
         fsl_replay::spine::SpineLimits::default(),
+        None,
+        None,
         |checked, _, _, packages, libraries, _, _, _, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();
@@ -466,6 +469,7 @@ fn admit_package(
             programs: 1,
             models: request.models.len(),
             observations: request.documents.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;
