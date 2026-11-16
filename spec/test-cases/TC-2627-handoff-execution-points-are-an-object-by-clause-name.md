@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify that the `handoff` request member `execution_points` is an object keyed by authored state-clause name, that absent means `{}`, that the sidecar records the object the request gave, and that an unknown clause name or an unknown point form refuses at stage `request`.
+Verify that the `handoff` request member `execution_points` is an object keyed by authored state-clause name, that absent means `{}`, that the sidecar records the object the request gave, that an unknown point form refuses at stage `request`, and that an unknown clause name keeps FR-104's check-stage refusal.
 
 Scope: FR-665-AC-4.
 
@@ -18,7 +18,7 @@ Scope: FR-665-AC-4.
 
 1. Run `fsl_command::command::compile` over a handoff request for `tests/fixtures/parent.native` with `execution_points` `{"CanAttempt": {"kind": "pre", "operation": "attempt"}}`; read the written `selection.json`.
 2. Run the same request with `execution_points` absent, into a new directory; read `selection.json`.
-3. Run the request with `execution_points` `{"Missing": {"kind": "pre", "operation": "attempt"}}`, then with `{"CanAttempt": {"kind": "loop", "name": "x"}}`; record category, stage, pointer, exit code and whether the directory exists.
+3. Run the request with `execution_points` `{"CanAttempt": {"kind": "loop", "name": "x"}}`, then with `{"Missing": {"kind": "pre", "operation": "attempt"}}`; record code, stage, pointer or region, exit code and whether the directory exists.
 
 Tag the tests `#[trace("TC-2627", "FR-665-AC-4")]`.
 
@@ -26,4 +26,4 @@ Tag the tests `#[trace("TC-2627", "FR-665-AC-4")]`.
 
 - Step 1: exit 0, and `selection.json`'s execution points are exactly `{"CanAttempt": {"kind": "pre", "operation": "attempt"}}`.
 - Step 2: exit 0, and `selection.json`'s execution points are `{}`.
-- Step 3: each refuses `invalid-request` at stage `request`, exit 20, at `/handoff/execution_points/Missing` and `/handoff/execution_points/CanAttempt`; neither writes a directory.
+- Step 3: the first refuses `invalid-request` at stage `request`, exit 20, at `/handoff/execution_points/CanAttempt`; the second refuses `missing_declaration`/`missing-name` at stage `check` at the unit's source-start region (FR-104-AC-15); neither writes a directory.

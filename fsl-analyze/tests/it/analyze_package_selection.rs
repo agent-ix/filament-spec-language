@@ -182,8 +182,9 @@ fn an_unknown_claim_over_a_package_settles_unknown_claim() {
     assert_eq!(run.exit, 20);
 }
 
-/// FR-940-AC-1 and AC-3: the package route reads the same facts as the
-/// source route through `AnalysisView`, so a `package` request is no longer
+/// FR-940-AC-1 and AC-3: the package route's `BarePackage` reads the same
+/// facts through `AnalysisView` as the source route's `AdmittedPackageRead`
+/// of the compiled package, so a `package` request is no longer
 /// refused as not implemented and its items equal the source route's.
 #[trace("TC-2620", "FR-940-AC-1", "FR-940-AC-3")]
 #[test]

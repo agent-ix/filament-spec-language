@@ -298,9 +298,10 @@ value (`ParsedSource`) or a wire-admitted value (`ImportView`, or any `protocol_
 through S1 to S4, never by reading v2 bytes into checked typestate (R-10;
 ADR-011 §4 "Checking precedes lowering"). A consumer that holds v2 bytes and no
 source, such as analysis or a run over a selected package, reads them as a
-`BarePackage` (FR-531) through the sealed `AnalysisView` that `CheckedPackage`
-also implements (FR-940); the view is a read surface over both values and
-converts neither into the other.
+`BarePackage` (FR-531) through the sealed `AnalysisView`, which a `CheckedPackage` reaches only
+through the `AdmittedPackageRead` of its own emission (FR-940); the view is a
+read surface over admitted packages and converts none of them into checked
+typestate.
 
 ### `ImportView::of` is the only constructor of an import view
 

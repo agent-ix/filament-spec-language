@@ -93,7 +93,7 @@ sibling drafts ADR-022 and ADR-024 likewise.
 | --- | --- | --- |
 | RU-1 | **Dense time is specified.** FSL supports robots and embedded real-time systems, so a model may declare real-valued clocks with strict and non-strict constraints, under timed-automata semantics | §2 to §8 |
 | RU-2 | **Model-claim intervals count time units through a clock binding.** A deadline like "within 5 ms" is an interval of a claim bound to the model's time | §5; ADR-018 §1 amended; overlap items OV-1 and OV-2 |
-| RU-3 | **Both bindings are kept.** A timed model counts time by default and an untimed model counts steps; a claim that wants the other binding writes it | CB-1, CB-5 |
+| RU-3 | **Both bindings are kept.** A claim with no `clock` clause binds the default of its selected profile: `model-time` under the timed profile and `model-steps` under every other; a claim that wants the other binding writes it (FSL FR-942, FSpec FR-765) | CB-1, CB-5 |
 | RU-4 | **A non-local time-lock reuses ADR-022's trap evidence.** `TimeLock` stays its own counterexample kind | TD-3, TV-1 |
 | RU-5 | **Stochastic delays are specified now, with statistical checking.** ADR-024's engine samples the delays. Exact probabilistic checking is the native engine EN-5, specified in ADR-028; over a timed model it covers probabilistic timed automata through digital clocks | §10, SS-7 |
 | RU-6 | **The engine is native.** A zone engine in Rust, EN-6, with zone certificates so a proof is checked without trusting the search. TChecker is a test oracle only; UPPAAL and nuXmv are excluded by their licences | §8, §8.1 |
@@ -146,7 +146,7 @@ sibling drafts ADR-022 and ADR-024 likewise.
 | CB-2 | **Time sources.** A dense source gives each position the time stamp of TS-3. A digital source gives it the time stamp of TS-6. Both give non-decreasing exact rational time stamps in unit `u`, with the step order as admitted order. The evaluator and every engine read time stamps only, so one profile serves both. |
 | CB-3 | **Binding identity.** The binding's FSpec FR-252 key is the timed profile identity, the clock identity (the model's qualified name and its time source kind), the unit, the period for a digital source, and the sequence authority (step order). Changing the source kind, unit or period changes the binding identity (FSpec FR-090-AC-3). |
 | CB-4 | **Interval values.** An interval bound in a `model-time` claim is a time quantity, converted exactly to `u` (FSpec FR-142). The interval's FSpec FR-255 key carries the timed profile identity and the binding, so it never equals a step-counting interval. |
-| CB-5 | **Default binding.** A claim over a timed model (CK-1) binds `model-time` unless it writes `clock "model-steps"`; a claim over an untimed model binds `model-steps`. Writing the default is admitted and changes nothing: the binding, not its spelling, enters the obligation identity (CB-3). |
+| CB-5 | **Default binding.** A claim that writes no `clock` clause binds the default of its selected profile (FSL FR-942, FSpec FR-765): `model-time` under the timed profile and `model-steps` under every other profile, whether or not the model is timed (CK-1). Under the timed profile over an untimed model the default refuses `invalid_timed_model`/`model-time-on-untimed-model` at the `using` alias. Writing the default is admitted and changes nothing: the binding, not its spelling, enters the obligation identity (CB-3). |
 
 ### 6. Temporal forms over dense time
 

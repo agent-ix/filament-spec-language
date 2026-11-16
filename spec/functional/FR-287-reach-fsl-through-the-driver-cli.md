@@ -145,9 +145,12 @@ FR-298) and takes FR-285's exit code.
   request frame with room for base64url growth, and bound a stuck plugin
   to minutes rather than hours. On a platform that provides no memory or
   CPU-time limit, `max_memory_bytes` and `max_cpu_ms` are still validated
-  and are then not applied, as FR-305 states. The limits bind process
-  plugins only; linked providers ignore them, and the option is accepted
-  with or without `--provider-config`. The driver shall read every
+  and are then not applied, as FR-305 states. `deadline_ms` binds every
+  provider: linked providers receive it in-process as the FR-331 request's
+  `deadline_ms` (FSpec FR-331), process plugins in the `request` frame. The
+  other six limits are transport limits of a process plugin, which linked
+  providers ignore. The option is accepted with or without
+  `--provider-config`. The driver shall read every
   `--provider-limit` before any stage runs and before any plugin starts,
   and pass the resolved limits with the started providers, so FSL's
   entries take none of them. An argument with no `=`, an unknown name, a

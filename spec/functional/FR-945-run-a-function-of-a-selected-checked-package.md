@@ -78,7 +78,9 @@ over the source the package was compiled from, and FR-650's refusals.
   equal the source route's for the same package, except for the request's
   selection member.
 - FR-531's `CheckedPackageEvaluation` for `BarePackage` SHALL provide the
-  function-call entry this requires; it is not listed as unmet parity.
+  function-call entry this requires, and FR-531's capability inventory lists
+  `call`, `call_supplied` and `call_observing_applications` as available
+  through this requirement, so FR-531-AC-9's one-row-per-method check holds.
 
 ## Acceptance Criteria
 

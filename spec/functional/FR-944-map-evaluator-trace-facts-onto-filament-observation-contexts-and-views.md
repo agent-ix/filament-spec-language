@@ -90,6 +90,19 @@ FR-526's reports, read from them.
     uncertainty the cover's `u`;
   - `scope`: the window `[first stamp, last stamp]` of the trace, its required
     members the trace's positions.
+- The evaluator SHALL keep a side mapping from each record's owner-derived
+  identity to its position's FR-106 identity, built at admission, and SHALL
+  report every owner answer (FR-501, FR-502, FR-524, FR-526) under the FR-106
+  identities it maps to; no owner document carries an FR-106 identity.
+- The tick-to-nanosecond conversion SHALL be exact: a stamp or `u` of `k`
+  ticks of a timed unit is `k × s` nanoseconds, where `s` is the unit's
+  declared rational factor to the second (FR-230's `time ... unit`) times
+  10^9, so `ms` = `rational(1, 1000)` gives `s` = 1000000, with no
+  rounding; a clock with no time unit (an event position or fixed sample
+  count) takes `s` = 1. A product that is not an integer number of
+  nanoseconds, or that exceeds the owner's nanosecond range, SHALL refuse the
+  request at stage `admit`, `invalid_runtime_input`/`invalid-value`, naming
+  the position, before any owner call.
 - A refusal of `admit` SHALL refuse the request at stage `admit`,
   `invalid_runtime_input`/`invalid-value`, carrying the owner's error code;
   it is never ignored.
@@ -165,7 +178,8 @@ The owner's `completeness` module derives one assessment from per-member
 facts and has no rule that compares a new assertion with a retained one.
 FR-502 needs it, so `filament-observation` SHALL provide it, as its own
 requirement (filament-observation FR-013, "Revise a completeness assertion
-monotonically across revisions"):
+monotonically across revisions", not yet filed upstream; tracked as
+QSL-2327):
 
 - `completeness::Selection` SHALL carry a `TemporalBoundary`, and
   `completeness::revise(prior: &View, context, selection, limits)` SHALL derive
@@ -178,16 +192,17 @@ monotonically across revisions"):
   absent from the successor that the prior held, which stays held.
 - `revise` SHALL leave `prior` unchanged on refusal.
 
-Until the owner provides `revise`, `fsl-eval` keeps FR-502's ledger revision
-rule, and FR-861's agreement tests run it against the owner's per-member
-`derive` on the cases where both apply.
+Until QSL-2327 lands, `fsl-eval` keeps only the `Complete { through }`
+revision rule, in the one function FR-861's tracked exception names, pinned
+to the rule text above by FR-861-AC-4's agreement test; everything else uses
+the owner.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-944-AC-1 | For readings 0 to 6 under `Counter { uncertainty: 1 }` and under `Exact`, with bounds 0 to 6, `definitely_before` and `within_bound` read through the owner's `relation_to` on the half-tick intervals equal `ClockCover`'s answers on every pair. | Test (TC-2624) |
-| FR-944-AC-2 | FR-501-AC-13's counter-cover trace admits through `filament_observation::admit` with one record per position whose identity is the position's FR-106 identity, and the partial facts of its atoms read back through `partial::read` with the possibility sets and reasons of their Kleene values. | Test (TC-2624) |
+| FR-944-AC-2 | FR-501-AC-13's counter-cover trace admits through `filament_observation::admit` with one record per position whose identity is the owner's `record_identity`, and every report names the position's FR-106 identity through the side mapping; a `ms` stamp 3 admits as `event_time_nanos` 3000000, and stamp 3 under a declared unit of factor `rational(1, 2000000000)` (1/2 ns) refuses at stage `admit` naming its position; and the partial facts of its atoms read back through `partial::read` with the possibility sets and reasons of their Kleene values. | Test (TC-2624) |
 | FR-944-AC-3 | FR-524-AC-27 to AC-29's scopes give `Active`, `Inactive` and the three `Unknown` kinds through `activation::derive` and the mapping above, equal to the dispositions the evaluator reports; FR-526-AC-2's superseding request gives a repair plan that invalidates exactly the superseded result and retains the other's bytes. | Test (TC-2624) |
 | FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. | Test (TC-2624) |
 

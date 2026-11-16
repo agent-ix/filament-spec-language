@@ -90,11 +90,14 @@ the sidecar, otherwise refusal carrying the reader's typed refusal or the
   rules; a missing `native_join`, an unknown member or a `corpus` value
   other than `none` or `standard` refuses `invalid-request` at stage
   `request`, exit 20, naming the member, before any file is read.
-- A key of `execution_points` that names no authored state clause of the
-  unit, or a value that is not one of FR-105's four closed forms, SHALL
-  refuse `invalid-request` at stage `request`, exit 20, at
-  `/handoff/execution_points/<name>`, and write no directory. An accepted
-  point inapplicable to its clause keeps FR-104's refusal.
+- A value of `execution_points` that is not one of FR-105's four closed
+  forms SHALL refuse `invalid-request` at stage `request`, exit 20, at
+  `/handoff/execution_points/<name>`, and write no directory. The request
+  stage reads no source, so it does not decide whether a key names an
+  authored state clause: a key that names none keeps FR-104's S3 refusal,
+  `missing_declaration`/`missing-name` at the unit's source-start region
+  (FR-104-AC-15), and an accepted point inapplicable to its clause keeps
+  FR-104's `invalid_model_binding` refusal. Neither writes a directory.
 - If `directory` already exists, then the command SHALL refuse it naming the
   path, exit 20, leaving its contents untouched (FR-517).
 - The command SHALL write the directory only after the package is built and
@@ -111,7 +114,7 @@ the sidecar, otherwise refusal carrying the reader's typed refusal or the
 | FR-665-AC-1 | `fsl_command::command::compile` over a `native-compile/1` request for `tests/fixtures/spine-compile.native` carrying `handoff` `{"directory": "handoff", "package_name": "spine", "native_join": {"work_units": 1000000, "storage": 1000000}}` exits 0 and writes `handoff/` holding `checked-package.json` equal to the compile's package bytes, `selection.json` whose `format` is `filament.checked-handoff.selection/1`, `identities.json`, `equality.json` and `inventory.json`, and no `mutations/`. | Test (TC-1748) |
 | FR-665-AC-2 | `verify` over AC-1's directory returns category success with operation `inspect`; over a copy whose `selection.json` names one node count more it refuses with the `SelectionRefusal` axis of that count; over a copy whose `checked-package.json` has one changed byte it refuses with the strict reader's typed refusal. | Test (TC-1748) |
 | FR-665-AC-3 | AC-1's request without `native_join`, with `corpus` `"all"`, and with an unknown member `digest` each refuse `invalid-request` at stage `request` naming the member and write no directory; AC-1's request run a second time refuses naming the existing `handoff` path and leaves its files unchanged. | Test (TC-1748) |
-| FR-665-AC-4 | A handoff request over `tests/fixtures/parent.native` with `execution_points` `{"CanAttempt": {"kind": "pre", "operation": "attempt"}}` writes a directory whose `selection.json` records that object, and the same request with `execution_points` absent records `{}`; with `{"Missing": {"kind": "pre", "operation": "attempt"}}`, and with `{"CanAttempt": {"kind": "loop", "name": "x"}}`, it refuses `invalid-request` at stage `request` at `/handoff/execution_points/Missing` and `/handoff/execution_points/CanAttempt`, exit 20, and writes no directory. | Test (TC-2627) |
+| FR-665-AC-4 | A handoff request over `tests/fixtures/parent.native` with `execution_points` `{"CanAttempt": {"kind": "pre", "operation": "attempt"}}` writes a directory whose `selection.json` records that object, and the same request with `execution_points` absent records `{}`; with `{"CanAttempt": {"kind": "loop", "name": "x"}}` it refuses `invalid-request` at stage `request` at `/handoff/execution_points/CanAttempt`, exit 20; with `{"Missing": {"kind": "pre", "operation": "attempt"}}` it refuses `missing_declaration`/`missing-name` at stage `check` at the unit's source-start region (FR-104-AC-15); neither writes a directory. | Test (TC-2627) |
 
 ## Dependencies
 

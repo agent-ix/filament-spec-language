@@ -22,11 +22,15 @@ relationships:
 
 The analysis engines (FR-281) SHALL read the package they analyze only
 through `fsl_package::AnalysisView`, a sealed read trait implemented for
-exactly two types: the in-process `CheckedPackage` that S4 builds from source,
-and the `BarePackage` (FR-531) over a `CheckedPackageV2` the strict reader
-admitted from bytes. An analyze request that selects a `package` (FR-850)
+exactly two types: `AdmittedPackageRead`, the strict reader's admitted
+read-back of an in-process `CheckedPackage`'s own S4 emission, and the
+`BarePackage` (FR-531) over a `CheckedPackageV2` the strict reader admitted
+from bytes. Both hold an admitted `CheckedPackageV2`; a `CheckedPackage`
+holds none (its emission is an optional `OnceLock<Emission>` of bytes), so it
+reaches analysis only through its admitted read-back. An analyze request that selects a `package` (FR-850)
 analyzes its `BarePackage` through this view; a request that selects a
-`program` analyzes the compiled `CheckedPackage` through the same view. No
+`program` analyzes the `AdmittedPackageRead` of the compiled
+`CheckedPackage` (`read_evaluation_package`) through the same view. No
 value read from bytes becomes a `CheckedPackage`.
 
 ### Decision: a typed read view, not an exception to R-10
@@ -51,8 +55,9 @@ result on both routes because both routes read the same bytes.
 
 ## Inputs
 
-- On the source route: the `CheckedPackage` S4 built for the request's
-  program, with its `Emission` (the v2 package value S4 emitted for it).
+- On the source route: the `AdmittedPackageRead` that
+  `read_evaluation_package` returns for the `CheckedPackage` S4 built for the
+  request's program: its emission's bytes read back by the strict reader.
 - On the package route: the `BarePackage` over the `CheckedPackageV2` that the
   strict checked-package reader admitted from the request's `package` file
   (FR-850 "Admission"), with the request's domain packages bound to its model
@@ -70,7 +75,7 @@ pub trait AnalysisView: sealed::Sealed {
     // ... one accessor per fact row of FR-531 "What the entry derives from
     // the bytes", each reading `package()`.
 }
-impl AnalysisView for CheckedPackage { /* reads its own S4 emission */ }
+impl AnalysisView for AdmittedPackageRead<'_> { /* reads `admitted()` */ }
 impl AnalysisView for BarePackage<'_> { /* reads the admitted package */ }
 ```
 
@@ -84,12 +89,13 @@ and `FR-621`'s outcome document is unchanged.
   subject binding and counterexample replay SHALL read the package only
   through `AnalysisView`. No engine SHALL take a `CheckedPackage` or a
   `CheckedGraph` as its package input.
-- `AnalysisView` SHALL be implemented for `CheckedPackage` and for
-  `BarePackage<'_>` and for no other type.
-- The `CheckedPackage` implementation SHALL read each fact from the v2 package
-  value of its own S4 emission, never from its `CheckedGraph`, so the two
-  implementations return equal values for a package and the bytes it was
-  written to.
+- `AnalysisView` SHALL be implemented for `AdmittedPackageRead<'_>` and for
+  `BarePackage<'_>` and for no other type; it SHALL NOT be implemented for
+  `CheckedPackage`.
+- The `AdmittedPackageRead` implementation SHALL read each fact from its
+  `admitted()` package, never from its `source()` package's `CheckedGraph`,
+  so the two implementations return equal values for a package and the bytes
+  it was written to.
 - No function SHALL convert a `BarePackage`, a `CheckedPackageV2` or any value
   read from bytes into a `CheckedPackage` or a `CheckedGraph` (FR-087 R-10).
 - A fact an engine needs that FR-531's table does not list SHALL be added to
@@ -101,8 +107,8 @@ and `FR-621`'s outcome document is unchanged.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-940-AC-1 | For FR-850-AC-1's Counter package, each `AnalysisView` accessor returns equal values over the compiled `CheckedPackage` and over the `BarePackage` of its written bytes; an analysis entry called with either value gives the same item records for `Bounded`, `BelowThree` and `AtMostTwo`. | Test (TC-2620) |
-| FR-940-AC-2 | `AnalysisView` has no implementation outside `fsl_package` (a `compile_fail` doctest implementing it for a local type fails with `E0277`), and no public function of any FSL crate takes a `BarePackage` or a `CheckedPackageV2` and returns a `CheckedPackage` or a `CheckedGraph` (source scan of every function returning either type). | Inspection (TC-2620) |
+| FR-940-AC-1 | For FR-850-AC-1's Counter package, each `AnalysisView` accessor returns equal values over the `AdmittedPackageRead` of the compiled `CheckedPackage` and over the `BarePackage` of its written bytes; an analysis entry called with either value gives the same item records for `Bounded`, `BelowThree` and `AtMostTwo`. | Test (TC-2620) |
+| FR-940-AC-2 | `AnalysisView` has no implementation outside `fsl_package` (a `compile_fail` doctest implementing it for a local type fails with `E0277`, and one passing a `CheckedPackage` where `&dyn AnalysisView` is expected fails the same way), and no public function of any FSL crate takes a `BarePackage` or a `CheckedPackageV2` and returns a `CheckedPackage` or a `CheckedGraph` (source scan of every function returning either type). | Inspection (TC-2620) |
 | FR-940-AC-3 | `fsl analyze` with a `package` selection no longer refuses `package` as not implemented: FR-850-AC-1's request completes with FR-850's outcome, exit 0. | Test (TC-2620) |
 
 ## Dependencies

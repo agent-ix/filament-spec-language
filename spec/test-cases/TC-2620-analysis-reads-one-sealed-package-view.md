@@ -16,8 +16,8 @@ typestate exists. Scope: FR-940-AC-1, FR-940-AC-2, FR-940-AC-3.
 
 ## Test Procedure
 
-1. Compile FR-850-AC-1's Counter unit; build the `BarePackage` of its written bytes; compare every `AnalysisView` accessor and the item records for `Bounded`, `BelowThree` and `AtMostTwo` over both.
-2. Build the `compile_fail` doctest implementing `AnalysisView` for a local type; scan every function returning `CheckedPackage` or `CheckedGraph`.
+1. Compile FR-850-AC-1's Counter unit; take the `AdmittedPackageRead` of its emission and the `BarePackage` of its written bytes; compare every `AnalysisView` accessor and the item records for `Bounded`, `BelowThree` and `AtMostTwo` over both.
+2. Build the `compile_fail` doctest implementing `AnalysisView` for a local type and the one passing a `CheckedPackage` as `&dyn AnalysisView`; scan every function returning `CheckedPackage` or `CheckedGraph`.
 3. Run FR-850-AC-1's `package` request through `fsl analyze`.
 
 Test: `fsl-analyze/tests/it/analysis_view.rs`.
