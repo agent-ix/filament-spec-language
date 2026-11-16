@@ -2039,11 +2039,41 @@ fn temporal_tags(declarations: &str) -> Vec<&'static str> {
 #[trace("FR-230-AC-65", "TC-2361")]
 #[test]
 fn a_source_object_type_name_times_the_source_model() {
-    let graph = finish(
-        assemble(&source_timed("time O dense unit ms;\n")).expect("the dense unit assembles"),
+    let declarations =
+        assemble(&source_timed("time O dense unit ms;\n")).expect("the dense unit assembles");
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    let object = declarations
+        .model_inputs
+        .as_ref()
+        .expect("models")
+        .0
+        .iter()
+        .find(|model| model.alias.is_empty())
+        .expect("source")
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::ObjectType(object) if object.key.node.ends_with("/O") => {
+                Some(&object.key)
+            }
+            _ => None,
+        })
+        .expect("O declaration");
+    let expected_node = filament_exact::NodeKey::new(
+        object.package.clone(),
+        ["model", "object_type", &object.node]
+            .into_iter()
+            .map(|segment| filament_exact::PathSegment::Text(segment.to_owned()))
+            .collect(),
+        0,
     )
-    .unwrap_or_else(|refusals| panic!("time O dense unit ms checks: {refusals:?}"));
+    .expect("O object type node");
+    let graph = finish(declarations)
+        .unwrap_or_else(|refusals| panic!("time O dense unit ms checks: {refusals:?}"));
     assert_eq!(graph.time_sources()[0].model, "O");
+    assert_eq!(graph.time_sources()[0].model_node, expected_node);
     let clocks: Vec<_> = graph
         .timed_models()
         .iter()
