@@ -53,9 +53,9 @@ The source is the checked tree (`check::ir::Node`), not the parsed
 every `result_type` and literal `type` from the checked type, never by
 inference. The exceptions are an integer `div`, `rem` or `mod` application,
 whose `result_type` is the builtin `Integer` node while its checked type is
-FR-495's exact interval, and a control node (`if`, `let`, `case`) whose
-`result_type` is the node of its lowered type, the hull of the lowered types
-of the leaves it yields, which is `Integer` when one of them is such an
+FR-495's exact interval, and an integer-typed control node (`if`, `let`,
+`case`) whose `result_type` is the node of its lowered type, the hull of the
+lowered types of the leaves it yields, which is `Integer` when one of them is such an
 application (FR-495 "Representation of an integer division
 result"). Each `Expression` form checks to the `NodeKind` the table below
 names.

@@ -58,13 +58,25 @@ decided against.
   before any negotiation. A plugin that does not start, sends no valid
   `hello`, or whose manifest is refused is a registration failure under
   FR-288 and FR-291, naming the entry's `path`; the registry never holds it.
-- **The analyze entry.** `fsl_command::command::analyze_with_providers(path,
-  vocabulary, providers, cancel)` SHALL take the started process providers
-  as values, each its `Process` descriptor and the wire handle the item is
-  sent over, and SHALL build the run's registry from `Engines::fsl()` and
-  those providers; `analyze(path, vocabulary, cancel)` is the same entry
-  with none. FSL's command reads no provider configuration of its own
-  (FR-287): starting the processes is the driver's.
+
+### One rule for every provider-routing entry
+
+The verbs that route items to providers are `analyze`, `prove`, `monitor`,
+`replay` and `generate`, the verbs FR-287 gives `--provider-config` (FSpec
+FR-561). Every FSL command entry those verbs reach SHALL take the started
+process providers as one `providers` parameter, each value its `Process`
+descriptor and the wire handle items are sent over, and SHALL build its
+registry from `Engines::fsl()` and those providers, before any negotiation.
+The entry with an empty `providers` is the entry with no plugin
+configured. No entry reads a provider configuration of its own: the driver
+starts the processes from `--provider-config` (FR-287) and passes them in,
+so every verb sees the same registry for the same configuration. The entries
+are `fsl_command::command::analyze_with_providers(path, vocabulary,
+providers, cancel)` for `analyze` (and `prove`, which shares the analyze
+items, FR-280), with `analyze(path, vocabulary, cancel)` the same entry with
+none; `command::monitor` (FR-644); and the FR-280 entries the driver's
+`prove`, `replay` and `generate` call. Each of those requirements refers to
+this rule rather than restating it.
 
 ### How a process provider runs an item
 

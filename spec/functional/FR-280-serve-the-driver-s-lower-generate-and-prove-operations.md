@@ -53,6 +53,11 @@ operations. This requirement states what FSL supplies at that boundary:
   and takes no `EmittedPackage`;
 - FSL's FR-331 terminal record type (`TerminalRecord`, ADR-013 O-24), the
   one record type both paths write.
+- for the entries the driver's `prove`, `replay` and `generate` call, the
+  started process providers as their `providers` parameter, by FR-635's
+  rule for every provider-routing entry (FR-635 "One rule for every
+  provider-routing entry"), so the driver passes the plugins it started from
+  `--provider-config` to each verb the same way.
 
 The entry and every type it takes are FSL's, in layer A `fsl-analyze`, so
 no FSL crate names a driver type:

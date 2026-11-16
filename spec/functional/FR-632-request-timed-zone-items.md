@@ -55,12 +55,14 @@ digitised and checked explicitly (FR-243).
 
 EN-6 decides every timed item it receives by zone search and never
 digitises (FR-239). An item that names `options.method` `digital-clocks`
-therefore does not reach EN-6: FR-243 routes it to the digital-clock route,
-which reads the closed subject through integer-valued clocks (ADR-028 TA-1
+therefore does not reach EN-6. `method` is a provider option: EN-1's
+manifest publishes it with the value `digital-clocks` and EN-6's with `zones`,
+so negotiation against the manifests (FR-635) routes the item to EN-1's
+digital-clock route (FR-243), which reads the closed subject through integer-valued clocks (ADR-028 TA-1
 to TA-3) and decides the claim by EN-1's explicit-state search (FR-126) over
-that reading. The route stays a function of the item alone (its kind, its
-evidence kind and its `options.method`), so one item always reaches one
-engine. Digitisation decides the same verdict as dense time exactly when the
+that reading. The route stays a function of the item alone (its kind, its evidence
+kind and its `options`, negotiated against the published manifests), so one
+item always reaches one engine. Digitisation decides the same verdict as dense time exactly when the
 subject and the claim are both closed (Henzinger, Manna and Pnueli), so the
 route is a cross-check of the zone verdict, with its own basis
 `digitized-explicit-state` (FR-235), and is refused where it could disagree.
@@ -91,8 +93,10 @@ route is a cross-check of the zone verdict, with its own basis
   replayed by FR-237. Its record names backend `en-1`.
 - **Refusals.** `options.method` `digital-clocks` on a subject with a strict
   clock constraint, or over a claim with a strict (open or half-open)
-  interval, settles `declined` `invalid-input`, naming the constraint or the
-  interval; an untimed subject routes to EN-1 as FR-625 states.
+  interval, is declined by EN-1's digital-clock route before any search: the
+  item settles `declined` `invalid-input`, naming the constraint or the
+  interval, with `settled_by` `result` and `backend` `en-1`, and no search
+  runs; an untimed subject routes to EN-1 as FR-625 states.
 
 ## Acceptance Criteria
 
@@ -101,7 +105,7 @@ route is a cross-check of the zone verdict, with its own basis
 | FR-632-AC-1 | A timer subject whose operation fires within 2 time units settles the MITL claim `eventually[0,2]` `proved` with basis `zone-certified`, certification `certified`, and `eventually[0,1]` `refuted` with a counterexample whose delays are exact rationals and replay. | Test (TC-1592) |
 | FR-632-AC-2 | The same claims with `options.method` `digital-clocks` on the closed subject settle the same verdicts on backend `en-1`, the proof with basis `digitized-explicit-state` and the refutation with integer delays that replay. | Test (TC-1592) |
 | FR-632-AC-3 | Over the `Rpc` subject provisioned with two calls (two live clocks), `max_clocks` 1 settles `incomplete` `LimitReached{max_clocks}` with value 1; `max_clocks` 0 refuses the whole request at the request stage, `invalid-request`, exit 20, naming `temporal.limits.max_clocks`, and runs no item. | Test (TC-1592) |
-| FR-632-AC-4 | `options.method` `digital-clocks` over the strict-guard retry subject, and over the closed subject with the half-open claim `eventually[0 ms, 2 ms) holds(not c.late)`, each settle `declined` `invalid-input` naming the strict constraint or interval, and no engine runs. | Test (TC-2290) |
+| FR-632-AC-4 | `options.method` `digital-clocks` over the strict-guard retry subject, and over the closed subject with the half-open claim `eventually[0 ms, 2 ms) holds(not c.late)`, each settle `declined` `invalid-input` naming the strict constraint or interval, with `settled_by` `result` and `backend` `en-1`, and no search runs. | Test (TC-2290) |
 
 ## Dependencies
 

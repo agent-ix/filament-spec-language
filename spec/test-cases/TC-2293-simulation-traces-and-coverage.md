@@ -21,7 +21,7 @@ mean, in both modes. Scope: FR-634-AC-4, FR-634-AC-5.
 ## Expected Results
 
 - Step 1: `success`; `coverage` states 4, transitions 4, choices 1; exactly one trace, `value` 0, 1, 2, 3.
-- Step 2: three traces with trace indices 0, 1, 2 in order, each starting at `value = 0`; `seed` 5; `coverage.states` at most 4.
+- Step 2: three traces with trace indices 0, 1, 2 in order, each starting at `value = 0`; `seed` 5; `coverage.states` equals the distinct states on the three traces and `coverage.transitions` the distinct steps on them.
 
 Test: `fsl-analyze/tests/it/analyze_reach_rulings.rs`
 `simulation_reports_discovery_tree_traces_and_choice_points`.

@@ -110,7 +110,7 @@ fn a_record_sample_counterexample_names_positions_by_index() {
 /// coder builds it over the FR-330-AC-16 subject, as FR-641-AC-7's test notes.
 #[test]
 #[trace("TC-2299", "FR-641-AC-8", "FSpec-TC-1701", "FSpec-FR-352-AC-19")]
-#[ignore = "QSL-2133: the run result does not write its limits member yet"]
+#[ignore = "QSL-2303: the run result does not write its limits member yet"]
 fn a_model_trace_run_writes_its_limits() {
     let directory = tempfile::tempdir().unwrap();
     let model = |bound: Option<u64>| {

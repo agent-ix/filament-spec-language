@@ -224,13 +224,14 @@ bound and does not authorize a CG-side result-bound workaround.
     `result_type` is the type node of the checked type. The *lowered type*
     of such an application is therefore `Integer`; the lowered type of a
     read of a `let` binder is the lowered type of the binder's bound value;
-    the lowered type of a control node (`if`, `let` or `case`) is the hull
-    of the lowered types of the leaves it yields (each branch of an `if`,
-    the body of a `let`, each arm body of a `case`), where `Integer` absorbs
-    every interval; the lowered type of every other node is its checked
-    type.
-  - *Control nodes.* FR-093's lowering SHALL give a control node the
-    `result_type` of its lowered type, so `if c then a mod b else 0` in an
+    the lowered type of an integer-typed control node (an `if`, `let` or
+    `case` whose checked type is `Integer` or an `Int[..]` interval) is the
+    hull of the lowered types of the leaves it yields (each branch of an
+    `if`, the body of a `let`, each arm body of a `case`), where `Integer`
+    absorbs every interval; the lowered type of every other node, every
+    control node of another type included, is its checked type.
+  - *Control nodes.* FR-093's lowering SHALL give an integer-typed control
+    node the `result_type` of its lowered type, so `if c then a mod b else 0` in an
     unbounded position lowers to a `filament.op.control.if` whose
     `result_type` is the builtin `Integer` node, as its `mod` leaf's is,
     while its checked type stays the interval hull of its branches. The

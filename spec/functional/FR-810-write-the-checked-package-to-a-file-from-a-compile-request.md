@@ -37,9 +37,10 @@ The outcome document's `artifacts` member stays the empty array FR-286
 gives every operation. The outcome names no package identity, because
 checking mints no `package_id` (ADR-029 OP-1), and a path the caller chose
 needs no echo. An output path keeps the bytes on disk under the caller's
-name, as FR-665's `handoff` member does for the full handoff directory, and
-the two compose: `output` writes the one package file and `handoff` writes
-the directory around it. A request member makes a request file
+name, as FR-665's `handoff` member does for the full handoff directory. A
+request may carry both, and they are independent writes of the same package
+bytes: `output` writes one file and `handoff` writes its own directory,
+which already holds `checked-package.json`. A request member makes a request file
 self-contained for repeated runs; the driver option serves a caller that
 reuses one request with different destinations. The option and the member
 are one writer, so a run that names both is refused instead of choosing
@@ -71,6 +72,12 @@ between two destinations.
   refuse `invalid-request`, exit 20, naming the path, and leave it
   untouched, as FR-665 does for an existing handoff directory: a compile
   never overwrites a file it did not create.
+- If the request carries both `output` and `handoff` and the `output` path
+  lies inside the `handoff` directory, then the command SHALL refuse
+  `invalid-request` at stage `request`, exit 20, naming both members,
+  before any file is written: either write order would make the other
+  writer meet an existing path, so the outcome would depend on an order no
+  requirement fixes.
 - If the path's parent directory does not exist or the write fails, then
   the command SHALL report the I/O failure with its original code, exit 20
   (FR-027), naming the path, and SHALL leave no partial file: it writes a
@@ -92,7 +99,9 @@ between two destinations.
 | --- | --- | --- |
 | FR-810-AC-1 | `fsl_command::command::compile` over a `native-compile/1` request for `tests/fixtures/spine-compile.native` carrying `output` `{"package": "spine.package.json"}` exits 0, returns package bytes equal to the bytes of the written file `spine.package.json` beside the request, and its outcome document has `artifacts` `[]`. | Test (TC-2297) |
 | FR-810-AC-2 | AC-1's request run a second time refuses `invalid-request`, exit 20, naming the existing path and leaving its bytes unchanged; a request whose program does not check carries `output` and writes no file; `output` `{"package": ""}`, `{"path": "x"}` and `{"package": 3}` each refuse `invalid-request` at stage `request` naming the member, and write no file; a `package` path under a missing directory fails with its I/O code, exit 20, and leaves no file. | Test (TC-2297) |
-| FR-810-AC-3 | `compile_outcome_with_overrides` over AC-1's request without `output` and with `RequestOverrides::output` `Some("cli.package.json")` writes a file byte-equal to AC-1's; over AC-1's request (which carries `output`) with `Some(..)` it refuses at stage `request` `invalid-request` naming `output` and `--output` and writes neither file. The driver's `fsl compile <request> --output <file>` writes the same bytes. | Test (TC-2297) |
+| FR-810-AC-3 | `compile_outcome_with_overrides` over AC-1's request without `output` and with `RequestOverrides::output` `Some("cli.package.json")` writes a file byte-equal to AC-1's; over AC-1's request (which carries `output`) with `Some(..)` it refuses at stage `request` `invalid-request` naming `output` and `--output` and writes neither file. | Test (TC-2297) |
+| FR-810-AC-4 | The driver's `fsl compile <request> --output <file>` over AC-1's request without `output` writes a file byte-equal to AC-1's, and `--output` on `fsl run` is refused as an unknown option (FSpec FR-301). | Driver test (TC-2297): the `fsl` binary parses the option, so the code ticket QSL-2299 adds the test in the filament-driver repository. |
+| FR-810-AC-5 | A request carrying FR-665-AC-1's `handoff` and `output` `{"package": "spine.package.json"}` writes both, the file and the directory's `checked-package.json` byte-equal; the same request with `output` `{"package": "handoff/pkg.json"}` refuses `invalid-request` at stage `request`, exit 20, naming `output` and `handoff`, and writes neither. | Test (TC-2297) |
 
 ## Dependencies
 

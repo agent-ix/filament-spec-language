@@ -181,6 +181,36 @@ fn always_possible_refutes_and_witnesses_repeat() {
         record.contains("\"seed\":\"7\"") || record.contains("\"seed\":7"),
         "{record}"
     );
+    // Exactly one sampled witness (one instance, one initial state), whose
+    // FSpec FR-393 source names seed 7 and a trace index below 3.
+    fn sampled_sources<'a>(value: &'a Value, out: &mut Vec<&'a Value>) {
+        match value {
+            Value::Object(members) => {
+                if members.get("type").is_some_and(|kind| kind == "sampled") {
+                    out.push(value);
+                }
+                members
+                    .values()
+                    .for_each(|member| sampled_sources(member, out));
+            }
+            Value::Array(items) => items.iter().for_each(|item| sampled_sources(item, out)),
+            _ => {}
+        }
+    }
+    let witnessed = first.item(1);
+    let mut sources = Vec::new();
+    sampled_sources(&witnessed, &mut sources);
+    let [source] = sources.as_slice() else {
+        panic!("exactly one sampled witness: {witnessed}");
+    };
+    assert_eq!(source["seed"], "7", "{source}");
+    assert!(
+        source["trace_index"]
+            .as_str()
+            .and_then(|index| index.parse::<u64>().ok())
+            .is_some_and(|index| index < 3),
+        "{source}"
+    );
     let second = analyze(&path);
     assert_eq!(
         first.item(1)["record"]["evidence"],

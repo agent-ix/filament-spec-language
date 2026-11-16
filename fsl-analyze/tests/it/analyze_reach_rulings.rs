@@ -93,6 +93,9 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
         declined["record"].to_string().contains("invalid-input"),
         "{declined}"
     );
+    // EN-1's digital-clock route declines before any search.
+    assert_eq!(declined["record"]["settled_by"], "result", "{declined}");
+    assert_eq!(declined["record"]["backend"], "en-1", "{declined}");
 
     let strict = crate::analyze_family_cli::rpc_unit(4, claim).replace(
         "self.inflight and self.x >= 1 ms",
@@ -112,6 +115,9 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
         declined["record"].to_string().contains("invalid-input"),
         "{declined}"
     );
+    // EN-1's digital-clock route declines before any search.
+    assert_eq!(declined["record"]["settled_by"], "result", "{declined}");
+    assert_eq!(declined["record"]["backend"], "en-1", "{declined}");
 }
 
 /// FR-628-AC-4, AC-5: the evidence's instance key is the typed canonical
@@ -246,11 +252,27 @@ fn simulation_reports_discovery_tree_traces_and_choice_points() {
         "{sampled}"
     );
     assert_eq!(decimal(&sampled["seed"]), "5", "{sampled}");
-    assert!(
-        sampled["coverage"]["states"]
-            .as_str()
-            .and_then(|states| states.parse::<u64>().ok())
-            .is_some_and(|states| states <= 4),
+    // Coverage counts exactly what the three sampled traces visited.
+    let traces = sampled["traces"].as_array().expect("traces");
+    let mut states = std::collections::BTreeSet::new();
+    let mut steps = std::collections::BTreeSet::new();
+    for trace in traces {
+        let visited = trace["states"].as_array().expect("trace states");
+        for state in visited {
+            states.insert(state.to_string());
+        }
+        for pair in visited.windows(2) {
+            steps.insert(format!("{}->{}", pair[0], pair[1]));
+        }
+    }
+    assert_eq!(
+        sampled["coverage"]["states"],
+        states.len().to_string(),
+        "{sampled}"
+    );
+    assert_eq!(
+        sampled["coverage"]["transitions"],
+        steps.len().to_string(),
         "{sampled}"
     );
 }
@@ -296,7 +318,7 @@ fn a_misadvertising_plugin_is_refused_and_never_joins_the_layering_snapshot() {
 /// the record.
 #[trace("TC-2296", "FR-621-AC-10")]
 #[test]
-#[ignore = "QSL-2296: the analyze record does not write `backend` by `settled_by` yet"]
+#[ignore = "QSL-2304: the analyze record does not write backend by settled_by yet"]
 fn a_record_names_its_backend_exactly_when_a_result_settles_it() {
     let ws = Workspace::new("rulings-backend");
     let body = format!("{}{}", bounded(), below_three());
