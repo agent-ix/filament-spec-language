@@ -62,14 +62,14 @@ fn event_unit() -> String {
 /// The finite-window unit: FR-501-AC-4's clause.
 fn window_unit() -> String {
     header("filament.temporal.timestamped-event.finite-window/v1")
-        + "temporal Window using t over (c: M::Counter) clock \"ms\" on origin { eventually[0,5] holds(c.value > 0) }\n\
-           temporal Window2 using t over (c: M::Counter) clock \"ms\" on origin { eventually[0,5] holds(c.value > 1) }\n"
+        + "temporal Window using t over (c: M::Counter) clock \"model-steps\" on origin { eventually[0,5] holds(c.value > 0) }\n\
+           temporal Window2 using t over (c: M::Counter) clock \"model-steps\" on origin { eventually[0,5] holds(c.value > 1) }\n"
 }
 
 /// FR-501-AC-7's `until` clause under the finite-window profile.
 fn until_unit() -> String {
     header("filament.temporal.timestamped-event.finite-window/v1")
-        + "temporal Until using t over (c: M::Counter) clock \"ms\" on origin { holds(c.value > 0) until[0,1] holds(c.value > 1) }\n"
+        + "temporal Until using t over (c: M::Counter) clock \"model-steps\" on origin { holds(c.value > 0) until[0,1] holds(c.value > 1) }\n"
 }
 
 fn identity() -> SourceIdentity {

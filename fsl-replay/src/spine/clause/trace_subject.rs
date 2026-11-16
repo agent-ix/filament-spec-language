@@ -978,34 +978,34 @@ mod tests {
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
          record Counter { level: Int[0, 9]; }\n\
          record Other { level: Int[0, 9]; }\n\
-         temporal A using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal A using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] (count where holds(c.level != 2) over past[0,0] min_count 1 >= 1)\n\
          }\n\
-         temporal B using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal B using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,0] (count where holds(c.level > 9) over past[0,0] min_count 0 >= 1)\n\
          }\n\
-         temporal Each using t over (c: Counter) clock \"model-steps\" on each (q: Counter) {\n\
+         temporal Each using t over (c: Counter) clock \"events\" on each (q: Counter) {\n\
            always[0,0] (count where holds(c.level > 9) over past[0,0] min_count 0 >= 1)\n\
          }\n\
-         temporal BoundedFalse using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal BoundedFalse using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] ((count where holds(c.level > 9) over past[0,0] min_count 0 >= 1) and holds(c.level > 0))\n\
          }\n\
-         temporal ComposedHeld using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedHeld using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] ((count where holds(c.level = 0) over past[0,0] min_count 0 >= 1) and holds(c.level > 0))\n\
          }\n\
-         temporal ComposedOr using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedOr using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] ((count where holds(c.level > 9) over past[0,0] min_count 0 >= 1) or holds(c.level > 0))\n\
          }\n\
-         temporal ComposedOrReverse using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedOrReverse using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] (holds(c.level > 9) or (count where holds(c.level > 9) over past[0,0] min_count 0 >= 1))\n\
          }\n\
-         temporal ComposedNested using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedNested using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] (((count where holds(c.level > 9) over past[0,0] min_count 0 >= 1) and holds(c.level > 0)) and holds(c.level > 0))\n\
          }\n\
-         temporal UnknownThenFalse using t over (c: Counter) clock \"model-steps\" on each (q: Counter) {\n\
+         temporal UnknownThenFalse using t over (c: Counter) clock \"events\" on each (q: Counter) {\n\
            always[0,2] (count where holds(c.level = 0) over past[1,1] min_count 1 >= 2)\n\
          }\n\
-         temporal Plain using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal Plain using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,0] holds(c.level > 0)\n\
          }\n";
 

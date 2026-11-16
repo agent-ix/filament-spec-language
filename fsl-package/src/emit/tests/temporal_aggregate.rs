@@ -23,7 +23,7 @@ fn sampled(formula: &str) -> String {
         EVENT,
         &format!(
             "record Sample {{ v: Int[0, 9]; w: Int[0, 9]; }}\n\
-             temporal Window using t over (e: Sample) clock \"model-steps\" on origin \
+             temporal Window using t over (e: Sample) clock \"events\" on origin \
              {{ {formula} }}"
         ),
     )
@@ -38,7 +38,7 @@ fn timestamped(formula: &str) -> String {
             "dimension Time;\n\
              unit s : Time = rational(1, 1);\n\
              unit ms : Time = rational(1, 1000) * s;\n\
-             temporal Window using t over (e: Quantity<ms>) clock \"model-steps\" on origin \
+             temporal Window using t over (e: Quantity<ms>) clock \"events\" on origin \
              {{ {formula} }}"
         ),
     )
@@ -322,7 +322,7 @@ fn package_window(declarations: &str, window: &str) -> String {
         TIMESTAMPED,
         &format!(
             "{declarations}record Sample {{ v: Int[0, 9]; }}\n\
-             temporal Window using t over (e: Sample) clock \"model-steps\" on origin \
+             temporal Window using t over (e: Sample) clock \"events\" on origin \
              {{ always[0,3] (count over {window} >= 1) }}"
         ),
     )

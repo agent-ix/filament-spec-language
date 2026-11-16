@@ -420,7 +420,7 @@ fn temporal_requirement_reference_retains_owner_and_checked_target() {
         )
         .replace(ANSWER, "");
     let source = format!(
-        "{}temporal Due using t over (item: M::Gadget) clock \"steps\" on origin {{\n\
+        "{}temporal Due using t over (item: M::Gadget) clock \"model-steps\" on origin {{\n\
            always holds(d::from_library(1))\n\
          }}\n\
          {}",

@@ -911,7 +911,17 @@ fn malformed_temporal_clock_values_refuse_emission_at_the_field() {
             EVENT,
             &declared("Bound", "eventually[0,1] holds(c.versionNumber = 2)"),
         )
-        .replace("clock \"model-steps\"", &format!("clock \"{clock_name}\""));
+        // A model subject's clock is `model-steps` or `model-time` at S3
+        // (FR-233-AC-4), so the out-of-range role is written over a trace
+        // subject, whose role S3 records as written (FR-610).
+        .replace(
+            "over (c: Config::ConfigVersion) clock \"model-steps\"",
+            &format!("over (c: Rec) clock \"{clock_name}\""),
+        )
+        .replace(
+            "temporal Bound",
+            "record Rec { versionNumber: Int[0, 9]; }\ntemporal Bound",
+        );
         let graph = check_graph(&text);
         let selected = selection(
             &graph,
