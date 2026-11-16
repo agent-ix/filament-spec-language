@@ -52,28 +52,30 @@ resumes from the last checkpoint with the same verdicts.
 ## Inputs
 
 ```rust
-impl MonitorSession {
+type Failure = StageFailure<MonitorRefusal>;
+
+impl<'a> MonitorSession<'a> {
     pub fn open(
-        package: &CheckedPackage,
-        request: &MonitorOpen<'_>,
+        package: &'a CheckedPackage,
+        request: MonitorOpen<'a>,
         limits: &MonitorLimits,
         cancel: &Cancel,
-    ) -> Result<MonitorSession, MonitorRefusal>;
+    ) -> Result<MonitorSession<'a>, Failure>;
     pub fn step(&mut self, observation: MonitorObservation<'_>, cancel: &Cancel)
-        -> Result<MonitorStep, MonitorRefusal>;
+        -> Result<MonitorStep, Failure>;
     pub fn assert_progress(&mut self, progress: ProgressAssertion, cancel: &Cancel)
-        -> Result<MonitorStep, MonitorRefusal>;
+        -> Result<MonitorStep, Failure>;
     pub fn assert_through(&mut self, through: ExactRational, cancel: &Cancel)
-        -> Result<MonitorStep, MonitorRefusal>;
-    pub fn finish(self, cancel: &Cancel) -> Result<MonitorOutcome, MonitorRefusal>;
+        -> Result<MonitorStep, Failure>;
+    pub fn finish(self, cancel: &Cancel) -> Result<MonitorOutcome, Failure>;
     pub fn checkpoint(&self) -> MonitorState;
     pub fn resume(
-        package: &CheckedPackage,
+        package: &'a CheckedPackage,
         state: &MonitorState,
-        request: &MonitorOpen<'_>,
+        request: MonitorOpen<'a>,
         limits: &MonitorLimits,
         cancel: &Cancel,
-    ) -> Result<MonitorSession, MonitorRefusal>;
+    ) -> Result<MonitorSession<'a>, Failure>;
 }
 
 pub struct MonitorOpen<'a> {
@@ -96,7 +98,7 @@ pub struct MonitorObservation<'a> {
     pub order_key: Option<TimestampedOrderKey>,
 }
 
-pub enum MonitorPosition<'a> { Snapshot(&'a [u8]), Sample(&'a Value) }
+pub enum MonitorPosition<'a> { Snapshot(&'a [u8]), Sample(&'a str) }
 pub enum MonitorStamp { Tick(u64), Exact(ExactRational) }
 ```
 
@@ -114,14 +116,42 @@ session's state that grows with the trace. `assert_through` is the `Timed`
 kind's completeness assertion: FR-642's `through`, the stamp up to which the
 recording is complete.
 
+### Decision: the accepted shape of the public API
+
+Four points of the session's public API follow FSL's existing monitor and
+spine APIs rather than a first sketch, and are accepted as its contract:
+
+- **Errors are `StageFailure<MonitorRefusal>`.** Every entry returns FR-283's
+  `StageFailure`, so a refusal (`Refused(MonitorRefusal)`), a cancellation
+  and an internal fault are told apart exactly as the batch `monitor`
+  reports them, and a caller handles both with one match.
+- **`MonitorPosition::Sample` is canonical text.** A record sample is passed
+  as its canonical JSON object text (JCS), not a parsed `Value`. The text is
+  the position's identity (FR-641's record-sample position), so the session
+  admits it without re-serializing, and two equal samples are the same text.
+- **Reports are shared, not copied.** A status holds FR-283's
+  `MonitorRecord`, whose `ClauseRunReport` is held behind an
+  `Arc<ClauseRunReport>`: a settled report is returned at every later step
+  unchanged (Finality), so each step shares it rather than cloning a
+  counterexample that may list many positions.
+- **`open` and `resume` take the request by value.** The session keeps the
+  request for its life (clause selections, kind, binding, sources), so it
+  owns `MonitorOpen<'a>`, borrowing only the package and the inputs the
+  request itself borrows, for the lifetime `'a` of the session.
+
 ## Outputs
 
-- `MonitorStep`: for each clause, in `clauses` order, its `ClauseStatus`
-  (`Settled(ClauseRunReport)` or `Pending(ClauseRunReport)`), and the names of the
-  clauses whose status changed at this step. A status changes when the clause
+- `MonitorStep`: for each clause, in `clauses` order, its name and its
+  `ClauseStatus`, `Settled(MonitorRecord, Settlement)` or
+  `Pending(MonitorRecord)`, and the names of the clauses whose status changed
+  at this step. The `MonitorRecord` (FR-283) holds the clause's report, which
+  is `B(k)` or `B(s)` ("Batch equality"). The `Settlement` records how the
+  clause settled ("Settlement" below). A status changes when the clause
   passes from `Pending` to `Settled`, or when its report's category or
   disposition changes.
-- `MonitorOutcome`: FR-283's outcome over the whole trace, with the final ledger.
+- `MonitorOutcome`: FR-283's outcome over the whole trace, with the final
+  ledger when the kind carries progress, and each settled clause's
+  `Settlement`.
 - `MonitorState`: the checkpoint, bytes in the closed JSON form
   `filament.monitor-state/1`: the package identity, the open request's clause
   selections, kind, binding and lower boundary, the number of positions seen,
@@ -140,8 +170,9 @@ recording is complete.
   `k`-th call of `step`, `assert_progress` or `assert_through`:
   - a clause still `Pending` SHALL report exactly `B(k)`;
   - a clause that settled at call `s <= k` SHALL report exactly `B(s)`, the
-    report over the prefix that decided it, and `B(k)` SHALL have the same
-    category and truth as `B(s)`.
+    batch report over the prefix that decided it, and `B(k)` SHALL have the
+    same category and truth as `B(s)`; the reading that decided it is its
+    `Settlement` ("Settlement"), never part of its report.
   A settled verdict is sound (see "Settling"), so its category and truth are
   the same over every longer prefix; its other members are not. The batch
   counterexample of a bad prefix lists every position of the prefix it was
@@ -151,6 +182,34 @@ recording is complete.
   decided the clause and never changes, and the batch agreement for a
   settled clause is on its category and truth over each longer prefix and on
   the whole report over its deciding prefix.
+- **Settlement.** A settled clause's report SHALL be exactly `B(s)`, the
+  batch report over its deciding prefix, with no member taken from the
+  reading that decided it: no open-scope `finite_window` report, no ledger on
+  a `Finite` trace, and its basis the one `B(s)` carries. The session SHALL
+  report the reading that decided the clause beside it as its `Settlement`, so the
+  report stays comparable with the batch run and the reason it is final is
+  still shown. `Settlement` is the closed record:
+  - `step`: `s`, the call at which the clause settled, a decimal string;
+  - `trigger`: `decided` (its profile's evaluator decided it, "Settling"),
+    `limit` (it settled `incomplete` on `retained_positions` or
+    `retained_identities`, "Retained state") or `finish` (it settled at
+    `finish`);
+  - `basis`: for `decided`, the FSpec FR-243 basis of the deciding reading:
+    the basis of FR-820's `decided` report for an event-position or
+    fixed-sample clause (`decisive-counterexample` or `decisive-witness`),
+    of FR-501's report for a finite-window clause, and of `B(s)` itself for
+    an infinite-trace or timed clause; absent for `limit` and `finish`;
+  - `horizon`: for `decided`, the seen horizon of the deciding reading, a
+    decimal string: `S = n - 1` of FR-504's open-scope reading, the asserted
+    watermark of a progressed or finite-window reading, the newest stamp or
+    the latest `through` of a timed one, and the last position seen for an
+    infinite-trace one; absent otherwise;
+  - `position`: for `decided`, the position at which the deciding reading
+    reports its verdict: the failing activation's position for a violation,
+    the witnessing position for a success, a decimal string, or `null` when
+    the reading names none; absent otherwise;
+  - `through`: for a timed clause settled at or below an asserted `through`,
+    that value as an FSpec FR-642 exact-rational string; absent otherwise.
 - **Finality.** Once a clause's status is `Settled`, every later step SHALL
   report the same report for it, and the session SHALL stop evaluating that
   clause.
@@ -259,7 +318,7 @@ recording is complete.
 | FR-643-AC-4 | A checkpoint taken after step 2 and resumed gives, for steps 3 to 5, the reports of the uninterrupted session; resuming under another package, or with another clause list, refuses `monitor-state-mismatch`. | Test (TC-1667) |
 | FR-643-AC-5 | A `Timestamped` observation stamped at or below the retained watermark refuses with `contradicted_dimension` `Watermark` and leaves the session unchanged, after which a correct observation is accepted; after a progress assertion with scope `closed` is retained, a further observation is refused with `contradicted_dimension` `Closure` and leaves the session unchanged. In a separate `Finite` session with `retained_positions` 2 over levels 0, 1, 0, the event-position clause `Recent` (`always[0,9] count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1`), whose window holds three positions at the third observation, reports `incomplete` naming `monitor.retained_positions` at the third observation, while the infinite-trace `Reaches` and `Never`, which retain no value (FR-820), stay `Pending`. | Test (TC-1667) |
 | FR-643-AC-6 | In a `Finite` session over samples with levels 0, 1, 2, 1, the infinite-trace `Never` (`always holds(r.level < 2)`) settles `violation` at step 3; at step 4 its report equals `B(3)`, whose counterexample lists three samples, while `B(4)` has the same category `violation` and truth `false` and a counterexample of four samples. `Reaches` (`eventually holds(r.level = 2)`) stays `Pending` at every step, reporting `B(k)` (`pending`, no truth) at step `k`, and `finish` returns `B(4)` for it. | Test (TC-2321) |
-| FR-643-AC-7 | In a `Finite` session, the event-position clause `E` (`eventually[0,2] holds(r.level = 2)`) over levels 0, 1 stays `Pending` at steps 1 and 2 while `B(1)` and `B(2)` report `violation` (the closed reading), and settles `success` with basis `decisive-witness` at step 3 on level 2; over levels 0, 1, 1 it settles `violation` with basis `decisive-counterexample` at step 3, when the window `[0, 2]` is wholly observed. | Test (TC-2321) |
+| FR-643-AC-7 | In a `Finite` session, the event-position clause `E` (`eventually[0,2] holds(r.level = 2)`) over levels 0, 1 stays `Pending` at steps 1 and 2 while `B(1)` and `B(2)` report `violation` (the closed reading), and settles at step 3 on level 2 with report exactly `B(3)` (`success`, basis `closed-scope`, no `finite_window` and no ledger) and `Settlement` `{step: "3", trigger: "decided", basis: "decisive-witness", horizon: "2", position: "2"}`; over levels 0, 1, 1 it settles at step 3, when the window `[0, 2]` is wholly observed, with report exactly `B(3)` (`violation`, basis `closed-scope`) and `Settlement` `{step: "3", trigger: "decided", basis: "decisive-counterexample", horizon: "2", position: "0"}`. A `finish` over levels 0, 1 settles it with `Settlement` `{step: "2", trigger: "finish"}` and report `B(2)`. | Test (TC-2321) |
 | FR-643-AC-8 | `finish()` of a `Finite` session over FR-643-AC-1's snapshots equals FR-283's `monitor` over that trace; a `Progressed` session whose latest assertion has scope `open` and execution `closed` returns, for each unsettled clause, `B(n)` under scope `open` and execution `closed`; `MonitorSession::finish` takes no closure argument. | Test (TC-2322) |
 | FR-643-AC-9 | A `Finite` session over 1,000 samples whose `level` cycles 0 to 8, with `retained_positions` 4, keeps the infinite-trace `Below` (`always holds(r.level < 9)`) and `Nine` (`eventually holds(r.level = 9)`) `Pending` to the end with no `incomplete`; `Recent` (at most one 2 in any four consecutive samples, which holds here) settles `success` at step 10, its state holding `min(k, 4)` values after step `k` until then; over levels 2, 0, 2 `Recent` settles `violation` at step 3. The checkpoint after the last sample holds no admitted value. | Test (TC-2322) |
 | FR-643-AC-10 | In a `Timed` session of FR-642's `Ack` (`always (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`): with `req` at 0 and `ack` at 250, `Ack` settles `violation` at position 0 at the `ack` step, the stamp 250 having passed the window `[0, 200]`; with `req` at 0 and no further observation it stays `Pending` until `assert_through(250)`, which settles `violation` at position 0; with `req` at 0, `ack` at 150 and `assert_through(300)` it stays `Pending`, and `finish` returns `pending` for it, the unbounded `always` reading positions the recording does not hold (FR-642-AC-2). The bounded `Bound` (`always[0 ms, 300 ms] (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`) over `req` at 0, `ack` at 150 and `assert_through(500)` stays `Pending` until `finish`, which returns `success`. `assert_through(100)` after a stamp 150 refuses `timed-through-before-last-stamp`; `assert_through(250)` after `assert_through(300)` refuses `timed-stamps-decrease`; after `assert_through(300)`, an observation stamped 260, and one stamped 300, each refuse `timed-stamps-decrease`; each refusal leaves the session unchanged, and `assert_through` on a `Finite` session refuses `invalid-request` naming `through`. | Test (TC-2324) |
