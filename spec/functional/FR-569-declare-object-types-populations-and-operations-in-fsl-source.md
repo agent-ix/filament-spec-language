@@ -239,10 +239,11 @@ fill every member's type once the unit's type namespace is assembled, and the
 view that conformance, dispatch, frames, admission and evaluation read SHALL
 hold no type from an earlier assembly step.
 
-The checker SHALL decide conformance of a `Resolved` type as follows. These
-are the rules FSpec FR-151's value-type axis applies to a field, and for an
-operation parameter or result, whose FSpec FR-151 rows say only "conforms",
-they are this requirement's own rule. A `Resolved` type S conforms to a
+The checker SHALL decide conformance of a `Resolved` type as follows. The list
+applies to fields, operation parameters and operation results. For operation
+parameters and results, whose FSpec FR-151 rows say only "conforms", it is
+this requirement's own rule, and it agrees with the conformance the model
+route applies to the same types. A `Resolved` type S conforms to a
 `Resolved` type T exactly when one of these holds:
 
 1. S and T are the same type after alias expansion.
@@ -252,14 +253,15 @@ they are this requirement's own rule. A `Resolved` type S conforms to a
 3. S and T are both `Option`, and S's payload conforms to T's.
 4. S and T are collections of the same kind, S's element conforms to T's,
    and S's bounds lie within T's.
-5. S and T have the same structure and differ only in `Reference`
-   components, where each `Reference` component of S conforms to the
-   matching one of T by FSpec FR-151's object conformance, for source and
-   model object types alike.
+5. S is `Reference<A>` and T is `Reference<B>` (reached directly, as an
+   `Option` payload or as a collection element), and A conforms to B by
+   FSpec FR-151's object conformance, for source and model object types
+   alike. Cases 3 and 4 reach a nested reference by recursion.
 
 No other pair conforms. In particular, two `Decimal`, `Rational`, `Float`,
 `Quantity`, `Text`, enum, record, tuple or union types conform only when they
-are the same type. A `Resolved` type does not conform to a type of any other
+are the same type. A tuple or union with `Reference` components likewise
+conforms only when it is the same type; its components are not compared. A `Resolved` type does not conform to a type of any other
 variant, and no type of another variant conforms to a `Resolved` type.
 
 The checker SHALL record a clock place for a `Resolved` type exactly where
