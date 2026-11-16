@@ -322,20 +322,17 @@ fn same_of(directory: &Path, value: Value) -> Value {
 /// unchanged as an argument.
 #[test]
 #[trace("TC-1704", "FR-650-AC-5")]
-#[ignore = "QSL-2182: blocked on FR-650 spelling of the universe and type as 64 hex digits, and call.snapshot reference arguments"]
+#[ignore = "QSL-2182: structural identity spelling of a Reference result and call.snapshot reference arguments not implemented yet"]
 fn reference_result_passes_back_as_an_argument() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
     let first = same_of(directory.path(), json!({"reference": child()}));
     let triple = &first["reference"];
-    for member in ["universe", "type"] {
-        let hex = triple[member].as_str().unwrap();
-        assert_eq!(hex.len(), 64, "{member}: {first}");
-        assert!(hex
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
-    }
+    assert!(triple["universe"]["package"].is_string(), "{first}");
+    assert!(triple["universe"]["path"].is_array(), "{first}");
+    assert!(triple["universe"]["ordinal"].is_u64(), "{first}");
+    assert!(triple["type"]["original"]["node"].is_string(), "{first}");
     assert!(triple["object_identity"].is_string(), "{first}");
     assert_eq!(same_of(directory.path(), first.clone()), first);
 }

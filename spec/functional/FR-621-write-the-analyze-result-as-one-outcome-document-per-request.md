@@ -81,6 +81,30 @@ analyze member:
 A `simulation` item carries FR-634's members in place of `record`,
 `certificate`, `counterexample`, `replay` and `axes`.
 
+### Last stage
+
+An `analyze` document's `last_stage` is FR-286's greatest stage the request
+entered, so a reader sees how far the request got without reading its items.
+The program is compiled and linked through `S4` before any item is
+admitted, and each item adds the stage that settled it:
+
+| Outcome | `last_stage` |
+| --- | --- |
+| A request document refused before any source is read (malformed `native-analyze/1`, an unreadable file) | `null` |
+| A source or compile refusal of the program | the refusing stage, `S1` to `S4` (`S3` for a checker refusal, FR-624-AC-2) |
+| A request-level refusal after linking: a snapshot or binding that does not fit the linked package (FR-624-AC-3) | `S4` |
+| A document whose items are all settled by a disposition before any engine ran (an unknown claim, an unregistered backend) | `S4` |
+| An item settled by a negotiated backend, or by its negotiation's `unsupported` disposition | `S6b` |
+| An item settled by an FSL in-process engine (EN-1 to EN-7, the zone search): `proved`, `measured`, `incomplete` at a budget, `inconclusive` (an unknown verdict or a rejected certificate) | `S6c` |
+| An item whose counterexample is built as a typed witness and not replayed | `S7` |
+| An item whose counterexample is replayed (its `replay` member is present) | `S8` |
+| A cancelled request, and an internal failure (an engine or evaluator fault), category internal-failure | `null` (FR-286) |
+
+A document with several items takes the greatest of `S4` and its items'
+stages. Every settled document therefore names a stage, `S4` or later, and
+`null` appears only for request intake, cancellation and faults, as for
+every other operation.
+
 ### Item members
 
 Each item, in request order, carries:
@@ -204,6 +228,8 @@ The Counter fixture is FR-620's.
 | FR-621-AC-8 | Over the Counter subject, the `proved` EN-1 item of `Bounded` carries `certificate.identity` with exactly the members `node_id`, `model` and `ordinal`, `model` the Counter model's identity text; the `refuted` item of `BelowThree` carries `replay.target` `{"state_clause": Q}` with `Q` ending in `BelowThree`; and, both items required, `aggregate` is `incomplete` with one gap for `BelowThree`'s index, `reason` `not-proved`, `result` `refuted`. | Test (TC-2184) |
 | FR-621-AC-9 | Over the Counter subject provisioned with counters `a` at 1, `b` at 0 and `d` at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b` (the first refuted instance in key order, though `a` precedes it and is proved), and the same document run twice writes equal items; the refuted `always possible (value = 0)` item over the one-counter fixture carries `replay.target` `{"state_clause": Q}` with `Q` ending in the claim's declared name, and `replay.reproduced` `true`. | Test (TC-2292) |
 | FR-621-AC-10 | Over the Counter subject, the `proved` item of `Bounded` and the `refuted` item of `BelowThree` each carry `record.settled_by` `result` and `record.backend` `en-1`; the `invalid-request` item of an unknown claim `Missing` carries `record.settled_by` `disposition` and no `backend` member. | Test (TC-2296) |
+| FR-621-AC-11 | Over the Counter subject, the analyze document of `[{"claim": "Bounded"}]` has `last_stage` `S6c`; of `[{"claim": "Bounded"}, {"claim": "BelowThree"}]`, whose refuted item is replayed, `S8`; of `[{"claim": "Bounded", "temporal": {"limits": {"max_states": 2}}}]`, whose item is `incomplete`, `S6c`; and of `[{"claim": "Nothing", "temporal": {"item_kind": "deadlock-freedom"}}]`, whose only item is an `unknown-claim` disposition, `S4`. | Test (TC-2381) |
+| FR-621-AC-12 | A malformed `native-analyze/1` document gives `last_stage` `null`; a program the checker refuses gives `S3`; a snapshot naming the undeclared population `ix://test/counter/nowhere` gives `S4`; and a request cancelled before its first item gives `null`. | Test (TC-2382) |
 
 ## Dependencies
 

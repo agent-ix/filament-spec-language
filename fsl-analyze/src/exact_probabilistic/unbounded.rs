@@ -714,7 +714,17 @@ pub fn decide_long_run_workload(
             state_weight.push(expected_weight);
         }
         if denominator.is_zero() {
-            return Err(UnboundedError::ZeroWeightComponent);
+            // FR-199 defines a zero-weight component by its unweighted
+            // fraction. Every recurrent step contributes one position, so
+            // the stationary mass of predicate states is the exact ratio.
+            numerator = zero();
+            denominator = zero();
+            for (local, state) in states.iter().copied().enumerate() {
+                state_weight[local] = one();
+                state_reward[local] = if predicate[state] { one() } else { zero() };
+                numerator = numerator.add(&stationary[local].mul(&state_reward[local]));
+                denominator = denominator.add(&stationary[local]);
+            }
         }
         let rho = numerator
             .div(&denominator)
@@ -1943,6 +1953,31 @@ pub(crate) fn optimize_mec_fraction(
                 .ok_or(UnboundedError::MissingAction)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // A zero weighted denominator is a property of a recurrent component,
+    // not of one arbitrarily selected policy. Detect the case before policy
+    // enumeration so every policy in an all-zero MEC uses the unweighted
+    // occupancy objective. This also lets the policy search compare choices
+    // whose induced chain has multiple recurrent classes.
+    let unweighted_component = if let Some(name) = weight {
+        let mut has_internal_edge = false;
+        let mut all_zero = true;
+        for (local, state) in component.iter().copied().enumerate() {
+            for action in &internal[local] {
+                let choice = graph.choices[state]
+                    .get(*action)
+                    .ok_or(UnboundedError::MissingAction)?;
+                for edge in &choice.edges {
+                    has_internal_edge = true;
+                    if !reward_value(edge, name)?.is_zero() {
+                        all_zero = false;
+                    }
+                }
+            }
+        }
+        has_internal_edge && all_zero
+    } else {
+        false
+    };
     let mut indices = vec![0_usize; component.len()];
     let mut candidates = Vec::new();
     let mut examined = 0_u64;
@@ -1984,9 +2019,13 @@ pub(crate) fn optimize_mec_fraction(
                     .ok_or(UnboundedError::MissingAction)?;
                 let mut step_weight = zero();
                 for edge in &choice.edges {
-                    let edge_weight = match weight {
-                        Some(name) => reward_value(edge, name)?,
-                        None => one(),
+                    let edge_weight = if unweighted_component {
+                        one()
+                    } else {
+                        match weight {
+                            Some(name) => reward_value(edge, name)?,
+                            None => one(),
+                        }
                     };
                     step_weight = step_weight.add(&edge.probability.mul(&edge_weight));
                 }
@@ -2002,26 +2041,42 @@ pub(crate) fn optimize_mec_fraction(
                 rewards[component_local] = step_reward;
                 weights[component_local] = step_weight;
             }
-            if !denominator.is_zero() {
-                let rho = numerator
-                    .div(&denominator)
-                    .ok_or(UnboundedError::ZeroWeightComponent)?;
-                if numerator.max_part_bits() > max_rational_bits
-                    || denominator.max_part_bits() > max_rational_bits
-                    || rho.max_part_bits() > max_rational_bits
-                {
-                    return Err(UnboundedError::MaxRationalBits);
+            if denominator.is_zero() {
+                // If a recurrent policy has no positive reward weight, use
+                // its unweighted stationary occupancy. Keep the same
+                // numerator/denominator representation so policy
+                // improvement and its bias certificate use one objective.
+                numerator = zero();
+                denominator = zero();
+                for (component_local, state) in component.iter().copied().enumerate() {
+                    weights[component_local] = one();
+                    rewards[component_local] = if predicate[state] { one() } else { zero() };
+                    if let Some(local) = recurrent.iter().position(|candidate| *candidate == state)
+                    {
+                        numerator =
+                            numerator.add(&stationary[local].mul(&rewards[component_local]));
+                        denominator = denominator.add(&stationary[local]);
+                    }
                 }
-                candidates.push(FractionPolicy {
-                    rho,
-                    numerator,
-                    denominator,
-                    choices: policy,
-                    recurrent: recurrent.clone(),
-                    rewards,
-                    weights,
-                });
             }
+            let rho = numerator
+                .div(&denominator)
+                .ok_or(UnboundedError::ZeroWeightComponent)?;
+            if numerator.max_part_bits() > max_rational_bits
+                || denominator.max_part_bits() > max_rational_bits
+                || rho.max_part_bits() > max_rational_bits
+            {
+                return Err(UnboundedError::MaxRationalBits);
+            }
+            candidates.push(FractionPolicy {
+                rho,
+                numerator,
+                denominator,
+                choices: policy,
+                recurrent: recurrent.clone(),
+                rewards,
+                weights,
+            });
         }
         let mut cursor = component.len();
         while cursor > 0 {
@@ -2993,7 +3048,6 @@ mod tests {
     #[trace("TC-634", "FR-199-AC-3")]
     #[trace("TC-2177", "FR-199-AC-4")]
     #[test]
-    #[ignore = "QSL-2156: zero-weight long-run components settle typed unsupported today"]
     fn a_zero_weight_component_takes_its_unweighted_fraction() {
         let duration = filament_exact::Identifier::new("duration").expect("identifier");
         let mut zero_weight = edge(0, 0, one());

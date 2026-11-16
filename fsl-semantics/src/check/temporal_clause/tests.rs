@@ -1290,3 +1290,23 @@ fn a_retired_temporal_profile_spelling_is_an_unknown_profile() {
         Ok(Vec::new())
     );
 }
+
+/// FR-610-AC-5: a clause over a trace subject that writes no `clock` checks
+/// as the same clause written `clock "default"`.
+#[trace("TC-2388", "FR-610-AC-5")]
+#[test]
+#[ignore = "QSL-2140: the default clock role of a trace-subject clause with no clock is not built yet"]
+fn an_unwritten_clock_is_the_default_role() {
+    let formula = "eventually[0,3] holds(c.level = 3)";
+    for profile in [INFINITE, EVENT, FIXED] {
+        let unwritten =
+            source(&[profile], "Counter", formula).replace("clock \"model-steps\" ", "");
+        assert!(!unwritten.contains("clock \""), "{unwritten}");
+        let clause = check(&assemble(&unwritten))
+            .unwrap_or_else(|failure| panic!("{profile}: checks, not {failure:?}"));
+        let written = check(&assemble(&with_clock(&[profile], "default", formula)))
+            .unwrap_or_else(|failure| panic!("{profile}: the written form checks: {failure:?}"));
+        assert_eq!(clause.clock(), "default", "{profile}");
+        assert_eq!(clause.horizon(), written.horizon(), "{profile}");
+    }
+}

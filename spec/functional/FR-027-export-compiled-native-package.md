@@ -56,9 +56,10 @@ that configures trace-subject clocks
 as native-run/1, the optional `handoff` member (FR-665) and the optional `output` member that writes the package to a file ([FR-810](FR-810-write-the-checked-package-to-a-file-from-a-compile-request.md)). It contains no runtime artifacts or execution selection.
 The command uses FR-026's default `request_bytes` and `dependent_bytes` intake
 ceilings, relative-path resolution, source selection checks and existing
-model/compiler stage defaults. `compile` has no caller-configurable limit
-options; a refusal at either fixed intake ceiling names the setting and its
-maximum without an option hint.
+model/compiler stage defaults, unless the caller raises them: `compile` takes
+the `--request-bytes` and `--dependent-bytes` intake ceilings and the stage
+settings of FR-869, and a refusal at either intake ceiling names the setting,
+its maximum and the option that raises it.
 
 ## Outputs
 
@@ -145,7 +146,7 @@ toward FR-026's shared 64-selected-file ceiling under the file category
 | FR-027-AC-10 | A `1-draft` request whose program imports `test/geometry` and whose `libraries` supplies it by file and labels writes exactly the bytes the FR-278 composition returns over the same source and dependency input, exit code 0. A `1-draft` request with a library of an empty identity refuses with `invalid-request`, exit code 20, no package bytes; so does one with a library object that has any member besides `identity`, `source` and `refinement_internals`, a `version` for one. | Test (TC-446) |
 | FR-027-AC-12 | A `1-draft` request carrying `refinement_internals` at its top level and on a library object hands those values to spine `compile` unchanged, and writes exactly the bytes the FR-278 composition returns over the same source, dependency input and refinement internals input, exit code 0; a request with the member absent supplies the empty list. | Test (TC-446) |
 | FR-027-AC-11 | For FR-027-AC-5's, AC-9's and AC-10's requests, the bytes the command writes equal the `package` output of `parse`, `select`, `check` and `package` composed over the same source, domain packages and libraries; for FR-027-AC-8's sources, the refusing operation's stage and cause code equal the command's, and its FR-285 exit code equals the command's exit status. | Test (TC-785) |
-| FR-027-AC-13 | A `1-draft` request whose program source and selected models total less than the fixed `dependent_bytes` ceiling, and whose one `libraries` source makes the aggregate one byte over it, refuses at intake naming `dependent_bytes` and its maximum, with no package bytes or option hint; compile has no caller override for this ceiling. A request selecting 64 library sources in addition to its program exceeds the 64-file compile limit and refuses at intake naming `selected files`, `programs`, requested count 65 and maximum 64, before reading a selected source. | Test (TC-105, TC-446) |
+| FR-027-AC-13 | A `1-draft` request whose program source and selected models total less than the fixed `dependent_bytes` ceiling, and whose one `libraries` source makes the aggregate one byte over it, refuses at intake naming `dependent_bytes` and its maximum, with no package bytes, naming the option `--dependent-bytes` that raises it (FR-869). A request selecting 64 library sources in addition to its program exceeds the 64-file compile limit and refuses at intake naming `selected files`, `programs`, requested count 65 and maximum 64, before reading a selected source. | Test (TC-105, TC-446) |
 
 | FR-027-AC-14 | Through `command`, a `1-draft` request whose `program` is an array of FR-480-AC-1's units `U1` and `U2` writes exactly the bytes the FR-278 composition returns over that unit list, exit 0, and the same request with the array reversed writes the same bytes. An array whose second unit declares `edition "0-draft"` refuses `unknown_edition` at that unit's edition literal, naming its file, with no package bytes and before FR-480's header agreement is checked; an empty array refuses `invalid-request`; and an array whose two units exceed `dependent_bytes` together, though each fits alone, refuses at intake naming `dependent_bytes`. | Test (TC-1210) |
 

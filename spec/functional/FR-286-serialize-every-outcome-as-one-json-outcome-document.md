@@ -44,6 +44,12 @@ the same document (FSpec FR-300-AC-3). The document's members are:
 - `last_stage`: the last ADR-011 stage the operation reached, or `null`
   when no stage is known: a cancelled outcome that stopped before its first
   stage, or an internal-failure (fault) outcome.
+  The stages are ordered `S1`, `S2`, `S3`, `S4`, `S5`, `S6a`, `S6b`, `S6c`,
+  `S7`, `S8`, ADR-011's numbering; an operation whose work enters several
+  stages writes the greatest it entered. A refusal of the request document
+  itself, before any source is read (request intake), writes `null`.
+  FR-621 "Last stage" gives every `analyze` outcome's stage and "Monitor
+  documents from clause runs" every `monitor` outcome's.
 - `category`: the ADR-013 O-16 category of the whole outcome, as the one
   `Category` type (FR-285); each item's category is the same type.
 - `items`: for `prove`, `analyze` and `monitor`, one entry per requested item
@@ -72,7 +78,7 @@ the same document (FSpec FR-300-AC-3). The document's members are:
   on a `monitor` item for FR-283's `InsufficientData` (category undefined,
   reason `insufficient-data`), and on no item of any other category (FR-285).
 - `diagnostics`: each with its typed cause, catalog code, `Locus` (ADR-013
-  T-5, FR-095) and message. A source `blank-label` cause also carries
+  T-5, FR-095), message and `details` ("Diagnostic details"). A source `blank-label` cause also carries
   `label`, exactly `authority` or `identity` from the source owner's typed
   `SourceLabel`. Every other source cause omits `label`, including
   `empty-path`. A source refusal with no region has `locus` `null`, never a
@@ -97,8 +103,8 @@ the same document (FSpec FR-300-AC-3). The document's members are:
     (FR-038's integer spelling), the Reference value
     `{"reference": {"universe": U, "type": T, "object_identity": O}}`, or
     FR-650's form of every other kind. For a Reference completion, `U` and `T` are the actual returned shared
-    reference's universe and most-specific effective type, each as 64
-    lowercase hexadecimal characters; `O` is its exact nonempty UTF-8
+    reference's universe and most-specific effective type, each as the structural
+    identity object of FR-650 "Identity spellings"; `O` is its exact nonempty UTF-8
     object identity, without normalization, reminting or substitution by an
     input reference. It carries neither object state nor a Population binding. A clause
     evaluation still completes with its `Boolean` value.
@@ -128,6 +134,20 @@ selected clause in request order. `fsl-inspect` and the driver read the
 document and build no item of their own. The `monitor` operation's records
 (FR-283) are rendered into items through this producer, and no other code path
 builds an item for a clause run.
+
+A `monitor` document's `last_stage` is `S6a`, where FR-330 and FR-109
+evaluate each clause, for a document of settled clause runs, whatever their
+verdicts, and for a whole-request refusal that arises while input is admitted
+to or written from that evaluation: a trace position's admission
+(`Admission`), a clause refused at stage `admit` (`ClauseRefused`), a
+record's missing source (`SourceNotSupplied`), a session's observation,
+progress contradiction or checkpoint refusal (`Observation`,
+`Contradiction`, `State`). It is `S4` for a selected name that resolves to
+no temporal clause of the linked package (`UnknownClause`); the refusing
+stage for a compile refusal; and `null` for a defective trace document
+(`TraceDocument`, request intake), a cancelled request and an internal
+failure (an evaluator fault, `TemporalRefusal::Fault`, FR-283), which
+FR-286's fault rule settles as category internal-failure with no stage.
 
 Each item takes its category from `ClauseRunReport::category()` (the catalog's
 `Category`, FR-285) and from nowhere else, and its `result` label from that
@@ -282,6 +302,49 @@ The outcome document's bytes.
   undefined reason or exhausted limit as the `result` member, and `result`
   `null` on every other document.
 
+### Diagnostic details
+
+Every diagnostic SHALL carry `details`: `null`, or one closed object that
+locates the refusal inside the request and the call, so a consumer of the
+outcome document reads the same facts a consumer of FR-100's command-error
+envelope reads, and the driver can show them.
+
+- An `execute` diagnostic from a refusal FR-100 writes at stage `call`
+  (FR-100 "Refusals before S6a", FR-650's argument table and FR-650-AC-6's
+  unsupported parameter and result types), and from the runtime-invariant
+  fault at stage `call`, SHALL carry exactly the `details` object FR-100's
+  command-error envelope carries for the same request, member for member and
+  value for value.
+- An `execute` diagnostic from a request-stage refusal of an argument
+  `value` (FR-650 "Arguments") SHALL carry `{"path":
+  "/call/arguments/<index>/value"}`, the pointer the envelope names.
+- Every other diagnostic, a source, profile or compile-stage diagnostic
+  included, SHALL carry `details` `null`: its `locus`, `cause` and payload
+  members already locate it.
+
+The object's members come from one closed vocabulary, each with one
+meaning and one JSON kind, and no other member is written:
+
+| Member | Kind | Meaning |
+| --- | --- | --- |
+| `function` | string | the request's `function` string, exactly as supplied |
+| `position` | integer | the zero-based position of the declared parameter |
+| `path` | string | an RFC 6901 JSON pointer: inside the argument's `value` for a call-stage defect (the empty pointer for the value itself), or to the request's `value` member for a request-stage one |
+| `parameter` | string | the parameter name an argument names or lacks |
+| `model_identity` | string | the offered document's model identity |
+| `population` | object | the offered population's DeclarationKey `{"package", "node"}` |
+| `expected` | object | the required DomainPackageRef `{"identity", "version"}` |
+| `member` | string | the uncovered member of a foreign type |
+| `type` | object | the uncovered type's DeclarationKey |
+| `required` | object | the required universe, as FR-650 "Identity spellings" writes a universe |
+| `supplied` | object | the supplied universe, spelled the same way |
+| `stage` | string | the fault's stage identifier |
+| `invariant` | string | the fault's invariant identifier |
+
+Each FR-100 row fixes which members its object holds; the members are
+written in RFC 8785 order with the document. A `details` object is never
+empty, and a refusal whose row has no `details` writes `null`.
+
 ### Analyze item members
 
 An `analyze` document also carries FR-621's `aggregate` member and FR-635's
@@ -310,6 +373,10 @@ FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
 | FR-286-AC-14 | Over FR-281-AC-2's record and `ItemCounterexample`, `from_analyze` gives an item with `result` `refuted`, category violation, naming `en-1`, a `counterexample` of kind `formula` with a non-empty `prefix`, a `loop`, an `initial_state` and a `trace_position`, and no `position`, `decisive` or `witness`; the same record with no counterexample returns `Err(OutcomeItemError::MissingCounterexample)`, and FR-281-AC-1's `proved` record gives an item with no `counterexample`. For each other `Counterexample` variant, a `refuted` record with that variant gives an item whose `counterexample` has the variant's spelling in the table, and a `time-lock` `Temporal` one carries its `final_delay`. The item `provider::run` gives for the same two records serializes to equal bytes. | Test (TC-770) |
 | FR-286-AC-15 | An external caller projects a pre-admission blank-label source diagnostic through `from_source_diagnostic` and serializes a document: its code is `invalid_source_identity`, cause `blank-label`, `label` the exact typed `authority` or `identity`, `locus` null and message unchanged. Empty-path, byte-budget and located invalid-UTF-8 source diagnostics retain their exact cause, code, optional region and message while omitting `label`; the located case retains its original source reference and endpoints. Projecting the same source diagnostic through a compile refusal, a parse refusal or a format refusal gives the same diagnostic members, without a consumer-written JSON field. | Test |
 | FR-286-AC-16 | `OutcomeDocument::from_format` over a completed format of `tests/fixtures/spine-compile.native` has `result` `{"kind": "formatted", "text": T}` with `T` byte-identical to the string `fsl_cst::format` returns, category `success`, exit 0; over the format of `T` itself the `text` is again `T`; over a refused format `result` is `null` and the refusal is a diagnostic. | Test (TC-2178) |
+| FR-286-AC-17 | Over FR-650's identity fixture, the `execute` outcome document of `id_rec` called with `fields` lacking `y` holds one diagnostic with `code` `invalid_runtime_input`, `cause` `missing-member` and `details` `{"path": "/record/fields", "position": 0}`, equal to the command-error envelope's `details` for the same request; of `id_set` with a repeated element, `details` `{"path": "/set/1", "position": 0}`. | Test (TC-2377) |
+| FR-286-AC-18 | The `execute` outcome document of a call of `function` `nope` holds a diagnostic with `details` `{"function": "nope"}`; of `id_rec` called with an argument naming the parameter `zz` instead of `a`, `details` `{"parameter": "zz"}`; and of `id_big` called with `"7"`, stage `request`, `details` `{"path": "/call/arguments/0/value"}`. | Test (TC-2378) |
+| FR-286-AC-19 | The `execute` outcome document of a run whose unit S3 refuses `ill_typed` (`function bad using v(): Int[0, 9] pure { true }`) and the `parse` outcome document of FR-763-AC-2's unit each hold diagnostics whose `details` is `null`; no diagnostic of any document holds a `details` member outside the closed vocabulary or an empty `details` object. | Test (TC-2379) |
+| FR-286-AC-20 | A `monitor` document of settled clause runs (`MonitorOutcome::document`, here with no records) has `last_stage` `S6a`; the whole-request refusal document of `MonitorRefusal::UnknownClause` has `S4` and of `MonitorRefusal::Observation` `S6a`, each with its refusal category. | Test (TC-2383) |
 
 ## Status
 

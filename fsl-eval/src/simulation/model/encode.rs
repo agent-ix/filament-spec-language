@@ -22,7 +22,7 @@ use quire_canonical::{Encode, Error, Limits, Sink, Writer};
 use serde_json::Value as Json;
 
 use filament_checked::key::DeclarationKey;
-use fsl_semantics::check::VariantTypeDeclaration;
+use fsl_semantics::check::{EnumBinding, VariantTypeDeclaration};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel};
 
 pub(super) mod bounded;
@@ -716,13 +716,15 @@ pub(super) fn parse_optional_reference(text: &str) -> Option<Option<ObjectRefere
 
 /// The declarations a value's typed canonical form reads: the package's
 /// record, tuple and union types and, where the caller has them, its
-/// variant (enum) types.
+/// model variant types and source `enum` declarations.
 #[derive(Clone, Copy)]
 pub(crate) struct Typing<'t> {
     /// `None` only where a value is compared, not encoded: see
     /// [`values_equal`].
     types: Option<&'t TypeEnvironment>,
     variants: &'t [VariantTypeDeclaration],
+    /// The unit's own `enum` declarations.
+    enums: &'t [EnumBinding],
     /// The element-count members of the pure-clock collections, which a
     /// record writes after its declared fields.
     clock_counts: &'t [super::ClockCount],
@@ -809,6 +811,7 @@ impl<'t> Typing<'t> {
         Self {
             types: None,
             variants: &[],
+            enums: &[],
             clock_counts: &[],
             clock_bits: &[],
             names: None,
@@ -825,11 +828,17 @@ impl<'t> Typing<'t> {
         Self {
             types: Some(types),
             variants,
+            enums: &[],
             clock_counts: &[],
             clock_bits: &[],
             names: None,
             state_fields: None,
         }
+    }
+
+    /// These declarations with the source `enum` declarations `enums`.
+    pub(crate) fn with_enums(self, enums: &'t [EnumBinding]) -> Self {
+        Self { enums, ..self }
     }
 
     /// These declarations with the element-count members `clock_counts`

@@ -6,6 +6,7 @@ mod analyze_cli;
 mod analyze_cli_support;
 mod analyze_coverage_cli;
 mod analyze_family_cli;
+mod analyze_last_stage;
 mod analyze_liveness_cli;
 mod analyze_package_selection;
 mod analyze_reach_rulings;

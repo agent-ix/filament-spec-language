@@ -16,7 +16,7 @@ Scope: FR-763-AC-5.
 
 ## Test Procedure
 
-For each construct kind, run the `parse` operation over a unit holding it and read the message; repeat with a `size<T>(e)` whose source text is 200 bytes. Test: `tests/it/forms_refusal_cause.rs` `every_construct_message_begins_with_the_construct`.
+For each construct kind source reaches (every kind but `declaration`), run the `parse` operation over a unit holding it and read the message; repeat with a `size<T>(e)` whose source text is 200 bytes. Test: `tests/it/forms_refusal_cause.rs` `every_construct_message_begins_with_the_construct`.
 
 Tag the tests `#[trace("TC-2159", "FR-763-AC-5")]`.
 

@@ -1403,3 +1403,161 @@ fn excluded_clause_forms_refuse_at_the_form() {
     let (_, wire) = emitted(&dropping_document(), &attempt("self.v = 0 ms"));
     assert_eq!(timed(&wire, "clock_reset").len(), 1);
 }
+
+/// The body of every `presence_read` application in `wire`.
+fn presence_read_bodies(wire: &Value) -> Vec<Value> {
+    nodes(wire)
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.option.present")
+        .map(|node| node["body"].clone())
+        .collect()
+}
+
+/// FR-230-AC-66: a presence requirement compared with `absent` writes the
+/// `presence_read` of its `present` form, and a timed predicate reading the
+/// presences of a clock collection's elements writes a `presence_read` at
+/// the binder.
+#[trace("TC-2390", "FR-230-AC-66")]
+#[test]
+#[ignore = "QSL-2144: compared and element presences are refused TimedModelNotEmitted, not written"]
+fn compared_and_element_presences_are_written() {
+    let post = |body: &str| {
+        emitted(
+            &dropping_document(),
+            &format!("post P using v on Config::ConfigVersion::attemptUpdate {{ {body} }}\n"),
+        )
+        .1
+    };
+    let compared = presence_read_bodies(&post("self.v != absent"));
+    assert!(!compared.is_empty(), "a presence_read is written");
+    assert_eq!(compared, presence_read_bodies(&post("present(self.v)")));
+    let quantifier = "forall(e in self.q: present(e))";
+    for member in [
+        format!(
+            "pre HasElement using v on Config::ConfigVersion::attemptUpdate {{ \
+             self.x >= 1 ms and {quantifier} }}"
+        ),
+        format!("time invariant HasElement when {{ {quantifier} }} {{ self.x <= 9 ms }}"),
+        format!("urgent HasElement when {{ {quantifier} }};"),
+    ] {
+        let (_, wire) = emitted(&slot_presence_document(), &format!("{member}\n"));
+        assert!(!presence_read_bodies(&wire).is_empty(), "{member}");
+    }
+}
+
+/// [`timer_document`] whose `Timer` also holds `ys: Sequence<Clock>[0, 2]`.
+fn nested_timer_document() -> Vec<u8> {
+    let mut document: Value = serde_json::from_slice(&timer_document()).expect("JSON");
+    let timer = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://example/config-version/Timer")
+        .expect("Timer");
+    let fields = timer["fields"].as_array_mut().expect("fields");
+    let mut ys = fields[0].clone();
+    let identity = "ix://example/config-version/Timer/ys";
+    ys["identity"] = json!(identity);
+    ys["name"] = json!("ys");
+    ys["multiplicity"] = json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    ys["origin"]["generated"]["generatorIdentity"] = json!(identity);
+    ys["origin"]["generated"]["inputIdentities"] = json!([identity]);
+    fields.push(ys);
+    crate::emit::tests::wire_bytes(&document).expect("JSON")
+}
+
+/// FR-230-AC-67: a reset of a clock below two collections writes one
+/// `clock_reset` with a slot term per collection level.
+#[trace("TC-2391", "FR-230-AC-67")]
+#[test]
+#[ignore = "QSL-2144: an element reset no single binder selects is refused TimedModelNotEmitted, not written"]
+fn a_reset_below_two_collections_holds_a_slot_per_level() {
+    let (_, wire) = emitted(
+        &nested_timer_document(),
+        "post R using v on Config::ConfigVersion::attemptUpdate { self.ts[0].ys[1] = 0 ms }\n",
+    );
+    let [reset] = timed(&wire, "clock_reset")[..] else {
+        panic!("one reset");
+    };
+    let place = target(&wire, member(&reset["body"], "place"));
+    let steps: Vec<String> = member(&place["body"], "path")["members"]
+        .as_array()
+        .expect("a path")
+        .iter()
+        .map(|step| literal(step, "kind"))
+        .collect();
+    assert_eq!(steps, ["field", "slot", "field", "slot"]);
+    let slots = member(&reset["body"], "slots")["members"]
+        .as_array()
+        .expect("slots")
+        .len();
+    assert_eq!(slots, 2);
+}
+
+/// FR-230-AC-50, FSpec FR-342-AC-13, FR-322-AC-454: a clock-reading `pre`
+/// bound to an execution point emits its guard with `operation` the no-point
+/// anchor and `point_anchor` the point-qualified anchor.
+#[trace("TC-2393", "FR-230-AC-50")]
+#[trace("FSpec-TC-1721", "FSpec-FR-342-AC-13")]
+#[trace("FSpec-TC-1722", "FSpec-FR-322-AC-454")]
+#[test]
+#[ignore = "QSL-2144: a point-bound clock-reading clause is refused PointQualifiedClause, not written with point_anchor"]
+fn a_point_bound_clock_clause_names_its_point_anchor() {
+    use filament_contract_model::{AnchorName, ExecutionPoint};
+    let document = document(false);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = clocked_unit(
+        "pre Late using v on Config::ConfigVersion::attemptUpdate { self.x >= 1 ms }\n",
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
+        "program.native",
+        unit.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 admits the unit");
+    let raw = parsed.source().reference().clone();
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
+        &built.selections().models,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("intake admits the package");
+    let point = ExecutionPoint::Pre {
+        operation: AnchorName::new("attemptUpdate").unwrap().into(),
+    };
+    let graph = PackageDeclarations::assemble_with_execution_points_and_cancel(
+        raw,
+        "pkg".to_owned(),
+        built,
+        models,
+        Vec::new(),
+        Default::default(),
+        fsl_semantics::check::AssemblyRun {
+            cancel: &filament_exact::Cancel::new(),
+            execution_points: BTreeMap::from([("Late".to_owned(), point)]),
+        },
+    )
+    .expect("the unit assembles")
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap_or_else(|refusals| panic!("the point-bound clause checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let [guard] = timed(&wire, "clock_guard")[..] else {
+        panic!("one guard");
+    };
+    let operation = target(&wire, member(&guard["body"], "operation"));
+    let anchor = target(&wire, member(&guard["body"], "point_anchor"));
+    assert_eq!(operation["semantic_form"], "operation_anchor");
+    assert_eq!(anchor["semantic_form"], "operation_anchor");
+    assert_ne!(operation["node_id"], anchor["node_id"]);
+    assert!(
+        anchor["body"].to_string().contains("execution_point"),
+        "{anchor}"
+    );
+    assert!(
+        !operation["body"].to_string().contains("execution_point"),
+        "{operation}"
+    );
+}

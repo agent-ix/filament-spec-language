@@ -106,6 +106,13 @@ FR-109's `ClauseRunReport` with FSpec FR-541's verdict: `success`, `violation`
   `filament.temporal.timed/v1`, `expected` `["timed"]` and `supplied` the kind
   given: snapshots carry no time stamp, and the evaluator does not substitute
   positions for time.
+- The entry SHALL read a window of a finite timed trace as complete once a
+  position stamped above the window's end is in the trace, with or without
+  `through`: stamps never decrease (a decreasing stamp is refused), so no
+  further position can fall inside that window. `through` completes a window
+  the stamps do not reach. A violation whose window is complete is therefore
+  reported over a trace with no `through`, and FR-643's timed settle rule
+  reads windows the same way.
 - A timed lasso SHALL be evaluated exactly: its value at a position of
   repetition `k` equals its value at the same loop position of repetition
   `k − 1` once `k·period` exceeds the clause's largest finite interval bound
@@ -120,6 +127,7 @@ FR-109's `ClauseRunReport` with FSpec FR-541's verdict: `success`, `violation`
 | FR-642-AC-3 | `Ack` over a timed lasso with prefix `req` at 0, loop `ack` at 100 then `req` at 120, `period` 200, reports `success`; with `period` 400 (the next `ack` 380 after the loop `req`) it reports `violation`. | Test (TC-1664) |
 | FR-642-AC-4 | `eventually[0, 1/2] holds(p)` over stamps `"0"`, `"1/3"` with `p` true only at the second position reports `success` and the interval is compared exactly, not in floating point. | Test (TC-1664) |
 | FR-642-AC-5 | A timed clause over a model subject run over `finite` snapshots refuses at stage `admit`, `invalid_runtime_input`/`invalid-value`, `reason` `trace-kind-mismatch`, `profile` `filament.temporal.timed/v1`, `expected` `["timed"]`, `supplied` `finite`, with FR-645's message; stamps 0, 5, 3 refuse `timed-stamps-decrease` naming position 2; a lasso with `period` 0 refuses `timed-period-too-short`. | Test (TC-1665) |
+| FR-642-AC-6 | `Ack` over a finite `timed` trace with no `through`, `req` at 0 and `ack` at 250, reports `violation` at position 0: the stamp 250 is above the end of the window `[0, 200]`, so the window is complete and holds no `ack`; with `req` at 0 and `ack` at 200 and no `through` it reports `pending` (the window is answered, the unbounded `always` still open); with `req` at 0 alone and no `through` it reports `pending`, no stamp having passed the window. | Test (TC-2444) |
 
 ## Dependencies
 
