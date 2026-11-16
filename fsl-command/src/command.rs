@@ -2143,7 +2143,6 @@ fn prepare_run_bytes(
                     .len()
             }),
             extensions: request.extensions.len(),
-            extensions: request.extensions.len(),
         },
         dependent_bytes,
     )?;

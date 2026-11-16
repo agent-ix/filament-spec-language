@@ -280,6 +280,7 @@ fn run_input(
         false,
         fsl_replay::spine::SpineLimits::default(),
         None,
+        None,
         |checked, _, packages, libraries, _, _, _, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();

@@ -479,6 +479,7 @@ fn drive(
         false,
         SpineLimits::default(),
         None,
+        None,
         |checked, selections, packages, libraries, _, _, _, _| {
             let mut sources: Vec<Source> = vec![program.source().clone()];
             sources.extend(libraries.iter().map(|library| library.source().clone()));
