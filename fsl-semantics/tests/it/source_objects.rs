@@ -1783,3 +1783,63 @@ fn a_recursive_object_member_is_refused_as_a_recursive_record_field_is() {
     assert_eq!(record, [(Code::InvalidPackage, Some("definition-cycle"))]);
     assert_eq!(object, record);
 }
+
+/// FR-230-AC-65 (TC-2361): the AC-65 source unit, with `time` for the
+/// unit's time member.
+fn source_timed(time: &str) -> String {
+    format!(
+        "profile tm = \"filament.temporal.timed/v1\";\n\
+         dimension Time;\nunit ms : Time = rational(1, 1);\n\
+         record W {{ c: Clock; }}\n\
+         object O {{ w: W; d: Clock; operation step() modifies self.d; }}\n\
+         object P {{ n: Integer; }}\n{time}"
+    )
+}
+
+/// The temporal tags of the unit's check refusals, in report order.
+fn temporal_tags(declarations: &str) -> Vec<&'static str> {
+    let refusals = finish(assemble(declarations).expect("the unit assembles"))
+        .expect_err("the unit is refused");
+    refusals
+        .iter()
+        .filter_map(|refusal| match &refusal.cause {
+            CheckCause::Temporal(cause) => Some(cause.tag()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// FR-230-AC-65 (TC-2361): a source object type's name in the `time` slot
+/// times the source model; a second source time member and a `tick` one
+/// refuse.
+#[trace("FR-230-AC-65", "TC-2361")]
+#[test]
+#[ignore = "QSL-2314: the source model's own time member (time O dense unit ms) not implemented yet"]
+fn a_source_object_type_name_times_the_source_model() {
+    finish(assemble(&source_timed("time O dense unit ms;\n")).expect("the dense unit assembles"))
+        .unwrap_or_else(|refusals| panic!("time O dense unit ms checks: {refusals:?}"));
+    assert_eq!(
+        temporal_tags(&source_timed(
+            "time O dense unit ms;\ntime P dense unit ms;\n"
+        )),
+        ["duplicate-time-source"]
+    );
+    assert_eq!(
+        temporal_tags(&source_timed("time O tick O::step period 1 ms unit ms;\n")),
+        ["clock-without-dense-time"]
+    );
+}
+
+/// FR-088-AC-14 (TC-2360 step 8): a `Population` keeps no member type, so it
+/// prints only its `resolved:` identity form, its maximum included.
+#[trace("FR-088-AC-14", "TC-2360")]
+#[test]
+#[ignore = "QSL-2314: the Population identity fallback of the resolved: form not implemented yet"]
+fn a_population_prints_only_its_identity_form() {
+    use filament_exact::ValueType;
+    use fsl_semantics::model::domain_package::ValueTypeRef;
+    let bounded = ValueTypeRef::Resolved(Box::new(ValueType::Population(Some(3))));
+    let open = ValueTypeRef::Resolved(Box::new(ValueType::Population(None)));
+    assert_eq!(bounded.to_string(), "resolved:Population[3]");
+    assert_eq!(open.to_string(), "resolved:Population");
+}

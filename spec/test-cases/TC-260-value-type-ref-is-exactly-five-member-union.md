@@ -46,8 +46,8 @@ this union. Scope: FR-088-AC-8.
    `ValueTypeRef::Resolved` and confirm each lies in the source-object assembler (FR-569 "The source
    model"), none in domain package intake or a wire reader. Confirm no
    serializer or wire writer encodes a `Resolved`, and that `Display` of a
-   `Resolved(Decimal[0, 100; 2, 2; exact])` prints the FSL type spelling and
-   no Rust `Debug` text.
+   `Resolved(Decimal[0, 100; 2, 2; exact])` prints the `resolved:` identity
+   form and no Rust `Debug` text. The FSL spelling is TC-2360's.
 
 ## Expected Results
 
@@ -56,5 +56,5 @@ this union. Scope: FR-088-AC-8.
 - Step 3: every model field type is `ValueTypeRef`-typed.
 - Step 4: no bare-`NodeKey`/raw-string field-type path exists.
 - Step 5: no production code outside the source-object assembler builds
-  `Resolved`, no wire writer encodes it, and `Display` prints its FSL type
-  spelling.
+  `Resolved`, no wire writer encodes it, and `Display` prints the
+  `resolved:` identity form.
