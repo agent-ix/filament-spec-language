@@ -136,8 +136,8 @@ no truth), not an error (FR-523).
 - A late observation (FR-501 "Late-data cutoff") SHALL NOT produce a
   `Superseding` or `Invalidating` result by itself: the result it arrives
   after keeps its bytes and its ledger entry. Admitting it is a revisioned
-  repair, a `Superseding` request whose inputs include the observation and
-  carry no late-data classification for it; the superseding result's input
+  repair, a `Superseding` request whose inputs classify the observation
+  `on-time` (an arrival watermark within the cutoff, or no late-data cutoff); the superseding result's input
   identity differs from the predecessor's by that observation, so the
   relation is not refused `unchanged-input`, and both results stay readable
   (FSpec FR-094 "Late-data cutoff").
@@ -148,6 +148,10 @@ no truth), not an error (FR-523).
   a prior run wrote. The run result writes `result_identity`, `relation`,
   `lineage` and the updated ledger as its `evidence_ledger` member, in the same
   file form, so a correction chain is reachable through `command::run`.
+  A relation refusal through `command::run` refuses the run as FR-966 "A
+  refused correction through a run" states: stage `evaluate`,
+  `invalid_runtime_input`/`invalid-value`, its `cause`, member `relation`, and
+  no result document or ledger.
 
 ### Result subject and support
 

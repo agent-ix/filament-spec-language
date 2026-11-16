@@ -359,3 +359,59 @@ fn the_linked_registrations_include_en7() {
         ]
     );
 }
+
+/// FR-967-AC-1: an option EN-1's manifest does not publish settles that
+/// item `invalid-request` `invalid_capability`/`unknown-option`, naming the
+/// least unpublished name, and leaves the other item as it is alone.
+#[trace("TC-2724", "FR-967-AC-1")]
+#[test]
+#[ignore = "QSL-2192: an unpublished option does not settle invalid_capability/unknown-option yet"]
+fn an_unpublished_option_settles_unknown_option() {
+    let ws = Workspace::new("rulings-unknown-option");
+    let run = analyze(&counter_request(
+        &ws,
+        &bounded(),
+        json!([
+            {"claim": "Bounded", "backend": "en-1", "options": {"zeta": "1", "alpha": "2"}},
+            {"claim": "Bounded", "backend": "en-1"},
+        ]),
+    ));
+    let refused = run.item(0);
+    let text = refused.to_string();
+    for needle in ["invalid-request", "invalid_capability", "unknown-option"] {
+        assert!(text.contains(needle), "{needle}: {refused}");
+    }
+    assert!(!text.contains("invalid_runtime_input"), "{refused}");
+    assert_eq!(find(&refused, "option"), Some(&json!("alpha")), "{refused}");
+    assert_eq!(
+        find(&refused, "backend").map(decimal).as_deref(),
+        Some("en-1"),
+        "{refused}"
+    );
+    let ws_alone = Workspace::new("rulings-unknown-option-alone");
+    let alone = analyze(&counter_request(
+        &ws_alone,
+        &bounded(),
+        json!([{"claim": "Bounded", "backend": "en-1"}]),
+    ));
+    assert_eq!(run.item(1)["record"], alone.item(0)["record"]);
+}
+
+/// FR-967-AC-2, its first half: an unregistered named backend settles
+/// `unknown-backend` and its options are not checked. The published-option
+/// half needs the workspace test plugin publishing `depth`, which the coder
+/// adds.
+#[trace("TC-2724", "FR-967-AC-2")]
+#[test]
+#[ignore = "QSL-2192: an unpublished option does not settle invalid_capability/unknown-option yet"]
+fn an_unknown_backend_wins_and_a_published_option_reaches_the_provider() {
+    let ws = Workspace::new("rulings-unknown-backend-option");
+    let run = analyze(&counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded", "backend": "fsl.absent", "options": {"k": "v"}}]),
+    ));
+    let text = run.item(0).to_string();
+    assert!(text.contains("unknown-backend"), "{text}");
+    assert!(!text.contains("unknown-option"), "{text}");
+}

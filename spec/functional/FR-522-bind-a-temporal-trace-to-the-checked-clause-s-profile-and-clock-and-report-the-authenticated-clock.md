@@ -146,8 +146,10 @@ The `result_identity` of every outcome follows the identity rule below.
 
 - The `result_identity` SHALL be a function of exactly these members: the checked
   clause identity (the package identity and the declaration), the authenticated
-  binding, the clock cover (`Exact` or `Counter { uncertainty }`, FR-501), the
-  stamps, valuations and order keys or the positions of the trace, the progress
+  binding, the clock cover with its kind and uncertainty (`Exact`, `Counter { uncertainty }`
+  or `Bounded { uncertainty }`, FR-501), the stamps, interval stamps (both ends
+  and both flags), arrival watermarks, valuations and order keys or the
+  positions of the trace, the late-data cutoff (its rule and parameter, FR-966), the progress
   inputs (watermark, completeness, scope closure, surrounding-execution closure,
   lower boundary), the retained-instance entries of the request's
   `EvidenceLedger` for the obligation (FR-524), the progress-ledger entry for the

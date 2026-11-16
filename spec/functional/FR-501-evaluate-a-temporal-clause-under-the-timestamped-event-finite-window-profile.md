@@ -35,6 +35,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-640
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-966
+    type: references
 ---
 # FR-501: Evaluate a temporal clause under the timestamped-event finite-window profile at S6a, with definite verdicts on a closed complete window
 
@@ -341,7 +343,10 @@ ranks below 10.
   otherwise).
 - An interval stamp with `earliest > latest`, or with `earliest = latest` and
   an open end, SHALL be refused `invalid_runtime_input`/`invalid-value` at the
-  observation; a midpoint is never substituted.
+  observation; a midpoint is never substituted. FR-966 states the stage, the
+  position, the nominal stamp's place inside the interval, the classified
+  instant, the positions of on-time observations and the identity members of
+  these inputs.
 
 ### Late-data cutoff
 

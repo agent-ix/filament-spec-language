@@ -17,6 +17,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-489
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-967
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-968
+    type: depends_on
 ---
 # FR-635: Route analyze items to external providers through the backend registry
 
@@ -173,9 +177,12 @@ builder unchanged.
   cause.
 - **Refusals.** A named `backend` the registry does not hold settles
   `invalid-request` `unknown-backend`; several candidates and no named backend
-  settle `invalid-request` `ambiguous-backend`; an unknown option refuses the
-  item `invalid-request` naming it; a provider manifest that does not
-  advertise its claimed kind and mode is refused at registration.
+  settle `invalid-request` `ambiguous-backend`; an option the named backend's manifest does not
+  publish settles the item `invalid-request` `invalid_capability`/`unknown-option`
+  (FR-967); a provider manifest that advertises no (kind, mode) pair, or
+  advertises `value-validity` without its `unbounded` mode, is refused at
+  registration (FR-968); a manifest advertising another kind, such as
+  `operation-contract`, registers for that kind.
 
 ## Acceptance Criteria
 
@@ -184,7 +191,7 @@ builder unchanged.
 | FR-635-AC-1 | With the workspace's test plugin started as a process provider advertising `value-validity` `unbounded` and passed to `analyze_with_providers`, a request naming it as `backend` settles the item `proved` on it with certification `trusted`, and the document's `registry` lists `en-1`, `en-7` and the provider. | Test (TC-1595) |
 | FR-635-AC-2 | The Counter item `Bounded` settles byte-equal with and without the test provider registered. | Test (TC-1595) |
 | FR-635-AC-3 | `backend` naming an unregistered `BackendId` settles `invalid-request` `unknown-backend`, exit 20. | Test (TC-1595) |
-| FR-635-AC-4 | A process provider whose `hello` manifest does not advertise (`value-validity`, `unbounded`) is refused at registration naming its `BackendId`, and the run's `registry` does not list it; a production layering snapshot (FR-489) built in the same process as AC-1's run holds exactly the linked descriptors and not the test plugin. | Test (TC-2294) |
+| FR-635-AC-4 | A process provider whose `hello` manifest advertises `value-validity` only in the `bounded` mode is refused at registration naming its `BackendId`, and the run's `registry` does not list it; a production layering snapshot (FR-489) built in the same process as AC-1's run holds exactly the linked descriptors and not the test plugin. | Test (TC-2294) |
 
 FR-950 states the acceptance criteria of the provider request and its
 transport.

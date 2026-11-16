@@ -598,8 +598,12 @@ threshold is bound as a reference to its node. S3 refuses, before emission,
 a value that is not of family `integer`, `rational` or `quantity` and a
 threshold of another family, as FR-194 states.
 
-The clause's clock unit is the `scalar_type`/`unit` node whose path is
-`["scalar_type", "unit", T]`, `T` the selected clock's `timestamp_unit`.
+The clause's clock unit is the `scalar_type`/`unit` node that the selected
+clock's `timestamp_unit` `T` names (FR-965): the model-owned node whose path
+is `["scalar_type", "unit", T]` when `T` is the FCD identity of a unit an
+admitted domain package declares, or the source-owned unit node of the unit
+named `T` that the clause's own source unit declares. Either is a linear unit
+of a dimension named `Time`; a `T` that names neither has no clock unit node.
 The caller that selects the clause's timestamped-event clock SHALL give the
 selection to S3 as well as to the emitter (the spine passes each selection
 of the unit's source to its check). S3 SHALL convert both bounds of each
@@ -630,8 +634,11 @@ bounds to the lower bound's written unit. The emitter SHALL refuse a clause
 whose `duration` window's unit node is not the clock unit node with
 `InvalidTemporalClockValue` naming `timestamp_unit`, and SHALL write no
 package. A source-declared unit's node path is its declared name, never
-`["scalar_type", "unit", T]`, so a `duration` window emits only in the time
-units of a selected model package (`M::s`, `M::ms`).
+`["scalar_type", "unit", T]`; when `T` names a source-declared time unit, the
+clock unit node is that declared node, written once as every declared unit
+is, so a `duration` window emits in the time units of the clause's own source
+(`ms`, `s`) as well as in those of a selected model package (`M::s`, `M::ms`)
+(FR-965).
 
 The bindings are inputs of the node's structural identity, so a change of any
 binding changes the formula node, and an omitted `min_count` and `min_count 1`

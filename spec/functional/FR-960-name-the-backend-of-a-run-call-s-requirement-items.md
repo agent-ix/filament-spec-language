@@ -17,6 +17,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-962
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-967
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-775
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-331
@@ -84,8 +86,9 @@ computed.
   `invalid_capability`/`unknown-backend` naming it, and no provider SHALL be
   called for it.
 - **Options.** An option name the named backend's manifest does not publish
-  SHALL refuse that item `invalid-request` naming the option, as FR-635 states
-  for analyze, and refuse no other item.
+  SHALL settle that item `invalid-request` `invalid_capability`/`unknown-option`
+  with `request_index`, `backend` and `option` (FR-967, FSpec FR-779), as for
+  analyze, and settle no other item that way; the call's value is unchanged.
 - **Unnamed items.** An item with no named backend SHALL have every registered
   matching backend as its candidates, narrowed by FR-962's tie rule.
 - **Precedence.** An item's own `items` entry SHALL take precedence over the
@@ -114,7 +117,7 @@ computed.
 | FR-960-AC-1 | A run of `sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }` with `x = 3` and `call.requirements` `{}`, through `command::run` and FR-961's linked registry, returns the completed value `{"integer": "16"}` and one settled entry per item of `sq` (three, in FR-395's package order), each with no named backend and `value-checker` as its one candidate; the same call without `requirements` returns the same value and no `requirements` member. | Test (TC-2700) |
 | FR-960-AC-2 | The same call with `call.requirements` `{"backend": "value-checker"}` gives each item request `backend` `value-checker`; with `{"backend": "fsl.absent"}` every item settles `invalid-request` `invalid_capability`/`unknown-backend` naming `fsl.absent`; with `{"backend": "fsl.absent", "items": [{"claim": C, "backend": "value-checker"}]}`, `C` the first item's claim, the first item settles on `value-checker`, its request naming `backend` `value-checker` and the other two settle `unknown-backend`. | Test (TC-2700) |
 | FR-960-AC-3 | Negative: `requirements` `[]`, `{"backend": ""}`, `{"options": {"k": "v"}}`, `{"backend": "value-checker", "options": {"k": 1}}`, `{"extra": 1}`, an `items` entry without `claim`, and two entries naming one claim each refuse at stage `request` with `invalid-request` naming the member's JSON pointer, exit 20, before any source is compiled; an entry whose `claim` names no item of `sq` refuses at stage `call` with `missing_declaration` and `details` naming that claim, exit 20, and no item is negotiated. | Test (TC-2700) |
-| FR-960-AC-4 | An option name `value-checker`'s manifest does not publish, given as `{"backend": "value-checker", "options": {"unknown": "1"}}`, settles each item `invalid-request` naming `unknown` and leaves the call's completed value unchanged. | Test (TC-2700) |
+| FR-960-AC-4 | An option name `value-checker`'s manifest does not publish, given as `{"backend": "value-checker", "options": {"unknown": "1"}}`, settles each item `invalid-request` `invalid_capability`/`unknown-option` with its `request_index`, `backend` `value-checker` and `option` `unknown`, never `invalid_runtime_input`, calls no engine for it, and leaves the call's completed value unchanged. | Test (TC-2700) |
 
 ## Dependencies
 

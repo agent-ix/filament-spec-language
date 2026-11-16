@@ -167,7 +167,10 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
     )
     .0;
     for item in entries(&option) {
-        assert!(item.to_string().contains("unknown"), "{item}");
+        let text = item.to_string();
+        assert!(text.contains("invalid_capability"), "{item}");
+        assert!(text.contains("unknown-option"), "{item}");
+        assert!(!text.contains("invalid_runtime_input"), "{item}");
         assert!(
             item["record"].get("result").is_none(),
             "an invalid-request record: {item}"

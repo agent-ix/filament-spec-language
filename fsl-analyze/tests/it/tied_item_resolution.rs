@@ -153,3 +153,101 @@ fn an_undecided_tie_settles_ambiguous_backend() {
         "{document}"
     );
 }
+
+/// A process descriptor `id` advertising `pairs`.
+fn advertising(
+    id: &str,
+    pairs: &[(fsl_semantics::check::Capability, fsl_route::Mode)],
+) -> fsl_route::BackendDescriptor {
+    fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(id)),
+        fsl_route::ProviderOrigin::Process,
+        pairs
+            .iter()
+            .map(|(kind, mode)| (Some(kind.to_wire()), Some(mode.to_wire())))
+            .collect::<Vec<_>>(),
+        fsl_route::ManifestMembers {
+            domains: None,
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("a well-formed descriptor")
+}
+
+/// FR-968-AC-1: a provider registers for the kinds it advertises; one that
+/// advertises `value-validity` without `unbounded`, or nothing, is refused
+/// naming its `BackendId`, and a refused provider is never called.
+#[trace("TC-2725", "FR-968-AC-1")]
+#[test]
+#[ignore = "QSL-2192: Engine::external still requires (value-validity, unbounded) of every provider"]
+fn a_provider_registers_for_the_kinds_it_advertises() {
+    use fsl_route::Mode;
+    use fsl_semantics::check::Capability::{OperationContract, ValueValidity};
+    #[derive(Debug)]
+    struct Never;
+    impl fsl_analyze::provider::ExternalProvider for Never {
+        fn settle(
+            &self,
+            _request: &fsl_analyze::provider::ProviderRequest<'_>,
+            _cancel: &filament_exact::Cancel,
+        ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+            panic!("registration calls no provider")
+        }
+    }
+    let build = |descriptor| {
+        fsl_analyze::analyze::Engine::external(
+            descriptor,
+            fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+            fsl_analyze::provider::ProviderLimits::default(),
+            Box::new(Never),
+        )
+    };
+    for (id, pairs) in [
+        (
+            "fsl.test-contract",
+            vec![(OperationContract, Mode::Unbounded)],
+        ),
+        (
+            "fsl.test-both",
+            vec![
+                (OperationContract, Mode::Bounded),
+                (ValueValidity, Mode::Unbounded),
+            ],
+        ),
+    ] {
+        let engine = build(advertising(id, &pairs))
+            .unwrap_or_else(|refusal| panic!("{id} registers: {refusal:?}"));
+        assert_eq!(engine.id().as_str(), id);
+    }
+    for (id, pairs) in [(
+        "fsl.test-bounded-validity",
+        vec![
+            (OperationContract, Mode::Unbounded),
+            (ValueValidity, Mode::Bounded),
+        ],
+    )] {
+        let refusal = build(advertising(id, &pairs)).expect_err("refused at registration");
+        assert_eq!(refusal.backend.as_str(), id);
+    }
+    // No advertised pair: refused by the manifest reader (FR-288-AC-3) or at
+    // registration, never registered.
+    let empty = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new("fsl.test-nothing")),
+        fsl_route::ProviderOrigin::Process,
+        Vec::new(),
+        fsl_route::ManifestMembers {
+            domains: None,
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    );
+    if let Ok(descriptor) = empty {
+        let refusal = build(descriptor).expect_err("an empty advertisement is refused");
+        assert_eq!(refusal.backend.as_str(), "fsl.test-nothing");
+    }
+}

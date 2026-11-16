@@ -139,6 +139,36 @@ fn a_state_graph_claim_refuses_a_temporal_profile() {
         .unwrap_or_else(|refusals| panic!("`using v` checks: {refusals:?}"));
 }
 
+/// FR-165-AC-7, its protocol half: a state-graph claim `using` the protocol
+/// profile refuses `unknown_profile`/`wrong-selection-role` at the alias, and
+/// `using` the header layer `filament.temporal.complete/v1` checks.
+#[trace("TC-1545", "FR-165-AC-7")]
+#[test]
+#[ignore = "QSL-2150: a state-graph claim using the protocol profile is not refused yet"]
+fn a_state_graph_claim_refuses_the_protocol_profile() {
+    let profiles = "profile pp = \"filament.protocol.finite-global/v1\";\n\
+                    profile tc = \"filament.temporal.complete/v1\";\n";
+    for claim in [
+        "possible Bad using pp over (c: Config::ConfigVersion) { c.versionNumber = 2 }",
+        "always possible Bad using pp over (c: Config::ConfigVersion) { c.versionNumber = 2 }",
+        "unique path Bad using pp over (c: Config::ConfigVersion) \
+         from (c.versionNumber = 0) to (c.versionNumber = 2);",
+    ] {
+        let (code, cause, named) = sole_refusal_with(profiles, claim);
+        assert_eq!(
+            (code, cause),
+            (Code::UnknownProfile, Some("wrong-selection-role")),
+            "{claim}"
+        );
+        assert_eq!(named.as_deref(), Some("pp"), "{claim}");
+    }
+    check_with(
+        profiles,
+        "possible Good using tc over (c: Config::ConfigVersion) { c.versionNumber = 2 }",
+    )
+    .unwrap_or_else(|refusals| panic!("`using tc` checks: {refusals:?}"));
+}
+
 /// The refusal of the fixture unit with `body` before a checked clause
 /// exists, at S2 or S3: its code and the text it names.
 fn forms_refusal(body: &str) -> (Code, String) {

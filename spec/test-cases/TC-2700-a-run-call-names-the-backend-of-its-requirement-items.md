@@ -26,4 +26,4 @@ Test: `fsl-command/tests/it/run_requirement_items.rs` `a_run_call_names_the_back
 - Step 1: value 16 and three entries with `value-checker` as sole candidate; without the member, value 16 and no `requirements`.
 - Step 2: named `value-checker`; every item `unknown-backend`; the first item on `value-checker`, the other two `unknown-backend`.
 - Step 3: stage `request` `invalid-request` naming the pointer, exit 20; the unknown claim refuses at stage `call` with `missing_declaration`.
-- Step 4: each item `invalid-request` naming `unknown`; the value unchanged.
+- Step 4: each item `invalid-request` `invalid_capability`/`unknown-option` naming `value-checker` and `unknown`; the value unchanged.
