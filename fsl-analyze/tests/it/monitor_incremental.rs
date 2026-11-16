@@ -1724,8 +1724,8 @@ fn a_state_read_back_from_its_bytes_continues_as_the_original() {
             members(&original.report()),
             "{name}"
         );
-        for index in 3..5 {
-            let observed = text(levels[index]);
+        for (index, level) in levels.iter().enumerate().take(5).skip(3) {
+            let observed = text(*level);
             let a = original
                 .advance(admitted(&world, name, &observed, index as u64), &cancel)
                 .expect("advances");
