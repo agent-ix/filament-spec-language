@@ -127,11 +127,14 @@ spine APIs rather than a first sketch, and are accepted as its contract:
   reports them, and a caller handles both with one match.
 - **`MonitorPosition::Sample` is canonical text.** A record sample is passed
   as its canonical JSON object text (JCS), not a parsed `Value`. The text is
-  the position's identity (FR-641's record-sample position), so the session
-  admits it without re-serializing, and two equal samples are the same text.
-- **Reports are shared, not copied.** A status holds FR-283's
-  `MonitorRecord`, whose `ClauseRunReport` is held behind an
-  `Arc<ClauseRunReport>`: a settled report is returned at every later step
+  the sample's canonical value, which the session admits without
+  re-serializing. It is not the position's identity: a record-sample
+  position is identified by its index in the trace (FR-330), so two equal
+  samples at different indices are distinct positions, each cited by its
+  own index.
+- **Reports are shared, not copied.** The session's `ClauseStatus` holds its
+  FR-283 `MonitorRecord` and that record's `ClauseRunReport` behind an
+  `Arc`: a settled report is returned at every later step
   unchanged (Finality), so each step shares it rather than cloning a
   counterexample that may list many positions.
 - **`open` and `resume` take the request by value.** The session keeps the
@@ -167,12 +170,14 @@ spine APIs rather than a first sketch, and are accepted as its contract:
   with the latest progress assertion (its `scope` and its `execution`, which
   is `open` when no assertion has been made), the latest `through` for a
   `Timed` session, and the ledger the session was opened with. After the
-  `k`-th call of `step`, `assert_progress` or `assert_through`:
+  `k`-th counted call ("Counted calls") of `step`, `assert_progress` or `assert_through`:
   - a clause still `Pending` SHALL report exactly `B(k)`;
-  - a clause that settled at call `s <= k` SHALL report exactly `B(s)`, the
-    batch report over the prefix that decided it, and `B(k)` SHALL have the
-    same category and truth as `B(s)`; the reading that decided it is its
-    `Settlement` ("Settlement"), never part of its report.
+  - a clause that settled at call `s <= k`, other than on a limit, SHALL
+    report exactly `B(s)`, the batch report over the prefix that decided it,
+    and `B(k)` SHALL have the same category and truth as `B(s)`; the reading
+    that decided it is its `Settlement` ("Settlement"), never part of its
+    report. A clause settled on a limit reports the limit report
+    ("Settlement").
   A settled verdict is sound (see "Settling"), so its category and truth are
   the same over every longer prefix; its other members are not. The batch
   counterexample of a bad prefix lists every position of the prefix it was
@@ -182,14 +187,27 @@ spine APIs rather than a first sketch, and are accepted as its contract:
   decided the clause and never changes, and the batch agreement for a
   settled clause is on its category and truth over each longer prefix and on
   the whole report over its deciding prefix.
-- **Settlement.** A settled clause's report SHALL be exactly `B(s)`, the
-  batch report over its deciding prefix, with no member taken from the
-  reading that decided it: no open-scope `finite_window` report, no ledger on
-  a `Finite` trace, and its basis the one `B(s)` carries. The session SHALL
-  report the reading that decided the clause beside it as its `Settlement`, so the
-  report stays comparable with the batch run and the reason it is final is
-  still shown. `Settlement` is the closed record:
-  - `step`: `s`, the call at which the clause settled, a decimal string;
+- **Counted calls.** The session SHALL count, from 1, each accepted call of
+  `step`, `assert_progress` or `assert_through`. A refused call (a malformed
+  or out-of-order observation, a contradiction, an admission failure) and a
+  cancelled call leave the session unchanged ("Atomic steps") and are not
+  counted. "The `k`-th call" in "Batch equality" and `step` in a
+  `Settlement` mean the `k`-th counted call, and a clause settled at
+  `finish` has `step` equal to the number of counted calls made before
+  `finish`.
+- **Settlement.** The session SHALL report, for a clause settled with
+  `trigger` `decided` or `finish`, exactly `B(s)`, the batch report over its
+  deciding prefix, with no member `B(s)` lacks: for example no
+  `finite_window` and no ledger on a `Finite` trace, and the basis `B(s)`
+  carries. A clause settled with `trigger` `limit` is exempt from that rule
+  and from the category-and-truth agreement of "Batch equality": its report
+  is the `incomplete` limit report "Retained state" gives, which no batch
+  run produces. The session SHALL report the reading that decided the
+  clause beside its report as its `Settlement`, so the report stays
+  comparable with the batch run and the reason it is final is still shown.
+  `Settlement` is the closed record:
+  - `step`: `s`, the counted call at which the clause settled ("Counted
+    calls"), a decimal string;
   - `trigger`: `decided` (its profile's evaluator decided it, "Settling"),
     `limit` (it settled `incomplete` on `retained_positions` or
     `retained_identities`, "Retained state") or `finish` (it settled at
@@ -199,17 +217,29 @@ spine APIs rather than a first sketch, and are accepted as its contract:
     fixed-sample clause (`decisive-counterexample` or `decisive-witness`),
     of FR-501's report for a finite-window clause, and of `B(s)` itself for
     an infinite-trace or timed clause; absent for `limit` and `finish`;
-  - `horizon`: for `decided`, the seen horizon of the deciding reading, a
-    decimal string: `S = n - 1` of FR-504's open-scope reading, the asserted
-    watermark of a progressed or finite-window reading, the newest stamp or
-    the latest `through` of a timed one, and the last position seen for an
-    infinite-trace one; absent otherwise;
-  - `position`: for `decided`, the position at which the deciding reading
-    reports its verdict: the failing activation's position for a violation,
-    the witnessing position for a success, a decimal string, or `null` when
-    the reading names none; absent otherwise;
-  - `through`: for a timed clause settled at or below an asserted `through`,
-    that value as an FSpec FR-642 exact-rational string; absent otherwise.
+  - `horizon`: for `decided`, the one seen horizon of the deciding reading,
+    by profile and kind:
+    - event-position, over a `Finite` or `Progressed` trace, and
+      fixed-sample over a `Finite` trace: `S = n - 1`, the index of the
+      last position seen (FR-820 `decided`, FR-504);
+    - fixed-sample over a `Progressed` trace: FR-504's seen horizon `S`,
+      `min(W, through)` under `Complete { through }` and `n - 1` under
+      `Incomplete`;
+    - finite-window (`Timestamped`): the asserted inclusive watermark `W`
+      (FR-501);
+    - infinite-trace: `n - 1`;
+    - timed: the `through` when `assert_through` settled the clause, and
+      otherwise the newest stamp;
+    written as a decimal string, except a timed horizon, which is an FSpec
+    FR-642 exact-rational string; absent for `limit` and `finish`;
+  - `position`: for `decided`, a decimal string read from the deciding
+    reading: for a `violation` (an `Undefined` that is a violation
+    included), its outcome's `where`, the failing activation's position;
+    for a `success`, the least position of its FR-501 decision support; and
+    `null` for a reading with no `where` and no decision support; absent
+    for `limit` and `finish`;
+  - `through`: for a timed clause settled by `assert_through`, that value as
+    an FSpec FR-642 exact-rational string; absent otherwise.
 - **Finality.** Once a clause's status is `Settled`, every later step SHALL
   report the same report for it, and the session SHALL stop evaluating that
   clause.
@@ -316,12 +346,12 @@ spine APIs rather than a first sketch, and are accepted as its contract:
 | FR-643-AC-2 | A `Timestamped` session over FR-641-AC-1's three observations with progress asserted after each reports, after the last, FR-501-AC-4's outcome; the ledger it returns equals the one the batch run returns. | Test (TC-1666) |
 | FR-643-AC-3 | Once `always holds(c.value <= 1)` settles `violation` at the step of `c.value` 2, the later steps report the same report for it; a clause passes from `Pending` to `Settled` only at the step that decides it, a `Pending` clause whose report changes is named as changed with status still `Pending`, and each step names exactly the clauses whose status or report changed. | Test (TC-1666) |
 | FR-643-AC-4 | A checkpoint taken after step 2 and resumed gives, for steps 3 to 5, the reports of the uninterrupted session; resuming under another package, or with another clause list, refuses `monitor-state-mismatch`. | Test (TC-1667) |
-| FR-643-AC-5 | A `Timestamped` observation stamped at or below the retained watermark refuses with `contradicted_dimension` `Watermark` and leaves the session unchanged, after which a correct observation is accepted; after a progress assertion with scope `closed` is retained, a further observation is refused with `contradicted_dimension` `Closure` and leaves the session unchanged. In a separate `Finite` session with `retained_positions` 2 over levels 0, 1, 0, the event-position clause `Recent` (`always[0,9] count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1`), whose window holds three positions at the third observation, reports `incomplete` naming `monitor.retained_positions` at the third observation, while the infinite-trace `Reaches` and `Never`, which retain no value (FR-820), stay `Pending`. | Test (TC-1667) |
+| FR-643-AC-5 | A `Timestamped` observation stamped at or below the retained watermark refuses with `contradicted_dimension` `Watermark` and leaves the session unchanged, after which a correct observation is accepted; after a progress assertion with scope `closed` is retained, a further observation is refused with `contradicted_dimension` `Closure` and leaves the session unchanged. In a separate `Finite` session with `retained_positions` 2 over levels 0, 1, 0, the event-position clause `Recent` (`always[0,9] count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1`), whose window holds three positions at the third observation, settles `incomplete` naming `monitor.retained_positions` at the third observation, with `Settlement` `{step: "3", trigger: "limit"}` and no `basis`, `horizon` or `position`, while the infinite-trace `Reaches` and `Never`, which retain no value (FR-820), stay `Pending`. | Test (TC-1667) |
 | FR-643-AC-6 | In a `Finite` session over samples with levels 0, 1, 2, 1, the infinite-trace `Never` (`always holds(r.level < 2)`) settles `violation` at step 3; at step 4 its report equals `B(3)`, whose counterexample lists three samples, while `B(4)` has the same category `violation` and truth `false` and a counterexample of four samples. `Reaches` (`eventually holds(r.level = 2)`) stays `Pending` at every step, reporting `B(k)` (`pending`, no truth) at step `k`, and `finish` returns `B(4)` for it. | Test (TC-2321) |
 | FR-643-AC-7 | In a `Finite` session, the event-position clause `E` (`eventually[0,2] holds(r.level = 2)`) over levels 0, 1 stays `Pending` at steps 1 and 2 while `B(1)` and `B(2)` report `violation` (the closed reading), and settles at step 3 on level 2 with report exactly `B(3)` (`success`, basis `closed-scope`, no `finite_window` and no ledger) and `Settlement` `{step: "3", trigger: "decided", basis: "decisive-witness", horizon: "2", position: "2"}`; over levels 0, 1, 1 it settles at step 3, when the window `[0, 2]` is wholly observed, with report exactly `B(3)` (`violation`, basis `closed-scope`) and `Settlement` `{step: "3", trigger: "decided", basis: "decisive-counterexample", horizon: "2", position: "0"}`. A `finish` over levels 0, 1 settles it with `Settlement` `{step: "2", trigger: "finish"}` and report `B(2)`. | Test (TC-2321) |
 | FR-643-AC-8 | `finish()` of a `Finite` session over FR-643-AC-1's snapshots equals FR-283's `monitor` over that trace; a `Progressed` session whose latest assertion has scope `open` and execution `closed` returns, for each unsettled clause, `B(n)` under scope `open` and execution `closed`; `MonitorSession::finish` takes no closure argument. | Test (TC-2322) |
 | FR-643-AC-9 | A `Finite` session over 1,000 samples whose `level` cycles 0 to 8, with `retained_positions` 4, keeps the infinite-trace `Below` (`always holds(r.level < 9)`) and `Nine` (`eventually holds(r.level = 9)`) `Pending` to the end with no `incomplete`; `Recent` (at most one 2 in any four consecutive samples, which holds here) settles `success` at step 10, its state holding `min(k, 4)` values after step `k` until then; over levels 2, 0, 2 `Recent` settles `violation` at step 3. The checkpoint after the last sample holds no admitted value. | Test (TC-2322) |
-| FR-643-AC-10 | In a `Timed` session of FR-642's `Ack` (`always (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`): with `req` at 0 and `ack` at 250, `Ack` settles `violation` at position 0 at the `ack` step, the stamp 250 having passed the window `[0, 200]`; with `req` at 0 and no further observation it stays `Pending` until `assert_through(250)`, which settles `violation` at position 0; with `req` at 0, `ack` at 150 and `assert_through(300)` it stays `Pending`, and `finish` returns `pending` for it, the unbounded `always` reading positions the recording does not hold (FR-642-AC-2). The bounded `Bound` (`always[0 ms, 300 ms] (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`) over `req` at 0, `ack` at 150 and `assert_through(500)` stays `Pending` until `finish`, which returns `success`. `assert_through(100)` after a stamp 150 refuses `timed-through-before-last-stamp`; `assert_through(250)` after `assert_through(300)` refuses `timed-stamps-decrease`; after `assert_through(300)`, an observation stamped 260, and one stamped 300, each refuse `timed-stamps-decrease`; each refusal leaves the session unchanged, and `assert_through` on a `Finite` session refuses `invalid-request` naming `through`. | Test (TC-2324) |
+| FR-643-AC-10 | In a `Timed` session of FR-642's `Ack` (`always (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`): with `req` at 0 and `ack` at 250, `Ack` settles `violation` at position 0 at the `ack` step, the stamp 250 having passed the window `[0, 200]`; with `req` at 0 and no further observation it stays `Pending` until `assert_through(250)`, which settles `violation` at position 0 with `Settlement` `{step: "2", trigger: "decided", basis: "closed-scope", horizon: "250", position: "0", through: "250"}`; with `req` at 0, `ack` at 150 and `assert_through(300)` it stays `Pending`, and `finish` returns `pending` for it, the unbounded `always` reading positions the recording does not hold (FR-642-AC-2). The bounded `Bound` (`always[0 ms, 300 ms] (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`) over `req` at 0, `ack` at 150 and `assert_through(500)` stays `Pending` until `finish`, which returns `success`. `assert_through(100)` after a stamp 150 refuses `timed-through-before-last-stamp`; `assert_through(250)` after `assert_through(300)` refuses `timed-stamps-decrease`; after `assert_through(300)`, an observation stamped 260, and one stamped 300, each refuse `timed-stamps-decrease`; each refusal leaves the session unchanged, and `assert_through` on a `Finite` session refuses `invalid-request` naming `through`. | Test (TC-2324) |
 | FR-643-AC-11 | A `Finite` session with `retained_identities` 3 over levels 0, 0, 2, 0: `Never` settles `violation` at step 3 citing three positions, and at step 4 `Below` settles `incomplete` naming `monitor.retained_identities`, its state dropped, while `Never` keeps its settled report; a further observation leaves `Below`'s report unchanged. | Test (TC-2324) |
 
 ## Dependencies

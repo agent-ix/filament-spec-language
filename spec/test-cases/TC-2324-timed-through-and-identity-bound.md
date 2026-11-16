@@ -29,7 +29,7 @@ success only at `finish`), the `through` assertion and its refusals, and the
 ## Expected Results
 
 - Step 1: `Ack` settles `violation` at position 0 at the `ack` step.
-- Step 2: `Pending` until `through` 250, then `violation` at position 0.
+- Step 2: `Pending` until `through` 250, then `violation` at position 0 with settlement `{step "2", trigger "decided", basis "closed-scope", horizon "250", position "0", through "250"}`.
 - Step 3: `Pending` throughout; `finish` returns `pending`.
 - Step 4: `Pending` until `finish`, which returns `success`.
 - Step 5: `timed-through-before-last-stamp`; `timed-stamps-decrease` for the lower `through` and for both observations; `invalid-request` naming `through`; each leaves the session unchanged.
