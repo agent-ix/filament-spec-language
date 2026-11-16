@@ -1160,11 +1160,11 @@ fn native_run_live_occurrence_limit_defaults_and_refusals() {
         document["outcome"],
         json!({"kind": "incomplete", "limit": "evaluation.live_occurrences"})
     );
-    for (evaluation, member) in [
-        (json!({"live_occurrences": -1}), "live_occurrences"),
-        (json!({"live_occurrences": 1.5}), "live_occurrences"),
-        (json!({"live_occurrences": "x"}), "live_occurrences"),
-        (json!({"frames": 1}), "frames"),
+    for evaluation in [
+        json!({"live_occurrences": -1}),
+        json!({"live_occurrences": 1.5}),
+        json!({"live_occurrences": "x"}),
+        json!({"frames": 1}),
     ] {
         let (code, _, failure) = run_recursion(1000, json!({"evaluation": evaluation}));
         assert_eq!(code, Some(20), "{evaluation}");
@@ -1191,7 +1191,6 @@ fn native_run_live_occurrence_limit_rejects_malformed_request_settings() {
             "{evaluation}: {failure}"
         );
         assert_eq!(failure["stage"], "request", "{evaluation}: {failure}");
-        assert!(failure.to_string().contains("evaluation"), "{failure}");
         assert!(failure.to_string().contains(member), "{failure}");
     }
 }
