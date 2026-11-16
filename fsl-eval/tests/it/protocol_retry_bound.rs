@@ -339,6 +339,29 @@ fn scalar_text(value: &serde_json::Value) -> Option<&str> {
     }
 }
 
+fn registration_status<'a>(
+    state: &'a serde_json::Value,
+    registration: &serde_json::Value,
+) -> Option<&'a str> {
+    match state {
+        serde_json::Value::Object(object) => {
+            if object.get("key") == Some(registration) {
+                return object
+                    .get("value")
+                    .and_then(|value| named_member(value, "status"))
+                    .and_then(scalar_text);
+            }
+            object
+                .values()
+                .find_map(|value| registration_status(value, registration))
+        }
+        serde_json::Value::Array(values) => values
+            .iter()
+            .find_map(|value| registration_status(value, registration)),
+        _ => None,
+    }
+}
+
 fn maximum_cattempts(
     reachable: &fsl_eval::simulation::protocol::Reachable<Sc>,
     template: &str,
@@ -509,10 +532,12 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         let state_key: serde_json::Value =
             serde_json::from_slice(reachable.states[*next].key.as_bytes())
                 .expect("state key is canonical JSON");
-        let status = scalar_text(
-            named_member(&state_key, "status").expect("registration status is in the state key"),
-        )
-        .expect("registration status is text");
+        let transition_json = fsl_eval::simulation::protocol::transition_json(transition)
+            .expect("cend transition encodes");
+        let registration = named_member(&transition_json, "registration")
+            .expect("cend transition names its registration");
+        let status = registration_status(&state_key, registration)
+            .expect("registration status is in the successor state key");
         assert_eq!(
             status,
             if balance == "0" {
