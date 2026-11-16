@@ -183,6 +183,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         let mut pending = vec![body];
         let mut division_key = None;
         let mut addition_key = None;
+        let mut direct_narrow = None;
         let mut narrows = 0;
         while let Some(node) = pending.pop() {
             if matches!(node.kind(), NodeKind::If { .. }) && function != "ifb" {
@@ -252,6 +253,9 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
                                 .any(|key| key.node() == &narrow_key),
                             "{function} binder narrow holds no record"
                         );
+                    } else {
+                        direct_narrow =
+                            Some((narrow_key, lowered.semantic_type().expect("narrow type")));
                     }
                     assert_eq!(
                         matches!(operand.kind(), NodeKind::Local(_)),
@@ -340,6 +344,20 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             .get(member.occurrence())
             .expect("the same occurrence has a checked requirement record");
         let expected_bound_node = record.result_bound().node();
+        if let Some((narrow, target)) = direct_narrow {
+            assert_eq!(
+                record
+                    .conversion_context()
+                    .expect("direct narrow context")
+                    .node(),
+                &narrow,
+                "{function} context names its direct narrow"
+            );
+            assert_eq!(
+                expected_bound_node, target,
+                "{function} bound node is its narrow target"
+            );
+        }
         assert_eq!(item.result_bound(), &expected_bound_node, "{function}");
         assert_eq!(
             item.conversion_context(),
