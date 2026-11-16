@@ -20,3 +20,23 @@ Reviewed PR #2788 at `8eb4f2d5085a2e59aa50735512c5a43335b9b1e4`, including its p
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | S2 loses the required decimal-literal spelling kind | fsl-forms/src/value.rs:1865-1874; fsl-forms/src/syntax.rs:608-613 |
+
+## Dispositions
+
+Rechecked at PR #2788 head `c9dd3bd403f6eb6b09aeff8189417ae4c450ac62`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The fix adds a `DecimalSpellingKind` to `ExprNode::DecimalValue`; the bare-token path sets `DecimalLiteral`, and the constructor path sets `DecimalConstructor`. |
+
+### FND-001 after excerpt
+
+```text
+Shape::Decimal(coefficient, scale, DecimalSpellingKind::DecimalLiteral)
+
+ExprNode::DecimalValue {
+    coefficient,
+    scale,
+    spelling,
+}
+```

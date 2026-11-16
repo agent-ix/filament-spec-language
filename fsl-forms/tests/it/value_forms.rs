@@ -1797,21 +1797,21 @@ fn a_selector_after_a_call_is_refused_at_its_own_span() {
 #[test]
 fn a_bare_decimal_literal_builds_the_decimal_value_it_spells() {
     for (source, coefficient, scale) in [("0.9", 9_i64, 1_u32), ("5.0", 50, 1), ("0.90", 90, 2)] {
-        let declarations = format!("function f using v(): Boolean pure {{ {source} }}");
-        let (text, parsed) = parse(&declarations);
-        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-        let start = text.rfind(source).expect("the literal in the unit");
-        assert!(
-            parsed.cst().nodes().iter().any(|node| {
-                node.production() == fsl_cst::Production::Primary
-                    && node.span().start == start
-                    && node.span().end == start + source.len()
-            }),
-            "the expression span equals the `{source}` literal span"
-        );
-        let unit = build_unit(&parsed).expect("S2 builds the unit");
+        let (text, function) = body(source);
+        let literal_span = span_of(&text, source);
+        let spans = function.spans().expect("the form carries expression spans");
         assert_eq!(
-            function(unit.forms()[0].form()).body.root_node().clone(),
+            spans.body.at(&[]),
+            Some(literal_span),
+            "the S2 expression span equals the `{source}` literal span"
+        );
+        assert_eq!(
+            &text[literal_span.start..literal_span.end],
+            source,
+            "the S2 expression span names the exact literal"
+        );
+        assert_eq!(
+            function.body.root_node().clone(),
             ExprNode::DecimalValue {
                 coefficient: Integer::from(coefficient),
                 scale,
