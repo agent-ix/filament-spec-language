@@ -238,7 +238,7 @@ fn a_parameter_read_is_rooted_at_the_invocation_and_absent_without_one() {
     assert_eq!(read_paths(&evaluation), vec![Some(own), None]);
 }
 
-/// FR-766-AC-5 (TC-2190): the `AtMostOne` unit, whose `count<One>` over a
+/// FR-766-AC-5 (TC-2195): the `AtMostOne` unit, whose `count<One>` over a
 /// two-element sequence can reach 2, with `One` spelled `one`.
 fn at_most_one(one: &str) -> (String, fsl_semantics::model::intake::PackageInput) {
     let (base, packages) = config_version_unit_and_packages();
@@ -258,11 +258,11 @@ fn run_item(clause: &str, report: &ClauseRunReport) -> serde_json::Value {
     serde_json::to_value(&item).expect("the item serializes")
 }
 
-/// FR-766-AC-5 (TC-2190): a clause run compiles its unit under
+/// FR-766-AC-5 (TC-2195): a clause run compiles its unit under
 /// `CheckMode::Linked`, so an invariant whose `count<One>` can exceed `One`
 /// is refused at compile with a named cause, never run to a null-cause
 /// refusal; with a domain that holds the count it compiles.
-#[trace("TC-2190", "FR-766-AC-5")]
+#[trace("TC-2195", "FR-766-AC-5")]
 #[test]
 #[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-replay/src/spine/clause/tests/witness.rs:84,1736, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478"]
 fn count_out_of_domain_names_its_cause() {
@@ -289,9 +289,9 @@ fn count_out_of_domain_names_its_cause() {
     );
 }
 
-/// FR-766-AC-6 (TC-2190): the clause run of that unit reports a compile
+/// FR-766-AC-6 (TC-2195): the clause run of that unit reports a compile
 /// disposition whose run item names `unproved-range`.
-#[trace("TC-2190", "FR-766-AC-6")]
+#[trace("TC-2195", "FR-766-AC-6")]
 #[test]
 #[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-replay/src/spine/clause/tests/witness.rs:84,1736, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478"]
 fn a_count_refused_at_compile_is_a_declined_run_item_with_its_cause() {
@@ -322,9 +322,9 @@ fn a_count_refused_at_compile_is_a_declined_run_item_with_its_cause() {
     assert_eq!(item["cause"]["kind"], "unproved-range", "{item}");
 }
 
-/// FR-766-AC-7 (TC-2190): a clause-run report whose S6a outcome is a kernel
+/// FR-766-AC-7 (TC-2195): a clause-run report whose S6a outcome is a kernel
 /// refusal record projects that record's code and cause onto its run item.
-#[trace("TC-2190", "FR-766-AC-7")]
+#[trace("TC-2195", "FR-766-AC-7")]
 #[test]
 #[ignore = "QSL-2003: a clause-run item over a kernel refusal record does not carry its cause yet"]
 fn a_kernel_refusal_record_names_its_cause_on_the_run_item() {

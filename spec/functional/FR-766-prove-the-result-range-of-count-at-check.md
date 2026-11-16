@@ -103,13 +103,13 @@ counter is an unbounded natural number and only the final count is retained into
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-766-AC-1 | Under `CheckMode::Linked`, for `q` of `Sequence<Integer>[0, 5]`, `Bag<Integer>[0, 5]` and `Set<Integer>[0, 5]`, `count<Int[0, 3]>(x in q: x > 0)` refuses `undefined_expression`/`unproved-range` at the `count` with required `[0, 3]` and proved `[0, 5]`; the same count into `Int[0, 5]` and into `Integer` checks. | Test (TC-2190) |
-| FR-766-AC-2 | Under `CheckMode::Linked`, `if size(q) <= 3 then count<Int[0, 3]>(x in q: x > 0) else 0` checks for the AC-1 sources, and `if size(q) <= 4 then count<Int[0, 3]>(x in q: x > 0) else 0` refuses `unproved-range` with proved `[0, 4]`. | Test (TC-2190) |
-| FR-766-AC-3 | Under `CheckMode::Linked`, `count<Int[1, 3]>(x in q: true)` for `q` of `Sequence<Integer>[0, 3]` refuses `unproved-range` with required `[1, 3]` and proved `[0, 3]`; `count<Int[0, 5]>(x in q: true)` for an unbounded `q` refuses `unproved-range` with a proved interval that has no upper bound. | Test (TC-2190) |
-| FR-766-AC-4 | Under `CheckMode::Kernel`, `count<Int[0, 3]>(x in q: x)` for `q` of `Sequence<Boolean>[0, 5]` checks, and evaluating it over five `true` occurrences refuses `IntegerOutOfDomain` with target `Int[0, 3]`, whose record is `integer_out_of_domain`/`outside-domain` with `expected` `Int[0, 3]`. | Test (TC-2190) |
-| FR-766-AC-5 | A unit over FR-108's `Config` model declaring `type One = Int[0, 1];`, `function pair using v(a: Int[0, 1000]): Sequence<Int[0, 1000]>[0, 2] pure { sequence[a, a] }` and `invariant AtMostOne using v on Config::ConfigVersion at current { count<One>(m in pair(self.versionNumber): m >= 0) <= 1 }` refuses at compile `undefined_expression`/`unproved-range` at the `count`, exit 20; with `type One = Int[0, 2];` it compiles. | Test (TC-2190) |
-| FR-766-AC-6 | The AC-5 `Int[0, 1]` unit run as a clause run of `AtMostOne` returns a compile disposition, and the run item built from it carries category `refusal`, result `declined` and cause `{code: undefined_expression, kind: unproved-range}`. | Test (TC-2190) |
-| FR-766-AC-7 | A clause-run report whose disposition is an S6a kernel refusal record `integer_out_of_domain`/`outside-domain` projects to a run item with category `refusal`, result `declined` and cause `{code: integer_out_of_domain, kind: outside-domain}`, never a `null` cause. | Test (TC-2190) |
+| FR-766-AC-1 | Under `CheckMode::Linked`, for `q` of `Sequence<Integer>[0, 5]`, `Bag<Integer>[0, 5]` and `Set<Integer>[0, 5]`, `count<Int[0, 3]>(x in q: x > 0)` refuses `undefined_expression`/`unproved-range` at the `count` with required `[0, 3]` and proved `[0, 5]`; the same count into `Int[0, 5]` and into `Integer` checks. | Test (TC-2195) |
+| FR-766-AC-2 | Under `CheckMode::Linked`, `if size(q) <= 3 then count<Int[0, 3]>(x in q: x > 0) else 0` checks for the AC-1 sources, and `if size(q) <= 4 then count<Int[0, 3]>(x in q: x > 0) else 0` refuses `unproved-range` with proved `[0, 4]`. | Test (TC-2195) |
+| FR-766-AC-3 | Under `CheckMode::Linked`, `count<Int[1, 3]>(x in q: true)` for `q` of `Sequence<Integer>[0, 3]` refuses `unproved-range` with required `[1, 3]` and proved `[0, 3]`; `count<Int[0, 5]>(x in q: true)` for an unbounded `q` refuses `unproved-range` with a proved interval that has no upper bound. | Test (TC-2195) |
+| FR-766-AC-4 | Under `CheckMode::Kernel`, `count<Int[0, 3]>(x in q: x)` for `q` of `Sequence<Boolean>[0, 5]` checks, and evaluating it over five `true` occurrences refuses `IntegerOutOfDomain` with target `Int[0, 3]`, whose record is `integer_out_of_domain`/`outside-domain` with `expected` `Int[0, 3]`. | Test (TC-2195) |
+| FR-766-AC-5 | A unit over FR-108's `Config` model declaring `type One = Int[0, 1];`, `function pair using v(a: Int[0, 1000]): Sequence<Int[0, 1000]>[0, 2] pure { sequence[a, a] }` and `invariant AtMostOne using v on Config::ConfigVersion at current { count<One>(m in pair(self.versionNumber): m >= 0) <= 1 }` refuses at compile `undefined_expression`/`unproved-range` at the `count`, exit 20; with `type One = Int[0, 2];` it compiles. | Test (TC-2195) |
+| FR-766-AC-6 | The AC-5 `Int[0, 1]` unit run as a clause run of `AtMostOne` returns a compile disposition, and the run item built from it carries category `refusal`, result `declined` and cause `{code: undefined_expression, kind: unproved-range}`. | Test (TC-2195) |
+| FR-766-AC-7 | A clause-run report whose disposition is an S6a kernel refusal record `integer_out_of_domain`/`outside-domain` projects to a run item with category `refusal`, result `declined` and cause `{code: integer_out_of_domain, kind: outside-domain}`, never a `null` cause. | Test (TC-2195) |
 
 ## Notes
 
@@ -119,7 +119,7 @@ every integer retain is proved at check. A test fixture that needs a clause
 whose evaluation meets that refusal at run, such as a `holds` atom refused at
 some trace position (FR-327-AC-6), a refused separating-witness domain
 (FR-268-AC-3) or a refused monitor condition, builds its package with
-`PackageDeclarations::check(CheckMode::Kernel, ..)` and link it, with the
+`PackageDeclarations::check(CheckMode::Kernel, ..)` and links it, with the
 same `count<Int[0, 0]>` atom it uses today. Compiling that atom from source
 through spine compile is refused at check by this requirement.
 

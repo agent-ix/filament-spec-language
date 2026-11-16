@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-765 (TC-2188): the `integer_division` member of `native-compile/1` and
+//! FR-767 (TC-2188): the `integer_division` member of `native-compile/1` and
 //! `native-run/1` requests supplies the law for `div` and `rem`.
 
 use std::path::{Path, PathBuf};
@@ -125,7 +125,7 @@ fn returned(path: &Path) -> String {
 }
 
 #[test]
-#[trace("TC-2188", "FR-765-AC-1", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
+#[trace("TC-2188", "FR-767-AC-1", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn request_member_selects_each_law_for_compile_and_run() {
     for (law, quotient, remainder) in [
@@ -157,7 +157,7 @@ fn request_member_selects_each_law_for_compile_and_run() {
 }
 
 #[test]
-#[trace("TC-2188", "FR-765-AC-2", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
+#[trace("TC-2188", "FR-767-AC-2", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn request_member_and_header_agree_or_conflict() {
     let directory = tempfile::tempdir().unwrap();
@@ -188,7 +188,7 @@ fn request_member_and_header_agree_or_conflict() {
 }
 
 #[test]
-#[trace("TC-2188", "FR-765-AC-3", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
+#[trace("TC-2188", "FR-767-AC-3", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn malformed_or_unknown_member_refuses_before_any_file_is_read() {
     for (law, code, cause) in [
@@ -230,7 +230,7 @@ fn malformed_or_unknown_member_refuses_before_any_file_is_read() {
 }
 
 #[test]
-#[trace("TC-2188", "FR-765-AC-4")]
+#[trace("TC-2188", "FR-767-AC-4")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn no_member_and_no_header_still_refuses_missing_selection() {
     let directory = tempfile::tempdir().unwrap();
@@ -261,7 +261,7 @@ fn no_member_and_no_header_still_refuses_missing_selection() {
 }
 
 #[test]
-#[trace("TC-2188", "FR-765-AC-5", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
+#[trace("TC-2188", "FR-767-AC-5", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn library_entry_takes_its_own_law() {
     let directory = tempfile::tempdir().unwrap();
@@ -306,7 +306,7 @@ fn library_entry_takes_its_own_law() {
 }
 
 #[test]
-#[trace("TC-2188", "FR-765-AC-6")]
+#[trace("TC-2188", "FR-767-AC-6")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn member_over_a_unit_without_div_or_rem_leaves_the_package_unchanged() {
     let directory = tempfile::tempdir().unwrap();
@@ -329,7 +329,7 @@ fn member_over_a_unit_without_div_or_rem_leaves_the_package_unchanged() {
 }
 
 #[test]
-#[trace("TC-2191", "FR-765-AC-8")]
+#[trace("TC-2196", "FR-767-AC-8")]
 #[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn top_level_law_reaches_every_unit_of_a_multi_unit_program() {
     let directory = tempfile::tempdir().unwrap();

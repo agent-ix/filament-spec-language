@@ -1459,7 +1459,7 @@ fn refused_domain(outcome: &Outcome<Value>) -> IntegerInterval {
 
 /// TC-428 (FR-096-AC-8): a `Coerce` into `Int[0, 3]` refuses with that
 /// declared domain, and `count<Three>` past `3` refuses with its own.
-#[trace("TC-2190", "FR-766-AC-4")]
+#[trace("TC-2195", "FR-766-AC-4")]
 #[trace("TC-428", "FR-096-AC-8")]
 #[test]
 fn coerce_and_count_refusals_carry_the_declared_domain() {
@@ -2083,7 +2083,7 @@ const COUNTED_KINDS: [CollectionKind; 3] = [
 /// FR-766-AC-1 and AC-3: a linked `count<N>` whose `[0, size maximum]` is not
 /// inside `N` is refused at check, as a `sum` prefix is.
 #[trace(
-    "TC-2190",
+    "TC-2195",
     "FR-766-AC-1",
     "FR-766-AC-3",
     "FSpec-TC-1653",
@@ -2128,7 +2128,7 @@ fn q14_count_refuses_unproved_range_at_check() {
 }
 
 /// FR-766-AC-1: the same count into a domain that holds `[0, 5]` checks.
-#[trace("TC-2190", "FR-766-AC-1")]
+#[trace("TC-2195", "FR-766-AC-1")]
 #[test]
 #[ignore = "QSL-2003: control for the linked count<N> range obligation, enabled with it"]
 fn q14_count_proves_when_the_bound_fits() {
@@ -2143,7 +2143,7 @@ fn q14_count_proves_when_the_bound_fits() {
 }
 
 /// FR-766-AC-2: a `size(q)` guard narrows the count's upper bound.
-#[trace("TC-2190", "FR-766-AC-2", "FSpec-TC-1653", "FSpec-FR-145-AC-16")]
+#[trace("TC-2195", "FR-766-AC-2", "FSpec-TC-1653", "FSpec-FR-145-AC-16")]
 #[test]
 #[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-replay/src/spine/clause/tests/witness.rs:84,1736, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478"]
 fn q14_count_under_a_size_guard_proves() {

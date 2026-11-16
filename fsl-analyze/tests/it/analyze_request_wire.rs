@@ -333,9 +333,9 @@ fn analyze_defaults_universes_and_limit_names() {
     }
 }
 
-/// FR-765-AC-9 (TC-2191): a `native-analyze/1` request's `integer_division`
+/// FR-767-AC-9 (TC-2196): a `native-analyze/1` request's `integer_division`
 /// member supplies the law its program's `div` needs.
-#[trace("TC-2191", "FR-765-AC-9")]
+#[trace("TC-2196", "FR-767-AC-9", "FSpec-TC-1654", "FSpec-FR-520-AC-5")]
 #[test]
 #[ignore = "QSL-1989: the native-analyze/1 integer_division member is not implemented yet"]
 fn an_analyze_request_supplies_the_integer_division_law() {

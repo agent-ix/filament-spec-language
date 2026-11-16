@@ -32,7 +32,7 @@ reaches checking, and what is refused.
 The header is the unit's own statement of its law because the source is the
 only thing every consumer of a unit reads. A caller may supply a law instead,
 through the compile facade (FR-495) or, from the command line and request
-files, through FR-765's `--integer-division` option and `integer_division`
+files, through FR-767's `--integer-division` option and `integer_division`
 member. A supplied law fills the package selection's integer-division slot,
 which is part of the package identity, so two compiles of one text under two
 supplied laws give two packages with different identities, and a supplied law
@@ -125,7 +125,7 @@ alias, the law identity and the required role.
   the law from the unit's header through spine compile. `fsl check`'s
   `--integer-division` option and the requests' `integer_division` member
   supply a caller law, which composes with the header as "Caller-supplied
-  selection" states (FR-765).
+  selection" states (FR-767).
 - The editor's profile check (FR-110 "Editor profile check") SHALL admit a
   header profile whose identity is one of the three law identities, so the
   editor and E3 agree on what a header may name.

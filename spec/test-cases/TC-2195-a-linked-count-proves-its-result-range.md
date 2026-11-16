@@ -1,12 +1,12 @@
 ---
-id: TC-2190
+id: TC-2195
 title: "A linked count proves its result range"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-766
     type: verifies
 ---
-# TC-2190: A linked count proves its result range
+# TC-2195: A linked count proves its result range
 
 ## Description
 
@@ -22,10 +22,11 @@ Scope: FR-766-AC-1, FR-766-AC-2, FR-766-AC-3, FR-766-AC-4, FR-766-AC-5, FR-766-A
 2. Check the count under a `size(q) <= 3` and a `size(q) <= 4` guard. Test: `q14_count_under_a_size_guard_proves`.
 3. Check `count<Int[1, 3]>` over `[0, 3]` and `count<Int[0, 5]>` over an unbounded source. Test: `q14_count_refuses_unproved_range_at_check`.
 4. Check and evaluate the kernel-mode count over five `true` occurrences. Test: `coerce_and_count_refusals_carry_the_declared_domain`.
-. Run `AtMostOne` of the `Int[0, 1]` unit as a clause run and build its run item. Test: `clause_paths.rs` `a_count_refused_at_compile_is_a_declined_run_item_with_its_cause`.
+5. Compile the `AtMostOne` invariant unit with `One = Int[0, 1]` and `Int[0, 2]`. Test: `fsl-replay/src/spine/clause/tests/clause_paths.rs` `count_out_of_domain_names_its_cause`.
+6. Run `AtMostOne` of the `Int[0, 1]` unit as a clause run and build its run item. Test: `clause_paths.rs` `a_count_refused_at_compile_is_a_declined_run_item_with_its_cause`.
 7. Project a clause-run report whose disposition is a kernel `integer_out_of_domain`/`outside-domain` record. Test: `clause_paths.rs` `a_kernel_refusal_record_names_its_cause_on_the_run_item`.
 
-Tag the tests `#[trace("TC-2190", "FR-766-AC-N")]` with the criterion each asserts.
+Tag the tests `#[trace("TC-2195", "FR-766-AC-N")]` with the criterion each asserts.
 
 ## Expected Results
 

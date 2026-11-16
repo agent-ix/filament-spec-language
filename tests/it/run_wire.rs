@@ -921,10 +921,10 @@ fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
     assert_eq!(first.stdout, second.stdout);
 }
 
-/// FR-765-AC-10 (TC-2191): a `native-monitor/1` request's `integer_division`
+/// FR-767-AC-10 (TC-2196): a `native-monitor/1` request's `integer_division`
 /// member supplies the law its program's `div` needs.
 #[test]
-#[trace("TC-2191", "FR-765-AC-10")]
+#[trace("TC-2196", "FR-767-AC-10")]
 #[ignore = "QSL-1989: the native-monitor/1 integer_division member is not implemented yet"]
 fn a_monitor_request_supplies_the_integer_division_law() {
     let directory = tempfile::tempdir().unwrap();
