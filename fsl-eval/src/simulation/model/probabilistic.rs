@@ -893,16 +893,31 @@ impl ModelSystem<'_> {
             };
             entry.1 += 1;
         }
+        let has_positive_weight = operations.values().any(|(weight, _)| !weight.is_zero());
         let total = operations.values().fold(
             Rational::from_integer(Integer::zero()),
-            |total, (weight, _)| total.add(weight),
+            |total, (weight, _)| {
+                if has_positive_weight {
+                    total.add(weight)
+                } else {
+                    total.add(&Rational::from_integer(Integer::one()))
+                }
+            },
         );
         let mut steps: Vec<(Vec<u8>, WeightedStep)> = Vec::new();
         for action in actions {
             let (weight, identities) = operations
                 .get(action.identity.operation.as_str())
                 .ok_or_else(|| stop(BROKEN))?;
-            let share = weight
+            if has_positive_weight && weight.is_zero() {
+                continue;
+            }
+            let effective_weight = if has_positive_weight {
+                weight.clone()
+            } else {
+                Rational::from_integer(Integer::one())
+            };
+            let share = effective_weight
                 .div(&total)
                 .and_then(|share| share.div(&Rational::from_integer(Integer::from(*identities))))
                 .ok_or_else(|| stop(BROKEN))?;

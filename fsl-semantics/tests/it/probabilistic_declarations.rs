@@ -839,35 +839,11 @@ fn names_workload_operation(cause: &ProbabilisticCause, expected: (&str, &str)) 
     }
 }
 
-/// TC-620 step 3 (FR-185 "Workloads"): each workload variant refuses naming
+/// TC-620 step 3 (FR-185 "Workloads"): a duplicate weight refuses naming
 /// the workload and the operation and carrying its cause.
 #[trace("TC-620", "FR-185-AC-3")]
 #[test]
-fn workload_variants_refuse_naming_the_workload_and_the_operation() {
-    let without_reset =
-        "workload Steady on Service { weight Server::request = 1; weight Server::attempt = 1; }";
-    let body = service(Some((STEADY, without_reset)), "");
-    assert_eq!(
-        located(&body),
-        [invalid("incomplete-workload", without_reset)]
-    );
-    assert!(names_workload_operation(
-        &causes(&body)[0],
-        ("Steady", "Server::reset")
-    ));
-
-    let unknown = "workload Steady on Service { weight Server::request = 1; \
-         weight Server::attempt = 1; weight Server::reset = 1; weight Server::launch = 1; }";
-    let body = service(Some((STEADY, unknown)), "");
-    assert_eq!(
-        located(&body),
-        [invalid("unknown-operation", "Server::launch")]
-    );
-    assert!(names_workload_operation(
-        &causes(&body)[0],
-        ("Steady", "Server::launch")
-    ));
-
+fn workload_duplicate_weight_is_refused() {
     let twice = "workload Steady on Service { weight Server::request = 1; \
          weight Server::attempt = 1; weight Server::reset = 1; weight Server::request = 2; }";
     let body = service(Some((STEADY, twice)), "");
@@ -875,13 +851,6 @@ fn workload_variants_refuse_naming_the_workload_and_the_operation() {
         located(&body),
         [invalid("duplicate-weight", "weight Server::request = 2;")]
     );
-    assert!(names_workload_operation(
-        &causes(&body)[0],
-        ("Steady", "Server::request")
-    ));
-
-    let body = service(Some((STEADY, &steady_with_request("0"))), "");
-    assert_eq!(located(&body), [invalid("invalid-weight", "0")]);
     assert!(names_workload_operation(
         &causes(&body)[0],
         ("Steady", "Server::request")
@@ -2898,12 +2867,12 @@ fn a_weight_sum_past_the_ceiling_refuses_promptly() {
 #[trace("TC-620")]
 #[test]
 fn a_second_weight_after_an_invalid_one_is_still_a_duplicate() {
-    let workload = "workload Steady on Service { weight Server::request = 0; \
+    let workload = "workload Steady on Service { weight Server::request = rational(-1, 1); \
          weight Server::attempt = 1; weight Server::reset = 1; weight Server::request = 2; }";
     assert_eq!(
         located(&service(Some((STEADY, workload)), "")),
         [
-            invalid("invalid-weight", "0"),
+            invalid("invalid-weight", "rational(-1, 1)"),
             invalid("duplicate-weight", "weight Server::request = 2;")
         ]
     );
@@ -3216,14 +3185,12 @@ fn a_claims_subject_is_its_own_units_package() {
     assert_eq!(claim.subject.package.identity, P);
 }
 
-/// TC-2060 (FR-185-AC-10): a workload weight of 0 is admitted and recorded
-/// with no diagnostic, a workload of all zero weights is admitted, and an
-/// omitted operation is still refused `incomplete-workload`.
+/// TC-2060 (FR-185-AC-10): zero and all-zero workload weights are admitted
+/// and recorded with no diagnostic.
 #[trace("TC-2060", "FR-185-AC-10")]
 #[trace("FSpec-TC-1560", "FSpec-FR-405-AC-10")]
 #[test]
-#[ignore = "QSL-1991: workload weight 0 admitted not implemented yet"]
-fn a_workload_admits_weight_zero_and_all_zero_weights() {
+fn workload_zero_weight_follows_spec() {
     let reset_zero = "workload Steady on Service { weight Server::request = 1; \
          weight Server::attempt = 1; weight Server::reset = 0; }";
     let graph = checked(&service(Some((STEADY, reset_zero)), ""));
@@ -3247,14 +3214,56 @@ fn a_workload_admits_weight_zero_and_all_zero_weights() {
 
     let all_zero = "workload Steady on Service { weight Server::request = 0; \
          weight Server::attempt = 0; weight Server::reset = 0; }";
-    checked(&service(Some((STEADY, all_zero)), ""));
+    let graph = checked(&service(Some((STEADY, all_zero)), ""));
+    let steady = graph
+        .probabilistic_model()
+        .workload("Steady")
+        .expect("all-zero Steady is recorded");
+    assert_eq!(
+        steady
+            .weights()
+            .iter()
+            .map(|(_, weight)| weight.clone())
+            .collect::<Vec<_>>(),
+        [ratio(0, 1), ratio(0, 1), ratio(0, 1)]
+    );
+}
 
+/// TC-2060 (FR-185-AC-10): omitting an operation remains a refusal and names
+/// the workload and the omitted operation.
+#[trace("TC-2060", "FR-185-AC-10")]
+#[trace("FSpec-TC-1560", "FSpec-FR-405-AC-10")]
+#[test]
+fn workload_omitted_operation_follows_spec() {
     let without_reset =
         "workload Steady on Service { weight Server::request = 0; weight Server::attempt = 1; }";
+    let body = service(Some((STEADY, without_reset)), "");
     assert_eq!(
-        located(&service(Some((STEADY, without_reset)), "")),
+        located(&body),
         [invalid("incomplete-workload", without_reset)]
     );
+    assert!(names_workload_operation(
+        &causes(&body)[0],
+        ("Steady", "Server::reset")
+    ));
+}
+
+/// TC-620 (FR-185-AC-3): a workload still refuses an operation outside its
+/// model, naming the workload and the operation.
+#[trace("TC-620", "FR-185-AC-3")]
+#[test]
+fn workload_unknown_operation_refused() {
+    let unknown = "workload Steady on Service { weight Server::request = 1; \
+         weight Server::attempt = 1; weight Server::reset = 1; weight Server::launch = 1; }";
+    let body = service(Some((STEADY, unknown)), "");
+    assert_eq!(
+        located(&body),
+        [invalid("unknown-operation", "Server::launch")]
+    );
+    assert!(names_workload_operation(
+        &causes(&body)[0],
+        ("Steady", "Server::launch")
+    ));
 }
 
 /// TC-2060 (FR-185-AC-3): a negative workload weight, written as an exact

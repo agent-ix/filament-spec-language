@@ -7,7 +7,7 @@
 //! checked graph ([`model`]): a random parameter's operation, parameter,
 //! typed support and probabilities; a reward's operation and its integer or
 //! quantity expression over the operation's parameters; a workload's model
-//! and one positive weight per operation of it. Each refusal is the
+//! and one non-negative weight per operation of it. Each refusal is the
 //! `invalid_probabilistic_model` cause FR-185 names, a `missing_declaration`
 //! or `ambiguous_declaration` for a name that resolves to no single
 //! declaration, or the typer's own refusal.
@@ -80,7 +80,8 @@ pub enum ProbabilisticDeclaration {
     Claim(Box<ProbabilisticForm>),
 }
 
-/// Whose weight is not a positive exact rational.
+/// Whose weight violates its rule: distributions require positive weights;
+/// workloads require non-negative weights.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum WeightOwner {
     /// A value of a random parameter's distribution.
@@ -131,7 +132,8 @@ pub enum ConfidenceFault {
 /// which `region::DeclarationRegions::refusal_region` reads directly.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProbabilisticCause {
-    /// A weight that is not a positive exact rational.
+    /// A distribution weight that is not positive, or a workload weight that
+    /// is negative.
     /// `invalid_probabilistic_model`/`invalid-weight`.
     InvalidWeight {
         /// Whose weight it is.
