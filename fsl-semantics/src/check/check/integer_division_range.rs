@@ -272,9 +272,9 @@ mod tests {
                 }
             };
             let selected = crate::value::admit_integer_division(&[role.reference()], None).unwrap();
-            for a in -4..=4 {
+            for a in -4_i64..=4 {
                 for b in a..=4 {
-                    for l in -3..=3 {
+                    for l in -3_i64..=3 {
                         for u in l..=3 {
                             if l == 0 && u == 0 {
                                 continue;
