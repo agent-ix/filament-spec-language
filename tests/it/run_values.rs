@@ -6,7 +6,7 @@
 //! checks the argument form and the result form of one kind.
 
 use crate::command_harness::{Output, run_file};
-use filament_exact::{Integer, Value, ValueType};
+use filament_exact::{Integer, Value as KernelValue, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
@@ -118,9 +118,10 @@ fn run_value_codec_round_trips_boolean_and_big_integer_forms() {
         let value = forms.read(&form, &value_type).expect("typed form reads");
         assert!(matches!(
             (&value_type, &value),
-            (ValueType::Boolean, Value::Boolean(true)) | (ValueType::Integer, Value::Integer(_))
+            (ValueType::Boolean, KernelValue::Boolean(true))
+                | (ValueType::Integer, KernelValue::Integer(_))
         ));
-        if let Value::Integer(integer) = &value {
+        if let KernelValue::Integer(integer) = &value {
             assert_eq!(integer.to_string(), "9223372036854775808");
             assert_eq!(integer, &"9223372036854775808".parse::<Integer>().unwrap());
         }
