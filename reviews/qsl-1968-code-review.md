@@ -13,7 +13,7 @@ Reviewed QSL-1968 PR #2754 at 30157f74efd99d41a03db9999eea4e1cb5310be6. The prof
 
 ## Verdict
 
-**CONDITIONAL** — 1 medium finding(s) require disposition before QSL-1968 is complete.
+**PASS (disposition pass 1)** — original FND-001 is fixed at 7069d2d730845a06fb0b0d76e2133570db17413d; no new code-review findings.
 
 ## Findings
 
@@ -79,4 +79,26 @@ Reviewed QSL-1968 PR #2754 at 30157f74efd99d41a03db9999eea4e1cb5310be6. The prof
 ## Coverage
 
 README-only diff. Language-independent code-review and docs-style checks applied. No applicable AssuranceProfile found. Rust review skipped because no Rust/Cargo file changes; spec review skipped because no spec/plan changes. No builds, tests, or aggregate gate run, per the brief. Existing Python figure tooling and docs lint were not run under the repository language policy. No new code, duplication, or vendoring introduced.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | README.md:121-122 now names Float32 and Float64 and the six supported modes. |
+
+## Disposition pass 1 evidence
+
+Reviewed 7069d2d730845a06fb0b0d76e2133570db17413d against the original findings. The original review artifacts were copied verbatim into reviews/ before this pass (cmp passed). The added Rust tests now also received the rust-review lane with the rust-style testing checklist: public S1/S2/model-intake/assembly/checking paths, active integration-module registration, exact checked clause names/kinds, nonempty typed negative refusal assertions, and deterministic embedded fixture/model input. The fixed literal copy is explicitly required by the ticket and compared with the extracted README text. No production, CI, unsafe, concurrency, or wire-contract changes. No builds/tests/gate run per the brief; this is source review, not fresh execution evidence. The trace mismatch is recorded once in the gap-analysis artifact.
+
+```yaml
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "after_excerpt": "and pure functions. `Float32` and `Float64` support `exact`, `nearest-even`,\n`nearest-away`, `toward-zero`, `toward-positive` and `toward-negative` rounding modes."
+    }
+  ]
+}
+```
 

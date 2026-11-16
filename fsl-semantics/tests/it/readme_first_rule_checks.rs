@@ -86,7 +86,7 @@ fn check(source: &str) -> Result<CheckedGraph, Vec<(Code, Option<&'static str>)>
 }
 
 /// The documented model layer checks all three clauses of the first rule.
-#[trace("TC-490", "FR-110-AC-7", "TC-1015", "FR-361-AC-13", "NFR-017-AC-5")]
+#[trace("TC-490", "FR-110-AC-7", "TC-1015", "FR-361-AC-13")]
 #[test]
 fn the_readme_first_rule_compiles_against_its_model() {
     let graph = check(first_rule()).expect("the README rule checks against its model");
@@ -106,7 +106,7 @@ fn the_readme_first_rule_compiles_against_its_model() {
 }
 
 /// A value-only layer cannot admit the rule's object-graph expressions.
-#[trace("TC-1015", "FR-361-AC-13", "NFR-017-AC-5")]
+#[trace("TC-1015", "FR-361-AC-13")]
 #[test]
 fn the_same_rule_under_value_complete_refuses_expression_form() {
     let source = first_rule().replace("filament.model.complete/v1", "filament.value.complete/v1");
