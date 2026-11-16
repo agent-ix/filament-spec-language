@@ -146,14 +146,6 @@ fn every_construct_message_begins_with_the_construct() {
             "synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };".to_owned(),
             "`synthesis` declarations are not supported yet".to_owned(),
         ),
-        (
-            function("none"),
-            "`none` is not supported as a value here yet".to_owned(),
-        ),
-        (
-            function("result"),
-            "`result` is not supported here yet".to_owned(),
-        ),
     ] {
         let (_, diagnostic) = construct_diagnostic(&declaration);
         let message = diagnostic["message"].as_str().expect("a message");

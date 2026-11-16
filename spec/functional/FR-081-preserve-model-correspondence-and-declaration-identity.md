@@ -261,8 +261,10 @@ binder SHALL NOT charge an ancestor path's length for an acyclic package.
 expansion. An effective type's identity is built in phase 3, before
 phase 4, because phase 4's charge order uses it. That identity holds the
 type's own original key with a null owner; its direct edges are retained in
-the charged `inherit/v2` facts. FSL meters no hash: the FSpec limit name
-`hashed_bytes` is FSpec's.
+the charged `inherit/v2` facts. FSL meters no hash and has no
+`hashed_bytes` limit: nothing in normalization is hashed (FSpec FR-150), so
+such a limit would bound nothing, and an analyze request that names one is
+refused (FR-620).
 
 The phase-4 charges are unchanged in kind and count a type's derivation facts
 as its retained facts, its qualify fact and one inherit fact per direct

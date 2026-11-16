@@ -70,8 +70,6 @@ members are below.
 | `construct` | Where S2 refuses it | `text` holds | Message |
 | --- | --- | --- | --- |
 | `null-value` | `null` as a primary outside a record field value | `null` | `` `null` is not supported as a value here yet `` |
-| `none-value` | `none` as a primary where no form takes it, such as a function body (FR-091-AC-7) | `none` | `` `none` is not supported as a value here yet `` |
-| `result-value` | `result` outside a position that reads an operation's result | `result` | `` `result` is not supported here yet `` |
 | `index-selection` | `e[i]` that does not directly follow a field or selector of a clock place expression | the indexing expression, such as `s[i]` | `` the index selection `<text>` is not supported here yet `` |
 | `size-of-type` | `size<T>(e)` | the whole call | `` `size<T>` is not supported in expressions yet `` with `T` as written |
 | `qualified-reaches-edge` | `reaches(a, b, e)` whose edge `e` has more than one segment | the edge name | `` `reaches` over the qualified edge `<text>` is not supported yet `` |
@@ -82,6 +80,9 @@ members are below.
   `text`, followed by ` (declaration <declaration>)` when `declaration` is not
   `null`. The message begins with the construct, so a reader scanning a list
   of refusals sees which construct each one is.
+- `none` and `result` have no row: S2 builds them as the `Absent` and
+  `Result` forms (FR-091 "Expression mapping"), and check, not S2, refuses
+  them where their position admits neither.
 - A construct that S2 later learns to build leaves this table with it; a new
   site that refuses with either cause adds a row. Every row's kind is a
   `ConstructKind` variant, and `ConstructKind` has no variant without a row.
@@ -100,7 +101,7 @@ members are below.
 | FR-763-AC-2 | S2 over a function body `null` refuses `UnrepresentedConstruct` with `construct` `null-value`, `text` `null`, the function's name and profile, and the span of `null`. | Test (TC-2156) |
 | FR-763-AC-3 | S2 over a function body `size<Integer>(xs)` refuses with `construct` `size-of-type` and `text` `size<Integer>(xs)`; over a function body `xs[0]` it refuses with `construct` `index-selection` and `text` `xs[0]`. | Test (TC-2157) |
 | FR-763-AC-4 | S2 over a state clause `reaches(self, self, Config::ConfigVersion::parent)` refuses with `construct` `qualified-reaches-edge` and `text` `Config::ConfigVersion::parent`, at the edge's span. | Test (TC-2158) |
-| FR-763-AC-5 | For every `ConstructKind` variant, `none-value` (function body `none`) and `result-value` (function body `result`) included, the refusal's message begins with the row's sentence filled from `text`; a construct whose source text is 200 bytes long carries a `text` of at most 123 bytes that ends with `...`. No refusal of either cause has an empty `text`. | Test (TC-2159) |
+| FR-763-AC-5 | For every `ConstructKind` variant, the refusal's message begins with the row's sentence filled from `text`; a construct whose source text is 200 bytes long carries a `text` of at most 123 bytes that ends with `...`. No refusal of either cause has an empty `text`. | Test (TC-2159) |
 | FR-763-AC-6 | The `parse` outcome document of AC-2's unit holds one diagnostic with `code` `unsupported_construct`, `cause` `not-yet-implemented` (not `null`), `construct` `null-value`, `text` `null`, `declaration` the function's name and `profile` its profile identity, and the message of AC-5; the document's category is `unsupported`, exit 21. | Test (TC-2160) |
 
 ## Dependencies

@@ -98,6 +98,7 @@ mod model_type_unit_roots;
 mod name_resolution_confinement;
 mod native_boundaries;
 mod native_run_result_root;
+mod replay_library_clocks;
 mod replay_multi_source;
 mod replay_refinement_internals;
 mod request_builder;

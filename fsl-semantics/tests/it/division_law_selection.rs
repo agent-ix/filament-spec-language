@@ -8,7 +8,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedGraph, Obligation, PackageDeclarations,
+    CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Obligation, PackageDeclarations,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
@@ -240,4 +240,95 @@ fn div_and_rem_carry_their_interval_and_nonzero_obligation_under_each_law() {
             only_nonzero(&check(&headers, zero, CheckMode::Linked).expect_err(zero));
         }
     }
+}
+
+/// `true` when `refusals` is one `unproved-range` refusal.
+fn only_range(refusals: &[CheckRefusal]) -> bool {
+    refusals.len() == 1
+        && matches!(
+            refusals[0].cause,
+            CheckCause::Unproved(Obligation::Range { .. })
+        )
+}
+
+/// `function f using v(<parameters>): Int[<lo>, <hi>] pure { <body> }`.
+fn into(parameters: &str, lo: i64, hi: i64, body: &str) -> String {
+    format!("function f using v({parameters}): Int[{lo}, {hi}] pure {{ {body} }}")
+}
+
+/// The remainder checks into `Int[lo, hi]` and refuses `unproved-range` into
+/// `Int[lo + 1, hi]` and `Int[lo, hi - 1]`: the interval is exact.
+fn exact(headers: &str, parameters: &str, body: &str, lo: i64, hi: i64) {
+    let fits = into(parameters, lo, hi, body);
+    check(headers, &fits, CheckMode::Linked)
+        .unwrap_or_else(|refusals| panic!("{fits}: {refusals:?}"));
+    for narrow in [
+        into(parameters, lo + 1, hi, body),
+        into(parameters, lo, hi - 1, body),
+    ] {
+        let refusals = check(headers, &narrow, CheckMode::Linked)
+            .expect_err("the narrowed interval misses a remainder");
+        assert!(only_range(&refusals), "{narrow}: {refusals:?}");
+    }
+}
+
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+#[ignore = "QSL-2002: the exact smallest remainder interval is not computed yet"]
+fn a_remainder_node_carries_its_exact_smallest_interval() {
+    for (parameters, lo, hi) in [
+        ("a: Int[0, 2], b: Int[5, 6]", 0, 2),
+        ("a: Int[91, 91], b: Int[2, 12]", 0, 7),
+        ("a: Int[97, 97], b: Int[2, 12]", 1, 9),
+        ("a: Int[-7, -7], b: Int[3, 5]", 1, 3),
+    ] {
+        exact(VALUE, parameters, "a mod b", lo, hi);
+    }
+    let truncating = format!("{VALUE}{}", law_header("d", "truncating"));
+    exact(
+        &truncating,
+        "a: Int[-7, -7], b: Int[3, 5]",
+        "a rem b",
+        -3,
+        -1,
+    );
+    let floor = format!("{VALUE}{}", law_header("d", "floor"));
+    exact(&floor, "a: Int[7, 7], b: Int[-5, -3]", "a rem b", -3, -1);
+
+    let guarded = "if b != 0 then a mod b else 0";
+    let bounded = into("a: Int[0, 9], b: Integer", 0, 9, guarded);
+    check(VALUE, &bounded, CheckMode::Linked)
+        .unwrap_or_else(|refusals| panic!("{bounded}: {refusals:?}"));
+    let unbounded = into("a: Int[-1, 9], b: Integer", 0, 1000, guarded);
+    let refusals = check(VALUE, &unbounded, CheckMode::Linked)
+        .expect_err("a negative dividend by an unbounded divisor is unbounded");
+    assert!(only_range(&refusals), "{unbounded}: {refusals:?}");
+}
+
+#[trace("TC-2211", "FR-495-AC-20", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+#[ignore = "QSL-2002: the remainder run walk and its work-ceiling charge are not implemented yet"]
+fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
+    let parameters = "a: Int[1000000007, 1000000007], b: Int[2, 1000000006]";
+    let big = into(parameters, 1, 500_000_003, "a mod b");
+    check(VALUE, &big, CheckMode::Linked)
+        .unwrap_or_else(|refusals| panic!("the default ceiling fits the walk: {refusals:?}"));
+    let raised = into(parameters, 2, 500_000_003, "a mod b");
+    let refusals = check(VALUE, &raised, CheckMode::Linked)
+        .expect_err("the minimum remainder is 1");
+    assert!(only_range(&refusals), "{refusals:?}");
+
+    let refusals = assemble(VALUE, &big)
+        .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal}"))
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default().with_work_budget(10_000),
+        )
+        .expect_err("the walk needs more than 10000 runs");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+        panic!("the work stage limit, never a wider type: {refusals:?}");
+    };
+    assert_eq!(limit.kind, CheckingLimitKind::WorkBudget, "{limit:?}");
+    assert_eq!(limit.limit, 10_000, "{limit:?}");
 }
