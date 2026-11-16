@@ -1011,22 +1011,25 @@ const fn is_temporal(operator: TemporalOperator) -> bool {
 
 /// The clock binding's node id (FSpec FR-255's structural clock-binding
 /// node): package `package`, path `["clock-binding", form, clock]` with the
-/// clock name as written, and ordinal 0. `form` is `model-time` under a
-/// timed profile's model clock and `model-steps` otherwise (FR-233).
+/// clock name as written, then the binding unit for a timed binding, and
+/// ordinal 0. `form` is `model-time` under a timed profile's model clock,
+/// `role-clock` under a timed profile's clock role over a record trace
+/// subject (FR-642), and `model-steps` otherwise (FR-233). The unit is a
+/// key component of a timed binding (FSpec FR-252), so equal bounds under two
+/// binding units have unequal FR-255 keys (FR-933).
 fn clock_binding(
     package: &str,
     clock: &str,
     form: &str,
+    unit: Option<&str>,
 ) -> Result<NodeKey, filament_exact::InvalidNodeKey> {
-    NodeKey::new(
-        package,
-        vec![
-            filament_exact::PathSegment::Text("clock-binding".to_owned()),
-            filament_exact::PathSegment::Text(form.to_owned()),
-            filament_exact::PathSegment::Text(clock.to_owned()),
-        ],
-        0,
-    )
+    let mut path = vec![
+        filament_exact::PathSegment::Text("clock-binding".to_owned()),
+        filament_exact::PathSegment::Text(form.to_owned()),
+        filament_exact::PathSegment::Text(clock.to_owned()),
+    ];
+    path.extend(unit.map(|unit| filament_exact::PathSegment::Text(unit.to_owned())));
+    NodeKey::new(package, path, 0)
 }
 
 /// A temporal operator's interval built from its form: the validated
@@ -1648,10 +1651,10 @@ fn check_clause(
         .next()
         .ok_or_else(|| fault("over-type-resolved"))?;
 
-    let time_binding_form = if time_binding.is_some() {
-        "model-time"
-    } else {
-        "model-steps"
+    let (time_binding_form, binding_unit) = match (&time_binding, &role_unit) {
+        (Some(binding), _) => ("model-time", Some(binding.unit.as_str())),
+        (None, Some(unit)) => ("role-clock", Some(unit.as_str())),
+        (None, None) => ("model-steps", None),
     };
     Ok(CheckedTemporalClause {
         name: form.name.name.clone(),
@@ -1660,8 +1663,13 @@ fn check_clause(
         profile_ref,
         over: (form.over.name.name.clone(), over_type),
         clock: clock.text.clone(),
-        clock_binding: clock_binding(declarations.package_name, &clock.text, time_binding_form)
-            .map_err(|_| fault("clock-binding-keyed"))?,
+        clock_binding: clock_binding(
+            declarations.package_name,
+            &clock.text,
+            time_binding_form,
+            binding_unit,
+        )
+        .map_err(|_| fault("clock-binding-keyed"))?,
         operators,
         horizon,
         claim: TemporalClaim {
