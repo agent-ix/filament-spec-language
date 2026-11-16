@@ -15,17 +15,19 @@ use std::collections::BTreeMap;
 use filament_exact::{Cancel, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::diagnostic::{Code, StageFailure};
+use fsl_foundation::node_wire::node_key_to_text;
 use fsl_foundation::source::Source;
 use fsl_package::number::ExactRational;
 use fsl_package::{CheckedPackage, TemporalClockSelection};
 use fsl_replay::spine::{
     authenticate_emission, authenticate_package_trace, clause_trace_binding, read_ledger,
     run_package_temporal, write_ledger, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
-    ConsequentSourceEvents, ContradictedDimension, LedgerReadError, PackageAuthentication,
-    PackageTemporalRequest, ProgressAssertion, ProgressClosure, ProgressCompleteness,
-    ProgressContradiction, ProgressLedger, ProgressLimitReached, ProgressLowerBoundary,
-    ProgressRefusal, ProgressValue, SpineLimits, TemporalVerdict, TimestampedCover,
-    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    ConsequentSourceEvents, ContradictedDimension, LedgerBinding, LedgerReadError,
+    PackageAuthentication, PackageTemporalRequest, ProgressAssertion, ProgressClosure,
+    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLimitReached,
+    ProgressLowerBoundary, ProgressRefusal, ProgressValue, SpineLimits, TemporalVerdict,
+    TimestampedCover, TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding,
+    TraceInput,
 };
 use fsl_semantics::check::TemporalProfile;
 use fsl_semantics::model::intake::PackageInput;
@@ -33,8 +35,8 @@ use fsl_semantics::model::observation::{document_reference, DocumentProvision, D
 use serde_json::{json, Value};
 
 use crate::monitor::{
-    record_of, refused, request_failure, Failure, MonitorClause, MonitorLimits, MonitorRecord,
-    MonitorRefusal, MonitorVerdict, Runs,
+    record_of, refused, request_failure, DecidingReading, Failure, MonitorClause, MonitorLimits,
+    MonitorRecord, MonitorRefusal, MonitorVerdict, Runs, SettleTrigger, Settlement,
 };
 
 /// The format member of a checkpoint.
@@ -124,7 +126,7 @@ pub struct MonitorObservation<'a> {
 #[derive(Clone, Debug)]
 pub enum ClauseStatus {
     /// The result is final and never changes.
-    Settled(MonitorRecord),
+    Settled(MonitorRecord, Settlement),
     /// The result may still change with later observations.
     Pending(MonitorRecord),
 }
@@ -133,13 +135,21 @@ impl ClauseStatus {
     /// The record of the status.
     pub fn record(&self) -> &MonitorRecord {
         match self {
-            Self::Settled(record) | Self::Pending(record) => record,
+            Self::Settled(record, _) | Self::Pending(record) => record,
         }
     }
 
     /// Whether the result is final.
     pub fn is_settled(&self) -> bool {
-        matches!(self, Self::Settled(_))
+        matches!(self, Self::Settled(..))
+    }
+
+    /// How the clause settled, for a settled status.
+    pub fn settlement(&self) -> Option<&Settlement> {
+        match self {
+            Self::Settled(_, settlement) => Some(settlement),
+            Self::Pending(_) => None,
+        }
     }
 }
 
@@ -191,6 +201,12 @@ struct Slot {
     /// The setting whose limit ended the clause, if one did.
     limited: Option<&'static str>,
     announced: bool,
+    /// The call whose evaluation produced `record`: the positions seen and the
+    /// assertion in force, so a resumed session reproduces the report even
+    /// when later calls were not evaluable.
+    evaluated_at: Option<(usize, Option<ProgressAssertion>)>,
+    /// How the clause settled, once it has.
+    settlement: Option<Settlement>,
 }
 
 /// FR-643's stepping monitor.
@@ -205,6 +221,9 @@ pub struct MonitorSession<'a> {
     snapshots: DocumentProvision,
     assertion: Option<ProgressAssertion>,
     slots: Vec<Slot>,
+    /// The accepted `step` and `assert_*` calls so far; a refused or cancelled
+    /// call does not count (FR-643 "Settlement").
+    calls: u64,
 }
 
 fn observation(member: &'static str, cause: &'static str) -> Failure {
@@ -255,6 +274,31 @@ fn decisive_window(report: &ClauseRunReport) -> bool {
         .finite_window
         .as_ref()
         .is_some_and(|window| window.basis.is_decisive())
+}
+
+/// The reading `report` is, as a settlement records it (FR-643 "Settlement"):
+/// the finite-window basis when the report has one, else the report's own;
+/// `horizon` is the seen horizon; the position is the failing activation of a
+/// violation, else the first position of the decision support.
+fn reading_of(report: &ClauseRunReport, horizon: u64) -> DecidingReading {
+    let basis = report
+        .finite_window
+        .as_ref()
+        .map_or(report.basis, |window| window.basis);
+    let position = match &report.disposition {
+        ClauseDisposition::Temporal(
+            TemporalVerdict::Violated { at } | TemporalVerdict::Undefined { at, .. },
+        ) => Some(*at),
+        _ => report
+            .finite_window
+            .as_ref()
+            .and_then(|window| window.support.iter().map(|support| support.position).min()),
+    };
+    DecidingReading {
+        basis,
+        horizon,
+        position,
+    }
 }
 
 /// Whether a profile reads a trace as a closed trace by false extension.
@@ -376,14 +420,15 @@ impl<'a> MonitorSession<'a> {
         }
         let first = request.clauses[0].name.clone();
         let reads_binding = request.kind.carries_progress()
-            || request.clauses.iter().any(|clause| {
-                package
-                    .graph()
-                    .temporal_clauses()
-                    .iter()
-                    .find(|node| node.clause().name() == clause.name)
-                    .is_some_and(|node| closed_trace(node.clause().profile()))
-            });
+            || (!request.temporal_selections.is_empty()
+                && request.clauses.iter().any(|clause| {
+                    package
+                        .graph()
+                        .temporal_clauses()
+                        .iter()
+                        .find(|node| node.clause().name() == clause.name)
+                        .is_some_and(|node| closed_trace(node.clause().profile()))
+                }));
         let authentication = if reads_binding {
             Some(
                 authenticate_emission(
@@ -409,6 +454,7 @@ impl<'a> MonitorSession<'a> {
             snapshots: DocumentProvision::new(),
             assertion: None,
             slots: Vec::new(),
+            calls: 0,
         };
         session.check_kind()?;
         let mut session = session;
@@ -469,6 +515,8 @@ impl<'a> MonitorSession<'a> {
                     settled_with: None,
                     limited: None,
                     announced: false,
+                    evaluated_at: None,
+                    settlement: None,
                 })
             })
             .collect()
@@ -532,7 +580,7 @@ impl<'a> MonitorSession<'a> {
         if observation_in.order_key.is_some() && kind != MonitorTraceKind::Timestamped {
             return Err(observation("order_key", "unknown-member"));
         }
-        if let Some(assertion) = self.assertion {
+        for assertion in self.retained() {
             if assertion.scope == ProgressClosure::Closed {
                 let clock = self
                     .request
@@ -638,7 +686,7 @@ impl<'a> MonitorSession<'a> {
         cancel: &Cancel,
     ) -> Result<MonitorStep, Failure> {
         cancelled(cancel)?;
-        Err(observation("through", "invalid-value"))
+        Err(observation("through", "invalid-request"))
     }
 
     /// FR-643: take a progress assertion.
@@ -668,7 +716,54 @@ impl<'a> MonitorSession<'a> {
 
     /// FR-502: what `next` retreats from in the assertion the session retains.
     fn regression(&self, next: ProgressAssertion) -> Option<ProgressContradiction> {
-        let held = self.assertion?;
+        self.retained()
+            .into_iter()
+            .find_map(|held| self.retreat(held, next))
+    }
+
+    /// The assertions the session retains for Order (FR-643): its own latest
+    /// one and the ledger's entry for each selected clause's binding, which
+    /// includes the opening ledger.
+    fn retained(&self) -> Vec<ProgressAssertion> {
+        let mut held: Vec<ProgressAssertion> = self.assertion.into_iter().collect();
+        let (Some(ledger), Some(source)) = (&self.ledger, self.request.sources.first()) else {
+            return held;
+        };
+        for clause in &self.request.clauses {
+            let Some(node) = self
+                .package
+                .graph()
+                .temporal_clauses()
+                .iter()
+                .find(|node| node.clause().name() == clause.name)
+            else {
+                continue;
+            };
+            let binding = LedgerBinding {
+                package: source.identity().identity.clone(),
+                clause: node.identity(),
+                occurrence: node.claim().ordinal(),
+                clock: node.clause().clock().to_owned(),
+                profile: node.clause().profile().identity().to_owned(),
+            };
+            if let Some(entry) = ledger.entry(&binding) {
+                held.push(ProgressAssertion {
+                    watermark: entry.watermark(),
+                    completeness: entry.completeness(),
+                    scope: entry.scope(),
+                    execution: entry.execution(),
+                });
+            }
+        }
+        held
+    }
+
+    /// What `next` retreats from in `held`.
+    fn retreat(
+        &self,
+        held: ProgressAssertion,
+        next: ProgressAssertion,
+    ) -> Option<ProgressContradiction> {
         let clock = self
             .request
             .binding
@@ -730,8 +825,7 @@ impl<'a> MonitorSession<'a> {
                 before.announced
                     && before.settled == slot.settled
                     && before.record.verdict == slot.record.verdict
-                    && format!("{:?}", before.record.report().disposition)
-                        == format!("{:?}", slot.record.report().disposition)
+                    && same_disposition(before.record.report(), slot.record.report())
             });
             if !same {
                 changed.push(slot.record.clause.clone());
@@ -747,6 +841,7 @@ impl<'a> MonitorSession<'a> {
         if ledger.is_some() {
             self.ledger = ledger;
         }
+        self.calls += 1;
         MonitorStep {
             statuses: self
                 .slots
@@ -758,10 +853,11 @@ impl<'a> MonitorSession<'a> {
     }
 
     fn status_of(slot: &Slot) -> ClauseStatus {
-        if slot.settled {
-            ClauseStatus::Settled(slot.record.clone())
-        } else {
-            ClauseStatus::Pending(slot.record.clone())
+        match (&slot.settlement, slot.settled) {
+            (Some(settlement), true) => {
+                ClauseStatus::Settled(slot.record.clone(), settlement.clone())
+            }
+            _ => ClauseStatus::Pending(slot.record.clone()),
         }
     }
 
@@ -825,42 +921,62 @@ impl<'a> MonitorSession<'a> {
                     carried = Some(updated.clone());
                 }
                 slot.record = record_of(self.package, self.request.sources, &clause.name, report)?;
+                slot.evaluated_at = Some((self.positions.len(), assertion));
             }
             if self.positions.is_empty() {
                 continue;
             }
             let profile = self.profile_of(&clause.name)?;
-            let mut settled = match profile {
+            let seen = u64::try_from(self.positions.len()).unwrap_or(u64::MAX);
+            let last = seen.saturating_sub(1);
+            let step = self.calls + 1;
+            let mut trigger = SettleTrigger::Decided;
+            let mut reading = match profile {
                 TemporalProfile::InfiniteTrace => matches!(
                     slot.record.verdict,
                     MonitorVerdict::Violated | MonitorVerdict::Undefined
-                ),
-                TemporalProfile::TimestampedEventFiniteWindow => {
-                    evaluable
-                        && (decisive_window(slot.record.report())
-                            || (assertion.is_some_and(|a| a.scope == ProgressClosure::Closed)
-                                && matches!(
-                                    slot.record.verdict,
-                                    MonitorVerdict::Violated | MonitorVerdict::Tested
-                                )))
-                }
+                )
+                .then(|| reading_of(slot.record.report(), last)),
+                TemporalProfile::TimestampedEventFiniteWindow => (evaluable
+                    && (decisive_window(slot.record.report())
+                        || (assertion.is_some_and(|a| a.scope == ProgressClosure::Closed)
+                            && matches!(
+                                slot.record.verdict,
+                                MonitorVerdict::Violated | MonitorVerdict::Tested
+                            ))))
+                .then(|| {
+                    reading_of(
+                        slot.record.report(),
+                        assertion.map_or(last, |a| a.watermark),
+                    )
+                }),
                 TemporalProfile::EventPositionFalseExtension
                 | TemporalProfile::FixedSampleFalseExtension => {
-                    match self.decided(&clause.name, cancel)? {
-                        Some(report) => {
-                            slot.record = record_of(
-                                self.package,
-                                self.request.sources,
-                                &clause.name,
-                                report,
-                            )?;
-                            true
-                        }
-                        None => false,
+                    if evaluable {
+                        // FR-504's S: min(W, through) when complete, else n - 1, for
+                        // a fixed-sample clause over a progressed trace.
+                        let horizon = match (profile, self.request.kind, assertion) {
+                            (
+                                TemporalProfile::FixedSampleFalseExtension,
+                                MonitorTraceKind::Progressed,
+                                Some(a),
+                            ) => match a.completeness {
+                                ProgressCompleteness::Complete { through } => {
+                                    a.watermark.min(through)
+                                }
+                                ProgressCompleteness::Incomplete => last,
+                            },
+                            _ => last,
+                        };
+                        self.decided(&clause.name, assertion, cancel)?
+                            .map(|report| reading_of(&report, horizon))
+                    } else {
+                        None
                     }
                 }
-                TemporalProfile::Timed => false,
+                TemporalProfile::Timed => None,
             };
+            let mut settled = reading.is_some();
             if !settled {
                 if let Some((setting, value)) = self.over_limit(&clause.name)? {
                     slot.record = record_of(
@@ -870,6 +986,8 @@ impl<'a> MonitorSession<'a> {
                         limit_report(setting, value),
                     )?;
                     slot.limited = Some(setting);
+                    trigger = SettleTrigger::Limit;
+                    reading = None;
                     settled = true;
                 }
             }
@@ -877,6 +995,11 @@ impl<'a> MonitorSession<'a> {
             if settled {
                 slot.settled_at = Some(self.positions.len());
                 slot.settled_with = assertion;
+                slot.settlement = Some(Settlement {
+                    step,
+                    trigger,
+                    reading,
+                });
             }
         }
         if carried.is_some() {
@@ -897,27 +1020,61 @@ impl<'a> MonitorSession<'a> {
             })
     }
 
-    /// FR-504's open-scope reading of the positions seen with `S = n - 1`, when
-    /// it is definite (a decisive basis): the report of a closed-trace clause
-    /// the next observation cannot change.
-    fn decided(&self, name: &str, cancel: &Cancel) -> Result<Option<ClauseRunReport>, Failure> {
+    /// FR-504's open-scope reading of the positions seen, when it is definite
+    /// (a decisive basis): the report of a closed-trace clause the next
+    /// observation cannot change. A fixed-sample clause over a `Progressed`
+    /// trace reads under the session's latest `assertion` (its watermark and
+    /// completeness, scope `open`), so silent samples up to `min(W, through)`
+    /// count; every other reading has `S = n - 1`. With no emission (a
+    /// `Finite` session opened without clock selections) the reading is
+    /// unauthenticated, as FR-820 needs no binding for a `Finite` trace.
+    fn decided(
+        &self,
+        name: &str,
+        assertion: Option<ProgressAssertion>,
+        cancel: &Cancel,
+    ) -> Result<Option<ClauseRunReport>, Failure> {
         let fault = |what: &'static str| StageFailure::Fault(InternalFault::new("monitor", what));
-        let Some(authentication) = self.authentication.as_ref() else {
-            return Err(fault("closed-trace-session-holds-an-emission"));
-        };
-        let Some(binding) = clause_trace_binding(self.package, name, authentication.temporal())
-        else {
-            return Err(fault("closed-trace-clause-has-a-clock-row"));
+        let node = self
+            .package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.clause().name() == name)
+            .ok_or_else(|| fault("session-clause-is-declared"))?;
+        let authentication = self.authentication.as_ref();
+        let binding = match authentication {
+            Some(authentication) => {
+                clause_trace_binding(self.package, name, authentication.temporal())
+                    .ok_or_else(|| fault("closed-trace-clause-has-a-clock-row"))?
+            }
+            None => TraceBinding {
+                profile: node.clause().profile().identity().to_owned(),
+                clock_name: node.clause().clock().to_owned(),
+                parameters: fsl_package::ClockConfiguration::EventPosition {
+                    sequence_authority: node.clause().clock().into(),
+                },
+            },
         };
         let Some(last) = self.positions.len().checked_sub(1) else {
             return Ok(None);
         };
         let last = u64::try_from(last).map_err(|_| fault("position-count-in-u64"))?;
-        let progress = ProgressAssertion {
-            watermark: last,
-            completeness: ProgressCompleteness::Complete { through: last },
-            scope: ProgressClosure::Open,
-            execution: ProgressClosure::Open,
+        let progress = match (node.clause().profile(), self.request.kind, assertion) {
+            (
+                TemporalProfile::FixedSampleFalseExtension,
+                MonitorTraceKind::Progressed,
+                Some(held),
+            ) => ProgressAssertion {
+                scope: ProgressClosure::Open,
+                ..held
+            },
+            _ => ProgressAssertion {
+                watermark: last,
+                completeness: ProgressCompleteness::Complete { through: last },
+                scope: ProgressClosure::Open,
+                execution: ProgressClosure::Open,
+            },
         };
         let trace = TraceInput::Progressed {
             trace: self.positions.iter().map(|p| p.reference.clone()).collect(),
@@ -942,7 +1099,7 @@ impl<'a> MonitorSession<'a> {
                 .and_then(|clause| clause.over.as_ref()),
             ledger: None,
             sources: self.request.sources,
-            authentication: Some(authentication.temporal()),
+            authentication: authentication.map(PackageAuthentication::temporal),
             cancel,
         });
         cancelled(cancel)?;
@@ -999,23 +1156,76 @@ impl<'a> MonitorSession<'a> {
     /// A cancelled call.
     pub fn finish(self, cancel: &Cancel) -> Result<crate::monitor::MonitorOutcome, Failure> {
         cancelled(cancel)?;
-        let settled_before_end = self.slots.iter().map(|slot| slot.settled).collect();
+        let seen = self.calls;
+        let settlements = self
+            .slots
+            .iter()
+            .map(|slot| {
+                slot.settlement.clone().unwrap_or(Settlement {
+                    step: seen,
+                    trigger: SettleTrigger::Finish,
+                    reading: None,
+                })
+            })
+            .collect();
+        let ledger = self
+            .request
+            .kind
+            .carries_progress()
+            .then(|| self.ledger.clone())
+            .flatten();
         Ok(crate::monitor::MonitorOutcome {
             records: self.slots.into_iter().map(|slot| slot.record).collect(),
-            settled_before_end,
+            settlements,
+            ledger,
         })
     }
 
-    fn package_identity(&self) -> String {
-        let mut text = String::new();
-        for source in self.request.sources {
-            let identity = source.identity();
-            text.push_str(&format!("{}:{};", identity.authority, identity.identity));
+    /// The package as its checkpoint form: each source's identity and each
+    /// temporal clause's checked node identity in its closed text spelling.
+    fn package_identity(&self) -> Result<Value, Failure> {
+        let sources: Vec<Value> = self
+            .request
+            .sources
+            .iter()
+            .map(|source| {
+                let identity = source.identity();
+                json!({"authority": identity.authority, "identity": identity.identity})
+            })
+            .collect();
+        let clauses = self
+            .package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .map(|node| {
+                node_key_to_text(&node.identity())
+                    .map(Value::String)
+                    .map_err(|_| state_fault("clause-identity-has-text"))
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
+        Ok(json!({"sources": sources, "clauses": clauses}))
+    }
+
+    /// The trace binding as its checkpoint form.
+    fn binding_identity(&self) -> Result<Value, Failure> {
+        let Some(binding) = &self.request.binding else {
+            return Ok(Value::Null);
+        };
+        let parameters = serde_json::to_value(&binding.parameters)
+            .map_err(|_| state_fault("binding-parameters-serialize"))?;
+        Ok(json!({
+            "profile": binding.profile,
+            "clock_name": binding.clock_name,
+            "parameters": parameters,
+        }))
+    }
+
+    fn boundary_identity(&self) -> &'static str {
+        match self.request.lower_boundary {
+            ProgressLowerBoundary::AuthoritativeOrigin => "authoritative_origin",
+            ProgressLowerBoundary::HistoryCutoff => "history_cutoff",
         }
-        for node in self.package.graph().temporal_clauses() {
-            text.push_str(&format!("{:?};", node.identity()));
-        }
-        text
     }
 
     fn selections(&self) -> Value {
@@ -1032,7 +1242,12 @@ impl<'a> MonitorSession<'a> {
     }
 
     /// FR-643: the session's checkpoint.
-    pub fn checkpoint(&self) -> MonitorState {
+    ///
+    /// # Errors
+    ///
+    /// An internal fault when the ledger, the binding or the state cannot be
+    /// written; no state is returned that lacks any of them.
+    pub fn checkpoint(&self) -> Result<MonitorState, Failure> {
         let positions: Vec<Value> = self
             .positions
             .iter()
@@ -1048,35 +1263,64 @@ impl<'a> MonitorSession<'a> {
             })
             .collect();
         let assertion = self.assertion.map(assertion_json);
-        let ledger = self
-            .ledger
-            .as_ref()
-            .and_then(|ledger| write_ledger(ledger).ok());
+        let ledger = match &self.ledger {
+            Some(ledger) => {
+                write_ledger(ledger).map_err(|_| state_fault("ledger-has-its-wire-form"))?
+            }
+            None => Value::Null,
+        };
         let clauses: Vec<Value> = self
             .slots
             .iter()
             .map(|slot| {
                 json!({
                     "settled_at": slot.settled_at,
+                    "settled_step": slot.settlement.as_ref().map(|s| s.step),
                     "settled_with": slot.settled_with.map(assertion_json),
                     "limited": slot.limited,
+                    "evaluated_at": slot.evaluated_at.map(|(seen, assertion)| json!({
+                        "seen": seen,
+                        "assertion": assertion.map(assertion_json),
+                    })),
                 })
             })
             .collect();
         let document = json!({
             "format": STATE_FORMAT,
-            "package": self.package_identity(),
+            "package": self.package_identity()?,
             "selections": self.selections(),
             "kind": self.request.kind.name(),
-            "binding": format!("{:?}", self.request.binding),
-            "lower_boundary": format!("{:?}", self.request.lower_boundary),
+            "binding": self.binding_identity()?,
+            "lower_boundary": self.boundary_identity(),
             "seen": self.positions.len(),
+            "calls": self.calls,
             "positions": positions,
             "assertion": assertion,
             "ledger": ledger,
             "clauses": clauses,
         });
-        MonitorState(serde_json::to_vec(&document).unwrap_or_default())
+        serde_json::to_vec(&document)
+            .map(MonitorState)
+            .map_err(|_| state_fault("state-serializes"))
+    }
+
+    /// Replay the call at which a clause's status was last decided: `seen`
+    /// positions under `assertion`, from the ledger the session opened with.
+    fn replay(
+        &mut self,
+        all: &[Position],
+        seen: usize,
+        assertion: Option<ProgressAssertion>,
+        cancel: &Cancel,
+    ) -> Result<Vec<Slot>, Failure> {
+        if seen > all.len() {
+            return Err(state_mismatch());
+        }
+        self.positions = all[..seen].to_vec();
+        let held = std::mem::replace(&mut self.ledger, self.request.ledger.clone());
+        let replayed = self.evaluate(assertion, cancel);
+        self.ledger = held;
+        Ok(replayed?.0)
     }
 
     /// FR-643: resume from `state` under the same package and request.
@@ -1084,8 +1328,9 @@ impl<'a> MonitorSession<'a> {
     /// # Errors
     ///
     /// `monitor-state-mismatch` for a state that is not a closed
-    /// `filament.monitor-state/1` or whose package, clause selections, kind
-    /// or binding differ from `package` and `request`.
+    /// `filament.monitor-state/1`, whose package, clause selections, kind or
+    /// binding differ from `package` and `request`, or whose recorded
+    /// settlements the replay does not reproduce.
     pub fn resume(
         package: &'a CheckedPackage,
         state: &MonitorState,
@@ -1096,7 +1341,7 @@ impl<'a> MonitorSession<'a> {
         let mut session = Self::open(package, request, limits, cancel)?;
         let document: Value = serde_json::from_slice(&state.0).map_err(|_| state_mismatch())?;
         let object = document.as_object().ok_or_else(state_mismatch)?;
-        const MEMBERS: [&str; 11] = [
+        const MEMBERS: [&str; 12] = [
             "format",
             "package",
             "selections",
@@ -1104,6 +1349,7 @@ impl<'a> MonitorSession<'a> {
             "binding",
             "lower_boundary",
             "seen",
+            "calls",
             "positions",
             "assertion",
             "ledger",
@@ -1115,11 +1361,11 @@ impl<'a> MonitorSession<'a> {
         {
             return Err(state_mismatch());
         }
-        let same = object["package"] == json!(session.package_identity())
+        let same = object["package"] == session.package_identity()?
             && object["selections"] == session.selections()
             && object["kind"] == json!(session.request.kind.name())
-            && object["binding"] == json!(format!("{:?}", session.request.binding))
-            && object["lower_boundary"] == json!(format!("{:?}", session.request.lower_boundary));
+            && object["binding"] == session.binding_identity()?
+            && object["lower_boundary"] == json!(session.boundary_identity());
         if !same {
             return Err(state_mismatch());
         }
@@ -1173,19 +1419,21 @@ impl<'a> MonitorSession<'a> {
                     .insert(position.reference.clone(), text.clone().into_bytes());
             }
         }
-        session.positions = restored;
         session.assertion = assertion;
+        session.calls = object["calls"].as_u64().ok_or_else(state_mismatch)?;
         if ledger.is_some() {
             session.ledger = ledger;
         }
-        // Re-establish each clause's status: a settled clause from the
-        // prefix it settled at, the others from every position.
-        let all = std::mem::take(&mut session.positions);
+        // Re-establish each clause's status from the call that decided it: a
+        // settled clause from the prefix it settled at, an unsettled one from
+        // the last call that evaluated it, then every position.
+        let all = restored;
         let mut slots = session.fresh_slots()?;
         for (index, saved) in clauses.iter().enumerate() {
             let at = saved["settled_at"]
                 .as_u64()
-                .and_then(|at| usize::try_from(at).ok());
+                .map(|at| usize::try_from(at).map_err(|_| state_mismatch()))
+                .transpose()?;
             if let Some(setting) = saved["limited"].as_str() {
                 let (setting, value) = match setting {
                     "monitor.retained_positions" => (
@@ -1198,6 +1446,7 @@ impl<'a> MonitorSession<'a> {
                     ),
                     _ => return Err(state_mismatch()),
                 };
+                let at = at.ok_or_else(state_mismatch)?;
                 let clause = session.request.clauses[index].name.clone();
                 slots[index].record = record_of(
                     package,
@@ -1207,22 +1456,42 @@ impl<'a> MonitorSession<'a> {
                 )?;
                 slots[index].settled = true;
                 slots[index].limited = Some(setting);
-                slots[index].settled_at = at;
+                slots[index].settled_at = Some(at);
+                slots[index].settlement = Some(Settlement {
+                    step: saved["settled_step"].as_u64().ok_or_else(state_mismatch)?,
+                    trigger: SettleTrigger::Limit,
+                    reading: None,
+                });
             } else if let Some(at) = at {
-                if at > all.len() {
-                    return Err(state_mismatch());
-                }
-                session.positions = all[..at].to_vec();
                 let with = match &saved["settled_with"] {
                     Value::Null => None,
                     value => Some(assertion_of(value)?),
                 };
-                // The settle is reproduced from what was in force then: the
-                // assertion of that call and the ledger the session opened with.
-                let held = std::mem::replace(&mut session.ledger, session.request.ledger.clone());
-                let replayed = session.evaluate(with, cancel);
-                session.ledger = held;
-                let (replayed, _) = replayed?;
+                // The settle is reproduced from what was in force then; a
+                // replay that does not settle again is not this state.
+                let replayed = session.replay(&all, at, with, cancel)?;
+                if !replayed[index].settled {
+                    return Err(state_mismatch());
+                }
+                slots[index] = replayed[index].clone();
+                let step = saved["settled_step"].as_u64().ok_or_else(state_mismatch)?;
+                if let Some(settlement) = slots[index].settlement.as_mut() {
+                    settlement.step = step;
+                }
+            } else if let Value::Object(evaluated) = &saved["evaluated_at"] {
+                let seen = evaluated
+                    .get("seen")
+                    .and_then(Value::as_u64)
+                    .and_then(|seen| usize::try_from(seen).ok())
+                    .ok_or_else(state_mismatch)?;
+                let with = match evaluated.get("assertion") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => Some(assertion_of(value)?),
+                };
+                let replayed = session.replay(&all, seen, with, cancel)?;
+                if replayed[index].settled {
+                    return Err(state_mismatch());
+                }
                 slots[index] = replayed[index].clone();
             }
         }
@@ -1241,5 +1510,19 @@ impl<'a> MonitorSession<'a> {
             slot.announced = true;
         }
         Ok(session)
+    }
+}
+
+fn state_fault(what: &'static str) -> Failure {
+    StageFailure::Fault(InternalFault::new("monitor", what))
+}
+
+/// Whether two reports give the same disposition: temporal verdicts by
+/// value, any other disposition by category.
+fn same_disposition(before: &ClauseRunReport, after: &ClauseRunReport) -> bool {
+    match (&before.disposition, &after.disposition) {
+        (ClauseDisposition::Temporal(a), ClauseDisposition::Temporal(b)) => a == b,
+        (ClauseDisposition::Temporal(_), _) | (_, ClauseDisposition::Temporal(_)) => false,
+        (a, b) => a.category() == b.category(),
     }
 }

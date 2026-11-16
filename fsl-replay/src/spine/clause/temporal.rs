@@ -599,6 +599,12 @@ fn authenticate_trace(
             return Ok(None)
         }
     };
+    // A caller that holds no emission and asserts none (FR-820: the decided
+    // reading of a `Finite` trace needs no binding) reads the trace
+    // unauthenticated.
+    if authentication.is_none() {
+        return Ok(None);
+    }
     let subject =
         subject_of().map_err(|fault| Box::new(ClauseDisposition::EvaluateFault(fault)))?;
     authenticate_binding(binding, &subject, node.claim().ordinal()).map(Some)
@@ -608,8 +614,7 @@ fn authenticate_trace(
 /// temporal clause `name` of `package`, before any of its positions is
 /// admitted. A clause `package` does not declare, and a `Finite` or `Lasso`
 /// trace, authenticate nothing.
-/// `authentication` is `None` for a caller that holds no emission, which
-/// can check only the kind a `Finite`, `Lasso` or `Model` trace takes.
+/// `authentication` is `None` for a caller that holds no emission
 ///
 /// # Errors
 ///
@@ -698,8 +703,9 @@ pub struct PackageTemporalRequest<'a> {
     /// a locus and an atom name are rendered from them.
     pub sources: &'a [Source],
     /// What FR-522 authenticates a `Progressed` or `Timestamped` trace
-    /// against; `None` for a request that holds no emission, which accepts
-    /// only a `Finite` or `Lasso` trace.
+    /// against; `None` for a request that holds no emission, which reads a
+    /// `Progressed` or `Timestamped` trace unauthenticated (FR-820), with no
+    /// `authenticated_temporal_selection` in its report.
     pub authentication: Option<TemporalAuthentication<'a>>,
     /// The caller's handle, polled at every charge of the run's meter.
     pub cancel: &'a filament_exact::Cancel,
@@ -707,9 +713,9 @@ pub struct PackageTemporalRequest<'a> {
 
 /// FR-283: run one temporal clause over a supplied finite or lasso trace
 /// through the evaluator [`super::run_clause`]'s `Temporal` selection uses.
-/// A progressed or timestamped trace without `authentication` reports an
-/// internal failure, because it has no emitted package to be authenticated
-/// against.
+/// A progressed or timestamped trace without `authentication` is read
+/// unauthenticated: its binding is not checked and its report carries no
+/// authenticated selection.
 pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunReport {
     let provisions = Provisions {
         snapshots: request.snapshots,

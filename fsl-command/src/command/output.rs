@@ -138,7 +138,8 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::AnalyzeRequest { .. }
         | RunCause::AnalyzeUniverse(_)
         | RunCause::AnalyzeNotYetImplemented { .. }
-        | RunCause::AnalyzeRefused(_) => (types::Stage::Request, types::Details::None),
+        | RunCause::AnalyzeRefused(_)
+        | RunCause::MonitorRefused(_) => (types::Stage::Request, types::Details::None),
         RunCause::AnalyzeFault | RunCause::MonitorFault | RunCause::MonitorCancelled => {
             (types::Stage::Output, types::Details::None)
         }

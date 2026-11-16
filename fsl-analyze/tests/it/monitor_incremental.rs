@@ -553,7 +553,7 @@ fn a_resumed_checkpoint_continues_as_the_original_does() {
         whole.step(sample(&observed), &cancel).expect("steps");
         head.step(sample(&observed), &cancel).expect("steps");
     }
-    let state = head.checkpoint();
+    let state = head.checkpoint().expect("checkpoints");
     let request = |names: &[&str]| MonitorOpen {
         clauses: clauses(names),
         kind: MonitorTraceKind::Finite,
@@ -580,7 +580,18 @@ fn a_resumed_checkpoint_continues_as_the_original_does() {
         let verdicts = |step: &fsl_analyze::monitor_session::MonitorStep| {
             step.statuses
                 .iter()
-                .map(|(_, status)| (status.record().verdict, status.is_settled()))
+                .map(|(_, status)| {
+                    let report = status.record().report();
+                    (
+                        status.record().verdict,
+                        status.is_settled(),
+                        format!("{:?}", report.disposition),
+                        format!("{:?}", report.basis),
+                        format!("{:?}", report.finite_window),
+                        format!("{:?}", report.ledger),
+                        status.settlement().cloned(),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
         assert_eq!(verdicts(&original), verdicts(&again));
@@ -611,10 +622,10 @@ fn a_resumed_checkpoint_continues_as_the_original_does() {
     ));
 }
 
-/// FR-643: a kind the clause's profile does not read refuses at open, before
-/// any observation.
+/// FR-645-AC-3 (TC-1671): a kind the clause's profile does not read refuses at
+/// open, before any observation, with `trace-kind-mismatch`.
 #[test]
-#[trace("TC-1667", "FR-643-AC-1")]
+#[trace("TC-1671", "FR-645-AC-3")]
 fn a_kind_the_profile_does_not_read_refuses_at_open() {
     let world = world();
     let refused = world
@@ -626,10 +637,17 @@ fn a_kind_the_profile_does_not_read_refuses_at_open() {
         )
         .err()
         .map(refusal);
-    assert!(matches!(
-        refused,
-        Some(MonitorRefusal::ClauseRefused { .. })
-    ));
+    let Some(refused) = refused else {
+        panic!("the open should refuse");
+    };
+    assert!(matches!(refused, MonitorRefusal::ClauseRefused { .. }));
+    let document = serde_json::to_value(refused.document()).expect("a document");
+    assert!(
+        document["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("reason=trace-kind-mismatch")),
+        "{document}"
+    );
 }
 
 fn category(
@@ -697,22 +715,33 @@ fn never_settles_at_the_bad_prefix_and_reaches_stays_pending() {
         format!("{:?}", outcome.records[0].report().disposition),
         world.batch(&["Reaches"], &levels)[0]
     );
-    assert_eq!(outcome.settled_before_end, vec![false, true]);
+    assert_eq!(settled_before_end(&outcome), vec![false, true]);
 }
 
 /// FR-643-AC-7 (TC-2321): the event-position `E` stays `Pending` over levels
-/// 0, 1 while the closed reading is `violation`, settles `success` with a
-/// decisive witness on level 2, and `violation` with a decisive
-/// counterexample once the window is wholly observed.
+/// 0, 1 while the closed reading is `violation`; it settles at step 3 with
+/// exactly `B(3)` (no open-scope `finite_window`, no ledger) and a
+/// settlement naming the reading that decided it. A `finish` over 0, 1
+/// settles it at the end.
 #[test]
 #[trace("TC-2321", "FR-643-AC-7")]
-fn a_closed_trace_clause_settles_on_its_decisive_reading() {
+fn a_closed_trace_clause_settles_on_b_s_and_records_its_deciding_reading() {
     use filament_semantic_value::catalog::Category;
     let world = world();
     let cancel = Cancel::new();
-    for (levels, category_at_three) in [
-        ([0, 1, 2], Category::Success),
-        ([0, 1, 1], Category::Violation),
+    for (levels, category_at_three, basis, position) in [
+        (
+            [0, 1, 2],
+            Category::Success,
+            fsl_replay::SettlementBasis::DecisiveWitness,
+            2,
+        ),
+        (
+            [0, 1, 1],
+            Category::Violation,
+            fsl_replay::SettlementBasis::DecisiveCounterexample,
+            0,
+        ),
     ] {
         let mut session = world
             .open(
@@ -734,23 +763,226 @@ fn a_closed_trace_clause_settles_on_its_decisive_reading() {
                     "closed reading"
                 );
             } else {
-                assert!(
-                    status.is_settled(),
-                    "{levels:?} step 3: {:?} {:?}",
-                    status.record().report().basis,
-                    status.record().report().disposition
-                );
+                assert!(status.is_settled(), "{levels:?} step 3");
                 assert_eq!(status.record().category, category_at_three);
-                let window = status
-                    .record()
-                    .report()
-                    .finite_window
-                    .as_ref()
-                    .expect("a window report");
-                assert!(window.basis.is_decisive(), "{:?}", window.basis);
+                let report = status.record().report();
+                let batch = world.batch_report("E", &levels);
+                assert_eq!(
+                    format!("{:?}", report.disposition),
+                    format!("{:?}", batch.disposition),
+                    "the settled report is B(3)"
+                );
+                assert_eq!(report.basis, batch.basis);
+                assert_eq!(report.basis, fsl_replay::SettlementBasis::ClosedScope);
+                assert!(report.finite_window.is_none(), "no open-scope window");
+                assert!(report.ledger.is_none(), "no ledger on a Finite trace");
+                assert_eq!(
+                    status.settlement(),
+                    Some(&fsl_analyze::monitor::Settlement {
+                        step: 3,
+                        trigger: fsl_analyze::monitor::SettleTrigger::Decided,
+                        reading: Some(fsl_analyze::monitor::DecidingReading {
+                            basis,
+                            horizon: 2,
+                            position: Some(position),
+                        }),
+                    })
+                );
             }
         }
     }
+    let mut session = world
+        .open(
+            &["E"],
+            MonitorTraceKind::Finite,
+            None,
+            DEFAULT_RETAINED_POSITIONS,
+        )
+        .expect("opens");
+    for level in [0, 1] {
+        session.step(sample(&text(level)), &cancel).expect("steps");
+    }
+    let outcome = session.finish(&cancel).expect("ends");
+    assert_eq!(
+        outcome.settlements,
+        vec![fsl_analyze::monitor::Settlement {
+            step: 2,
+            trigger: fsl_analyze::monitor::SettleTrigger::Finish,
+            reading: None,
+        }]
+    );
+    assert_eq!(
+        format!("{:?}", outcome.records[0].report().disposition),
+        format!("{:?}", world.batch_report("E", &[0, 1]).disposition)
+    );
+    assert!(outcome.ledger.is_none());
+}
+
+/// FR-283-AC-17 (TC-2323), FR-820: a `Finite` session over an event-position
+/// clause needs no binding or clock selection; with empty
+/// `temporal_selections` it opens and reports what the batch `Finite` run
+/// reports at every prefix.
+#[test]
+#[trace("TC-2323", "FR-283-AC-17")]
+fn a_finite_session_needs_no_selection_for_a_closed_trace_clause() {
+    let world = world();
+    let cancel = Cancel::new();
+    let mut session = MonitorSession::open(
+        world.unit.package(),
+        MonitorOpen {
+            clauses: clauses(&["E"]),
+            kind: MonitorTraceKind::Finite,
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: None,
+            cover: None,
+            ledger: None,
+            packages: &world.packages,
+            sources: &world.sources,
+            temporal_selections: &[],
+        },
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("opens without a selection");
+    let levels = [0, 1, 2];
+    for (index, level) in levels.iter().enumerate() {
+        let step = session.step(sample(&text(*level)), &cancel).expect("steps");
+        assert_eq!(
+            format!("{:?}", step.statuses[0].1.record().report().disposition),
+            world.batch(&["E"], &levels[..=index])[0],
+            "prefix {index}"
+        );
+    }
+    let outcome = session.finish(&cancel).expect("ends");
+    assert_eq!(
+        format!("{:?}", outcome.records[0].report().disposition),
+        world.batch(&["E"], &levels)[0]
+    );
+}
+
+/// FR-643 Order: an opening ledger that holds watermark 5 refuses an
+/// observation stamped 3, and an assertion that regresses it, even when the
+/// run is skipped.
+#[test]
+#[trace("TC-1667", "FR-643-AC-4")]
+fn the_opening_ledger_orders_stamps_and_assertions() {
+    let world = world();
+    let cancel = Cancel::new();
+    let open = |ledger| {
+        MonitorSession::open(
+            world.unit.package(),
+            MonitorOpen {
+                clauses: clauses(&["T"]),
+                kind: MonitorTraceKind::Timestamped,
+                lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+                binding: Some(stamped_binding()),
+                cover: None,
+                ledger,
+                packages: &world.packages,
+                sources: &world.sources,
+                temporal_selections: &world.selections,
+            },
+            &limits(DEFAULT_RETAINED_POSITIONS),
+            &cancel,
+        )
+        .expect("opens")
+    };
+    // A ledger holding watermark 5 comes from a session that asserted it.
+    let mut earlier = open(None);
+    earlier.step(stamped(&text(1), 5), &cancel).expect("steps");
+    let held = earlier
+        .assert_progress(progress(5), &cancel)
+        .expect("asserts");
+    let ledger = earlier
+        .finish(&cancel)
+        .expect("ends")
+        .ledger
+        .expect("a ledger");
+    drop(held);
+    let mut session = open(Some(ledger.clone()));
+    let refused = session
+        .step(stamped(&text(1), 3), &cancel)
+        .expect_err("a stamp at or below the ledger's watermark");
+    assert!(matches!(refusal(refused), MonitorRefusal::Contradiction(_)));
+    let mut session = open(Some(ledger));
+    session.step(stamped(&text(1), 10), &cancel).expect("steps");
+    let refused = session
+        .assert_progress(progress(2), &cancel)
+        .expect_err("a regressing assertion");
+    assert!(matches!(refusal(refused), MonitorRefusal::Contradiction(_)));
+}
+
+/// FR-643 Checkpoint: after a step at a stamp above the watermark the clause
+/// keeps its earlier pending-window report, and a resumed session reports the
+/// same.
+#[test]
+#[trace("TC-1667", "FR-643-AC-4")]
+fn a_resumed_timestamped_session_keeps_the_pending_window_report() {
+    use fsl_replay::spine::{ClauseDisposition, TemporalVerdict};
+    let world = world();
+    let cancel = Cancel::new();
+    let request = || MonitorOpen {
+        clauses: clauses(&["T"]),
+        kind: MonitorTraceKind::Timestamped,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: Some(stamped_binding()),
+        cover: None,
+        ledger: None,
+        packages: &world.packages,
+        sources: &world.sources,
+        temporal_selections: &world.selections,
+    };
+    let mut original = MonitorSession::open(
+        world.unit.package(),
+        request(),
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("opens");
+    original.step(stamped(&text(0), 0), &cancel).expect("step");
+    original
+        .assert_progress(progress(2), &cancel)
+        .expect("asserts");
+    let step = original.step(stamped(&text(0), 3), &cancel).expect("step");
+    let expected = |step: &fsl_analyze::monitor_session::MonitorStep| {
+        matches!(
+            step.statuses[0].1.record().report().disposition,
+            ClauseDisposition::Temporal(TemporalVerdict::PendingWindow { at: 0, deadline: 5 })
+        )
+    };
+    assert!(expected(&step), "the original keeps PendingWindow");
+    let state = original.checkpoint().expect("checkpoints");
+    let mut resumed = MonitorSession::resume(
+        world.unit.package(),
+        &state,
+        request(),
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("resumes");
+    let after = resumed.step(stamped(&text(0), 4), &cancel).expect("step");
+    let reference = original.step(stamped(&text(0), 4), &cancel).expect("step");
+    assert_eq!(
+        format!("{:?}", after.statuses[0].1.record().report().disposition),
+        format!(
+            "{:?}",
+            reference.statuses[0].1.record().report().disposition
+        )
+    );
+    let held = MonitorSession::resume(
+        world.unit.package(),
+        &state,
+        request(),
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("resumes")
+    .finish(&cancel)
+    .expect("ends");
+    assert!(matches!(
+        held.records[0].report().disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::PendingWindow { at: 0, deadline: 5 })
+    ));
 }
 
 /// FR-643-AC-11 (TC-2324): `retained_identities` ends a pending clause
@@ -781,15 +1013,43 @@ fn retained_identities_end_a_pending_clause_incomplete() {
         &cancel,
     )
     .expect("opens");
-    let mut last = None;
+    let mut steps = Vec::new();
     for level in [0, 0, 2, 0, 1] {
         let observed = text(level);
-        last = Some(session.step(sample(&observed), &cancel).expect("steps"));
+        steps.push(session.step(sample(&observed), &cancel).expect("steps"));
     }
-    let step = last.expect("a step");
-    assert_eq!(category(&step, 0), Category::Violation);
-    assert_eq!(category(&step, 1), Category::Incomplete);
+    let at_four = &steps[3];
+    let step = &steps[4];
+    assert_eq!(category(step, 0), Category::Violation);
+    assert_eq!(category(step, 1), Category::Incomplete);
     assert!(step.statuses.iter().all(|(_, status)| status.is_settled()));
+    // `Never` keeps B(3), whose counterexample lists three positions.
+    let never = step.statuses[0].1.record().report();
+    assert_eq!(
+        format!("{:?}", never.disposition),
+        format!("{:?}", world.batch_report("Never", &[0, 0, 2]).disposition)
+    );
+    assert_eq!(
+        never.counterexample.as_ref().map(|c| c.prefix.len()),
+        world
+            .batch_report("Never", &[0, 0, 2])
+            .counterexample
+            .as_ref()
+            .map(|c| c.prefix.len())
+    );
+    // `Below` ended on `monitor.retained_identities` at step 4 and a further
+    // observation leaves its report unchanged.
+    let below = at_four.statuses[1].1.record().report();
+    assert!(
+        format!("{:?}", below.disposition).contains("monitor.retained_identities"),
+        "{:?}",
+        below.disposition
+    );
+    assert_eq!(
+        format!("{:?}", below.disposition),
+        format!("{:?}", step.statuses[1].1.record().report().disposition)
+    );
+    assert!(!steps[4].changed.iter().any(|name| name == "Below"));
 }
 
 /// FR-643-AC-5 (TC-1667): with `retained_positions` 2 over levels 0, 1, 0 the
@@ -817,6 +1077,14 @@ fn recent_reports_incomplete_at_the_retained_positions_limit() {
     }
     let step = last.expect("a step");
     assert_eq!(category(&step, 0), Category::Incomplete);
+    assert_eq!(
+        step.statuses[0].1.settlement(),
+        Some(&fsl_analyze::monitor::Settlement {
+            step: 3,
+            trigger: fsl_analyze::monitor::SettleTrigger::Limit,
+            reading: None,
+        })
+    );
     assert_eq!(category(&step, 1), Category::Pending);
     assert_eq!(category(&step, 2), Category::Pending);
 }
@@ -915,7 +1183,7 @@ fn a_clause_settled_under_an_earlier_assertion_resumes_to_the_same_report() {
             &cancel,
         )
         .expect("a later assertion");
-    let state = original.checkpoint();
+    let state = original.checkpoint().expect("checkpoints");
     let mut resumed = MonitorSession::resume(
         world.unit.package(),
         &state,
@@ -1018,5 +1286,137 @@ fn a_progressed_finish_returns_the_batch_report_under_the_latest_assertion() {
         format!("{:?}", outcome.records[0].report().disposition),
         format!("{:?}", batch.disposition)
     );
-    assert_eq!(outcome.settled_before_end, vec![false]);
+    assert_eq!(settled_before_end(&outcome), vec![false]);
+}
+
+/// For each clause, whether it settled before the end of the trace.
+fn settled_before_end(outcome: &fsl_analyze::monitor::MonitorOutcome) -> Vec<bool> {
+    outcome
+        .settlements
+        .iter()
+        .map(|settlement| settlement.trigger != fsl_analyze::monitor::SettleTrigger::Finish)
+        .collect()
+}
+
+/// FR-643-AC-1 (TC-1666) over snapshots: `Bounded` (event-position), `Reaches`
+/// and `always holds(c.value <= 1)` fed `c.value` 0, 1, 2, 1, 0 one at a time
+/// in a `Finite` session report `B(k)` while pending and `B(s)` once settled
+/// (`Bounded` at step 2, the `always` clause at step 3, `Reaches` never).
+#[test]
+#[trace("TC-1666", "FR-643-AC-1")]
+fn snapshots_fed_one_at_a_time_equal_the_batch_with_settled_clauses_frozen() {
+    use crate::counter::{document, mixed_package_with_clauses, Documents};
+    use fsl_replay::spine::OverObject;
+    let document = document(false);
+    let (package, source) = mixed_package_with_clauses(
+        &document,
+        &[("Bounded", "", "eventually[0,1] holds(c.value = 2)")],
+        &[
+            ("Reaches", "", "eventually holds(c.value = 2)"),
+            ("Small", "", "always holds(c.value <= 1)"),
+        ],
+    );
+    let mut documents = Documents::new(document);
+    let values = [0, 1, 2, 1, 0];
+    let refs: Vec<_> = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| documents.start(&format!("s-{index}"), &[("c1", *value)]))
+        .collect();
+    let bytes: Vec<Vec<u8>> = refs
+        .iter()
+        .map(|reference| {
+            documents
+                .snapshot_bytes()
+                .find(|(held, _)| held.identity == reference.identity)
+                .map(|(_, bytes)| bytes.clone())
+                .expect("a provisioned snapshot")
+        })
+        .collect();
+    let names = ["Bounded", "Reaches", "Small"];
+    let over = || OverObject {
+        population: "ix://test/counter/counters".to_owned(),
+        key: "c1".to_owned(),
+    };
+    let cancel = Cancel::new();
+    let mut session = MonitorSession::open(
+        &package,
+        MonitorOpen {
+            clauses: names
+                .iter()
+                .map(|name| MonitorClause {
+                    name: (*name).to_owned(),
+                    over: Some(over()),
+                })
+                .collect(),
+            kind: MonitorTraceKind::Finite,
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: None,
+            cover: None,
+            ledger: None,
+            packages: &documents.packages,
+            sources: std::slice::from_ref(&source),
+            temporal_selections: &[],
+        },
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("opens");
+    let batch = |name: &str, upto: usize| {
+        let trace = TraceInput::Finite(refs[..upto].to_vec());
+        let snapshots: DocumentProvision = documents
+            .snapshot_bytes()
+            .map(|(reference, bytes)| (reference.clone(), bytes.clone()))
+            .collect();
+        let over = over();
+        run_package_temporal(&PackageTemporalRequest {
+            package: &package,
+            packages: &documents.packages,
+            model_limits: ModelNormalizationLimits::default(),
+            snapshots: &snapshots,
+            observation_limits: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            name,
+            trace: &trace,
+            over: Some(&over),
+            ledger: None,
+            sources: std::slice::from_ref(&source),
+            authentication: None,
+            cancel: &Cancel::new(),
+        })
+    };
+    let settles = [Some(2), None, Some(3)];
+    for (index, snapshot) in bytes.iter().enumerate() {
+        let step = session
+            .step(
+                MonitorObservation {
+                    position: MonitorPosition::Snapshot(snapshot),
+                    stamp: None,
+                    order_key: None,
+                },
+                &cancel,
+            )
+            .expect("steps");
+        for (clause, name) in names.iter().enumerate() {
+            let at = match settles[clause] {
+                Some(settled) if settled <= index + 1 => settled,
+                _ => index + 1,
+            };
+            let status = &step.statuses[clause].1;
+            assert_eq!(
+                status.is_settled(),
+                settles[clause].is_some_and(|settled| settled <= index + 1),
+                "{name} after step {}",
+                index + 1
+            );
+            assert_eq!(
+                format!("{:?}", status.record().report().disposition),
+                format!("{:?}", batch(name, at).disposition),
+                "{name} after step {}",
+                index + 1
+            );
+        }
+    }
+    let outcome = session.finish(&cancel).expect("ends");
+    assert_eq!(settled_before_end(&outcome), vec![true, false, true]);
 }

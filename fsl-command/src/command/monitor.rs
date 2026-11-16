@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use filament_exact::Cancel;
-use fsl_analyze::monitor::{MonitorClause, MonitorLimits, MonitorRefusal};
+use fsl_analyze::monitor::{
+    MonitorClause, MonitorLimits, MonitorRefusal, SettleTrigger, Settlement,
+};
 use fsl_analyze::monitor_session::{
     ClauseStatus, MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
     MonitorState, MonitorStep, MonitorTraceKind,
@@ -79,17 +81,13 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
 /// The request-stage cause a session refusal stands for.
 fn cause_of(failure: StageFailure<MonitorRefusal>) -> RunCause {
     match failure {
-        StageFailure::Refused(MonitorRefusal::UnknownClause { name }) => invalid(
-            "clauses",
-            format!("the program declares no temporal clause `{name}`"),
-        ),
-        StageFailure::Refused(refusal) => invalid("request", format!("{refusal:?}")),
+        StageFailure::Refused(refusal) => RunCause::MonitorRefused(Box::new(refusal)),
         StageFailure::Cancelled(_) => RunCause::MonitorCancelled,
         StageFailure::Fault(_) => RunCause::MonitorFault,
         StageFailure::Limit(limit) | StageFailure::LimitWithPayload(limit, _) => {
             invalid("limits", format!("{limit:?}"))
         }
-        StageFailure::RefusedWithPayload(refusal, _) => invalid("request", format!("{refusal:?}")),
+        StageFailure::RefusedWithPayload(refusal, _) => RunCause::MonitorRefused(refusal),
     }
 }
 
@@ -108,7 +106,7 @@ fn event(
     status: &ClauseStatus,
 ) -> Result<Value> {
     let (disposition, basis, _) = report_value(status)?;
-    Ok(json!({
+    let mut event = json!({
         "format": EVENT_FORMAT,
         "record": record,
         "position": position,
@@ -116,6 +114,46 @@ fn event(
         "settled": status.is_settled(),
         "category": disposition.get("category").cloned().unwrap_or(Value::Null),
         "basis": basis,
+        "disposition": disposition,
+    });
+    if let (Some(settlement), Some(members)) = (status.settlement(), event.as_object_mut()) {
+        members.insert("settlement".to_owned(), settlement_value(settlement));
+    }
+    Ok(event)
+}
+
+/// FR-644: a settlement as its closed JSON object, counts as decimal strings.
+fn settlement_value(settlement: &Settlement) -> Value {
+    let mut members = serde_json::Map::new();
+    members.insert("step".to_owned(), json!(settlement.step.to_string()));
+    members.insert("trigger".to_owned(), json!(settlement.trigger.as_str()));
+    if let (SettleTrigger::Decided, Some(reading)) = (settlement.trigger, &settlement.reading) {
+        members.insert("basis".to_owned(), json!(reading.basis.as_str()));
+        members.insert("horizon".to_owned(), json!(reading.horizon.to_string()));
+        members.insert(
+            "position".to_owned(),
+            json!(reading.position.map(|position| position.to_string())),
+        );
+    }
+    Value::Object(members)
+}
+
+/// The event of a session refusal: FR-643's record as the disposition.
+fn session_refusal_event(
+    record: usize,
+    position: Option<u64>,
+    refusal: &MonitorRefusal,
+) -> Result<Value> {
+    let document = refusal.document();
+    let disposition = serde_json::to_value(&document).map_err(RunCause::Output)?;
+    Ok(json!({
+        "format": EVENT_FORMAT,
+        "record": record,
+        "position": position,
+        "clause": Value::Null,
+        "settled": false,
+        "category": document.category().as_str(),
+        "basis": "unavailable",
         "disposition": disposition,
     }))
 }
@@ -374,6 +412,7 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
             refinement_internals: None,
             libraries: request.libraries,
             clocks: request.clocks,
+            output: None,
         },
     })
 }
@@ -515,12 +554,11 @@ fn stream(
             Record::End => break,
             Record::Checkpoint(path) => {
                 let target = directory.join(&path);
-                std::fs::write(&target, session.checkpoint().as_bytes()).map_err(|error| {
-                    RunCause::Io {
+                std::fs::write(&target, session.checkpoint().map_err(cause_of)?.as_bytes())
+                    .map_err(|error| RunCause::Io {
                         path: target,
                         error,
-                    }
-                })?;
+                    })?;
                 continue;
             }
             Record::Progress(progress) => session.assert_progress(progress, cancel),
@@ -552,51 +590,36 @@ fn stream(
             }
             Err(StageFailure::Refused(refusal)) => {
                 refused += 1;
-                emit(refusal_event(
-                    index,
-                    position,
-                    "record",
-                    &format!("{refusal:?}"),
-                ));
+                emit(session_refusal_event(index, position, &refusal)?);
             }
             Err(other) => return Err(cause_of(other)),
         }
     }
     let outcome = session.finish(cancel).map_err(cause_of)?;
     let mut clauses = Vec::new();
-    let mut ledger = Value::Null;
     let mut codes = Vec::new();
-    for (index, (name, record)) in names.iter().zip(&outcome.records).enumerate() {
+    for (name, (record, settlement)) in names
+        .iter()
+        .zip(outcome.records.iter().zip(&outcome.settlements))
+    {
         let status = ClauseStatus::Pending(record.clone());
-        let settled = outcome
-            .settled_before_end
-            .get(index)
-            .copied()
-            .unwrap_or(false);
-        let (disposition, basis, written) = report_value(&status)?;
-        if !written.is_null() {
-            ledger = written;
-        }
+        let (disposition, basis, _) = report_value(&status)?;
         codes.push(record.category.exit_code());
         clauses.push(json!({
             "clause": name,
-            "settled": settled,
+            "settled": settlement.trigger != SettleTrigger::Finish,
             "category": disposition.get("category").cloned().unwrap_or(Value::Null),
             "basis": basis,
             "disposition": disposition,
+            "settlement": settlement_value(settlement),
         }));
     }
-    if ledger.is_null() {
-        if let Some(report_ledger) = outcome
-            .records
-            .iter()
-            .rev()
-            .find_map(|r| r.report().ledger.as_ref())
-        {
-            ledger = write_ledger(report_ledger)
-                .map_err(|error| invalid(&error.member, error.reason))?;
+    let ledger = match &outcome.ledger {
+        Some(ledger) => {
+            write_ledger(ledger).map_err(|error| invalid(&error.member, error.reason))?
         }
-    }
+        None => Value::Null,
+    };
     let value = json!({
         "format": SUMMARY_FORMAT,
         "clauses": clauses,

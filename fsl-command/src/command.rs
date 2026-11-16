@@ -325,6 +325,9 @@ pub enum RunCause {
     /// analyze request was refused before any item ran.
     #[error("{0}")]
     AnalyzeRefused(Box<fsl_analyze::analyze::AnalyzeRefusal>),
+    /// FR-644: the monitor session refused the request, with FR-643's record.
+    #[error("{0:?}")]
+    MonitorRefused(Box<fsl_analyze::monitor::MonitorRefusal>),
     /// An analyze run faulted while writing its document.
     #[error("the analyze run faulted")]
     AnalyzeFault,
@@ -422,6 +425,12 @@ impl RunCause {
                 .first()
                 .and_then(|diagnostic| Code::from_code(diagnostic.code()))
                 .unwrap_or(Code::RuntimeInvariant),
+            Self::MonitorRefused(refusal) => refusal
+                .document()
+                .diagnostics()
+                .first()
+                .and_then(|diagnostic| Code::from_code(diagnostic.code()))
+                .unwrap_or(Code::RuntimeInvariant),
             Self::AnalyzeFault | Self::MonitorFault | Self::MonitorCancelled => {
                 Code::RuntimeInvariant
             }
@@ -445,6 +454,7 @@ impl RunCause {
             }
             Self::SpineRun(refusal) => refusal.category(),
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
+            Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
@@ -488,6 +498,7 @@ impl RunError {
             )]),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
+            RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,

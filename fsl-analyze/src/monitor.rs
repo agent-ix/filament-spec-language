@@ -1,4 +1,4 @@
-// SPDX-Li.filter(|name| clauses.iter().any(|c| c.name == *name))|name| clauses.iter().any(|c| c.name == *name))ense-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-283: the `monitor` operation. It checks a supplied trace offline
 //! against temporal clauses with the layer-5 trace evaluator replay uses
 //! (ADR-029 OP-3, ADR-014 A-4), and reports one [`MonitorRecord`] per
@@ -192,14 +192,62 @@ impl MonitorRecord {
     }
 }
 
+/// What settled a clause (FR-643 "Settlement").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettleTrigger {
+    /// The profile's evaluator decided it.
+    Decided,
+    /// A retention limit ended it `incomplete`.
+    Limit,
+    /// It settled at `finish`.
+    Finish,
+}
+
+impl SettleTrigger {
+    /// The wire label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Decided => "decided",
+            Self::Limit => "limit",
+            Self::Finish => "finish",
+        }
+    }
+}
+
+/// The reading that decided a clause, for the `decided` trigger.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecidingReading {
+    /// The FSpec FR-243 basis of the deciding reading.
+    pub basis: fsl_replay::SettlementBasis,
+    /// The seen horizon of the deciding reading.
+    pub horizon: u64,
+    /// The position at which the reading reports its verdict, if it names one.
+    pub position: Option<u64>,
+}
+
+/// How a settled clause settled (FR-643 "Settlement"): the report stays
+/// `B(s)`, and this records the reading that made it final.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Settlement {
+    /// The call at which the clause settled.
+    pub step: u64,
+    /// What settled it.
+    pub trigger: SettleTrigger,
+    /// The deciding reading; present exactly for the `decided` trigger.
+    pub reading: Option<DecidingReading>,
+}
+
 /// A completed `monitor` request.
 #[derive(Debug)]
 pub struct MonitorOutcome {
     /// One record per selected clause, in request order.
     pub records: Vec<MonitorRecord>,
-    /// For each record, whether the clause had settled before the end of the
-    /// trace; empty for the one-shot `monitor`, which settles nothing early.
-    pub settled_before_end: Vec<bool>,
+    /// For each record, how its clause settled (FR-643 "Settlement"); a clause
+    /// still pending at the end settles at `finish`. Empty for the one-shot
+    /// `monitor`, which settles nothing early.
+    pub settlements: Vec<Settlement>,
+    /// The session's final progress ledger, for a kind that carries progress.
+    pub ledger: Option<fsl_replay::spine::ProgressLedger>,
 }
 
 impl MonitorOutcome {
@@ -232,7 +280,7 @@ pub enum MonitorRefusal {
     Admission {
         /// The position's index.
         position: usize,
-        /// FR-106's .map_err(|failure| Self::emission_failure(&self.request.clauses, failure, &first.name))?;|failure| Self::emission_failure(&self.request.clauses, failure, &first.name))?;.
+        /// FR-106's failure.
         failure: Box<AdmissionFailure>,
     },
     /// FR-330 refused a selected clause at stage `admit` for a reason that is
@@ -303,12 +351,18 @@ impl MonitorRefusal {
             Self::Admission { position, failure } => crate::analyze::refusal_document(
                 Operation::Monitor,
                 failure,
-                format!("trace position {position}: {failure}"),
+                format!(
+                    "trace position {position}: {failure}{}",
+                    record_fields_text(failure)
+                ),
             ),
             Self::ClauseRefused { clause, failure } => crate::analyze::refusal_document(
                 Operation::Monitor,
                 failure,
-                format!("clause `{clause}`: {failure}"),
+                format!(
+                    "clause `{clause}`: {failure}{}",
+                    record_fields_text(failure)
+                ),
             ),
             Self::UnknownClause { name } => refused(
                 CatalogCode::new("missing_declaration", "missing-name"),
@@ -412,7 +466,8 @@ pub fn monitor_with_evaluator(
     }
     Ok(Staged::new(MonitorOutcome {
         records,
-        settled_before_end: Vec::new(),
+        settlements: Vec::new(),
+        ledger: None,
     }))
 }
 
@@ -826,6 +881,24 @@ pub(crate) fn verdict_of(
 }
 
 /// A refused admission failure with `code` and `cause`.
+/// The record's fields as ` (name=value, ...)`, empty when it has none, so a
+/// rendered refusal keeps its `reason` and the members FR-645 names.
+fn record_fields_text(failure: &AdmissionFailure) -> String {
+    match failure {
+        AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record)
+            if !record.fields.is_empty() =>
+        {
+            let fields: Vec<String> = record
+                .fields
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect();
+            format!(" ({})", fields.join(", "))
+        }
+        _ => String::new(),
+    }
+}
+
 pub(crate) fn refused(
     code: Code,
     cause: &'static str,

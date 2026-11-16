@@ -778,6 +778,17 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
                     clause == "Never" && record >= 2,
                     "{clause} settled at record {record}"
                 );
+                // `settlement` is present exactly when `settled` is true.
+                if clause == "Never" && record >= 2 {
+                    assert_eq!(
+                        event["settlement"],
+                        json!({"step": "3", "trigger": "decided",
+                            "basis": batch_of(2)["basis"], "horizon": "2", "position": "0"}),
+                        "{event}"
+                    );
+                } else {
+                    assert!(event.get("settlement").is_none(), "{event}");
+                }
             }
             // A settled result never changes (FR-643-AC-3), so the status
             // equals the clause run at the record that decided it; its
@@ -803,7 +814,67 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             clause == "Never",
             "{clause} settled in the summary"
         );
+        if clause == "Never" {
+            assert_eq!(summary["settlement"]["step"], "3", "{summary}");
+            assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
+        } else {
+            assert_eq!(
+                summary["settlement"],
+                json!({"step": "4", "trigger": "finish"}),
+                "{summary}"
+            );
+        }
+        assert!(
+            run["summary"]["ledger"].is_null(),
+            "a finite summary has no ledger: {run}"
+        );
     }
+}
+
+/// FR-644-AC-7 (TC-2340): a `finite` stream of `E` over levels 0, 1, 2 gives
+/// at record 2 an event settled with `B(3)`'s disposition and a settlement
+/// naming the deciding reading; the earlier events carry none, and the
+/// summary repeats the settlement and has no ledger.
+#[test]
+#[trace("TC-2340", "FR-644-AC-7")]
+fn a_settled_event_carries_the_reading_that_decided_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut records = observations(&[0, 1, 2]);
+    records.push(json!({"end": true}));
+    let output = monitor_run(
+        directory.path(),
+        "settlement",
+        monitor_request(json!([{"name": "E"}]), json!({"kind": "finite"})),
+        &records,
+    );
+    let run = result(&output);
+    let events = run["events"].as_array().expect("events");
+    let batch = result(&run_file(&write_trace(
+        directory.path(),
+        "batch.json",
+        &trace_request(json!({"name": "E", "trace": {"finite": samples(&[0, 1, 2])}})),
+    )));
+    let settlement = json!({"step": "3", "trigger": "decided",
+        "basis": "decisive-witness", "horizon": "2", "position": "2"});
+    for event in events {
+        if event["record"] == 2 {
+            assert_eq!(event["settled"], true, "{event}");
+            assert_eq!(event["disposition"], batch["disposition"], "{event}");
+            assert_eq!(event["disposition"]["category"], "success", "{event}");
+            assert_eq!(event["basis"], "closed-scope", "{event}");
+            assert!(
+                event["disposition"].get("finite_window").is_none(),
+                "{event}"
+            );
+            assert_eq!(event["settlement"], settlement, "{event}");
+        } else {
+            assert_eq!(event["settled"], false, "{event}");
+            assert!(event.get("settlement").is_none(), "{event}");
+        }
+    }
+    let summary = &run["summary"];
+    assert_eq!(summary["clauses"][0]["settlement"], settlement, "{summary}");
+    assert!(summary["ledger"].is_null(), "{summary}");
 }
 
 /// FR-640-AC-4, AC-6 (TC-1661): a malformed configuration refuses at stage
@@ -1436,4 +1507,48 @@ fn end_with_a_closure_and_through_are_refused_as_events() {
         noisy["summary"]["clauses"], clean["summary"]["clauses"],
         "{noisy}"
     );
+}
+
+/// FR-643, FR-504 (TC-2321): a fixed-sample clause on a `Progressed` stream
+/// reads under the session's latest assertion. After one sample, a
+/// watermark-only assertion W 3 complete through 3 settles `S`
+/// (`eventually[0,3]`) `violation` on its own, naming the horizon 3; W 2
+/// leaves it pending.
+#[test]
+#[trace("TC-2321", "FR-643-AC-7", "FR-504")]
+fn a_watermark_assertion_alone_settles_a_fixed_sample_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, watermark, settles) in [("deadline", 3, true), ("short", 2, false)] {
+        let trace = json!({"kind": "progressed", "lower_boundary": "authoritative-origin",
+            "binding": binding(SAMPLED, "sample")});
+        let records = [
+            json!({"observation": sample(0)}),
+            json!({"progress": progress(watermark)}),
+            json!({"end": true}),
+        ];
+        let output = monitor_run(
+            directory.path(),
+            name,
+            monitor_request(json!([{"name": "S"}]), trace),
+            &records,
+        );
+        let run = result(&output);
+        let event = run["events"]
+            .as_array()
+            .and_then(|events| events.iter().rev().find(|event| event["clause"] == "S"))
+            .expect("an event for S");
+        assert_eq!(event["settled"], settles, "W {watermark}: {run}");
+        if settles {
+            assert_eq!(event["category"], "violation", "{event}");
+            assert_eq!(event["record"], 1, "{event}");
+            assert_eq!(event["settlement"]["trigger"], "decided", "{event}");
+            assert_eq!(
+                event["settlement"]["basis"], "decisive-counterexample",
+                "{event}"
+            );
+            assert_eq!(event["settlement"]["horizon"], "3", "{event}");
+        } else {
+            assert!(event.get("settlement").is_none(), "{event}");
+        }
+    }
 }
