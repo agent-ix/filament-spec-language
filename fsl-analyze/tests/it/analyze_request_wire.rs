@@ -573,7 +573,8 @@ fn a_pending_clause_run_reports_its_pending_disposition() {
         "clause": {"selection": {"temporal": {"name": "Reaches",
             "trace": {"finite": [sample(0), sample(1)]}}}, "observations": {}}}});
     let path = ws.write("run.json", request.to_string().as_bytes());
-    let result = fsl_command::command::run(&path).expect("the clause runs");
+    let result = fsl_command::command::run(&path, &crate::analyze_cli_support::Fr290)
+        .expect("the clause runs");
     assert_eq!(result.exit_code, 0);
     let document: Value =
         serde_json::from_str(&result.value.to_string()).expect("a result document");

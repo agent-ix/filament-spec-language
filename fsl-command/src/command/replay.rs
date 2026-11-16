@@ -83,6 +83,7 @@ pub(super) fn run_bytes(
                 exit_code: outcome.category().exit_code(),
                 value: NativeResult::replay_document(json!({ "results": [row] })),
                 outcome: Some(outcome),
+                requirements: None,
             })
         }
         Err(refusal) => Err(RunCause::Replay(Box::new(ReplayFailure {

@@ -141,9 +141,8 @@ pub fn run(
 
 /// The FSpec FR-462 limits of one provider's runs, by the names and with
 /// the defaults FR-287 gives `--provider-limit`. The caller resolves them
-/// and hands them over with the provider
-/// ([`crate::analyze::Engine::external`]); every request `analyze` sends
-/// that provider carries them. `deadline_ms` binds every provider, as the
+/// once for the run as [`ProviderOptions`]; every request the run sends
+/// carries them. `deadline_ms` binds every provider, as the
 /// FR-331 request's `deadline_ms`; the other six are transport limits of a
 /// process plugin, which a linked provider ignores.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -184,6 +183,16 @@ impl ProviderLimits {
             _ => None,
         }
     }
+}
+
+/// The provider options of one provider-routing run (FR-964): its FSpec
+/// FR-462 limits, by FR-287's names and defaults. Every provider-routing
+/// entry takes one and every `ProviderRequest` the run builds carries its
+/// limits.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProviderOptions {
+    /// The run's FSpec FR-462 limits.
+    pub provider_limits: ProviderLimits,
 }
 
 impl Default for ProviderLimits {
@@ -675,7 +684,7 @@ pub(crate) fn settle_items(
             targets,
             manifest: engines.registrations().collect(),
             descriptor: engine.descriptor(),
-            limits: engine.provider_limits(),
+            limits: engines.options().provider_limits,
         };
         let verdicts = provider.settle(&request, cancel);
         let complete = verdicts.len() == indices.len();

@@ -22,6 +22,7 @@ pub(super) fn run_bytes(
     bytes: &[u8],
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
+    settle: &super::settle::Settle<'_>,
 ) -> Result<Option<RunResult>> {
     let mut request: Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
     let Some(body) = request.get_mut("request").and_then(Value::as_object_mut) else {
@@ -397,7 +398,7 @@ pub(super) fn run_bytes(
                 Ok(
                     prepared
                     @ (super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_)),
-                ) => ItemExecution::Run(execute_prepared(prepared)),
+                ) => ItemExecution::Run(execute_prepared(prepared, settle)),
                 Err(cause) => ItemExecution::Run(Err(cause)),
             };
             prepared.push((index, object, execution));
@@ -570,6 +571,7 @@ pub(super) fn run_bytes(
         exit_code,
         value: document,
         outcome: None,
+        requirements: None,
     }))
 }
 
@@ -1061,12 +1063,14 @@ mod tests {
             exit_code: 30,
             value: NativeResult::items_document(json!({"category": "internal-failure"})),
             outcome: None,
+            requirements: None,
         };
         assert!(is_internal_item_failure(&result));
         let refusal = RunResult {
             exit_code: 20,
             value: NativeResult::items_document(json!({"category": "refusal"})),
             outcome: None,
+            requirements: None,
         };
         assert!(!is_internal_item_failure(&refusal));
     }

@@ -1295,6 +1295,29 @@ impl CandidateSet {
         }
     }
 
+    /// This set narrowed to its one member `backend`, every other member
+    /// unchanged: the set a tie rule's row selects (FR-962). `None` when
+    /// `backend` is not a member.
+    #[must_use]
+    pub fn narrowed_to(&self, backend: &BackendId) -> Option<Self> {
+        let kept = self
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id() == backend)?
+            .clone();
+        let fairness = self
+            .fairness
+            .iter()
+            .filter(|(candidate, _)| candidate.id() == backend)
+            .map(|(candidate, kinds)| (candidate.clone(), kinds.clone()))
+            .collect();
+        Some(Self {
+            candidates: vec![kept],
+            fairness,
+            ..self.clone()
+        })
+    }
+
     /// The evidence value a `probabilistic-satisfaction` item named,
     /// preserved unchanged for negotiation (FR-075 "Candidate computation
     /// matches probabilistic evidence exactly"); `None` for an item of any

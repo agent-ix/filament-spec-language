@@ -36,6 +36,7 @@ pub mod provider;
 pub mod schedulability;
 pub mod statistical;
 pub mod step_simulation;
+pub mod tie_rule;
 pub mod value_check;
 pub mod zone_check;
 

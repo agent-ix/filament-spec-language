@@ -14,6 +14,7 @@ use fsl_analyze::analyze::document::{
     SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
+use fsl_analyze::provider::ProviderOptions;
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::{
@@ -242,7 +243,14 @@ pub fn analyze_with_limits(
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    analyze_with_providers_and_limits(path, limits, negotiate, Vec::new(), cancel)
+    analyze_with_providers_and_limits(
+        path,
+        limits,
+        negotiate,
+        Vec::new(),
+        &ProviderOptions::default(),
+        cancel,
+    )
 }
 
 /// [`analyze`] with the caller's started process providers (FR-635 "One rule
@@ -250,7 +258,8 @@ pub fn analyze_with_limits(
 /// over its `Process` descriptor and the handle its items are sent over.
 /// They register beside `Engines::fsl()` before any item is negotiated, so
 /// an item reaches one only by negotiation. An empty `providers` is
-/// [`analyze`].
+/// [`analyze`]. `options` carries the run's FSpec FR-462 limits, which every
+/// provider request carries (FR-964).
 ///
 /// # Errors
 ///
@@ -260,9 +269,17 @@ pub fn analyze_with_providers(
     path: &Path,
     negotiate: &dyn Negotiate,
     providers: Vec<Engine>,
+    options: &ProviderOptions,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    analyze_with_providers_and_limits(path, RunLimits::default(), negotiate, providers, cancel)
+    analyze_with_providers_and_limits(
+        path,
+        RunLimits::default(),
+        negotiate,
+        providers,
+        options,
+        cancel,
+    )
 }
 
 /// [`analyze_with_providers`] under the caller's request and dependent-file
@@ -276,17 +293,21 @@ pub fn analyze_with_providers_and_limits(
     limits: RunLimits,
     negotiate: &dyn Negotiate,
     providers: Vec<Engine>,
+    options: &ProviderOptions,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = read(directory, bytes, limits.dependent_bytes)?;
-        run_input(&mut intake, input, negotiate, providers, cancel)
+        run_input(&mut intake, input, negotiate, providers, options, cancel)
     })
 }
 
-/// FSL's engines with the caller's process providers registered beside them.
-fn engines_with(providers: Vec<Engine>) -> Result<Engines> {
-    let mut engines = Engines::fsl().map_err(|_| RunCause::AnalyzeFault)?;
+/// FSL's engines with the caller's process providers registered beside them,
+/// under the run's provider `options`.
+pub(super) fn engines_with(providers: Vec<Engine>, options: &ProviderOptions) -> Result<Engines> {
+    let mut engines = Engines::fsl()
+        .map_err(|_| RunCause::AnalyzeFault)?
+        .under(*options);
     for provider in providers {
         engines.with(provider).map_err(|duplicate| {
             invalid(
@@ -306,11 +327,12 @@ fn run_input(
     input: AnalyzeInput,
     negotiate: &dyn Negotiate,
     providers: Vec<Engine>,
+    options: &ProviderOptions,
     cancel: &Cancel,
 ) -> Result<RunResult> {
     // The registry is fixed before the program is read, so a provider that
     // cannot register refuses the request before any stage runs.
-    let engines = engines_with(providers)?;
+    let engines = engines_with(providers, options)?;
     let AnalyzeInput {
         source,
         compile,
@@ -362,6 +384,7 @@ fn run_input(
                     exit_code,
                     value: NativeResult::analyze_document(document),
                     outcome: None,
+                    requirements: None,
                 }),
                 Err(AnalyzeDocumentError::Refused(refusal)) => {
                     Err(RunCause::AnalyzeRefused(Box::new(refusal)))

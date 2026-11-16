@@ -404,7 +404,6 @@ fn process_provider(
     fsl_analyze::analyze::Engine::external(
         process_descriptor(backend),
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-        fsl_analyze::provider::ProviderLimits::default(),
         Box::new(AnsweringProvider(verdict)),
     )
     .expect("the descriptor is unbounded")
@@ -558,11 +557,14 @@ fn analyze_builds_the_fr331_request_for_a_boolean_value_clause() {
     let engine = fsl_analyze::analyze::Engine::external(
         process_descriptor(PROCESS_PROVIDER),
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-        limits,
         Box::new(recording),
     )
     .expect("the descriptor is unbounded");
-    let run = crate::analyze_cli_support::analyze_with_providers(&request, vec![engine]);
+    let options = fsl_analyze::provider::ProviderOptions {
+        provider_limits: limits,
+    };
+    let run =
+        crate::analyze_cli_support::analyze_with_providers_under(&request, vec![engine], &options);
     assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
     let sent = sent.lock().expect("the record").clone();
     let [(sent, manifest_entry)] = sent.as_slice() else {

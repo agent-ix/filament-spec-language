@@ -155,7 +155,7 @@ impl RunWithRequirements {
     }
 }
 
-/// Compile `bytes` once, call `call`'s function as FR-100's
+/// Compile `run.bytes` once, call `run.call`'s function as FR-100's
 /// [`run`](crate::spine::run) does, and return the call's
 /// outcome with the requirement items whose owner is the selected function
 /// (FR-395). Arguments do not select items: the members of a call whose
@@ -165,47 +165,83 @@ impl RunWithRequirements {
 /// members. A `value-validity` record with no owner, or one whose owner names
 /// no function of the package, is a `RunRefusal::Fault` of stage `spine-run`
 /// and invariant `requirement-owner-known`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "run's signature (FR-100): the request's fields, the object context and the cancel handle"
-)]
 pub fn run_with_requirements(
-    source: SourceIdentity,
-    package_name: String,
-    path: &str,
-    bytes: &[u8],
-    packages: &fsl_semantics::model::intake::PackageInput,
-    dependencies: &DependencyInput,
-    limits: SpineLimits,
-    call: &Call,
-    objects: &ObjectEnvironment,
-    cancel: &Cancel,
+    run: &RequirementsRun<'_>,
 ) -> Result<RunWithRequirements, Box<RunRefusal>> {
-    let library_name = package_name_of(&package_name)?;
-    let (outcome, members) = run_reading(
-        source,
-        package_name,
-        path,
-        bytes,
-        packages,
-        dependencies,
-        limits,
-        call,
-        objects,
+    run_with_requirements_reading(run, |_, _| ()).map(|(run, ())| run)
+}
+
+/// The inputs of one [`run_with_requirements`] or
+/// [`run_with_requirements_reading`] run: `run`'s
+/// arguments (FR-100), the request's fields, the object context and the
+/// cancel handle.
+pub struct RequirementsRun<'a> {
+    /// The program's source identity.
+    pub source: SourceIdentity,
+    /// The package name the program compiles under.
+    pub package_name: String,
+    /// The program's request-selected path.
+    pub path: &'a str,
+    /// The program's bytes.
+    pub bytes: &'a [u8],
+    /// The admitted domain packages.
+    pub packages: &'a fsl_semantics::model::intake::PackageInput,
+    /// The supplied library dependencies.
+    pub dependencies: &'a DependencyInput,
+    /// The spine's stage limits.
+    pub limits: SpineLimits,
+    /// The call.
+    pub call: &'a Call,
+    /// The call's object context.
+    pub objects: &'a ObjectEnvironment,
+    /// The run's cancel handle.
+    pub cancel: &'a Cancel,
+}
+
+/// [`run_with_requirements`], handing `read` the checked unit the call was
+/// compiled into and the call's requirement items once the call has run, and
+/// returning what `read` returns beside the run (FR-961 step 3). `read` sees
+/// the same compile as the call, so what it settles describes the package
+/// that was executed; it is not called when the run refuses before the call.
+///
+/// # Errors
+///
+/// As [`run_with_requirements`].
+pub fn run_with_requirements_reading<T>(
+    run: &RequirementsRun<'_>,
+    read: impl FnOnce(&crate::spine::CheckedUnit, &CallRequirements) -> T,
+) -> Result<(RunWithRequirements, T), Box<RunRefusal>> {
+    let library_name = package_name_of(&run.package_name)?;
+    let (outcome, (requirements, read)) = run_reading(
+        run.source.clone(),
+        run.package_name.clone(),
+        run.path,
+        run.bytes,
+        run.packages,
+        run.dependencies,
+        run.limits,
+        run.call,
+        run.objects,
         &fsl_eval::execution::SuppliedBackends::default(),
         &fsl_eval::execution::PrepareLimits::default(),
-        cancel,
+        run.cancel,
         |checked, _, _| {
             let graph = checked.package().graph();
-            associate(graph.requirements(), graph, &call.function)
-                .map_err(|fault| Box::new(RunRefusal::Fault(fault)))
+            let members = associate(graph.requirements(), graph, &run.call.function)
+                .map_err(|fault| Box::new(RunRefusal::Fault(fault)))?;
+            let requirements = CallRequirements::new(run.call, members);
+            let read = read(checked, &requirements);
+            Ok((requirements, read))
         },
     )?;
-    Ok(RunWithRequirements {
-        package_name: library_name,
-        outcome,
-        requirements: CallRequirements::new(call, members),
-    })
+    Ok((
+        RunWithRequirements {
+            package_name: library_name,
+            outcome,
+            requirements,
+        },
+        read,
+    ))
 }
 
 /// The library name the manifest's package name spells.

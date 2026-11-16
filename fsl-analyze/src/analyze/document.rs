@@ -853,6 +853,115 @@ pub fn resolve_items(
     }
 }
 
+/// One requirement item of a run call (FR-395 "Item of the call") with the
+/// backend and options the run names for it (FR-960).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallItem {
+    /// The item's record occurrence: its FSpec FR-331 claim.
+    pub claim: OccurrenceKey,
+    /// The item's FR-395 request index.
+    pub request_index: RequestIndex,
+    /// The backend the run names for the item, when it names one.
+    pub backend: Option<BackendId>,
+    /// The named backend's options (FSpec FR-196).
+    pub options: BTreeMap<String, String>,
+}
+
+/// Resolve the requirement items of a call of `function` (FR-960, FR-961
+/// step 4): each item's candidates are FR-075's for its named backend, an
+/// unnamed item's narrowed by FR-962's tie rule, and its request item
+/// carries the named backend. An option the named backend's manifest does
+/// not publish settles the item `invalid-request` naming the option; a
+/// registered descriptor publishes no option, so every option given to a
+/// registered backend refuses its item. A named backend the registry does
+/// not hold keeps FR-075's unknown-backend marker, which negotiation
+/// settles.
+pub fn resolve_call_items(
+    package: &CheckedPackage,
+    function: &str,
+    items: &[CallItem],
+    registry: &Registry,
+) -> Vec<ResolvedItem> {
+    items
+        .iter()
+        .map(|call_item| resolve_call_item(package, function, call_item, registry))
+        .collect()
+}
+
+fn resolve_call_item(
+    package: &CheckedPackage,
+    function: &str,
+    call_item: &CallItem,
+    registry: &Registry,
+) -> ResolvedItem {
+    let index = call_item.request_index;
+    let named = call_item.backend.as_ref();
+    let registered = named.is_none_or(|backend| registry.backends().any(|held| held == backend));
+    if let (true, Some(option)) = (registered, call_item.options.keys().next()) {
+        let mut detail = Map::new();
+        detail.insert("member".to_owned(), json!("options"));
+        detail.insert("option".to_owned(), json!(option));
+        return ResolvedItem::Settled {
+            claim_name: Some(function.to_owned()),
+            record: Box::new(TerminalRecord::disposition_invalid_request(
+                index,
+                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                detail,
+            )),
+        };
+    }
+    let Some(record) = requirement_items(package, registry, named)
+        .into_iter()
+        .find(|record| record.occurrence() == &call_item.claim)
+    else {
+        return ResolvedItem::Settled {
+            claim_name: Some(function.to_owned()),
+            record: Box::new(TerminalRecord::disposition_failed(
+                index,
+                filament_semantic_value::catalog::InternalFault::new(
+                    "run-requirements",
+                    "call-item-is-a-record",
+                )
+                .catalog_code(),
+            )),
+        };
+    };
+    let kind = record.kind();
+    let candidates = crate::tie_rule::resolve_tie(
+        package,
+        &call_item.claim,
+        kind,
+        named,
+        false,
+        record.candidates().clone(),
+    );
+    let item = ClaimItem {
+        request_index: index,
+        claim: call_item.claim.clone(),
+        kind,
+        extent: record.extent(),
+        backend: call_item.backend.clone(),
+        candidates: candidate_list(&candidates),
+        options: ItemOptions {
+            required: true,
+            max_cases: None,
+            trace: None,
+        },
+        form: None,
+    };
+    ResolvedItem::Claim(Box::new(ResolvedClaim {
+        item,
+        claim_name: function.to_owned(),
+        candidates,
+        subject: SubjectSelection {
+            initial_states: Vec::new(),
+            universes: Vec::new(),
+            proof_bounds: Vec::new(),
+        },
+        unrouted: false,
+    }))
+}
+
 fn requirement_items(
     package: &CheckedPackage,
     registry: &Registry,
@@ -942,6 +1051,23 @@ fn resolve_one(
     } else {
         candidates
     };
+    // FR-962: an unnamed item the linked tie decides reaches the negotiator
+    // with the one provider FR-489's claim-form rule selects.
+    let model_subject = !selection
+        .temporal
+        .as_ref()
+        .and_then(|temporal| temporal.subject.as_ref())
+        .unwrap_or(subject)
+        .initial_states
+        .is_empty();
+    let candidates = crate::tie_rule::resolve_tie(
+        package,
+        &claim,
+        kind,
+        named.as_ref(),
+        model_subject,
+        candidates,
+    );
     let temporal = selection.temporal.clone().unwrap_or_default();
     let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
     if let Some(claim) = state_graph {
@@ -1549,6 +1675,58 @@ pub fn analyze_document(
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> Result<(Value, u8), AnalyzeDocumentError> {
+    settle_run(run, negotiate, cancel).map(|settled| (settled.document, settled.exit_code))
+}
+
+/// One FR-635 `registry` entry: a registered backend and its FSpec FR-331
+/// tool record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryEntry {
+    /// The backend.
+    pub backend: BackendId,
+    /// Its tool record.
+    pub tool: super::BackendTool,
+}
+
+impl RegistryEntry {
+    /// The entry's `{backend, tool}` wire spelling.
+    pub fn wire(&self) -> Value {
+        json!({"backend": self.backend.as_str(),
+            "tool": {"name": self.tool.name(), "version": self.tool.version()}})
+    }
+}
+
+/// What [`settle_run`] settled: the typed records and reproduced
+/// counterexamples, each item's FR-621 entry, the registry, the FR-621
+/// document over them and its FR-285 exit code.
+pub struct SettledRun {
+    /// One terminal record per item, in request-index order.
+    pub records: Vec<TerminalRecord>,
+    /// Exactly one reproduced counterexample per `refuted` record.
+    pub counterexamples: Vec<super::ItemCounterexample>,
+    /// Each item's FR-621 entry, in [`Self::records`] order.
+    pub items: Vec<Value>,
+    /// FR-635's registry, sorted by backend.
+    pub registry: Vec<RegistryEntry>,
+    /// The FR-621 document.
+    pub document: Value,
+    /// The most severe item's FR-285 exit code; 0 with no item.
+    pub exit_code: u8,
+}
+
+/// Negotiate `run`'s items with `negotiate`, run them under `cancel`
+/// (sending each external provider its one request after every item is
+/// negotiated, FR-950) and settle each as one record: the one settlement
+/// path `analyze` and `run` share (FR-961, FR-963).
+///
+/// # Errors
+///
+/// As [`analyze_document`].
+pub fn settle_run(
+    run: AnalyzeRun<'_>,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> Result<SettledRun, AnalyzeDocumentError> {
     let AnalyzeRun {
         package,
         binding,
@@ -1655,6 +1833,16 @@ pub fn analyze_document(
             }
         }
     }
+    // FR-621 "The record's `backend` member": the backend each item was
+    // negotiated to, which produced its record when no disposition did.
+    let targets: BTreeMap<RequestIndex, BackendId> = negotiated
+        .iter()
+        .filter_map(|item| {
+            item.disposition
+                .target()
+                .map(|target| (item.item.request_index, target.id().clone()))
+        })
+        .collect();
     let outcome = super::request::analyze_bound(
         package,
         &binding,
@@ -1692,7 +1880,7 @@ pub fn analyze_document(
             None => settled.get(&index).and_then(|(name, _)| name.clone()),
         };
         let required = echo.is_none_or(|echo| echo.required);
-        let disposed = record.disposition_detail().is_some();
+        let disposed = record.settled_by_disposition();
         if required
             && !matches!(
                 record.value(),
@@ -1717,37 +1905,45 @@ pub fn analyze_document(
                 detail: detail.copied(),
                 scoped: echo.is_some_and(|echo| echo.scoped),
                 axes: OutcomeAxes::of_record(record.value(), disposed),
+                producer: record
+                    .producer(targets.get(&index))
+                    .map(|backend| backend.as_str().to_owned()),
+                disposed,
             },
         ));
     }
-    document["items"] = Value::Array(items);
+    document["items"] = Value::Array(items.clone());
     document["aggregate"] = json!({
         "status": if gaps.is_empty() { "complete" } else { "incomplete" },
         "gaps": gaps,
     });
     // FR-635 "Outputs": `{backend, tool}` of every registered backend,
     // sorted by backend.
-    let mut registry: Vec<(&str, &super::BackendTool)> = engines
+    let mut registry: Vec<RegistryEntry> = engines
         .tools()
-        .map(|(descriptor, tool)| (descriptor.id().as_str(), tool))
+        .map(|(descriptor, tool)| RegistryEntry {
+            backend: descriptor.id().clone(),
+            tool: tool.clone(),
+        })
         .collect();
-    registry.sort_unstable();
-    document["registry"] = Value::Array(
-        registry
-            .into_iter()
-            .map(|(backend, tool)| {
-                json!({"backend": backend,
-                    "tool": {"name": tool.name(), "version": tool.version()}})
-            })
-            .collect(),
-    );
-    let category = Category::most_severe(
+    registry.sort_unstable_by(|left, right| {
+        (left.backend.as_str(), &left.tool).cmp(&(right.backend.as_str(), &right.tool))
+    });
+    document["registry"] = Value::Array(registry.iter().map(RegistryEntry::wire).collect());
+    let exit_code = Category::most_severe(
         records
             .iter()
             .map(|record| record.value().category().exit_code()),
     )
     .unwrap_or(0);
-    Ok((document, category))
+    Ok(SettledRun {
+        records,
+        counterexamples: outcome.counterexamples,
+        items,
+        registry,
+        document,
+        exit_code,
+    })
 }
 
 /// Whether an item of `kind` has an activation scope, so it carries
@@ -1817,6 +2013,10 @@ struct ItemMembers {
     detail: Option<super::ItemDetail>,
     scoped: bool,
     axes: OutcomeAxes,
+    /// The backend that produced the record, when a result settled it.
+    producer: Option<String>,
+    /// Whether a disposition settled the record.
+    disposed: bool,
 }
 
 /// The identity of the domain package that owns the obligation `claim`
@@ -1873,6 +2073,8 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         detail,
         scoped,
         axes,
+        producer,
+        disposed,
     } = members;
     let Value::Object(mut record) = written else {
         return written;
@@ -1934,6 +2136,15 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             record.insert("trace".to_owned(), trace.clone());
         }
         record.insert("steps".to_owned(), json!(steps));
+    }
+    // FR-621: `settled_by`, and `backend` exactly when a result settled
+    // the record.
+    record.insert(
+        "settled_by".to_owned(),
+        json!(if disposed { "disposition" } else { "result" }),
+    );
+    if let Some(backend) = producer {
+        record.insert("backend".to_owned(), json!(backend));
     }
     item.insert("record".to_owned(), Value::Object(record));
     Value::Object(item)

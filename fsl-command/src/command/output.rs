@@ -197,6 +197,10 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 },
             },
         ),
+        RunCause::UnknownRequirementClaim { claim } => (
+            types::Stage::SpineRun("call"),
+            types::Details::Claim { claim },
+        ),
         RunCause::SpineRun(refusal) => (
             // A cancel has no stage (FR-286); the command never cancels its
             // own handle, so the envelope names the request that owns it.
@@ -395,6 +399,7 @@ pub(super) fn clause_report(
         exit_code: report.disposition.exit_code(),
         value: NativeResult(value),
         outcome: Some(outcome),
+        requirements: None,
     })
 }
 
@@ -472,10 +477,57 @@ pub(super) fn spine_run_result(
     source: &FormalSource,
     function: &str,
     outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
 ) -> super::Result<RunResult> {
     use fsl_replay::spine::{CallOutcome, CallRefusal};
-    let exit_code = outcome.category().exit_code();
+    let call_category = outcome.category();
     let lifecycle = fsl_replay::OutcomeDocument::from_call(&outcome);
+    // FR-963: the run's category is the most severe of the call's and
+    // every settled item's, the call's on a tie.
+    let category = settled.as_ref().map_or(call_category, |settled| {
+        let categories: Vec<filament_semantic_value::catalog::Category> =
+            std::iter::once(call_category)
+                .chain(
+                    settled
+                        .records
+                        .iter()
+                        .map(|record| record.value().category()),
+                )
+                .collect();
+        filament_semantic_value::catalog::Category::most_severe(
+            categories.iter().map(|category| category.exit_code()),
+        )
+        .and_then(|worst| {
+            categories
+                .iter()
+                .copied()
+                .find(|category| category.exit_code() == worst)
+        })
+        .unwrap_or(call_category)
+    });
+    let exit_code = category.exit_code();
+    let (lifecycle, requirements, registry, results) = match settled {
+        None => (lifecycle, None, None, None),
+        Some(settled) => {
+            let registry = serde_json::Value::Array(
+                settled
+                    .registry
+                    .iter()
+                    .map(fsl_analyze::analyze::document::RegistryEntry::wire)
+                    .collect(),
+            );
+            (
+                lifecycle.with_requirement_items(category, settled.items.clone(), registry.clone()),
+                Some(settled.items),
+                Some(registry),
+                Some(super::RequirementResults {
+                    records: settled.records,
+                    counterexamples: settled.counterexamples,
+                    registry: settled.registry,
+                }),
+            )
+        }
+    };
     let outcome = match outcome {
         CallOutcome::Completed(value) => types::SpineOutcome::Completed {
             value: value.form(),
@@ -514,11 +566,14 @@ pub(super) fn spine_run_result(
         },
         function,
         outcome,
+        requirements,
+        registry,
     };
     Ok(RunResult {
         exit_code,
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
         outcome: Some(lifecycle),
+        requirements: results,
     })
 }
 
@@ -575,7 +630,8 @@ mod tests {
     /// tests cover that distinction.
     fn assert_undefined_renders(reason: &'static str) {
         let source = formal_source();
-        let result = spine_run_result(&source, "seven", CallOutcome::Undefined { reason }).unwrap();
+        let result =
+            spine_run_result(&source, "seven", CallOutcome::Undefined { reason }, None).unwrap();
         assert_eq!(result.exit_code, 10, "{reason}");
         assert_eq!(
             result.value.as_value(),
@@ -634,7 +690,7 @@ mod tests {
     }
 
     fn render(outcome: CallOutcome) -> RunResult {
-        spine_run_result(&formal_source(), "seven", outcome).unwrap()
+        spine_run_result(&formal_source(), "seven", outcome, None).unwrap()
     }
 
     /// FR-100-AC-9 (TC-452 step 4, FND-013): a record refusal renders every
