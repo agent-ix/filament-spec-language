@@ -47,3 +47,20 @@ Rust review covered the changed checker, package assertions, replay diagnostic m
 - These failures are source-routing behavior tracked separately by QSL-2158; they do not show a regression in the changed semantics checker.
 - The aggregate gate and other tests were not run per the dispatch instruction.
 
+
+## Dispositions
+
+Round 1. Rechecked PR #2740 at `511b35b2b12a1f5ec22e7b982ce77bd2f5f8a3c8` against the reviewed head `7e9d318e56b65eea7f25e38031f135eabb7611f7`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The analyzer source test is ignored again and the added empty-population source test is removed, so these known QSL-2158 routing failures no longer fail this PR's integration lane. |
+
+`FND-001 after_excerpt` (current text at `fsl-analyze/tests/it/probability_from_source.rs:158-159`):
+
+```rust
+#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
+fn probabilistic_on_each_settles_per_instance() {
+```
+
+The newly added `probabilistic_on_each_empty_population` function is absent from the current file.
