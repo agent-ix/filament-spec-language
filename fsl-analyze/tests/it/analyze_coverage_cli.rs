@@ -159,10 +159,9 @@ fn weak_and_strong_fairness_separate() {
 #[trace("TC-1588", "FR-628-AC-2")]
 #[trace("TC-1588", "FR-628-AC-3")]
 #[test]
-#[ignore = "QSL-2125: state-graph items are not reachable through fsl analyze yet"]
 fn always_possible_refutes_and_witnesses_repeat() {
-    let body = "always possible BackToZero using t0 over (c: M::Counter) { c.value = 0 }\n\
-                possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n";
+    let body = "always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n\
+                possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n";
     let items = json!([{"claim": "BackToZero"},
         {"claim": "ReachThree", "temporal": {"witness_samples": 3, "seed": 7}}]);
     let ws = Workspace::new("cov-state-graph");
@@ -274,7 +273,7 @@ fn edf_proves_ctl() {
 #[trace("TC-1594", "FR-634-AC-2")]
 #[trace("TC-1594", "FR-634-AC-3")]
 #[test]
-#[ignore = "QSL-2132: simulation items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2132: FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_budget_and_seeded_sampling() {
     let ws = Workspace::new("cov-simulation");
     let request = request_members(Some(json!([

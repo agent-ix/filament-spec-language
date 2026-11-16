@@ -88,7 +88,8 @@ pub(super) const BROKEN: CatalogCode =
 pub(super) const NOT_YET: CatalogCode =
     CatalogCode::new("unsupported_construct", "not-yet-implemented");
 const EXPRESSION_FORM: CatalogCode = CatalogCode::new("unsupported_construct", "expression-form");
-const INVALID_VALUE: CatalogCode = CatalogCode::new("invalid_runtime_input", "invalid-value");
+pub(super) const INVALID_VALUE: CatalogCode =
+    CatalogCode::new("invalid_runtime_input", "invalid-value");
 
 /// An EN-1 item (FR-281 Inputs): the run, the certificate request that
 /// re-admits its subject for the closure checker, and the replay of a

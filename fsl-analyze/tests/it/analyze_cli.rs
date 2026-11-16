@@ -258,10 +258,10 @@ fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
 /// FR-628-AC-1: a possible claim proves with a witness and refutes.
 #[trace("TC-1588", "FR-628-AC-1")]
 #[test]
-#[ignore = "QSL-2125: state-graph items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2125: FR-628-AC-1 asks for `possible (value = 4)` over the Counter fixture, whose `value` is Int[0,3]; the checker refuses the literal 4 with undefined_expression/unproved-range (FR-104, FR-145), so the claim has no checked form (spec question open)"]
 fn possible_claims_prove_and_refute() {
-    let body = "possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n\
-                possible ReachFour using t0 over (c: M::Counter) { c.value = 4 }\n";
+    let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+                possible ReachFour using v over (c: M::Counter) { c.value = 4 }\n";
     let ws = Workspace::new("cli-state-graph");
     let run = analyze(&counter_request(
         &ws,
@@ -314,7 +314,7 @@ fn store_buffering_separates_sc_and_tso() {
 /// FR-634-AC-1: enumerating the Counter subject reports coverage and traces.
 #[trace("TC-1594", "FR-634-AC-1")]
 #[test]
-#[ignore = "QSL-2132: simulation items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2132: FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_enumerates_the_counter_subject() {
     let ws = Workspace::new("cli-simulation");
     let run = analyze(&counter_request(

@@ -317,7 +317,7 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
 #[trace("TC-1595", "FR-635-AC-1")]
 #[trace("TC-1595", "FR-635-AC-2")]
 #[test]
-#[ignore = "QSL-2132: external provider items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2132: FR-635 says the driver loads providers from their manifests but no requirement states where manifests are found or how a process provider is run; FR-489 forbids test-only registrations in the production registry (spec question open)"]
 fn an_item_naming_a_registered_provider_settles_on_it() {
     let provider =
         std::env::var("FSL_TEST_PROVIDER").unwrap_or_else(|_| "test-value-provider".to_owned());

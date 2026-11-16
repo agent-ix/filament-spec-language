@@ -213,6 +213,11 @@ pub struct TemporalItem {
     /// The request's `reductions` member as written, until it is admitted over
     /// the unit's declarations (FR-623).
     pub pending_reductions: Option<serde_json::Value>,
+    /// The witness walks per initial state of a `possible` claim (FSpec
+    /// FR-392); the published default when absent.
+    pub witness_samples: Option<u64>,
+    /// The witness-sampling seed; the published default when absent.
+    pub seed: Option<u64>,
 }
 
 impl Default for TemporalItem {
@@ -230,6 +235,8 @@ impl Default for TemporalItem {
             reductions: fsl_route::reductions::Reductions::default(),
             max_clocks: None,
             pending_reductions: None,
+            witness_samples: None,
+            seed: None,
         }
     }
 }
@@ -448,6 +455,21 @@ fn work<'a>(
     let mut built = match &item.form {
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction
+                && super::document::is_state_graph(package, &item.claim) =>
+        {
+            super::state_graph_item::state_graph_item(
+                package,
+                binding,
+                *limits,
+                provision,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
                 && matches!(
                     form.item_kind,
                     ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom
@@ -619,6 +641,9 @@ fn work<'a>(
         _ => absent(),
     };
     let expected = match &item.form {
+        Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
+            Some(crate::model_check::manifest::BACKEND_ID)
+        }
         Some(ItemForm::Temporal(_)) if super::document::timed(package) => {
             Some(crate::zone_check::manifest::BACKEND_ID)
         }

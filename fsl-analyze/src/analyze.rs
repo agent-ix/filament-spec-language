@@ -39,6 +39,7 @@ mod exact;
 mod items;
 mod reduction_item;
 mod request;
+mod state_graph_item;
 mod timed_item;
 pub(crate) use request::analyze_bound;
 
@@ -421,7 +422,8 @@ impl ItemDetail {
             request_index: record.request_index,
             exploration: model
                 .and_then(|model| model.exploration)
-                .or_else(|| protocol.and_then(|protocol| protocol.exploration)),
+                .or_else(|| protocol.and_then(|protocol| protocol.exploration))
+                .or_else(|| record.state_graph.as_ref().map(|graph| graph.exploration)),
             checker: model
                 .and_then(|model| model.checker)
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
@@ -499,6 +501,25 @@ pub enum Counterexample {
     Assignments(Box<value_check::ValueCounterexample>),
     /// The operation-contract arm's counterexample.
     Contract(Box<fsl_replay::contract_check::ContractCounterexample>),
+    /// A state-graph item's settled instance (FR-628): the record, its
+    /// FSpec FR-393 refuting evidence when refuted and its witnesses when
+    /// proved by one.
+    StateGraph(Box<GraphReport>),
+}
+
+/// What a state-graph engine run reports for one item (FR-628): the record of
+/// the instance that decides it and the spelling of its evidence.
+#[derive(Clone, Debug)]
+pub struct GraphReport {
+    /// The decisive instance's FR-169 record.
+    pub record: fsl_replay::StateGraphRecord,
+    /// The explored graph's counts (FR-621 `exploration`).
+    pub exploration: fsl_replay::RunStats,
+    /// A refuted record's evidence in FSpec FR-393's spelling.
+    pub counterexample: Option<serde_json::Value>,
+    /// A proved record's witnesses in FSpec FR-393's spelling, with the
+    /// sampled ones.
+    pub evidence: Option<serde_json::Value>,
 }
 
 /// A reproduced counterexample with its FR-286 spelling, written where the
@@ -617,6 +638,12 @@ pub fn analyze_item(
     let found = counterexamples
         .iter()
         .find(|found| found.request_index == record.request_index());
+    if let Some(Counterexample::StateGraph(graph)) = found.map(|found| &found.counterexample) {
+        return Ok(
+            OutcomeItem::from_state_graph(record.request_index(), &graph.record)
+                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone()),
+        );
+    }
     let wire = found.map(|found| found.wire.clone()).transpose()?;
     let undefined = found.and_then(|found| found.counterexample.undefined_cause());
     OutcomeItem::from_analyze(record, wire, undefined)
@@ -840,6 +867,8 @@ pub(crate) enum EngineReport {
     Contract(Box<contract_check::ContractReport>),
     /// An external provider's verdict, its counterexample replayed.
     Provider(Box<ProviderReport>),
+    /// EN-1's state-graph record (FR-169) for the item's decisive instance.
+    StateGraph(Box<GraphReport>),
     /// EN-6's record, settled by FR-235's map, or a timed refinement's by
     /// FR-144's rows over EN-6's causes.
     Zone(Box<ZoneCheckRecord>, Option<ObjectReference>),
@@ -1072,6 +1101,8 @@ pub struct AnalyzeRecord {
     /// The protocol analysis result: its key, and the witness or the
     /// counterexample with its FR-351 record (ADR-036 PA-24, PA-25).
     pub protocol_analysis: Option<Box<crate::protocol_analysis::ProtocolAnalysisArtifact>>,
+    /// The state-graph engine's report (FR-628).
+    pub state_graph: Option<Box<GraphReport>>,
 }
 
 /// How an item settled.
@@ -1100,6 +1131,7 @@ impl AnalyzeRecord {
             over_reference: None,
             protocol_subject: None,
             protocol_analysis: None,
+            state_graph: None,
         }
     }
 
@@ -1292,7 +1324,7 @@ impl Counterexample {
                 undefined_cause(Some(&counterexample.kind), None)
             }
             Self::Assignments(found) => undefined_cause(None, Some(found)),
-            Self::Probabilistic(_) | Self::Contract(_) => None,
+            Self::Probabilistic(_) | Self::Contract(_) | Self::StateGraph(_) => None,
         }
     }
 }
@@ -1412,6 +1444,22 @@ pub fn split_records(
     let mut terminals = Vec::with_capacity(records.len());
     let mut counterexamples = Vec::new();
     for mut record in records {
+        if let Some(graph) = record.state_graph.take() {
+            let terminal = into_terminal(record);
+            if let Some(backend) = terminal.backend().cloned() {
+                counterexamples.push(ItemCounterexample {
+                    request_index: terminal.request_index(),
+                    backend,
+                    wire: Ok(graph
+                        .counterexample
+                        .clone()
+                        .unwrap_or(serde_json::Value::Null)),
+                    counterexample: Counterexample::StateGraph(graph),
+                });
+            }
+            terminals.push(terminal);
+            continue;
+        }
         let wire = record.spell(package);
         let counterexample = record.take_counterexample();
         let mut terminal = into_terminal(record);
@@ -1657,6 +1705,17 @@ fn settle(
             settled.probabilistic_counterexample =
                 counterexample.map(|(found, wire)| Spelled { found, wire });
             settled
+        }
+        EngineReport::StateGraph(graph) => {
+            let settlement = terminal(TerminalRecord::of_state_graph(
+                index,
+                backend,
+                &graph.record,
+            ));
+            AnalyzeRecord {
+                state_graph: Some(graph),
+                ..AnalyzeRecord::of(index, settlement)
+            }
         }
         EngineReport::Zone(zone, zone_over) => {
             // A refuted value without its reproduced counterexample is an

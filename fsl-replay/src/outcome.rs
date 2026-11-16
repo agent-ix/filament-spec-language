@@ -25,8 +25,8 @@
 
 mod counterexample;
 pub use counterexample::{
-    assignments_wire, probabilistic_wire, protocol_temporal_wire, temporal_wire,
-    CounterexampleWireError, ProtocolWire,
+    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
+    temporal_wire, CounterexampleWireError, ProtocolWire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -885,6 +885,10 @@ pub struct OutcomeItem {
     /// holds one.
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<serde_json::Value>,
+    /// A state-graph item's FSpec FR-393 witness evidence and its sampled
+    /// witnesses (FR-628).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<serde_json::Value>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1137,6 +1141,7 @@ impl OutcomeItem {
             counterexample: None,
             decisive: None,
             witness: None,
+            evidence: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1198,6 +1203,19 @@ impl OutcomeItem {
         item
     }
 
+    /// This state-graph item carrying the FR-393 spelling of its refuting
+    /// evidence as `counterexample` and of its witnesses as `evidence`.
+    #[must_use]
+    pub fn with_graph_evidence(
+        mut self,
+        counterexample: Option<serde_json::Value>,
+        evidence: Option<serde_json::Value>,
+    ) -> Self {
+        self.counterexample = counterexample;
+        self.evidence = evidence;
+        self
+    }
+
     /// The item whose claim evaluated to an undefined value at `at` for
     /// `cause`: refuted, category violation, never labelled `undefined`.
     pub fn undefined_evaluation(
@@ -1225,6 +1243,7 @@ impl OutcomeItem {
             counterexample: None,
             decisive: None,
             witness: None,
+            evidence: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1280,6 +1299,7 @@ impl OutcomeItem {
             counterexample: record.counterexample,
             decisive: record.decisive,
             witness: record.witness,
+            evidence: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,

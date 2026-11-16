@@ -1871,6 +1871,16 @@ impl TerminalRecord {
         Self::failed(request_index, backend).with_diagnostic(Some(diagnostic))
     }
 
+    /// The record of a settled state-graph instance (FR-169) produced by
+    /// `backend`.
+    pub fn of_state_graph(
+        request_index: RequestIndex,
+        backend: BackendId,
+        record: &crate::StateGraphRecord,
+    ) -> Self {
+        Self::with_backend(request_index, backend, record.value.clone())
+    }
+
     /// The record of `value`, a model-check settlement map's (FR-127's,
     /// FR-235's or FR-144's), produced by `backend`: a `refuted` value only
     /// with the counterexample `reproduced`, which its replay reproduced.
