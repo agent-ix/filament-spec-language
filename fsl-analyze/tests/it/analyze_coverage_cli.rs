@@ -83,7 +83,6 @@ fn counterexample_values_use_the_fr181_typed_form() {
 /// FR-624-AC-3: a binding refusal refuses the whole request.
 #[trace("TC-1584", "FR-624-AC-3")]
 #[test]
-#[ignore = "QSL-1976: analyze binding refusals are not written as outcome documents yet"]
 fn a_binding_refusal_refuses_the_request() {
     let ws = Workspace::new("cov-binding");
     let path = counter_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
