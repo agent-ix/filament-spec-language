@@ -1111,10 +1111,15 @@ pub(crate) fn key_claims(
             )
         } else {
             (
-                graph
-                    .node(key.clone())
-                    .and_then(|node| node.semantic_type())
-                    .ok_or_else(unkeyable)?,
+                match &site.bound {
+                    SiteBound::Own(ValueType::Int(interval)) => {
+                        graph.integer_interval_node(interval)
+                    }
+                    _ => graph
+                        .node(key.clone())
+                        .and_then(|node| node.semantic_type()),
+                }
+                .ok_or_else(unkeyable)?,
                 None,
             )
         };

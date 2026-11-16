@@ -2,28 +2,62 @@
 //! FR-495 / FR-062: direct mod narrows retain the consumer's claim bound and
 //! conversion occurrence through request construction and replay.
 
+use filament_checked::node::NodeKind;
 use filament_exact::{Cancel, Integer, IntegerInterval, ValueType};
+use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::{BackendId, SourceIdentity};
 use fsl_replay::spine::default_accounting;
 use fsl_replay::{
     replay, run_with_replay_context, Call, CallArgument, CallerLimits, CanonicalAssignment,
-    DependencyInput, InconclusiveCause, ObjectEnvironment, ReplayLimits, TerminalRecord,
-    TerminalValue, Value, WitnessValue,
+    DependencyInput, DisagreementCause, EvaluatedValue, InconclusiveCause, ObjectEnvironment,
+    ReplayLimits, ReplayResult, TerminalRecord, TerminalValue, Value, Verdict, WitnessValue,
 };
 use fsl_route::request::items_from_requirements;
 use fsl_route::Registry;
-use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::check::{BodyTerm, CheckedTypeNode, PackageDeclarations, ScalarShape};
 use ix_trace_rs::trace;
 use std::collections::BTreeMap;
 
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
+    profile d = \"filament.value.integer-division.euclidean/v1\";\n\
+    function acc using v(r: Int[0, 20]): Boolean pure { true }\n\
+    function accw using v(r: Integer): Boolean pure { true }\n\
     function equal using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }\n\
     function wider using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 20] pure { a mod b }\n\
-    function integer using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { a mod b }\n";
+    function integer using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { a mod b }\n\
+    function arg using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure { acc(a mod b) }\n\
+    function ifb using v(a: Int[0, 9], c: Integer): Int[0, 9] pure { if c != 0 then a mod c else 0 }\n\
+    function letb using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 20] pure { let r = a mod b in r }\n\
+    function argw using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure { accw(a mod b) }\n\
+    function cmp using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure { a mod b >= 0 }\n\
+    function bound using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { let r = a mod b in r }\n\
+    function derived using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { (a mod b) + 1 }\n\
+    function derivedb using v(a: Int[0, 100], b: Int[1, 12]): Int[1, 12] pure { (a mod b) + 1 }\n\
+    function qb using v(a: Int[-100, 100], b: Int[1, 12]): Int[-100, 100] pure { a div b }\n\
+    function rb using v(a: Int[-100, 100], b: Int[1, 12]): Int[-11, 11] pure { a rem b }\n\
+    function qi using v(a: Int[-100, 100], b: Int[1, 12]): Integer pure { a div b }\n\
+    function ri using v(a: Int[-100, 100], b: Int[1, 12]): Integer pure { a rem b }\n\
+    function qlet using v(a: Int[-100, 100], b: Int[1, 12]): Int[-100, 100] pure { let r = a div b in r }\n\
+    function control using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 20] pure { let r = if a > 0 then a mod b else 0 in r }\n\
+    function inc using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }\n\
+    function big using v(n: Integer): Integer pure { n + 1 }\n";
 
-#[trace("TC-2210", "FR-495-AC-17", "FR-062-AC-13", "FR-404-AC-2")]
+fn interval(lower: i64, upper: i64) -> ValueType {
+    ValueType::Int(IntegerInterval::new(lower.into(), upper.into()).expect("valid interval"))
+}
+
+#[trace(
+    "TC-2210",
+    "TC-2270",
+    "FR-495-AC-17",
+    "FR-495-AC-21",
+    "FR-495-AC-22",
+    "FR-062-AC-16",
+    "FR-062-AC-13",
+    "FR-404-AC-2"
+)]
 #[test]
 fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
     let parsed = fsl_cst::parse(
@@ -48,32 +82,203 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             .check(CheckMode::Linked, CheckingLimits::default())
             .expect("the unit checks");
     let items = items_from_requirements(graph.requirements(), &Registry::new(), None);
-    assert_eq!(items.len(), 3);
-
-    for (function, expected_type, expected_narrow) in [
+    for (index, expected) in [(19, interval(0, 10)), (20, ValueType::Integer)] {
+        let mut pending = vec![graph.function_state(index).expect("RR function").body];
+        let addition = loop {
+            let node = pending.pop().expect("RR addition exists");
+            if matches!(node.kind(), NodeKind::Arithmetic(..)) {
+                break graph.node_key(node).expect("RR addition keyed");
+            }
+            pending.extend(node.children());
+        };
+        let (_, record) = graph
+            .requirements()
+            .iter()
+            .find(|(key, _)| key.node() == addition)
+            .expect("RR record");
+        assert_eq!(record.result_bound().value_type(), &expected);
+        let type_node = graph
+            .checked_type_node(record.result_bound().node())
+            .expect("RR bound node");
+        match (&expected, type_node) {
+            (ValueType::Int(expected), CheckedTypeNode::BoundedDomain { bound, .. }) => {
+                assert_eq!(bound, expected)
+            }
+            (
+                ValueType::Integer,
+                CheckedTypeNode::Scalar {
+                    shape: ScalarShape::Integer,
+                    ..
+                },
+            ) => {}
+            _ => panic!("RR bound names one type twice"),
+        }
+    }
+    for (index, function, expected_type, checked_type, expected_narrow, binder_narrow) in [
+        (2, "equal", interval(0, 11), interval(0, 11), true, false),
+        (3, "wider", interval(0, 20), interval(0, 11), true, false),
+        (4, "integer", interval(0, 11), interval(0, 11), false, false),
+        (5, "arg", interval(0, 20), interval(0, 11), true, false),
+        (6, "ifb", interval(0, 9), interval(0, 9), true, false),
+        (7, "letb", interval(0, 11), interval(0, 11), false, true),
+        (8, "argw", interval(0, 11), interval(0, 11), false, false),
+        (9, "cmp", interval(0, 11), interval(0, 11), false, false),
+        (10, "bound", interval(0, 11), interval(0, 11), false, false),
         (
-            "equal",
-            ValueType::Int(IntegerInterval::new(0_i64.into(), 11_i64.into()).unwrap()),
-            true,
+            11,
+            "derived",
+            interval(0, 11),
+            interval(0, 11),
+            false,
+            false,
         ),
         (
-            "wider",
-            ValueType::Int(IntegerInterval::new(0_i64.into(), 20_i64.into()).unwrap()),
+            12,
+            "derivedb",
+            interval(0, 11),
+            interval(0, 11),
+            false,
+            false,
+        ),
+        (
+            13,
+            "qb",
+            interval(-100, 100),
+            interval(-100, 100),
+            true,
+            false,
+        ),
+        (14, "rb", interval(-11, 11), interval(0, 11), true, false),
+        (
+            15,
+            "qi",
+            interval(-100, 100),
+            interval(-100, 100),
+            false,
+            false,
+        ),
+        (16, "ri", interval(0, 11), interval(0, 11), false, false),
+        (
+            17,
+            "qlet",
+            interval(-100, 100),
+            interval(-100, 100),
+            false,
             true,
         ),
-        ("integer", ValueType::Integer, false),
+        (18, "control", interval(0, 11), interval(0, 11), false, true),
     ] {
+        let body = graph.function_state(index).expect("function checked").body;
+        let mut pending = vec![body];
+        let mut division_key = None;
+        let mut addition_key = None;
+        let mut narrows = 0;
+        while let Some(node) = pending.pop() {
+            if matches!(node.kind(), NodeKind::Arithmetic(..)) {
+                addition_key = graph.node_key(node).cloned();
+            }
+            if matches!(node.kind(), NodeKind::IntegerDivision { .. }) {
+                assert_eq!(
+                    node.value_type(),
+                    &checked_type,
+                    "{function} checked interval"
+                );
+                let key = graph.node_key(node).expect("division keyed").clone();
+                let lowered = graph
+                    .semantic_graph()
+                    .node(key.clone())
+                    .expect("division lowered");
+                let result = lowered.semantic_type().expect("application has type");
+                assert!(
+                    matches!(
+                        graph.checked_type_node(result),
+                        Some(CheckedTypeNode::Scalar {
+                            shape: ScalarShape::Integer,
+                            ..
+                        })
+                    ),
+                    "{function} lowered catalog type"
+                );
+                division_key = Some(key);
+            }
+            if let NodeKind::Coerce(operand, _) = node.kind() {
+                let operand = node.at(*operand);
+                if matches!(
+                    operand.kind(),
+                    NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+                ) {
+                    narrows += 1;
+                    let narrow_key = graph.node_key(node).expect("coercion keyed").clone();
+                    let lowered = graph
+                        .semantic_graph()
+                        .node(narrow_key.clone())
+                        .expect("narrow lowered");
+                    assert!(
+                        matches!(lowered.body(), BodyTerm::Application(application) if application.operation.identity() == "filament.op.numeric.narrow"),
+                        "{function} coercion emits a narrow"
+                    );
+                    if binder_narrow {
+                        assert!(
+                            !graph
+                                .requirements()
+                                .keys()
+                                .any(|key| key.node() == &narrow_key),
+                            "{function} binder narrow holds no record"
+                        );
+                    }
+                    assert_eq!(
+                        matches!(operand.kind(), NodeKind::Local(_)),
+                        binder_narrow,
+                        "{function} narrow operand"
+                    );
+                }
+            }
+            pending.extend(node.children());
+        }
+        assert_eq!(
+            narrows,
+            usize::from(expected_narrow || binder_narrow),
+            "{function} narrow count"
+        );
+        let division_key = division_key.expect("one division");
+        if let Some(addition) = addition_key {
+            let (_, record) = graph
+                .requirements()
+                .iter()
+                .find(|(key, _)| key.node() == &addition)
+                .expect("addition record");
+            let bounded = function == "derivedb";
+            assert_eq!(
+                record.result_bound().value_type(),
+                &if bounded {
+                    interval(1, 12)
+                } else {
+                    ValueType::Integer
+                },
+                "{function} addition bound"
+            );
+            assert_eq!(
+                record.conversion_context().is_some(),
+                bounded,
+                "{function} addition context"
+            );
+        }
+        let (a, second_name, b) = if function == "ifb" {
+            (9, "c", 4)
+        } else {
+            (100, "b", 12)
+        };
         let call = Call {
             clocks: Default::default(),
             function: function.to_owned(),
             arguments: vec![
                 CallArgument {
                     parameter: "a".to_owned(),
-                    value: Value::Integer(Integer::from(100_i64)),
+                    value: Value::Integer(Integer::from(a)),
                 },
                 CallArgument {
-                    parameter: "b".to_owned(),
-                    value: Value::Integer(Integer::from(12_i64)),
+                    parameter: second_name.to_owned(),
+                    value: Value::Integer(Integer::from(b)),
                 },
             ],
             accounting: default_accounting(1_000_000),
@@ -93,9 +298,12 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             &Cancel::new(),
         )
         .expect("the selected function runs");
-        let [member] = run.requirements().members() else {
-            panic!("one mod requirement for {function}");
-        };
+        let member = run
+            .requirements()
+            .members()
+            .iter()
+            .find(|member| member.occurrence().node() == &division_key)
+            .expect("division requirement");
         let item = items
             .get(member.request_index().get())
             .expect("the requirement item is present");
@@ -115,6 +323,23 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             record.result_bound().value_type(),
             &expected_type,
             "{function} records the consumer's result bound"
+        );
+        let bound = graph
+            .semantic_graph()
+            .nodes()
+            .find(|node| node.key() == expected_bound_node)
+            .expect("bound type exists");
+        let ValueType::Int(expected_interval) = &expected_type else {
+            panic!("interval bound")
+        };
+        assert!(
+            matches!(graph.checked_type_node(bound.key()), Some(CheckedTypeNode::BoundedDomain { bound: actual, .. }) if actual == expected_interval),
+            "{function} bound and type node agree"
+        );
+        assert_eq!(
+            record.path_condition().len(),
+            usize::from(function == "ifb" || function == "control"),
+            "{function} guards"
         );
         assert_eq!(
             record.conversion_context().is_some(),
@@ -137,11 +362,11 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         let assignments = vec![
             CanonicalAssignment {
                 parameter: parameters[0].clone(),
-                value: WitnessValue::Integer(100),
+                value: WitnessValue::Integer(i128::from(a)),
             },
             CanonicalAssignment {
                 parameter: parameters[1].clone(),
-                value: WitnessValue::Integer(12),
+                value: WitnessValue::Integer(i128::from(b)),
             },
         ];
         let wire = run
@@ -158,6 +383,22 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             Some(member.occurrence())
         );
         let replayed = replay(wire, ReplayLimits::default());
+        let ReplayResult::Input(result) = replayed.as_ref().expect("request replays") else {
+            panic!("input replay")
+        };
+        assert_eq!(
+            result.disagreement(),
+            Some(&DisagreementCause::Verdicts {
+                proved: Verdict::from_category(Category::Violation),
+                replayed: Verdict::from_category(Category::Success),
+            }),
+            "{function} replay verdicts"
+        );
+        assert_eq!(
+            result.value(),
+            Some(EvaluatedValue::Boolean(true)),
+            "{function} replay value"
+        );
         let terminal =
             TerminalRecord::from_plugin_counterexample(member.request_index(), plugin, &replayed);
         assert!(

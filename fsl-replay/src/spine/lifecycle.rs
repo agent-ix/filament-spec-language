@@ -1553,52 +1553,6 @@ pub fn check(
     )
 }
 
-/// Check one unit under the supplied integer-division law (FR-767).
-pub fn check_with_integer_division(
-    parsed: &ParsedUnitSource,
-    package_name: String,
-    models: &AdmittedModels,
-    dependencies: &DependencyInput,
-    selection: &crate::AdmittedIntegerDivision,
-    limits: SpineLimits,
-    cancel: &Cancel,
-) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
-    let dependencies = dependencies.clone().with_integer_division(
-        parsed.source().identity().clone(),
-        *selection,
-        "--integer-division".to_owned(),
-    );
-    check(parsed, package_name, models, &dependencies, limits, cancel)
-}
-
-/// Check every admitted program unit under one supplied law (FR-767).
-pub fn check_units_with_integer_division(
-    admitted: &AdmittedUnitList,
-    package_name: String,
-    models: &AdmittedModels,
-    dependencies: &DependencyInput,
-    selection: &crate::AdmittedIntegerDivision,
-    limits: SpineLimits,
-    cancel: &Cancel,
-) -> Result<Staged<Vec<CheckedUnit>>, FrontEndFailure> {
-    let mut dependencies = dependencies.clone();
-    for unit in admitted.units() {
-        dependencies = dependencies.with_integer_division(
-            unit.source().identity().clone(),
-            *selection,
-            "--integer-division".to_owned(),
-        );
-    }
-    check_units(
-        admitted,
-        package_name,
-        models,
-        &dependencies,
-        limits,
-        cancel,
-    )
-}
-
 /// S3 and S4 with the caller's exact profile-definition registry. Profile
 /// closures are resolved before package admission and remain attached to both
 /// successful checked units and check refusals. The closure result is
@@ -3754,25 +3708,13 @@ impl<'a> Resolution<'a> {
                 refusal,
             })
         })?;
-        let caller = self
-            .dependencies
-            .integer_division
-            .get(&SourceIdentity::new(raw.authority(), raw.identity()));
-        let caller_selection = caller.map(|(law, _)| *law).or_else(|| {
-            (frame.raw == self.continuation_source)
-                .then_some(self.integer_division)
-                .flatten()
-        });
-        let mut selected = caller_selection;
+        let mut selected = (frame.raw == self.continuation_source)
+            .then_some(self.integer_division)
+            .flatten();
         for source in &source_units {
             selected = fsl_semantics::check::resolve_integer_division(
                 &source.unit().selections().profiles,
-                selected.map(|law| {
-                    (
-                        law,
-                        caller.map_or("caller selection", |(_, origin)| origin.as_str()),
-                    )
-                }),
+                selected.map(|law| (law, "caller selection")),
             )
             .map_err(|refusal| {
                 Box::new(CompileRefusal::Profile {

@@ -395,6 +395,8 @@ impl Node {
 pub struct CheckedBody {
     /// Never empty: the root is the last node.
     nodes: Vec<Node>,
+    /// Each integer node's lowered interval; None denotes Integer.
+    lowered_integer: Vec<Option<IntegerInterval>>,
     identity: Arc<()>,
 }
 
@@ -446,6 +448,7 @@ impl CheckedBody {
             field_population: None,
         });
         Self {
+            lowered_integer: lowered_integer_types(&nodes),
             nodes,
             identity: Arc::default(),
         }
@@ -472,21 +475,23 @@ impl CheckedBody {
     #[cfg(any(test, feature = "test-support"))]
     pub fn from_nodes(nodes: Vec<(NodeKind<NodeId>, ValueType)>) -> Self {
         assert!(!nodes.is_empty(), "a body holds its root");
+        let nodes = nodes
+            .into_iter()
+            .map(|(kind, value_type)| Node {
+                kind,
+                value_type,
+                location: Location::root(
+                    filament_semantic_value::location::ExpressionOwner::Expression,
+                ),
+                equality_producer: None,
+                ordering_part: false,
+                field_population: None,
+            })
+            .collect::<Vec<_>>();
         Self {
+            lowered_integer: lowered_integer_types(&nodes),
+            nodes,
             identity: Arc::default(),
-            nodes: nodes
-                .into_iter()
-                .map(|(kind, value_type)| Node {
-                    kind,
-                    value_type,
-                    location: Location::root(
-                        filament_semantic_value::location::ExpressionOwner::Expression,
-                    ),
-                    equality_producer: None,
-                    ordering_part: false,
-                    field_population: None,
-                })
-                .collect(),
         }
     }
 
@@ -602,6 +607,7 @@ impl BodyBuilder {
     pub(in crate::check) fn finish(mut self, root: Node) -> CheckedBody {
         self.nodes.push(root);
         CheckedBody {
+            lowered_integer: lowered_integer_types(&self.nodes),
             nodes: self.nodes,
             identity: Arc::default(),
         }
@@ -640,6 +646,18 @@ impl<'a> CheckedNode<'a> {
     /// The node's checked static type.
     pub fn value_type(self) -> &'a ValueType {
         &self.node().value_type
+    }
+
+    /// FR-495's lowered integer type, including division-bound locals and
+    /// the hull of a control node's yielded leaves.
+    pub(crate) fn lowered_value_type(self) -> std::borrow::Cow<'a, ValueType> {
+        match self.value_type() {
+            ValueType::Integer | ValueType::Int(_) => match &self.body.lowered_integer[self.id.0] {
+                Some(interval) => std::borrow::Cow::Owned(ValueType::Int(interval.clone())),
+                None => std::borrow::Cow::Owned(ValueType::Integer),
+            },
+            _ => std::borrow::Cow::Borrowed(self.value_type()),
+        }
     }
 
     /// The node's source location.
@@ -1035,13 +1053,74 @@ pub(crate) fn coerce_node_builds_narrow(
     operand: CheckedNode<'_>,
     interval: &IntegerInterval,
 ) -> bool {
-    matches!(
-        operand.kind(),
-        NodeKind::IntegerDivision {
-            operator: filament_checked::node::IntegerDivisionOperator::Mod,
-            ..
+    coerce_builds_narrow(&operand.lowered_value_type(), interval)
+}
+
+/// Compute integer lowering types once per arena. Local reads may precede
+/// the stored root of their bound value, so follow those dependencies with
+/// an explicit stack rather than relying on arena order or host recursion.
+fn lowered_integer_types(nodes: &[Node]) -> Vec<Option<IntegerInterval>> {
+    let bindings: std::collections::HashMap<_, _> = nodes
+        .iter()
+        .filter_map(|node| match node.kind {
+            NodeKind::Let { slot, value, .. } => Some((slot, value)),
+            _ => None,
+        })
+        .collect();
+    let dependencies = |node: &Node| -> Vec<NodeId> {
+        if !matches!(node.value_type, ValueType::Int(_) | ValueType::Integer) {
+            return Vec::new();
         }
-    ) || coerce_builds_narrow(operand.value_type(), interval)
+        match &node.kind {
+            NodeKind::Local(slot) => bindings.get(slot).copied().into_iter().collect(),
+            NodeKind::If {
+                then, otherwise, ..
+            } => vec![*then, *otherwise],
+            NodeKind::Let { body, .. } => vec![*body],
+            NodeKind::Case { arms, .. } => arms.iter().map(|arm| arm.body).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let mut found: Vec<Option<Option<IntegerInterval>>> = vec![None; nodes.len()];
+    for index in 0..nodes.len() {
+        let mut pending = vec![(NodeId(index), false)];
+        while let Some((id, exit)) = pending.pop() {
+            if found[id.0].is_some() {
+                continue;
+            }
+            let node = &nodes[id.0];
+            let children = dependencies(node);
+            if exit {
+                let interval = if matches!(node.kind, NodeKind::IntegerDivision { .. }) {
+                    None
+                } else if children.is_empty() {
+                    match &node.value_type {
+                        ValueType::Int(interval) => Some(interval.clone()),
+                        _ => None,
+                    }
+                } else {
+                    children
+                        .iter()
+                        .try_fold(None, |hull: Option<IntegerInterval>, child| {
+                            let interval = found[child.0].as_ref()?.as_ref()?;
+                            Some(Some(match hull {
+                                None => interval.clone(),
+                                Some(hull) => IntegerInterval::spanning(
+                                    hull.lower().min(interval.lower()).clone(),
+                                    hull.upper().max(interval.upper()).clone(),
+                                ),
+                            }))
+                        })
+                        .flatten()
+                };
+                found[id.0] = Some(interval);
+            } else {
+                pending.push((id, true));
+                pending.extend(children.into_iter().map(|id| (id, false)));
+            }
+        }
+    }
+    found.into_iter().map(Option::flatten).collect()
 }
 
 /// The type a [`NodeKind::ConvertScalar`] of an `operand`-typed node

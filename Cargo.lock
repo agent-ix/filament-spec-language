@@ -22,7 +22,7 @@ source = "git+https://github.com/agent-ix/filament-core-data?branch=main#dd34850
 [[package]]
 name = "agent-ix-semantic-schema"
 version = "0.3.0"
-source = "git+https://github.com/agent-ix/filament-core-data?branch=main#c23980ea9943fc61a1c2b489322e77dec85f3d9d"
+source = "git+https://github.com/agent-ix/filament-core-data?branch=main#dd3485073737e6a892b96042123fe2ad4acfe1e9"
 
 [[package]]
 name = "ahash"
@@ -535,6 +535,17 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "531e46835a22af56d1e3b66f04844bed63158bc094a628bec1d321d9b4c44bf2"
+dependencies = [
+ "bit-set 0.5.3",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "fancy-regex"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
@@ -741,6 +752,16 @@ name = "fraction"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3027ae1df8d41b4bed2241c8fdad4acc1e7af60c8e17743534b545e77182d678"
+dependencies = [
+ "lazy_static",
+ "num",
+]
+
+[[package]]
+name = "fraction"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
 dependencies = [
  "lazy_static",
  "num",
@@ -1053,7 +1074,7 @@ version = "0.1.0"
 dependencies = [
  "fsl-foundation",
  "ix-trace-rs",
- "quire-rs 0.61.0",
+ "quire-rs 0.50.3",
  "serde",
  "serde_json",
  "thiserror",
@@ -1423,6 +1444,34 @@ dependencies = [
  "bytecount",
  "fancy-regex 0.11.0",
  "fraction 0.13.1",
+ "getrandom 0.2.17",
+ "iso8601",
+ "itoa",
+ "memchr",
+ "num-cmp",
+ "once_cell",
+ "parking_lot",
+ "percent-encoding",
+ "regex",
+ "serde",
+ "serde_json",
+ "time",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.18.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa0f4bea31643be4c6a678e9aa4ae44f0db9e5609d5ca9dc9083d06eb3e9a27a"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "base64 0.22.1",
+ "bytecount",
+ "fancy-regex 0.13.0",
+ "fraction 0.15.4",
  "getrandom 0.2.17",
  "iso8601",
  "itoa",
@@ -1907,14 +1956,14 @@ dependencies = [
 
 [[package]]
 name = "quire-rs"
-version = "0.53.0"
-source = "git+https://github.com/agent-ix/quire-rs?rev=71a1f970bebc8d7267424dda26cf4c665bcc5ae5#71a1f970bebc8d7267424dda26cf4c665bcc5ae5"
+version = "0.50.3"
+source = "git+https://github.com/agent-ix/quire-rs?rev=5b4be36d594a488b21c854051f05116eb9302d78#5b4be36d594a488b21c854051f05116eb9302d78"
 dependencies = [
  "agent-ix-semantic-schema",
  "globset",
  "ignore",
  "indexmap",
- "jsonschema 0.56.0",
+ "jsonschema 0.18.3",
  "loom",
  "rayon",
  "regex",
@@ -1927,8 +1976,8 @@ dependencies = [
 
 [[package]]
 name = "quire-rs"
-version = "0.61.0"
-source = "git+https://github.com/agent-ix/quire-rs?branch=main#cd817f070dbe5f677f4e232454abd5e4b615fa62"
+version = "0.53.0"
+source = "git+https://github.com/agent-ix/quire-rs?rev=71a1f970bebc8d7267424dda26cf4c665bcc5ae5#71a1f970bebc8d7267424dda26cf4c665bcc5ae5"
 dependencies = [
  "agent-ix-semantic-schema",
  "globset",

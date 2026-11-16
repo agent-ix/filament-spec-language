@@ -219,14 +219,6 @@ pub enum PreparedRun {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RunCause {
-    /// FR-767: an externally supplied law name is outside the closed table.
-    #[error("integer-division law `{value}` supplied by `{origin}` is not one of `euclidean`, `floor`, `truncating`")]
-    IntegerDivision {
-        /// The request member or command option that supplied the value.
-        origin: String,
-        /// The unrecognized law name.
-        value: String,
-    },
     /// Local file could not be opened or read.
     #[error("cannot read {path}: {error}")]
     Io {
@@ -400,7 +392,6 @@ impl RunCause {
     /// Stable catalogued code for this cause, independent of its display message.
     pub fn code(&self) -> Code {
         match self {
-            Self::IntegerDivision { .. } => Code::UnknownProfile,
             Self::Io { .. } => Code::IoError,
             Self::Json(_) => Code::InvalidRequest,
             Self::ClauseRequest { .. }
@@ -497,35 +488,14 @@ impl RunError {
         use fsl_replay::{OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
         match &self.cause {
-            RunCause::IntegerDivision { .. } => {
-                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
-                    OutcomeDiagnostic::new(
-                        Some("unsupported-selection"),
-                        Code::UnknownProfile.as_str(),
-                        None,
-                        self.cause.to_string(),
-                    ),
-                ])
-            }
             RunCause::Spine(failure) => OutcomeDocument::new(
                 operation,
                 Some(failure.refusal.stage().into()),
                 self.category(),
             )
-            .with_diagnostics(match &failure.refusal {
-                fsl_replay::spine::CompileRefusal::Check { refusals, .. } => refusals
-                    .iter()
-                    .map(|refusal| {
-                        OutcomeDiagnostic::new(
-                            refusal.cause.cause(),
-                            refusal.cause.code().as_str(),
-                            None,
-                            refusal.to_string(),
-                        )
-                    })
-                    .collect(),
-                other => vec![OutcomeDiagnostic::from_compile_refusal(other)],
-            }),
+            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(
+                &failure.refusal,
+            )]),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
@@ -863,7 +833,6 @@ pub fn compile_outcome_with_overrides(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     with_request(path, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
-        validate_integer_divisions(request.integer_division.as_deref(), &request.libraries)?;
         let output = match (&request.output, overrides.output) {
             (Some(_), Some(_)) => return Err(RunCause::OutputGivenTwice),
             (Some(member), None) => Some(directory.join(&member.package)),
@@ -1090,12 +1059,6 @@ fn check_sources<T>(
             bytes: source.text().as_bytes(),
         })
         .collect();
-    let dependencies = with_integer_divisions(
-        dependencies,
-        request.integer_division.as_deref(),
-        &program_sources,
-        &libraries,
-    )?;
     if unit_list {
         fsl_replay::spine::preflight_unit_list(&parse_requests, &dependencies)
             .map_err(|refusal| spine_failure(*refusal))?;
@@ -1210,67 +1173,6 @@ fn library_sources<'r>(
         .iter()
         .map(|library| Ok((library, intake.source(&library.source)?)))
         .collect()
-}
-
-/// Admit FR-767's short law spelling before dependent file intake.
-#[ix_trace_rs::string_edge]
-fn integer_division(value: &str, origin: &str) -> Result<fsl_replay::AdmittedIntegerDivision> {
-    let role = match value {
-        "euclidean" => fsl_replay::DefinitionRole::IntegerDivisionEuclidean,
-        "floor" => fsl_replay::DefinitionRole::IntegerDivisionFloor,
-        "truncating" => fsl_replay::DefinitionRole::IntegerDivisionTruncating,
-        _ => {
-            return Err(RunCause::IntegerDivision {
-                origin: origin.to_owned(),
-                value: value.to_owned(),
-            })
-        }
-    };
-    fsl_replay::admit_integer_division(&[role.reference()], None).map_err(|error| {
-        RunCause::ClauseRequest {
-            member: origin.to_owned(),
-            reason: format!("integer-division admission refused: {error:?}"),
-        }
-    })
-}
-
-fn validate_integer_divisions(value: Option<&str>, libraries: &[wire::Library]) -> Result<()> {
-    if let Some(value) = value {
-        integer_division(value, "integer_division")?;
-    }
-    for (index, library) in libraries.iter().enumerate() {
-        if let Some(value) = library.integer_division.as_deref() {
-            integer_division(value, &format!("libraries[{index}].integer_division"))?;
-        }
-    }
-    Ok(())
-}
-
-fn with_integer_divisions(
-    mut dependencies: fsl_replay::spine::DependencyInput,
-    value: Option<&str>,
-    sources: &[&Source],
-    libraries: &[(&wire::Library, FormalSource)],
-) -> Result<fsl_replay::spine::DependencyInput> {
-    if let Some(value) = value {
-        let law = integer_division(value, "integer_division")?;
-        for source in sources {
-            dependencies = dependencies.with_integer_division(
-                source.identity().clone(),
-                law,
-                "integer_division".to_owned(),
-            );
-        }
-    }
-    for (index, (library, source)) in libraries.iter().enumerate() {
-        if let Some(value) = library.integer_division.as_deref() {
-            let origin = format!("libraries[{index}].integer_division");
-            let law = integer_division(value, &origin)?;
-            dependencies =
-                dependencies.with_integer_division(source.source().identity().clone(), law, origin);
-        }
-    }
-    Ok(dependencies)
 }
 
 /// A request selection a complete-V1 (`1-draft`) program does not take.
@@ -1441,18 +1343,6 @@ fn prepare_run_bytes(
     overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
-    if request.package.is_some() {
-        return Err(RunCause::ClauseRequest {
-            member: if request.integer_division.is_some() {
-                "integer_division"
-            } else {
-                "package"
-            }
-            .to_owned(),
-            reason: "an existing package cannot take a caller-supplied law".to_owned(),
-        });
-    }
-    validate_integer_divisions(request.integer_division.as_deref(), &request.libraries)?;
     let mut intake = intake_with_bytes(
         directory,
         FileCounts {
@@ -1546,12 +1436,6 @@ fn prepare_complete_run(
             value: filament_exact::Value::Integer(filament_exact::Integer::from(argument.value)),
         })
         .collect();
-    let dependencies = with_integer_divisions(
-        dependencies,
-        request.integer_division.as_deref(),
-        &[source.source()],
-        &libraries,
-    )?;
     let mut spine_call = fsl_replay::spine::Call::new(
         call.function.clone(),
         arguments,

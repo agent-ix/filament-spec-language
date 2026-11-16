@@ -45,8 +45,8 @@
 //! flagged.
 
 use filament_checked::node::{
-    Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, IntegerDivisionOperator, NodeKind,
-    OrderedKind, RecordField, RecordSlot, Visit,
+    Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
+    RecordSlot, Visit,
 };
 use fsl_foundation::source::node_table::{
     standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
@@ -2708,13 +2708,8 @@ impl Typer<'_> {
         required: &ValueType,
     ) -> Result<Node, CheckRefusal> {
         if &node.value_type == required {
-            if let (
-                NodeKind::IntegerDivision {
-                    operator: IntegerDivisionOperator::Mod,
-                    ..
-                },
-                ValueType::Int(target),
-            ) = (&node.kind, required)
+            if let (NodeKind::IntegerDivision { .. } | NodeKind::Local(_), ValueType::Int(target)) =
+                (&node.kind, required)
             {
                 let location = node.location.clone();
                 return Ok(Node {
@@ -2742,27 +2737,11 @@ impl Typer<'_> {
             {
                 Ok(node)
             }
-            (ValueType::Int(_), ValueType::Integer)
-                if matches!(
-                    node.kind,
-                    NodeKind::IntegerDivision {
-                        operator: IntegerDivisionOperator::Mod,
-                        ..
-                    }
-                ) =>
-            {
-                let mut widened = node;
-                widened.value_type = required.clone();
-                Ok(widened)
-            }
             (ValueType::Integer | ValueType::Int(_), ValueType::Integer) => Ok(node),
             (ValueType::Int(source), ValueType::Int(target))
                 if matches!(
                     node.kind,
-                    NodeKind::IntegerDivision {
-                        operator: IntegerDivisionOperator::Mod,
-                        ..
-                    }
+                    NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
                 ) && target.lower() <= source.lower()
                     && source.upper() <= target.upper() =>
             {
@@ -4942,13 +4921,12 @@ impl<'a> Typer<'a> {
             },
             location,
         )?;
-        if matches!(
-            typed.kind,
-            NodeKind::IntegerDivision {
-                operator: IntegerDivisionOperator::Mod,
-                ..
-            }
-        ) {
+        if matches!(typed.value_type, ValueType::Integer | ValueType::Int(_))
+            && matches!(
+                typed.kind,
+                NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+            )
+        {
             if let ValueType::Int(target) = required {
                 let location = typed.location.clone();
                 return Ok(Node {
@@ -4959,11 +4937,6 @@ impl<'a> Typer<'a> {
                     ordering_part: false,
                     field_population: None,
                 });
-            }
-            if matches!(required, ValueType::Integer) {
-                let mut widened = typed;
-                widened.value_type = upcast_type;
-                return Ok(widened);
             }
             return Ok(typed);
         }

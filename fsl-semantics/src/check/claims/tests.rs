@@ -257,10 +257,10 @@ fn mod_claims_record_the_direct_target_bound_and_conversion_context() {
     }
 
     let record = checked.record("a mod b", 2, MOD);
-    assert_eq!(record.result_bound().value_type(), &ValueType::Integer);
+    assert_eq!(record.result_bound().value_type(), &int(0, 11));
     assert_eq!(
         record.result_bound().node(),
-        checked.type_node(TypeAt::Result("integer"))
+        checked.type_node(TypeAt::Result("equal"))
     );
     assert_eq!(record.conversion_context(), None);
 }
