@@ -419,9 +419,7 @@ fn analyze_with_providers_registers_a_process_provider() {
     let registry: Vec<Value> = run.document()["registry"]
         .as_array()
         .expect("registry")
-        .iter()
-        .cloned()
-        .collect();
+        .clone();
     assert!(registry.contains(&json!(PROCESS_PROVIDER)), "{registry:?}");
     assert!(registry.contains(&json!("en-1")), "{registry:?}");
     let without = analyze(&request);

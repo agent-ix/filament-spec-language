@@ -16,7 +16,7 @@ Verify the lowering to `tl-syntax` and the `tl-mltl` cross-evaluation. Scope: FR
 
 1. Lower `always [0, 3] holds(c.value <= 2)` under the event-position false-extension profile.
 2. Cross-evaluate over the fixed trace corpus, then with one atom mis-mapped.
-3. Lower a clause under a timed profile.
+3. Lower `always [0 ms, 3 ms] holds(c.versionNumber <= 2)` over the ConfigVersion model timed by `time Config dense unit ms`, under `filament.temporal.timed/v1` with no `clock` member.
 
 ## Expected Results
 

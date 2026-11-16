@@ -1395,6 +1395,12 @@ impl ClaimItem {
         if let Some(backend) = &self.backend {
             item.insert("backend".to_owned(), json!(backend.as_str()));
         }
+        if let Some(trace) = &self.options.trace {
+            item.insert(
+                "trace".to_owned(),
+                json!({"authority": trace.authority, "identity": trace.identity}),
+            );
+        }
         if let Some(max_cases) = self.options.max_cases {
             item.insert(
                 "check".to_owned(),
@@ -1874,6 +1880,14 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             "axes".to_owned(),
             serde_json::to_value(axes).unwrap_or(Value::Null),
         );
+    }
+    // FR-941 "Bare claim": a proof over a supplied trace names the trace and
+    // the steps it replayed; it is about that trace only.
+    if let Some(steps) = detail.and_then(|detail| detail.replayed_steps) {
+        if let Some(trace) = item.get("request").and_then(|request| request.get("trace")) {
+            record.insert("trace".to_owned(), trace.clone());
+        }
+        record.insert("steps".to_owned(), json!(steps));
     }
     item.insert("record".to_owned(), Value::Object(record));
     Value::Object(item)

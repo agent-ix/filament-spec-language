@@ -643,7 +643,7 @@ fn work<'a>(
                         .as_ref()
                         .and_then(|reference| binding.snapshots.get(reference))
                         .map_or(
-                            Err(crate::protocol_analysis::TraceDefect::Malformed),
+                            Err(crate::protocol_analysis::TraceDefect::unreadable()),
                             |bytes| crate::protocol_analysis::SuppliedTrace::read(bytes),
                         );
                     crate::protocol_analysis::finite_replay_item(

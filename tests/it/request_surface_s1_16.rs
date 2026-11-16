@@ -984,10 +984,7 @@ fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
         value["tl_lowering"]["cross_evaluation"]["agree"], true,
         "{value}"
     );
-    let timed = unit.replace(
-        "filament.temporal.event-position.false-extension/v1",
-        "filament.temporal.timed/v1",
-    );
+    let timed = timed_low();
     let (_, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));
     assert!(value["tl_lowering"].get("formula").is_none(), "{value}");
     assert_eq!(
@@ -1037,6 +1034,19 @@ fn low(profile: &str, body: &str) -> String {
          temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ {body} }}\n"
     )
+}
+
+/// The timed form of `Low` (FR-757-AC-3, FR-931-AC-2): the ConfigVersion model
+/// timed in `ms`, under the timed profile with no `clock` member, so bound
+/// `model-time`; it checks and FR-527 classifies it unsupported.
+fn timed_low() -> String {
+    "language \"ix:native\" edition \"1-draft\";\n\
+     profile t = \"filament.temporal.timed/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config dense unit ms;\n\
+     temporal Low using t over (c: Config::ConfigVersion) \
+     on origin { always [0 ms, 3 ms] holds(c.versionNumber <= 2) }\n"
+        .to_owned()
 }
 
 const EVENT_POSITION: &str = "filament.temporal.event-position.false-extension/v1";
@@ -1093,7 +1103,7 @@ fn a_tl_lowering_request_selects_its_correspondence() {
         "mltl.origin-complete-history/v1"
     );
 
-    let timed = low("filament.temporal.timed/v1", LOW_BODY);
+    let timed = timed_low();
     let (code, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));
     assert_eq!(code, 21, "{value}");
     assert_eq!(value["tl_lowering"]["disposition"], "unsupported");

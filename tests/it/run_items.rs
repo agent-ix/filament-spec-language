@@ -288,6 +288,11 @@ fn reference_argument_without_a_snapshot_refuses() {
     assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
     assert_eq!(failure["cause"], "missing-member", "{failure}");
     assert_eq!(failure["stage"], "call", "{failure}");
+    assert_eq!(
+        failure["details"],
+        json!({"position": 0, "path": "/call/snapshot"}),
+        "{failure}"
+    );
 }
 
 /// Append `functions` to the written spine unit.

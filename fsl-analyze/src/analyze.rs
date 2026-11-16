@@ -413,6 +413,8 @@ pub struct ItemDetail {
     pub exploration: Option<fsl_replay::RunStats>,
     /// The qualified-core checker that accepted a proof's certificate.
     pub checker: Option<fsl_replay::CertificateChecker>,
+    /// The steps of the supplied trace a `finite-replay` proof replayed.
+    pub replayed_steps: Option<u64>,
 }
 
 impl ItemDetail {
@@ -428,6 +430,7 @@ impl ItemDetail {
             checker: model
                 .and_then(|model| model.checker)
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
+            replayed_steps: record.replayed_steps,
         }
     }
 }
@@ -1109,6 +1112,9 @@ pub struct AnalyzeRecord {
     pub protocol_analysis: Option<Box<crate::protocol_analysis::ProtocolAnalysisArtifact>>,
     /// The state-graph engine's report (FR-628).
     pub state_graph: Option<Box<GraphReport>>,
+    /// The number of steps of a supplied trace a `finite-replay` item
+    /// replayed to its proof (FR-941).
+    pub replayed_steps: Option<u64>,
 }
 
 /// How an item settled.
@@ -1136,6 +1142,7 @@ impl AnalyzeRecord {
             probabilistic_counterexample: None,
             over_reference: None,
             protocol_subject: None,
+            replayed_steps: None,
             protocol_analysis: None,
             state_graph: None,
         }
@@ -1698,11 +1705,17 @@ fn settle(
             record(terminal(statistical.into_terminal(index, backend)), None)
         }
         EngineReport::FiniteReplay(report) => {
+            let mut replayed = None;
             let settled_record = match report {
                 crate::protocol_analysis::FiniteReplayReport::Replayed(steps) => {
+                    replayed = Some(steps);
                     TerminalRecord::proved_by_replay(index, backend, steps)
                 }
-                crate::protocol_analysis::FiniteReplayReport::Declined { cause, position } => {
+                crate::protocol_analysis::FiniteReplayReport::Declined {
+                    cause,
+                    position,
+                    path,
+                } => {
                     let declined = TerminalRecord::declined_with(
                         index,
                         backend,
@@ -1710,16 +1723,22 @@ fn settle(
                         DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                         CatalogCode::new("invalid_runtime_input", cause),
                     );
-                    match position {
-                        Some(position) => declined.with_diagnostic_detail(
-                            std::iter::once(("position".to_owned(), serde_json::json!(position)))
-                                .collect(),
-                        ),
-                        None => declined,
+                    let detail: serde_json::Map<String, serde_json::Value> = position
+                        .map(|position| ("position".to_owned(), serde_json::json!(position)))
+                        .into_iter()
+                        .chain(path.map(|path| ("path".to_owned(), serde_json::json!(path))))
+                        .collect();
+                    if detail.is_empty() {
+                        declined
+                    } else {
+                        declined.with_diagnostic_detail(detail)
                     }
                 }
             };
-            record(terminal(settled_record), None)
+            AnalyzeRecord {
+                replayed_steps: replayed,
+                ..record(terminal(settled_record), None)
+            }
         }
         EngineReport::ProtocolAnalysis(report) => {
             let (settled_record, artifact) =

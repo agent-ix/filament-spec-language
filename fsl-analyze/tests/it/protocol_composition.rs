@@ -58,7 +58,7 @@ fn order_steps(kinds: &[StepKind]) -> Vec<Value> {
 fn trace_document(identity: &str, steps: &[Value]) -> Value {
     json!({"format": "filament.protocol-trace/v1",
         "identity": {"authority": "test", "identity": identity},
-        "steps": steps})
+        "prefix": steps})
 }
 
 /// The analyze outcome of one `finite-replay` item over the order protocol
@@ -239,4 +239,111 @@ fn a_stale_or_malformed_supplied_trace_is_declined_and_an_unprovisioned_one_refu
     assert_eq!(run.document()["diagnostics"][0]["code"], "invalid-request");
     let message = run.document()["diagnostics"][0]["message"].to_string();
     assert!(message.contains("nowhere"), "{message}");
+}
+
+/// FR-941-AC-1: a bare protocol claim is proved over a supplied trace when
+/// every step replays, naming the trace and the steps replayed; a prefix
+/// that stops before `Seller`'s choice is proved too.
+#[trace("TC-2621", "FR-941-AC-1")]
+#[test]
+fn a_bare_claim_is_proved_when_every_step_replays() {
+    let whole = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    for (identity, steps) in [("whole", &whole[..]), ("prefix", &whole[..2])] {
+        let run = replay_item(identity, &trace_document(identity, steps));
+        let item = run.item(0);
+        assert_eq!(label(&item), "proved", "{identity}: {item}");
+        assert_eq!(
+            item["record"]["steps"],
+            steps.len(),
+            "{identity}: the replayed step count"
+        );
+        assert_eq!(
+            item["record"]["trace"],
+            json!({"authority": "test", "identity": identity}),
+            "{identity}: {item}"
+        );
+    }
+}
+
+/// FR-941-AC-2: the trace document is read before replay. A `send` step
+/// without its `send_record` declines `missing-member` at
+/// `/prefix/0/send_record`; a `receive` step with one declines
+/// `unknown-member` at that step; a trace whose step 0 is stale and whose
+/// step 2 lacks a required member reports the step-2 shape defect.
+#[trace("TC-2621", "FR-941-AC-2")]
+#[test]
+fn a_trace_is_read_before_it_is_replayed() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let declined = |identity: &str, steps: &[Value]| {
+        let item = replay_item(identity, &trace_document(identity, steps)).item(0);
+        assert_eq!(label(&item), "declined", "{identity}: {item}");
+        assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{item}"
+        );
+        item
+    };
+
+    let mut bare = steps.clone();
+    bare[0]
+        .as_object_mut()
+        .expect("a step")
+        .remove("send_record");
+    let item = declined("bare", &bare);
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(diagnostic["cause"], "missing-member", "{item}");
+    assert_eq!(
+        diagnostic["detail"]["path"], "/prefix/0/send_record",
+        "{item}"
+    );
+    assert_eq!(diagnostic["detail"]["position"], 0, "{item}");
+
+    let mut stray = steps.clone();
+    stray[1]["send_record"] = steps[0]["send_record"].clone();
+    let item = declined("stray", &stray);
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(diagnostic["cause"], "unknown-member", "{item}");
+    assert_eq!(diagnostic["detail"]["position"], 1, "{item}");
+    assert_eq!(
+        diagnostic["detail"]["path"], "/prefix/1/send_record",
+        "{item}"
+    );
+
+    let mut late = vec![steps[1].clone(), steps[0].clone(), steps[2].clone()];
+    late[2]
+        .as_object_mut()
+        .expect("a step")
+        .remove("post_state");
+    let item = declined("late", &late);
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(diagnostic["cause"], "missing-member", "{item}");
+    assert_eq!(diagnostic["detail"]["position"], 2, "{item}");
+    assert_eq!(
+        diagnostic["detail"]["path"], "/prefix/2/post_state",
+        "{item}"
+    );
+}
+
+/// FR-941-AC-3: a well-formed trace beginning with `Got` declines
+/// `invalid-value` at position 0.
+#[trace("TC-2621", "FR-941-AC-3")]
+#[test]
+fn a_stale_first_step_is_declined_at_position_zero() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive]);
+    let item = replay_item("got-first", &trace_document("got-first", &steps[1..])).item(0);
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["position"], 0,
+        "{item}"
+    );
+    assert!(
+        item["record"]["diagnostic"]["detail"].get("path").is_none(),
+        "{item}"
+    );
 }

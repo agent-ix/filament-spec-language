@@ -17,7 +17,6 @@ use fsl_eval::simulation::protocol::{
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedProtocol;
-use serde::Deserialize;
 use serde_json::Value;
 
 use filament_semantic_value::catalog::CatalogCode;
@@ -28,18 +27,13 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 use super::manifest::BACKEND_ID;
 use crate::analyze::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding};
 
-/// The FSpec FR-433 trace document a `finite-replay` item names.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// The FSpec FR-433 trace document a `finite-replay` item names: a format
+/// word, its declared `{authority, identity}` (the request selects the
+/// document by it), the index of the initial state it starts from, and its
+/// steps, spelled as a protocol counterexample's `prefix`.
+#[derive(Clone, Debug)]
 pub(crate) struct SuppliedTrace {
-    /// The document's format word.
-    format: String,
-    /// The document's declared `{authority, identity}`; the request selects
-    /// the document by it.
-    #[serde(rename = "identity")]
-    _identity: Value,
     /// The index of the initial state the trace starts from.
-    #[serde(default)]
     initial_state: usize,
     /// The trace's steps, in order.
     steps: Vec<SuppliedStep>,
@@ -47,18 +41,15 @@ pub(crate) struct SuppliedTrace {
 
 /// One step of a supplied trace: its transition identity, the key of its
 /// post-state and, for a `send`, its send record.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug)]
 struct SuppliedStep {
     transition: Value,
     post_state: PostState,
-    #[serde(default)]
     send_record: Option<Value>,
 }
 
 /// A state key as the counterexample wire spells it.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct PostState {
     key: String,
 }
@@ -66,57 +57,199 @@ struct PostState {
 /// The format word of a supplied protocol trace.
 const FORMAT: &str = "filament.protocol-trace/v1";
 
-/// Why a supplied trace document is declined before any step replays
-/// (FSpec FR-433 "Wire").
+/// The members of a trace document, in the order they are read.
+const DOCUMENT_MEMBERS: [&str; 4] = ["format", "identity", "initial_state", "prefix"];
+
+/// The members of a trace step, in the order they are read.
+const STEP_MEMBERS: [&str; 3] = ["transition", "post_state", "send_record"];
+
+/// What a wire-shape defect of a supplied trace is (FR-941 "Read").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TraceDefect {
-    /// The document is not a trace in FR-433's spelling: another format, or
-    /// a missing, extra or mistyped document member.
-    Malformed,
-    /// The `send` step at this position carries no `send_record`.
-    MissingSendRecord(usize),
-    /// The non-`send` step at this position carries a `send_record`.
-    ExtraSendRecord(usize),
+pub(crate) enum DefectKind {
+    /// A required member is absent.
+    MissingMember,
+    /// A member the spelling does not have is present.
+    UnknownMember,
+    /// A member holds a value of another JSON kind.
+    WrongValueKind,
+    /// A member holds a value of the right kind that is not admitted: a
+    /// format word other than the trace format, or a document that is not
+    /// JSON.
+    InvalidValue,
+}
+
+/// Why a supplied trace document is declined before any step replays
+/// (FR-941 "Read", FSpec FR-433 "Wire"): the first defect, its kind, the
+/// JSON pointer of the member it is at and, inside a step, that step's
+/// position.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TraceDefect {
+    kind: DefectKind,
+    path: String,
+    position: Option<usize>,
 }
 
 impl TraceDefect {
-    /// The `invalid_runtime_input` cause word of the decline.
-    pub(crate) fn cause(self) -> &'static str {
-        match self {
-            Self::Malformed => "invalid-value",
-            Self::MissingSendRecord(_) => "missing-member",
-            Self::ExtraSendRecord(_) => "unknown-member",
+    /// A defect of `kind` at the document member `member`.
+    fn at(kind: DefectKind, member: &str) -> Self {
+        Self {
+            kind,
+            path: format!("/{member}"),
+            position: None,
         }
     }
 
-    /// The position of the step the defect is at, if it is at one.
-    pub(crate) fn position(self) -> Option<usize> {
-        match self {
-            Self::Malformed => None,
-            Self::MissingSendRecord(position) | Self::ExtraSendRecord(position) => Some(position),
+    /// A defect of `kind` at the member `member` of the step at `position`.
+    fn in_step(kind: DefectKind, position: usize, member: &str) -> Self {
+        Self {
+            kind,
+            path: format!("/prefix/{position}/{member}"),
+            position: Some(position),
         }
     }
+
+    /// A document that is not JSON, or not provisioned: no member names it.
+    pub(crate) fn unreadable() -> Self {
+        Self {
+            kind: DefectKind::InvalidValue,
+            path: String::new(),
+            position: None,
+        }
+    }
+
+    /// The `invalid_runtime_input` cause word of the decline.
+    pub(crate) fn cause(&self) -> &'static str {
+        match self.kind {
+            DefectKind::MissingMember => "missing-member",
+            DefectKind::UnknownMember => "unknown-member",
+            DefectKind::WrongValueKind => "wrong-value-kind",
+            DefectKind::InvalidValue => "invalid-value",
+        }
+    }
+
+    /// The position of the step the defect is in, if it is in one.
+    pub(crate) fn position(&self) -> Option<usize> {
+        self.position
+    }
+
+    /// The JSON pointer of the defect inside the trace document; empty for
+    /// the whole document.
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+/// The first member of `object` not in `known`, in key order.
+fn unknown<'o>(object: &'o serde_json::Map<String, Value>, known: &[&str]) -> Option<&'o str> {
+    object
+        .keys()
+        .map(String::as_str)
+        .find(|member| !known.contains(member))
 }
 
 impl SuppliedTrace {
     /// The trace `bytes` hold. The whole document is read before any step
-    /// replays: another format, a missing, extra or mistyped member, and a
-    /// `send` step without a `send_record` or another step with one are
-    /// each a wire-shape defect (FSpec FR-433 "Wire", FR-433-AC-8).
+    /// replays, so the answer never depends on how far a replay got: a
+    /// missing, extra or mistyped member, and a `send` step without a
+    /// `send_record` or another step with one, are each a wire-shape defect,
+    /// and the first one is reported (FR-941 "Read", FSpec FR-433-AC-8).
     pub(crate) fn read(bytes: &[u8]) -> Result<Self, TraceDefect> {
-        let trace: Self = serde_json::from_slice(bytes).map_err(|_| TraceDefect::Malformed)?;
-        if trace.format != FORMAT {
-            return Err(TraceDefect::Malformed);
+        use DefectKind::{InvalidValue, MissingMember, UnknownMember, WrongValueKind};
+        let document: Value =
+            serde_json::from_slice(bytes).map_err(|_| TraceDefect::unreadable())?;
+        let Value::Object(document) = document else {
+            return Err(TraceDefect {
+                kind: WrongValueKind,
+                path: String::new(),
+                position: None,
+            });
+        };
+        match document.get("format") {
+            None => return Err(TraceDefect::at(MissingMember, "format")),
+            Some(Value::String(format)) if format == FORMAT => {}
+            Some(Value::String(_)) => return Err(TraceDefect::at(InvalidValue, "format")),
+            Some(_) => return Err(TraceDefect::at(WrongValueKind, "format")),
         }
-        for (position, step) in trace.steps.iter().enumerate() {
-            let send = step.transition.get("step").and_then(Value::as_str) == Some("send");
-            match (send, step.send_record.is_some()) {
-                (true, false) => return Err(TraceDefect::MissingSendRecord(position)),
-                (false, true) => return Err(TraceDefect::ExtraSendRecord(position)),
-                _ => {}
+        match document.get("identity") {
+            None => return Err(TraceDefect::at(MissingMember, "identity")),
+            Some(Value::Object(_)) => {}
+            Some(_) => return Err(TraceDefect::at(WrongValueKind, "identity")),
+        }
+        let initial_state = match document.get("initial_state") {
+            None => 0,
+            Some(value) => value
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .ok_or_else(|| TraceDefect::at(WrongValueKind, "initial_state"))?,
+        };
+        let prefix = match document.get("prefix") {
+            None => return Err(TraceDefect::at(MissingMember, "prefix")),
+            Some(Value::Array(prefix)) => prefix,
+            Some(_) => return Err(TraceDefect::at(WrongValueKind, "prefix")),
+        };
+        if let Some(member) = unknown(&document, &DOCUMENT_MEMBERS) {
+            return Err(TraceDefect::at(UnknownMember, member));
+        }
+        let steps = prefix
+            .iter()
+            .enumerate()
+            .map(|(position, step)| SuppliedStep::read(position, step))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            initial_state,
+            steps,
+        })
+    }
+}
+
+impl SuppliedStep {
+    /// The step at `position` that `step` spells.
+    fn read(position: usize, step: &Value) -> Result<Self, TraceDefect> {
+        use DefectKind::{MissingMember, UnknownMember, WrongValueKind};
+        let defect = |kind, member| TraceDefect::in_step(kind, position, member);
+        let Value::Object(step) = step else {
+            return Err(TraceDefect {
+                kind: WrongValueKind,
+                path: format!("/prefix/{position}"),
+                position: Some(position),
+            });
+        };
+        let transition = match step.get("transition") {
+            None => return Err(defect(MissingMember, "transition")),
+            Some(transition @ Value::Object(_)) => transition.clone(),
+            Some(_) => return Err(defect(WrongValueKind, "transition")),
+        };
+        let post_state = match step.get("post_state") {
+            None => return Err(defect(MissingMember, "post_state")),
+            Some(Value::Object(post_state)) => {
+                let key = match post_state.get("key") {
+                    None => return Err(defect(MissingMember, "post_state/key")),
+                    Some(Value::String(key)) => key.clone(),
+                    Some(_) => return Err(defect(WrongValueKind, "post_state/key")),
+                };
+                if let Some(member) = unknown(post_state, &["key"]) {
+                    return Err(defect(UnknownMember, &format!("post_state/{member}")));
+                }
+                PostState { key }
             }
+            Some(_) => return Err(defect(WrongValueKind, "post_state")),
+        };
+        let send = transition.get("step").and_then(Value::as_str) == Some("send");
+        let send_record = match (send, step.get("send_record")) {
+            (true, None) => return Err(defect(MissingMember, "send_record")),
+            (false, Some(_)) => return Err(defect(UnknownMember, "send_record")),
+            (true, Some(record @ Value::Object(_))) => Some(record.clone()),
+            (true, Some(_)) => return Err(defect(WrongValueKind, "send_record")),
+            (false, None) => None,
+        };
+        if let Some(member) = unknown(step, &STEP_MEMBERS) {
+            return Err(defect(UnknownMember, member));
         }
-        Ok(trace)
+        Ok(Self {
+            transition,
+            post_state,
+            send_record,
+        })
     }
 }
 
@@ -343,6 +476,9 @@ pub(crate) enum FiniteReplayReport {
         cause: &'static str,
         /// The position of the step the decline names.
         position: Option<usize>,
+        /// The JSON pointer of a wire-shape defect inside the trace
+        /// document (FR-941 "Read").
+        path: Option<String>,
     },
 }
 
@@ -377,6 +513,7 @@ pub(crate) fn finite_replay_item<'a>(
                     return EngineReport::FiniteReplay(FiniteReplayReport::Declined {
                         cause: defect.cause(),
                         position: defect.position(),
+                        path: Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
                     })
                 }
             };
@@ -394,12 +531,14 @@ pub(crate) fn finite_replay_item<'a>(
                     EngineReport::FiniteReplay(FiniteReplayReport::Declined {
                         cause: "invalid-value",
                         position: Some(position),
+                        path: None,
                     })
                 }
                 Ok(ReplayVerdict::NoInitialState) => {
                     EngineReport::FiniteReplay(FiniteReplayReport::Declined {
                         cause: "invalid-value",
                         position: None,
+                        path: Some("/initial_state".to_owned()),
                     })
                 }
                 Err(ReplayFault::Admission(failure)) => {
