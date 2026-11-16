@@ -826,6 +826,15 @@ pub(crate) fn admit_wire_arguments(
         else {
             continue;
         };
+        // A parameter with no run value form refuses whatever the value is.
+        if !forms.has_form(value_type) {
+            return Err(Box::new(match value_type {
+                ValueType::Reference(_) | ValueType::Population(_) => {
+                    RunRefusal::WrongValueKind { position }
+                }
+                _ => RunRefusal::UnsupportedParameter { position },
+            }));
+        }
         let read = match &wire.value {
             serde_json::Value::Number(number) => match number.as_i64() {
                 Some(number) => forms.bare_integer(number, value_type),
@@ -835,17 +844,7 @@ pub(crate) fn admit_wire_arguments(
                     path: String::new(),
                 })),
             },
-            form => {
-                if !forms.has_form(value_type) {
-                    return Err(Box::new(match value_type {
-                        ValueType::Reference(_) | ValueType::Population(_) => {
-                            RunRefusal::WrongValueKind { position }
-                        }
-                        _ => RunRefusal::UnsupportedParameter { position },
-                    }));
-                }
-                forms.read(form, value_type)
-            }
+            form => forms.read(form, value_type),
         };
         let value = read.map_err(|stop| {
             Box::new(match stop {

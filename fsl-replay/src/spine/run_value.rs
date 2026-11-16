@@ -717,7 +717,7 @@ impl<'a> Forms<'a> {
                 if matches!(kind, CollectionKind::Set | CollectionKind::Bag) {
                     let mut keyed = items
                         .into_iter()
-                        .map(|item| (item.to_string().into_bytes(), item))
+                        .map(|item| (order_key(&item), item))
                         .collect::<Vec<_>>();
                     keyed.sort_by(|left, right| left.0.cmp(&right.0));
                     items = keyed.into_iter().map(|(_, item)| item).collect();
@@ -806,6 +806,48 @@ impl<'a> Forms<'a> {
             (FieldValue::Absent, _) => Ok(json!({"absent": {}})),
             (FieldValue::Null, _) => Err(WriteStop::NoForm),
         }
+    }
+}
+
+/// The RFC 8785 bytes a set or bag orders its element by (FR-650): the
+/// element's form with every Decimal normalized.
+fn order_key(form: &Json) -> Vec<u8> {
+    let mut normalized = form.clone();
+    normalize_decimals(&mut normalized);
+    normalized.to_string().into_bytes()
+}
+
+/// Rewrite each Decimal object inside `form` with its trailing zeros
+/// stripped and its scale lowered by as many.
+fn normalize_decimals(form: &mut Json) {
+    match form {
+        Json::Object(object) => {
+            let is_decimal = object.get("kind") == Some(&json!("decimal"));
+            if is_decimal {
+                let parts = match (object.get("coefficient"), object.get("scale")) {
+                    (Some(Json::String(coefficient)), Some(Json::String(scale))) => {
+                        scale.parse::<u32>().ok().map(|scale| (coefficient.clone(), scale))
+                    }
+                    _ => None,
+                };
+                if let Some((mut coefficient, mut scale)) = parts {
+                    if coefficient == "0" {
+                        scale = 0;
+                    }
+                    while scale > 0 && coefficient.len() > 1 && coefficient.ends_with('0') {
+                        coefficient.pop();
+                        scale -= 1;
+                    }
+                    object.insert("coefficient".to_owned(), Json::String(coefficient));
+                    object.insert("scale".to_owned(), Json::String(scale.to_string()));
+                }
+            }
+            for member in object.values_mut() {
+                normalize_decimals(member);
+            }
+        }
+        Json::Array(items) => items.iter_mut().for_each(normalize_decimals),
+        Json::Null | Json::Bool(_) | Json::Number(_) | Json::String(_) => {}
     }
 }
 
@@ -1100,6 +1142,37 @@ mod tests {
             forms.read(&form, &map),
             Err(ReadStop::Unsupported)
         ));
+    }
+
+    /// FR-650: a set orders its elements by the form with every Decimal
+    /// normalized, and writes each element as it is.
+    #[trace("FR-650-AC-1")]
+    #[test]
+    fn a_set_of_decimals_orders_by_the_normalized_form() {
+        let forms = forms();
+        let decimal = filament_exact::DecimalType::new(
+            Integer::from(0_i64),
+            Integer::from(1000_i64),
+            0,
+            2,
+            filament_exact::RoundingMode::Exact,
+        )
+        .expect("a decimal type");
+        let collection = CollectionType::new(
+            CollectionKind::Set,
+            ValueType::Decimal(decimal),
+            None,
+        );
+        let ten = Value::Decimal(Decimal::new(Integer::from(10_i64), 0));
+        let one = Value::Decimal(Decimal::new(Integer::from(100_i64), 2));
+        let set = filament_exact::from_admitted(collection, vec![ten, one]);
+        assert_eq!(
+            forms.write(&set).expect("a set of decimals writes"),
+            json!({"set": [
+                {"kind": "decimal", "coefficient": "100", "scale": "2"},
+                {"kind": "decimal", "coefficient": "10", "scale": "0"},
+            ]})
+        );
     }
 
     /// FR-650: the writer's depth bound keeps every written value readable.
