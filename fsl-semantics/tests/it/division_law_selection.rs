@@ -505,7 +505,15 @@ fn small_modulo_intervals_match_all_nonzero_operand_pairs() {
             let parameters = format!(
                 "a: Int[{dividend_lower}, {dividend_upper}], b: Int[{divisor_lower}, {divisor_upper}]"
             );
-            exact(VALUE, &parameters, "a mod b", lower, upper);
+            // b = 1 already contributes zero to these oracle domains.
+            // Keep a possibly-zero source divisor defined on the other path
+            // without changing the hull of its nonzero results.
+            let body = if divisor_lower <= 0 && divisor_upper >= 0 {
+                "if b != 0 then a mod b else a mod 1"
+            } else {
+                "a mod b"
+            };
+            exact(VALUE, &parameters, body, lower, upper);
         }
     }
 }
