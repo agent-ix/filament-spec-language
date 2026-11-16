@@ -105,7 +105,7 @@ fn explicit_state_items_prove_and_refute() {
 /// FR-625-AC-4: an invariant state clause is an explicit-state item.
 #[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-#[ignore = "QSL-2301 and QSL-2304 (from QSL-2122): needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and FR-625-AC-4 expects record.backend, a member no record carries (FR-331 spells settled_by; adding backend changes every record and the filament-examples expected files) (spec question open)"]
+#[ignore = "QSL-2301: needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and the record backend member FR-621 states"]
 fn invariant_items_prove_and_refute() {
     let ws = Workspace::new("cli-invariant");
     let body = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\

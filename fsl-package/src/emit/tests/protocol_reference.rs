@@ -1062,3 +1062,25 @@ fn a_whole_model_role_compiles_to_the_text_form_and_its_replicated_form_writes_n
         "{found:?}"
     );
 }
+
+/// FR-880-AC-4: a function that refers to a protocol with an `attempt` is
+/// written after that protocol, and the protocol's key is unchanged by the
+/// reference.
+#[test]
+#[trace("TC-2501", "FR-880-AC-4")]
+#[ignore = "QSL-2219: a reference to a protocol that holds an attempt is refused at S4 instead of written in dependency order"]
+fn a_reference_to_an_attempt_protocol_is_written() {
+    let alone = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, false), false)
+        .unwrap_or_else(|refusals| panic!("the attempt protocol checks: {refusals:?}"));
+    let referred = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, true), false)
+        .unwrap_or_else(|refusals| panic!("the reference is written: {refusals:?}"));
+    let clause_keys = |graph: &fsl_semantics::check::CheckedGraph| {
+        graph
+            .semantic_graph()
+            .nodes()
+            .filter(|node| node.semantic_form() == "protocol_clause")
+            .map(|node| format!("{:?}", node.key()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(clause_keys(&alone), clause_keys(&referred));
+}

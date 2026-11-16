@@ -3708,9 +3708,22 @@ impl<'a> Resolution<'a> {
                 refusal,
             })
         })?;
-        if frame.raw == self.continuation_source {
-            declarations.integer_division = self.integer_division;
+        let mut selected = (frame.raw == self.continuation_source)
+            .then_some(self.integer_division)
+            .flatten();
+        for source in &source_units {
+            selected = fsl_semantics::check::resolve_integer_division(
+                &source.unit().selections().profiles,
+                selected.map(|law| (law, "caller selection")),
+            )
+            .map_err(|refusal| {
+                Box::new(CompileRefusal::Profile {
+                    region: region(source.source().reference(), refusal.identity_span),
+                    refusals: vec![*refusal],
+                })
+            })?;
         }
+        declarations.integer_division = selected;
         // FR-354: the extensions the package's units were parsed against are
         // the ones S3 checks their forms with.
         declarations = declarations.with_extensions(HeldExtensions::union(

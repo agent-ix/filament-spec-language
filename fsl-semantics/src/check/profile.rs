@@ -127,6 +127,8 @@ impl TemporalProfile {
 /// Why a header profile does not resolve (FR-110's table).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProfileCause {
+    /// Two selected integer-division definitions disagree.
+    ConflictingDefinition,
     /// The identity is not a closed semantic role: `unknown_profile`/`unsupported-selection`.
     UnsupportedSelection,
     /// The identity is a closed semantic role other than `root`:
@@ -138,6 +140,8 @@ pub enum ProfileCause {
 /// row it was compared with.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProfileRefusal {
+    /// Origin of a conflicting caller selection, when supplied externally.
+    pub supplied_by: Option<String>,
     /// The profile's local alias.
     pub alias: String,
     /// The span of the selection's identity literal.
@@ -146,7 +150,7 @@ pub struct ProfileRefusal {
     pub selected: String,
     /// The role a header profile must select.
     pub required_role: DefinitionRole,
-    /// The `root` row the selection was compared with.
+    /// The conflicting definition, or the root role used for a role refusal.
     pub root: DefinitionReference,
     /// Why it refused.
     pub cause: ProfileCause,
@@ -156,6 +160,7 @@ impl ProfileRefusal {
     /// The `filament.native.diagnostics/v1` code.
     pub fn code(&self) -> Code {
         match self.cause {
+            ProfileCause::ConflictingDefinition => Code::InvalidPackage,
             ProfileCause::UnsupportedSelection | ProfileCause::WrongSelectionRole => {
                 Code::UnknownProfile
             }
@@ -165,10 +170,84 @@ impl ProfileRefusal {
     /// The `filament.native.diagnostics/v1` cause tag.
     pub fn cause(&self) -> &'static str {
         match self.cause {
+            ProfileCause::ConflictingDefinition => "conflicting-definition",
             ProfileCause::UnsupportedSelection => "unsupported-selection",
             ProfileCause::WrongSelectionRole => "wrong-selection-role",
         }
     }
+
+    /// The located profile refusal with the retained selection identities.
+    pub fn message(&self) -> String {
+        match self.cause {
+            ProfileCause::ConflictingDefinition => format!(
+                "integer-division law `{}` selected by header profile `{}` conflicts with `{}` supplied by `{}`",
+                self.selected, self.alias, self.root.identity,
+                self.supplied_by.as_deref().unwrap_or("header profile")
+            ),
+            ProfileCause::UnsupportedSelection | ProfileCause::WrongSelectionRole => format!(
+                "header profile `{}` does not resolve: {}/{}", self.alias,
+                self.code().as_str(), self.cause()
+            ),
+        }
+    }
+}
+
+/// Resolve an integer-division header identity to its exact definition role.
+#[ix_trace_rs::string_edge]
+pub fn integer_division_role(identity: &str) -> Option<DefinitionRole> {
+    [
+        DefinitionRole::IntegerDivisionEuclidean,
+        DefinitionRole::IntegerDivisionFloor,
+        DefinitionRole::IntegerDivisionTruncating,
+    ]
+    .into_iter()
+    .find(|role| role.identity() == identity)
+}
+
+/// Compose a unit's header laws with an optional admitted caller law (FR-670).
+#[ix_trace_rs::string_edge]
+pub fn resolve_integer_division(
+    profiles: &[ProfileSelection],
+    supplied: Option<(
+        filament_checked::integer_division::AdmittedIntegerDivision,
+        &str,
+    )>,
+) -> Result<Option<filament_checked::integer_division::AdmittedIntegerDivision>, Box<ProfileRefusal>>
+{
+    let mut selected = supplied.map(|(law, _)| law);
+    for profile in profiles {
+        let Some(role) = integer_division_role(&profile.identity) else {
+            continue;
+        };
+        let refusal = |cause, other| {
+            Box::new(ProfileRefusal {
+                alias: profile.alias.clone(),
+                identity_span: profile.identity_span,
+                selected: profile.identity.clone(),
+                required_role: role,
+                root: other,
+                cause,
+                supplied_by: supplied.map(|(_, origin)| origin.to_owned()),
+            })
+        };
+        if let Some(law) = selected {
+            if law.profile().definition_identity() != role.identity() {
+                return Err(refusal(
+                    ProfileCause::ConflictingDefinition,
+                    DefinitionReference {
+                        authority: CLAUSE_PROFILE_AUTHORITY.to_owned(),
+                        identity: law.profile().definition_identity().to_owned(),
+                    },
+                ));
+            }
+        } else {
+            selected = Some(
+                crate::value::admit_integer_division(&[role.reference()], None)
+                    .map_err(|_| refusal(ProfileCause::UnsupportedSelection, role.reference()))?,
+            );
+        }
+    }
+    Ok(selected)
 }
 
 /// Resolve each header profile by identity against the closed typed profile
@@ -192,6 +271,7 @@ pub fn resolve_profiles(
             let cause = if HeaderLayer::from_identity(selected).is_some()
                 || protocol_profile(selected).is_some()
                 || TemporalProfile::from_identity(selected).is_some()
+                || integer_division_role(selected).is_some()
             {
                 return None;
             } else if let Some(extension) = extension_of(selected) {
@@ -214,6 +294,7 @@ pub fn resolve_profiles(
                 ProfileCause::UnsupportedSelection
             };
             Some(ProfileRefusal {
+                supplied_by: None,
                 alias: profile.alias.clone(),
                 identity_span: profile.identity_span,
                 selected: selected.to_owned(),

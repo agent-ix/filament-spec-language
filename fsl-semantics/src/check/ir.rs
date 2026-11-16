@@ -393,27 +393,46 @@ impl Node {
 /// reaches is never read.
 #[derive(Clone)]
 pub struct CheckedBody {
+    /// Keep the arena and its derived cache together without growing the
+    /// inline bodies embedded in other checked IR values.
+    data: Box<CheckedBodyData>,
+    identity: Arc<()>,
+}
+
+#[derive(Clone)]
+struct CheckedBodyData {
     /// Never empty: the root is the last node.
     nodes: Vec<Node>,
-    identity: Arc<()>,
+    /// Integer nodes whose lowered type must widen to Integer.
+    lowered_integer: Vec<bool>,
 }
 
 impl fmt::Debug for CheckedBody {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CheckedBody")
-            .field("nodes", &self.nodes)
+            .field("nodes", &self.data.nodes)
             .finish()
     }
 }
 
 impl PartialEq for CheckedBody {
     fn eq(&self, other: &Self) -> bool {
-        self.nodes == other.nodes
+        self.data.nodes == other.data.nodes
     }
 }
 
 impl CheckedBody {
+    fn new(nodes: Vec<Node>) -> Self {
+        Self {
+            data: Box::new(CheckedBodyData {
+                lowered_integer: lowered_integer_types(&nodes),
+                nodes,
+            }),
+            identity: Arc::default(),
+        }
+    }
+
     /// A malformed checked-state fixture for producer tests, never shipped.
     #[cfg(any(test, feature = "test-support"))]
     pub fn fixture(
@@ -445,17 +464,14 @@ impl CheckedBody {
             ordering_part: false,
             field_population: None,
         });
-        Self {
-            nodes,
-            identity: Arc::default(),
-        }
+        Self::new(nodes)
     }
 
     /// Link the reachability `id`, over a relationship end or a field edge,
     /// to the authored bound of the population it walks (FR-380). A node
     /// that is no such reachability is left as it is.
     pub(in crate::check) fn link_population(&mut self, id: NodeId, bound: AuthoredBound) {
-        let Some(node) = self.nodes.get_mut(id.0) else {
+        let Some(node) = self.data.nodes.get_mut(id.0) else {
             return;
         };
         match &mut node.kind {
@@ -472,22 +488,20 @@ impl CheckedBody {
     #[cfg(any(test, feature = "test-support"))]
     pub fn from_nodes(nodes: Vec<(NodeKind<NodeId>, ValueType)>) -> Self {
         assert!(!nodes.is_empty(), "a body holds its root");
-        Self {
-            identity: Arc::default(),
-            nodes: nodes
-                .into_iter()
-                .map(|(kind, value_type)| Node {
-                    kind,
-                    value_type,
-                    location: Location::root(
-                        filament_semantic_value::location::ExpressionOwner::Expression,
-                    ),
-                    equality_producer: None,
-                    ordering_part: false,
-                    field_population: None,
-                })
-                .collect(),
-        }
+        let nodes = nodes
+            .into_iter()
+            .map(|(kind, value_type)| Node {
+                kind,
+                value_type,
+                location: Location::root(
+                    filament_semantic_value::location::ExpressionOwner::Expression,
+                ),
+                equality_producer: None,
+                ordering_part: false,
+                field_population: None,
+            })
+            .collect::<Vec<_>>();
+        Self::new(nodes)
     }
 
     /// Process-local ownership, preserved by exact body clones. This token
@@ -505,7 +519,7 @@ impl CheckedBody {
     /// Replace the location of every node for which `relocate` returns a new
     /// one.
     pub(in crate::check) fn relocate(&mut self, relocate: impl Fn(&Location) -> Option<Location>) {
-        for node in &mut self.nodes {
+        for node in &mut self.data.nodes {
             if let Some(moved) = relocate(&node.location) {
                 node.location = moved;
             }
@@ -516,7 +530,7 @@ impl CheckedBody {
     pub fn root(&self) -> CheckedNode<'_> {
         CheckedNode {
             body: self,
-            id: NodeId(self.nodes.len().saturating_sub(1)),
+            id: NodeId(self.data.nodes.len().saturating_sub(1)),
         }
     }
 
@@ -526,25 +540,29 @@ impl CheckedBody {
     ///
     /// When `id` is from another body and past this one's last node.
     pub fn node(&self, id: NodeId) -> CheckedNode<'_> {
-        assert!(id.0 < self.nodes.len(), "{id:?} names no node of this body");
+        assert!(
+            id.0 < self.data.nodes.len(),
+            "{id:?} names no node of this body"
+        );
         CheckedNode { body: self, id }
     }
 
     /// How many nodes the body stores.
     pub fn len(&self) -> usize {
-        self.nodes.len()
+        self.data.nodes.len()
     }
 
     /// Whether the body stores no node: never, since it holds its root.
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.data.nodes.is_empty()
     }
 
     /// Whether a node of the body reads the presences of a clock
     /// collection's elements (`forall(e in r.q: present(e))`), which the
     /// current timed-clause producer does not write.
     pub(crate) fn reads_slot_presence(&self) -> bool {
-        self.nodes
+        self.data
+            .nodes
             .iter()
             .any(|node| matches!(node.kind, NodeKind::SlotPresence { .. }))
     }
@@ -552,7 +570,8 @@ impl CheckedBody {
     /// Whether a node of the body reads the local slot `slot`: for a slot
     /// below the body's parameter count, whether it reads that parameter.
     pub fn reads_local(&self, slot: Slot) -> bool {
-        self.nodes
+        self.data
+            .nodes
             .iter()
             .any(|node| matches!(node.kind, NodeKind::Local(read) if read == slot))
     }
@@ -561,7 +580,8 @@ impl CheckedBody {
     /// are its parameters: `bound`, or one past the highest slot a node of
     /// the body reads or binds, whichever is larger.
     pub fn frame_slots(&self, bound: usize) -> usize {
-        self.nodes
+        self.data
+            .nodes
             .iter()
             .flat_map(|node| match &node.kind {
                 NodeKind::Local(slot) | NodeKind::Let { slot, .. } => vec![*slot],
@@ -601,10 +621,7 @@ impl BodyBuilder {
     /// The body whose root is `root`, stored after every pushed node.
     pub(in crate::check) fn finish(mut self, root: Node) -> CheckedBody {
         self.nodes.push(root);
-        CheckedBody {
-            nodes: self.nodes,
-            identity: Arc::default(),
-        }
+        CheckedBody::new(self.nodes)
     }
 }
 
@@ -619,7 +636,7 @@ pub struct CheckedNode<'a> {
 impl<'a> CheckedNode<'a> {
     /// The node itself.
     fn node(self) -> &'a Node {
-        &self.body.nodes[self.id.0]
+        &self.body.data.nodes[self.id.0]
     }
 
     /// This node's id in its body.
@@ -640,6 +657,16 @@ impl<'a> CheckedNode<'a> {
     /// The node's checked static type.
     pub fn value_type(self) -> &'a ValueType {
         &self.node().value_type
+    }
+
+    /// FR-495's lowered integer type, including division-bound locals and
+    /// the hull of a control node's yielded leaves.
+    pub(crate) fn lowered_value_type(self) -> std::borrow::Cow<'a, ValueType> {
+        if self.body.data.lowered_integer[self.id.0] {
+            std::borrow::Cow::Owned(ValueType::Integer)
+        } else {
+            std::borrow::Cow::Borrowed(self.value_type())
+        }
     }
 
     /// The node's source location.
@@ -1024,6 +1051,69 @@ pub(crate) fn static_integer_range<'n>(
 pub(crate) fn coerce_builds_narrow(operand: &ValueType, interval: &IntegerInterval) -> bool {
     !matches!(operand, ValueType::Int(source)
         if interval.contains(source.lower()) && interval.contains(source.upper()))
+}
+
+/// Whether a checked [`NodeKind::Coerce`] around `operand` lowers to a
+/// `filament.op.numeric.narrow` application. Integer division and reads of
+/// its binders lower at Integer, so their bounded coercions remain explicit
+/// even when the checked interval already fits inside the target.
+pub(crate) fn coerce_node_builds_narrow(
+    operand: CheckedNode<'_>,
+    interval: &IntegerInterval,
+) -> bool {
+    coerce_builds_narrow(&operand.lowered_value_type(), interval)
+}
+
+/// Compute integer lowering types once per arena. Local reads may precede
+/// the stored root of their bound value, so follow those dependencies with
+/// an explicit stack rather than relying on arena order or host recursion.
+fn lowered_integer_types(nodes: &[Node]) -> Vec<bool> {
+    let bindings: std::collections::HashMap<_, _> = nodes
+        .iter()
+        .filter_map(|node| match node.kind {
+            NodeKind::Let { slot, value, .. } => Some((slot, value)),
+            _ => None,
+        })
+        .collect();
+    let dependencies = |node: &Node| -> Vec<NodeId> {
+        if !matches!(node.value_type, ValueType::Int(_) | ValueType::Integer) {
+            return Vec::new();
+        }
+        match &node.kind {
+            NodeKind::Local(slot) => bindings.get(slot).copied().into_iter().collect(),
+            NodeKind::If {
+                then, otherwise, ..
+            } => vec![*then, *otherwise],
+            NodeKind::Let { body, .. } => vec![*body],
+            NodeKind::Case { arms, .. } => arms.iter().map(|arm| arm.body).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let mut found = vec![None; nodes.len()];
+    for index in 0..nodes.len() {
+        let mut pending = vec![(NodeId(index), false)];
+        while let Some((id, exit)) = pending.pop() {
+            if found[id.0].is_some() {
+                continue;
+            }
+            let node = &nodes[id.0];
+            let children = dependencies(node);
+            if exit {
+                found[id.0] = Some(
+                    matches!(node.value_type, ValueType::Integer)
+                        || matches!(node.kind, NodeKind::IntegerDivision { .. })
+                        || children.iter().any(|id| found[id.0] == Some(true)),
+                );
+            } else {
+                pending.push((id, true));
+                pending.extend(children.into_iter().map(|id| (id, false)));
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|value| value.unwrap_or(false))
+        .collect()
 }
 
 /// The type a [`NodeKind::ConvertScalar`] of an `operand`-typed node

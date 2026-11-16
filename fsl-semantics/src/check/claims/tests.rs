@@ -227,6 +227,43 @@ fn int(lower: i64, upper: i64) -> ValueType {
 const ADD: &str = "filament.op.integer.add";
 const NARROW: &str = "filament.op.numeric.narrow";
 const MUL: &str = "filament.op.integer.mul";
+const MOD: &str = "filament.op.integer.mod";
+
+/// FR-062 RR-16: a direct modulo narrow supplies each bounded occurrence's
+/// requested result bound even when it equals or contains the exact modulo
+/// interval. An Integer consumer keeps the operation's own result type.
+#[trace("TC-2210", "FR-495-AC-17", "FR-062-AC-13")]
+#[test]
+fn mod_claims_record_the_direct_target_bound_and_conversion_context() {
+    let checked = check(
+        "function equal using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }\n\
+         function wider using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 20] pure { a mod b }\n\
+         function integer using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { a mod b }",
+    );
+
+    for (nth, function, bound) in [(0, "equal", int(0, 11)), (1, "wider", int(0, 20))] {
+        let record = checked.record("a mod b", nth, MOD);
+        assert_eq!(record.result_bound().value_type(), &bound, "{function}");
+        assert_eq!(
+            record.result_bound().node(),
+            checked.type_node(TypeAt::Result(function)),
+            "{function} uses its target type node"
+        );
+        assert_eq!(
+            record.conversion_context(),
+            Some(&checked.occurrence("a mod b", nth, Some(NARROW))),
+            "{function} retains its direct narrow occurrence"
+        );
+    }
+
+    let record = checked.record("a mod b", 2, MOD);
+    assert_eq!(record.result_bound().value_type(), &int(0, 11));
+    assert_eq!(
+        record.result_bound().node(),
+        checked.type_node(TypeAt::Result("equal"))
+    );
+    assert_eq!(record.conversion_context(), None);
+}
 
 /// FR-062's fixtures RR-1 to RR-13 and RR-15 to RR-17, each with exactly
 /// the records the fixture table lists.
@@ -626,8 +663,8 @@ fn a_record_can_carry_a_guard_at_a_non_checked_node() {
 #[test]
 fn a_record_names_the_parameters_its_extent_reads() {
     let checked = check(
-        "function u using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { 10 mod x }\n\
-         function g using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { if y > 0 then 10 mod x else 0 }",
+        "function u using v(x: Int[1, 9], y: Int[0, 9]): Integer pure { 10 mod x }\n\
+         function g using v(x: Int[1, 9], y: Int[0, 9]): Integer pure { if y > 0 then 10 mod x else 0 }",
     );
     let roots = |function: &str, guarded: bool| {
         let mut found = checked.graph.requirements().values().filter(|record| {

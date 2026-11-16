@@ -57,6 +57,12 @@ pub struct ZoneCertificate {
     pub divergence: Option<Vec<DivergenceWitness>>, // time-lock-freedom item only
     pub admitted: DivergenceWitness,            // every proof: TD-6 vacuity witness
     pub refinement: Option<RefinementPart>,     // refinement form only
+    pub state_graph: Option<StateGraphPart>,    // `always possible` proof over a timed subject only (FR-852)
+}
+
+pub struct StateGraphPart {                     // FSpec FR-418 `state_graph`, FSpec FR-712
+    pub form: StateGraphFormKind,               // `always-possible`
+    pub ef_nodes: Vec<NodeIndex>,               // positions in `nodes` of the E(P) zones, ascending
 }
 
 pub struct RefinementPart {                     // FR-430

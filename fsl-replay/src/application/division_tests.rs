@@ -191,6 +191,46 @@ fn missing_division_selection_stays_typed_and_modulo_needs_no_selection() {
     }
 }
 
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+fn exact_mod_intervals_remain_readable_in_bounded_and_integer_consumers() {
+    let source = format!(
+        "{HEADER}function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure {{ a mod b }}\n\
+         function m2 using v(a: Int[0, 100], b: Int[1, 12]): Integer pure {{ a mod b }}\n\
+         function accepts using v(r: Int[0, 11]): Boolean pure {{ r >= 0 }}\n\
+         function via_call using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure {{ accepts(a mod b) }}\n\
+         function accepts_wide using v(r: Integer): Boolean pure {{ r >= 0 }}\n"
+    );
+    let compiled = compile_without_law(&source).expect("mod compiles without a division law");
+    let mut evidence = CheckedPackageEvidence::new();
+    evidence.support_feature("filament.value.complete/v1");
+    let read = match CheckedPackageV2::read(
+        compiled.bytes(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        CheckedPackageV2ReadResult::Admitted(read) => read,
+        other => panic!("exact mod results remain independently readable: {other:?}"),
+    };
+    let modulo_nodes = read
+        .resolved_graph()
+        .nodes
+        .iter()
+        .filter_map(|node| read.term(&node.node_id))
+        .filter(|term| {
+            matches!(
+                term,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.integer.mod")
+            )
+        })
+        .count();
+    assert!(
+        modulo_nodes >= 1,
+        "bounded and Integer consumers retain mod"
+    );
+}
+
 #[trace("TC-1284", "FR-495-AC-8")]
 #[test]
 fn facade_admission_retains_conflicting_unknown_and_incompatible_definition_refusals() {
@@ -272,7 +312,6 @@ fn compile_without_law(source: &str) -> Result<CompiledPackage, crate::ReplayRef
 /// `conflicting-definition`; a caller law alone still decides.
 #[trace("TC-1782", "FR-670-AC-5", "FSpec-TC-1280", "FSpec-FR-570-AC-3")]
 #[test]
-#[ignore = "QSL-1989: a header law is not resolved, so it cannot agree or conflict with a caller-supplied law yet"]
 fn a_header_law_agrees_with_or_refuses_a_caller_supplied_law() {
     let body = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n";
     let headed =
@@ -296,10 +335,9 @@ fn a_header_law_agrees_with_or_refuses_a_caller_supplied_law() {
 }
 
 /// FR-670-AC-6 and FSpec FR-570-AC-5 (identity half): a law header in a unit
-/// with no `div` or `rem` leaves the emitted package unchanged.
+/// with no `div` or `rem` leaves the checked semantic identity unchanged.
 #[trace("TC-1782", "FR-670-AC-6", "FSpec-TC-1280", "FSpec-FR-570-AC-5")]
 #[test]
-#[ignore = "QSL-1989: a header naming the integer-division law is refused wrong-selection-role today"]
 fn a_law_header_without_div_or_rem_leaves_the_package_identity_unchanged() {
     let body = "function m using v(a: Int[-7, 7], b: Int[1, 3]): Int[-6, 9] pure { a mod b + b }\n";
     let plain = compile_without_law(&format!("{HEADER}{body}")).expect("no law is demanded");
@@ -307,5 +345,39 @@ fn a_law_header_without_div_or_rem_leaves_the_package_identity_unchanged() {
         "{HEADER}profile d = \"filament.value.integer-division.floor/v1\";\n{body}"
     ))
     .expect("an inert law header is admitted");
-    assert_eq!(headed.bytes(), plain.bytes());
+    let read = |package: &CompiledPackage| {
+        let mut evidence = CheckedPackageEvidence::new();
+        evidence.support_feature("filament.value.complete/v1");
+        match CheckedPackageV2::read(
+            package.bytes(),
+            CheckedPackageReadLimits::bounded(),
+            &evidence,
+        ) {
+            CheckedPackageV2ReadResult::Admitted(read) => read,
+            other => panic!("actual emitted package admits independently: {other:?}"),
+        }
+    };
+    let plain = read(&plain);
+    let headed = read(&headed);
+    assert_eq!(headed.name(), plain.name());
+    assert_eq!(headed.graph(), plain.graph());
+    assert_eq!(headed.lock(), plain.lock());
+    for package in [&plain, &headed] {
+        assert!(package
+            .lock()
+            .definition_selections
+            .iter()
+            .all(|definition| {
+                ![
+                    DefinitionRole::IntegerDivisionEuclidean,
+                    DefinitionRole::IntegerDivisionFloor,
+                    DefinitionRole::IntegerDivisionTruncating,
+                ]
+                .iter()
+                .any(|role| definition.identity.as_ref() == role.reference().identity)
+            }));
+    }
+    // Occurrence spans record the actual input, which changed when the inert
+    // header was inserted; they are outside semantic identity.
+    assert_ne!(headed.source_map(), plain.source_map());
 }

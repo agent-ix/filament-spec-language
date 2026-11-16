@@ -1247,6 +1247,18 @@ impl<'a> Definedness<'a> {
                     ))
                 }
             }
+            NodeKind::IntegerDivision { right, .. } => {
+                let divisor = node.at(*right);
+                if self.interval(divisor, facts).excludes_zero()
+                    || self
+                        .stable_path(divisor, facts)
+                        .is_some_and(|path| facts.nonzero.contains(&path))
+                {
+                    Ok(())
+                } else {
+                    Err(Self::refuse(node, Obligation::Nonzero))
+                }
+            }
             NodeKind::Divide {
                 left,
                 right,

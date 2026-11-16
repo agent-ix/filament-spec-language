@@ -1556,3 +1556,90 @@ fn e_c_shared_constraint_has_occurrence_zero_at_tried_and_one_at_picked() {
         [(0, tried), (1, picked)]
     );
 }
+
+/// FR-880-AC-8 and AC-3: a post-test `repeat` (FSpec FR-729), a `repeat`
+/// that steps through a nested `repeat`, and a `protocol` reference in a
+/// `repeat` guard are written and read back.
+#[test]
+#[trace("TC-2502", "FR-880-AC-8", "FSpec-FR-729-AC-1")]
+#[ignore = "QSL-2220: post-test repeat and repeat through repeat are refused at S4 instead of written"]
+fn every_checked_repeat_form_is_written() {
+    let post_test = emitted(&deciding(
+        "sequence Main { repeat Loop by Seller visible (got.ok) while { not got.ok } \
+         sequence Body { send Placed via Ch as (placed: Ack) { true }; \
+         receive Got via Ch of Placed as (got: Ack) { true }; } }",
+    ));
+    let repeat = run_control(&post_test.wire, "Loop");
+    assert!(
+        repeat.to_string().contains("\"post\""),
+        "the repeat carries test post: {repeat}"
+    );
+    emitted(&flow(
+        "sequence Main { repeat Loop by Buyer visible () while { true } \
+         repeat Inner by Buyer visible () while { true } \
+         sequence Step { event Tick by Buyer as (tick: Boolean) { true }; } }",
+    ));
+}
+
+/// FR-880-AC-3, FSpec FR-728-AC-1: a `protocol` reference in a `repeat`
+/// guard is written as one carrier and the package is admitted.
+#[test]
+#[trace("TC-2501", "FR-880-AC-3", "FSpec-FR-728-AC-1")]
+#[ignore = "QSL-2219: a protocol reference in a protocol body is refused at S4 instead of written"]
+fn a_protocol_reference_in_a_body_is_written() {
+    emitted(&format!(
+        "protocol Other using p over (input: M::Order) on origin {{\n\
+         role Buyer on M::Order;\nrun sequence Main {{ }}\n\
+         finish End as (outcome: Boolean) {{ true }};\n}}\n{}",
+        flow(
+            "sequence Main { repeat Loop by Buyer visible () while { protocol Other } \
+             sequence Body { event Tick by Buyer as (tick: Boolean) { true }; } }",
+        )
+    ));
+}
+
+/// FR-880-AC-5: a protocol that refers to itself is one cyclic component,
+/// written as one recursion group.
+#[test]
+#[trace("TC-2501", "FR-880-AC-5")]
+#[ignore = "QSL-2219: a protocol reference cycle is refused at S4 instead of written as a recursion group"]
+fn a_self_referring_protocol_is_written_as_one_recursion_group() {
+    let lowered = emitted(&flow(
+        "sequence Main { repeat Loop by Buyer visible () while { protocol Flow } \
+         sequence Body { event Tick by Buyer as (tick: Boolean) { true }; } }",
+    ));
+    let grouped = nodes(&lowered.wire)
+        .iter()
+        .filter(|node| !node["recursion_group"].is_null())
+        .count();
+    assert!(
+        grouped >= 2,
+        "the component shares one group: {}",
+        lowered.text
+    );
+}
+
+/// FR-880-AC-9: a pre-test `repeat` whose `visible` entry or proof slots
+/// read its body's binder is written without `test`, those reads being
+/// FSpec FR-729 back-edge reads, and the package is admitted.
+#[test]
+#[trace("TC-2502", "FR-880-AC-9", "FSpec-FR-729-AC-5")]
+#[ignore = "QSL-2220: a pre-test decision that reads its body is refused at S4 as not-yet-implemented"]
+fn a_pre_test_decision_that_reads_its_body_is_written() {
+    for run in [
+        "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \
+         sequence Body { send Placed via Ch as (placed: Ack) { true }; \
+         receive Got via Ch of Placed as (got: Ack) { true }; } }",
+        "sequence Main { repeat Loop by Seller visible () invariant { got.ok } \
+         variant { if got.ok then 1 else 0 } while { true } sequence Body { \
+         send Placed via Ch as (placed: Ack) { true }; \
+         receive Got via Ch of Placed as (got: Ack) { true }; } }",
+    ] {
+        let lowered = emitted(&deciding(run));
+        let repeat = run_control(&lowered.wire, "Loop");
+        assert!(
+            !repeat.to_string().contains("\"post\""),
+            "a pre-test repeat carries no test member: {repeat}"
+        );
+    }
+}
