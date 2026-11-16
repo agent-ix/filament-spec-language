@@ -64,8 +64,14 @@ that reading. The route stays a function of the item alone (its kind, its eviden
 kind and its `options`, negotiated against the published manifests), so one
 item always reaches one engine. Digitisation decides the same verdict as dense time exactly when the
 subject and the claim are both closed (Henzinger, Manna and Pnueli), so the
-route is a cross-check of the zone verdict, with its own basis
-`digitized-explicit-state` (FR-235), and is refused where it could disagree.
+route is a cross-check of the zone verdict, with the basis `exhaustive`
+(FR-235, FSpec FR-416), and is refused where it could disagree. The basis is
+`exhaustive` because the proof is a complete explicit-state search of the
+digitized subject, and FSpec FR-331's closed proof-basis set has no separate
+digitized basis; the route is recorded by the item's `options.method`
+`digital-clocks` and backend `en-1`, not by a second basis name. An exact
+probabilistic proof over digital clocks keeps `exact-value` or `value-bounds`
+with its timed-product certificate (FR-920).
 
 ## Outputs
 
@@ -87,7 +93,7 @@ route is a cross-check of the zone verdict, with its own basis
   whole request at the request stage with `invalid-request`, exit 20, naming
   `temporal.limits.max_clocks`, as every FR-625 limit of 0 does.
 - **Digital-clock records.** An item decided on the digital-clock route
-  settles `proved` with basis `digitized-explicit-state` and the
+  settles `proved` with basis `exhaustive` and the
   certification FR-625 gives an EN-1 proof, or `refuted` with a
   counterexample whose delays are integers written as exact rationals and
   replayed by FR-237. Its record names backend `en-1`.
@@ -103,7 +109,7 @@ route is a cross-check of the zone verdict, with its own basis
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-632-AC-1 | A timer subject whose operation fires within 2 time units settles the MITL claim `eventually[0,2]` `proved` with basis `zone-certified`, certification `certified`, and `eventually[0,1]` `refuted` with a counterexample whose delays are exact rationals and replay. | Test (TC-1592) |
-| FR-632-AC-2 | The same claims with `options.method` `digital-clocks` on the closed subject settle the same verdicts on backend `en-1`, the proof with basis `digitized-explicit-state` and the refutation with integer delays that replay. | Test (TC-1592) |
+| FR-632-AC-2 | The same claims with `options.method` `digital-clocks` on the closed subject settle the same verdicts on backend `en-1`, the proof with basis `exhaustive` and the refutation with integer delays that replay. | Test (TC-1592) |
 | FR-632-AC-3 | Over the `Rpc` subject provisioned with two calls (two live clocks), `max_clocks` 1 settles `incomplete` `LimitReached{max_clocks}` with value 1; `max_clocks` 0 refuses the whole request at the request stage, `invalid-request`, exit 20, naming `temporal.limits.max_clocks`, and runs no item. | Test (TC-1592) |
 | FR-632-AC-4 | `options.method` `digital-clocks` over the strict-guard retry subject, and over the closed subject with the half-open claim `eventually[0 ms, 2 ms) holds(not c.late)`, each settle `declined` `invalid-input` naming the strict constraint or interval, with `settled_by` `result` and `backend` `en-1`, and no search runs. | Test (TC-2290) |
 

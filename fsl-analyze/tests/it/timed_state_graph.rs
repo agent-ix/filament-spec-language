@@ -157,7 +157,7 @@ fn en_6_advertises_the_state_graph_forms() {
 
 /// FR-852-AC-6: with `options.method` `digital-clocks` the closed `Rpc`
 /// subject's state-graph items settle on `en-1` over the digitized subject,
-/// the proof with basis `digitized-explicit-state`; EN-1 lists the forms.
+/// the proof with basis `exhaustive`; EN-1 lists the forms.
 #[trace("TC-2412", "FR-852-AC-6")]
 #[trace("TC-2412", "FSpec-FR-712-AC-4")]
 #[test]
@@ -174,10 +174,7 @@ fn digital_clocks_decide_timed_state_graph_items_on_en_1() {
     let proved = run.item(0);
     assert_eq!(label(&proved), "proved", "{proved}");
     assert_eq!(proved["record"]["backend"], "en-1", "{proved}");
-    assert_eq!(
-        proved["record"]["basis"]["type"], "digitized-explicit-state",
-        "{proved}"
-    );
+    assert_eq!(proved["record"]["basis"]["type"], "exhaustive", "{proved}");
     assert_eq!(proved["replay"]["reproduced"], true, "{proved}");
     let refuted = run.item(1);
     assert_eq!(label(&refuted), "refuted", "{refuted}");
