@@ -246,3 +246,39 @@ fn an_unproved_nonempty_reduction_checks_only_under_kernel() {
         check(nonempty, mode).unwrap_or_else(|refusals| panic!("{mode:?}: {refusals:?}"));
     }
 }
+
+/// FR-766-AC-8 (TC-2240): an unproved `count<N>` range in a declared state
+/// clause refuses at check under both modes (FR-495); only a `count` outside
+/// a declared clause, here a function body, is left to S6a under `Kernel`.
+#[trace("TC-2240", "FR-766-AC-8")]
+#[test]
+#[ignore = "QSL-2003: a count<N> result range is not proved at check yet"]
+fn a_count_range_in_a_state_clause_refuses_under_both_modes() {
+    let clause = "type Zero = Int[0, 0];\n\
+                  invariant I using v on Config::ConfigVersion at current { \
+                  count<Zero>(m in sequence[self.versionNumber]: m >= 0) = 0 }\n";
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        let refusals = crate::model_operations::admit_and_assemble_with_body(
+            &crate::model_operations::tc465_document(),
+            clause,
+        )
+        .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
+        .check(mode, CheckingLimits::default())
+        .expect_err("the count range is unproved in a declared clause");
+        assert!(
+            matches!(
+                refusals.as_slice(),
+                [CheckRefusal {
+                    cause: CheckCause::Unproved(Obligation::Range { .. }),
+                    ..
+                }]
+            ),
+            "{mode:?}: {refusals:?}"
+        );
+    }
+    kernel_drops(
+        "function f using v(q: Sequence<Integer>[0, 1]): Int[0, 0] pure { \
+         count<Int[0, 0]>(m in q: m >= 0) }",
+        |found| matches!(found, Obligation::Range { .. }),
+    );
+}

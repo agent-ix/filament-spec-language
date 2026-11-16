@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-335
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-766
+    type: references
   - target: ix://agent-ix/filament-specification/FR-044
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-140
@@ -255,6 +257,9 @@ bound and does not authorize a CG-side result-bound workaround.
     whose obligation `Linked` refuses. `CheckedGraph::check_clause_expression`
     is a different entry that takes its own `CheckMode` and does drop
     obligations under `Kernel`; this boundary does not govern it.
+    A `count<N>` result range in such a clause is one of these obligations:
+    it refuses at check under both modes, and only a `count` outside a
+    declared state clause reaches FR-766's kernel run-time refusal.
   - A termination measure is not a definedness obligation of the body. The
     `decreases(..)` expression and the recursion's missing-measure and
     unproved-decrease refusals (FSpec FR-146, FR-091-AC-30) SHALL be checked

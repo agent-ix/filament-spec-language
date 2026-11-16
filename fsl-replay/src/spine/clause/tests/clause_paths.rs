@@ -264,7 +264,7 @@ fn run_item(clause: &str, report: &ClauseRunReport) -> serde_json::Value {
 /// refusal; with a domain that holds the count it compiles.
 #[trace("TC-2195", "FR-766-AC-5")]
 #[test]
-#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-replay/src/spine/clause/tests/witness.rs:84,1736, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478"]
+#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) refuses unproved-range at check under both modes (FR-495) and is rewritten to expect that"]
 fn count_out_of_domain_names_its_cause() {
     let compile = |one: &str| {
         let (unit, packages) = at_most_one(one);
@@ -291,7 +291,7 @@ fn count_out_of_domain_names_its_cause() {
 /// disposition whose run item names `unproved-range`.
 #[trace("TC-2195", "FR-766-AC-6")]
 #[test]
-#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-replay/src/spine/clause/tests/witness.rs:84,1736, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478"]
+#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) refuses unproved-range at check under both modes (FR-495) and is rewritten to expect that"]
 fn a_count_refused_at_compile_is_a_declined_run_item_with_its_cause() {
     let (unit, packages) = at_most_one("Int[0, 1]");
     let selection = ClauseSelection {

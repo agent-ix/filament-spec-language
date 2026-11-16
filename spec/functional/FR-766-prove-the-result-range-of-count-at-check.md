@@ -15,6 +15,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-286
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-495
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-145
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-044
@@ -88,8 +90,17 @@ counter is an unbounded natural number and only the final count is retained into
 - A `count` over a named population (`count(M::P: p)`) is typed from the
   population maximum (FR-391), so its type always contains the count and this
   obligation is discharged by construction.
-- Under `CheckMode::Kernel`, the checker SHALL NOT record the obligation.
-- Under `CheckMode::Kernel`, S6a SHALL return `Outcome::Refused(Refusal::IntegerOutOfDomain{target: N})`,
+- Under `CheckMode::Kernel`, the checker SHALL NOT record the obligation for a
+  `count` outside a declared state clause: in a function body or in a
+  temporal clause atom.
+- In a state clause a package declares (`invariant`, `pre`, `post`), checked
+  through `PackageDeclarations::check`, the checker SHALL record and decide the
+  obligation under `CheckMode::Kernel` exactly as under `CheckMode::Linked`,
+  and an unproved count range there SHALL refuse
+  `undefined_expression`/`unproved-range` at check in both modes (FR-495:
+  `Kernel` never admits a declared clause whose obligation
+  `Linked` refuses). Such a `count` never reaches S6a outside `N`.
+- Under `CheckMode::Kernel`, for a `count` outside a declared state clause, S6a SHALL return `Outcome::Refused(Refusal::IntegerOutOfDomain{target: N})`,
   located at the `count` node, for a final count outside `N` (FR-096-AC-8).
 - A clause run compiles its unit under `CheckMode::Linked`, so when a clause's
   `count` is not proved, spine compile SHALL refuse the unit, and the clause
@@ -110,18 +121,25 @@ counter is an unbounded natural number and only the final count is retained into
 | FR-766-AC-5 | A unit over FR-108's `Config` model declaring `type One = Int[0, 1];`, `function pair using v(a: Int[0, 1000]): Sequence<Int[0, 1000]>[0, 2] pure { sequence[a, a] }` and `invariant AtMostOne using v on Config::ConfigVersion at current { count<One>(m in pair(self.versionNumber): m >= 0) <= 1 }` refuses at compile `undefined_expression`/`unproved-range` at the `count`, exit 20; with `type One = Int[0, 2];` it compiles. | Test (TC-2195) |
 | FR-766-AC-6 | The AC-5 `Int[0, 1]` unit run as a clause run of `AtMostOne` returns a compile disposition, and the run item built from it carries category `refusal`, result `declined` and cause `{code: undefined_expression, kind: unproved-range}`. | Test (TC-2195) |
 | FR-766-AC-7 | A clause-run report whose disposition is an S6a kernel refusal record `integer_out_of_domain`/`outside-domain` projects to a run item with category `refusal`, result `declined` and cause `{code: integer_out_of_domain, kind: outside-domain}`, never a `null` cause. | Test (TC-2195) |
+| FR-766-AC-8 | Through `PackageDeclarations::check` under `CheckMode::Kernel` and under `CheckMode::Linked`, a unit over FR-108's `Config` model declaring `type Zero = Int[0, 0];` and `invariant I using v on Config::ConfigVersion at current { count<Zero>(m in sequence[self.versionNumber]: m >= 0) = 0 }` refuses `undefined_expression`/`unproved-range` at the `count` in both modes, and no checked graph is returned; the same `count<Zero>` in the body `function f using v(q: Sequence<Integer>[0, 1]): Int[0, 0] pure { count<Int[0, 0]>(m in q: m >= 0) }` refuses `unproved-range` under `CheckMode::Linked` and checks under `CheckMode::Kernel`, where S6a meets the out-of-domain count (AC-4). | Test (TC-2240) |
 
 ## Notes
 
 Spine compile, and so every clause run, checks under `CheckMode::Linked`, and
 no linked integer construct reaches the S6a refusal `integer_out_of_domain`:
-every integer retain is proved at check. A test fixture that needs a clause
-whose evaluation meets that refusal at run, such as a `holds` atom refused at
-some trace position (FR-327-AC-6), a refused separating-witness domain
-(FR-268-AC-3) or a refused monitor condition, builds its package with
-`PackageDeclarations::check(CheckMode::Kernel, ..)` and links it, with the
-same `count<Int[0, 0]>` atom it uses today. Compiling that atom from source
-through spine compile is refused at check by this requirement.
+every integer retain is proved at check. The kernel run-time refusal applies
+only to a `count` outside a declared state clause. A test fixture that needs
+an evaluation that meets that refusal at run, such as a `holds` atom refused
+at some trace position (FR-327-AC-6) or a refused monitor condition, SHALL
+write the `count<Int[0, 0]>` atom in a temporal clause atom (or a function
+body evaluated at run) and build its package with
+`PackageDeclarations::check(CheckMode::Kernel, ..)` and link it. A fixture
+whose `count` sits in a declared `invariant`, `pre` or `post`, such as a
+separating-witness domain written in an invariant body (FR-268-AC-3), cannot
+reach the run-time refusal under either mode: its unproved count refuses at
+check (FR-495), and the fixture SHALL expect that check refusal or move the
+atom to a temporal clause. Compiling any such atom from source through spine
+compile is refused at check by this requirement.
 
 ## Dependencies
 
