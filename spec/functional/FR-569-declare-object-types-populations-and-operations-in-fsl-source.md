@@ -239,6 +239,17 @@ fill every member's type once the unit's type namespace is assembled, and the
 view that conformance, dispatch, frames, admission and evaluation read SHALL
 hold no type from an earlier assembly step.
 
+When it fills the member types, the assembler SHALL also build the source
+model's `SourceSpellings` registry (FR-088 "A `Resolved` type is spelled
+through the source spelling registry"). The registry keeps the FSL names that
+the normalized records drop: alias names, record, tuple, union and enum names,
+object type names and unit names, keyed by `NodeKey`, enum owner key,
+`EffectiveId`, declared unit and member slot. The source model's
+`AdmittedModel` SHALL hold the registry with its records, and every
+user-facing text naming a source member's type SHALL be printed from it
+through FR-088's formatter. The registry takes no part in identity,
+conformance or emission.
+
 The checker SHALL decide conformance of a `Resolved` type as follows. The list
 applies to fields, operation parameters and operation results. For operation
 parameters and results, whose FSpec FR-151 rows say only "conforms", it is

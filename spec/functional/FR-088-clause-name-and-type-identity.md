@@ -110,6 +110,9 @@ ADR's summary sentence as if it were itself testable.
 - C-26: the total conversion function, checked type node → kernel
   `ValueType`, owned by the FSL checker, covering every checked type-node
   form including the sum form.
+- The source spelling registry (`SourceSpellings`) on a source model's
+  `AdmittedModel`, the context-aware formatter `fsl_spelling`, and
+  `ValueTypeRef`'s `Display` as a non-user-facing identity form.
 
 ## Behavior
 
@@ -249,11 +252,107 @@ carried instead.
 No serializer or wire writer SHALL encode `Resolved`. No production code
 outside the assembler's source model (FR-569 "The source model") SHALL
 construct it; tests may. Domain package intake SHALL never produce it, and no domain package, snapshot, `identities.json` or
-package document SHALL carry it. A diagnostic SHALL print it as the FSL
-spelling of the checked type, not as a Rust `Debug` rendering. In the FR-569
+package document SHALL carry it. User-facing text SHALL print it through the
+source spelling formatter, never through `Display` or `Debug` (next section).
+In the FR-569
 target emission, the binding of a `Resolved` member SHALL name the type node
 that a record field of that `ValueType` binds; the reference itself is never
 serialized.
+
+### A `Resolved` type is spelled through the source spelling registry
+
+A kernel `ValueType` does not hold the names a source author wrote:
+`Composite` holds an opaque `NodeKey`, `Enum` holds opaque `VariantId`s,
+`Reference` holds an `EffectiveId`, `Quantity` holds a `UnitId`, and an alias
+is gone once its target is checked. The normalized records of the source model
+hold none of these names either. Two parts therefore print a `Resolved` type:
+a registry that keeps the names, and a formatter that reads it.
+
+**The registry.** The assembler SHALL build one `SourceSpellings` registry for
+a source model (FR-569 "The source model"), at the same time it fills the
+members' types. The source model's `AdmittedModel` SHALL keep the registry
+beside the normalized records, and every model built by this assembler SHALL
+carry one. A model admitted from a domain package carries an empty registry,
+because it holds no `Resolved` type. The registry SHALL hold:
+
+- `NodeKey` → FSL name, for every record, tuple and union declaration that a
+  `Composite` in the view names. A declaration of the unit is spelled by its
+  declared name (`Point`), and a model-owned declaration by its selection
+  alias and name (`M::Total`);
+- enum declaration `NodeKey` → FSL name, for every enum whose `VariantId`s an
+  `Enum` in the view holds. A variant is spelled by that name and the
+  `VariantId`'s case;
+- `EffectiveId` → FSL name, for every object type a `Reference` in the view
+  names (`Order`, `M::Node`);
+- declared-unit `NodeKey` → FSL unit name, for every unit a `UnitId` in the
+  view names (`m`, `Config::cm`);
+- member slot → alias tree, for every `Resolved` member type whose source
+  spelling names an alias at any depth. A member slot is a field's
+  declaration key, an operation's declaration key and parameter position, or
+  an operation's declaration key and its result. The alias tree has the shape
+  of the member's `ValueType`, and each node holds the alias name written at
+  that position, or none. When an alias names the outermost collection of a
+  member, the collection becomes the member's multiplicity (FR-569), so the
+  alias is not part of the `value_type` and no tree node holds it.
+
+The registry is not identity-bearing. It does not take part in any key,
+equality, hash, conformance decision or serialized record, and two models
+whose spellings differ check, admit and evaluate identically.
+
+**The formatter.** `fsl_spelling(value_type, spellings, slot)` SHALL return a
+`ValueTypeRef`'s FSL spelling as a pure function of its three inputs; `slot`
+is optional. For `Clock`, `Native`, `Package` and `Unit` it SHALL return
+exactly the text `Display` returns. For `Resolved` it SHALL print each node of
+the `ValueType`. A node whose alias tree entry holds an alias prints the alias
+name and nothing below it. Every other node prints by its form:
+
+| `ValueType` form | Spelling |
+| --- | --- |
+| `Boolean`, `Integer`, `String`, `Uuid`, `Timestamp` | the type's name |
+| `Int` | `Int[lo, hi]` |
+| `Rational` | `Rational[n1, n2; d1, d2]` |
+| `Decimal` | `Decimal[lo, hi; smin, smax; mode]` |
+| `Float` | `Float32[mode]` or `Float64[mode]` |
+| `Text` | `Text[min, max; profile]` |
+| `Quantity`, declared unit | `Quantity<u>`, `u` the unit's registry name |
+| `Quantity`, compound unit | `Quantity<u1^e1*u2^e2>` in the `UnitId`'s factor order, with each unit's registry name and every exponent, `^1` included, so it never equals a declared unit's spelling |
+| `CarriedQuantity` | `Quantity<u, C>`, `C` the carrier's spelling |
+| `BoundedQuantity` | `Quantity<u>[min, max]`, the bounds as quantity literals |
+| `Enum` | the enum's registry name |
+| `Option` | `Option<T>` |
+| `Composite` | the declaration's registry name |
+| `Collection` | `Sequence<T>`, `Set<T>`, `Bag<T>` or `OrderedSet<T>`, followed by `[min, max]` when the type is bounded |
+| `Map` | `Map<K, V>`, followed by `[min, max]` when the type is bounded |
+| `Reference` | `Reference<T>`, `T` the object type's registry name |
+| `Population` | `Population<T>[N]`, or `Population<T>` with no maximum |
+
+Each nested type is spelled by the same rule, so
+`Option<Sequence<Money>[0, 3]>` keeps the alias `Money`. With no slot, or a
+slot that has no alias tree, no node prints an alias. If the registry has no
+entry for a key the type holds, the formatter SHALL print that subterm in the
+identity form below; assembly is required to leave no such key (FR-088-AC-13).
+
+**`Display` is an identity form.** `ValueTypeRef`'s `Display` takes no
+registry, so it cannot print FSL names. For `Resolved` it SHALL print a
+deterministic identity form: `resolved:` followed by the table's spelling,
+where each name the registry would supply is replaced by the key's canonical
+text (a `NodeKey` by its `Display`, a variant by its owner `NodeKey` and case,
+an `EffectiveId` by its declaration keys in chain order, a compound unit by
+its (unit node key, exponent) factors). It SHALL never print a Rust `Debug`
+rendering. The form is for logs, test failure text and internal keys only. It
+is not user-facing and is not a stable interface, and no user-facing output
+SHALL contain it.
+
+**Outputs that SHALL use the formatter.** Every user-facing text that names a
+`ValueTypeRef` held by a source model SHALL get the text from `fsl_spelling`,
+passing the member slot when the text is about a member's declared type. This
+covers diagnostic and refusal messages from S3 to S6 (for example the
+operation member type message of model normalization), CLI and inspect
+output, and the `member_type` of a FSpec FR-322 `resolved_path` row whose
+member is `Resolved`. A row of any other member keeps its FR-322 identity
+rendering.
+Code that reads a `resolved_path` row's collection element SHALL take it from
+the `ValueType`, not by parsing the rendered text.
 
 ## Constraints
 
@@ -276,11 +375,12 @@ serialized.
 | FR-088-AC-5 | No function exists whose signature accepts a `QualifiedName` or a bare string and returns a node id or a declaration, callable from outside the check stage; a source and call-graph scan over every crate module confirms every call site of the checker's name-resolution function lies inside the check stage, with the sole documented exception being the `replay` facade's own E9 lookup (a separate module, not built by this requirement) never called from `check` itself. | Test (TC-251) |
 | FR-088-AC-6 | `QualifiedName` is used only as a declared component of an identity preimage (for example inside `DeclarationKey`'s or a checked node's own preimage where a name participates); no equality or hashing implementation on any identity type treats a `QualifiedName` as the sole identity-bearing field where a node id is available instead. | Inspection (TC-258) |
 | FR-088-AC-7 | A package type's identity is its checked node id: node keys are content keys scoped only by owner (ADR-013 O-04, OQ-G). Two type declarations with the same structure under the same qualified name in two packages of the same owner share one node id. Two with the same structure and qualified name in packages with different source owners get distinct node ids, and two with different qualified names get distinct node ids. A builtin or anonymous type node, such as `Int[0, 9]`, has no owner and shares one id across packages and owners. A reference into another package is distinguished by the `package` component of its structural `NodeKey` (ADR-013 T-3). Within one package, two source *occurrences* of a reference to the same declared type (ADR-013 O-07's own term: "each source occurrence of a node is keyed by (node id, role, ordinal)" — for example the same type named as the field type of two different fields) resolve to the one node id the single declaration was minted with; this is not a claim about declaring a type twice; declaring a structurally identical type a second time under a colliding name is a name-binding refusal (a duplicate declaration), a different criterion, not a second occurrence of the first node id, and is out of this criterion's scope. This repository's own precedent for a duplicate name/binding — `checking::composed::proofs::CorrespondenceError::DuplicateDeclaration`, `src/checking/composed/proofs/correspondence.rs:96` — refuses rather than admits with a shared id. | Test (TC-259) |
-| FR-088-AC-8 | `ValueTypeRef` is exactly the five-member union `{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String), Resolved(Box<ValueType>)}`; no sixth variant and no second definition exists, and no model field type is represented by a bare `NodeKey` or a raw string type name. `Clock` carries no fields (a place in a timed model, FR-230), and the `String` of `Unit` is a unit name the assembler resolves (FR-056-AC-42), not a type name. No production code outside the source-object assembler (FR-569 "The source model") constructs `Resolved`, domain package intake never does, and no serializer or wire writer encodes it; and `ValueTypeRef`'s `Display` renders it by its FSL type spelling, not by `Debug`. | Inspection (TC-260) |
+| FR-088-AC-8 | `ValueTypeRef` is exactly the five-member union `{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String), Resolved(Box<ValueType>)}`; no sixth variant and no second definition exists, and no model field type is represented by a bare `NodeKey` or a raw string type name. `Clock` carries no fields (a place in a timed model, FR-230), and the `String` of `Unit` is a unit name the assembler resolves (FR-056-AC-42), not a type name. No production code outside the source-object assembler (FR-569 "The source model") constructs `Resolved`, domain package intake never does, and no serializer or wire writer encodes it; and `ValueTypeRef`'s `Display` renders it in the `resolved:` identity form, never by `Debug`. | Inspection (TC-260) |
 | FR-088-AC-9 | C-26's conversion function is total: for every checked type-node form (`scalar_type`, `composite_type`, `bounded_domain`, and the sum form), a test constructs a checked node of that form and confirms the function returns a kernel `ValueType` with no panic, no `_`-arm fallback, and no lossy substitution; a checked type-node form added without a corresponding match arm fails to compile (`clippy::wildcard_enum_match_arm`, following ADR-011 §5's convention for other exhaustive maps). | Test (TC-252) |
 | FR-088-AC-10 | For the sum form specifically, the source checked node's own id is not re-minted by C-26's conversion (it is the same content-addressed id the node carried before conversion, read from `CheckedGraph`/`CheckedPackage`, not a value the kernel shape carries); C-26's output kernel `ValueType` carries, per variant, a `VariantId` computed from the declaring sum and that member, and the kernel shape carries no `NodeKey` anywhere in its variant representation. A sum value built from this conversion carries its `VariantId`, and an adverse test confirms no code path reads or stores a bare variant index in place of the `VariantId`. | Test (TC-252) |
 | FR-088-AC-11 | For an enum `E` declared with cases `b`, `a`, `c` in that order, each variant's `VariantId` equals the node key over `{version: filament.enum-member-node/v1, declaration_node_id: E's node key, case}`. When `E` is ordered, the variants' ranks are `b` 0, `a` 1, `c` 2, and a set of all three values visits `b`, `a`, `c`. When `E` is unordered, its canonical member list is `a`, `b`, `c`, the ranks are `a` 0, `b` 1, `c` 2, and the set visits `a`, `b`, `c`. A value that pairs `E::a`'s `VariantId` with rank 2 is refused at admission. Renaming the declaration `E` to `F` changes every `VariantId` and changes no rank and no visiting order. C-30 refuses `E`'s own declaration node key as a `VariantId`. | Test (TC-409) |
 | FR-088-AC-12 | For declared units `m` and `km` (a scaled unit of `m`) and the compound unit `m^1`, the three `UnitId`s are pairwise unequal. `m`'s `UnitId` carries `m`'s node key under the `filament.checked-semantic-node/v1` label. For every compound unit, the compound `UnitId` equals its ordered (unit node key, exponent) factor record by structural equality. C-30 refuses a dimension node key as a declared-arm `UnitId`. | Test (TC-411) |
+| FR-088-AC-13 | Over a source unit that selects a model as `M` (with record type `Total`), declares `type Money = Decimal[0, 100; 2, 2; exact];`, `record Point { x: Integer; }`, `enum Color { Red, Green }`, `dimension Length;`, `unit m : Length = rational(1, 1);` and `object Order { a: Money; b: Point; c: Color; d: Option<Sequence<Money>[0, 3]>; e: M::Total; g: Quantity<m>; h: Decimal[0, 100; 2, 2; exact]; operation f(p: Money): Option<Reference<Order>>; }`, `fsl_spelling` with each member's slot returns `Money`, `Point`, `Color`, `Option<Sequence<Money>[0, 3]>`, `M::Total`, `Quantity<m>`, `Decimal[0, 100; 2, 2; exact]`, `Money` for `p` and `Option<Reference<Order>>` for the result. Without a slot, `a` returns `Decimal[0, 100; 2, 2; exact]`. Every `NodeKey`, enum owner key, `EffectiveId` and declared unit that a `Resolved` type in the view holds has a registry entry. `Display` of each of these types starts with `resolved:`, holds no `Debug` text, and is the same in two runs. Replacing the registry entry of `Point`'s key with `Spot` changes the spelling of `b` to `Spot` and changes no record, `ValueType`, equality or conformance verdict. In a subtype `object Rush extends Order`, an override `f(p: Decimal[0, 200; 2, 2; exact]): Option<Reference<Order>>` is refused `ill_typed`/`variance-parameter`, and the refusal message names the base parameter type `Money` and the override's `Decimal[0, 200; 2, 2; exact]`. For a member `w: W`, where `record W { c: Clock; }`, the `resolved_path` row of the step `field(w)` has member type `W`. Neither output contains `resolved:` text. | Test (TC-2360) |
 
 For AC-6, a hand-written `PartialEq` or `Hash`, a name beside a filler field,
 a local map, and the root crate's lane-private `QualifiedName` types are
