@@ -284,6 +284,38 @@ pub(crate) fn bounded_package_with_clauses(
     CheckedPackage::link(graph)
 }
 
+/// A package declaring the event-position clauses `bounded` and the
+/// infinite-trace clauses `infinite` together (name, fairness, formula).
+pub(crate) fn mixed_package_with_clauses(
+    document: &[u8],
+    bounded: &[(&str, &str, &str)],
+    infinite: &[(&str, &str, &str)],
+) -> (CheckedPackage, fsl_foundation::Source) {
+    let mut text = unit_text("").replace(
+        "profile t0 = \"filament.temporal.infinite-trace/v1\";",
+        "profile t0 = \"filament.temporal.infinite-trace/v1\";\nprofile t1 = \"filament.temporal.event-position.false-extension/v1\";",
+    );
+    for (name, fairness, formula) in infinite {
+        text += &clause_text(name, fairness, formula);
+    }
+    for (name, fairness, formula) in bounded {
+        text += &clause_text(name, fairness, formula).replace(" using t0 ", " using t1 ");
+    }
+    let source = fsl_cst::parse(
+        SourceIdentity::new("agent-ix", "counter"),
+        "counter.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 parses the unit")
+    .source()
+    .clone();
+    let graph = declarations_from_text(document, text)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
+    (CheckedPackage::link(graph), source)
+}
+
 /// The text of the temporal clause `name` over `c: M::Counter`, `on origin`,
 /// whose formula is `formula` under infinite-trace.
 pub(crate) fn clause_text(name: &str, fairness: &str, formula: &str) -> String {

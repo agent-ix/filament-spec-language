@@ -46,9 +46,9 @@ pub use progress::{
 };
 use temporal::TemporalRun;
 pub use temporal::{
-    admit_progress, authenticate_package_trace, name_clause_atom, run_package_temporal,
-    sample_position, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
-    FiniteWindowSupport, OverObject, PackageTemporalRequest, ProgressRefusal,
+    admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
+    run_package_temporal, sample_position, FiniteWindowAssessment, FiniteWindowPremises,
+    FiniteWindowReport, FiniteWindowSupport, OverObject, PackageTemporalRequest, ProgressRefusal,
     TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
     TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };

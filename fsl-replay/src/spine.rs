@@ -203,23 +203,24 @@ pub use call::{
 
 pub(crate) mod clause;
 pub use clause::{
-    admit_progress, authenticate_emission, authenticate_package_trace, name_clause_atom,
-    read_ledger, run_clause, run_clause_with_temporal_selections, run_package_temporal,
-    run_package_trace_subject, run_trace_subject_clause, sample_position, temporal_batch_exit_code,
-    temporal_batch_outcome, write_ledger, AuthenticatedTemporalSelection, AuthenticationFailure,
-    ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunReport,
-    ClauseRunRequest, ClauseRunSelection, ClauseRunSource, ClauseRunStage, ClauseRunUsage,
-    ConsequentEventRefusal, ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState,
-    ContradictedDimension, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
-    FiniteWindowSupport, LedgerBinding, LedgerReadError, ObservedPosition, OperationName,
-    OverObject, PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest,
-    PackagesStage, ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
-    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
-    ProgressRefusal, ProgressValue, TemporalAuthentication, TemporalIndeterminateReason,
-    TemporalPositionRefusal, TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict,
-    TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, TraceRefusal,
-    TraceSubjectClauseRequest, DEFAULT_MODEL_MAX_CANDIDATES,
+    admit_progress, authenticate_emission, authenticate_package_trace, clause_trace_binding,
+    name_clause_atom, read_ledger, run_clause, run_clause_with_temporal_selections,
+    run_package_temporal, run_package_trace_subject, run_trace_subject_clause, sample_position,
+    temporal_batch_exit_code, temporal_batch_outcome, write_ledger, AuthenticatedTemporalSelection,
+    AuthenticationFailure, ClauseArgument, ClauseArgumentValue, ClauseDisposition,
+    ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
+    ClauseRunStage, ClauseRunUsage, ConsequentEventRefusal, ConsequentSourceEvent,
+    ConsequentSourceEvents, ConsequentState, ContradictedDimension, FiniteWindowAssessment,
+    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LedgerBinding, LedgerReadError,
+    ObservedPosition, OperationName, OverObject, PackageAuthentication, PackageTemporalRequest,
+    PackageTraceSubjectRequest, PackagesStage, ProgressAssertion, ProgressClosure,
+    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
+    ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal, ProgressValue,
+    TemporalAuthentication, TemporalIndeterminateReason, TemporalPositionRefusal,
+    TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
+    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow, TraceBinding, TraceInput, TraceRefusal, TraceSubjectClauseRequest,
+    DEFAULT_MODEL_MAX_CANDIDATES,
 };
 mod refinement;
 pub use refinement::{
@@ -249,10 +250,12 @@ pub use protocol_proof::{
 pub mod query_proof;
 mod request;
 pub use request::{
-    read_clause_run_request, AnchorWire, ClauseArgumentWire, ClauseRequestParts,
-    ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind,
-    ClauseSelectionWire, FrameSelectionWire, FunctionSelectionWire, ObjectReferenceWire,
-    ObservationLimitsWire, SuppliedObservation,
+    read_clause_run_request, read_cover, read_lower_boundary, read_progress_assertion,
+    read_sample_text, read_trace_binding, AnchorWire, BindingWire, ClauseArgumentWire,
+    ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts,
+    ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire, FrameSelectionWire,
+    FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire, ObservationLimitsWire,
+    OrderKeyWire, ProgressWire, SuppliedObservation,
 };
 // FR-116: FR-115's frame run, shared with the frame replay (`crate::execute`).
 pub(crate) use clause::{check_clause_admitted, check_frame, ClauseCheck, CompiledRun, FrameCheck};

@@ -147,6 +147,8 @@ impl World {
             normalization: ModelNormalizationLimits::default(),
             accounting,
             max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+            retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
+            retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
         };
         monitor_with_evaluator(evaluator, &self.package, &request, &limits, cancel)
             .map(|staged| staged.into_value())
@@ -453,6 +455,8 @@ fn a_defective_trace_document_is_refused_at_its_first_defect() {
         normalization: ModelNormalizationLimits::default(),
         accounting: UNLIMITED,
         max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+        retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
+        retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
     };
     limits.observation.document_bytes = u64::try_from(bytes.len()).expect("small") - 1;
     let request = MonitorRequest {

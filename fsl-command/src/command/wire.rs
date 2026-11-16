@@ -556,3 +556,78 @@ pub(super) fn read_clocks(
 ) -> Result<fsl_replay::spine::RequestClocks, serde_json::Error> {
     clocks(&mut serde_json::Deserializer::from_str(raw.get()))
 }
+
+impl RequestKind for MonitorRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::MonitorRequest;
+}
+
+/// FR-644's closed `native-monitor/1` request.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorRequest {
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(deserialize_with = "from_object")]
+    pub program: Program,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub clauses: Vec<MonitorClauseWire>,
+    #[serde(deserialize_with = "from_object")]
+    pub trace: MonitorTraceWire,
+    /// The path of an FR-641 ledger file.
+    #[serde(default)]
+    pub ledger: Option<String>,
+    /// The path of a `filament.monitor-state/1` checkpoint to resume from.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Snapshot files by key, for records that name a snapshot by key.
+    #[serde(default, deserialize_with = "from_object")]
+    pub observations: std::collections::BTreeMap<String, String>,
+    /// The relative path of a JSON Lines record file (the batch form).
+    #[serde(default)]
+    pub records: Option<String>,
+}
+
+/// One selected clause: its name and, for a snapshot trace, its `over`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorClauseWire {
+    pub name: String,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub over: Option<MonitorOverWire>,
+}
+
+/// FR-641's `over`: the object a clause's `over` parameter names.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorOverWire {
+    #[serde(deserialize_with = "from_object")]
+    pub reference: fsl_replay::spine::ObjectReferenceWire,
+}
+
+/// The `trace` member: the kind and the members FR-641 gives it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorTraceWire {
+    pub kind: MonitorKindWire,
+    #[serde(default)]
+    pub lower_boundary: Option<fsl_replay::spine::LowerBoundaryWire>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub binding: Option<fsl_replay::spine::BindingWire>,
+    #[serde(default)]
+    pub cover: Option<fsl_replay::spine::CoverWire>,
+}
+
+/// The trace kinds a monitor request names.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum MonitorKindWire {
+    Finite,
+    Progressed,
+    Timestamped,
+    Timed,
+}

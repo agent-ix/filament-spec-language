@@ -212,6 +212,8 @@ fn limits(max_window_values: u64) -> MonitorLimits {
         normalization: ModelNormalizationLimits::default(),
         accounting: UNLIMITED,
         max_window_values,
+        retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
+        retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
     }
 }
 
@@ -592,7 +594,8 @@ fn a_handle_cancelled_before_the_call_returns_cancelled() {
             accounting: UNLIMITED,
             name,
             trace: &trace,
-            over: &object,
+            over: Some(&object),
+            ledger: None,
             sources: &world.event.sources,
             authentication: None,
             cancel,

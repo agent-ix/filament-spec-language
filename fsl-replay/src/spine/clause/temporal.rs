@@ -558,33 +558,6 @@ fn authenticate_trace(
 ) -> Result<Option<crate::spine::AuthenticatedTemporalSelection>, Box<ClauseDisposition>> {
     let node = site.node;
     let clause = node.clause();
-    // The temporal subject is read only to authenticate a clock-bearing
-    // trace.
-    let subject_of = || {
-        let Some(TemporalAuthentication {
-            clock_rows,
-            admitted_package,
-        }) = authentication
-        else {
-            return Err(filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "clock-bearing-trace-has-authentication-rows",
-            ));
-        };
-        let Some(declaration) = clock_rows.declaration(&node.identity(), node.claim().ordinal())
-        else {
-            return Err(filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "emitted-temporal-declaration-retains-checked-id",
-            ));
-        };
-        fsl_package::checked_views::temporal_subject(admitted_package, declaration).map_err(|_| {
-            filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "admitted-temporal-subject-resolves",
-            )
-        })
-    };
     // FR-645: a trace kind the clause's profile does not read refuses at stage
     // `admit` before any position is admitted.
     if !super::trace_refusal::profile_reads(clause.profile()).contains(&trace.kind()) {
@@ -599,8 +572,27 @@ fn authenticate_trace(
             return Ok(None)
         }
     };
-    let subject =
-        subject_of().map_err(|fault| Box::new(ClauseDisposition::EvaluateFault(fault)))?;
+    // A caller that holds no emission asserts none (FR-820: the decided reading
+    // of a `Finite` trace needs no binding), so a clock-bearing trace is read
+    // unauthenticated. With rows, the temporal subject is read to authenticate
+    // the trace's binding.
+    let Some(TemporalAuthentication {
+        clock_rows,
+        admitted_package,
+    }) = authentication
+    else {
+        return Ok(None);
+    };
+    let fault = |what: &'static str| {
+        Box::new(ClauseDisposition::EvaluateFault(
+            filament_semantic_value::catalog::InternalFault::new("FR-050", what),
+        ))
+    };
+    let Some(declaration) = clock_rows.declaration(&node.identity(), node.claim().ordinal()) else {
+        return Err(fault("emitted-temporal-declaration-retains-checked-id"));
+    };
+    let subject = fsl_package::checked_views::temporal_subject(admitted_package, declaration)
+        .map_err(|_| fault("admitted-temporal-subject-resolves"))?;
     authenticate_binding(binding, &subject, node.claim().ordinal()).map(Some)
 }
 
@@ -608,6 +600,7 @@ fn authenticate_trace(
 /// temporal clause `name` of `package`, before any of its positions is
 /// admitted. A clause `package` does not declare, and a `Finite` or `Lasso`
 /// trace, authenticate nothing.
+/// `authentication` is `None` for a caller that holds no emission
 ///
 /// # Errors
 ///
@@ -617,7 +610,7 @@ pub fn authenticate_package_trace(
     package: &fsl_package::CheckedPackage,
     name: &str,
     trace: &TraceInput,
-    authentication: TemporalAuthentication<'_>,
+    authentication: Option<TemporalAuthentication<'_>>,
 ) -> Result<(), Box<ClauseDisposition>> {
     let Some(node) = package
         .graph()
@@ -628,7 +621,40 @@ pub fn authenticate_package_trace(
         return Ok(());
     };
     let site = ClauseSite { package, node };
-    authenticate_trace(site, trace, Some(authentication)).map(drop)
+    authenticate_trace(site, trace, authentication).map(drop)
+}
+
+/// The `TraceBinding` a trace of the clause `name` asserts to agree with the
+/// emitted package: its profile, clock name and clock configuration, read from
+/// the admitted `temporal_bindings` row. `None` for a clause the package does
+/// not declare or that has no clock row.
+pub fn clause_trace_binding(
+    package: &fsl_package::CheckedPackage,
+    name: &str,
+    authentication: TemporalAuthentication<'_>,
+) -> Option<TraceBinding> {
+    let node = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == name)?;
+    let declaration = authentication
+        .clock_rows
+        .declaration(&node.identity(), node.claim().ordinal())?;
+    let subject =
+        fsl_package::checked_views::temporal_subject(authentication.admitted_package, declaration)
+            .ok()?;
+    let occurrence = node.claim().ordinal();
+    let row = subject
+        .occurrences()
+        .iter()
+        .find(|found| found.ordinal == occurrence)
+        .and_then(|found| subject.clock_of(found))?;
+    Some(TraceBinding {
+        profile: subject.profile().definition.identity.to_string(),
+        clock_name: row.clock_name.to_string(),
+        parameters: row.clock.clone(),
+    })
 }
 
 /// FR-283: one temporal clause run over a checked package, with no source to
@@ -652,14 +678,20 @@ pub struct PackageTemporalRequest<'a> {
     pub name: &'a str,
     /// The supplied trace.
     pub trace: &'a TraceInput,
-    /// The object the clause's `over` parameter names.
-    pub over: &'a OverObject,
+    /// The object the clause's `over` parameter names; `None` for a clause
+    /// over a declared record trace subject, whose positions are record
+    /// samples (FR-641).
+    pub over: Option<&'a OverObject>,
+    /// The progress ledger carried into the run (FR-502); `None` starts a
+    /// fresh one for a trace that asserts progress.
+    pub ledger: Option<&'a ProgressLedger>,
     /// The unit's and each library's source the package was checked from;
     /// a locus and an atom name are rendered from them.
     pub sources: &'a [Source],
     /// What FR-522 authenticates a `Progressed` or `Timestamped` trace
-    /// against; `None` for a request that holds no emission, which accepts
-    /// only a `Finite` or `Lasso` trace.
+    /// against; `None` for a request that holds no emission, which reads a
+    /// `Progressed` or `Timestamped` trace unauthenticated (FR-820), with no
+    /// `authenticated_temporal_selection` in its report.
     pub authentication: Option<TemporalAuthentication<'a>>,
     /// The caller's handle, polled at every charge of the run's meter.
     pub cancel: &'a filament_exact::Cancel,
@@ -667,9 +699,9 @@ pub struct PackageTemporalRequest<'a> {
 
 /// FR-283: run one temporal clause over a supplied finite or lasso trace
 /// through the evaluator [`super::run_clause`]'s `Temporal` selection uses.
-/// A progressed or timestamped trace without `authentication` reports an
-/// internal failure, because it has no emitted package to be authenticated
-/// against.
+/// A progressed or timestamped trace without `authentication` is read
+/// unauthenticated: its binding is not checked and its report carries no
+/// authenticated selection.
 pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunReport {
     let provisions = Provisions {
         snapshots: request.snapshots,
@@ -693,8 +725,8 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
         &TemporalRun {
             name: request.name,
             trace: request.trace,
-            over: Some(request.over),
-            ledger: None,
+            over: request.over,
+            ledger: request.ledger,
             authentication: request.authentication,
             cancel: Some(request.cancel),
         },

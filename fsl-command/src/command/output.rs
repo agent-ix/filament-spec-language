@@ -21,6 +21,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-644 `filament.monitor-run/1` document.
+    pub(super) fn monitor_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// Inspect the encoded observations without changing the admitted shape.
     pub fn as_value(&self) -> &Value {
         &self.0
@@ -133,8 +138,11 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::AnalyzeRequest { .. }
         | RunCause::AnalyzeUniverse(_)
         | RunCause::AnalyzeNotYetImplemented { .. }
-        | RunCause::AnalyzeRefused(_) => (types::Stage::Request, types::Details::None),
-        RunCause::AnalyzeFault => (types::Stage::Output, types::Details::None),
+        | RunCause::AnalyzeRefused(_)
+        | RunCause::MonitorRefused(_) => (types::Stage::Request, types::Details::None),
+        RunCause::AnalyzeFault | RunCause::MonitorFault | RunCause::MonitorCancelled => {
+            (types::Stage::Output, types::Details::None)
+        }
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
             match clock_selection_refusal(&failure.refusal) {

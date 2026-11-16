@@ -733,7 +733,6 @@ fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
     "FSpec-TC-1162",
     "FSpec-FR-114-AC-5"
 )]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
     let directory = tempfile::tempdir().unwrap();
     let levels = [0, 1, 2, 1];
@@ -741,14 +740,14 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
         .iter()
         .map(|level| json!({"observation": sample(*level)}).to_string())
         .collect();
-    records.push(json!({"end": "open"}).to_string());
+    records.push(json!({"end": true}).to_string());
     std::fs::write(directory.path().join("records.jsonl"), records.join("\n")).unwrap();
     let request = json!({"format": "native-monitor/1", "request": {
-        "models": [], "program": program(), "clocks": clocks(),
+        "models": [], "program": program(), "clocks": trace_clocks(),
         "clauses": [{"name": "Reaches"}, {"name": "Never"}],
         "trace": {"kind": "finite"},
         "records": "records.jsonl"}});
-    let output = run_file(&write(directory.path(), "monitor.json", &request));
+    let output = run_file(&write_trace(directory.path(), "monitor.json", &request));
     assert_eq!(output.status.code(), Some(10));
     let run = result(&output);
     assert_eq!(run["format"], "filament.monitor-run/1", "{run}");
@@ -756,23 +755,53 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
 
     for clause in ["Reaches", "Never"] {
         let mut status = Value::Null;
+        let mut decided = 0;
+        let batch_of = |upto: usize| {
+            let prefix = trace_request(json!({"name": clause,
+                "trace": {"finite": samples(&levels[..=upto])}}));
+            result(&run_file(&write_trace(
+                directory.path(),
+                &format!("{clause}-{upto}.json"),
+                &prefix,
+            )))
+        };
         for record in 0..levels.len() {
             if let Some(event) = events
                 .iter()
                 .find(|event| event["record"] == record && event["clause"] == clause)
             {
                 status = event["disposition"].clone();
+                decided = record;
+                // Only `Never` settles, at record 2 (FR-644-AC-5).
+                assert_eq!(
+                    event["settled"],
+                    clause == "Never" && record >= 2,
+                    "{clause} settled at record {record}"
+                );
+                // `settlement` is present exactly when `settled` is true.
+                if clause == "Never" && record >= 2 {
+                    assert_eq!(
+                        event["settlement"],
+                        json!({"step": "3", "trigger": "decided",
+                            "basis": batch_of(2)["basis"], "horizon": "2", "position": "0"}),
+                        "{event}"
+                    );
+                } else {
+                    assert!(event.get("settlement").is_none(), "{event}");
+                }
             }
-            let prefix = run_request(json!({"name": clause,
-                "trace": {"finite": samples(&levels[..=record])}}));
-            let batch = result(&run_file(&write(
-                directory.path(),
-                &format!("{clause}-{record}.json"),
-                &prefix,
-            )));
+            // A settled result never changes (FR-643-AC-3), so the status
+            // equals the clause run at the record that decided it; its
+            // category equals the clause run over every sample so far.
+            let batch = batch_of(record);
             assert_eq!(
-                status, batch["disposition"],
+                status["category"], batch["disposition"]["category"],
                 "{clause} after record {record}"
+            );
+            assert_eq!(
+                status,
+                batch_of(decided)["disposition"],
+                "{clause} as decided at record {decided}"
             );
         }
         let summary = run["summary"]["clauses"]
@@ -780,7 +809,72 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             .and_then(|clauses| clauses.iter().find(|entry| entry["clause"] == clause))
             .expect("a summary entry");
         assert_eq!(summary["disposition"], status, "{clause} summary");
+        assert_eq!(
+            summary["settled"],
+            clause == "Never",
+            "{clause} settled in the summary"
+        );
+        if clause == "Never" {
+            assert_eq!(summary["settlement"]["step"], "3", "{summary}");
+            assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
+        } else {
+            assert_eq!(
+                summary["settlement"],
+                json!({"step": "4", "trigger": "finish"}),
+                "{summary}"
+            );
+        }
+        assert!(
+            run["summary"]["ledger"].is_null(),
+            "a finite summary has no ledger: {run}"
+        );
     }
+}
+
+/// FR-644-AC-7 (TC-2340): a `finite` stream of `E` over levels 0, 1, 2 gives
+/// at record 2 an event settled with `B(3)`'s disposition and a settlement
+/// naming the deciding reading; the earlier events carry none, and the
+/// summary repeats the settlement and has no ledger.
+#[test]
+#[trace("TC-2340", "FR-644-AC-7")]
+fn a_settled_event_carries_the_reading_that_decided_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut records = observations(&[0, 1, 2]);
+    records.push(json!({"end": true}));
+    let output = monitor_run(
+        directory.path(),
+        "settlement",
+        monitor_request(json!([{"name": "E"}]), json!({"kind": "finite"})),
+        &records,
+    );
+    let run = result(&output);
+    let events = run["events"].as_array().expect("events");
+    let batch = result(&run_file(&write_trace(
+        directory.path(),
+        "batch.json",
+        &trace_request(json!({"name": "E", "trace": {"finite": samples(&[0, 1, 2])}})),
+    )));
+    let settlement = json!({"step": "3", "trigger": "decided",
+        "basis": "decisive-witness", "horizon": "2", "position": "2"});
+    for event in events {
+        if event["record"] == 2 {
+            assert_eq!(event["settled"], true, "{event}");
+            assert_eq!(event["disposition"], batch["disposition"], "{event}");
+            assert_eq!(event["disposition"]["category"], "success", "{event}");
+            assert_eq!(event["basis"], "closed-scope", "{event}");
+            assert!(
+                event["disposition"].get("finite_window").is_none(),
+                "{event}"
+            );
+            assert_eq!(event["settlement"], settlement, "{event}");
+        } else {
+            assert_eq!(event["settled"], false, "{event}");
+            assert!(event.get("settlement").is_none(), "{event}");
+        }
+    }
+    let summary = &run["summary"];
+    assert_eq!(summary["clauses"][0]["settlement"], settlement, "{summary}");
+    assert!(summary["ledger"].is_null(), "{summary}");
 }
 
 /// FR-640-AC-4, AC-6 (TC-1661): a malformed configuration refuses at stage
@@ -966,12 +1060,12 @@ fn monitor_run(
     std::fs::write(directory.join(format!("{name}.jsonl")), lines.join("\n")).unwrap();
     let mut request = request;
     request["request"]["records"] = json!(format!("{name}.jsonl"));
-    run_file(&write(directory, &format!("{name}.json"), &request))
+    run_file(&write_trace(directory, &format!("{name}.json"), &request))
 }
 
 fn monitor_request(clauses: Value, trace: Value) -> Value {
     json!({"format": "native-monitor/1", "request": {
-        "models": [], "program": program(), "clocks": clocks(),
+        "models": [], "program": program(), "clocks": trace_clocks(),
         "clauses": clauses, "trace": trace}})
 }
 
@@ -987,7 +1081,6 @@ fn observations(levels: &[i64]) -> Vec<Value> {
 /// ledger; a stamp at the retained watermark is refused and the stream goes on.
 #[test]
 #[trace("TC-1666", "FR-643-AC-2", "TC-1667", "FR-643-AC-5")]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn a_timestamped_stream_matches_the_batch_run_and_refuses_a_regressing_stamp() {
     let directory = tempfile::tempdir().unwrap();
     let trace = json!({"kind": "timestamped", "lower_boundary": "authoritative-origin",
@@ -998,7 +1091,7 @@ fn a_timestamped_stream_matches_the_batch_run_and_refuses_a_regressing_stamp() {
         records.push(json!({"progress": progress(stamp)}));
     }
     records.insert(4, json!({"observation": sample(1), "stamp": 2}));
-    records.push(json!({"end": "closed"}));
+    records.push(json!({"end": true}));
     let output = monitor_run(
         directory.path(),
         "stamped",
@@ -1027,21 +1120,20 @@ fn request_batch(directory: &Path) -> Value {
         .into_iter()
         .map(|(stamp, level)| json!({"position": sample(level), "stamp": stamp}))
         .collect();
-    let request = run_request(json!({"name": "T", "trace": {"timestamped": {
+    let request = trace_request(json!({"name": "T", "trace": {"timestamped": {
         "observations": observations, "progress": progress(5),
         "lower_boundary": "authoritative-origin", "binding": binding(STAMPED, "plant-ms")}}}));
-    result(&run_file(&write(directory, "batch.json", &request)))
+    result(&run_file(&write_trace(directory, "batch.json", &request)))
 }
 
 /// FR-643-AC-3, FR-644-AC-1 (TC-1666, TC-1668): a settled violation is
 /// reported once, at the observation that decides it, and never changes.
 #[test]
 #[trace("TC-1666", "FR-643-AC-3", "TC-1668", "FR-644-AC-1")]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn a_settled_result_is_reported_once_and_never_changes() {
     let directory = tempfile::tempdir().unwrap();
     let mut records = observations(&[0, 1, 2, 1, 0]);
-    records.push(json!({"end": "open"}));
+    records.push(json!({"end": true}));
     let output = monitor_run(
         directory.path(),
         "settled",
@@ -1074,7 +1166,6 @@ fn a_settled_result_is_reported_once_and_never_changes() {
 /// resumed request give the later events of the uninterrupted stream.
 #[test]
 #[trace("TC-1667", "FR-643-AC-4", "TC-1669", "FR-644-AC-3")]
-#[ignore = "QSL-1977: the monitor command does not checkpoint or resume yet"]
 fn a_checkpointed_stream_resumes_to_the_same_events() {
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(
@@ -1082,7 +1173,7 @@ fn a_checkpointed_stream_resumes_to_the_same_events() {
         json!({"kind": "finite"}),
     );
     let mut whole = observations(&[0, 1, 2, 1, 0]);
-    whole.push(json!({"end": "open"}));
+    whole.push(json!({"end": true}));
     let full = result(&monitor_run(
         directory.path(),
         "whole",
@@ -1092,12 +1183,12 @@ fn a_checkpointed_stream_resumes_to_the_same_events() {
 
     let mut head = observations(&[0, 1]);
     head.push(json!({"checkpoint": "state.json"}));
-    head.push(json!({"end": "open"}));
+    head.push(json!({"end": true}));
     monitor_run(directory.path(), "head", request.clone(), &head);
     let mut resumed_request = request;
     resumed_request["request"]["state"] = json!("state.json");
     let mut tail = observations(&[2, 1, 0]);
-    tail.push(json!({"end": "open"}));
+    tail.push(json!({"end": true}));
     let resumed = result(&monitor_run(
         directory.path(),
         "tail",
@@ -1115,12 +1206,11 @@ fn a_checkpointed_stream_resumes_to_the_same_events() {
 /// returns the command-error envelope before any record.
 #[test]
 #[trace("TC-1668", "FR-644-AC-2", "TC-1669", "FR-644-AC-4")]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn a_bad_record_is_an_event_and_a_bad_request_is_refused() {
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(json!([{"name": "Never"}]), json!({"kind": "finite"}));
     let mut good = observations(&[0, 1, 2]);
-    good.push(json!({"end": "open"}));
+    good.push(json!({"end": true}));
     let clean = result(&monitor_run(
         directory.path(),
         "clean",
@@ -1195,7 +1285,7 @@ fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
 fn a_monitor_request_supplies_the_integer_division_law() {
     let directory = tempfile::tempdir().unwrap();
     let mut records = observations(&[0, 1, 2]);
-    records.push(json!({"end": "open"}));
+    records.push(json!({"end": true}));
     let lines: Vec<String> = records.iter().map(Value::to_string).collect();
     std::fs::write(directory.path().join("half.jsonl"), lines.join("\n")).unwrap();
     let run = |law: Option<&str>| {
@@ -1290,4 +1380,175 @@ fn a_timed_trace_answers_a_timed_clause() {
     assert_eq!(output.status.code(), Some(0), "{:?}", output.stderr);
     let document = result(&output);
     assert_eq!(document["disposition"]["truth"], true, "{document}");
+}
+
+/// FR-644-AC-1, AC-4 (TC-1668, TC-1669): `command::monitor` hands the sink
+/// each event before reading the next record, gives the events and summary
+/// the batch form gives, and refuses a request naming no clause before any
+/// record is read.
+#[test]
+#[trace("TC-1668", "FR-644-AC-1", "TC-1669", "FR-644-AC-4")]
+fn command_monitor_streams_events_to_its_sink() {
+    use fsl_command::command::{monitor, MonitorEvent, RunLimits};
+
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        json!({"kind": "finite"}),
+    );
+    let path = write_trace(directory.path(), "stream.json", &request);
+    let mut lines: Vec<String> = observations(&[0, 1, 2, 1, 0])
+        .iter()
+        .map(Value::to_string)
+        .collect();
+    lines.push(json!({"end": true}).to_string());
+    let mut seen: Vec<MonitorEvent> = Vec::new();
+    let handed = std::cell::Cell::new(0_usize);
+    let records = lines.iter().enumerate().map(|(index, line)| {
+        // The events of records 0 to 2 are with the sink before record 3 is read.
+        if index == 3 {
+            assert!(handed.get() >= 3, "{}", handed.get());
+        }
+        Ok(line.clone().into_bytes())
+    });
+    let summary = monitor(
+        &path,
+        records,
+        &mut |event| {
+            handed.set(handed.get() + 1);
+            seen.push(event.clone());
+        },
+        RunLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the stream runs");
+    assert_eq!(summary.exit_code, 10);
+    assert!(
+        seen.iter()
+            .any(|event| event.as_value()["clause"] == "Never"
+                && event.as_value()["category"] == "violation"
+                && event.as_value()["record"] == 2),
+        "{seen:?}"
+    );
+    assert_eq!(
+        summary.as_value()["clauses"][1]["category"],
+        "violation",
+        "{}",
+        summary.as_value()
+    );
+
+    let missing = write_trace(
+        directory.path(),
+        "missing.json",
+        &monitor_request(json!([{"name": "Absent"}]), json!({"kind": "finite"})),
+    );
+    let mut nothing = 0;
+    let refused = monitor(
+        &missing,
+        lines.iter().map(|line| Ok(line.clone().into_bytes())),
+        &mut |_| nothing += 1,
+        RunLimits::default(),
+        &filament_exact::Cancel::new(),
+    );
+    let error = refused.expect_err("an unknown clause is refused");
+    assert_eq!(error.category().exit_code(), 20);
+    assert!(error.to_string().contains("Absent"), "{error}");
+    assert_eq!(nothing, 0);
+}
+
+/// FR-644-AC-6 (TC-2324), refusal half: `{"end": "closed"}`, `{"end": "open"}`
+/// and `{"through": X}` on a finite stream each give a `refusal` event naming
+/// `end` or `through`, and leave the session unchanged.
+#[test]
+#[trace("TC-2324", "FR-644-AC-6")]
+fn end_with_a_closure_and_through_are_refused_as_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(json!([{"name": "Never"}]), json!({"kind": "finite"}));
+    let mut clean = observations(&[0, 1, 2]);
+    clean.push(json!({"end": true}));
+    let clean = result(&monitor_run(
+        directory.path(),
+        "clean",
+        request.clone(),
+        &clean,
+    ));
+    let mut noisy = observations(&[0, 1]);
+    noisy.push(json!({"end": "closed"}));
+    noisy.push(json!({"through": 250}));
+    noisy.push(json!({"end": "open"}));
+    noisy.extend(observations(&[2]));
+    noisy.push(json!({"end": true}));
+    let noisy = result(&monitor_run(directory.path(), "noisy", request, &noisy));
+    let members: Vec<(u64, String)> = noisy["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["category"] == "refusal")
+        .map(|event| {
+            (
+                event["record"].as_u64().expect("a record"),
+                event["disposition"]["member"]
+                    .as_str()
+                    .expect("a member")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        members,
+        vec![
+            (2, "end".to_owned()),
+            (3, "through".to_owned()),
+            (4, "end".to_owned())
+        ],
+        "{noisy}"
+    );
+    assert_eq!(
+        noisy["summary"]["clauses"], clean["summary"]["clauses"],
+        "{noisy}"
+    );
+}
+
+/// FR-643, FR-504 (TC-2321): a fixed-sample clause on a `Progressed` stream
+/// reads under the session's latest assertion. After one sample, a
+/// watermark-only assertion W 3 complete through 3 settles `S`
+/// (`eventually[0,3]`) `violation` on its own, naming the horizon 3; W 2
+/// leaves it pending.
+#[test]
+#[trace("TC-2321", "FR-643-AC-7", "FR-504")]
+fn a_watermark_assertion_alone_settles_a_fixed_sample_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, watermark, settles) in [("deadline", 3, true), ("short", 2, false)] {
+        let trace = json!({"kind": "progressed", "lower_boundary": "authoritative-origin",
+            "binding": binding(SAMPLED, "sample")});
+        let records = [
+            json!({"observation": sample(0)}),
+            json!({"progress": progress(watermark)}),
+            json!({"end": true}),
+        ];
+        let output = monitor_run(
+            directory.path(),
+            name,
+            monitor_request(json!([{"name": "S"}]), trace),
+            &records,
+        );
+        let run = result(&output);
+        let event = run["events"]
+            .as_array()
+            .and_then(|events| events.iter().rev().find(|event| event["clause"] == "S"))
+            .expect("an event for S");
+        assert_eq!(event["settled"], settles, "W {watermark}: {run}");
+        if settles {
+            assert_eq!(event["category"], "violation", "{event}");
+            assert_eq!(event["record"], 1, "{event}");
+            assert_eq!(event["settlement"]["trigger"], "decided", "{event}");
+            assert_eq!(
+                event["settlement"]["basis"], "decisive-counterexample",
+                "{event}"
+            );
+            assert_eq!(event["settlement"]["horizon"], "3", "{event}");
+        } else {
+            assert!(event.get("settlement").is_none(), "{event}");
+        }
+    }
 }

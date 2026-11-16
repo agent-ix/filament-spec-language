@@ -5,6 +5,7 @@
 //! selected clause.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use filament_exact::{Cancel, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category, InternalFault};
@@ -16,7 +17,7 @@ use fsl_replay::spine::{
     authenticate_emission, authenticate_package_trace, name_clause_atom, run_package_temporal,
     run_package_trace_subject, AuthenticationFailure, ClauseDisposition, ClauseRunReport,
     ClauseRunStage, OverObject, PackageAuthentication, PackageTemporalRequest,
-    PackageTraceSubjectRequest, PackagesStage, RunRefusal, SpineLimits,
+    PackageTraceSubjectRequest, PackagesStage, ProgressRefusal, RunRefusal, SpineLimits,
     TemporalIndeterminateReason, TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict,
     TraceInput,
 };
@@ -97,7 +98,22 @@ pub struct MonitorLimits {
     /// FR-194's window limit, `monitor.max_window_values`, of every window
     /// aggregate a `Samples` run reads.
     pub max_window_values: u64,
+    /// FR-643's `monitor.retained_positions`: the most positions a stepping
+    /// session keeps at once for one clause.
+    pub retained_positions: u64,
+    /// FR-643's `monitor.retained_identities`: the most position identities one
+    /// unsettled clause keeps for the counterexample it may still report.
+    pub retained_identities: u64,
 }
+
+/// The published default of `monitor.retained_identities`.
+pub const DEFAULT_RETAINED_IDENTITIES: u64 = 1_048_576;
+
+/// The published default of `monitor.max_window_values` (FR-194).
+pub const DEFAULT_MAX_WINDOW_VALUES: u64 = fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES;
+
+/// The published default of `monitor.retained_positions`.
+pub const DEFAULT_RETAINED_POSITIONS: u64 = 1_048_576;
 
 /// What a clause run reports (FR-283 Outputs table).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,7 +144,7 @@ pub enum MonitorVerdict {
 }
 
 /// One selected clause's record, in request order.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MonitorRecord {
     /// The clause's declared name.
     pub clause: String,
@@ -139,7 +155,7 @@ pub struct MonitorRecord {
     /// The source text of the atom a `InsufficientData` or `Indeterminate`
     /// record names.
     atom: Option<String>,
-    report: ClauseRunReport,
+    report: Arc<ClauseRunReport>,
 }
 
 impl MonitorRecord {
@@ -176,11 +192,62 @@ impl MonitorRecord {
     }
 }
 
+/// What settled a clause (FR-643 "Settlement").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettleTrigger {
+    /// The profile's evaluator decided it.
+    Decided,
+    /// A retention limit ended it `incomplete`.
+    Limit,
+    /// It settled at `finish`.
+    Finish,
+}
+
+impl SettleTrigger {
+    /// The wire label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Decided => "decided",
+            Self::Limit => "limit",
+            Self::Finish => "finish",
+        }
+    }
+}
+
+/// The reading that decided a clause, for the `decided` trigger.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecidingReading {
+    /// The FSpec FR-243 basis of the deciding reading.
+    pub basis: fsl_replay::SettlementBasis,
+    /// The seen horizon of the deciding reading.
+    pub horizon: u64,
+    /// The position at which the reading reports its verdict, if it names one.
+    pub position: Option<u64>,
+}
+
+/// How a settled clause settled (FR-643 "Settlement"): the report stays
+/// `B(s)`, and this records the reading that made it final.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Settlement {
+    /// The call at which the clause settled.
+    pub step: u64,
+    /// What settled it.
+    pub trigger: SettleTrigger,
+    /// The deciding reading; present exactly for the `decided` trigger.
+    pub reading: Option<DecidingReading>,
+}
+
 /// A completed `monitor` request.
 #[derive(Debug)]
 pub struct MonitorOutcome {
     /// One record per selected clause, in request order.
     pub records: Vec<MonitorRecord>,
+    /// For each record, how its clause settled (FR-643 "Settlement"); a clause
+    /// still pending at the end settles at `finish`. Empty for the one-shot
+    /// `monitor`, which settles nothing early.
+    pub settlements: Vec<Settlement>,
+    /// The session's final progress ledger, for a kind that carries progress.
+    pub ledger: Option<fsl_replay::spine::ProgressLedger>,
 }
 
 impl MonitorOutcome {
@@ -194,7 +261,7 @@ impl MonitorOutcome {
             Some(OutcomeStage::S6a),
             self.records
                 .iter()
-                .map(|record| (record.clause.as_str(), &record.report)),
+                .map(|record| (record.clause.as_str(), record.report.as_ref())),
         )
     }
 }
@@ -243,6 +310,25 @@ pub enum MonitorRefusal {
         /// The source the region names.
         source: SourceIdentity,
     },
+    /// FR-643: a session refuses an observation or progress assertion it
+    /// cannot take, as `invalid_runtime_input` with `cause`, and keeps its
+    /// state.
+    Observation {
+        /// The member at fault.
+        member: &'static str,
+        /// The catalog cause.
+        cause: &'static str,
+    },
+    /// FR-643 "Order": an observation or progress assertion that contradicts
+    /// the progress ledger (FR-502).
+    Contradiction(Box<ProgressRefusal>),
+    /// FR-643 "Checkpoint": a state that does not fit its package and request,
+    /// at stage `admit`.
+    State {
+        /// The refused admission, `invalid_runtime_input`/`invalid-value` with
+        /// `reason` `monitor-state-mismatch`.
+        failure: Box<AdmissionFailure>,
+    },
 }
 
 impl MonitorRefusal {
@@ -265,12 +351,18 @@ impl MonitorRefusal {
             Self::Admission { position, failure } => crate::analyze::refusal_document(
                 Operation::Monitor,
                 failure,
-                format!("trace position {position}: {failure}"),
+                format!(
+                    "trace position {position}: {failure}{}",
+                    record_fields_text(failure)
+                ),
             ),
             Self::ClauseRefused { clause, failure } => crate::analyze::refusal_document(
                 Operation::Monitor,
                 failure,
-                format!("clause `{clause}`: {failure}"),
+                format!(
+                    "clause `{clause}`: {failure}{}",
+                    record_fields_text(failure)
+                ),
             ),
             Self::UnknownClause { name } => refused(
                 CatalogCode::new("missing_declaration", "missing-name"),
@@ -280,11 +372,25 @@ impl MonitorRefusal {
                 CatalogCode::new("invalid_runtime_input", "missing-member"),
                 format!("clause `{clause}` needs the source `{source:?}`, which `sources` lacks"),
             ),
+            Self::Observation { member, cause } => refused(
+                CatalogCode::new("invalid_runtime_input", cause),
+                format!("the session refuses `{member}`: {cause}"),
+            ),
+            Self::Contradiction(refusal) => refused(
+                refusal.record.catalog,
+                "the supplied progress contradicts the retained ledger".to_owned(),
+            ),
+            Self::State { failure } => crate::analyze::refusal_document(
+                Operation::Monitor,
+                failure,
+                "the checkpoint does not fit the package and request".to_owned(),
+            ),
         }
     }
 }
 
-type Failure = StageFailure<MonitorRefusal>;
+/// A stepping session's or a one-shot request's failure.
+pub(crate) type Failure = StageFailure<MonitorRefusal>;
 
 /// FR-283: check `request.trace` against each selected clause of `package`.
 ///
@@ -358,11 +464,15 @@ pub fn monitor_with_evaluator(
             }
         }
     }
-    Ok(Staged::new(MonitorOutcome { records }))
+    Ok(Staged::new(MonitorOutcome {
+        records,
+        settlements: Vec::new(),
+        ledger: None,
+    }))
 }
 
 /// One request's inputs, shared by the stages of [`monitor`].
-struct Runs<'a> {
+pub(crate) struct Runs<'a> {
     evaluator: TraceEvaluator,
     package: &'a CheckedPackage,
     request: &'a MonitorRequest<'a>,
@@ -407,13 +517,13 @@ impl Runs<'_> {
             &SpineLimits::default(),
             self.cancel,
         )
-        .map_err(|failure| self.emission_failure(failure, &first.name))?;
+        .map_err(|failure| Self::emission_failure(&self.request.clauses, failure, &first.name))?;
         for clause in &self.request.clauses {
             if let Err(disposition) = authenticate_package_trace(
                 self.package,
                 &clause.name,
                 input,
-                authentication.temporal(),
+                Some(authentication.temporal()),
             ) {
                 return Err(
                     request_failure(&clause.name, &disposition).unwrap_or_else(|| {
@@ -436,7 +546,11 @@ impl Runs<'_> {
     /// `invalid_runtime_input`/`invalid-value` naming the member; a missing
     /// selection of a declaration no selected clause owns is
     /// `missing_declaration`/`missing-selection` on `first` as well.
-    fn emission_failure(&self, failure: AuthenticationFailure, first: &str) -> Failure {
+    pub(crate) fn emission_failure(
+        clauses: &[MonitorClause],
+        failure: AuthenticationFailure,
+        first: &str,
+    ) -> Failure {
         let refusal = |clause: &str, code, cause, member: &str, stage: Option<&str>| {
             let mut fields = BTreeMap::from([("member", member.to_owned())]);
             if let Some(stage) = stage {
@@ -452,7 +566,7 @@ impl Runs<'_> {
             AuthenticationFailure::MissingSelection { clause } => {
                 let owner = clause
                     .as_deref()
-                    .filter(|name| self.request.clauses.iter().any(|c| c.name == *name))
+                    .filter(|name| clauses.iter().any(|c| c.name == *name))
                     .unwrap_or(first);
                 refusal(
                     owner,
@@ -574,7 +688,8 @@ impl Runs<'_> {
             accounting: self.limits.accounting,
             name: &clause.name,
             trace: input,
-            over,
+            over: Some(over),
+            ledger: None,
             sources: self.request.sources,
             authentication: authentication.map(PackageAuthentication::temporal),
             cancel: self.cancel,
@@ -616,61 +731,73 @@ impl Runs<'_> {
         clause: &MonitorClause,
         report: ClauseRunReport,
     ) -> Result<MonitorRecord, Failure> {
-        let verdict = verdict_of(&clause.name, &report.disposition)?;
-        let atom = self.named_atom(clause, &report.disposition)?;
-        Ok(MonitorRecord {
-            clause: clause.name.clone(),
-            verdict,
-            category: report.category(),
-            atom,
-            report,
-        })
+        record_of(self.package, self.request.sources, &clause.name, report)
     }
+}
 
-    /// The atom a record names, by the source text of its condition, read
-    /// from `sources` (FR-283 Behavior).
-    fn named_atom(
-        &self,
-        clause: &MonitorClause,
-        disposition: &ClauseDisposition,
-    ) -> Result<Option<String>, Failure> {
-        let ClauseDisposition::Temporal(verdict) = disposition else {
-            return Ok(None);
-        };
-        match verdict {
-            TemporalVerdict::Indeterminate {
-                reason:
-                    TemporalIndeterminateReason::MissingValuation { atom, .. }
-                    | TemporalIndeterminateReason::ConflictingValuation { atom, .. },
-                ..
-            } => Ok(Some(atom.clone())),
-            TemporalVerdict::Undefined {
-                cause: TemporalUndefinedCause::InsufficientData { atom, .. },
-                ..
-            } => match name_clause_atom(self.package, self.request.sources, &clause.name, *atom) {
-                Ok(name) => Ok(Some(name)),
-                Err(refusal) => Err(match *refusal {
-                    RunRefusal::SourceNotSupplied { reference } => {
-                        StageFailure::Refused(MonitorRefusal::SourceNotSupplied {
-                            clause: clause.name.clone(),
-                            source: reference,
-                        })
-                    }
-                    RunRefusal::Fault(fault) => StageFailure::Fault(fault),
-                    _ => StageFailure::Fault(InternalFault::new(
-                        "monitor",
-                        "atom-naming-refuses-with-a-source-or-fault",
-                    )),
-                }),
-            },
-            _ => Ok(None),
-        }
+/// The record of the run of the clause `clause`, or the whole-request
+/// failure the run's disposition stands for.
+pub(crate) fn record_of(
+    package: &CheckedPackage,
+    sources: &[Source],
+    clause: &str,
+    report: ClauseRunReport,
+) -> Result<MonitorRecord, Failure> {
+    let verdict = verdict_of(clause, &report.disposition)?;
+    let atom = named_atom(package, sources, clause, &report.disposition)?;
+    Ok(MonitorRecord {
+        clause: clause.to_owned(),
+        verdict,
+        category: report.category(),
+        atom,
+        report: Arc::new(report),
+    })
+}
+
+/// The atom a record names, by the source text of its condition, read
+/// from `sources` (FR-283 Behavior).
+fn named_atom(
+    package: &CheckedPackage,
+    sources: &[Source],
+    clause: &str,
+    disposition: &ClauseDisposition,
+) -> Result<Option<String>, Failure> {
+    let ClauseDisposition::Temporal(verdict) = disposition else {
+        return Ok(None);
+    };
+    match verdict {
+        TemporalVerdict::Indeterminate {
+            reason:
+                TemporalIndeterminateReason::MissingValuation { atom, .. }
+                | TemporalIndeterminateReason::ConflictingValuation { atom, .. },
+            ..
+        } => Ok(Some(atom.clone())),
+        TemporalVerdict::Undefined {
+            cause: TemporalUndefinedCause::InsufficientData { atom, .. },
+            ..
+        } => match name_clause_atom(package, sources, clause, *atom) {
+            Ok(name) => Ok(Some(name)),
+            Err(refusal) => Err(match *refusal {
+                RunRefusal::SourceNotSupplied { reference } => {
+                    StageFailure::Refused(MonitorRefusal::SourceNotSupplied {
+                        clause: clause.to_owned(),
+                        source: reference,
+                    })
+                }
+                RunRefusal::Fault(fault) => StageFailure::Fault(fault),
+                _ => StageFailure::Fault(InternalFault::new(
+                    "monitor",
+                    "atom-naming-refuses-with-a-source-or-fault",
+                )),
+            }),
+        },
+        _ => Ok(None),
     }
 }
 
 /// The whole-request failure `disposition` stands for, when it stands for
 /// one.
-fn request_failure(clause: &str, disposition: &ClauseDisposition) -> Option<Failure> {
+pub(crate) fn request_failure(clause: &str, disposition: &ClauseDisposition) -> Option<Failure> {
     use ClauseDisposition as D;
     Some(match disposition {
         D::EvaluateFault(fault) => StageFailure::Fault(fault.clone()),
@@ -710,7 +837,10 @@ fn request_failure(clause: &str, disposition: &ClauseDisposition) -> Option<Fail
 }
 
 /// The verdict `disposition` stands for, or the whole-request failure.
-fn verdict_of(clause: &str, disposition: &ClauseDisposition) -> Result<MonitorVerdict, Failure> {
+pub(crate) fn verdict_of(
+    clause: &str,
+    disposition: &ClauseDisposition,
+) -> Result<MonitorVerdict, Failure> {
     use ClauseDisposition as D;
     use TemporalVerdict as V;
     if let Some(failure) = request_failure(clause, disposition) {
@@ -751,7 +881,25 @@ fn verdict_of(clause: &str, disposition: &ClauseDisposition) -> Result<MonitorVe
 }
 
 /// A refused admission failure with `code` and `cause`.
-fn refused(
+/// The record's fields as ` (name=value, ...)`, empty when it has none, so a
+/// rendered refusal keeps its `reason` and the members FR-645 names.
+fn record_fields_text(failure: &AdmissionFailure) -> String {
+    match failure {
+        AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record)
+            if !record.fields.is_empty() =>
+        {
+            let fields: Vec<String> = record
+                .fields
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect();
+            format!(" ({})", fields.join(", "))
+        }
+        _ => String::new(),
+    }
+}
+
+pub(crate) fn refused(
     code: Code,
     cause: &'static str,
     fields: BTreeMap<&'static str, String>,

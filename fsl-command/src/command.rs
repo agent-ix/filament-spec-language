@@ -3,11 +3,13 @@
 
 mod analyze;
 mod clause;
+mod monitor;
 mod output;
 mod output_file;
 mod wire;
 
 pub use analyze::{analyze, analyze_with_limits, prepare_analyze, AnalyzeInput, PreparedAnalyze};
+pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
 
 use crate::formal_source::FormalSource;
@@ -323,9 +325,18 @@ pub enum RunCause {
     /// analyze request was refused before any item ran.
     #[error("{0}")]
     AnalyzeRefused(Box<fsl_analyze::analyze::AnalyzeRefusal>),
+    /// FR-644: the monitor session refused the request, with FR-643's record.
+    #[error("{0:?}")]
+    MonitorRefused(Box<fsl_analyze::monitor::MonitorRefusal>),
     /// An analyze run faulted while writing its document.
     #[error("the analyze run faulted")]
     AnalyzeFault,
+    /// FR-644: a monitor run faulted.
+    #[error("the monitor run faulted")]
+    MonitorFault,
+    /// FR-644: the caller cancelled a monitor run.
+    #[error("the monitor run was cancelled")]
+    MonitorCancelled,
 }
 
 /// The two owner projections of the same source-intake refusal.
@@ -414,7 +425,15 @@ impl RunCause {
                 .first()
                 .and_then(|diagnostic| Code::from_code(diagnostic.code()))
                 .unwrap_or(Code::RuntimeInvariant),
-            Self::AnalyzeFault => Code::RuntimeInvariant,
+            Self::MonitorRefused(refusal) => refusal
+                .document()
+                .diagnostics()
+                .first()
+                .and_then(|diagnostic| Code::from_code(diagnostic.code()))
+                .unwrap_or(Code::RuntimeInvariant),
+            Self::AnalyzeFault | Self::MonitorFault | Self::MonitorCancelled => {
+                Code::RuntimeInvariant
+            }
         }
     }
 
@@ -435,7 +454,10 @@ impl RunCause {
             }
             Self::SpineRun(refusal) => refusal.category(),
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
+            Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::MonitorFault => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             _ => self.code().category(),
         }
     }
@@ -476,6 +498,7 @@ impl RunError {
             )]),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
+            RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -527,7 +550,9 @@ impl RunError {
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
             | RunCause::AnalyzeUniverse(_)
-            | RunCause::AnalyzeFault => OutcomeDocument::new(operation, None, self.category())
+            | RunCause::AnalyzeFault
+            | RunCause::MonitorFault
+            | RunCause::MonitorCancelled => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     None,
                     self.cause.code().as_str(),
@@ -704,6 +729,18 @@ pub fn run_with_limits_and_overrides(
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<RunResult, Box<RunError>> {
+    // FR-644: a `native-monitor/1` request runs its record file as the batch
+    // stream.
+    let monitored = with_request_limits(path, limits.request_bytes, |directory, bytes| {
+        if monitor::is_monitor_request(bytes) {
+            monitor::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
+        } else {
+            Ok(None)
+        }
+    })?;
+    if let Some(result) = monitored {
+        return Ok(result);
+    }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     execute_prepared(prepared).map_err(|cause| Box::new(RunError { cause }))
 }
