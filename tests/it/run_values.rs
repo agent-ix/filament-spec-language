@@ -6,7 +6,7 @@
 //! checks the argument form and the result form of one kind.
 
 use crate::command_harness::{Output, run_file};
-use filament_exact::{Integer, Value as KernelValue, ValueType};
+use filament_exact::{Integer, IntegerInterval, RationalDomain, Value as KernelValue, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
@@ -103,6 +103,13 @@ fn assert_call_refusal(function: &str, argument: Value, code: &str, cause: &str,
 fn run_value_codec_round_trips_boolean_and_big_integer_forms() {
     let types = TypeEnvironment::new(Vec::new(), Vec::new()).expect("empty type environment");
     let forms = fsl_replay::spine::RunValueForms::new(&types, &[]);
+    let rational_type = ValueType::Rational(
+        RationalDomain::new(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(9_i64)).unwrap(),
+            IntegerInterval::new(Integer::from(1_i64), Integer::from(9_i64)).unwrap(),
+        )
+        .unwrap(),
+    );
     for (form, value_type, expected) in [
         (
             json!({"boolean": true}),
@@ -114,12 +121,18 @@ fn run_value_codec_round_trips_boolean_and_big_integer_forms() {
             ValueType::Integer,
             json!({"integer": "9223372036854775808"}),
         ),
+        (
+            json!({"kind": "rational", "numerator": "4", "denominator": "6"}),
+            rational_type,
+            json!({"kind": "rational", "numerator": "2", "denominator": "3"}),
+        ),
     ] {
         let value = forms.read(&form, &value_type).expect("typed form reads");
         assert!(matches!(
             (&value_type, &value),
             (ValueType::Boolean, KernelValue::Boolean(true))
                 | (ValueType::Integer, KernelValue::Integer(_))
+                | (ValueType::Rational(_), KernelValue::Rational(_))
         ));
         if let KernelValue::Integer(integer) = &value {
             assert_eq!(integer.to_string(), "9223372036854775808");
