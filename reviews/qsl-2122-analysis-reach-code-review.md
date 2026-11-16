@@ -139,3 +139,32 @@ FSpec FR-368-AC-20 reads: "A derived item carries no `max_depth` (a derived item
 Round 2 evidence: fsl-analyze + fsl-route + fsl-replay with FSPEC_DIR set, 3563 passed, 0 failed, 85 ignored.
 
 Round 2 verdict: REQUEST CHANGES for FND-013 (high) and the still-open FND-006, FND-008 and FND-011. FND-014 and FND-015 are low.
+
+## Dispositions (round 2, head 9b01e5f69)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-006 | fixed | - |
+| FND-008 | fixed | - |
+| FND-011 | fixed | - |
+| FND-013 | fixed | - |
+| FND-014 | fixed | - |
+| FND-015 | still-open | `an_unread_member_settles_unsupported_not_requires_bound` is retagged to FR-507-AC-7, which is about relation claims and refinement occurrences and says nothing of unread members or `requires-bound`; the other two retags (TC-694) and the unit-test arms are correct |
+
+### Round 3 notes
+
+- **FND-013.** `resolve_derived` (document.rs:956) refuses a derived item that sets `temporal.max_depth` with `invalid-request` and `invalid_runtime_input`/`invalid-value`, naming `temporal.max_depth`. It does so before the EN-1/EN-6 split, so both paths are covered by construction. `deadlock_item` is back to `max_depth: None`, and `a_derived_item_that_sets_max_depth_is_refused_naming_the_member` asserts the refusal and exit 20 (FSpec FR-368-AC-20).
+- **FND-008.** `two_call_snapshot` adds a second `Call`. `max_clocks` 1 then settles `incomplete`, `limit-reached`, limit `max_clocks`, value 1, which matches W6 FR-632-AC-3 on origin/fsl-spec-w6 (244962bbe). W6 FR-632 also names the setting `model_check.max_clocks`. The test does not assert that, but it is not required for this AC.
+- **FND-014.** `Extent(ClassifyFailure::Limit)` now settles `incomplete` `ResourceExhausted` without naming a limit. That is acceptable:
+  - FR-625 "Budgets" and FR-621-AC-3 require `LimitReached{limit}` for a run that reaches one of the item's named limits (FSpec FR-127 `ModelCheckLimit`, raised by a request member).
+  - The type-position walk is bounded by the constant `BOUND_POSITIONS`. It is not one of those limits, `ModelCheckLimit` has no variant for it, and no request member raises it.
+  - FSpec FR-331 `ResourceExhausted` ("exhausted a configured resource bound") is the matching cause. The doc comment now states this.
+- **FND-015.** The unit test now covers the `RequiresBound` and `Extent(Limit)` arms. `a_timed_subject_refusal_is_typed_by_what_causes_it` and `a_timed_subject_with_an_unbounded_root_requires_a_bound` are retagged to TC-694, the FR-239 test case. FR-239 states "An unbounded population root SHALL refuse `RequiresBound` before any state is explored", so both retags are correct. `an_unread_member_settles_unsupported_not_requires_bound` (analyze_timed_cli.rs:273) is wrong as tagged:
+  - FR-507-AC-7 covers relation-claim and refinement occurrences.
+  - No FR AC states the unread-member precedence. FR-281 (lines 75-83) states the dispositions it chooses between.
+  - Fix: tag it at test-case level to the refusal behaviour (for example `#[trace("TC-762")]` for FR-281, or TC-1584 for FR-624) with no AC.
+- **#10.** The test asserts only `send` at 0 and `reply` at 3, with their operation names. These are the values derived from FR-241 and the fixture in round 2, and the lasso tail is left to the engine.
+
+Round 3 evidence: fsl-analyze + fsl-route + fsl-replay with FSPEC_DIR set, 3563 passed, 0 failed, 85 ignored.
+
+Round 3 verdict: REQUEST CHANGES, for the single still-open low FND-015, which needs a one-line retag. Every medium and high finding is fixed.
