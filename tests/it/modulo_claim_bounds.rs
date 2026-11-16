@@ -326,7 +326,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             let (_, record) = graph
                 .requirements()
                 .iter()
-                .find(|(key, _)| key.node() == &addition)
+                .find(|(key, record)| key.node() == &addition && record.owner() == Some(function))
                 .expect("addition record");
             let bounded = function == "derivedb";
             assert_eq!(
