@@ -109,6 +109,7 @@ mod mapping_support;
 mod mapping_support_occurrences;
 #[cfg(feature = "checked-handoff")]
 mod model_type_unit_roots;
+mod modulo_claim_bounds;
 mod name_resolution_confinement;
 mod native_boundaries;
 mod native_run_result_root;

@@ -5357,6 +5357,80 @@ mod tests {
         }
     }
 
+    /// FR-883-AC-2 (TC-2507): `lookup` under a protocol clause evaluates by
+    /// the `Value` regime's rule, so an absent key under `refused` gives the
+    /// same absent-key refusal it gives outside a clause, never
+    /// `unsupported-feature`.
+    #[trace("TC-2507", "FR-883-AC-2")]
+    #[test]
+    #[ignore = "QSL-2216: lookup under a protocol clause refuses unsupported-feature instead of evaluating"]
+    fn lookup_under_a_protocol_clause_evaluates() {
+        use filament_semantic_value::absence::AbsenceMode;
+
+        let (package, _identity) = population_function_package();
+        let graph = package.graph();
+        let a = match normalize(
+            &domain_package("bundle.qsl174-ac10-seam"),
+            ModelNormalizationLimits::UNLIMITED,
+        ) {
+            NormalizeOutcome::Completed(view) => view
+                .type_identities()
+                .get(&DeclarationKey::fixture("model.A"))
+                .cloned()
+                .expect("model.A has a type-level effective declaration"),
+            other => panic!("expected a completed effective view, got {other:?}"),
+        };
+        let expression = graph
+            .check_expression(
+                vec![
+                    ("p".to_owned(), ValueType::Population(Some(3))),
+                    ("r".to_owned(), ValueType::Reference(a.clone())),
+                ],
+                &Expression::lookup(
+                    TypeForm::name("M::A", SPAN),
+                    Expression::name("p".to_owned()),
+                    Expression::name("r".to_owned()),
+                    AbsenceMode::Refused,
+                ),
+                None,
+                CheckMode::Linked,
+                CheckingLimits::default(),
+            )
+            .expect("lookup<M::A>(p, r) absent Refused checks as a standalone expression");
+        let objects = ObjectEnvironment::default();
+        let reads: std::collections::BTreeMap<
+            Location,
+            fsl_semantics::model::clause_observation::Observation,
+        > = std::collections::BTreeMap::new();
+        let mut meter = Meter::new(fsl_semantics::check::SCALAR_LIMITS_UNLIMITED);
+        let arguments = vec![
+            Value::Population(PopulationId::new(crate::test_ids::node_key([9]))),
+            Value::Reference(ObjectReference::new(
+                crate::test_ids::universe_id([9]),
+                a,
+                filament_exact::ObjectId::new("root".to_owned()).expect("non-empty key"),
+            )),
+        ];
+        let evaluation = Machine::with_pre(
+            graph.scope(),
+            graph,
+            &objects,
+            None,
+            Some(&reads),
+            &mut meter,
+            graph.dispatch_tables(),
+        )
+        .run(expression.root(), expression.slots(), arguments)
+        .expect("a family-owned result is `Ok`, never an `Err`");
+        if let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = &evaluation.outcome {
+            assert_ne!(
+                cause.catalog_code().cause(),
+                "unsupported-feature",
+                "lookup is evaluated under a protocol clause"
+            );
+        }
+    }
+
     /// SR-750 FND-013 (FR-107-evaluate-state-clauses-at-s6a.md:102-105): a
     /// `pre` read reached with no pre observation refuses `wrong_snapshot`/
     /// `wrong-anchor`, never silently falling back to `objects`

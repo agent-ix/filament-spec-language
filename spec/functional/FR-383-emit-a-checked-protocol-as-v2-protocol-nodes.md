@@ -70,11 +70,12 @@ non-model target, or a target omitted from exact dependencies.
 The clause's model context is the object type its `over` input references
 (`over (input: M::T)`, a `Reference<T>` to an object type of a selected model),
 and the edge is the model declaration node of that object type, as FSpec's
-published fixtures write it. A clause whose `over` input is any other type (a
-scalar, an `Option`, a collection) has no model declaration node to name: S4
-refuses the protocol typed, `unsupported_construct`/`not-yet-implemented`
-naming the construct `NoOwnerModel` (QSL-1147), and a reference to it,
-and writes no clause node, rather than emit a clause the reader refuses.
+published fixtures write it. An `over` input that is an `Option` or a
+collection of references to `M::T` has `M::T` as its model context, and the
+edge names that object type. An `over` input that reaches no object type (a
+scalar, a bounded domain, a record, a tuple, or an `Option` or collection of
+those) has no model context: S4 writes the clause with no `owner_model` edge,
+as FSpec FR-727 defines (FR-880).
 
 When the `over` input references an object type the unit's own source
 declares (`over (input: T)`, a `Reference<T>` to a source-declared object
@@ -190,26 +191,20 @@ arguments. `P` is the protocol's qualified name.
   binder at the level that follows the captures, and each role, channel, control, compensation template and `finish` node at its
   declaration path and each queue with none; the `roles`,
   `channels` and `queues` sets are ascending by node id (FSpec FR-322 node `id`) whatever the
-  source order. A protocol that holds any other construct refuses
-  `unsupported_construct`/`not-yet-implemented` at its declaration, once for
-  each such construct and naming it, and so does a reference to it: a `terminal when` condition that reads `over` under
-  `activation on each` (IR-1069); a function's or protocol's reference to a
-  protocol that holds an `attempt`, whose node is written after the state
-  clauses it lists, which follow the functions (QSL-1121g); a protocol in a cyclic component
-  of function calls and protocol references, whose recursion group is not
-  written yet (QSL-844: a body that calls a function, or refers to a protocol,
-  is keyed after that function or protocol, QSL-1121g, so only a cycle is
-  refused); a channel that carries a bounded scalar or collection
-  (QSL-1137: a `bounded_domain` node, which the reader does not admit as
-  `carries`; a quantity, a nominal enum, an `option`, an unbounded collection
-  and a declared record are admitted); a FIFO channel whose key type is not equality-stable
-  (QSL-1142: the reader accepts only Boolean, Integer, Rational, Decimal,
-  Text, String, UUID, Timestamp and enum scalars, references, and composites
-  of them, so a key that is or contains a bounded domain, a quantity, a float
-  or a model-owned type is refused). A protocol is never written without a
-  part of its graph.
+  source order. Every other construct that S3 checks is written too, by the
+  rules of FR-880: each `run` control, the `relationships` set, a `protocol`
+  reference anywhere in a protocol body or a function, a reference to a
+  protocol that holds an `attempt`, a cyclic component of function calls and
+  protocol references (one FSpec FR-322 recursion group), a `terminal when`
+  that reads `over` under `activation on each`, a post-test `repeat`, a
+  `repeat` that steps through a nested `repeat`, a channel that carries a
+  bounded scalar or collection, and a FIFO key of any FIFO-key-stable type
+  (FSpec FR-726). A key that is not FIFO-key-stable never reaches S4: S3
+  refuses it at the key (FR-881). S4 therefore has no
+  `not-yet-implemented` refusal for a checked protocol, and a protocol is
+  never written without a part of its graph.
 
-  A role on a whole model (`role w on M`, FR-218) is not in that list. S4
+  A role on a whole model (`role w on M`, FR-218) is written the same way. S4
   writes it in FSpec FR-465's whole-model form: the role's `model` argument is
   the text `identity` of the package `M` selects, its `replication` Group is
   empty, and it has no `model` dependency (FR-383-AC-23). The form is the
@@ -596,8 +591,8 @@ refusal changes no other protocol's result (see "Per-protocol results").
   exit is FR-285's: the items are the per-protocol results, and the multi-item
   rule of FR-285-AC-2 decides the unit's exit, so a unit with a refused
   protocol never exits 0.
-- A protocol refused `unsupported_construct`/`not-yet-implemented` (the
-  `NoOwnerModel` case) has the same standing as an S3 refusal.
+- A protocol refused at S3 for a FIFO key that is not FIFO-key-stable
+  (FR-881) has the standing of every S3 refusal.
 
 ### Reading the nodes back
 
@@ -645,9 +640,9 @@ refusal changes no other protocol's result (see "Per-protocol results").
 | FR-383-AC-24 | Under Option A, a protocol whose predicate-join function refers to that protocol emits the full cyclic reference component with one shared `recursion_group`, `{size, ordinal}` coordinates and `group_reference` edges; the I2 reader admits it. An acyclic protocol in the same package has no `recursion_group` and `recursion` `null`, and its key inputs are unchanged. | Test (TC-1062) |
 | FR-383-AC-25 | SCC discovery is iterative and O(V + E), does not merge groups quadratically, computes each completed group's identity once, and uses no global lock on the emit path. There is no fixed recursion depth, group size, node count or group count cap: the only applicable work bound is the caller's shared `s3.work_units` budget, and exhaustion produces the existing typed limit refusal naming `s3.work_units`. A 100,000-node cycle group emits and reads back within the supplied budget without native stack overflow; the budget refuses at zero and one unit short and succeeds at the exact measured work; permuting authored node order leaves group identity unchanged. | Test (TC-1062) |
 | FR-383-AC-26 | Each protocol clause's node-level `owner_model` is the exact local model declaration node bound by the checker for its `over` subject, enters its application-node key preimage and exact dependencies, and is read back unchanged. Two clauses over different selected models have distinct owner edges; retargeting one changes its clause key. The edge is derived from the object type `over`'s `Reference` input names (FSpec FR-464), and a clause whose `over` names none has no edge to write (AC-27). | Test (TC-1062, TC-1063) |
-| FR-383-AC-27 | A protocol whose `over` input is `Boolean`, `Integer`, `Option<M::T>` or `Sequence<M::T>` is refused once with `unsupported_construct`/`not-yet-implemented` naming `NoOwnerModel` (QSL-1147) and, with the emission gate open, writes no `protocol_clause` node; the same protocol over `M::T` writes the clause. Over the emitted package, a clause without the edge, an edge on another node, an external edge and an edge omitted from `dependencies` each refuse as IR's reader does (`malformed_wire`, `malformed_wire`, `malformed_wire`, `invalid_semantic_graph`), a non-model target refuses `invalid_model_binding`/`malformed-declaration` at the edge (FSpec FR-464-AC-20), and retargeting only the edge refuses `invalid_package`/`stale-node-key` until the key and `package_id` are rebuilt. | Test (TC-1063) |
+| FR-383-AC-27 | A protocol whose `over` input is `Boolean` or `Integer` writes its `protocol_clause` node with no `owner_model` edge, one over `Option<M::T>` or `Sequence<M::T>` writes the edge to `M::T`'s object-type node (FSpec FR-727), and the same protocol over `M::T` writes the edge to the same node. Over the emitted package of the `M::T` protocol, a clause without the edge, an edge on another node, an external edge and an edge omitted from `dependencies` each refuse as IR's reader does (`malformed_wire`, `malformed_wire`, `malformed_wire`, `invalid_semantic_graph`), a non-model target refuses `invalid_model_binding`/`malformed-declaration` at the edge (FSpec FR-464-AC-20), and retargeting only the edge refuses `invalid_package`/`stale-node-key` until the key and `package_id` are rebuilt. | Test (TC-1063) |
 | FR-383-AC-28 | In AC-18's unit the diagnostics hold exactly one record, **X**'s, and none for **W**; the unit exits as FR-285-AC-2 gives for the items {0, 20}, which is 20, and never 0. Declaring **X** before **W** gives the same two results and the same records. A protocol **Y** whose predicate-join (`outstanding cancel`) function names **X** is `Refused` `missing_declaration`/`missing-name` at the reference with `refused_dependency` naming **X** (`missing_declaration`/`missing-name`) and `consequence` true, **W** is unchanged, and the aggregate is `Refused` with **X**'s code, cause and locus as the `StageFailure::Refused` primary. | Test (TC-1297) |
-| FR-383-AC-29 | Removing **X** from AC-18's unit changes **W**'s result in no byte. Removing **W** leaves **X**'s refusal identity unchanged: the refusal code, typed cause and declaration/reference names are equal, while `source_index`, declaration span and any cause span remain relative to the containing unit and reflect its new declaration order and source layout. An `unsupported_construct`/`not-yet-implemented` refusal (`NoOwnerModel`, AC-27) of one protocol beside a good one gives the same independence and the same `Refused` aggregate. | Test (TC-1297) |
+| FR-383-AC-29 | Removing **X** from AC-18's unit changes **W**'s result in no byte. Removing **W** leaves **X**'s refusal identity unchanged: the refusal code, typed cause and declaration/reference names are equal, while `source_index`, declaration span and any cause span remain relative to the containing unit and reflect its new declaration order and source layout. An S3 refusal of one protocol (FR-881's unstable FIFO key) beside a good one gives the same independence and the same `Refused` aggregate. | Test (TC-1297) |
 | FR-383-AC-30 | **W**, **Z** and **V** are three renamed copies of one protocol with equal measured work `n`. With an `s3.work_units` budget of exactly `n` and the source order **W**, **Z**, **V**, the results are **W** `Emitted`, **Z** `Incomplete` naming `s3.work_units` and **V** `Incomplete` naming `s3.work_units`; the aggregate is `Incomplete` (`StageFailure::Limit`) and exits 22. With the source order **Z**, **W**, **V** the results are **Z** `Emitted`, then **W** and **V** `Incomplete`. With a budget of `3n` all three are `Emitted` in either order. | Test (TC-1297) |
 | FR-383-AC-31 | A refusal at S1 (a syntax error the parser confines to **X**'s declaration), at S2, at S3 and at S4 (the `NoOwnerModel` refusal) each give **X** a `Refused` result with that stage's code and cause and leave **W**'s result byte-identical to **W** alone; a syntax error in the unit header gives a `Refused` unit with no `ProtocolResult`. FR-503 owns the stage obligations. | Test (TC-1297, TC-1298) |
 | FR-383-AC-32 | For every slot of **W**, of TC-1070 fixture E and of protocol L (fixture L), the number of `protocol_locations` rows under the slot's site name for an application equals the number of that application's visits in the slot's walk. | Test (TC-1063) |
