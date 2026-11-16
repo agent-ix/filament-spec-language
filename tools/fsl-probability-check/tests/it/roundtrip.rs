@@ -396,7 +396,7 @@ fn attained_minimum_and_maximum_thresholds_pass_and_stronger_bounds_fail() {
 
 #[trace("TC-764", "FR-201-AC-10", "FR-201-AC-11", "FR-282-AC-11")]
 #[test]
-fn a_real_resolved_workload_uses_checked_weights_and_refuses_authored_zero_weights() {
+fn a_real_resolved_workload_uses_checked_weights_and_admits_authored_zero_weights() {
     let claim = "probabilistic Likely using inf on M over (m: M::Msg) under Even on origin { probability >= 0.9775 [ eventually holds(m.delivered) ] }\n";
     let original = proof_request(claim);
     let (code, result) = run(&original, &[]);
@@ -435,20 +435,46 @@ fn a_real_resolved_workload_uses_checked_weights_and_refuses_authored_zero_weigh
     );
     assert_eq!(result["status"], "unsupported");
 
+    // FR-185-AC-10: a zero workload weight checks, and the checker reads the
+    // checked weights, so a certificate computed under `send_a = 1` no longer
+    // holds once `send_a` weighs 0 (only `send_b` is drawn).
     let mut zero = original;
-    let source = zero["source"]["content"]
+    let zero_source = zero["source"]["content"]
         .as_str()
         .unwrap()
         .replace("weight Msg::send_a = 1", "weight Msg::send_a = 0");
-    zero["source"]["content"] = json!(source);
-    zero["byte_provision"][0][2] = json!(source.as_bytes());
+    replace_checked_source(&mut zero, &zero_source);
     let (code, result) = run(&zero, &[]);
     assert_eq!(
-        code, 2,
-        "S3 requires strictly positive authored weights: {result}"
+        code, 1,
+        "a zero weight is admitted and re-weights the chain: {result}"
     );
-    assert_eq!(result["status"], "refused");
-    assert!(result.get("value").is_none());
+    assert_eq!(result["rule"], "inequality-fails");
+
+    // A real proof under the zero weight draws only `send_b`:
+    // 1 - (1/5)^2 = 24/25.
+    let only_b = format!("{SOURCE}{claim}")
+        .replace("weight Msg::send_a = 1", "weight Msg::send_a = 0")
+        .replace("probability >= 0.9775", "probability >= 0.96");
+    let (code, result) = run(&proof_source_request(&only_b, |_, _, _, _, _| {}), &[]);
+    assert_eq!(code, 0, "{result}");
+    assert_eq!(result["status"], "accepted");
+    assert_eq!(
+        result["value"],
+        json!({"numerator":"24", "denominator":"25"})
+    );
+
+    // All-zero weights normalize to the uniform workload: the same 391/400.
+    let all_zero = format!("{SOURCE}{claim}")
+        .replace("weight Msg::send_a = 1", "weight Msg::send_a = 0")
+        .replace("weight Msg::send_b = 1", "weight Msg::send_b = 0");
+    let (code, result) = run(&proof_source_request(&all_zero, |_, _, _, _, _| {}), &[]);
+    assert_eq!(code, 0, "{result}");
+    assert_eq!(result["status"], "accepted");
+    assert_eq!(
+        result["value"],
+        json!({"numerator":"391", "denominator":"400"})
+    );
 }
 
 #[trace("TC-764", "FR-201-AC-11", "FR-282-AC-11")]
