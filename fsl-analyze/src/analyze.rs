@@ -86,9 +86,9 @@ pub use items::{
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 
-use crate::external_provider::{ExternalProvider, NotUnbounded, ProviderReport};
+use crate::provider::{ExternalProvider, NotUnbounded, ProviderLimits, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
-use crate::{contract_check, external_provider, model_check, statistical, value_check, zone_check};
+use crate::{contract_check, model_check, statistical, value_check, zone_check};
 
 /// FSpec FR-331 "Backend tool": the closed `{name, version}` naming the code
 /// that decides a backend's results. A linked FSL engine is a pure
@@ -151,6 +151,9 @@ pub struct Engine {
     /// The external provider an [`Engine::external`] engine decides items
     /// with; absent for the in-process engines.
     provider: Option<std::sync::Arc<dyn ExternalProvider>>,
+    /// The FSpec FR-462 limits the caller set for an [`Engine::external`]
+    /// engine, which `analyze` writes into each request it sends it.
+    provider_limits: ProviderLimits,
 }
 
 impl Engine {
@@ -161,6 +164,7 @@ impl Engine {
             descriptor,
             tool: BackendTool::linked(),
             provider: None,
+            provider_limits: ProviderLimits::default(),
         }
     }
 
@@ -173,10 +177,13 @@ impl Engine {
     ///
     /// [`NotUnbounded`] when `descriptor` does not advertise `value-validity`
     /// in the `unbounded` mode; no engine is made and `provider` is never
-    /// called. `tool` is the provider's FSpec FR-331 tool record.
+    /// called. `tool` is the provider's FSpec FR-331 tool record, and
+    /// `limits` the FSpec FR-462 limits the caller resolved for it (FR-287
+    /// `--provider-limit`), which every request `analyze` sends it carries.
     pub fn external(
         descriptor: BackendDescriptor,
         tool: BackendTool,
+        limits: ProviderLimits,
         provider: Box<dyn ExternalProvider>,
     ) -> Result<Self, NotUnbounded> {
         let unbounded = descriptor
@@ -191,12 +198,24 @@ impl Engine {
             descriptor,
             provider: Some(provider.into()),
             tool,
+            provider_limits: limits,
         })
     }
 
     /// The external provider this engine decides items with, if any.
     pub(crate) fn provider(&self) -> Option<&dyn ExternalProvider> {
         self.provider.as_deref()
+    }
+
+    /// The FSpec FR-462 limits of this engine's provider requests.
+    pub(crate) fn provider_limits(&self) -> ProviderLimits {
+        self.provider_limits
+    }
+
+    /// The descriptor this engine was registered with: for an external
+    /// engine, the negotiated manifest entry its requests name.
+    pub(crate) fn descriptor(&self) -> &BackendDescriptor {
+        &self.descriptor
     }
 
     /// A probe engine `id` that advertises every capability kind in bounded
@@ -763,7 +782,7 @@ impl Engines {
         Ok(())
     }
 
-    fn get(&self, backend: &BackendId) -> Option<&Engine> {
+    pub(crate) fn get(&self, backend: &BackendId) -> Option<&Engine> {
         self.engines.iter().find(|engine| engine.id() == backend)
     }
 }
@@ -806,6 +825,14 @@ pub enum Payload {
         /// The claim's declaration family, absent for an unknown claim node.
         family: Option<DeclarationFamily>,
     },
+    /// A provider item whose checked package could not be emitted, so no
+    /// request was sent (FSpec FR-331-AC-33): the kind and the backend.
+    NotEmitted {
+        /// The item's kind.
+        kind: Capability,
+        /// The provider the item was negotiated to.
+        backend: BackendId,
+    },
 }
 
 impl Payload {
@@ -833,6 +860,11 @@ impl Payload {
                     "modes",
                     Value::Array(modes.iter().map(|mode| json!(mode.to_wire())).collect()),
                 ),
+            ],
+            Self::NotEmitted { kind, backend } => vec![
+                ("kind", json!(kind.to_wire())),
+                ("backend", json!(backend.as_str())),
+                ("reason", json!("package-not-emitted")),
             ],
             Self::Inapplicable {
                 request_index,
@@ -966,10 +998,25 @@ pub(crate) enum Refusal {
     Unsupported(CatalogCode),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
+    /// `unsupported` `unsupported-requested-capability`: the package of a
+    /// provider item could not be emitted, so no request was sent (FSpec
+    /// FR-331-AC-33).
+    NotEmitted,
 }
 
 /// The work an engine runs for one item.
 type Work<'a> = Box<dyn FnOnce(&Cancel, &Engine) -> EngineReport + 'a>;
+
+/// What settles one item: an engine's own work, or an external provider's
+/// verdict, which [`analyze_items`] obtains for every provider item of a
+/// backend in one FSpec FR-331 request after routing and negotiation, and
+/// the item then replays (FR-281 "External provider arm", FR-635).
+pub(crate) enum ItemWork<'a> {
+    /// The work an in-process engine runs.
+    Engine(Work<'a>),
+    /// The members a provider request is built from.
+    Provider(Box<crate::provider::ProviderWork<'a>>),
+}
 
 /// One item to analyze: its request index, its claim, its settled
 /// disposition and the work an engine runs for it, when the claim kind has an
@@ -983,7 +1030,7 @@ pub struct AnalyzeItem<'a> {
     mode: Mode,
     disposition: Disposition,
     diagnostic: Option<Diagnostic>,
-    work: Option<Work<'a>>,
+    work: Option<ItemWork<'a>>,
     /// The caller's requiredness for this request index (FR-507-AC-5).
     required: bool,
     /// The claim the item is read at, the locus of a counterexample that
@@ -992,6 +1039,57 @@ pub struct AnalyzeItem<'a> {
 }
 
 impl<'a> AnalyzeItem<'a> {
+    /// The provider work of an item that [`analyze_items`] will settle on
+    /// the external engine its disposition names, with that engine: an item
+    /// whose kind applies to its claim, that negotiation settled
+    /// `Supported` on a registered engine advertising the item's kind and
+    /// mode. Every other item settles without a provider request, as
+    /// `run` states.
+    pub(crate) fn provider_route<'e>(
+        &self,
+        engines: &'e Engines,
+    ) -> Option<(&'e Engine, RequestIndex, &crate::provider::ProviderWork<'a>)> {
+        let Some(ItemWork::Provider(work)) = &self.work else {
+            return None;
+        };
+        if self
+            .family
+            .is_none_or(|family| !self.kind.applies_to_declaration(family))
+        {
+            return None;
+        }
+        let Disposition::Supported(candidate) = &self.disposition else {
+            return None;
+        };
+        let engine = engines.get(candidate.id())?;
+        engine
+            .modes(self.kind)
+            .contains(&self.mode)
+            .then_some((engine, self.index, work.as_ref()))
+    }
+
+    /// An item that an external provider settles: `work` holds the members
+    /// its FSpec FR-331 request is built from (FR-281 "External provider
+    /// arm").
+    pub(crate) fn new_with_provider(
+        index: RequestIndex,
+        family: Option<DeclarationFamily>,
+        backend: &str,
+        work: crate::provider::ProviderWork<'a>,
+    ) -> Self {
+        Self {
+            index,
+            kind: Capability::ValueValidity,
+            family,
+            mode: Mode::Unbounded,
+            disposition: Disposition::Supported(Candidate::new(BackendId::new(backend))),
+            diagnostic: None,
+            work: Some(ItemWork::Provider(Box::new(work))),
+            required: false,
+            claim: None,
+        }
+    }
+
     /// An item of claim kind `kind` and mode `mode` that `backend` runs as
     /// `work`: `Supported(backend)` unless [`Self::disposed`] says otherwise.
     pub(crate) fn new(
@@ -1009,7 +1107,7 @@ impl<'a> AnalyzeItem<'a> {
             mode,
             disposition: Disposition::Supported(Candidate::new(BackendId::new(backend))),
             diagnostic: None,
-            work: Some(Box::new(move |cancel, _| work(cancel))),
+            work: Some(ItemWork::Engine(Box::new(move |cancel, _| work(cancel)))),
             required: false,
             claim: None,
         }
@@ -1032,7 +1130,7 @@ impl<'a> AnalyzeItem<'a> {
             mode,
             disposition: Disposition::Supported(Candidate::new(BackendId::new(backend))),
             diagnostic: None,
-            work: Some(Box::new(work)),
+            work: Some(ItemWork::Engine(Box::new(work))),
             required: false,
             claim: None,
         }
@@ -1415,9 +1513,10 @@ pub fn analyze_items(
     items: Vec<AnalyzeItem<'_>>,
     cancel: &Cancel,
 ) -> Vec<AnalyzeRecord> {
+    let mut settled = crate::provider::settle_items(engines, &items, cancel);
     items
         .into_iter()
-        .map(|item| run(engines, item, cancel))
+        .map(|item| run(engines, item, cancel, &mut settled))
         .collect()
 }
 
@@ -1592,7 +1691,12 @@ fn into_terminal(record: AnalyzeRecord) -> TerminalRecord {
     }
 }
 
-fn run(engines: &Engines, item: AnalyzeItem<'_>, cancel: &Cancel) -> AnalyzeRecord {
+fn run(
+    engines: &Engines,
+    item: AnalyzeItem<'_>,
+    cancel: &Cancel,
+    settled: &mut crate::provider::Settled,
+) -> AnalyzeRecord {
     let AnalyzeItem {
         index,
         kind,
@@ -1664,7 +1768,12 @@ fn run(engines: &Engines, item: AnalyzeItem<'_>, cancel: &Cancel) -> AnalyzeReco
             IncompleteCause::Cancelled { source },
         )));
     }
-    let report = work(cancel, engine);
+    let report = match work {
+        ItemWork::Engine(work) => work(cancel, engine),
+        ItemWork::Provider(work) => {
+            crate::provider::finish(*work, settled.remove(&index), cancel, engine)
+        }
+    };
     // An item whose charge saw the cancel was still open when the handle was
     // cancelled and settles `incomplete` with its cause (FR-276); a handle
     // cancelled after the item's last charge is not tripped and the verdict
@@ -1736,7 +1845,7 @@ fn settle(
         }
         EngineReport::Provider(report) => {
             let (settled_record, counterexample) =
-                external_provider::settle(*report, index, backend, engine.descriptor.origin());
+                crate::provider::settle_record(*report, index, backend, engine.descriptor.origin());
             let mut settled = record(terminal(settled_record), None);
             settled.value_check = counterexample.map(Box::new);
             settled
@@ -1863,6 +1972,19 @@ fn settle(
         ),
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
+        }
+        EngineReport::Refused(Refusal::NotEmitted) => {
+            let diagnostic = Diagnostic {
+                code: CatalogCode::new(
+                    "unsupported_projection",
+                    "unsupported-requested-capability",
+                ),
+                payload: Payload::NotEmitted {
+                    kind,
+                    backend: backend.clone(),
+                },
+            };
+            disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
         EngineReport::Refused(Refusal::NotStatistical) => disposed(
             DispositionKind::InvalidRequest,

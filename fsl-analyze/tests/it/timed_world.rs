@@ -244,6 +244,26 @@ pub(crate) fn world(document: &[u8], profiles: &str, body: &str) -> World {
     world_over(document, profiles, body, &["c"])
 }
 
+/// [`world`] checked under `mode`, for runtime undefinedness fixtures.
+pub(crate) fn world_with_mode(
+    document: &[u8],
+    profiles: &str,
+    body: &str,
+    mode: CheckMode,
+) -> World {
+    world_built_in_with_protocol_selection(
+        PACKAGE,
+        &[document],
+        profiles,
+        body,
+        &["c"],
+        &[],
+        &json!({}),
+        true,
+        mode,
+    )
+}
+
 /// [`world`] whose `c` also holds the fields `extra`.
 pub(crate) fn world_holding(document: &[u8], profiles: &str, body: &str, extra: &Json) -> World {
     world_built(document, profiles, body, &["c"], &[], extra)
@@ -310,6 +330,7 @@ pub(crate) fn world_built_in(
         armed,
         extra,
         true,
+        CheckMode::Linked,
     )
 }
 
@@ -333,6 +354,7 @@ pub(crate) fn world_built_with_packages(
         &[],
         &json!({}),
         true,
+        CheckMode::Linked,
     )
 }
 
@@ -357,6 +379,7 @@ pub(crate) fn world_built_in_without_protocol_profile(
         armed,
         extra,
         false,
+        CheckMode::Linked,
     )
 }
 
@@ -370,6 +393,7 @@ fn world_built_in_with_protocol_selection(
     armed: &[&str],
     extra: &Json,
     select_protocol_profile: bool,
+    mode: CheckMode,
 ) -> World {
     let packages = package_input(documents.iter().copied()).unwrap();
     let unit = unit_text(package, profiles, body);
@@ -408,7 +432,7 @@ fn world_built_in_with_protocol_selection(
     }
     let graph = declarations
         .with_unwritten_timed_members()
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let header = json!({"identity": package});
     let mut fields = json!({"phase": {"integer": "0"}, "inflight": {"boolean": false},

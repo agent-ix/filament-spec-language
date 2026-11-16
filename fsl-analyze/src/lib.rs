@@ -25,7 +25,6 @@ pub mod analyze;
 pub mod claim_family;
 pub mod contract_check;
 pub mod exact_probabilistic;
-pub mod external_provider;
 pub mod model_check;
 pub mod monitor;
 pub mod monitor_entries;

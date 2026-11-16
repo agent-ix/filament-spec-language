@@ -1063,7 +1063,10 @@ mod tests {
             Refusal::Declined(_, _, code) | Refusal::Unsupported(code) | Refusal::Failed(code) => {
                 Some(code.to_string())
             }
-            Refusal::RequiresBound | Refusal::NotStatistical | Refusal::Incomplete(_) => None,
+            Refusal::RequiresBound
+            | Refusal::NotStatistical
+            | Refusal::NotEmitted
+            | Refusal::Incomplete(_) => None,
         }
     }
 
