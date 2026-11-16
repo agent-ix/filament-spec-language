@@ -110,7 +110,6 @@ fn a_binding_refusal_refuses_the_request() {
 /// FR-625-AC-5: an unbounded parameter with no proof bound is unsupported.
 #[trace("TC-1585", "FR-625-AC-5")]
 #[test]
-#[ignore = "QSL-2122: explicit-state items are not reachable through fsl analyze yet"]
 fn an_unbounded_domain_is_unsupported() {
     let ws = Workspace::new("cov-unbounded");
     let path = counter_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));

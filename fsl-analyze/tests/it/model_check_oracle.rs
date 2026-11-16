@@ -30,7 +30,6 @@ fn oracle(start: i64) -> (usize, usize) {
 /// FR-625-AC-1: verdict and counts agree with the oracle.
 #[trace("TC-1585", "FR-625-AC-1")]
 #[test]
-#[ignore = "QSL-2122: explicit-state items and their exploration counts are not reachable through fsl analyze yet"]
 fn verdict_and_counts_match_the_breadth_first_oracle() {
     let (states, steps) = oracle(0);
     assert_eq!((states, steps), (4, 3));
@@ -51,7 +50,7 @@ fn verdict_and_counts_match_the_breadth_first_oracle() {
 /// cut settles `inconclusive` `bound-reached` (FR-127 V-5).
 #[trace("TC-1585", "FR-625-AC-3")]
 #[test]
-#[ignore = "QSL-2122: explicit-state budgets are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2122: FR-625-AC-3 settles a max_depth cut incomplete but FR-127 V-5 settles it inconclusive BoundReached (spec question open)"]
 fn budgets_settle_incomplete_with_what_was_explored() {
     let ws = Workspace::new("oracle-budget");
     let run = analyze(&counter_request(

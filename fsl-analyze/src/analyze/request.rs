@@ -438,6 +438,25 @@ fn work<'a>(
     let family = if wrong_occurrence { None } else { family };
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
     let mut built = match &item.form {
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
+                && form.item_kind == ItemKind::DeadlockFreedom =>
+        {
+            if super::document::timed(package) {
+                absent()
+            } else {
+                super::derived_item::deadlock_item(
+                    package,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    form,
+                )
+                .unwrap_or_else(absent)
+            }
+        }
         Some(ItemForm::Temporal(form)) if item.kind == Capability::TemporalSatisfaction => {
             match super::ClauseSubject::from_provision(
                 package,

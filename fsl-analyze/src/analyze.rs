@@ -33,6 +33,7 @@
 //! with the cancellation cause kept.
 
 mod clause_item;
+mod derived_item;
 pub mod document;
 mod exact;
 mod items;

@@ -131,7 +131,7 @@ pub fn model_item<'a>(
 
 /// [`model_item`] with no check of what `item` runs: the derived adapters'
 /// path once they have joined the run to its request item.
-fn run_model_item(
+pub(super) fn run_model_item(
     index: RequestIndex,
     family: Option<DeclarationFamily>,
     item: ModelItem<'_>,
@@ -554,7 +554,7 @@ fn join_terminals<'p>(
 /// recompiled package it replayed over declares other terminal states than
 /// `expected` (FR-411 "Deadlock-freedom verdict join"), so a refutation
 /// found under one declaration never settles the item under another.
-fn joined_replay<'a>(
+pub(super) fn joined_replay<'a>(
     replay: Box<CounterexampleReplayFn<'a>>,
     expected: TerminalKeys,
 ) -> Box<CounterexampleReplayFn<'a>> {

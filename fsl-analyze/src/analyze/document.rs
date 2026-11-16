@@ -730,7 +730,8 @@ fn resolve_one(
         };
     };
     let Some(node) = declarations(package).get(name).cloned() else {
-        return unknown_claim(index, name);
+        return resolve_derived(package, subject, index, selection, registry, name)
+            .unwrap_or_else(|| unknown_claim(index, name));
     };
     let named = selection.backend.as_deref().map(BackendId::new);
     let records = requirement_items(package, registry, named.as_ref());
@@ -796,9 +797,70 @@ fn resolve_one(
     }))
 }
 
+/// FR-626: a derived item (`deadlock-freedom`, `time-lock-freedom` or
+/// `race-freedom`) named by the model alias of its subject, which is the
+/// declaration the derived item anchors at (FSpec FR-368 "Claim and
+/// anchor"). `None` when the item is no derived item or `name` is no model
+/// alias, so the caller settles `unknown-claim`; an alias whose subject
+/// derives no such item (a time-lock item over an untimed subject, a
+/// deadlock item under `terminal any`) settles `inapplicable-kind`.
+fn resolve_derived(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    index: RequestIndex,
+    selection: &ItemSelection,
+    registry: &Registry,
+    name: &str,
+) -> Option<ResolvedItem> {
+    let temporal = selection.temporal.as_ref()?;
+    let kind = temporal.item_kind?.kind();
+    if matches!(kind, ItemKind::Formula | ItemKind::Refinement) {
+        return None;
+    }
+    let graph = package.graph();
+    let identity = graph.model_package_identity(name)?;
+    let root = graph
+        .model_roots()
+        .find(|(selected, _)| selected.identity == identity)
+        .map(|(_, root)| root)?;
+    let derived = derived_items(package, subject, registry, &[], 0)
+        .into_iter()
+        .find_map(|resolved| match resolved {
+            ResolvedItem::Claim(claim)
+                if claim.item.claim.node() == &root
+                    && matches!(
+                        &claim.item.form,
+                        Some(ItemForm::Temporal(form)) if form.item_kind == kind
+                    ) =>
+            {
+                Some(claim)
+            }
+            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } => None,
+        });
+    let Some(mut claim) = derived else {
+        return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
+    };
+    let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
+    claim.item.request_index = index;
+    claim.item.backend = selection.backend.as_deref().map(BackendId::new);
+    claim.item.options = ItemOptions {
+        required: selection.required.unwrap_or(true),
+        max_cases: None,
+    };
+    claim.item.form = Some(ItemForm::Temporal(temporal_item(
+        package,
+        &claim.item.claim,
+        temporal,
+    )));
+    claim.claim_name = name.to_owned();
+    claim.unrouted = selection.unrouted() || own_subject != *subject;
+    claim.subject = own_subject;
+    Some(ResolvedItem::Claim(claim))
+}
+
 /// Whether the model subject the package's selections give is timed
 /// (FR-243): a selected model declares a time source.
-fn timed(package: &CheckedPackage) -> bool {
+pub(super) fn timed(package: &CheckedPackage) -> bool {
     let graph = package.graph();
     let selections: BTreeSet<&str> = graph
         .model_selections()
@@ -976,6 +1038,16 @@ fn derived_items(
         .map(|selection| selection.identity.as_str())
         .collect();
     let mut request = fsl_route::model_request::ModelRequest::<()>::new();
+    // FSpec FR-368: a model subject has its derived items whether or not the
+    // unit authors a clause, so the subject is joined to the derivation
+    // before any authored item is written.
+    request.state_graph(
+        &fsl_route::deadlock::ModelStateGraphItem {
+            subject: &(),
+            package: graph,
+        },
+        &selections,
+    );
     let occurrences: Vec<OccurrenceKey> = authored
         .iter()
         .filter_map(|resolved| match resolved {

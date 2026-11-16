@@ -87,7 +87,6 @@ fn analyze_is_routed_and_never_refused_as_not_routed() {
 #[trace("TC-1585", "FR-625-AC-1")]
 #[trace("TC-1585", "FR-625-AC-2")]
 #[test]
-#[ignore = "QSL-2122: explicit-state model-check items are not reachable through fsl analyze yet"]
 fn explicit_state_items_prove_and_refute() {
     let ws = Workspace::new("cli-mc");
     let body = format!("{}{}", bounded(), below_three());
@@ -106,7 +105,7 @@ fn explicit_state_items_prove_and_refute() {
 /// FR-625-AC-4: an invariant state clause is an explicit-state item.
 #[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-#[ignore = "QSL-2122: invariant clauses are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2122: FR-625-AC-4 runs an invariant as temporal-satisfaction on EN-1 but FR-507 admits only operation-contract for a state-model claim (spec question open)"]
 fn invariant_items_prove_and_refute() {
     let ws = Workspace::new("cli-invariant");
     let body = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
@@ -141,7 +140,6 @@ fn invariant_items_prove_and_refute() {
 #[trace("TC-1586", "FR-626-AC-1")]
 #[trace("TC-1586", "FR-626-AC-2")]
 #[test]
-#[ignore = "QSL-2122: deadlock-freedom items are not reachable through fsl analyze yet"]
 fn deadlock_freedom_respects_terminal_states() {
     let item = json!([{"claim": "M", "temporal": {"item_kind": "deadlock-freedom"}}]);
     let ws = Workspace::new("cli-deadlock");
@@ -155,7 +153,6 @@ fn deadlock_freedom_respects_terminal_states() {
 /// FR-626-AC-3: time-lock freedom over an untimed subject is inapplicable.
 #[trace("TC-1586", "FR-626-AC-3")]
 #[test]
-#[ignore = "QSL-2122: time-lock-freedom items are not reachable through fsl analyze yet"]
 fn time_lock_freedom_over_an_untimed_subject_is_inapplicable() {
     let ws = Workspace::new("cli-time-lock");
     let run = analyze(&counter_request(
@@ -378,4 +375,44 @@ fn protocol_deadlock_proves_and_refutes() {
             assert_eq!(item["replay"]["reproduced"], true);
         }
     }
+}
+
+/// FR-626-AC-1: the refuted deadlock item's counterexample is a finite prefix
+/// whose last state is the stuck state `value = 3`, and its replay reproduced.
+#[trace("TC-1586", "FR-626-AC-1")]
+#[test]
+fn a_deadlock_counterexample_ends_at_the_stuck_state_and_replays() {
+    let ws = Workspace::new("cli-deadlock-ce");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"claim": "M", "temporal": {"item_kind": "deadlock-freedom"}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted");
+    assert_eq!(item["counterexample"]["kind"], "deadlock");
+    assert_eq!(item["replay"]["reproduced"], true);
+    let prefix = item["counterexample"]["prefix"]
+        .as_array()
+        .expect("a finite prefix");
+    assert_eq!(prefix.len(), 3, "inc runs three times from value 0");
+    let last = prefix.last().expect("a last step")["post_state"]["state"].to_string();
+    assert!(last.contains(r#""name":"value","value":{"type":"integer","value":"3"}"#));
+    assert_eq!(run.exit, 10);
+}
+
+/// item of the subject, and a claim naming no model alias is `unknown-claim`.
+#[trace("TC-1586", "FR-626-AC-1")]
+#[test]
+fn a_derived_item_over_a_name_that_is_no_model_alias_is_an_unknown_claim() {
+    let ws = Workspace::new("cli-deadlock-unknown");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"claim": "Nothing", "temporal": {"item_kind": "deadlock-freedom"}}]),
+    ));
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"],
+        "unknown-claim"
+    );
 }
