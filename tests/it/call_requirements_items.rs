@@ -32,6 +32,7 @@ const K: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn members(function: &str) -> Vec<(OccurrenceKey, usize)> {
     let call = Call {
         clocks: Default::default(),
+        wire_arguments: Vec::new(),
         function: function.to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),

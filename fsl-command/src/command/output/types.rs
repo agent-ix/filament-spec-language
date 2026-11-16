@@ -119,6 +119,12 @@ pub(super) enum Details<'a> {
     Position {
         position: usize,
     },
+    /// FR-650: an argument refusal naming the declared position and the JSON
+    /// pointer of the defect inside the argument's `value`.
+    Argument {
+        position: usize,
+        path: &'a str,
+    },
     /// FR-100 typed model admission's foreign-universe payload.
     AdmissionForeignUniverse {
         position: usize,
@@ -177,24 +183,6 @@ pub(super) struct RunSource<'a> {
     #[serde(flatten)]
     pub identity: &'a SourceIdentity,
     pub path: &'a str,
-}
-
-/// FR-100: a value [`SpineOutcome::Completed`] carries.
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(super) enum SpineValue {
-    Boolean {
-        value: bool,
-    },
-    Integer {
-        decimal: String,
-    },
-    Reference {
-        universe: String,
-        #[serde(rename = "type")]
-        object_type: String,
-        object_identity: String,
-    },
 }
 
 /// FR-096/FR-100: a `refused` record's or cause's resolved locus -- the
@@ -256,7 +244,8 @@ pub(super) enum SpineOrigin {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum SpineOutcome {
     Completed {
-        value: SpineValue,
+        /// FR-650's run value form.
+        value: serde_json::Value,
     },
     Refused {
         code: &'static str,

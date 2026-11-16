@@ -1428,20 +1428,33 @@ fn prepare_complete_run(
                 fsl_replay::spine::CompileRefusal::DependencyInput(refusal),
             )
         })?;
-    let arguments = call
+    // FR-650: a `value` is a JSON integer in the signed 64-bit range or a JSON
+    // object; the run reads it against its parameter's declared type.
+    let wire_arguments = call
         .arguments
         .iter()
-        .map(|argument| fsl_replay::spine::CallArgument {
-            parameter: argument.parameter.clone(),
-            value: filament_exact::Value::Integer(filament_exact::Integer::from(argument.value)),
+        .enumerate()
+        .map(|(index, argument)| {
+            if !(argument.value.is_object() || argument.value.as_i64().is_some()) {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/call/arguments/{index}/value"),
+                    reason: "expected a JSON integer in the signed 64-bit range or an object"
+                        .to_owned(),
+                });
+            }
+            Ok(fsl_replay::spine::WireArgument {
+                parameter: argument.parameter.clone(),
+                value: argument.value.clone(),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let mut spine_call = fsl_replay::spine::Call::new(
         call.function.clone(),
-        arguments,
+        Vec::new(),
         call_accounting(&call.accounting),
         request.limits.supplied.unwrap_or_default(),
     );
+    spine_call.wire_arguments = wire_arguments;
     spine_call.clocks = request.clocks.clone();
     Ok(PreparedRun::Function(PreparedFunctionRun {
         data: Box::new(FunctionRunData {

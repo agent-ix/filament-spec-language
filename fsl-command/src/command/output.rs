@@ -178,6 +178,17 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 | fsl_replay::spine::RunRefusal::UnboundParameter { parameter } => {
                     types::Details::Parameter { parameter }
                 }
+                fsl_replay::spine::RunRefusal::Argument { position, defect } => {
+                    types::Details::Argument {
+                        position: *position,
+                        path: &defect.path,
+                    }
+                }
+                fsl_replay::spine::RunRefusal::UnsupportedParameter { position } => {
+                    types::Details::Position {
+                        position: *position,
+                    }
+                }
                 fsl_replay::spine::RunRefusal::WrongValueKind { position } => {
                     types::Details::Position {
                         position: *position,
@@ -283,6 +294,11 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             RunCause::Spine(failure) => failure.refusal.cause(),
             RunCause::SpineRun(refusal) => match refusal.as_ref() {
                 fsl_replay::spine::RunRefusal::Compile(refusal) => refusal.cause(),
+                fsl_replay::spine::RunRefusal::Argument { defect, .. } => Some(defect.cause),
+                fsl_replay::spine::RunRefusal::UnsupportedResult { .. }
+                | fsl_replay::spine::RunRefusal::UnsupportedParameter { .. } => {
+                    Some("unsupported-feature")
+                }
                 fsl_replay::spine::RunRefusal::Fault(_) => Some("established-invariant-broken"),
                 fsl_replay::spine::RunRefusal::Storage { failure, .. } => {
                     fsl_semantics::value::environment_stage::membership_failure_cause(failure)
@@ -399,23 +415,11 @@ pub(super) fn spine_run_result(
     function: &str,
     outcome: fsl_replay::spine::CallOutcome,
 ) -> super::Result<RunResult> {
-    use fsl_replay::spine::{CallOutcome, CallRefusal, CallValue};
+    use fsl_replay::spine::{CallOutcome, CallRefusal};
     let exit_code = outcome.category().exit_code();
     let outcome = match outcome {
-        CallOutcome::Completed(CallValue::Boolean(value)) => types::SpineOutcome::Completed {
-            value: types::SpineValue::Boolean { value },
-        },
-        CallOutcome::Completed(CallValue::Integer(value)) => types::SpineOutcome::Completed {
-            value: types::SpineValue::Integer {
-                decimal: value.to_string(),
-            },
-        },
-        CallOutcome::Completed(CallValue::Reference(reference)) => types::SpineOutcome::Completed {
-            value: types::SpineValue::Reference {
-                universe: reference.universe().root_type().to_string(),
-                object_type: effective_type_text(reference.object_type()),
-                object_identity: reference.object().as_str().to_owned(),
-            },
+        CallOutcome::Completed(value) => types::SpineOutcome::Completed {
+            value: value.form(),
         },
         CallOutcome::Refused(CallRefusal::Record {
             code,
@@ -456,17 +460,6 @@ pub(super) fn spine_run_result(
         exit_code,
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
     })
-}
-
-/// An effective type identity as its owning declarations, root first, each
-/// `package:node`, joined by `/`.
-fn effective_type_text(identity: &filament_exact::EffectiveId) -> String {
-    identity
-        .owner_chain()
-        .iter()
-        .map(|original| format!("{}:{}", original.package(), original.node()))
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// FR-640: the clock-selection refusal `refusal` carries, the program's own

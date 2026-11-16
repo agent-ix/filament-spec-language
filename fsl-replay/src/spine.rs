@@ -195,11 +195,13 @@ pub use bind::{
 };
 
 mod call;
+mod run_value;
 pub(crate) use call::run_reading;
 pub use call::{
     default_accounting, run, Call, CallArgument, CallIncomplete, CallLocus, CallOutcome,
-    CallRefusal, CallValue, RunRefusal, DEFAULT_WORK_UNITS,
+    CallRefusal, CallValue, RunRefusal, WireArgument, DEFAULT_WORK_UNITS,
 };
+pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
 pub use clause::{

@@ -590,9 +590,9 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
             Classification::new(Refused, Vec::new())
         }
         // FR-109 selects only `Boolean` functions, so neither completes.
-        CallOutcome::Completed(CallValue::Integer(_) | CallValue::Reference(_)) => {
-            Classification::new(ToolFailure, vec![RefusalCause::INVARIANT])
-        }
+        CallOutcome::Completed(
+            CallValue::Integer(_) | CallValue::Reference(_) | CallValue::Written(_),
+        ) => Classification::new(ToolFailure, vec![RefusalCause::INVARIANT]),
         CallOutcome::Refused(refusal) => {
             let (CallRefusal::Record { code, .. } | CallRefusal::Family { code, .. }) = refusal;
             let causes = Code::from_code(code.code())
