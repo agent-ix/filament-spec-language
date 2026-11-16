@@ -860,3 +860,163 @@ fn an_observation_after_a_closed_scope_is_refused() {
         ContradictedDimension::Closure
     );
 }
+
+/// FR-643-AC-4 (TC-1667): a finite-window clause settled under an earlier
+/// progress assertion resumes, from a checkpoint taken after a later one, to
+/// the same settled report and the same later reports.
+#[test]
+#[trace("TC-1667", "FR-643-AC-4")]
+fn a_clause_settled_under_an_earlier_assertion_resumes_to_the_same_report() {
+    let world = world();
+    let cancel = Cancel::new();
+    let open = || MonitorOpen {
+        clauses: clauses(&["T"]),
+        kind: MonitorTraceKind::Timestamped,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: Some(stamped_binding()),
+        cover: None,
+        ledger: None,
+        packages: &world.packages,
+        sources: &world.sources,
+        temporal_selections: &world.selections,
+    };
+    let mut original = MonitorSession::open(
+        world.unit.package(),
+        open(),
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("opens");
+    let first = text(1);
+    original.step(stamped(&first, 0), &cancel).expect("steps");
+    let settled = original
+        .assert_progress(
+            ProgressAssertion {
+                scope: ProgressClosure::Closed,
+                ..progress(5)
+            },
+            &cancel,
+        )
+        .expect("progress");
+    assert!(
+        settled.statuses[0].1.is_settled(),
+        "settles under the closed scope"
+    );
+    let at_settle = format!(
+        "{:?}",
+        settled.statuses[0].1.record().report().finite_window
+    );
+    original
+        .assert_progress(
+            ProgressAssertion {
+                scope: ProgressClosure::Closed,
+                ..progress(8)
+            },
+            &cancel,
+        )
+        .expect("a later assertion");
+    let state = original.checkpoint();
+    let mut resumed = MonitorSession::resume(
+        world.unit.package(),
+        &state,
+        open(),
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("resumes");
+    for session in [&mut original, &mut resumed] {
+        let step = session
+            .assert_progress(
+                ProgressAssertion {
+                    scope: ProgressClosure::Closed,
+                    ..progress(9)
+                },
+                &cancel,
+            )
+            .expect("a further assertion");
+        let status = &step.statuses[0].1;
+        assert!(status.is_settled());
+        assert_eq!(
+            format!("{:?}", status.record().report().finite_window),
+            at_settle,
+            "the settled report is the one of the deciding assertion"
+        );
+    }
+    let kept = original.finish(&cancel).expect("ends");
+    let again = resumed.finish(&cancel).expect("ends");
+    assert_eq!(
+        format!("{:?}", kept.records[0].report().disposition),
+        format!("{:?}", again.records[0].report().disposition)
+    );
+}
+
+/// FR-643-AC-8 (TC-2322): a `Progressed` session whose latest assertion has
+/// scope `open` and execution `closed` finishes with `B(n)` under it for the
+/// unsettled clause.
+#[test]
+#[trace("TC-2322", "FR-643-AC-8")]
+fn a_progressed_finish_returns_the_batch_report_under_the_latest_assertion() {
+    let world = world();
+    let cancel = Cancel::new();
+    let mut session = world
+        .open(
+            &["E"],
+            MonitorTraceKind::Progressed,
+            Some(events_binding()),
+            DEFAULT_RETAINED_POSITIONS,
+        )
+        .expect("opens");
+    let levels = [0, 1];
+    for (index, level) in levels.iter().enumerate() {
+        let observed = text(*level);
+        session.step(sample(&observed), &cancel).expect("steps");
+        session
+            .assert_progress(progress(u64::try_from(index).expect("index")), &cancel)
+            .expect("progress");
+    }
+    let latest = ProgressAssertion {
+        execution: ProgressClosure::Closed,
+        ..progress(1)
+    };
+    let step = session.assert_progress(latest, &cancel).expect("progress");
+    assert!(!step.statuses[0].1.is_settled());
+    let outcome = session.finish(&cancel).expect("ends");
+
+    let authentication = spine::authenticate_emission(
+        world.unit.package(),
+        &world.selections,
+        &world.packages,
+        &SpineLimits::default(),
+        &cancel,
+    )
+    .expect("emits");
+    let trace = TraceInput::Progressed {
+        trace: levels
+            .iter()
+            .map(|level| spine::sample_position(&text(*level)))
+            .collect(),
+        progress: latest,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: events_binding(),
+    };
+    let batch = run_package_temporal(&PackageTemporalRequest {
+        package: world.unit.package(),
+        packages: &world.packages,
+        model_limits: ModelNormalizationLimits::default(),
+        snapshots: &DocumentProvision::new(),
+        observation_limits: ObservationLimits::default(),
+        accounting: UNLIMITED,
+        name: "E",
+        trace: &trace,
+        over: None,
+        ledger: None,
+        sources: &world.sources,
+        authentication: Some(PackageAuthentication::temporal(&authentication)),
+        cancel: &cancel,
+    });
+    assert_eq!(
+        format!("{:?}", outcome.records[0].report().disposition),
+        format!("{:?}", batch.disposition)
+    );
+    assert_eq!(outcome.settled_before_end, vec![false]);
+}

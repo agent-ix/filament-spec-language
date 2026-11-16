@@ -185,6 +185,9 @@ struct Slot {
     settled: bool,
     /// The number of positions seen when the clause settled.
     settled_at: Option<usize>,
+    /// The progress assertion in force when the clause settled, so a resumed
+    /// session reproduces the settled report exactly.
+    settled_with: Option<ProgressAssertion>,
     /// The setting whose limit ended the clause, if one did.
     limited: Option<&'static str>,
     announced: bool,
@@ -260,6 +263,45 @@ fn closed_trace(profile: TemporalProfile) -> bool {
         profile,
         TemporalProfile::EventPositionFalseExtension | TemporalProfile::FixedSampleFalseExtension
     )
+}
+
+/// A progress assertion as its checkpoint form.
+fn assertion_json(assertion: ProgressAssertion) -> Value {
+    json!({
+        "watermark": assertion.watermark,
+        "complete": match assertion.completeness {
+            ProgressCompleteness::Complete { through } => json!(through),
+            ProgressCompleteness::Incomplete => Value::Null,
+        },
+        "scope_closed": assertion.scope == ProgressClosure::Closed,
+        "execution_closed": assertion.execution == ProgressClosure::Closed,
+    })
+}
+
+/// A progress assertion read from its checkpoint form.
+fn assertion_of(value: &Value) -> Result<ProgressAssertion, Failure> {
+    let closure = |closed: bool| {
+        if closed {
+            ProgressClosure::Closed
+        } else {
+            ProgressClosure::Open
+        }
+    };
+    Ok(ProgressAssertion {
+        watermark: value["watermark"].as_u64().ok_or_else(state_mismatch)?,
+        completeness: match &value["complete"] {
+            Value::Null => ProgressCompleteness::Incomplete,
+            through => ProgressCompleteness::Complete {
+                through: through.as_u64().ok_or_else(state_mismatch)?,
+            },
+        },
+        scope: closure(value["scope_closed"].as_bool().ok_or_else(state_mismatch)?),
+        execution: closure(
+            value["execution_closed"]
+                .as_bool()
+                .ok_or_else(state_mismatch)?,
+        ),
+    })
 }
 
 fn state_mismatch() -> Failure {
@@ -424,6 +466,7 @@ impl<'a> MonitorSession<'a> {
                     )?,
                     settled: false,
                     settled_at: None,
+                    settled_with: None,
                     limited: None,
                     announced: false,
                 })
@@ -833,6 +876,7 @@ impl<'a> MonitorSession<'a> {
             slot.settled = settled;
             if settled {
                 slot.settled_at = Some(self.positions.len());
+                slot.settled_with = assertion;
             }
         }
         if carried.is_some() {
@@ -1003,17 +1047,7 @@ impl<'a> MonitorSession<'a> {
                 })
             })
             .collect();
-        let assertion = self.assertion.map(|assertion| {
-            json!({
-                "watermark": assertion.watermark,
-                "complete": match assertion.completeness {
-                    ProgressCompleteness::Complete { through } => json!(through),
-                    ProgressCompleteness::Incomplete => Value::Null,
-                },
-                "scope_closed": assertion.scope == ProgressClosure::Closed,
-                "execution_closed": assertion.execution == ProgressClosure::Closed,
-            })
-        });
+        let assertion = self.assertion.map(assertion_json);
         let ledger = self
             .ledger
             .as_ref()
@@ -1021,7 +1055,13 @@ impl<'a> MonitorSession<'a> {
         let clauses: Vec<Value> = self
             .slots
             .iter()
-            .map(|slot| json!({"settled_at": slot.settled_at, "limited": slot.limited}))
+            .map(|slot| {
+                json!({
+                    "settled_at": slot.settled_at,
+                    "settled_with": slot.settled_with.map(assertion_json),
+                    "limited": slot.limited,
+                })
+            })
             .collect();
         let document = json!({
             "format": STATE_FORMAT,
@@ -1113,30 +1153,7 @@ impl<'a> MonitorSession<'a> {
         }
         let assertion = match &object["assertion"] {
             Value::Null => None,
-            value => {
-                let closure = |closed: bool| {
-                    if closed {
-                        ProgressClosure::Closed
-                    } else {
-                        ProgressClosure::Open
-                    }
-                };
-                Some(ProgressAssertion {
-                    watermark: value["watermark"].as_u64().ok_or_else(state_mismatch)?,
-                    completeness: match &value["complete"] {
-                        Value::Null => ProgressCompleteness::Incomplete,
-                        through => ProgressCompleteness::Complete {
-                            through: through.as_u64().ok_or_else(state_mismatch)?,
-                        },
-                    },
-                    scope: closure(value["scope_closed"].as_bool().ok_or_else(state_mismatch)?),
-                    execution: closure(
-                        value["execution_closed"]
-                            .as_bool()
-                            .ok_or_else(state_mismatch)?,
-                    ),
-                })
-            }
+            value => Some(assertion_of(value)?),
         };
         let ledger = match &object["ledger"] {
             Value::Null => None,
@@ -1196,7 +1213,16 @@ impl<'a> MonitorSession<'a> {
                     return Err(state_mismatch());
                 }
                 session.positions = all[..at].to_vec();
-                let (replayed, _) = session.evaluate(session.assertion, cancel)?;
+                let with = match &saved["settled_with"] {
+                    Value::Null => None,
+                    value => Some(assertion_of(value)?),
+                };
+                // The settle is reproduced from what was in force then: the
+                // assertion of that call and the ledger the session opened with.
+                let held = std::mem::replace(&mut session.ledger, session.request.ledger.clone());
+                let replayed = session.evaluate(with, cancel);
+                session.ledger = held;
+                let (replayed, _) = replayed?;
                 slots[index] = replayed[index].clone();
             }
         }

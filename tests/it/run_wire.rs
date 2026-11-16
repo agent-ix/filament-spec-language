@@ -1384,3 +1384,56 @@ fn command_monitor_streams_events_to_its_sink() {
     assert!(error.to_string().contains("Absent"), "{error}");
     assert_eq!(nothing, 0);
 }
+
+/// FR-644-AC-6 (TC-2324), refusal half: `{"end": "closed"}`, `{"end": "open"}`
+/// and `{"through": X}` on a finite stream each give a `refusal` event naming
+/// `end` or `through`, and leave the session unchanged.
+#[test]
+#[trace("TC-2324", "FR-644-AC-6")]
+fn end_with_a_closure_and_through_are_refused_as_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(json!([{"name": "Never"}]), json!({"kind": "finite"}));
+    let mut clean = observations(&[0, 1, 2]);
+    clean.push(json!({"end": true}));
+    let clean = result(&monitor_run(
+        directory.path(),
+        "clean",
+        request.clone(),
+        &clean,
+    ));
+    let mut noisy = observations(&[0, 1]);
+    noisy.push(json!({"end": "closed"}));
+    noisy.push(json!({"through": 250}));
+    noisy.push(json!({"end": "open"}));
+    noisy.extend(observations(&[2]));
+    noisy.push(json!({"end": true}));
+    let noisy = result(&monitor_run(directory.path(), "noisy", request, &noisy));
+    let members: Vec<(u64, String)> = noisy["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["category"] == "refusal")
+        .map(|event| {
+            (
+                event["record"].as_u64().expect("a record"),
+                event["disposition"]["member"]
+                    .as_str()
+                    .expect("a member")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        members,
+        vec![
+            (2, "end".to_owned()),
+            (3, "through".to_owned()),
+            (4, "end".to_owned())
+        ],
+        "{noisy}"
+    );
+    assert_eq!(
+        noisy["summary"]["clauses"], clean["summary"]["clauses"],
+        "{noisy}"
+    );
+}
