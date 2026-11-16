@@ -174,6 +174,10 @@ fn malformed_extension_entries_refuse_before_compile() {
             json!([{"authority": "agent-ix", "identity": "ext.retention"}]),
             "file",
         ),
+        (
+            json!([{"authority": "agent-ix", "identity": " ", "file": "retention.json"}]),
+            "identity",
+        ),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let path = extension_request(directory.path(), extensions);
