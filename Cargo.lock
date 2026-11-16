@@ -844,6 +844,7 @@ dependencies = [
  "fsl-analyze",
  "fsl-cst",
  "fsl-foundation",
+ "fsl-package",
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",

@@ -353,6 +353,8 @@ pub(super) struct AnalyzeRequest {
     pub libraries: Vec<Library>,
     #[serde(default, deserialize_with = "present_json_value")]
     pub refinement_internals: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub documents: Vec<FileSelection>,
     #[serde(default)]

@@ -99,11 +99,17 @@ fn read<'d>(
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
-    if request.package.is_some() {
-        // FR-620 admits a checked-package selection, but the engines analyze
-        // an in-process checked package that only a source compile builds:
-        // an implementation gap (QSL-2271), not a refused request.
+    if let Some(package) = &request.package {
+        admit_package(directory, dependent_bytes, &request, package)?;
+        // The engines analyze an in-process checked package that only a
+        // source compile builds, so an admitted package stops here.
         return Err(RunCause::AnalyzeNotYetImplemented { member: "package" });
+    }
+    if request.integer_division.is_some() {
+        return Err(invalid(
+            "integer_division",
+            "an integer-division law is not read by this build",
+        ));
     }
     let Some(program) = &request.program else {
         return Err(invalid("program", "a program or package is required"));
@@ -316,5 +322,127 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
             let _ = done.send(());
             value
         }),
+    }
+}
+
+/// FR-850 "Admission": a request that selects `package` is read by the strict
+/// checked-package reader against the supplied domain packages, and refuses
+/// before any item resolves when a compile member sits beside it, the reader
+/// refuses the bytes, a recorded domain package is not supplied, or a
+/// supplied one is not recorded.
+fn admit_package(
+    directory: &Path,
+    dependent_bytes: usize,
+    request: &wire::AnalyzeRequest,
+    package: &wire::FileSelection,
+) -> Result<()> {
+    if request.program.is_some() {
+        return Err(invalid(
+            "program",
+            "a program cannot be selected beside a package",
+        ));
+    }
+    if !request.libraries.is_empty() {
+        return Err(invalid(
+            "libraries",
+            "a package already holds its dependency selections",
+        ));
+    }
+    if request.refinement_internals.is_some() {
+        return Err(invalid(
+            "refinement_internals",
+            "a package is already compiled",
+        ));
+    }
+    if request.integer_division.is_some() {
+        return Err(invalid("integer_division", "a package is already compiled"));
+    }
+    let mut intake = intake_with_bytes(
+        directory,
+        FileCounts {
+            programs: 1,
+            models: request.models.len(),
+            observations: request.documents.len(),
+        },
+        dependent_bytes,
+    )?;
+    let bytes = intake.file(&package.file, intake.remaining)?;
+    if request
+        .models
+        .iter()
+        .any(|model| !super::is_domain_package(model))
+    {
+        return Err(RunCause::CompleteSelection(
+            super::CompleteSelection::NativeModels,
+        ));
+    }
+    let documents = request
+        .models
+        .iter()
+        .map(|model| intake.source(&model.source))
+        .collect::<Result<Vec<_>>>()?;
+    let supplied = fsl_semantics::model::intake::package_input(
+        documents
+            .iter()
+            .map(|document| document.source().text().as_bytes()),
+    )
+    .map_err(|refusal| match refusal.cause {
+        fsl_semantics::model::refusal::ModelRefusalCause::ConflictingPackage { identity } => {
+            conflicting_model(&identity)
+        }
+        _ => RunCause::ClauseRequest {
+            member: "models".to_owned(),
+            reason: refusal.detail,
+        },
+    })?;
+    let limits =
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let admitted =
+        fsl_package::admit_checked_package(&bytes, &supplied, limits).map_err(package_refusal)?;
+    for identity in supplied.keys() {
+        if !admitted
+            .selected_model_packages()
+            .any(|recorded| recorded == identity)
+        {
+            return Err(conflicting_model(identity));
+        }
+    }
+    Ok(())
+}
+
+fn conflicting_model(identity: &str) -> RunCause {
+    RunCause::AnalyzePackage {
+        code: fsl_foundation::Code::InvalidPackage,
+        cause: Some("conflicting-definition".to_owned()),
+        pointer: None,
+        message: format!(
+            "invalid_package/conflicting-definition: the models entry {identity} is not a domain \
+             package the package records, or repeats one"
+        ),
+    }
+}
+
+/// The request-stage refusal of a package the strict reader refused.
+fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
+    let fsl_package::PackageAdmissionRefusal {
+        code,
+        cause,
+        pointer,
+        identity,
+    } = refusal;
+    let named = match (&identity, &pointer) {
+        (Some(identity), _) => format!(": no models entry supplies {identity}"),
+        (None, Some(pointer)) => format!(" at {pointer}"),
+        (None, None) => String::new(),
+    };
+    let label = match &cause {
+        Some(cause) => format!("{}/{cause}", code.as_str()),
+        None => code.as_str().to_owned(),
+    };
+    RunCause::AnalyzePackage {
+        code,
+        cause,
+        pointer,
+        message: format!("{label}{named}"),
     }
 }

@@ -619,7 +619,7 @@ fn a_pending_clause_run_reports_its_pending_disposition() {
 #[trace("TC-1580", "FR-620-AC-1")]
 #[trace("TC-2410", "FR-850-AC-1")]
 #[test]
-#[ignore = "QSL-2271: analyze over a checked-package selection is not implemented yet"]
+#[ignore = "QSL-2271: the in-process checked-package builder from package bytes conflicts with FR-087-AC-2"]
 fn a_package_selection_analyzes_as_its_source() {
     let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}]);
     let body = format!("{}{}", bounded(), below_three());
@@ -642,22 +642,55 @@ fn a_package_selection_analyzes_as_its_source() {
     let run = analyze(&path);
     assert_eq!(run.exit, source.exit, "{}", run.document());
     assert_eq!(run.document()["items"], source.document()["items"]);
+
+    // The same equality with no `items` member: the default items, in the
+    // source map's order.
+    let default_source = analyze(&counter_request_with(&ws, &body, request_members(None)));
+    selected
+        .as_object_mut()
+        .expect("a request object")
+        .remove("items");
+    let document = json!({"format": "native-analyze/1", "request": selected});
+    let path = ws.write(
+        "analyze-package-default.json",
+        document.to_string().as_bytes(),
+    );
+    let default_run = analyze(&path);
+    assert_eq!(
+        default_run.exit,
+        default_source.exit,
+        "{}",
+        default_run.document()
+    );
+    assert_eq!(
+        default_run.document()["items"],
+        default_source.document()["items"]
+    );
 }
 
-/// A package selection is an implementation gap until QSL-2271 lands: it
-/// refuses `unsupported_construct`/`not-yet-implemented` naming `package`,
-/// never `invalid-request` or a profile prohibition (FR-763).
+/// A package that admits reaches the analysis gap: building the in-process
+/// checked package from package bytes conflicts with FR-087-AC-2, so
+/// analysis refuses `unsupported_construct`/`not-yet-implemented` naming
+/// `package`, never `invalid-request` or a profile prohibition (FR-763).
 #[trace("TC-1580", "FR-620-AC-3")]
 #[test]
 fn a_package_selection_names_its_implementation_gap() {
     let ws = Workspace::new("wire-package-gap");
-    let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
-    request
+    let request = request_members(Some(json!([{"claim": "Bounded"}])));
+    let _ = counter_request_with(&ws, &bounded(), request.clone());
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": request["models"], "program": request["program"]}});
+    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
+    let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
+    ws.write("package.json", &package);
+    let mut selected = request;
+    selected
         .as_object_mut()
         .expect("a request object")
         .remove("program");
-    request["package"] = json!({"file": "package.json"});
-    let path = counter_request_with(&ws, &bounded(), request);
+    selected["package"] = json!({"file": "package.json"});
+    let document = json!({"format": "native-analyze/1", "request": selected});
+    let path = ws.write("analyze-package-gap.json", document.to_string().as_bytes());
     let run = analyze(&path);
     let document = run.document();
     let diagnostic = &document["diagnostics"][0];
