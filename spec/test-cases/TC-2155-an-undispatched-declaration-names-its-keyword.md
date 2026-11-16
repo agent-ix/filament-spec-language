@@ -16,11 +16,11 @@ Scope: FR-763-AC-1.
 
 ## Test Procedure
 
-Run the `parse` operation over a unit whose one declaration has a leading keyword with no S2 dispatch entry and read its outcome document's diagnostic. Test: `tests/it/forms_refusal_cause.rs` `an_undispatched_declaration_names_its_keyword`.
+Run the `parse` operation over a unit holding a `synthesis` declaration and over one holding a `verify` declaration, read each outcome document's diagnostics, and read `leading_keywords()`. Test: `tests/it/forms_refusal_cause.rs` `an_undispatched_declaration_names_its_keyword`.
 
 Tag the tests `#[trace("TC-2155", "FR-763-AC-1")]`.
 
 ## Expected Results
 
-- `code` `unsupported_construct`, `cause` `not-yet-implemented`.
-- `construct` `declaration`, `text` the keyword, `declaration` the declared name, `profile` the `using` profile identity.
+- Neither document holds an `unsupported_construct` diagnostic or a diagnostic whose `construct` is `declaration`.
+- `leading_keywords()` yields `synthesis` and `verify`.

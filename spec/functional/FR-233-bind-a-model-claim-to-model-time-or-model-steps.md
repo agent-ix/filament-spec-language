@@ -92,6 +92,20 @@ FSpec FR-255 key under that binding.
   at the clock clause's span, naming the model.
 - A `ModelTime` clause SHALL select the timed profile (FR-234). A
   `ModelSteps` clause SHALL keep ADR-018's profiles.
+- **The timed profile reads model time.** A clause whose `using` alias
+  selects the timed profile over a timed model and writes `clock
+  "model-steps"` SHALL be refused `ill_typed`/`type-mismatch` at the clock
+  string, with a message saying that the timed profile counts time units of
+  the model's time source and that a step-counted claim over the same model
+  is written under the event-position or infinite-trace profile with `clock
+  "model-steps"`. The two choices contradict each other (FSpec FR-090 selects
+  the timed profile by `model-time`, and the timed profile reads no step
+  count), so the source is wrong, category refusal, exit 20, never an
+  unsupported feature. Counting steps of a timed model stays fully supported
+  under the step profiles by "Explicit" above. `clock "events"` or any other
+  name over a model subject is "Other names" above under every profile, the
+  timed profile included; over a trace subject the timed profile takes any
+  role FR-610 admits, configured as FR-642's `timed` member.
 - **Identity.** The binding's FSpec FR-252 key SHALL be built from the
   timed profile identity, the model's qualified name and time source kind,
   the unit, the period for a `Tick` source, and the step-order sequence
@@ -114,6 +128,7 @@ FSpec FR-255 key under that binding.
 | FR-233-AC-2 | `eventually[0 ms, 3 ms]` under `model-time` over `Rpc` checks with bounds `0` and `3` in `ms`; `eventually[0 s, 3/1000 s]` checks to equal bounds and an equal FR-255 key. `eventually[0, 3]` under `model-time` refuses `ill_typed`/`type-mismatch`, and `eventually[0 ms, 3 ms]` under `model-steps` refuses `ill_typed`/`type-mismatch`. | Test (TC-688) |
 | FR-233-AC-3 | The `Rpc` model with `time dense unit ms` and the same model with `time tick send period 1 ms unit ms` give `model-time` bindings with different FR-252 keys; two tick models that differ only in period give different keys. A `[0,3]` step interval and a `[0 ms, 3 ms]` time interval have different FR-255 keys. | Test (TC-688) |
 | FR-233-AC-4 | Over a model subject under the infinite-trace profile, `eventually[0,3] holds(r.stopped)` with `clock "ms"`, with `clock "wall"` and with `clock "steps"` each refuses `unsupported_construct`/`declaration-form` at the clock string, with a message naming the written name, `model-steps` and `model-time`; the same clause with `clock "model-steps"` checks with the `ModelSteps` binding. The same refusal holds under the event-position profile. | Test (TC-1540) |
+| FR-233-AC-5 | Over the ConfigVersion model timed by `dimension Time; unit ms : Time = rational(1, 1); time Config dense unit ms;`, `eventually holds(c.versionNumber = 2)` under the timed profile with `clock "model-steps"` refuses `ill_typed`/`type-mismatch` at the clock string `"model-steps"`, category refusal, never `unsupported_construct`/`not-yet-implemented`; `eventually[0,3] holds(c.versionNumber = 2)` under the event-position profile with `clock "model-steps"` checks; `eventually[0 ms, 3 ms] holds(c.versionNumber = 2)` under the timed profile with no `clock` checks; and under the timed profile `clock "events"` refuses `unsupported_construct`/`declaration-form` at the clock string. | Test (TC-2389) |
 
 ## Dependencies
 

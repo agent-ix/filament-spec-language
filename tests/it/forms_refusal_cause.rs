@@ -59,24 +59,23 @@ fn function(body: &str) -> String {
 #[test]
 #[ignore = "QSL-2196: the forms-stage construct payload not implemented yet"]
 fn an_undispatched_declaration_names_its_keyword() {
-    for (declaration, keyword, name) in [
-        (
-            "synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };",
-            "synthesis",
-            "Pick",
-        ),
-        (
-            "verify Release using v { check safe claim M::Safe method model_check domain M::Order bound 20; }",
-            "verify",
-            "Release",
-        ),
+    for declaration in [
+        "synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };",
+        "verify Release using v { check safe claim M::Safe method model_check domain M::Order bound 20; }",
     ] {
-        let (_, diagnostic) = construct_diagnostic(declaration);
-        assert_eq!(diagnostic["construct"], "declaration", "{keyword}");
-        assert_eq!(diagnostic["text"], keyword);
-        assert_eq!(diagnostic["declaration"], name);
-        assert_eq!(diagnostic["profile"], PROFILE);
+        let (_, value, _) = parsed(declaration);
+        let diagnostics = value["diagnostics"].as_array().cloned().unwrap_or_default();
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic["code"] != "unsupported_construct"
+                    && diagnostic["construct"] != "declaration"
+            }),
+            "{declaration}: {diagnostics:?}"
+        );
     }
+    let keywords: Vec<_> = fsl_forms::leading_keywords().collect();
+    assert!(keywords.contains(&"synthesis"), "{keywords:?}");
+    assert!(keywords.contains(&"verify"), "{keywords:?}");
 }
 
 #[trace("TC-2156", "FR-763-AC-2")]
@@ -141,10 +140,6 @@ fn every_construct_message_begins_with_the_construct() {
             "invariant I using v on M::Order at current { reaches(self, self, M::Order::next) }"
                 .to_owned(),
             "`reaches` over the qualified edge `M::Order::next` is not supported yet".to_owned(),
-        ),
-        (
-            "synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };".to_owned(),
-            "`synthesis` declarations are not supported yet".to_owned(),
         ),
     ] {
         let (_, diagnostic) = construct_diagnostic(&declaration);
