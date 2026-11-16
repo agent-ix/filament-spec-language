@@ -305,6 +305,42 @@ pub(crate) fn span_at(spans: &ExpressionSpans, location: &Location) -> Span {
     })
 }
 
+/// The span reached by `location` below `root` of `expression`.
+pub(crate) fn span_at_subtree(
+    expression: &Expression,
+    spans: &ExpressionSpans,
+    root: ExprId,
+    location: &Location,
+) -> Span {
+    let mut pending = vec![(expression.root_id(), Vec::new())];
+    while let Some((id, path)) = pending.pop() {
+        if id == root {
+            let mut path = path;
+            path.extend(location.path());
+            return spans.at(&path).unwrap_or_else(|| {
+                spans
+                    .span(spans.root())
+                    .unwrap_or(Span { start: 0, end: 0 })
+            });
+        }
+        for (index, child) in expression
+            .at(id)
+            .node()
+            .children()
+            .into_iter()
+            .enumerate()
+            .rev()
+        {
+            let mut child_path = path.clone();
+            child_path.push(index);
+            pending.push((child, child_path));
+        }
+    }
+    spans
+        .span(spans.root())
+        .unwrap_or(Span { start: 0, end: 0 })
+}
+
 /// A typer over `typing` that has bound `bound` as its first slots.
 fn typer<'a>(
     typing: &Typing<'a>,

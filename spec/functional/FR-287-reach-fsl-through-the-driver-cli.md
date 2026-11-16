@@ -133,8 +133,9 @@ FR-298) and takes FR-285's exit code.
   `--provider-config` and `--provider-limit`, and the provider items of its
   request go through the same FR-950 request and transport. FSpec FR-561
   names `run` among the verbs that take a provider configuration. `fsl run`
-  with `--provider-config` or `--provider-limit` SHALL call
-  `fsl_command::run_with_providers(request, providers: &[Engine], options)`,
+  SHALL call `fsl_command::command::run_with_providers(request, negotiate,
+  providers, options, cancel)` (FR-961), with an empty `providers` when
+  `--provider-config` is absent,
   which routes the run call's requirement items through the provider seam
   `fsl_analyze::provider::settle_items` (build each `ProviderRequest`, then
   `ExternalProvider::settle`) and returns the run outcome with the provider
@@ -173,7 +174,7 @@ FR-298) and takes FR-285's exit code.
   `--provider-config`. The driver shall read every
   `--provider-limit` before any stage runs and before any plugin starts,
   and pass the resolved limits with the started providers as
-  `AnalyzeOptions.provider_limits`. FSL's entries parse no option. Analyze
+  `ProviderOptions.provider_limits`. FSL's entries parse no option. Analyze
   writes the limits into every `ProviderRequest` it builds (FR-635), and
   `ProcessProvider` enforces the transport limits of the request it carries. An argument with no `=`, an unknown name, a
   name given twice, or a value that is empty, zero, signed, has a leading

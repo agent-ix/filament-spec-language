@@ -33,7 +33,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::ZERO;
 use crate::hyper_world::{
-    high, low, low_of, non_interference, Vault, World, EQUAL_INPUTS, KEY, STARTS,
+    assert_hyper_division_refused, high, low, low_of, non_interference, Vault, World, EQUAL_INPUTS,
+    KEY, STARTS,
 };
 
 /// The engine's outcome of `world` under the default limits.
@@ -384,53 +385,15 @@ fn a_subject_that_alone_exceeds_max_states_stops_before_the_product_is_built() {
     );
 }
 
-/// FR-176-AC-4, second sentence: `NonInterference` over the secure vault with
-/// the added `match` conjunct `(if present(a.step.Vault::step.i) then 1 /
-/// value(a.step.Vault::step.i) else 0) = 0`, which has no value on a joint
-/// step whose `a` step is `step(0)`, is refuted by an `Undefined`
-/// counterexample that ends at the first such joint step in canonical order,
-/// with a path for `a` and one for `b` and the cause `division-by-zero`.
-#[trace("TC-1264", "FR-487-AC-6")]
-#[trace("TC-601", "FR-176-AC-4")]
+/// FR-495: a possibly-zero divisor in a declared hyper `match` is refused by
+/// S3 at the divisor expression.
+#[trace("TC-1264", "FR-495")]
 #[test]
-fn an_undefined_match_ends_the_item_at_the_first_such_joint_step() {
+fn an_unproved_match_divisor_is_refused_at_s3() {
     let divided = "match { a.step.op = b.step.op and \
          a.step.Vault::step.i = b.step.Vault::step.i and \
          (if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) else 0) = 0 }";
-    let world = World::new(Vault::Secure, false, &STARTS, &non_interference(divided));
-    let counterexample = refuted(run(&world));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!("expected an undefined-evaluation counterexample");
-    };
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
-    );
-    assert_eq!(undefined.locus, HyperLocus::Match { conjunct: 2 });
-    // One path per trace variable, each the single step into joint position 1,
-    // `step(0)` on both: the first joint step out of the first initial pair.
-    assert_eq!(counterexample.trace_position, 1);
-    assert_eq!(undefined.position, 1);
-    assert_eq!(counterexample.traces.len(), 2);
-    assert_eq!(inputs(&counterexample, 0), [0]);
-    assert_eq!(inputs(&counterexample, 1), [0]);
-    let variables: Vec<_> = undefined
-        .variables
-        .iter()
-        .map(|(variable, alias)| (variable.as_str(), alias.as_str()))
-        .collect();
-    assert_eq!(variables, [("a", "V"), ("b", "V")]);
-    // The named states are the two post-states, and the paths end in them.
-    assert_eq!(undefined.state_keys.len(), 2);
-    for (index, expected) in undefined.state_keys.iter().enumerate() {
-        let HyperStep::Model(step) = &counterexample.traces[index].steps[0] else {
-            panic!("a model step");
-        };
-        assert_eq!(&step.post_state, expected);
-    }
-    // The first initial pair in canonical order is at depth 0, so no deeper
-    // finding precedes it.
-    assert_eq!(counterexample.steps(), 1);
+    assert_hyper_division_refused(&non_interference(divided), "value(a.step.Vault::step.i)");
 }
 
 /// FR-176-AC-4, last sentence: running the leaky request twice gives
@@ -455,7 +418,7 @@ fn the_leaky_request_run_twice_gives_equal_counterexamples() {
 /// ADR-023 HM-7: a subject with no initial state decides nothing
 /// (`NoInitialState`), and a clause with an object parameter whose universe
 /// is empty has no instance (`NoInstance`), before any state is explored.
-#[trace("TC-601")]
+#[trace("TC-601", "FR-495")]
 #[test]
 fn a_subject_without_an_initial_state_or_an_instance_decides_nothing() {
     let empty_start = World::new(Vault::Secure, false, &[], &non_interference(EQUAL_INPUTS));
@@ -1297,30 +1260,15 @@ fn a_horizon_cuts_the_lockstep_search_before_its_lasso() {
     assert_eq!(refuted(run(&world)), unbounded);
 }
 
-/// A finding the first phase makes inside the horizon is returned and one
-/// beyond it is not: the undefined `match` conjunct of the secure vault is
-/// read on the joint steps out of the initial states, which a horizon of 0
-/// does not expand and a horizon of 1 does.
+/// FR-495: the declared hyper `match` divisor is rejected before a horizon
+/// can affect evaluation.
 #[trace("TC-601")]
 #[test]
-fn a_first_phase_finding_is_returned_only_inside_the_horizon() {
+fn a_match_divisor_is_refused_before_horizon_evaluation() {
     let divided = "match { a.step.op = b.step.op and \
          a.step.Vault::step.i = b.step.Vault::step.i and \
          (if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) else 0) = 0 }";
-    let mut world = World::new(Vault::Secure, false, &STARTS, &non_interference(divided));
-    world.max_depth = Some(0);
-    assert!(matches!(
-        run(&world),
-        HyperOutcome::BoundReached { depth: 0, .. }
-    ));
-    world.max_depth = Some(1);
-    let counterexample = refuted(run(&world));
-    assert!(matches!(
-        counterexample.kind,
-        HyperCounterexampleKind::Undefined(_)
-    ));
-    world.max_depth = None;
-    assert_eq!(refuted(run(&world)), counterexample);
+    assert_hyper_division_refused(&non_interference(divided), "value(a.step.Vault::step.i)");
 }
 
 /// A run that completes inside its horizon holds, as it does with none; a
