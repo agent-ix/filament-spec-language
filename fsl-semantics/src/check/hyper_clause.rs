@@ -1494,7 +1494,9 @@ fn check_behaviours<'a>(
                 let location = lowering::hyper_location(clause_index, site);
                 // A conjunct refuses at its own span, the span the first
                 // typing pass names.
-                let locate = |_: &Location| draft.span;
+                let locate = |at: &Location| {
+                    lowering::span_at_subtree(&block.expression, &block.spans, draft.root, at)
+                };
                 match lowering::lower_conjunct(
                     &typing,
                     &mut cx.reborrow(scope),
@@ -1903,8 +1905,7 @@ fn body_refusal_at(
     let location = refusal.location.clone();
     let path = location.path();
     if matches!(&refusal.cause, CheckCause::Unproved(Obligation::Nonzero)) {
-        let root = lowering::node_at(expression, &path).unwrap_or_else(|| expression.root_id());
-        if let Some(divisor_span) = unproved_nonzero_divisor_span(expression, spans, root) {
+        if let Some(divisor_span) = unproved_nonzero_divisor_span(expression, spans, span) {
             span = divisor_span;
         }
     }
@@ -2003,15 +2004,19 @@ fn body_refusal_at(
     Found::Typed(cause, location)
 }
 
-/// The divisor expression whose nonzero proof failed within `root`.
+/// The divisor expression for the division at the exact failed occurrence.
 fn unproved_nonzero_divisor_span(
     expression: &Expression,
     spans: &ExpressionSpans,
-    root: ExprId,
+    occurrence: Span,
 ) -> Option<Span> {
     let node_spans = spans.of_nodes(expression)?;
-    let mut pending = vec![root];
+    let mut pending = vec![expression.root_id()];
     while let Some(id) = pending.pop() {
+        if node_spans.get(id.index()).copied() != Some(occurrence) {
+            pending.extend(expression.at(id).node().children());
+            continue;
+        }
         let node = expression.at(id).node();
         if let ExprNode::Binary {
             operator:
@@ -2025,7 +2030,7 @@ fn unproved_nonzero_divisor_span(
         {
             return node_spans.get(right.index()).copied();
         }
-        pending.extend(node.children().into_iter().rev());
+        pending.extend(node.children());
     }
     None
 }

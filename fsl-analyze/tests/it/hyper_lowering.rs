@@ -153,7 +153,7 @@ fn an_exact_sqrt_refusal_reaches_the_hyper_atom_boundary() {
 }
 
 /// FR-495: a possibly-zero divisor in a declared hyper atom is refused by S3.
-#[trace("TC-1264", "FR-487-AC-3")]
+#[trace("FR-495")]
 #[test]
 fn an_unproved_hyper_atom_divisor_is_refused_at_s3() {
     assert_hyper_division_refused(
@@ -161,6 +161,22 @@ fn an_unproved_hyper_atom_divisor_is_refused_at_s3() {
          forall trace a of V forall trace b of V \
          { always holds(1 mod (1 - v.h @ a) = 1 mod (1 - v.h @ b)) }",
         "1 - v.h @ a",
+    );
+}
+
+/// FR-495/QSL-2331: when an expression has two divisors, the refusal names
+/// the later divisor whose nonzero proof failed, not the earlier proven one.
+#[trace("FR-495")]
+#[test]
+fn a_later_unproved_divisor_gets_its_own_source_span() {
+    assert_hyper_division_refused(
+        "function positive using v(): Int[1, 1] pure { 1 }\n\
+         hyper Divided using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         match { 1 mod positive() = 1 mod (if present(b.step.Vault::step.i) then \
+         value(b.step.Vault::step.i) else 0) } \
+         { holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }",
+        "if present(b.step.Vault::step.i) then value(b.step.Vault::step.i) else 0",
     );
 }
 
