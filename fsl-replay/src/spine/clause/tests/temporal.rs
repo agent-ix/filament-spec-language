@@ -4814,7 +4814,7 @@ fn mixed_unit_clock_in(library: &str, checked_with_selections: bool) -> MixedUni
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          model Counters = {package:?};\n\
          record Sample {{ v: Int[0, 9]; }}\n\
-         temporal Window using t over (e: Sample) clock \"ms\" on origin \
+         temporal Window using t over (e: Sample) clock \"plant-ms\" on origin \
          {{ always[0,3] (count over past[0 Counters::s, 300000 Counters::ms] >= 1) }}\n"
     );
     let identity = fsl_foundation::SourceIdentity::new("test", "window");
